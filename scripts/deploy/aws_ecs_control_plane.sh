@@ -102,7 +102,9 @@ if [ "$bake_status" -eq 75 ]; then
   exit 0
 fi
 [ "$bake_status" -eq 0 ] || exit "$bake_status"
-python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws >/dev/null
+python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws >/dev/null \
+  || die "AWS fleet serving evidence is inconsistent or unstable before rollout;" \
+         "inspect each region with cloud_serving_release.py aws-region REGION SERVICE (the reader prints nothing on purpose)"
 
 SOURCE_REPO=us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router
 SOURCE_DIGEST="$(gcloud artifacts docker images describe "${SOURCE_REPO}:${IMAGE_TAG}" \

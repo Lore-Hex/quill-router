@@ -1,7 +1,9 @@
 import copy
 import json
+import re
 import tempfile
 import unittest
+import urllib.error
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
@@ -12,6 +14,7 @@ from build import build, load_markets, render, tracked_url
 from deploy import certificate_requests, domains, publish_certificates, url_map
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
+REAL_BROCHURE_GAPS = deploy.brochure_gaps
 
 
 class FakeCloud:
@@ -149,6 +152,12 @@ class MarketLinkParser(HTMLParser):
 
 
 class ExchangeTests(unittest.TestCase):
+    def setUp(self):
+        # Publish asks the live app whether it accepts every domain; tests stay offline.
+        patcher = mock.patch.object(deploy, "brochure_gaps", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_inventory(self):
         self.assertEqual(len(load_markets()), 13)
         self.assertEqual(len(domains()), 30)
@@ -163,6 +172,34 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(len(listed), len(set(listed)))
         self.assertEqual(sorted(set(domains()) - set(listed)), [])
 
+    def test_every_market_domain_may_request_the_brochure(self):
+        # Rule: the app allowlists exactly the canonical market domains for the brochure form.
+        listed = json.loads(
+            (Path(__file__).parents[2] / "src" / "trusted_router" / "data" / "token_exchange_origins.json").read_text()
+        )
+        self.assertEqual(sorted(listed), sorted(m["domain"] for m in load_markets()))
+
+    def test_publish_refuses_until_the_app_accepts_every_domain(self):
+        with mock.patch.object(deploy, "brochure_gaps", return_value=["newcitytokenexchange.com"]), \
+                tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(deploy, "gcloud", side_effect=AssertionError("published")):
+            with self.assertRaisesRegex(RuntimeError, "does not accept newcitytokenexchange.com[.] .*deploy the app first"):
+                deploy.publish(built_output(Path(directory) / "out"), Path(directory) / "state")
+
+    def test_brochure_gaps_lists_domains_the_live_preflight_rejects(self):
+        def answer(request, timeout):
+            origin = request.headers["Origin"]
+            if origin == "https://tokyotokenexchange.com":
+                raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+            if origin == "https://dubaitokenexchange.com":
+                raise TimeoutError("read timed out")
+            response = mock.MagicMock()
+            response.__enter__.return_value.headers = {"Access-Control-Allow-Origin": origin}
+            return response
+
+        with mock.patch.object(deploy.urllib.request, "urlopen", answer):
+            self.assertEqual(REAL_BROCHURE_GAPS(), ["dubaitokenexchange.com", "tokyotokenexchange.com"])
+
     def test_pages(self):
         markets = load_markets()
         for market in markets:
@@ -173,16 +210,22 @@ class ExchangeTests(unittest.TestCase):
             self.assertIn("regional name identifies", page)
             self.assertIn("provider retention", page)
             self.assertIn("not a securities", page)
-            self.assertNotIn("<form", page)
+            # The brochure form is the one form on the page. It posts to TrustedRouter's
+            # email-gated download with the honeypot, and every brochure button jumps to it.
+            self.assertEqual(page.count("<form"), 1)
+            self.assertIn('<form id="brochure-form" action="https://trustedrouter.com/token-exchange/brief" method="post">', page)
+            self.assertIn('name="website"', page)
+            self.assertEqual(page.count('href="#brochure"'), 3)
+            self.assertNotIn("calendly", page)
             self.assertNotIn("google-analytics", page)
             self.assertNotIn("$headline", page)
             # The hero photograph and the provider marquee: one visible group of six links,
-            # five hidden copies that stay out of the tab order, under the relationship label.
+            # one hidden copy that stays out of the tab order, under the relationship label.
             self.assertIn('class="hero-photo"', page)
             self.assertIn("Providers on TrustedRouter", page)
             self.assertEqual(page.count('<div class="hero-provider-group">'), 1)
-            self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 5)
-            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 30)
+            self.assertEqual(page.count('<div class="hero-provider-group" aria-hidden="true">'), 1)
+            self.assertEqual(page.count('href="https://trustedrouter.com/providers" tabindex="-1"'), 6)
 
     def test_escape(self):
         market = copy.deepcopy(load_markets()[0])
@@ -214,11 +257,10 @@ class ExchangeTests(unittest.TestCase):
 
     def test_attribution(self):
         market = load_markets()[0]
-        url = tracked_url(
-            "https://trustedrouter.com/token-exchange", market, "brief", "#enterprise-brief"
-        )
-        self.assertEqual(urlparse(url).fragment, "enterprise-brief")
-        self.assertEqual(parse_qs(urlparse(url).query)["utm_source"], ["thetokenexchange.com"])
+        query = parse_qs(urlparse(tracked_url("https://trustedrouter.com/providers/marketplace", market, "seller")).query)
+        self.assertEqual(query["utm_source"], ["thetokenexchange.com"])
+        self.assertEqual(query["utm_campaign"], ["token-exchange-launch"])
+        self.assertEqual(query["utm_content"], ["seller"])
 
     def test_map_preserves_and_is_idempotent(self):
         current = {
@@ -452,7 +494,14 @@ class ExchangeTests(unittest.TestCase):
                 self.assertIn(
                     market["domain"], (output / market["slug"] / "sitemap.xml").read_text()
                 )
-            self.assertTrue((output / "assets/exchange.webp").is_file())
+            # Every copied asset is referenced by the built pages, styles or scripts, and nothing
+            # referenced is missing.
+            assets = output / "assets"
+            referenced = set()
+            for path in [*output.glob("*/index.html"), *assets.glob("*.css"), *assets.glob("*.js")]:
+                referenced.update(re.findall(r"/assets/([A-Za-z0-9._-]+)", path.read_text()))
+            self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "mark.svg"}, referenced)
+            self.assertEqual({path.name for path in assets.iterdir()}, referenced)
 
 
 if __name__ == "__main__":

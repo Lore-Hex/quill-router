@@ -97,6 +97,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "ark.ap-southeast.bytepluses.com" in url:
+        return {"data": [{"id": "glm-5-2-260617"}]}
     if "abliterate.ai" in url:
         return {"data": [{"id": "abliterate-0.3-fast"}]}
     if "api.system1models.ai" in url:

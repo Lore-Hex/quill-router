@@ -450,7 +450,12 @@ def test_models_reference_executes_against_canonical_api_host(
 ) -> None:
     operation = client.get("/openapi.json").json()["paths"]["/v1/models"]["get"]
 
-    assert operation["servers"] == [{"url": "https://api.trustedrouter.com"}]
+    # The first server is the default "try it" target; the EU gateway region
+    # serves the same public catalog.
+    assert operation["servers"] == [
+        {"url": "https://api.trustedrouter.com", "description": "Global"},
+        {"url": "https://api-europe-west4.quillrouter.com", "description": "EU regional"},
+    ]
     assert "No API key is required" in operation["description"]
 
 

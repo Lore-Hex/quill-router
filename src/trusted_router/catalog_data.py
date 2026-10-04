@@ -1869,13 +1869,12 @@ PROVIDERS: dict[str, Provider] = {
     "byteplus": Provider(
         slug="byteplus",
         name="BytePlus ModelArk",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "The BytePlus ModelArk key authenticates and discovers direct model IDs, "
-            "but this account has not activated the model service. Routes remain "
-            "dark until activation, a paid canary, and exact first-party pricing "
-            "all succeed."
+            "Direct BytePlus ModelArk inference. Availability and standard token "
+            "prices are refreshed from BytePlus's native catalog and pricing "
+            "documentation. Video availability requires a verified native adapter."
         ),
         provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
     ),
@@ -2218,6 +2217,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "byteplus",
         "abliterate",
         "system1models",
         "system1models-eu",

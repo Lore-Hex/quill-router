@@ -36,6 +36,11 @@ PLANES = {
 }
 SHA = re.compile(r"[a-f0-9]{7,40}")
 MAX_BYTES = 1_048_576
+# A repository name can be re-created after a rename; its immutable id cannot.
+GITHUB_REPOSITORY_IDS = {
+    "Lore-Hex/quill-router": 1227431177,
+    "Lore-Hex/quill-cloud-proxy": 1223401116,
+}
 
 
 class Refused(RuntimeError):
@@ -347,18 +352,126 @@ def admission_wait(environ: Any) -> int:
     return wait
 
 
-def owner_stopped(lease: dict[str, Any]) -> bool:
+def _owner_check_refused(reason: str) -> bool:
+    # Recovery is an operator action; a bare refusal leaves them guessing whether to
+    # fix the gh credential or wait for the lease TTL, so every refusal names its cause.
+    print(f"cloud_rollout.owner_check: {reason}", file=sys.stderr)
+    return False
+
+
+def _github_api(gh: str, path: str, env: dict[str, str]) -> tuple[int, Any]:
+    result = subprocess.run(  # noqa: S603 - allowlisted repository/run ID; read only
+        [gh, "api", "--hostname", "github.com", path],
+        capture_output=True, text=True, timeout=30, check=False, env=env,
+    )
+    return result.returncode, json.loads(result.stdout)
+
+
+def _github_failure(path: str, code: int, body: Any) -> str:
+    status = body.get("status") if isinstance(body, dict) else None
+    detail = f"{path}: exit {code}, status={status!r}"
+    if str(status) in {"401", "403", "404"}:
+        return (f"{detail}; cannot verify repository/Actions access;"
+                " give gh a credential with actions:read and retry")
+    return f"GitHub API failure ({detail}); retry later"
+
+
+def _actions_readable(gh: str, repo: str, run_id: str, env: dict[str, str]) -> str | None:
+    path = f"repos/{repo}"
+    try:
+        code, body = _github_api(gh, path, env)
+        if code != 0 or not isinstance(body, dict):
+            return _github_failure(path, code, body)
+        repository_id = body.get("id")
+        if type(repository_id) is not int or repository_id != GITHUB_REPOSITORY_IDS[repo]:
+            return (f"https://github.com/{repo} now resolves to a different repository"
+                    f" (id {repository_id!r}), not the allowlisted one")
+        path = f"repos/{repo}/actions/runs?per_page=100"
+        code, body = _github_api(gh, path, env)
+        if (code != 0 or not isinstance(body, dict)
+                or type(body.get("total_count")) is not int
+                or not isinstance(body.get("workflow_runs"), list)):
+            return _github_failure(path, code, body)
+        for run in body["workflow_runs"]:
+            if isinstance(run, dict) and run.get("id") == int(run_id):
+                return (f"{path}: listing still shows run {run_id}"
+                        f" (status {run.get('status')!r}); not deleted")
+        # Run ids are global: the URL must not pair a live run with the wrong repo.
+        for other in GITHUB_REPOSITORY_IDS:
+            if other == repo:
+                continue
+            path = f"repos/{other}/actions/runs/{run_id}"
+            code, body = _github_api(gh, path, env)
+            if code == 0:
+                status = body.get("status") if isinstance(body, dict) else None
+                return f"run {run_id} exists in {other} with status {status!r}"
+            if not isinstance(body, dict) or body.get("status") != "404":
+                return _github_failure(path, code, body)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return f"GitHub API failure ({path}: {type(exc).__name__}: {exc}); retry later"
+    return None
+
+
+def owner_stopped(lease: dict[str, Any], now: Callable[[], float] = time.time) -> bool:
     match = re.fullmatch(r"https://github.com/(Lore-Hex/(?:quill-router|quill-cloud-proxy))/actions/runs/([0-9]+)",
                          lease["owner"])
     if match:
         gh = shutil.which("gh")
         if not gh:
-            return False
-        result = subprocess.run(  # noqa: S603 - allowlisted repository/run ID; read only
-            [gh, "run", "view", match[2], "--repo", match[1], "--json", "status"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-        return result.returncode == 0 and json.loads(result.stdout).get("status") == "completed"
+            return _owner_check_refused("gh is not installed; the owner run cannot be inspected")
+        run_ref = f"repos/{match[1]}/actions/runs/{match[2]}"
+        try:
+            credential = subprocess.run(  # noqa: S603 - fixed CLI credential lookup; captured only
+                [gh, "auth", "token", "--hostname", "github.com"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            token = credential.stdout.strip()
+            if credential.returncode != 0 or not token:
+                return _owner_check_refused(
+                    "gh has no github.com credential; run `gh auth login` (or set GH_TOKEN) and retry")
+            # Bind the client credential once so concurrent gh auth switches cannot
+            # change later calls. Server-side permission flapping three times within
+            # one recovery is out of scope; allowlisted workflows are trusted lease writers.
+            env = {**os.environ, "GH_TOKEN": token}
+            code, body = _github_api(gh, run_ref, env)
+            if not isinstance(body, dict):
+                return _owner_check_refused(_github_failure(run_ref, code, body))
+            if code == 0:
+                status = body.get("status")
+                if status == "completed":
+                    return True
+                return _owner_check_refused(
+                    f"{run_ref}: status={status!r}; the owner run has not completed")
+            # Require the exact run endpoint's structured 404; unauthorized reads
+            # look like deletion too, so this evidence alone is insufficient.
+            if body.get("status") != "404":
+                return _owner_check_refused(_github_failure(run_ref, code, body))
+            # Fence expiry before any further network call, even for deleted runs.
+            expires = lease.get("expires_at")
+            checked_at = int(now())
+            if type(expires) is not int or expires >= checked_at:
+                return _owner_check_refused(
+                    f"{run_ref}: lease expires_at={expires!r} has not elapsed"
+                    f" (now={checked_at}); wait for the TTL")
+            reason = _actions_readable(gh, match[1], match[2], env)
+            if reason is not None:
+                return _owner_check_refused(reason)
+            # Sandwich a fresh 404 between fresh identity/access probes. Do not
+            # cache evidence: server-side permissions can change.
+            code, body = _github_api(gh, run_ref, env)
+            if code == 0:
+                status = body.get("status") if isinstance(body, dict) else None
+                return _owner_check_refused(
+                    f"run {match[2]} reappeared with status {status!r}")
+            if not isinstance(body, dict) or body.get("status") != "404":
+                return _owner_check_refused(_github_failure(run_ref, code, body))
+            reason = _actions_readable(gh, match[1], match[2], env)
+            if reason is not None:
+                return _owner_check_refused(reason)
+            return True
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return _owner_check_refused(
+                f"GitHub API failure ({run_ref}: {type(exc).__name__}: {exc}); retry later")
     if (lease.get("host") != socket.gethostname() or type(lease.get("pid")) is not int
             or lease["pid"] <= 1):
         return False

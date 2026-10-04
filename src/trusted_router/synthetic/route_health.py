@@ -12,6 +12,9 @@ from trusted_router.synthetic.probes import rotation_candidates
 _SAMPLES_PER_ROUTE_LIMIT = 48
 _BATCH_SAMPLE_LIMIT = 100_000
 _DEGRADATION_WINDOW_HOURS = 24
+_CONFIGURATION_ERROR_TYPES = frozenset({
+    "provider_auth_config", "unsupported_route", "probe_config_error",
+})
 
 # A route-health alert means "this route is structurally broken — quarantine
 # it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
@@ -91,6 +94,12 @@ def evaluate_route_health(
 
     flags: list[RouteHealthFlag] = []
     for provider, model in routes:
+        configuration = _configuration_flag(
+            provider, model, samples_by_route[(provider, model)], now, cutoff, min_samples,
+        )
+        if configuration is not None:
+            flags.append(configuration)
+            continue
         sample_count = 0
         failure_count = 0
         newest_error: tuple[dt.datetime, str | None, str | None] | None = None
@@ -139,6 +148,47 @@ def evaluate_route_health(
             )
         )
     return flags
+
+
+def _configuration_flag(
+    provider: str,
+    model: str,
+    samples: list[ProviderBenchmarkSample],
+    now: dt.datetime,
+    cutoff: dt.datetime,
+    min_samples: int,
+) -> RouteHealthFlag | None:
+    # Exclusion from provider uptime is not exclusion from operational alerts.
+    # Only current routable pairs reach this evaluator. Do not auto-quarantine:
+    # auth and probe configuration must remain observable until recovery.
+    recent = sorted(
+        (
+            (created, sample) for sample in samples
+            if sample.source == "synthetic"
+            and (created := _parse_created_at(sample.created_at)) is not None
+            and cutoff <= created <= now
+        ),
+        key=lambda pair: pair[0], reverse=True,
+    )
+    streak = []
+    for pair in recent:
+        sample = pair[1]
+        if sample.status not in {"unsupported", "error"} or (
+            sample.error_type not in _CONFIGURATION_ERROR_TYPES
+        ):
+            break
+        streak.append(pair)
+    if (
+        len(streak) < min_samples
+        or now - streak[0][0] > dt.timedelta(hours=6)
+        or streak[0][0] - streak[-1][0] < dt.timedelta(minutes=30)
+    ):
+        return None
+    return RouteHealthFlag(
+        provider=provider, model=model, samples=len(streak), failures=len(streak),
+        failure_rate=1.0, newest_error_type=streak[0][1].error_type,
+        newest_error_message=None, kind="configuration",
+    )
 
 
 def _availability_flag(
@@ -195,6 +245,17 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
         return
 
     for flag in flags:
+        if flag.kind == "configuration":
+            from trusted_router.synthetic.alerts import ops_alert
+
+            ops_alert(
+                f"route-configuration: {flag.provider}/{flag.model} failed "
+                f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
+                f"({flag.newest_error_type}); excluded from provider uptime, not operations",
+                fingerprint=["route-configuration", flag.provider, flag.model],
+                tags={"route_provider": flag.provider, "route_model": flag.model},
+            )
+            continue
         if flag.kind in {"availability", "degradation"}:
             from trusted_router.synthetic.alerts import ops_alert
 

@@ -34,6 +34,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "byteplus",
         "privatemode",
         "featherless",
         "sakana",
@@ -90,6 +91,15 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
                 and all(int(value) > 0 for value in fixed.values())
             )
         if model_type == "video":
+            if row.get("billing_unit") == "output_tokens":
+                return (
+                    type(row.get("input_token_price_per_m")) is int
+                    and row["input_token_price_per_m"] == 0
+                    and type(row.get("output_token_price_per_m")) is int
+                    and row["output_token_price_per_m"] > 0
+                    and row.get("endpoints") == ["videos"]
+                    and "price_tiers" not in row
+                )
             return int(row.get("fixed_output_price_per_second_microdollars") or 0) > 0
         if model_type == "embedding":
             prompt = int(row.get("input_token_price_per_m") or 0)

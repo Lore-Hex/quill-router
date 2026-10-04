@@ -34,6 +34,8 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+{% include "public/_api_hosts.html" %}
+
 <section style="margin-top:48px" id="privacy-filters">
   <h2 class="section-center">Fail-closed privacy filters</h2>
   <div class="marketing-grid two">
@@ -157,6 +159,12 @@ const r = await client.chat.completions.create({
       </ul>
     </div>
   </div>
+</section>
+
+<section style="margin-top:48px" id="billing-usage">
+  <h2>Billing and usage</h2>
+  <p>Token counts and token list prices are the starting point for billing. Review the rounding rules below, then inspect credits and activity at <code>{{ control_plane_api_base_url }}</code> to reconcile charges.</p>
+  {% include "public/_minimum_charges.html" %}
 </section>
 
 <section style="margin-top:48px" id="rate-limit-headers">

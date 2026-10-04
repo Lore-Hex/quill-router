@@ -101,6 +101,7 @@ def test_plain_validation_is_not_an_error(
         "plugins", "truncation", "prompt_cache_key", "prompt_cache_options", "service_tier",
         "usage.include", "stream_options.include_usage", "provider.quantizations",
         "provider.max_price.image", "plugins.web-fetch",
+        "file", "audio", "video", "content", "input_image", "input_audio", "input_file",
     ],
 )
 def test_public_parameter_diagnosis_survives_scrubbing(

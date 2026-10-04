@@ -38,6 +38,8 @@ from trusted_router.markdown_negotiation import (
 from trusted_router.middleware import register_http_middleware
 from trusted_router.post_commit import close_post_commit
 from trusted_router.public_openapi import (
+    document_router_server,
+    install_operation_servers,
     load_public_openapi_payload,
     public_openapi_response,
 )
@@ -59,6 +61,7 @@ from trusted_router.routes.chat_proxy import register_chat_proxy_routes
 from trusted_router.routes.client_events import register_client_events_routes
 from trusted_router.routes.compat import (
     register_compat_stub_routes,
+    register_gateway_compat_stub_routes,
     register_versioned_compat_stub_routes,
 )
 from trusted_router.routes.console import register_console_routes
@@ -244,7 +247,10 @@ def create_app(
             "many providers, with provider fallback, zero-retention routing, and an "
             "attested gateway whose running source commit and image digest can be "
             "verified.\n\n"
-            "Base URL: https://api.trustedrouter.com/v1\n"
+            "Inference base URL: https://api.trustedrouter.com/v1\n"
+            "Account and key management base URL: https://trustedrouter.com/v1\n"
+            "Management calls to the inference host return 404. "
+            "GET /v1/key is available on both hosts.\n"
             "Authentication: `Authorization: Bearer <api key>`\n\n"
             "Further machine-readable entry points: "
             "https://trustedrouter.com/llms.txt (index), "
@@ -673,6 +679,7 @@ def create_app(
             methods=["GET", "HEAD"],
             include_in_schema=False,
         )
+    install_operation_servers(app, api)
     return app
 
 
@@ -800,7 +807,12 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_workspace_routes(router)
         if _control_plane_inference_enabled(settings):
             register_inference_routes(inference_router)
+            document_router_server(inference_router)
             router.include_router(inference_router)
+        gateway_compat = APIRouter()
+        register_gateway_compat_stub_routes(gateway_compat)
+        document_router_server(gateway_compat)
+        router.include_router(gateway_compat)
         register_compat_stub_routes(router)
         register_signup_routes(router)
         register_email_verify_routes(router)

@@ -156,6 +156,7 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
         candidate_endpoint_ids=[endpoint.id],
         idempotency_key="stage-d-ineligible",
         idempotency_fingerprint="e" * 64,
+        video_pricing_snapshot=snapshot,
         expires_at=datetime.now(UTC) + timedelta(hours=2),
         stage_d_reason="not_streaming",
         stage_d_prompt_tokens=100,
@@ -163,6 +164,8 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
     )
     assert ineligible_outcome == AuthorizeOutcome.ACCEPTED
     assert ineligible is not None
+    reloaded = store.get_gateway_authorization(ineligible.id)
+    assert reloaded is not None and reloaded.video_pricing_snapshot == snapshot
     ineligible_row = db.gateway_authorizations[ineligible.id]
     assert [ineligible_row[column] for column in (
         "started_at",
