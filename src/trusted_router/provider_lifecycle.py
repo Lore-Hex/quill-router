@@ -148,6 +148,18 @@ class _Retirement:
     model_ids: frozenset[str]
     upstream_ids: frozenset[str]
     effective_at: datetime
+    replacement_model_ids: tuple[str, ...] = ()
+
+    @property
+    def notice_id(self) -> str:
+        # One provider cutover remains the same event if its model list or
+        # replacement advice is corrected before deployment.
+        return f"{self.provider}:{self.effective_at.astimezone(UTC).isoformat()}"
+
+
+def provider_retirements() -> tuple[_Retirement, ...]:
+    """Announced cutovers, including future entries, for operational notices."""
+    return _RETIREMENTS
 
 
 _RETIREMENTS = (

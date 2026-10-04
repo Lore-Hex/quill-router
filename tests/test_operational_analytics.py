@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import re
+import sqlite3
 import textwrap
 from typing import Any
 
@@ -54,6 +55,53 @@ from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
 )
 from trusted_router.types import UsageType
+
+
+def test_retirement_route_workspaces_exact_route_and_half_open_window() -> None:
+    # Execute the shipped selection SQL on fixture rows, translating only
+    # ClickHouse's parameter/timestamp/result syntax. Removing either route
+    # predicate or a time boundary changes the resulting workspace ids.
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE activity_generations (workspace_id TEXT, provider TEXT, model TEXT, created_at TEXT)")
+    conn.executemany("INSERT INTO activity_generations VALUES (?, ?, ?, ?)", [
+        ("start", "tinfoil", "model", "2026-08-02T12:00:00.000Z"),
+        ("before", "tinfoil", "model", "2026-08-02T11:59:59.999Z"),
+        ("recent", "tinfoil", "model", "2026-09-01T11:59:59.999Z"),
+        ("recent", "tinfoil", "model", "2026-09-01T11:00:00.000Z"),
+        ("end", "tinfoil", "model", "2026-09-01T12:00:00.000Z"),
+        ("future", "tinfoil", "model", "2026-09-01T12:00:00.001Z"),
+        ("other-provider", "near-ai", "model", "2026-09-01T11:00:00.000Z"),
+        ("other-model", "tinfoil", "model-other", "2026-09-01T11:00:00.000Z"),
+        ("", "tinfoil", "model", "2026-09-01T11:00:00.000Z"),
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.content.decode()
+        assert "FROM activity_generations FINAL" in query
+        assert "LIMIT" not in query
+        query = query.replace(" FINAL", "").replace("FORMAT JSON", "")
+        query = re.sub(r"parseDateTime64BestEffort\((\{\w+:String\}), 3\)", r"\1", query)
+        query = re.sub(r"\{(\w+):String\}", r":\1", query)
+        params = {key.removeprefix("param_"): value for key, value in request.url.params.items()}
+        rows = conn.execute(query, params).fetchall()
+        return httpx.Response(200, json={"data": [dict(row) for row in rows]})
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test", user="read", password="test",  # noqa: S106
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert client.route_workspaces(
+            provider="tinfoil", model="model",
+            start_at="2026-08-02T12:00:00.000Z", end_at="2026-09-01T12:00:00.000Z",
+        ) == ["recent", "start"]
+        assert client.route_workspaces(
+            provider="tinfoil' OR 1=1 --", model="model",
+            start_at="2026-08-02T12:00:00.000Z", end_at="2026-09-01T12:00:00.000Z",
+        ) == []
+    finally:
+        conn.close()
 
 
 def _generation() -> Generation:

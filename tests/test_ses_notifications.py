@@ -209,6 +209,23 @@ def test_account_suppression_service_sanitizes_provider_errors(monkeypatch) -> N
     assert exc_info.value.__cause__ is None
 
 
+def test_product_email_checks_local_blocks_without_ses_lookup() -> None:
+    with patch("boto3.client") as client_factory:
+        service = EmailService(Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="test",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+        ))
+        assert service.enabled is True
+        client_factory.side_effect = AssertionError("Eligibility must not initialize another SES client")
+        STORE.block_email_sending(email="local@example.com", reason="complaint")
+        assert service.can_receive_product_email("LOCAL@example.com") is False
+        assert service.can_receive_product_email("ok@example.com") is True
+        assert client_factory.call_count == 1
+        assert client_factory.return_value.mock_calls == []
+
+
 def test_replayed_message_id_is_idempotent(
     verified_client: TestClient,
     caplog: pytest.LogCaptureFixture,

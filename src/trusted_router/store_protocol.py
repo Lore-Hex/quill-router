@@ -393,6 +393,15 @@ class Store(Protocol):
     def get_email_block(self, email: str) -> EmailSendBlock | None: ...
     def record_sns_message_once(self, message_id: str) -> bool: ...
     def record_webhook_event_once(self, source: str, event_id: str) -> bool: ...
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        """Atomically record and return unclaimed ids, once per workspace ever.
+
+        The whole batch is claimed before email delivery. Claims never expire,
+        including when delivery fails, and contain no recipient addresses.
+        """
+        ...
 
     # API keys ----------------------------------------------------------------
     def create_api_key(

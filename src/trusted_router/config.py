@@ -765,6 +765,9 @@ class Settings(BaseSettings):
     # pass per minute; an atomic milestone claim prevents duplicate sends when
     # several warm regional replicas inspect the same due task.
     activation_reminder_interval_seconds: int = 0
+    # Daily route-retirement notices. Preview never claims customer notices.
+    retirement_notices_mode: Literal["off", "preview", "send"] = "off"
+    retirement_notices_preview_email: str | None = None
 
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False

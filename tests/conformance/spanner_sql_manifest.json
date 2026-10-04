@@ -4479,6 +4479,10 @@
     "storage_trust_reconciliation:write:7": {
       "fingerprint": "c6becd7764dccd875ca78b8d33ec0323b66fc97e293cc7633124ea5d7ca7c122",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
+    },
+    "operational_analytics:route_workspaces:1": {
+      "fingerprint": "8755cf00b1bd694bd8de72537255dbf48da72a80d07f4e524372be0a34cbbadf",
+      "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     }
   }
 }
