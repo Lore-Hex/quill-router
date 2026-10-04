@@ -18,7 +18,9 @@ KEY_LIMIT_TABLE = "tr_key_limit"
 UNSHARDED = 0
 MAX_CREDIT_SHARDS = 64
 MAX_KEY_USAGE_SHARDS = 64
-DEFAULT_NEW_BILLING_SHARDS = 16
+# Small starter balances must be usable without an all-shard repair per request.
+# Expand funded, high-throughput workspaces through the guarded operator tooling.
+DEFAULT_NEW_BILLING_SHARDS = 1
 
 CREDIT_BALANCE_TRUST_COLUMNS = (
     "trust_tier",

@@ -190,7 +190,7 @@ def test_fanout_increasing_reshard_rejects_grandfathered_owner_budget() -> None:
         )] = {"owner_user_id": user.id, "workspace_id": workspace_id}
     with pytest.raises(OwnerTrustMutationBudgetExceeded):
         reshard_credit_account(store, workspace.id, 64, apply=True)
-    assert store.get_credit_account(workspace.id).shard_count == 16
+    assert store.get_credit_account(workspace.id).shard_count == 1
 
 
 def test_slice_1c_schemas_have_exact_columns_and_keys() -> None:
@@ -287,7 +287,11 @@ def test_spanner_owner_backfill_repairs_both_directions_and_marks_complete() -> 
     assert marker["completed_at"] is not None
 
 
-def test_veriff_demotion_is_atomic_with_claim_and_all_shards() -> None:
+def test_veriff_demotion_is_atomic_with_claim_and_all_shards(monkeypatch) -> None:
+    from trusted_router import storage_gcp
+
+    # This case intentionally exercises a multi-shard funded account, not the starter default.
+    monkeypatch.setattr(storage_gcp, "DEFAULT_NEW_BILLING_SHARDS", 16)
     store, database = make_fake_store()
     user = store.ensure_user("demote@example.com", trial_credit_microdollars=0)
     workspace = store.list_workspaces_for_user(user.id)[0]
