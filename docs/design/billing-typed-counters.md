@@ -255,12 +255,33 @@ Fresh credit authorize now has three sequential operations, armed or unarmed:
 | Replay / mismatch | unchanged: authoritative idempotency read first; replay commits, mismatch rolls back |
 | Credit/key batch miss | idempotency read → batch → rollback → original sequential transaction |
 
-The credit lock now spans only the commit RPC after Batch DML, instead of the
+The credit lock now spans only the commit after Batch DML, instead of the
 separate batch RPC plus commit (the former Europe path held it across roughly
-250–350 ms of client round trips plus about 25 ms commit). These are transaction
-operation counts: the warm gateway adds one auth-context/BYOK/boot snapshot,
-for four operations overall. This change does not claim a measured p50 or
-production abort-rate improvement before rollout.
+250–350 ms of client round trips plus about 25 ms commit). "Only the commit" is
+the nominal case: the installed SDK sends a second commit request when the
+`CommitResponse` carries a precommit token (`spanner_v1/transaction.py`, the
+multiplexed-session retry), so the hold is one application round trip plus
+whatever the commit itself needs. These are transaction operation counts: the
+warm gateway adds one auth-context/BYOK/boot snapshot, for four operations
+overall. This change does not claim a measured p50 or production abort-rate
+improvement before rollout.
+
+The miss path is deliberately more expensive than main's. A zero credit count
+(first candidate underfunded, or paused) rolls the batch back and reruns the
+whole transaction in main's sequential shape with key speculation disabled
+too, because a rerun that kept speculation could raise the key-miss fallback a
+second time outside its handler. Measured on the fake with two candidates:
+first candidate funded 4 → 3 operations; first underfunded, second funded and a
+capped key 5 → 9; the same with `skip_key_limit` 5 → 8; first funded but paused
+3 → 6; both underfunded 4 → 7 — for N underfunded candidates N+2 → N+5, under the
+existing four-candidate bound, and the eventual credit hold then spans three
+RPCs instead of two. Production justifies the trade: `SPANNER_SYS.QUERY_STATS`
+shows the reserve UPDATE averaging 1.00 affected rows and 1.000 executions per
+authorize commit attempt in every hour of 2026-10-03/04, i.e. first-candidate
+misses round to zero. The cohort that could change that is low-balance
+fragmentation (a small balance spread over many shards so no single shard
+covers an estimate); watch the plain-form reserve UPDATE's execution count and
+`avg_rows` against authorize attempts after each rollout.
 
 The armed credit predicate is `COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0`.
 The actual DDL is `ARRAY<STRING(32)>`: NULL and empty arrays pass; every nonempty
