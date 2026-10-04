@@ -19,7 +19,6 @@ from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import _Retirement
 from trusted_router.services import retirement_notices as notices
 from trusted_router.services.email import EmailMessage, EmailService
-from trusted_router.services.ses_suppression import SesSuppressionSyncError
 from trusted_router.storage import STORE
 
 NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
@@ -33,7 +32,6 @@ class CapturingEmailService(EmailService):
         self.accepted = True
         self.error = False
         self._lock = threading.Lock()
-        self._suppression = SimpleNamespace(is_suppressed=Mock(return_value=False))
 
     def send(self, message: EmailMessage) -> bool:
         with self._lock:
@@ -178,12 +176,11 @@ def test_timing_window_edges(setup_notice, monkeypatch, until, expected):
     assert case.analytics.route_workspaces.call_count == expected
 
 
-def test_off_does_no_discovery_suppression_or_claiming(setup_notice):
+def test_off_does_no_discovery_or_claiming(setup_notice):
     case = setup_notice
     case.settings.retirement_notices_mode = "off"
     assert run(case) == notices.RetirementNoticePassResult()
     case.analytics.route_workspaces.assert_not_called()
-    case.email._suppression.is_suppressed.assert_not_called()
     assert case.email.messages == []
     assert STORE.in_memory_target.retirement_notices == {}
 
@@ -244,7 +241,7 @@ def test_only_eligible_owners_and_admins_receive_notices(setup_notice):
     case = setup_notice
     for email, role in [
         ("admin@example.com", "admin"), ("member@example.com", "member"),
-        ("blocked@example.com", "admin"), ("suppressed@example.com", "admin"),
+        ("blocked@example.com", "admin"),
         ("disabled@example.com", "admin"), ("suspended@example.com", "admin"),
         ("unverified@example.com", "admin"), ("no-email@example.com", "admin"),
     ]:
@@ -256,12 +253,8 @@ def test_only_eligible_owners_and_admins_receive_notices(setup_notice):
         if email == "no-email@example.com":
             user.email = None
     STORE.block_email_sending(email="BLOCKED@example.com", reason="complaint")
-    case.email._suppression.is_suppressed.side_effect = lambda address: address == "suppressed@example.com"
     assert run(case).sent == 2
     assert sorted(message.to for message in case.email.messages) == ["admin@example.com", "owner@example.com"]
-    checked = [call.args[0] for call in case.email._suppression.is_suppressed.call_args_list]
-    assert "blocked@example.com" not in checked
-    assert "suppressed@example.com" in checked
 
 
 @pytest.mark.parametrize("state", ["deleted", "federated_home", "missing", "blocked"])
@@ -278,15 +271,10 @@ def test_no_eligible_recipient_does_not_claim(setup_notice, state):
     assert STORE.in_memory_target.retirement_notices == {}
 
 
-def test_analytics_or_suppression_failure_does_not_consume_notices(setup_notice):
+def test_analytics_failure_does_not_consume_notices(setup_notice):
     case = setup_notice
     case.analytics.route_workspaces.side_effect = RuntimeError("analytics unavailable")
     with pytest.raises(RuntimeError, match="analytics unavailable"):
-        run(case)
-    assert STORE.in_memory_target.retirement_notices == {}
-    case.analytics.route_workspaces.side_effect = None
-    case.email._suppression.is_suppressed.side_effect = SesSuppressionSyncError("suppression unavailable")
-    with pytest.raises(SesSuppressionSyncError):
         run(case)
     assert STORE.in_memory_target.retirement_notices == {}
     assert case.email.messages == []

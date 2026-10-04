@@ -57,10 +57,9 @@ each exact provider/model pair in `[run time - 30 days, run time)`. It considers
 cutovers between one hour and 45 days away, inclusive; past retirements never
 produce catch-up mail. It delivers one grouped message per eligible owner or
 admin per workspace. Deleted workspaces, foreign-plane shadows, unverified,
-disabled or suspended users, local email blocks and SES account suppression
-entries are excluded. The SES credential needs `ses:GetSuppressedDestination`
-in addition to its existing sending permissions. Lookup failures fail the pass
-before customer claims are written, rather than treating recipients as eligible.
+disabled or suspended users and local email blocks are excluded. The local
+block list is fed by SES bounce/complaint notifications; SES itself drops sends
+to addresses on its account-level suppression list.
 
 Impact applies all known retirements up to each cutover to today's available
 catalog routes and uses the router's own confidential/ZDR checks. Hourly

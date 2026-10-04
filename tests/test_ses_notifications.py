@@ -209,47 +209,21 @@ def test_account_suppression_service_sanitizes_provider_errors(monkeypatch) -> N
     assert exc_info.value.__cause__ is None
 
 
-def test_account_suppression_lookup_distinguishes_absent_blocked_and_failure(monkeypatch) -> None:
-    class NotFound(Exception):
-        pass
-
-    class FakeSesV2Client:
-        class exceptions:  # noqa: N801 - boto3 shape
-            NotFoundException = NotFound
-
-        def get_suppressed_destination(self, *, EmailAddress):  # noqa: N803 - boto3 shape
-            if EmailAddress == "allowed@example.com":
-                raise NotFound
-            if EmailAddress == "error@example.com":
-                raise RuntimeError("private provider exception")
-            return {"SuppressedDestination": {"Reason": "BOUNCE"}}
-
-    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSesV2Client())
-    service = SesSuppressionService(Settings(
-        environment="test", aws_access_key_id="AKIA_TEST", aws_secret_access_key="test",  # noqa: S106
-    ))
-    assert service.is_suppressed("allowed@example.com") is False
-    assert service.is_suppressed("blocked@example.com") is True
-    with pytest.raises(SesSuppressionSyncError, match="SES account suppression read failed") as error:
-        service.is_suppressed("error@example.com")
-    assert "private" not in str(error.value)
-
-
-def test_product_email_checks_local_and_ses_suppression(monkeypatch) -> None:
-    looked_up = []
-
-    def suppressed(_self, email):
-        looked_up.append(email)
-        return email == "ses@example.com"
-
-    monkeypatch.setattr(SesSuppressionService, "is_suppressed", suppressed)
-    service = EmailService(Settings(environment="test"))
-    STORE.block_email_sending(email="local@example.com", reason="complaint")
-    assert service.can_receive_product_email("local@example.com") is False
-    assert looked_up == []
-    assert service.can_receive_product_email("ses@example.com") is False
-    assert service.can_receive_product_email("ok@example.com") is True
-    assert looked_up == ["ses@example.com", "ok@example.com"]
+def test_product_email_checks_local_blocks_without_ses_lookup() -> None:
+    with patch("boto3.client") as client_factory:
+        service = EmailService(Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="test",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+        ))
+        assert service.enabled is True
+        client_factory.side_effect = AssertionError("Eligibility must not initialize another SES client")
+        STORE.block_email_sending(email="local@example.com", reason="complaint")
+        assert service.can_receive_product_email("LOCAL@example.com") is False
+        assert service.can_receive_product_email("ok@example.com") is True
+        assert client_factory.call_count == 1
+        assert client_factory.return_value.mock_calls == []
 
 
 def test_replayed_message_id_is_idempotent(
