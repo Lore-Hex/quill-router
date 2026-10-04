@@ -360,3 +360,37 @@ def test_a_new_duplicated_model_gets_no_listing_name(
         10_000_000,
         30_000_000,
     )
+
+
+@pytest.mark.parametrize("model_id", ["google/gemini-3.5-flash", "google/gemini-future-preview"])
+def test_google_passthrough_stays_held_across_refresh_and_relisting(
+    feed: list[dict[str, Any]], manifests: tuple[Path, Path], model_id: str,
+) -> None:
+    feed.extend([_listing(model_id, "Google passthrough", 1e-06, 5e-06), GEMMA, GPT41])
+    committed = _committed({})[1:]
+    committed.append({
+        "id": model_id, "upstream_id": model_id,
+        "endpoints": ["chat/completions"],
+        "routable": False, "routable_reason": "delisted-upstream",
+        "missing_since": "2026-09-20",
+    })
+
+    _notes, rows = _refresh(manifests, committed)
+
+    assert rows[model_id]["routable"] is False
+    assert rows[model_id]["routable_reason"] == "google-passthrough-disabled"
+    assert rows["google/gemma-4-31b-it"].get("routable", True) is True
+    assert rows["openai/gpt-4.1"].get("routable", True) is True
+    lightning.write_provider_manifest(lightning.fetch())
+    rows = json.loads((manifests[1] / "lightning.json").read_text())["models"]
+    assert next(row for row in rows if row["id"] == model_id)["routable"] is False
+
+
+def test_new_google_passthrough_is_classified_but_never_activated(
+    feed: list[dict[str, Any]], manifests: tuple[Path, Path],
+) -> None:
+    model_id = "google/gemini-future-preview"
+    feed.extend([_listing(model_id, "Google passthrough", 1e-06, 5e-06), GEMMA, GPT41])
+    _notes, rows = _refresh(manifests, _committed({})[1:])
+    assert rows[model_id]["routable"] is False
+    assert rows[model_id]["routable_reason"] == "google-passthrough-disabled"
