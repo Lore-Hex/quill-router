@@ -217,6 +217,16 @@ owner. Its row records:
     terminal is never stored without the earlier ones.
   - And a checkpoint's `consumed` is exactly the terminals with lower
     numbers.
+  - Everything that reads or moves the books takes that lock: an admission,
+    a heartbeat's record, a checkpoint, a return. An admission that read
+    `free` between a terminal's two updates would admit against room the
+    log has not given.
+  - A settle's step begins after its full request record's publish is
+    acknowledged (§4.9), so that a settle waiting on the record topic holds
+    back no other record. The step ends with the record handed to the
+    ordering key's queue, still under the lock, so that number n + 1 is
+    never handed over before n. Nothing waits under the lease's lock: the
+    wait for the publish's acknowledgement comes after it is released.
 - **Room a terminal frees is let again only once its publish is
   acknowledged.** The owner takes a terminal's charge into its books when
   it decides it, since the record has to carry the shortfall total (below).
@@ -336,11 +346,15 @@ The second is closed as fast as each writer can close it:
 Two things follow, and §4.13 rests on both:
 
 - **A lease's remaining allocation in Spanner is never less than its open
-  holds.** Open is meant in the log's sense: every hold with no terminal
-  applied, whatever prefix of the owner's records the log turns out to
-  hold. Three rules give it: the auditor's raise and the front door's, each
-  in the transaction that books the charge or stores its row; the lease's
-  one order; and `pending`. The owner's own write is not needed for it.
+  holds.** Open is meant in the log's sense: every hold whose terminal the
+  log does not hold, whatever prefix of the owner's records that turns out
+  to be. A terminal that is stored and not yet booked is not open, and its
+  whole charge is still inside the stored allocation. So the claim holds
+  with everything stored counted as booked, too: the charges and returns
+  come out, and the shortfall their records carry goes in. Three rules give
+  it: the auditor's raise and the front door's, each in the transaction
+  that books the charge or stores its row; the lease's one order; and
+  `pending`. The owner's own write is not needed for it.
 - **Spanner's headroom counts an overrun that a lease had no room for:**
   - an owner's, within one write of the owner deciding it, or two when a
     write for the lease was already in flight;
@@ -556,7 +570,8 @@ and the request records all follow that rule.
   - It handles `A`'s heartbeats and terminals under a per-`A` lock.
   - It publishes only the winner, and answers after the publish is
     acknowledged.
-  - So its memory follows log order.
+  - Its records take their numbers, and are published, in one order per
+    lease (§4.2). So its memory follows log order.
   - If a publish fails, it resumes the paused ordering key and republishes
     the same records, with the same sequence numbers, before anything new.
     Until a publish succeeds again it admits nothing new under the lease:
@@ -1119,7 +1134,9 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
       rebuild's check; rebuilds are rare enough for that wait.
   - If S was stored, every owner sequence number up to S must be present. A
     missing number is a true gap, and the lease stays reserved for an
-    operator.
+    operator. Numbers are given at decision (§4.2), so this is also the
+    backstop for the lease's order: a later record stored without an
+    earlier one shows as a gap, and is not booked.
   - If S was never stored, nothing depends on it yet: no reap was appended and
     no drain-log terminal decided. The rebuild publishes its tick as the
     auditor would, once its clock passes F plus the skew allowance. Once the
@@ -1715,9 +1732,11 @@ Each has a production check.
   (§4.8);
 - an owner record received after a tick that reaped its hold, which only
   loses, as Decision 70 allows;
-- a drain-log settle committed between the owner reaper's read and its
-  publish: milliseconds, after which the reap, an owner record, comes first.
-  Decision 70 covers it, as it covers today's reaper race.
+- a drain-log settle committed between the owner reaper's read and the
+  reap's publish, after which the reap, an owner record, comes first. That
+  is milliseconds ordinarily, and as long as the lease's queue is held back
+  when an earlier publish is failing (§4.5). Decision 70 covers it, as it
+  covers today's reaper race.
 
 ### 5.1 What is model-checked
 
@@ -1773,13 +1792,15 @@ What the table's short names hide:
   writes. The claim counts holds in the log's sense (§4.2), so the model
   keeps the owner's decided records apart from the stored ones: its owner
   can die with a suffix of them unstored, and those holds' settles then
-  arrive through the drain log. Its mutants include an auditor and a front
-  door that each skip the raise, an owner that admits against room a
-  terminal freed before its publish was acknowledged, and a log that
-  stores a later record without an earlier one, each of which must break
-  the first claim; an owner that skips its write, which must break only the
-  second; and an owner's raise that lands after the lease has closed, which
-  must break §4.7's identity.
+  arrive through the drain log. Its auditor applies whatever the log
+  holds: the gap rule (§4.8) is `AuditorCommit`'s, and with it a broken
+  order would stop the lease, not misbook it. Its mutants include an
+  auditor and a front door that each skip the raise, an owner that admits
+  against room a terminal freed before its publish was acknowledged, and a
+  log that stores a later record without an earlier one, each of which
+  must break the first claim; an owner that skips its write, which must
+  break only the second; and an owner's raise that lands after the lease
+  has closed, which must break §4.7's identity.
 - In `LeaseLifecycle` a pause stands for every stop that reaches owners
   through the state cache: the debt mark, a trust downgrade and a switch out
   of fast mode travel the same way. Its mutants are an owner that admits on
@@ -3067,3 +3088,21 @@ record.
     generation ID in the response, as for a durable intent today.
   - One clock reading in authorize is a standalone Python change (§8).
   - §6 calls the 170 a projection.
+- **v39.** Codex and Fable both accepted v38, with one and four P3s. No
+  mechanism changes:
+  - what else takes the lease's lock (an admission, a heartbeat's record, a
+    checkpoint, a return), and where the step begins and ends: after the
+    full record's publish, and with the record handed to the ordering key's
+    queue, with no wait under the lock;
+  - §4.5's "its memory follows log order" cites the lease's order;
+  - §4.8's gap rule is named as the order's backstop, and `CreditDebt`'s
+    auditor is said to apply whatever is stored;
+  - the reaper race in §5 lasts as long as the lease's queue is held back,
+    not always milliseconds.
+
+  One correction came from writing `CreditDebt`. v38 called a hold open
+  until a terminal for it was applied. The model refuted that at once: a
+  refund that is stored and not yet booked frees room, the owner admits
+  against it, and three holds have no applied terminal under a lease of
+  two. The claim is about holds whose terminal the log does not hold, and
+  §4.2 now says so.
