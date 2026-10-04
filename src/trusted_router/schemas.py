@@ -160,6 +160,10 @@ class CreateKeyRequest(_Lenient):
         return _validate_dollars(value)
 
 
+class BulkDeleteKeysRequest(_Strict):
+    hashes: list[str] = Field(min_length=1, max_length=1000)
+
+
 class PatchKeyRequest(_Lenient):
     budget_strict: None = None  # Immutable; create a new key to change admission mode.
     name: str | None = Field(default=None, max_length=120)

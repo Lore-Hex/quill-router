@@ -449,6 +449,20 @@ _API_KEY_AUTH_CONTEXT_SQL = """
 
 _CONSOLE_API_KEYS_SQL = """
     /* console_api_keys */
+    WITH key_page AS (
+      SELECT key_record.id, key_record.body
+      FROM tr_entities AS key_index
+      JOIN tr_entities AS key_record
+        ON key_record.kind = 'api_key'
+       AND key_record.id = key_index.body ->> 'key_id'
+       AND key_record.body ->> 'hash' = key_record.id
+      WHERE key_index.kind = 'api_key_by_workspace'
+        AND key_index.id = (%s || '#' || key_record.id)
+        AND key_record.body ->> 'workspace_id' = %s
+        AND (%s OR COALESCE(key_record.body ->> 'disabled', 'false') != 'true')
+      ORDER BY key_record.body ->> 'created_at' DESC, key_record.id
+      LIMIT %s OFFSET %s
+    )
     SELECT
       key_record.body,
       key_limit.shard,
@@ -461,11 +475,7 @@ _CONSOLE_API_KEYS_SQL = """
       key_limit.week_start,
       key_limit.month_usage,
       key_limit.month_start
-    FROM tr_entities AS key_index
-    JOIN tr_entities AS key_record
-      ON key_record.kind = 'api_key'
-     AND key_record.id = key_index.body ->> 'key_id'
-     AND key_record.body ->> 'hash' = key_record.id
+    FROM key_page AS key_record
     LEFT JOIN tr_key_limit AS key_limit
       ON key_limit.workspace_id = %s
      AND key_limit.key_hash = key_record.id
@@ -474,9 +484,6 @@ _CONSOLE_API_KEYS_SQL = """
        CAST(key_record.body ->> 'usage_shard_count' AS BIGINT),
        1
      )
-    WHERE key_index.kind = 'api_key_by_workspace'
-      AND key_index.id = (%s || '#' || key_record.id)
-      AND key_record.body ->> 'workspace_id' = %s
     ORDER BY key_record.body ->> 'created_at' DESC,
              key_record.id,
              key_limit.shard
@@ -3201,13 +3208,24 @@ class PostgresStore:
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         self._not_implemented("list_keys")
 
-    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+    def list_api_keys_with_usage(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
         """Portable one-statement key-management page projection."""
 
         def read(conn: Any) -> list[ApiKeyUsageSnapshot]:
             rows = conn.execute(
                 _CONSOLE_API_KEYS_SQL,
-                (workspace_id, workspace_id, workspace_id),
+                (
+                    workspace_id, workspace_id, include_disabled,
+                    Int8(limit if limit is not None else 2**63 - 1),
+                    Int8(min(offset, 2**63 - 1)), workspace_id,
+                ),
             ).fetchall()
             grouped: dict[str, tuple[ApiKey, list[list[Any]]]] = {}
             for row in rows:
@@ -3225,32 +3243,53 @@ class PostgresStore:
         return self._run_transaction(read)
 
     def delete_key(self, key_hash: str) -> bool:
-        def delete(conn: Any) -> bool:
-            key = self._read_entity_tx(
-                conn,
-                "api_key",
-                key_hash,
-                ApiKey,
-                for_update=True,
-            )
-            if key is None:
-                return False
-            self._delete_entity_tx(conn, "api_key", key.hash)
-            self._delete_entity_tx(
-                conn,
-                "api_key_lookup",
-                key.lookup_hash,
-            )
-            self._delete_entity_tx(
-                conn,
-                "api_key_by_workspace",
-                workspace_key_id(key.workspace_id, key.hash),
-            )
-            conn.execute(
-                "DELETE FROM tr_key_limit WHERE workspace_id = %s AND key_hash = %s",
-                (key.workspace_id, key.hash),
-            )
-            return True
+        return self._delete_keys_batch([key_hash], workspace_id=None)[key_hash]
+
+    def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        hashes = sorted(set(key_hashes))
+        results: dict[str, bool] = {}
+        for start in range(0, len(hashes), 100):
+            results.update(self._delete_keys_batch(hashes[start:start + 100], workspace_id))
+        return results
+
+    def _delete_keys_batch(
+        self, key_hashes: list[str], workspace_id: str | None,
+    ) -> dict[str, bool]:
+        def delete(conn: Any) -> dict[str, bool]:
+            rows = conn.execute(
+                "SELECT id, body FROM tr_entities WHERE kind = %s "
+                "AND id = ANY(%s) ORDER BY id FOR UPDATE",
+                ("api_key", key_hashes),
+            ).fetchall()
+            results = dict.fromkeys(key_hashes, False)
+            keys = []
+            for key_id, body in rows:
+                key = api_key_from_json(body)
+                if key.hash != key_id or (
+                    workspace_id is not None and key.workspace_id != workspace_id
+                ):
+                    continue
+                results[key_id] = True
+                keys.append(key)
+            if keys:
+                for kind, ids in (
+                    ("api_key", [key.hash for key in keys]),
+                    ("api_key_lookup", [key.lookup_hash for key in keys]),
+                    ("api_key_by_workspace", [
+                        workspace_key_id(key.workspace_id, key.hash) for key in keys
+                    ]),
+                ):
+                    conn.execute(
+                        "DELETE FROM tr_entities WHERE kind = %s AND id = ANY(%s)",
+                        (kind, ids),
+                    )
+                # Preserve the existing Postgres single-delete counter cleanup.
+                for owner in sorted({key.workspace_id for key in keys}):
+                    conn.execute(
+                        "DELETE FROM tr_key_limit WHERE workspace_id = %s AND key_hash = ANY(%s)",
+                        (owner, [key.hash for key in keys if key.workspace_id == owner]),
+                    )
+            return results
 
         return self._run_transaction(delete)
 

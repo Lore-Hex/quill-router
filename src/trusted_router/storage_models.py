@@ -373,6 +373,9 @@ class ApiKeyUsageSnapshot:
     byok_usage_microdollars: int
     reserved_microdollars: int
     windows: dict[str, int]
+    # The public API preserves its legacy JSON-only window fallback when the
+    # typed rows do not exist. Console callers can still display zero windows.
+    typed_usage_available: bool = True
 
 
 @dataclass

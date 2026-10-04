@@ -2854,6 +2854,13 @@ def _execute_sql(
         keys.sort(key=lambda item: item[1])
         keys.sort(key=lambda item: item[0], reverse=True)
 
+        _require_pred(sql, "@include_disabled OR", "key-list disabled filter")
+        _require_pred(sql, "LIMIT @limit OFFSET @offset", "key-list page bounds")
+        if not params["include_disabled"]:
+            keys = [key for key in keys if not key[2].get("disabled", False)]
+        offset = int(params["offset"])
+        keys = keys[offset:offset + int(params["limit"])]
+
         output: list[list[Any]] = []
         usage_columns = (
             "shard",

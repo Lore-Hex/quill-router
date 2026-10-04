@@ -215,6 +215,7 @@ def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
                     if usage is None
                     else dict(usage["windows"])
                 ),
+                typed_usage_available=usage is not None,
             )
         )
 
@@ -312,7 +313,7 @@ def test_spanner_bulk_key_projection_is_strong_and_read_your_write() -> None:
     assert store.delete_key(key.hash) is True
     assert store.list_api_keys_with_usage(workspace.id) == []
     calls = database.snapshot_calls[snapshot_start:]
-    assert len(calls) == 6
+    assert len(calls) == 5  # Delete now reads inside its transaction, not a snapshot.
     assert calls == [{}] * len(calls)
 
 
@@ -443,9 +444,9 @@ def test_postgres_bulk_key_projection_uses_one_portable_statement(
 
     class Connection:
         def __init__(self) -> None:
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
+            self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
-        def execute(self, sql: str, params: tuple[str, ...]) -> Result:
+        def execute(self, sql: str, params: tuple[Any, ...]) -> Result:
             self.calls.append((sql, params))
             return Result()
 
@@ -465,10 +466,16 @@ def test_postgres_bulk_key_projection_uses_one_portable_statement(
     assert "key_index.id = (%s || '#' || key_record.id)" in sql
     assert "key_record.body ->> 'workspace_id' = %s" in sql
     assert "key_record.body ->> 'hash' = key_record.id" in sql
-    assert params == ("ws-postgres", "ws-postgres", "ws-postgres")
+    assert params == ("ws-postgres", "ws-postgres", True, 2**63 - 1, 0, "ws-postgres")
+    assert isinstance(params[3], Int8)
+    assert isinstance(params[4], Int8)
+    assert sql.index("LIMIT %s OFFSET %s") < sql.index("LEFT JOIN tr_key_limit")
+    assert "COALESCE(key_record.body ->> 'disabled', 'false') != 'true'" in sql
     assert len(snapshots) == 1
     assert snapshots[0].usage_microdollars == 42
     assert snapshots[0].windows["daily"] == 7
+    store.list_api_keys_with_usage("ws-postgres", limit=2, offset=3, include_disabled=False)
+    assert connection.calls[-1][1] == ("ws-postgres", "ws-postgres", False, 2, 3, "ws-postgres")
 
 
 def test_postgres_key_limit_seed_binds_small_limits_as_int8(
