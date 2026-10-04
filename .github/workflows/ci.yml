@@ -28,6 +28,8 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy
+      - name: Catalog change history is current
+        run: uv run python scripts/update_model_changes.py --check
 
   spanner-emulator:
     runs-on: ubuntu-latest

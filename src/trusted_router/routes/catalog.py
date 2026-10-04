@@ -43,17 +43,23 @@ from trusted_router.image_generation import (
     image_pricing_by_resolution,
     image_supported_parameters,
 )
+from trusted_router.model_changes import last_route_changes, timestamp
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
 from trusted_router.openai_service_tiers import (
     OPENAI_SERVICE_TIERS,
     openai_priority_pricing,
 )
-from trusted_router.provider_lifecycle import provider_catalog_revision, provider_pricing_schedule
+from trusted_router.provider_lifecycle import (
+    _utc_now,
+    provider_catalog_revision,
+    provider_pricing_schedule,
+)
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
 from trusted_router.public_openapi import inference_servers
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_capabilities import endpoint_capabilities
+from trusted_router.routes.model_changes import register_model_change_routes
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
 _PUBLIC_CATALOG_CACHE_CONTROL = "public, max-age=300, s-maxage=300, stale-while-revalidate=60"
@@ -122,11 +128,14 @@ def _picker_model_shape(shape: dict[str, Any]) -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
     shapes: list[dict[str, Any]] = []
+    last_changes = last_route_changes(timestamp(_utc_now()))
     for model in MODELS.values():
         shape = model_to_openrouter_shape(model)
         trustedrouter = shape.get("trustedrouter")
         if isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"):
             continue
+        if isinstance(trustedrouter, dict):
+            trustedrouter["last_route_change_at"] = last_changes.get(model.id)
         shapes.append(shape)
     frozen_shapes = tuple(shapes)
     body = _json_bytes({"data": frozen_shapes})
@@ -411,6 +420,7 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
 
 
 def register_catalog_routes(router: APIRouter) -> None:
+    register_model_change_routes(router)
     # Prewarm the projection. Scheduled retirements/prices can change without
     # a release, so handlers retrieve the cached current revision, not a closure
     # over startup prices. Ordinary requests still share the prebuilt payload.

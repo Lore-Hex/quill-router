@@ -311,6 +311,9 @@ jobs:
           echo "::error title=Price/model coverage gate::Catalog publication is blocked; the last known-good snapshot remains live."
           exit 1
 
+      - name: Record model route changes and upcoming schedules
+        run: uv run python scripts/update_model_changes.py
+
       - name: Validate generated catalog before commit
         # The refresh can change parsers, provider manifests, model ownership,
         # routing, pricing, and SEO output in one pass. GitHub suppresses
@@ -339,6 +342,8 @@ jobs:
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
             src/trusted_router/data/provider_models/ \
+            src/trusted_router/data/model_changes.jsonl \
+            src/trusted_router/data/model_changes_state.json \
             src/trusted_router/static/og/providers/ \
             scripts/pricing/parsers/
 
