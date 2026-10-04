@@ -797,6 +797,9 @@ def _authorize_gateway_sync_impl(
                 speculation_shadow.reason("key_disabled" if api_key.disabled else "key_expired")
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
+    # Trusted key metadata, not the caller's workspace header or request body.
+    # Preserve attribution if a later boot/workspace read fails before reserve.
+    request.state.billing_workspace_id = api_key.workspace_id
     if boot_auth is not None:
         if auth_context is not None and auth_context.boot_record_loaded:
             raw_boot = auth_context.boot_record_body
