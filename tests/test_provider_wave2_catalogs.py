@@ -324,7 +324,7 @@ def test_model_canary_state_rejects_unchecked_healthy_models(tmp_path: Path) -> 
 
 
 def test_wave2_hourly_refresh_and_secret_wiring_are_complete() -> None:
-    assert {"inceptron", "morph", "atlas_cloud", "streamlake"}.issubset(
+    assert {"inceptron", "morph", "atlas_cloud"}.issubset(
         PROVIDER_SLUGS
     )
     assert _PRICING_RESULT_PROVIDER_ALIASES["atlas_cloud"] == ("atlas-cloud",)
@@ -337,8 +337,29 @@ def test_wave2_hourly_refresh_and_secret_wiring_are_complete() -> None:
         "INCEPTRON_API_KEY": "trustedrouter-inceptron-api-key",
         "MORPH_API_KEY": "trustedrouter-morph-api-key",
         "ATLAS_CLOUD_API_KEY": "trustedrouter-atlas-cloud-api-key",
-        "STREAMLAKE_API_KEY": "trustedrouter-streamlake-api-key",
     }.items():
         assert f'ensure_secret_from_env_file "{env_name}" "{secret_name}"' in secrets
         assert f'grant_tr_deploy_secret_access "{secret_name}"' in secrets
         assert f"{env_name}:{secret_name}" in workflow
+
+
+def test_retired_streamlake_is_never_fetched_by_hourly_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts.pricing import refresh
+
+    attempted: list[str] = []
+
+    def fetch_one(slug: str) -> tuple[str, ProviderPricingResult, None]:
+        attempted.append(slug)
+        return slug, ProviderPricingResult(slug=slug, source="api", prices={}), None
+
+    monkeypatch.setattr(refresh, "_fetch_one", fetch_one)
+    results, failures = refresh._fetch_all_providers()
+
+    assert failures == []
+    assert len(results) == len(refresh.PROVIDER_SLUGS)
+    assert set(attempted) == set(refresh.PROVIDER_SLUGS)
+    assert "streamlake" not in attempted
+    assert "streamlake" not in refresh._SELF_HEALING_PARSER_SLUGS
+    raw = json.loads(streamlake.MANIFEST_PATH.read_text())
+    assert len(raw["models"]) == 3
+    assert all(provider_model_retired("streamlake", row["id"], row["upstream_id"]) for row in raw["models"])

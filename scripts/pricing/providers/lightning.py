@@ -6,8 +6,8 @@ Lightning publishes per-model pricing in its `/v1/models` response
 scraping, no LLM self-heal.
 
 Auth: Bearer token in `LIGHTNING_API_KEY`. Without it, returns 401
-and Lightning is one failure under MAX_TOLERATED_FAILURES — every
-other provider still refreshes normally.
+and Lightning keeps its committed state while other providers still
+refresh normally.
 
 OR-canonical model id mapping is small today (just gemma-4 +
 llama-3.3 to start). Extend `_NATIVE_TO_OR_ID` when we add more

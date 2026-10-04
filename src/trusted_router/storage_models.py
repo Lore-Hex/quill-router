@@ -373,6 +373,9 @@ class ApiKeyUsageSnapshot:
     byok_usage_microdollars: int
     reserved_microdollars: int
     windows: dict[str, int]
+    # The public API preserves its legacy JSON-only window fallback when the
+    # typed rows do not exist. Console callers can still display zero windows.
+    typed_usage_available: bool = True
 
 
 @dataclass
@@ -1904,6 +1907,10 @@ class GatewayBoot:
     image_digest: str
     attestation_kind: str
     registered_at: str
+    # What the enclave declared at its latest registration. A registration
+    # that omits one withdraws it: an absent declaration means undeclared.
+    declares_usage_heartbeat: bool = False
+    declares_stream_open_heartbeat: bool = False
 
 
 @dataclass(frozen=True)

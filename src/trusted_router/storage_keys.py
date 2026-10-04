@@ -179,10 +179,23 @@ class InMemoryApiKeys:
         with self._lock:
             return [key for key in self.keys.values() if key.workspace_id == workspace_id]
 
-    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
-        """Atomically snapshot every key and its display counters."""
+    def list_with_usage_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
+        """Atomically snapshot a page of keys and its display counters."""
         with self._lock:
-            keys = [key for key in self.keys.values() if key.workspace_id == workspace_id]
+            keys = [
+                key for key in self.keys.values()
+                if key.workspace_id == workspace_id and (include_disabled or not key.disabled)
+            ]
+            keys.sort(key=lambda key: key.hash)
+            keys.sort(key=lambda key: key.created_at, reverse=True)
+            keys = keys[offset:None if limit is None else offset + limit]
             return [
                 ApiKeyUsageSnapshot(
                     api_key=key,
@@ -201,6 +214,20 @@ class InMemoryApiKeys:
                 return False
             self.key_ids_by_lookup_hash.pop(key.lookup_hash, None)
             return True
+
+    def delete_many(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        results: dict[str, bool] = {}
+        hashes = list(dict.fromkeys(key_hashes))
+        for start in range(0, len(hashes), 100):
+            with self._lock:
+                for key_hash in hashes[start:start + 100]:
+                    key = self.keys.get(key_hash)
+                    results[key_hash] = bool(
+                        key is not None
+                        and key.workspace_id == workspace_id
+                        and self.delete(key_hash)
+                    )
+        return results
 
     def update(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         with self._lock:

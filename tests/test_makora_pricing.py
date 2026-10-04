@@ -441,7 +441,9 @@ def test_provider_model_manifests_have_hourly_refresh_path() -> None:
     missing_modules = sorted(
         manifest_slugs - provider_modules - aliased_manifest_slugs - legacy_manual
     )
-    missing_hourly = sorted((manifest_slugs & provider_modules) - hourly)
+    missing_hourly = sorted(
+        (manifest_slugs & provider_modules) - hourly - refresh.RETIRED_PROVIDER_SLUGS
+    )
 
     assert not missing_modules
     assert not missing_hourly

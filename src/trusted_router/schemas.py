@@ -12,7 +12,15 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 from trusted_router.client_context import (
     ClientArch,
@@ -152,6 +160,10 @@ class CreateKeyRequest(_Lenient):
         return _validate_dollars(value)
 
 
+class BulkDeleteKeysRequest(_Strict):
+    hashes: list[str] = Field(min_length=1, max_length=1000)
+
+
 class PatchKeyRequest(_Lenient):
     budget_strict: None = None  # Immutable; create a new key to change admission mode.
     name: str | None = Field(default=None, max_length=120)
@@ -284,11 +296,24 @@ class CreditTransferRequest(_Strict):
         return dollars_to_microdollars(self.amount)
 
 
+class GatewayBootCapabilities(BaseModel):
+    """What this boot declares it does. Unknown names are ignored on purpose:
+    a newer enclave may declare a capability this release does not know, and
+    its registration must still succeed. Only the declarations named here are
+    stored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    usage_heartbeat: StrictBool = False
+    stream_open_heartbeat: StrictBool = False
+
+
 class GatewayBootRegistrationRequest(_Strict):
     kid: str = Field(min_length=1, max_length=128)
     receipt_public_key: dict[str, Any]
     attestation_evidence: str = Field(min_length=1, max_length=2 * 1024 * 1024)
     attestation_kind: str = Field(min_length=1, max_length=64)
+    capabilities: GatewayBootCapabilities | None = None
 
 
 class GatewayTimingData(BaseModel):

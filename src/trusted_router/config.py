@@ -913,6 +913,10 @@ class Settings(BaseSettings):
     # runtime kill switch so heartbeat writes can be stopped independently of a
     # code rollout while authorize continues to expose cohort metadata.
     stage_d_heartbeat_enabled: bool = True
+    # Off until every accepted enclave image declares its heartbeats at boot
+    # registration. On, a stream joins the heartbeat cohort only when its boot
+    # declared them: a verified boot alone does not prove the enclave heartbeats.
+    stage_d_require_heartbeat_declaration: bool = False
     # Emergency kill added 2026-09-03: declares no request Stage D eligible.
     stage_d_eligibility_enabled: bool = False
     stage_d_pilot_workspace_ids: str = "45819281-0ce9-4811-a0cd-c660ab3a116d"

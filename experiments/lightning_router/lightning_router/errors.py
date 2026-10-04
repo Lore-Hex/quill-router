@@ -13,3 +13,10 @@ class FundingReviewRequired(ValueError):
 
 class QuoteUnavailable(RuntimeError):
     pass
+
+
+class InvoiceCreationPending(RuntimeError):
+    """Another caller owns creation within its bounded recovery grace period."""
+
+    def __init__(self) -> None:
+        super().__init__("Invoice creation in progress")

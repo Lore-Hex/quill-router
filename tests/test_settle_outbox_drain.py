@@ -3757,3 +3757,12 @@ def test_done_uses_stored_reservation_and_preserves_foreign_authorization_guard(
         assert db.settle_outbox[("auth", "settle")]["attempts"] == 8
         outcomes.append((db.gateway_authorizations, db.reservations, db.settle_outbox))
     assert outcomes[0] == outcomes[1]
+
+
+def test_outbox_delayed_stamps_read_the_same_clock_as_now(monkeypatch):
+    """One clock: pinning _iso_now pins every delayed timestamp too."""
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_iso_now", lambda: "2026-10-03T14:15:05Z")
+    assert outbox_module._iso_after_seconds(0) == "2026-10-03T14:15:05Z"
+    assert outbox_module._iso_after_seconds(60) == "2026-10-03T14:16:05Z"

@@ -23,6 +23,7 @@ from trusted_router.receipt_keys import b64url_encode, receipt_kid
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest, GatewayBootRegistrationRequest
 from trusted_router.storage import STORE
+from trusted_router.storage_models import decode_auth_record
 
 
 def _boot_auth_fixture() -> tuple[Ed25519PrivateKey, GatewayBoot, bytes, BootAuthHeader]:
@@ -356,6 +357,137 @@ def test_boot_registration_wire_contract_accepts_literal_enclave_body(
     assert set(payload) == {"data"}
     assert set(payload["data"]) == {"verified"}
     assert isinstance(payload["data"]["verified"], bool)
+
+
+def _register(
+    monkeypatch: pytest.MonkeyPatch,
+    jwk: dict[str, str],
+    capabilities: dict[str, Any] | None,
+) -> GatewayBoot:
+    digest = "sha256:" + "11" * 32
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: digest)
+    body: dict[str, Any] = {
+        "kid": receipt_kid(jwk),
+        "receipt_public_key": jwk,
+        "attestation_evidence": "signed-gcp-evidence",
+        "attestation_kind": "gcp",
+    }
+    if capabilities is not None:
+        body["capabilities"] = capabilities
+    gateway._register_gateway_boot_sync(  # noqa: SLF001
+        _request(),
+        GatewayBootRegistrationRequest(**body),
+        _registration_settings(digest),
+    )
+    stored = STORE.get_gateway_boot(receipt_kid(jwk))
+    assert stored is not None
+    return stored
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "usage", "stream_open"),
+    [
+        # An enclave built before the declaration existed sends none.
+        (None, False, False),
+        ({}, False, False),
+        ({"usage_heartbeat": True}, True, False),
+        ({"usage_heartbeat": True, "stream_open_heartbeat": True}, True, True),
+        ({"usage_heartbeat": False, "stream_open_heartbeat": True}, False, True),
+        # A capability this release does not know is ignored, not refused.
+        ({"usage_heartbeat": True, "a_later_capability": True}, True, False),
+    ],
+)
+def test_boot_registration_stores_what_the_boot_declares(
+    monkeypatch: pytest.MonkeyPatch,
+    capabilities: dict[str, Any] | None,
+    usage: bool,
+    stream_open: bool,
+) -> None:
+    STORE.reset()
+    stored = _register(monkeypatch, _jwk(Ed25519PrivateKey.generate()), capabilities)
+    assert stored.declares_usage_heartbeat is usage
+    assert stored.declares_stream_open_heartbeat is stream_open
+
+
+def test_boot_reregistration_replaces_the_declarations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A declaration is what the latest registration says, never the union of
+    # every registration: one that omits it withdraws it.
+    STORE.reset()
+    jwk = _jwk(Ed25519PrivateKey.generate())
+    declared = _register(
+        monkeypatch, jwk, {"usage_heartbeat": True, "stream_open_heartbeat": True}
+    )
+    assert declared.declares_usage_heartbeat and declared.declares_stream_open_heartbeat
+
+    withdrawn = _register(monkeypatch, jwk, None)
+    assert withdrawn.declares_usage_heartbeat is False
+    assert withdrawn.declares_stream_open_heartbeat is False
+    # The identity and its verification are still merged upward, as before.
+    assert withdrawn.verified is True and withdrawn.approved is True
+
+    again = _register(monkeypatch, jwk, {"usage_heartbeat": True})
+    assert again.declares_usage_heartbeat is True
+    assert again.declares_stream_open_heartbeat is False
+
+
+@pytest.mark.parametrize("value", ["true", 1, "yes", None, [True]])
+def test_boot_registration_refuses_a_declaration_that_is_not_a_boolean(value: object) -> None:
+    # "true" or 1 read as a declaration would let a malformed registration
+    # claim heartbeats. Only a JSON boolean declares anything.
+    with pytest.raises(ValueError):
+        GatewayBootRegistrationRequest(
+            kid="kid",
+            receipt_public_key={"kty": "OKP"},
+            attestation_evidence="evidence",
+            attestation_kind="gcp",
+            capabilities={"usage_heartbeat": value},
+        )
+
+
+def test_boot_registration_wire_contract_accepts_declared_capabilities(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wire_fixture = (
+        '{"kid":"testkid","receipt_public_key":{"kty":"OKP","crv":"Ed25519",'
+        '"x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},'
+        '"attestation_evidence":"<...>","attestation_kind":"gcp",'
+        '"capabilities":{"usage_heartbeat":true,"stream_open_heartbeat":false}}'
+    )
+    monkeypatch.setattr(gateway, "receipt_kid", lambda _jwk: "testkid")
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: "")
+
+    response = client.post(
+        "/internal/gateway/spend-lease/register-boot",
+        content=wire_fixture,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    # The answer is unchanged: an enclave that declares decodes what it did before.
+    assert response.json() == {"data": {"verified": True}}
+    stored = STORE.get_gateway_boot("testkid")
+    assert stored is not None
+    assert stored.declares_usage_heartbeat is True
+    assert stored.declares_stream_open_heartbeat is False
+
+
+def test_boot_record_stored_before_the_declaration_reads_as_undeclared() -> None:
+    _private, boot, _raw_body, _auth = _boot_auth_fixture()
+    legacy = {
+        key: value
+        for key, value in boot.__dict__.items()
+        if key not in {"declares_usage_heartbeat", "declares_stream_open_heartbeat"}
+    }
+    decoded = decode_auth_record(json.dumps(legacy), GatewayBoot)
+    assert decoded.declares_usage_heartbeat is False
+    assert decoded.declares_stream_open_heartbeat is False
 
 
 def test_authorize_gateway_forwards_exact_cached_body_bytes(

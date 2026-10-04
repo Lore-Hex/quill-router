@@ -130,9 +130,8 @@ jobs:
         # provider's /v1/models call needs the right key; without
         # them the respective adapter returns 401 and the new
         # gemma-4 endpoints drop from the snapshot. Each scraper
-        # tolerates a missing key (counts as one failure under
-        # MAX_TOLERATED_FAILURES), but the hourly bot should always
-        # have them — same per-secret IAM pattern.
+        # keeps committed state on a missing key, but the hourly bot should
+        # always have them — same per-secret IAM pattern.
         # Phala discovery uses its public inference.phala.com catalog;
         # no inference credential is needed for that read-only feed.
         run: |
@@ -169,7 +168,6 @@ jobs:
                       INCEPTRON_API_KEY:trustedrouter-inceptron-api-key \
                       MORPH_API_KEY:trustedrouter-morph-api-key \
                       ATLAS_CLOUD_API_KEY:trustedrouter-atlas-cloud-api-key \
-                      STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
                       NEUROMETRIC_API_KEY:trustedrouter-neurometric-api-key \
                       ENGY_API_KEY:trustedrouter-engy-api-key \
                       CONFIDENTIAL_AI_API_KEY:trustedrouter-confidential-ai-api-key \
@@ -564,10 +562,10 @@ jobs:
           fi
 
       - name: Reconcile held-price issue
-        # The refresh holds a provider whose prices spiked at its last
-        # published prices and publishes the rest. The issue stays open until
-        # a person closes it: a later run without the hold may only mean the
-        # provider's fetch failed and fell back to its published prices.
+        # The refresh keeps providers with price spikes or refresh failures at
+        # their committed state and publishes the rest. The issue stays open
+        # until a person closes it; a successful run alone does not verify a
+        # pending price change or repair a provider account.
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -583,9 +581,9 @@ jobs:
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
           if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
             {
-              echo "These providers' routes rose 2x or more (or both prices went to zero), so the hourly refresh kept their last published prices and published every other provider."
+              echo "These providers had a price spike or refresh failure. The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
               echo
-              echo "If a change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. A held provider's expiring manifest still fails closed 14 days after its last publish."
+              echo "Repair fetch, parser, or manifest failures using the reasons below. If a price change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. Manifest expiry and canary gates still apply; holding a provider does not renew its freshness."
               echo
               echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo
