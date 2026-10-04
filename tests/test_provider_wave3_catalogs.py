@@ -52,6 +52,7 @@ from trusted_router.pricing import (
     provider_manifest_price_profile_is_valid,
     provider_manifest_price_tiers_are_valid,
 )
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
     PROVIDER_MANIFEST_MAX_AGE_DAYS,
@@ -99,7 +100,6 @@ ROUTABLE_READY = READY | {"perplexity"}
 PENDING = {
     "perceptron",
     "modal",
-    "byteplus",
     "riverflow",
     "liquid",
 }
@@ -140,7 +140,13 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
     for module in (*MODULES, perplexity):
         rows = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
         live_rows = [row for row in rows if row.get("routable") is not False]
-        assert module.SLUG in endpoint_providers or not live_rows, module.SLUG
+        if module.SLUG in PREPAID_PROVIDER_HOLD_REASONS:
+            assert not any(
+                endpoint.provider == module.SLUG and endpoint.usage_type == "Credits"
+                for endpoint in catalog_vehicles.registry_endpoints().values()
+            )
+        else:
+            assert module.SLUG in endpoint_providers or not live_rows, module.SLUG
     for module in MODULES:
         manifest = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))
         assert manifest["provider"] == module.SLUG
@@ -154,6 +160,7 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
                     "delisted-upstream",
                     "provider-geographic-restriction",
                     "provider-alias-unavailable",
+                    "provider-access-unavailable",
                 }
                 if reason == "delisted-upstream":
                     assert row.get("missing_since")
@@ -560,6 +567,25 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
     assert relisted["routable_reason"] == "operator-hold"
     assert "missing_since" not in relisted
     assert probed == ["vendor/live"] * 4
+
+
+def test_arcee_access_holds_match_manifest_and_leave_other_routes_available() -> None:
+    holds = arcee.CATALOG.spec.operator_hold_reasons
+    assert holds == {
+        "deepseek/deepseek-v4-pro": "provider-access-unavailable",
+        "thinkingmachines/inkling-small": "provider-access-unavailable",
+    }
+    rows = json.loads(arcee.MANIFEST_PATH.read_text())["models"]
+    for row in rows:
+        if row["id"] in holds:
+            assert row["routable"] is False
+            assert row["routable_reason"] == holds[row["id"]]
+    routed = {
+        endpoint.model_id for endpoint in catalog_vehicles.registry_endpoints().values()
+        if endpoint.provider == "arcee"
+    }
+    assert not routed.intersection(holds)
+    assert "moonshotai/kimi-k3" in routed
 
 
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:

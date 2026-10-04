@@ -1701,6 +1701,8 @@ def typed_finalize_atomic(
         insert_entity_dml_at,
         read_reservation,
         release_credit,
+        release_credit_no_debt_statement,
+        release_key_statement,
         update_entity_body_dml,
     )
     pt = param_types
@@ -1745,12 +1747,12 @@ def typed_finalize_atomic(
     rollback_ms = 0.0
     fallback_outcome = "not_attempted"
 
-    def speculative_batch(transaction: Any, *, include_claim: bool) -> None:
+    def speculative_batch(transaction: Any, *, include_claim: bool, res: dict, fold_tail: bool) -> None:
         nonlocal eligible_attempts
         eligible_attempts += 1
         assert authorization is not None
         statements = []
-        reasons = []
+        reasons: list[str | None] = []
         if include_claim:
             statements.append(claim_reservation_statement(
                 pt, reservation_id, actual_micro=book_actual,
@@ -1793,15 +1795,49 @@ def typed_finalize_atomic(
             statements.append(benchmark_statement)
             counts.append((1,))
 
+        # These hot rows are last, credit before key. A miss rolls back ALL
+        # speculative writes before recovery/rollover/deletion classification;
+        # never hold a speculative key lock while running credit recovery.
+        reasons.extend([None] * (len(statements) - len(reasons)))
+        sampled_floors = window_floors(utcnow()) if fold_tail else None
+        if fold_tail:
+            assert sampled_floors is not None
+            statements.append(release_credit_no_debt_statement(
+                pt, res["workspace_id"], res["credit_reserved_micro"], book_actual,
+                shard=res["credit_shard"],
+            ))
+            # The key's release in both window forms: the current one, which
+            # leaves the boundary columns unlocked (#1083), and the rolling one
+            # for a key with a window to roll forward. Exactly one matches.
+            for windows in ("current", "stale"):
+                statements.append(release_key_statement(
+                    pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
+                    book_to_byok=book_to_byok, window_floors=sampled_floors,
+                    shard=res["key_shard"], windows=windows,
+                ))
+            counts.extend([(1,), (0, 1), (0, 1)])
+            reasons.extend(["credit_release_zero", None, None])
+
         def check_prefix(row_counts: Sequence[int]) -> None:
-            for count, reason in zip(row_counts, reasons, strict=False):
-                if count == 0:
+            for count, reason, allowed in zip(row_counts, reasons, counts, strict=False):
+                if count == 0 and reason is not None:
                     raise _RetrySequentialFinalize(reason)
-                if count != 1:
+                if count not in allowed:
                     # A malformed earlier count cannot authorize a later fallback.
-                    break
+                    return
+            if fold_tail and len(row_counts) == len(statements) and sum(row_counts[-2:]) != 1:
+                # Neither form matched: a deleted key or a hold the key no
+                # longer covers, which the sequential path classifies.
+                raise _RetrySequentialFinalize("key_release_zero")
 
         execute_batch_dml(transaction, statements, counts, check_prefix=check_prefix)
+        if sampled_floors is not None:
+            # Main samples after credit release/recovery. A batch crossing a
+            # boundary must discard its old-window increments and resample in
+            # the sequential path, before any of these writes can commit.
+            current_floors = window_floors(utcnow())
+            if any(current_floors[window] > floor for window, floor in sampled_floors.items()):
+                raise _RetrySequentialFinalize("window_boundary_advanced")
 
     def txn(transaction: Any) -> dict:
         nonlocal attempts
@@ -1812,8 +1848,19 @@ def typed_finalize_atomic(
                 # Raise (not return) so this attempt commits nothing at all.
                 raise OneCommitSettleDeclined("not_found")
             return {"outcome": SettleOutcome.NOT_FOUND}
+        fold_tail = (
+            speculate and success and not res["settled"]
+            and settled_usage_type == "Credits"
+            and isinstance(res["credit_reserved_micro"], int)
+            and isinstance(res["key_reserved_micro"], int)
+            and res["key_reserved_micro"] >= 0 and res["key_hash"] is not None
+            and 0 <= book_actual <= res["credit_reserved_micro"]
+            and res["credit_reserved_micro"] > 0
+            and user_model_payout is None and app_markup_payout is None
+            and custom_model_markup_payout is None
+        )
         if speculate:
-            speculative_batch(transaction, include_claim=True)
+            speculative_batch(transaction, include_claim=True, res=res, fold_tail=fold_tail)
         else:
             won = claim_reservation(
                 transaction,
@@ -1950,7 +1997,7 @@ def typed_finalize_atomic(
         # commit. Credit goes first so its contention cannot extend the key lock.
         # The `!= 1` raises still abort the whole transaction.
         missing_key_releases = []
-        if res["credit_reserved_micro"] > 0:
+        if not fold_tail and res["credit_reserved_micro"] > 0:
             credit_actual = book_actual if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
                 transaction,
@@ -1963,13 +2010,14 @@ def typed_finalize_atomic(
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
 
-        key_count, warning = _release_key_or_skip_deleted(
-            transaction, pt, res, book_actual, book_to_byok=book_to_byok,
-        )
-        if warning is not None:
-            missing_key_releases.append(warning)
-        if res["key_reserved_micro"] > 0 and key_count != 1:
-            raise _SettleError("key release row-count != 1")
+        if not fold_tail:
+            key_count, warning = _release_key_or_skip_deleted(
+                transaction, pt, res, book_actual, book_to_byok=book_to_byok,
+            )
+            if warning is not None:
+                missing_key_releases.append(warning)
+            if res["key_reserved_micro"] > 0 and key_count != 1:
+                raise _SettleError("key release row-count != 1")
 
         return {
             "outcome": SettleOutcome.SETTLED,

@@ -411,6 +411,7 @@ class SpannerApiKeys:
         user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
+        video_pricing_snapshot: str | None = None,
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
@@ -474,6 +475,7 @@ class SpannerApiKeys:
             user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
+            video_pricing_snapshot=video_pricing_snapshot,
             invocation_nonce=invocation_nonce,
         )
         if not trust_eligibility_enabled:

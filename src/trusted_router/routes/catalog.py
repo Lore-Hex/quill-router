@@ -51,6 +51,7 @@ from trusted_router.openai_service_tiers import (
 from trusted_router.provider_lifecycle import provider_catalog_revision, provider_pricing_schedule
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
+from trusted_router.public_openapi import inference_servers
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_capabilities import endpoint_capabilities
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
@@ -487,7 +488,7 @@ def register_catalog_routes(router: APIRouter) -> None:
             "provider.min_privacy: \"confidential\". Routing aliases omit the object. "
             "See https://trustedrouter.com/docs#model-capabilities for scope and routing rules."
         ),
-        openapi_extra={"servers": [{"url": "https://api.trustedrouter.com"}]},
+        openapi_extra={"servers": inference_servers()},
     )
     async def models(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()

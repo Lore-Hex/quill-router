@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import http.client
 import json
 import shutil
 import subprocess
+import urllib.request
 from pathlib import Path
 
 from build import load_markets
@@ -23,6 +25,7 @@ BACKEND = "token-exchange-static"
 MAP = "trusted-router-control-map"
 PROXY = "trusted-router-control-https-proxy"
 IP = "35.241.14.18"
+BROCHURE_ENDPOINT = "https://trustedrouter.com/token-exchange/brief"
 
 
 def gcloud(*args: str, read: bool = False):
@@ -39,6 +42,40 @@ def gcloud(*args: str, read: bool = False):
 
 def domains() -> list[str]:
     return [d for m in load_markets() for d in [m["domain"], *m["aliases"]]]
+
+
+def brochure_gaps() -> list[str]:
+    """Canonical domains whose brochure form the live TrustedRouter app does not yet accept.
+
+    The app allowlists src/trusted_router/data/token_exchange_origins.json; a page published
+    before the app deploy that lists its domain shows a form that cannot download."""
+    gaps = []
+    for market in load_markets():
+        origin = f"https://{market['domain']}"
+        request = urllib.request.Request(  # noqa: S310 - fixed https endpoint
+            BROCHURE_ENDPOINT,
+            method="OPTIONS",
+            headers={"Origin": origin, "Access-Control-Request-Method": "POST",
+                     "Access-Control-Request-Headers": "content-type"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+                allowed = response.headers.get("Access-Control-Allow-Origin") == origin
+        except (OSError, http.client.HTTPException):  # refusals, timeouts and dropped connections
+            allowed = False
+        if not allowed:
+            gaps.append(market["domain"])
+    return gaps
+
+
+def require_brochure_origins() -> None:
+    gaps = brochure_gaps()
+    if gaps:
+        raise RuntimeError(
+            "The live brochure endpoint does not accept " + ", ".join(gaps)
+            + ". Add the domain to src/trusted_router/data/token_exchange_origins.json "
+            "and deploy the app first."
+        )
 
 
 def certificate_requests(attached: list[dict], hosts: list[str]) -> list[tuple[str, list[str]]]:
@@ -198,6 +235,7 @@ def publish(output: Path, state: Path) -> None:
     required += [output / "assets" / f"og-{m['slug']}.png" for m in load_markets()]
     if not all(p.is_file() for p in required):
         raise ValueError("Build and verify all market pages and OG images before publishing")
+    require_brochure_origins()
     # A proxy with a certificate map serves the map's certificates
     # (infra/control_lb_certificate_map.tf) and ignores its classic ones. Then
     # publish creates and attaches none, and changes nothing until every host
@@ -377,11 +415,16 @@ def publish_certificates() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("inventory", "dns", "publish"))
-    parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("action", choices=("inventory", "dns", "publish", "check-brochure"))
+    parser.add_argument("--state", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if args.action == "inventory":
+    if args.action == "check-brochure":
+        require_brochure_origins()
+        print("The live brochure endpoint accepts every market domain.")
+    elif args.state is None:
+        parser.error(f"{args.action} requires --state")
+    elif args.action == "inventory":
         inventory(args.state)
     elif args.action == "dns":
         provision_dns(args.state)

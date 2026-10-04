@@ -1,10 +1,12 @@
 {% extends "public/_routing_feature_base.html" %}
 {% block feature_kind %}API guide{% endblock %}
 {% block feature_content %}
+{% include "public/_api_hosts.html" %}
+
 <section class="routing-feature-section">
   <p><a href="/spend-controls">Spend controls overview</a></p>
   <h2>Create a key with a deliberate budget</h2>
-  <p>Use a management key with <code>POST /v1/keys</code> on the control-plane hostname. <code>limit</code>, <code>limit_daily</code>, <code>limit_weekly</code>, and <code>limit_monthly</code> are USD amounts. <code>budget_strict</code> is off by default and immutable after creation.</p>
+  <p>Use a management key with <code>POST {{ control_plane_api_base_url }}/keys</code>. <code>limit</code>, <code>limit_daily</code>, <code>limit_weekly</code>, and <code>limit_monthly</code> are USD amounts. <code>budget_strict</code> is off by default and immutable after creation.</p>
   <pre><code>import os
 import httpx
 
@@ -22,7 +24,7 @@ response = httpx.post(
 )
 response.raise_for_status()
 # Store the returned key securely. Keep it out of logs.</code></pre>
-  <p>Use the new key for inference at <code>{{ api_base_url }}</code>. Read its settings with <code>GET /v1/key</code> on the control-plane hostname. Create a separate key to change admission mode; changing <code>budget_strict</code> on an existing key is rejected.</p>
+  <p>Use the new key for inference at <code>{{ api_base_url }}</code>. Read its settings with <code>GET /v1/key</code> on either host. Create a separate key to change admission mode; changing <code>budget_strict</code> on an existing key is rejected.</p>
 </section>
 <section class="routing-feature-section routing-feature-columns">
   <div><h2>What strict mode counts</h2><p>Ordinary spend-window checks are approximate and exclude in-flight holds. Strict mode counts outstanding estimated costs alongside settled spend in each enforced UTC window. Settlement or refund releases the recorded hold, even across a window reset.</p><p>Strict mode is estimated-cost admission, not an absolute final-charge guarantee. Actual provider usage may exceed an estimate. <code>budget_alert_only: true</code> remains alert-only; leave it false for enforcement.</p></div>

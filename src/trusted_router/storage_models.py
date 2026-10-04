@@ -532,6 +532,8 @@ class VideoJob:
     endpoint_id: str
     provider_model: str
     quoted_microdollars: int
+    # A bound, not billable usage. Old fixed-price jobs keep zero.
+    output_token_limit: int = 0
     input_mode: str = "text"
     duration_seconds: int = 0
     resolution: str = ""
@@ -844,6 +846,9 @@ class GatewayAuthorization:
     # caller-supplied route_type because native provider Batch APIs retain
     # plaintext content and receive discounted billing.
     native_batch_eligible: bool = False
+    # Async video prices are immutable for the job lifetime. Separate from
+    # Stage D's snapshot: videos must never enter its streaming cohort.
+    video_pricing_snapshot: str | None = None
     # The settlement DECISION, made at authorize and stored — settle must not
     # re-derive it from key state, which can change between authorize and
     # settle. "local" books against the plane's own balance (every

@@ -298,9 +298,13 @@ def run_in_transaction_with_retry(
     ``transaction_tag`` is a stable, non-sensitive operation label forwarded
     to Spanner on every retry. It makes lock-stat samples attributable without
     placing workspace, key, request, or authorization identifiers in telemetry.
+    Without one, the transaction function's own name is used (``auto:``), so
+    every read-write transaction is attributable in SPANNER_SYS statistics.
     """
     from google.api_core.exceptions import Aborted
 
+    if transaction_tag is None:
+        transaction_tag = default_transaction_tag(func)
     retryable_errors = (Aborted,) + also_retry
     rolled_back_func = _rollback_on_api_error(func)
     deadline = time.monotonic() + max(total_budget_seconds, _MIN_INNER_TIMEOUT_SECONDS)
@@ -319,10 +323,9 @@ def run_in_transaction_with_retry(
         # deadline takes precedence over the normal per-transaction floor.
         inner_timeout = remaining_rpc_budget(max(remaining, _MIN_INNER_TIMEOUT_SECONDS))
         try:
-            transaction_kwargs: dict[str, Any] = {"timeout_secs": inner_timeout}
-            if transaction_tag is not None:
-                transaction_kwargs["transaction_tag"] = transaction_tag
-            result = database.run_in_transaction(rolled_back_func, **transaction_kwargs)
+            result = database.run_in_transaction(
+                rolled_back_func, timeout_secs=inner_timeout, transaction_tag=transaction_tag,
+            )
         except retryable_errors as exc:
             last_retryable = exc
             if attempt >= attempts:
@@ -341,6 +344,26 @@ def run_in_transaction_with_retry(
             attempts_out.append(attempt)
         return result
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+# Spanner accepts transaction tags of at most 50 printable ASCII characters.
+_TRANSACTION_TAG_LIMIT = 50
+
+
+def default_transaction_tag(func: Callable[..., Any]) -> str:
+    """``auto:`` and the end of the transaction function's qualified name.
+
+    A function's name identifies the code path and nothing about the data, so
+    it is safe in telemetry. The end of the name (``outer_function.txn``) is
+    kept when it is too long, since that is what tells call sites apart.
+    """
+
+    name = getattr(func, "__qualname__", None) or "transaction"
+    name = name.replace("<locals>.", "")
+    tag = "auto:" + name
+    if len(tag) > _TRANSACTION_TAG_LIMIT:
+        tag = "auto:" + name[-(_TRANSACTION_TAG_LIMIT - len("auto:")):]
+    return "".join(ch if 32 <= ord(ch) < 127 else "_" for ch in tag)
 
 
 def _rollback_on_api_error(func: Callable[..., T]) -> Callable[..., T]:

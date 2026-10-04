@@ -46,6 +46,9 @@ VIDEO_MODELS = {
 }
 
 NATIVE_VIDEO_PROVIDERS = {
+    "bytedance/seedance-2.5": ("byteplus",),
+    "bytedance/seedance-2.0": ("byteplus",),
+    "bytedance/seedance-2.0-fast": ("byteplus",),
     "lightricks/ltx-2.3": ("ltx",),
     "lightricks/ltx-2.3-fast": ("ltx",),
     "minimax/hailuo-3": ("atlas-cloud",),
@@ -81,6 +84,8 @@ def _authorize_video(
     quote: int = 850_500,
     idempotency_key: str = "video-test-1",
     request_fingerprint: str = "a" * 64,
+    provider: str | None = None,
+    region: str | None = None,
 ) -> dict[str, object]:
     response = client.post(
         "/v1/internal/gateway/authorize",
@@ -93,6 +98,8 @@ def _authorize_video(
             "additional_cost_reservation_microdollars": quote,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            **({"provider": {"only": [provider]}} if provider else {}),
+            **({"region": region} if region else {}),
         },
     )
     assert response.status_code == 200, response.text
@@ -189,7 +196,7 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     resolution: str,
 ) -> None:
     quote = 850_500
-    auth = _authorize_video(client, inference_key, model=model_id, quote=quote)
+    auth = _authorize_video(client, inference_key, model=model_id, quote=quote, provider=provider)
     authorization = STORE.get_gateway_authorization(str(auth["authorization_id"]))
     assert authorization is not None
     assert authorization.estimated_microdollars == quote

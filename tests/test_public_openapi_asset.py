@@ -3,14 +3,21 @@ from __future__ import annotations
 import gzip
 import importlib.util
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+import pytest
+from fastapi import APIRouter, FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from tests.route_inventory import effective_routes
+from trusted_router import main
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.compat import register_gateway_compat_stub_routes
+from trusted_router.routes.inference import register_inference_routes
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR_PATH = ROOT / "scripts" / "generate_public_openapi.py"
@@ -92,6 +99,122 @@ def test_public_openapi_asset_is_sanitized_and_reference_closed() -> None:
     components = schema.get("components", {})
     for section, name in _component_refs(schema):
         assert name in components[section]
+
+
+def _operations(router: APIRouter | FastAPI) -> set[tuple[str, str]]:
+    return {
+        (path.replace(route.path, route.path_format), method.lower())
+        for path, route in effective_routes(router)
+        if isinstance(route, APIRoute) and route.include_in_schema
+        for method in route.methods
+    }
+
+
+def _expected_servers(gateway: bool, prefix: str) -> list[dict[str, str]]:
+    if not gateway:
+        return [{"url": "https://trustedrouter.com" + prefix}]
+    return [
+        {"url": "https://api.trustedrouter.com" + prefix, "description": "Global"},
+        {"url": "https://api-europe-west4.quillrouter.com" + prefix, "description": "EU regional"},
+    ]
+
+
+def test_every_public_operation_has_the_server_for_its_registered_surface() -> None:
+    settings = Settings(environment="test", service_surface="combined", _env_file=None)
+    gateway = APIRouter()
+    register_inference_routes(gateway)
+    register_gateway_compat_stub_routes(gateway)
+    gateway_operations = _operations(gateway) | {("/models", "get")}
+    app = create_app(settings, configure_store_arg=False, init_observability=False)
+    registered = {
+        (path.replace(route.path, route.path_format), method.lower(), route.endpoint)
+        for path, route in effective_routes(app)
+        if isinstance(route, APIRoute) and route.include_in_schema
+        for method in route.methods
+    }
+    # API handlers are mounted bare and under /v1, including OAuth handlers
+    # added after _make_api_router. Match endpoints as well as paths so a
+    # same-named website page (e.g. /benchmarks) is not mistaken for an API.
+    api_operations = {
+        (path, method)
+        for path, method, endpoint in registered
+        if (f"/v1{path}", method, endpoint) in registered
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        dynamic = app.openapi()
+    asset = json.loads(JSON_PATH.read_bytes())
+
+    for schema in (dynamic, asset):
+        checked: set[tuple[str, str]] = set()
+        for path, path_item in schema["paths"].items():
+            if path.startswith(("/internal/", "/v1/internal/")):
+                continue
+            for method, operation in path_item.items():
+                if method not in {"get", "post", "put", "patch", "delete", "head", "options", "trace"}:
+                    continue
+                bare_path = path.removeprefix("/v1") if path.startswith("/v1/") else path
+                prefix = "/v1" if (path, method) in api_operations else ""
+                assert operation["servers"] == _expected_servers(
+                    (bare_path, method) in gateway_operations, prefix
+                ), (path, method)
+                # Assert the actual URL an OpenAPI client constructs, not just
+                # the host: duplicated /v1 would still send customers to 404s.
+                for server in operation["servers"]:
+                    assert "/v1/v1/" not in server["url"] + path
+                checked.add((path, method))
+        expected = {
+            (path, method)
+            for path, method in _operations(app)
+            if not path.startswith(("/internal/", "/v1/internal/"))
+        }
+        assert checked == expected
+
+
+def test_new_registered_operations_inherit_their_surface_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    register_keys = main.register_key_routes
+    register_inference = main.register_inference_routes
+
+    def account_routes(router: APIRouter) -> None:
+        register_keys(router)
+
+        @router.get("/surface-example")
+        def account() -> dict[str, str]:
+            return {"surface": "control"}
+
+    def inference_routes(router: APIRouter) -> None:
+        register_inference(router)
+
+        @router.post("/surface-example")
+        def inference() -> dict[str, str]:
+            return {"surface": "inference"}
+
+    monkeypatch.setattr(main, "register_key_routes", account_routes)
+    monkeypatch.setattr(main, "register_inference_routes", inference_routes)
+    app = create_app(
+        Settings(environment="test", service_surface="combined", _env_file=None),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        schema = app.openapi()
+    assert app.openapi() is schema
+    client = TestClient(app)
+    for prefix in ("", "/v1"):
+        path = f"{prefix}/surface-example"
+        for method, gateway, surface in (
+            ("get", False, "control"),
+            ("post", True, "inference"),
+        ):
+            assert schema["paths"][path][method]["servers"] == _expected_servers(
+                gateway, "" if prefix else "/v1"
+            )
+            response = client.request(method, path)
+            assert response.status_code == 200
+            assert response.json() == {"surface": surface}
 
 
 def test_public_openapi_uses_static_representation_without_calling_app_openapi(

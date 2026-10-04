@@ -251,6 +251,7 @@ from trusted_router.user_model_rules import (
     user_model_gateway_pair,
     user_model_is_on_the_clock,
 )
+from trusted_router.video_billing import video_cost_microdollars, video_pricing_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -1298,7 +1299,9 @@ def _authorize_gateway_sync_impl(
             model_estimate,
             custom_model_markup_basis_points,
         )
-    estimate = model_estimate + additional_cost_reservation
+    # Video candidates are either fixed-quote or output-token billed. Reserve
+    # the largest possible route charge, not the sum of mutually exclusive routes.
+    estimate = max(model_estimate, additional_cost_reservation) if is_video_request else model_estimate + additional_cost_reservation
     broadcast_destinations = [
         payload
         for destination in _broadcast_destinations_for_authorize(workspace.id)
@@ -1395,7 +1398,13 @@ def _authorize_gateway_sync_impl(
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
 
         if existing_authorization is not None:
-            if existing_authorization.idempotency_fingerprint != request_fingerprint:
+            if (
+                existing_authorization.idempotency_fingerprint != request_fingerprint
+                and not _video_cross_region_replay_matches(
+                    existing_authorization, workspace.id, api_key.hash,
+                    fingerprint_body, request_idempotency_key,
+                )
+            ):
                 raise api_error(
                     409,
                     "Idempotency key was already used for a different gateway request",
@@ -1440,6 +1449,13 @@ def _authorize_gateway_sync_impl(
         ),
     )
     pricing_snapshot = None
+    video_snapshot = (
+        video_pricing_snapshot(
+            (effective_endpoint(e, at=pricing_effective_at) for _m, e in endpoint_candidates),
+            output_tokens,
+        )
+        if body.route_type == "videos" else None
+    )
     if stage_d_reason == "ok":
         pricing_snapshot = canonical_pricing_snapshot(
             endpoint_pricing_document(
@@ -1559,6 +1575,7 @@ def _authorize_gateway_sync_impl(
                     expires_at=expires_at,
                     window_limits=window_limits or None,
                     pricing_snapshot=pricing_snapshot,
+                    video_pricing_snapshot=video_snapshot,
                     stage_d_reason=stage_d_reason,
                     stage_d_prompt_tokens=input_tokens,
                     stage_d_max_output_tokens=output_tokens,
@@ -1625,6 +1642,23 @@ def _authorize_gateway_sync_impl(
             raise
         window_decision = getattr(outcome, "rate_limit", None)
         remember_spend_window_decision(request, window_decision)
+        if (
+            outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH
+            or outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED)
+        ) and is_video_request and body.request_fingerprint and request_idempotency_key:
+            # Only a rejected video retry pays this indexed read. A window
+            # precheck can reject before the atomic idempotency check when the
+            # original job consumed its budget. Recover only that exact hold;
+            # neither path admitted a new reservation or provider call.
+            existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
+                workspace.id, api_key.hash, request_idempotency_key,
+            )
+            if _video_cross_region_replay_matches(
+                existing_authorization, workspace.id, api_key.hash,
+                fingerprint_body, request_idempotency_key,
+            ):
+                release_user_model_slot_after_error()
+                return _replay_response(existing_authorization)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
             if settings.speculative_provider_shadow_enabled:
@@ -1802,6 +1836,7 @@ def _authorize_gateway_sync_impl(
             user_model_owner_user_id=user_model.owner_user_id if user_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
             native_batch_eligible=native_batch_eligible,
+            video_pricing_snapshot=video_snapshot,
             settlement=settlement,
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
@@ -2335,6 +2370,45 @@ def _gateway_authorize_fingerprint(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _video_cross_region_replay_matches(
+    authorization: Any,
+    workspace_id: str,
+    key_hash: str,
+    body: dict[str, Any],
+    idempotency_key: str | None,
+) -> bool:
+    """Recover a video's original hold without changing persisted fingerprints.
+
+    Video content/options are HMAC-bound by the enclave. Its execution region
+    can change on retry; caller provider/region restrictions remain in the body.
+    No other field is relaxed, and ordinary text/image requests are unchanged.
+    """
+    if (
+        authorization is None
+        or body.get("route_type") != "videos"
+        or not body.get("request_fingerprint")
+        or not idempotency_key
+        or authorization.workspace_id != workspace_id
+        or authorization.key_hash != key_hash
+        or authorization.idempotency_key != idempotency_key
+    ):
+        return False
+    original = {**body, "region": authorization.region}
+    if authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
+        workspace_id=workspace_id, key_hash=key_hash,
+        body=original, idempotency_key=idempotency_key,
+    ):
+        return True
+    # Older/internal callers may have omitted the region and used the default.
+    original.pop("region")
+    return bool(authorization.idempotency_fingerprint) and (
+        authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
+            workspace_id=workspace_id, key_hash=key_hash,
+            body=original, idempotency_key=idempotency_key,
+        )
+    )
+
+
 def _new_gateway_authorization_id() -> str:
     """One fresh authorization id (same shape the typed store mints)."""
     return f"gwa-{uuid.uuid4().hex}"
@@ -2491,6 +2565,7 @@ def _gateway_authorize_response(
             "receipt_fee_basis_points": authorization.receipt_fee_basis_points,
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
+            **({"video_token_billing": True} if authorization.video_pricing_snapshot else {}),
             **stage_d,
             "tags": dict(authorization.tags),
             "custom_model": None
@@ -3237,8 +3312,20 @@ def _settle_gateway_authorization(
         selected_endpoint,
         body.price_tier_input_tokens,
     )
+    video_cost = None
+    if success and authorization.video_pricing_snapshot is not None:
+        if body.route_type != "videos" or total_input:
+            raise api_error(400, "Video settlement requires video output usage only", ErrorType.BAD_REQUEST)
+        try:
+            video_cost = video_cost_microdollars(
+                authorization.video_pricing_snapshot, selected_endpoint.id,
+                output_tokens=output_tokens,
+                quoted_microdollars=body.additional_cost_microdollars,
+            )
+        except ValueError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     actual_cost = (
-        custom_model_cost_microdollars(
+        video_cost if video_cost is not None else custom_model_cost_microdollars(
             input_tokens=total_input,
             output_tokens=output_tokens,
             prompt_price=int(authorization.user_model_prompt_price_microdollars_per_m or 0),
@@ -3315,6 +3402,13 @@ def _settle_gateway_authorization(
         )
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
+    if (
+        body.route_type == "videos"
+        and authorization.video_pricing_snapshot is not None
+        and success
+    ):
+        if actual_cost > authorization.estimated_microdollars:
+            raise api_error(400, "Video token cost exceeds the authorized reservation", ErrorType.BAD_REQUEST)
     if user_model_pair is not None and additional_cost:
         raise api_error(
             400,

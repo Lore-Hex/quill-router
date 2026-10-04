@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from trusted_router import acquisition
 from trusted_router.config import Settings
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
@@ -172,7 +174,7 @@ def test_configured_enterprise_inbox_receives_the_lead(client: TestClient, test_
 
 
 def test_bounded_body_and_json_only(client: TestClient, sent_messages: list[EmailMessage]) -> None:
-    assert client.post("/token-exchange/brief", json={"email": "a" * 4096}).status_code == 413
+    assert client.post("/token-exchange/brief", json={"email": "a" * 8192}).status_code == 413
     assert client.post("/token-exchange/brief", data={"email": "ada@example.com"}).status_code == 415
     assert not sent_messages
 
@@ -218,3 +220,121 @@ def test_no_ungated_http_download(client: TestClient) -> None:
     for name in ("TrustedRouter-Token-Exchange-Brochure.pdf", "TrustedRouter-Enterprise-Brief.pdf"):
         assert client.get(f"/static/enterprise/{name}").status_code == 404
         assert client.get(f"/data/enterprise/{name}").status_code == 404
+
+
+EXCHANGE_HEADERS = {"Origin": "https://nytokenexchange.com", "Sec-Fetch-Site": "cross-site"}
+
+
+def test_exchange_sites_may_request_the_brief_from_their_own_domains(client: TestClient, sent_messages: list[EmailMessage]) -> None:
+    preflight = client.options(
+        "/token-exchange/brief",
+        headers={**EXCHANGE_HEADERS, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"},
+    )
+    assert preflight.status_code == 204
+    assert preflight.headers["Access-Control-Allow-Origin"] == "https://nytokenexchange.com"
+    assert preflight.headers["Access-Control-Allow-Methods"] == "POST, OPTIONS"
+    assert preflight.headers["Access-Control-Allow-Headers"] == "content-type"
+    response = client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=EXCHANGE_HEADERS)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["Access-Control-Allow-Origin"] == "https://nytokenexchange.com"
+    assert "Origin" in response.headers["vary"]
+    assert len(sent_messages) == 1
+    assert "Page: https://nytokenexchange.com/\n" in sent_messages[0].text_body
+
+
+def test_exchange_site_brochure_keeps_its_campaign(
+    client: TestClient, sent_messages: list[EmailMessage], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda _r, name, touch: events.append((name, touch)))
+    monkeypatch.setattr(public_routes, "log_browser_funnel_event", lambda *_: pytest.fail("cookie funnel used"))
+    campaign = {"utm_source": "linkedin", "utm_medium": "paid_social", "utm_campaign": "ny-launch", "gclid": "dropped"}
+    response = client.post(
+        "/token-exchange/brief", json={"email": "ada@example.com", "campaign": campaign}, headers=EXCHANGE_HEADERS
+    )
+    assert response.status_code == 200
+    body = sent_messages[0].text_body
+    assert "utm_source: linkedin\nutm_medium: paid_social\nutm_campaign: ny-launch\n" in body
+    assert "gclid" not in body
+    [(name, touch)] = events
+    assert name == "enterprise_brief_delivered"
+    assert touch["utm_campaign"] == "ny-launch"
+    assert touch["landing_path"] == "nytokenexchange.com/"
+
+
+def test_exchange_site_email_lists_only_campaign_fields_the_page_sent(
+    client: TestClient, sent_messages: list[EmailMessage], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(public_routes, "log_exchange_site_funnel_event", lambda *_: None)
+    client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=EXCHANGE_HEADERS)
+    client.post(
+        "/token-exchange/brief",
+        json={"email": "bo@example.com", "campaign": {"utm_campaign": "ny-launch"}},
+        headers={**EXCHANGE_HEADERS, "Sec-GPC": "1"},
+    )
+    assert [m.text_body.count("utm_") for m in sent_messages] == [0, 0]
+
+
+def test_exchange_site_touch_keeps_the_launch_link_defaults() -> None:
+    def touch(campaign: dict[str, str]) -> tuple[str, ...]:
+        result = acquisition.exchange_site_touch("https://nytokenexchange.com/", campaign)
+        return tuple(result[name] for name in ("utm_source", "utm_medium", "utm_campaign", "utm_content"))
+
+    assert touch({}) == ("nytokenexchange.com", "referral", "token-exchange-launch", "brief")
+    assert touch({"utm_source": "linkedin"}) == ("linkedin", "referral", "token-exchange-launch", "brief")
+    assert touch({"utm_source": "linkedin", "utm_campaign": "ny"}) == ("linkedin", "referral", "ny", "brief")
+
+
+def test_exchange_site_campaign_ignores_privacy_signals_and_bad_values() -> None:
+    def request(headers: dict[str, str]) -> Request:
+        raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        return Request({"type": "http", "method": "POST", "path": "/token-exchange/brief", "headers": raw, "query_string": b""})
+
+    campaign = {"utm_source": "linkedin", "utm_medium": 7, "utm_term": "x" * 300}
+    assert acquisition.exchange_site_campaign(request({}), campaign) == {"utm_source": "linkedin", "utm_term": "x" * 128}
+    assert acquisition.exchange_site_campaign(request({"DNT": "1"}), campaign) == {}
+    assert acquisition.exchange_site_campaign(request({}), ["utm_source"]) == {}
+
+
+def test_exchange_site_funnel_event_respects_privacy_signals(caplog: pytest.LogCaptureFixture) -> None:
+    touch = acquisition.exchange_site_touch("https://nytokenexchange.com/", {"utm_source": "linkedin"})
+
+    def request(headers: dict[str, str]) -> Request:
+        raw = [(k.lower().encode(), v.encode()) for k, v in {"user-agent": "Mozilla/5.0", **headers}.items()]
+        return Request({"type": "http", "method": "POST", "path": "/token-exchange/brief", "headers": raw, "query_string": b""})
+
+    with caplog.at_level(logging.INFO):
+        acquisition.log_exchange_site_funnel_event(request({"Sec-GPC": "1"}), "enterprise_brief_delivered", touch)
+        assert not [r for r in caplog.records if r.message == "acquisition.enterprise_brief_delivered"]
+        acquisition.log_exchange_site_funnel_event(request({}), "enterprise_brief_delivered", touch)
+    [record] = [r for r in caplog.records if r.message == "acquisition.enterprise_brief_delivered"]
+    assert record.utm_source == "linkedin"
+
+
+def test_exchange_sites_can_read_the_error_they_caused(client: TestClient, sent_messages: list[EmailMessage]) -> None:
+    response = client.post("/token-exchange/brief", json={"email": "not-an-address"}, headers=EXCHANGE_HEADERS)
+    assert response.status_code == 422
+    assert response.headers["Access-Control-Allow-Origin"] == "https://nytokenexchange.com"
+    assert not sent_messages
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["https://www.nytokenexchange.com", "http://nytokenexchange.com", "https://nytokenexchange.com.evil.example", "https://other.example"],
+)
+def test_other_origins_get_no_cors_answer(client: TestClient, sent_messages: list[EmailMessage], origin: str) -> None:
+    headers = {"Origin": origin, "Sec-Fetch-Site": "cross-site"}
+    preflight = client.options("/token-exchange/brief", headers={**headers, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 403
+    assert "Access-Control-Allow-Origin" not in preflight.headers
+    response = client.post("/token-exchange/brief", json={"email": "ada@example.com"}, headers=headers)
+    assert response.status_code == 403
+    assert "Access-Control-Allow-Origin" not in response.headers
+    assert not sent_messages
+
+
+def test_exchange_origins_are_exactly_the_canonical_static_site_domains() -> None:
+    markets = json.loads((Path(__file__).resolve().parents[1] / "sites" / "token-exchange" / "markets.json").read_text())
+    assert public_routes._EXCHANGE_ORIGINS == {f"https://{market['domain']}" for market in markets}
+
