@@ -264,6 +264,8 @@
       "status": 1,
       "id": "google/gemini-2.5-flash",
       "upstream_id": "google/gemini-2.5-flash",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2500000
@@ -284,6 +286,8 @@
       "status": 1,
       "id": "google/gemini-2.5-flash-lite-preview-06-17",
       "upstream_id": "google/gemini-2.5-flash-lite-preview-06-17",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000
@@ -304,6 +308,8 @@
       "status": 1,
       "id": "google/gemini-2.5-pro",
       "upstream_id": "google/gemini-2.5-pro",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000
@@ -324,6 +330,8 @@
       "status": 1,
       "id": "google/gemini-3-flash-preview",
       "upstream_id": "google/gemini-3-flash-preview",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000
@@ -344,6 +352,8 @@
       "status": 1,
       "id": "google/gemini-3.1-flash-lite-preview",
       "upstream_id": "google/gemini-3.1-flash-lite-preview",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 1500000
@@ -364,6 +374,8 @@
       "status": 1,
       "id": "google/gemini-3.1-pro-preview",
       "upstream_id": "google/gemini-3.1-pro-preview",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 12000000
@@ -384,6 +396,8 @@
       "status": 1,
       "id": "google/gemini-3.5-flash",
       "upstream_id": "google/gemini-3.5-flash",
+      "routable": false,
+      "routable_reason": "google-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 9000000
