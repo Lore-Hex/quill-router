@@ -288,8 +288,9 @@ The second is closed as fast as each writer can close it:
   write that leaves a shard negative.
   - So the stored allocation less the consumption booked is never less than
     the holds the owner has open, before a record is applied as well as
-    after. A terminal the auditor has not booked has its whole charge still
-    inside that difference, and its shortfall is no more than its charge.
+    after. Until a terminal is booked, nothing of it has left that
+    difference. When it is booked its shortfall goes in first, and that is
+    whatever its charge takes beyond the lease's room.
   - Each checkpoint record carries the owner's open holds (above). When it
     applies one, the auditor checks that the stored allocation less the
     consumption booked is at least that sum. A difference means the owner
@@ -348,8 +349,10 @@ Two things follow, and §4.13 rests on both:
 - **A lease's remaining allocation in Spanner is never less than its open
   holds.** Open is meant in the log's sense: every hold whose terminal the
   log does not hold, whatever prefix of the owner's records that turns out
-  to be. A terminal that is stored and not yet booked is not open, and its
-  whole charge is still inside the stored allocation. So the claim holds
+  to be. A hold whose terminal is stored and not yet booked is not open,
+  and its charge, less the shortfall its record carries, is still inside
+  the stored allocation. The same goes for a row in a draining lease's
+  drain log, whose append has made its raise already. So the claim holds
   with everything stored counted as booked, too: the charges and returns
   come out, and the shortfall their records carry goes in. Three rules give
   it: the auditor's raise and the front door's, each in the transaction
@@ -977,7 +980,9 @@ synchronous holds, through `settle_atomic`.
 - Only the member holding the lease publishes its ticks, numbered on from the
   stored last tick. It skips a tick at or below that number.
 - A gap in an owner's sequence numbers stops the lease's processing and
-  alerts.
+  alerts. Numbers are given at decision (§4.2), so this is the backstop for
+  the lease's order: a later record stored without an earlier one shows as
+  a gap, and is not booked.
 - One transaction can carry many leases, each its own conditional statement.
 - Winners are stored packed, one row per lease per commit. A row-deletion
   policy removes them once the lease is closed, their pending work is done,
@@ -1134,9 +1139,7 @@ A new owner never reuses a dead owner's lease. It is granted a new one.
       rebuild's check; rebuilds are rare enough for that wait.
   - If S was stored, every owner sequence number up to S must be present. A
     missing number is a true gap, and the lease stays reserved for an
-    operator. Numbers are given at decision (§4.2), so this is also the
-    backstop for the lease's order: a later record stored without an
-    earlier one shows as a gap, and is not booked.
+    operator.
   - If S was never stored, nothing depends on it yet: no reap was appended and
     no drain-log terminal decided. The rebuild publishes its tick as the
     auditor would, once its clock passes F plus the skew allowance. Once the
@@ -3106,3 +3109,11 @@ record.
   against it, and three holds have no applied terminal under a lease of
   two. The claim is about holds whose terminal the log does not hold, and
   §4.2 now says so.
+- **v40.** Codex and Fable both accepted v39, with one and two P3s on its
+  new sentences:
+  - a stored, unbooked terminal's charge is inside the stored allocation
+    only net of the shortfall its record carries, which is not stored until
+    it is booked;
+  - the claim's "log" includes a draining lease's drain log;
+  - the order's backstop is the live gap rule, so the sentence moved there
+    from the rebuild's check.
