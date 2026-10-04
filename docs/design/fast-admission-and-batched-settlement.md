@@ -2,7 +2,7 @@
 
 Status: **approved by Joseph on 2026-10-03 (v25). Nothing built.** v8 changed
 direction to regional leases, Joseph's choice (§2). Codex and Fable reviewed
-v1-v25 (§11) and both accepted v25. v26 to v31 add §4.13, how this fits with
+v1-v25 (§11) and both accepted v25. v26 to v32 add §4.13, how this fits with
 the work in flight on the same path, and §5.1, the TLA+ specs that are
 model-checked before the code is written. The first spec, `TerminalOrder`,
 and the runner that checks every spec's mutants are written (#1515).
@@ -331,10 +331,10 @@ lease's expiry minus a skew allowance.
 1. Verify the boot signature and the accepted image digest, against caches with
    a maximum age.
 2. Evaluate the compiled routing snapshot (§4.10) and compute the estimate e.
-   Without `max_tokens`, it assumes 512 output tokens. The fast path takes
-   only requests whose e covers what the provider can bill (§4.11).
+   Without `max_tokens`, it assumes 512 output tokens. It is the estimate
+   Python computes today, so a hold is the same amount on both paths (§4.13).
 3. At the owner, check the workspace's state from a cache with a short maximum
-   age (pause, trust, revocation). Then hold e against the lease.
+   age (pause, trust, debt, revocation). Then hold e against the lease.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
    settle and refund:
    - the authorization ID `A` and the generation ID;
@@ -510,8 +510,9 @@ and the request records all follow that rule.
     answers, a quill-cloud-proxy change (§9). An enclave that sends it
     declares that in its Stage D boot registration too, and the release
     applies only to holds admitted for such a boot. Then a streaming hold
-    with no accepted heartbeat by the first-heartbeat allowance plus the
-    heartbeat grace is released uncharged by its owner. A draining lease's
+    for which its owner has issued no heartbeat record by the first-heartbeat
+    allowance plus the heartbeat grace is released uncharged by that owner. A
+    draining lease's
     heartbeats are refused, and its holds end as §4.8 says, so the release
     does not apply there, and a hand-off record need not carry the boot's
     declaration.
@@ -519,10 +520,14 @@ and the request records all follow that rule.
     latency out of it. The fast path admits only streams the enclave
     heartbeats (§4.11), so this never releases a stream that runs without
     heartbeats.
-  - "Accepted" means durable: a first heartbeat that was stored but whose
-    answer was lost leaves a hold with a heartbeat, which is reaped at its
-    snapshot, as today. Without a durable heartbeat the enclave delivered
-    nothing and sends no settle, so nothing can still be owed.
+  - The test is that no heartbeat record was issued, not that none was
+    acknowledged or stored. A publish the owner issued and never saw
+    acknowledged can still be stored (above), and the owner cannot tell. A
+    release issued beside it would put both in the log. `TerminalOrder`
+    produces that sequence for either weaker test (§5.1). A hold with an
+    issued heartbeat is instead reaped at its snapshot, as today, once the
+    republished record is stored. With no heartbeat issued the enclave
+    delivered nothing and sends no settle, so nothing can still be owed.
   - Until then every streaming hold keeps today's 2 hours. A burst of
     first-heartbeat failures holds those estimates against the trust
     allowance for up to 2 hours, so a small workspace can get 503s with
@@ -702,14 +707,18 @@ headroom is unchanged.
   (`absorb_unrecovered_recovery_tx`).
 - An overrun lowers the signed headroom that grants read.
 
-**Pause, revoke, trust downgrade, or a switch out of fast mode:**
+**Pause, revoke, trust downgrade, debt, or a switch out of fast mode:**
 
 - Spanner refuses new grants for the workspace.
 - Owners learn of it from the state cache or a pushed control message, within
   the cache's maximum age. They then stop admitting and close the
   workspace's leases (§4.2).
+- A workspace marked in debt (above) is in that list: the state cache
+  carries the mark, so every owner stops admitting for it within the cache's
+  maximum age, as for a pause.
 - **Exposure:** at most the sum of `allocation − consumed` over the
-  workspace's open leases, within the trust allowance.
+  workspace's open leases, within the trust allowance, plus what the requests
+  then in flight overrun their holds by (§4.13).
   - Not `remaining`: refunds free held capacity, which new admissions can use
     until the owner stops.
 
@@ -1069,8 +1078,7 @@ when Python is unreachable: the first durable point is Python's
 ### 4.11 What stays synchronous at first
 
 Credit-funded keys on standard catalog routes go first: requests that do not
-stream, and streams the enclave heartbeats, when their hold covers what the
-provider can bill. These stay on today's Python path:
+stream, and streams the enclave heartbeats. These stay on today's Python path:
 
 - streams the enclave does not heartbeat. The owner decides that with
   today's rule (`_stage_d_eligibility_reason` in `gateway.py`) and its
@@ -1114,25 +1122,6 @@ provider can bill. These stay on today's Python path:
   answers heartbeats `retry`, which ends running streams as today's 503 does
   (§4.5); with eligibility disabled it admits no new streams on the fast
   path and keeps serving those it admitted;
-- requests whose hold does not cover what the provider can bill (§4.13),
-  streaming or not. The allowance counts holds, so a request that settles
-  far above its hold takes settled spend past the allowance. The fast path
-  takes a request only when both hold, as authorize sees them:
-  - the caller named an output limit: the request's `max_tokens` is not
-    null. Without one the hold is priced at 512 output tokens, and the
-    provider may return up to its own ceiling;
-  - the request asks for no reasoning: `requested_parameters` has no
-    `reasoning`. A thinking budget is not an output limit. It raises the
-    ceiling the enclave sends above the caller's limit.
-
-  For those requests the enclave sends the provider the caller's limit (read
-  on its Anthropic and OpenAI-compatible paths at `29be0fdd`; shadow checks
-  every endpoint, §8). The owner also prices their input at the endpoint's
-  cache-write rate where that is above its input rate, so a cache write is
-  inside the hold. What is left is the input estimate's error, which shadow
-  measures before the pilot. The others move once the enclave states, in
-  authorize, the output ceiling it will send for each candidate, and the hold
-  is priced at it (§9);
 - requests that carry a speculation descriptor, which Python alone answers
   (§4.13);
 - requests with an `Idempotency-Key` (§4.3);
@@ -1243,15 +1232,19 @@ lists.
   estimated input at the input rate, plus the caller's `max_tokens`, or 512
   tokens without one, at the output rate (`outputTokenEstimate` in the
   enclave, `output_estimate` in Python). A settle bills what the provider
-  reports. With the input estimate exact, it can still pass the hold in three
-  ways (quill-cloud-proxy `29be0fdd`):
+  reports. With the input estimate exact, it can still pass the hold
+  (quill-cloud-proxy `29be0fdd`, quill-router `7ea04fa7`):
   - **The ceiling sent to the provider is above the estimate.** With no
     caller limit, adaptive-thinking Anthropic models are sent 32,000 tokens
     (#440), about sixty times a 512-token hold, and OpenAI-compatible
     upstreams are sent no limit. With a caller limit and a thinking budget,
     the enclave sends the budget plus the limit
     (`anthropicMaxTokensForThinking`): a limit of 100 with high effort
-    becomes 8,292.
+    becomes 8,292. Image-capable Gemini models are sent no ceiling whatever
+    the caller named (`vertexGeminiPayload` deletes `maxOutputTokens`).
+  - **Some output is billed outside the ceiling.** Sakana's Fugu bills its
+    orchestration tokens beside the caller's limit
+    (`openAIStreamUsage.outputTokens` adds `orchestration_output_tokens`).
   - **The stream cap counts relayed bytes, not billed tokens.** The enclave
     ends a stream when its own meter reaches the hold (`cap_reached`, with
     `QUILL_TERMINATE_AT_CAP` on in every GCP region; elsewhere the heartbeat
@@ -1260,13 +1253,52 @@ lists.
     provider's count (`terminalUsage`), which includes reasoning the provider
     billed and did not relay. So the cap bounds what the client received, not
     the charge.
-  - **A cache write bills above the input rate:** 1.25 times it
-    (`pricing.py`), while the estimate prices all input at the input rate.
+  - **Some input is billed above the input rate.** A cache write bills 1.25
+    times it (`pricing.py`). On a few endpoints a cache read does too
+    (`openai/gpt-oss-120b` on SiliconFlow: 79,125 against 52,750 microdollars
+    a million). An estimate just under a price-tier boundary reprices
+    everything when the real count is just over it.
 
-  On today's path each is an overrun against the balance: 12.2% of settles,
-  $45.57 a day (§1). On the fast path the trust allowance counts holds, so
-  settled spend would pass the allowance by the same ratio. So the fast path
-  takes only requests whose hold covers what the provider can bill (§4.11).
+  **None of this is new with the fast path.** The hold is the same estimate
+  and the settle the same charge on both paths. Today an overrun is taken
+  from the balance: 12.2% of settles, $45.57 a day, 96% of it in 0.7% of
+  settles (§1). On the fast path it is booked beyond the lease's allocation
+  (§4.2) and taken from the balance in the same way.
+
+  v29 to v31 tried to make it impossible instead, by admitting only requests
+  whose hold covers what the provider can bill. That is withdrawn, for two
+  reasons the reviews of v30 and v31 made plain:
+  - It needs every endpoint's billing behaviour to be known. Each round
+    found endpoints the conditions missed, faster than conditions could be
+    written. The alternative, an allow-list of endpoints proven in shadow,
+    would still leave out every request that asks for reasoning or names no
+    limit. That share is unmeasured, and coding agents commonly do both.
+  - Pricing every hold at its provider's ceiling does not scale. A request
+    with no limit would reserve about sixty times what it spends, so a
+    workspace's balance would have to cover its concurrency at that price.
+
+  So the fast path keeps today's holds, and an overrun is bounded as it is
+  today:
+  - Admission is bounded by reserved money. Open holds never exceed their
+    lease's allocation, and leases never exceed the trust allowance or the
+    paid headroom (§4.2). That is today's rule with the lease in place of the
+    balance.
+  - An overrun stops admission. It makes its lease's `remaining` negative,
+    and the owner admits nothing more under it (§4.2). The auditor books it
+    within seconds. It lowers the signed headroom that grants read, and a
+    workspace it takes into debt stops fast admission everywhere within the
+    state cache's maximum age (§4.7).
+  - Leases are for workspaces at a trust tier that allows them (§4.11). A
+    workspace too new, or too little trusted, to be let run into debt is not
+    on the fast path.
+  - So settled spend can pass the allowance by what the requests in flight
+    overrun, each by at most its provider's ceiling less its estimate. Today
+    the same sentence holds with the balance in place of the allowance, for
+    every workspace.
+
+  Shadow records each settle against its hold, by endpoint, so the allowances
+  are sized against the measured overrun (§8). Whether holds should cover the
+  bill, for some tiers or for all, is a pricing decision for both paths (§9).
 - **The trust-tier job** (#1484, #1491) selects its candidates from one
   snapshot, in shadow. The trust allowance (§4.7) reads the tier it
   maintains, and nothing in that job depends on leases.
@@ -1304,7 +1336,8 @@ Each has a production check.
    only after every fast hold of the key is booked.
 9. **Pauses** stop admission within the state cache's maximum age. Exposure is
    at most the sum of `allocation − consumed` over open leases, within the
-   workspace's trust allowance.
+   workspace's trust allowance, plus the overruns of the requests then in
+   flight.
 10. **Renewals and bookings are conditional:** renewals on lease state and
     epoch, bookings on the auditor's commit version. Replays change nothing.
 11. **Debt marks every shard.** No credit shard is negative unless every
@@ -1318,10 +1351,9 @@ Each has a production check.
 - the state cache's maximum age, for pauses and revocation;
 - a clock wrong, or stepped, by more than the skew allowance, which could let
   an owner admit or decide after its lease drains;
-- overruns: a settle above its hold, booked in full, as debt when the balance
-  cannot cover it (§4.7). The fast path's cohort is chosen so that a hold
-  covers what the provider can bill (§4.11), which leaves the input
-  estimate's error;
+- overruns: a settle above its hold, by at most its provider's ceiling less
+  its estimate (§4.13). It is booked in full, as debt when the balance cannot
+  cover it (§4.7). This window is today's, unchanged;
 - requests whose gateway could not reach the log within its retry budget
   (§4.8);
 - an owner record received after a tick that reaped its hold, which only
@@ -1350,7 +1382,12 @@ Three properties the table's short names hide:
 - `TerminalOrder` treats the release before a first heartbeat (§4.5) as a
   terminal with outcome `released`. It checks that a hold with a durable
   heartbeat is never released, by a release record or by closing the lease
-  over it, and that the enclave of a released hold had given up.
+  over it, and that the enclave of a released hold had given up. Writing it
+  showed that the release must ask for no heartbeat issued, not none
+  acknowledged (§4.5).
+- It also checks that adoption changes who publishes a terminal and not which
+  one wins: an adopted record that wins is the drain log's first row for its
+  authorization.
 - `AuditorCommit` checks Invariant 4 across a takeover, whichever members
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
@@ -1427,17 +1464,20 @@ Three properties the table's short names hide:
     is gone. It is deleted when `LeaseLifecycle` lands, and its header's
     lessons on vacuous guards move to a README in `proofs/`.
   - The check is of existence. Whether a test follows its spec is for
-    review.
+    review, and so is where the code went: a change that implements a
+    modeled protocol anywhere but the path its spec names is refused there.
   - `LeaseLifecycle`, `TerminalOrder` and `AuditorCommit` are shadowed by
     the owner's and the auditor's state machines in the Go service, which
     lives in this repository under `fastpath/`. So the `proofs` job can see
     its tests, and one pull request can change a spec, its shadow and the
-    code. Their planned entries name that directory, so the spike cannot
-    land without them.
+    code. Each planned entry names a package of its own,
+    `fastpath/internal/` and the spec's name in lower case, so the three
+    become implemented one at a time, each when its package first appears.
   - `CreditDebt` and `KeyCapFence` are shadowed in Python. The code around
     them exists today, so each names a new pure module that holds its rules:
-    the debt rules, and the check that enables a cap. The existing
-    primitives call it, and the planned rule applies to that module.
+    the debt rules, and the check that enables a cap. The step that changes
+    those rules (§8) creates the module, and the existing primitives call
+    it.
 - **Recorded traces are replayed through the shadow.** In the spike and in
   shadow, a trace recorded from a real lease is fed to the shadow's
   transition function, which checks that each step is one of the spec's
@@ -1573,17 +1613,15 @@ leases, and was retired on 2026-09-27.
    reaper outcomes and records, and in the answer bytes the enclave decodes.
    Python's answer to the same request is the reference for those bytes; the
    error envelopes are also frozen in `tests/fixtures/speculation_v1/`.
-   - It also records, for every request the fast path would have admitted,
-     its settle against the hold the owner priced. The pilot starts only
-     when that cohort's settles stay within their holds, but for the input
-     estimate's error, inside a tolerance set from the measurement. An
-     endpoint whose settles pass it is left out of the cohort by name.
+   - It also records each settle against its hold, by endpoint. Nothing is
+     gated on it: the fast path carries the overruns today's path carries
+     (§4.13). The figure sizes the allowances, and shows where pricing a hold
+     differently would pay (§9).
 7. **Benchmark gate** (§6).
 8. **Pilot:** Joseph's own workspace, then a few large ones, with kill switches
    per workspace, region and cloud. The first cohort is requests that do not
-   stream, name an output limit and ask for no reasoning (§4.11). Streams
-   under the same two conditions join once the enclave sends the heartbeat
-   declaration and registrations carry it.
+   stream. Streams join once the enclave sends the heartbeat declaration and
+   registrations carry it (§4.11). Python stores the declaration since #1519.
 9. **Widen;** move keyed requests, capped keys, payouts and the remaining route
    types (§4.11) one at a time; then retire the Python hot path.
 
@@ -1613,13 +1651,19 @@ leases, and was retired on 2026-09-27.
     Stage D boot registration, which fast streaming admission requires
     (§4.11);
   - the retirement phase in §4.12, without which gateway scale-in stays
-    scale-out only;
-  - the output ceiling the enclave will send the provider, for each
-    candidate, in the authorize request. A hold priced at it brings requests
-    with no caller limit, and those that ask for reasoning, onto the fast
-    path (§4.11). The ceiling depends on the model that is finally chosen,
-    which authorize itself decides, so the request must carry one per
-    candidate or the largest.
+    scale-out only.
+- **Whether holds should cover the bill,** Joseph's call. A hold is an
+  estimate, and a settle can pass it several ways (§4.13). That is true on
+  both paths and is not changed by this design. The choices:
+  - leave it, as today: an overrun becomes debt, and the workspace is stopped
+    once it is booked;
+  - price the hold at the provider's ceiling for workspaces below some trust
+    tier. That bounds what a new workspace can overrun, at the cost of fewer
+    concurrent requests for it. It needs the enclave to state, in authorize,
+    the ceiling it will send for each candidate, since the ceiling depends on
+    the model that authorize itself chooses;
+  - raise the estimate only where the measured overruns are: 96% of overrun
+    dollars are in 0.7% of settles (§1).
 - **Where request records live at 100T:** ClickHouse rather than Spanner
   (§6).
 - **Home-region assignment** for workspaces whose traffic moves between
@@ -2313,3 +2357,38 @@ record.
   Looking for a mutant that would break "a settle wins only for a stream
   that ran" is what showed that it restated a guard. The rule that every
   invariant and property needs such a mutant came from that.
+- **v32.** Codex (3 P1, 1 P2) and Fable (3 P2, 5 P3) reviewed v31, and Codex
+  reviewed the first spec (#1515). On v31:
+  - three more ways a settle passes a hold that the two conditions did not
+    see: image-capable Gemini models are sent no ceiling, Fugu bills
+    orchestration tokens beside the caller's limit, and one endpoint's
+    cache-read rate is above its input rate (Codex P1s);
+  - the measured gate could not fail: its tolerance was to be fitted to the
+    data it gated, and an endpoint never measured was admitted (Fable P2,
+    Codex P2);
+  - the cohort had become narrow by the shape of a request, while §6 and the
+    rest still assumed the hottest workspace's whole rate on the fast path
+    (Fable P2);
+  - three planned specs naming one directory could not become implemented
+    one at a time (Fable P2).
+
+  v32 answers them by going back to the cohort Joseph approved in v25:
+  - The narrowing of v29 to v31 is withdrawn. Making a hold cover the bill
+    needs every endpoint's billing behaviour to be known, the reviews found
+    exceptions faster than conditions could be written, and pricing a hold
+    at its ceiling would reserve about sixty times what a request spends.
+  - §4.13 keeps every mechanism the reviews found, and says what bounds an
+    overrun instead: it is the hold and the settle of today's path, it stops
+    admission under its lease at once, it is booked within seconds, debt
+    stops fast admission within the state cache's age, and leases are for
+    trust tiers that allow them. Invariant 9 and the overrun window say so.
+  - Whether holds should cover the bill is a pricing decision for both
+    paths, now in §9 as Joseph's call.
+  - Each planned spec names its own package.
+
+  From the spec's review:
+  - The release before a first heartbeat must ask for no heartbeat issued.
+    "None accepted", read as none acknowledged or none stored yet, releases a
+    hold whose heartbeat then lands. §4.5 now says so.
+  - `TerminalOrder` gained the adoption property: adopting any drain row but
+    the first passed every claim before.
