@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-10-04T10:32:15Z",
+  "generated_at": "2026-10-04T15:40:42Z",
   "price_scale": "microdollars_per_million",
   "model_count": 20,
   "models": [
@@ -55,7 +55,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -296,7 +298,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -345,7 +349,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
@@ -700,7 +706,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "yutori/n1.5",
@@ -749,7 +757,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.1",
@@ -800,7 +810,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -851,7 +863,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "nvidia/Nemotron-3.5-Lightning-30B-A3B",

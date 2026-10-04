@@ -240,11 +240,12 @@
         "streaming",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 250000,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "kimi k2.7 code",
@@ -347,10 +348,11 @@
         "tools",
         "streaming"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 600000,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "qwen3 embedding 8b",
@@ -399,11 +401,12 @@
         "streaming",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 200000,
       "cached_input_token_price_per_m": 40000,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "qwen3.8 2.4t a95b",
@@ -554,11 +557,12 @@
         "streaming",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 350000,
-      "missing_since": "2026-10-04"
+      "missing_since": "2026-10-04",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "glm-5.2",
@@ -708,7 +712,7 @@
   ],
   "source": "https://api.lyceum.technology/openai/v1/models",
   "pricing_source": "https://lyceum.technology/products/inference/models/",
-  "generated_at": "2026-10-04T10:32:15Z",
+  "generated_at": "2026-10-04T15:40:42Z",
   "price_scale": "microdollars_per_million",
   "model_count": 28
 }
