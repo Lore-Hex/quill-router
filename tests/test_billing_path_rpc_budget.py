@@ -8,11 +8,10 @@ inserting a new helper between `@spanner_rpc_budget(...)` and
 function that writes billing state unguarded -- while still compiling, still
 importing, and still passing every behavioural test in the suite.
 
-Warm lookup authorize spends five sequential Spanner operations, armed or
+Warm lookup authorize spends four sequential Spanner operations, armed or
 unarmed: one strong auth-context/BYOK/boot snapshot, the idempotency read,
-credit reserve (THEN RETURN pause evidence when armed), the
-key/reservation/authorization batch, and commit. C3 removes the armed pause
-SELECT, reducing the armed count from six to five.
+the credit/key/reservation/authorization batch, and commit. The authorize
+hold-time batch leaves only the commit RPC after the first credit write.
 The exact sequence is pinned in
 ``test_gateway_authorize_spanner_operations.py``; the 20-second deadline stays.
 

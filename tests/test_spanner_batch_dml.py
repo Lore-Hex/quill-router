@@ -419,7 +419,7 @@ def test_real_sdk_authorize_aborted_prefix_retries_before_business_fallback(
         tx.execute_sql.return_value = []
         tx.execute_update.return_value = 1
     aborted.batch_update.return_value = (Status(code=code_pb2.ABORTED), [0, 1])
-    committed.batch_update.return_value = (Status(), [1, 1, 1])
+    committed.batch_update.return_value = (Status(), [1, 1, 1, 1])
     assert _authorize(session)['outcome'] == AuthorizeOutcome.ACCEPTED
     assert aborted.batch_update.call_args == committed.batch_update.call_args
     aborted.commit.assert_not_called()

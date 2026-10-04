@@ -420,3 +420,32 @@ def test_buffered_write_does_not_excuse_an_inversion_in_recorded_sql(order):
     assert record.unproved == {"t"}, "the buffered write must still be reported as unproved"
     with pytest.raises(lock_order.LockOrderError, match="deadlock shape"):
         record.check("unproved-must-not-excuse")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_guard_observes_order_inside_credit_key_batch(reverse):
+    from google.cloud.spanner_v1 import param_types
+
+    from tests.fakes.spanner import _FakeTransaction
+    from tests.test_spanner_batch_dml import _database
+    from trusted_router.storage_gcp_counter_dml import (
+        reserve_credit_statement,
+        reserve_key_statement,
+    )
+
+    tx = _FakeTransaction(_database())
+    statements = [reserve_credit_statement(param_types, "workspace", 100),
+                  reserve_key_statement(param_types, "key", 100, is_byok=False)]
+    if reverse:
+        statements.reverse()
+    try:
+        status, counts = tx.batch_update(statements)
+        assert status.code == 0 and counts == [1, 1]
+        assert lock_order.recorder.both_tables_seen == 1
+        if reverse:
+            with pytest.raises(lock_order.LockOrderError):
+                lock_order.recorder.check("reversed-batch")
+        else:
+            lock_order.recorder.check("credit-first-batch")
+    finally:
+        lock_order.recorder.reset()

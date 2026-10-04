@@ -101,10 +101,10 @@ def test_authorize_rejection_order_and_rollback(
         }[failure]
     )
     transactions = list(dict.fromkeys(tx for tx, _ in calls))
-    assert len(transactions) == (1 if failure == "credit" else 2)
+    assert len(transactions) == 2
     for transaction in transactions:
         statements = transaction_statements([(tx, sql) for tx, sql in calls if tx is transaction])
-        if failure == "credit":
+        if failure == "credit" and transaction is transactions[-1]:
             assert statements and all(sql.startswith("update tr_credit_balance") for sql in statements)
         else:
             authorize_credit_before_key(statements)
@@ -252,20 +252,29 @@ def test_armed_pause_precedes_capped_key_and_rolls_back(
         db, has_credit_candidate=has_credit_candidate,
         trust_settings=SimpleNamespace(spend_lease_trust_eligibility_enabled=True),
     )
-    statements = transaction_statements(calls)
-    pause = next(i for i, sql in enumerate(statements)
-                 if ("then return billing_pause_causes, pause_epoch" in sql
-                     if has_credit_candidate else sql.startswith("select billing_pause_causes, pause_epoch")))
-    if paused:
-        assert result["outcome"] == "billing_paused"
-        assert not any("tr_key_limit" in sql for sql in statements)
-        assert (db.typed, db.reservations, db.gateway_authorizations) == before
-        if has_credit_candidate:
-            assert statements[0].startswith("update tr_credit_balance")
-    else:
-        assert result["outcome"] == billing.AuthorizeOutcome.ACCEPTED
-        assert pause < next(i for i, sql in enumerate(statements) if "tr_key_limit" in sql)
-        authorize_credit_before_key(statements)
+    transactions = list(dict.fromkeys(tx for tx, _ in calls))
+    assert len(transactions) == (2 if has_credit_candidate and paused else 1)
+    for tx in transactions:
+        statements = transaction_statements([call for call in calls if call[0] is tx])
+        if tx is not transactions[-1]:
+            authorize_credit_before_key(statements)
+            assert tx.rolled_back
+            continue
+        pause = next(i for i, sql in enumerate(statements)
+                     if "billing_pause_causes" in sql)
+        if paused:
+            assert result["outcome"] == "billing_paused"
+            assert not any("tr_key_limit" in sql for sql in statements)
+            assert (db.typed, db.reservations, db.gateway_authorizations) == before
+            assert tx.rolled_back
+            if has_credit_candidate:
+                assert "then return billing_pause_causes, pause_epoch" in statements[0]
+        else:
+            assert result["outcome"] == billing.AuthorizeOutcome.ACCEPTED
+            assert pause < next(i for i, sql in enumerate(statements) if "tr_key_limit" in sql)
+            if has_credit_candidate:
+                assert "coalesce(array_length(billing_pause_causes), 0) = 0" in statements[pause]
+            authorize_credit_before_key(statements)
 
 
 def _fragmented_authorize(store: Any, key: Any, **kwargs: Any) -> tuple[str, Any]:

@@ -62,6 +62,7 @@ from trusted_router.storage_gcp_counter_dml import (
     read_reservation_by_idempotency,
     reservation_insert_statement,
     reserve_credit,
+    reserve_credit_statement,
     reserve_credit_with_pause,
     reserve_key,
     reserve_key_statement,
@@ -163,6 +164,13 @@ class _Reject(Exception):
 
     def __init__(self, outcome: str) -> None:
         self.outcome = outcome
+
+
+class _RetrySequentialCreditReserve(GoogleAPICallError):
+    """Discard the batch before sequential credit/pause classification.
+
+    Use the same protected API-error rollback lifecycle as key misses.
+    """
 
 
 class _RetrySequentialKeyReserve(GoogleAPICallError):
@@ -566,11 +574,17 @@ def authorize_atomic(
         raise ValueError("strict budgets require exactly one key shard")
     speculative = not strict_budget and not skip_key_limit and speculate_key_limit
 
-    def check_key_prefix(counts: Sequence[int]) -> None:
-        # Zero is ambiguous (missing, exhausted, uncapped, BYOK-excluded).
-        # Even a later INSERT error must not override the key business decision.
+    batch_credit = has_credit_candidate and not strict_budget and (speculative or skip_key_limit)
+
+    def check_prefix(counts: Sequence[int]) -> None:
+        # Credit zero means underfunded or paused; key zero means missing,
+        # exhausted, uncapped or BYOK-excluded. Classify only after rollback.
+        # Later INSERT errors must not override the first missed counter.
         # ABORTED is handled first by execute_batch_dml and retries this callback.
-        if counts and counts[0] == 0:
+        if batch_credit and counts and counts[0] == 0:
+            raise _RetrySequentialCreditReserve("speculative credit hold missed")
+        key_index = int(batch_credit)
+        if speculative and len(counts) > key_index and counts[key_index] == 0:
             raise _RetrySequentialKeyReserve("speculative key hold missed")
 
     def txn(transaction: Any) -> dict:
@@ -585,7 +599,10 @@ def authorize_atomic(
         selected_credit_shard = UNSHARDED
         armed = trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled
         paused = False
-        if has_credit_candidate:
+        if batch_credit:
+            selected_credit_shard = shard_candidates[0]
+            credit_hold = estimate
+        elif has_credit_candidate:
             for candidate in shard_candidates:
                 if armed:
                     reserved, paused = reserve_credit_with_pause(
@@ -601,6 +618,7 @@ def authorize_atomic(
             credit_hold = estimate
 
         if armed:
+            # Batched credit checks pause in its UPDATE predicate below.
             # Returning DML observes pause at the write on the selected row.
             # Returning both columns preserves the old SELECT's dependencies
             # on this key, without coupling unrelated credit shards. Spanner
@@ -698,21 +716,21 @@ def authorize_atomic(
                 authorization_id,
                 legacy_auth_body,
             )
+        statements = []
+        if batch_credit:
+            statements.append(reserve_credit_statement(
+                pt, workspace_id, estimate, shard=selected_credit_shard, check_pause=armed,
+            ))
         if speculative:
-            # Ordered server execution: credit precedes key,
-            # and key precedes these new rows. A zero does NOT stop Batch DML.
-            execute_batch_dml(
-                transaction,
-                [reserve_key_statement(
-                    pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
-                ), reservation_statement, authorization_statement],
-                [(1,), (1,), (1,)],
-                check_prefix=check_key_prefix,
-            )
-        else:
-            execute_batch_dml(
-                transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
-            )
+            statements.append(reserve_key_statement(
+                pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
+            ))
+        # Credit before key; no client RPC between these locks and commit.
+        # A zero does not stop Batch DML: check the prefix before INSERT errors.
+        statements.extend([reservation_statement, authorization_statement])
+        execute_batch_dml(
+            transaction, statements, [(1,)] * len(statements), check_prefix=check_prefix,
+        )
         return {
             "outcome": AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=strict_decision),
             "reservation_id": reservation_id,
@@ -726,13 +744,14 @@ def authorize_atomic(
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize",
             )
-        except _RetrySequentialKeyReserve:
+        except (_RetrySequentialCreditReserve, _RetrySequentialKeyReserve):
             # Protected API-error cleanup attempted rollback before the SDK
             # discarded the handle. Cleanup never renews the shared T1 budget.
             # Retry the original decision path once; it handles no-hold success,
             # all shard candidates, and terminal rejection without speculation.
             # IDs, created_at, and candidate order remain stable across attempts.
             speculative = False
+            batch_credit = False
             return run_in_transaction_with_retry(
                 database, txn, transaction_tag="tr_authorize",
             )

@@ -89,6 +89,29 @@ def reserve_credit(
     return count == 1
 
 
+def reserve_credit_statement(
+    param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+    check_pause: bool = False,
+) -> DmlStatement:
+    """First-candidate credit hold for the authorize hold-time batch.
+
+    billing_pause_causes is ARRAY<STRING(32)> (migrate_typed_counters.sh).
+    NULL/empty arrays are unpaused; every nonempty array is paused, including
+    arrays containing empty strings or NULL. This matches billing_paused_row.
+    Keep reserve_credit and returning DML unchanged as the fallback oracle.
+    """
+    pause_predicate = (
+        " AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if check_pause else ""
+    )
+    return (
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
+        "WHERE workspace_id=@ws AND shard=@shard "
+        "AND (total_credits - total_usage - reserved) >= @est" + pause_predicate,
+        {"est": int(amount), "ws": workspace_id, "shard": shard},
+        {"est": param_types.INT64, "ws": param_types.STRING, "shard": param_types.INT64},
+    )
+
+
 def reserve_credit_with_pause(
     transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
 ) -> tuple[bool, bool]:

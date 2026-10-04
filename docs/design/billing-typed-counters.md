@@ -232,6 +232,55 @@ codex findings #4 & #5:
    sharding cutover.
 3. refund = same claim, then release holds with **no** usage increment.
 
+### Authorize hold-time batch
+
+Cut 2 targets lock hold time. Production read-only `SPANNER_SYS` measurements
+on 2026-10-03, 14:00–18:00Z found authorize aborts of 4.5–6.1%/hour and settle
+aborts of 3.1–4.5%/hour at about 40k transactions of each kind per hour. Lock
+wait totaled 6.7–9.4 thousand seconds/hour: 68–80% on one workspace's credit
+balances (64 evenly loaded shards), 20–31% on its key-limit windows. Conditional
+read/write UPDATEs acquire Exclusive locks on `reserved`/`total_usage` and key
+window cells. C1 already reduced lock wait from 8,974 to 6,817 seconds/hour and
+settle aborts to 3.08% by putting hot releases last in its batch; settle is
+unchanged here.
+
+Fresh credit authorize now has three sequential operations, armed or unarmed:
+
+| Shape | Transaction sequence |
+|---|---|
+| Speculative key | idempotency read → batch [credit, key, reservation INSERT, authorization INSERT] → commit |
+| Skip key limit | idempotency read → batch [credit, reservation INSERT, authorization INSERT] → commit |
+| Sequential key / strict budget | unchanged: idempotency read → sequential credit and key checks → INSERT batch → commit |
+| BYOK | unchanged: idempotency read → armed shard-zero pause read if enabled → existing key/INSERT path → commit |
+| Replay / mismatch | unchanged: authoritative idempotency read first; replay commits, mismatch rolls back |
+| Credit/key batch miss | idempotency read → batch → rollback → original sequential transaction |
+
+The credit lock now spans only the commit RPC after Batch DML, instead of the
+separate batch RPC plus commit (the former Europe path held it across roughly
+250–350 ms of client round trips plus about 25 ms commit). These are transaction
+operation counts: the warm gateway adds one auth-context/BYOK/boot snapshot,
+for four operations overall. This change does not claim a measured p50 or
+production abort-rate improvement before rollout.
+
+The armed credit predicate is `COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0`.
+The actual DDL is `ARRAY<STRING(32)>`: NULL and empty arrays pass; every nonempty
+array fails, even `['']`, `['[]']`, `[' ']`, and `['[ ]']`. Scalar JSON-looking
+strings are not values of this column. The native SQL builder cases compare
+batch row counts to `billing_paused_row` over that value matrix. The local fake
+also evaluates the emitted predicate rather than calling the Python oracle.
+A zero credit count cannot distinguish insufficient credit from pause: it
+rolls back before retrying all candidates with the unchanged returning-DML
+classifier. This preserves the first funded shard's pause decision and
+insufficient-credit precedence. Key misses use the existing sequential fallback.
+
+`tests/fakes/authorize_main_6e793645.py` freezes main's authorize and reserve
+helpers, pinned by the same AST digest mechanism as C1. The differential covers
+1,920 combinations plus 12,565 ABORTED injections (every reached statement/commit in both
+implementations), checks complete durable state and exact RPC/SQL/parameter
+traces, and includes AlreadyExists winner races. The hold-time trace pins one
+RPC after the first credit write (main: two). No explicit begin or extra RPC
+is introduced; stable IDs/time, protected rollback and the shared deadline stay.
+
 ### Overdraft semantics (codex finding #6) — explicit decision
 
 Conditional reserve guarantees accepted *estimates* never exceed available. It

@@ -63,14 +63,15 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
         row["limit_micro"] = 600_000
     workspace_id = "stress-workspace"
     other_shard = 1 - credit_shard
-    original = _FakeTransaction.execute_sql
+    original = _FakeTransaction.execute_update
     competing_commits = 0
 
-    def execute_sql(transaction, sql, **kwargs):
+    def execute_update(transaction, sql, **kwargs):
         nonlocal competing_commits
         result = original(transaction, sql, **kwargs)
         if (
-            sql.endswith("THEN RETURN billing_pause_causes, pause_epoch")
+            ("ARRAY_LENGTH(billing_pause_causes)" in sql
+             or sql.endswith("THEN RETURN billing_pause_causes, pause_epoch"))
             and (change == "other_shard" or competing_commits == 0)
         ):
             def compete(other):
@@ -95,7 +96,7 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
             competing_commits += 1
         return result
 
-    monkeypatch.setattr(_FakeTransaction, "execute_sql", execute_sql)
+    monkeypatch.setattr(_FakeTransaction, "execute_update", execute_update)
     result = authorize_atomic(
         database, store._param_types,
         workspace_id=workspace_id, key_hash=key.hash, estimate=300_000,
