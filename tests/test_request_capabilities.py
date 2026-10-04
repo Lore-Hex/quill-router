@@ -96,13 +96,21 @@ def test_whole_catalog_capabilities_agree_with_legacy_declarations(client):
     rows = response.json()["data"]
     concrete = [row for row in rows if "capabilities" in row["trustedrouter"]]
     assert len(concrete) > 500
+    # Routes are listed as effective endpoints, whose ids can differ from the
+    # static registry key (e.g. abliterate's alias routes), so resolve them the
+    # same way the catalog does.
+    effective = {
+        endpoint.id: endpoint
+        for model_id in catalog.MODELS
+        for endpoint in catalog.endpoints_for_model(model_id)
+    }
     for row in concrete:
         capabilities = row["trustedrouter"]["capabilities"]
         assert capabilities["tools"] == ("tools" in row["supported_parameters"]), row["id"]
         assert capabilities["seed"] == ("seed" in row["supported_parameters"]), row["id"]
         assert capabilities["vision"] == ("image" in row["architecture"]["input_modalities"]), row["id"]
         for route in row["trustedrouter"]["endpoints"]:
-            endpoint = catalog.MODEL_ENDPOINTS[route["id"]]
+            endpoint = effective[route["id"]]
             flags = route["capabilities"]
             for parameter in ("tools", "seed"):
                 assert flags[parameter] == (parameter in endpoint.supported_parameters), endpoint.id
