@@ -96,9 +96,8 @@ def test_whole_catalog_capabilities_agree_with_legacy_declarations(client):
     rows = response.json()["data"]
     concrete = [row for row in rows if "capabilities" in row["trustedrouter"]]
     assert len(concrete) > 500
-    # Routes are listed as effective endpoints, whose ids can differ from the
-    # static registry key (e.g. abliterate's alias routes), so resolve them the
-    # same way the catalog does.
+    # Each listed route is looked up among the effective endpoints, which is
+    # what the listing is built from.
     effective = {
         endpoint.id: endpoint
         for model_id in catalog.MODELS

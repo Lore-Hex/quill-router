@@ -28,13 +28,34 @@ from tests import (
     catalog_freshness_freeze,
     catalog_vehicles,  # import-time side effect, see above
 )
-from tests.fixture_routes import clear_catalog_caches
+from tests.fixture_routes import (
+    clear_catalog_caches,
+    record_the_session_catalog,
+    start_from_the_session_catalog,
+)
 from trusted_router import catalog_data, catalog_registry, post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.routes import catalog as catalog_routes
 from trusted_router.storage import STORE, InMemoryStore, configure_store
+
+# The session's catalog is complete: the data, and the vehicles put back above.
+record_the_session_catalog()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Every test starts from the session's catalog, before any of its fixtures
+    runs: the registry in the session's order, and in each process-wide cache
+    the session's own projection of it (tests/fixture_routes.py).
+
+    The order, because undoing a monkeypatch.delitem puts a route back at the
+    end of the registry, and a route's place there is the order a model's
+    routes are listed and tried in. The projections, because a test that
+    filled a cache from its own catalog would otherwise leave that to every
+    test after it in the process."""
+    start_from_the_session_catalog()
 
 
 class InlinePostCommitExecutor(post_commit.PostCommitExecutor):
