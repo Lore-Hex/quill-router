@@ -11,7 +11,7 @@ driven to the bad schedule. It is written before the code it describes.
 | `AutoRefillHandoff` | Settlement handing auto-refill to a credentialed drain, across a surface split and rollback | implemented |
 | `SurfaceCutover` | The routed multi-region Cloud Run rollout, with a crash between any two steps | implemented |
 | `TerminalOrder` | One lease's records: which terminal wins, and why the live auditor and a rebuild agree (fast admission §4.5, §4.8) | planned |
-| `LeaseLifecycle` | One lease over time: renewals, the owner's cutoff, draining and close under clock skew (fast admission §4.2, §4.8) | planned |
+| `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, its last record and its draining write, draining and close under clock skew (fast admission §4.2, §4.3, §4.8) | planned |
 
 `docs/design/fast-admission-and-batched-settlement.md` §5.1 has the plan for
 the fast-admission specs.
@@ -21,10 +21,11 @@ the fast-admission specs.
 ```bash
 curl -fsSL -o proofs/tla2tools.jar \
   https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
-./proofs/check.sh                                   # everything CI runs
+./proofs/check.sh                                   # what the `proofs` job runs
 python3 proofs/check_mutants.py --only TerminalOrder  # one spec's manifest
 python3 proofs/guard_sweep.py TerminalOrder           # sweep its guards again
-python3 proofs/guard_sweep.py --verify TerminalOrder  # check its guard table
+python3 proofs/guard_sweep.py --verify TerminalOrder  # check its guard table, as the
+                                                      # `Proofs guard tables` workflow does
 ```
 
 `TLC_WORKERS=4` lowers the worker count on a machine that is doing other
@@ -50,6 +51,9 @@ It needs a JVM (17 or later) and Python 3.11 or later.
 - **Its assumptions listed in its header,** each with a mutant that widens
   it.
 
+`AutoRefillHandoff` and `SurfaceCutover` predate this list. They have no
+`TypeOK`, no list of assumptions and no guard table.
+
 ## The manifest
 
 `manifest.toml` has an entry for every spec. `check_mutants.py` checks it.
@@ -68,9 +72,13 @@ parse error, an evaluation error, a timeout or no error fails it.
 - After adding a mutant, read its shortest counterexample (`-workers 1`) and
   confirm it fails for the reason you named.
 
-**Survivors.** A guard whose removal breaks nothing is either unnecessary or
-not modeled. The spec's header says which, and the manifest lists it as a
-survivor: it is checked against the whole `.cfg` and must find no error.
+**Survivors.** A change that the spec's header says breaks nothing is listed
+in the manifest as a survivor. It is checked against the whole `.cfg` on
+every run and must find no error. That is for a change worth naming, such as
+a rule the model shows is not needed. It is not where a guard whose removal
+breaks nothing is recorded. Every guard has a row in the guard table (below).
+A row that says `nothing` carries its reason there, and
+`guard_sweep.py --verify` checks it, not the manifest run.
 
 **Variants.** `<Spec>.<variant>.cfg` is another instance of the same model,
 for a hazard the main instance's constants cannot reach. A mutant or survivor
@@ -145,11 +153,17 @@ When a row says `nothing`, first ask whether a claim is missing. Three of
 `TerminalOrder`'s did break something once two claims said what the design
 meant: the cutoff on reaps, releases and adoptions was held up by nothing
 until the claim about acknowledged settles covered every terminal the owner
-may answer with. When two guards of one action both say `nothing`, remove
-them together before calling either idle: `LeaseLifecycle`'s final
-checkpoint asked for the process to hold the lease and for the lease's
-epoch, either of which keeps a later process from closing a lease over
-another's holds.
+may answer with. When several guards say `nothing`, remove them together
+before calling any of them idle: two guards on one hole each look idle
+alone (below). `LeaseLifecycle`'s 27 broke a claim when all were removed at
+once, and four groups of two or three explained it, each a second defense
+behind the first. For example, `OwnerStop` and `FinalCheckpoint` each ask
+that the process hold the lease. Either is enough: without both, a later
+process stops and publishes the lease's last record, listing none of its
+predecessor's holds. Each member's reason names its group, and one group is
+a mutant too. Leaving out `Admit`'s, `OwnerStop`'s and `FinalCheckpoint`'s
+`has`, which every group needs one of, the other 24 removed all together
+break nothing.
 
 ## Ways a check proves nothing
 
@@ -159,12 +173,14 @@ pilot it modeled. Each cost a review round there.
 - **An adversary that does nothing.** A stale-writer action written as
   `UNCHANGED vars` is trivially safe. The guard it was meant to test could be
   deleted and TLC would still pass. An adversary has to write something.
-- **A guard on an existentially chosen value.** With
-  `\E t \in Tokens : Reserve(l, h, t)`, the guard `t = leaseToken[l]`
-  restricts nothing: TLC picks the `t` that satisfies it. Deleting such a
-  guard can never produce a violation, in any spec. "Some plane presents some
-  token" is not the hazard. A specific plane presenting the token it was
-  handed, after that token was superseded, is. Make the value state.
+- **A guard on an existentially chosen value.** That spec had
+  `\E t \in Tokens : Reserve(l, h, t)` with the guard `t = leaseToken[l]`,
+  and `Reserve` used `t` for nothing but that comparison. The guard
+  restricted nothing: TLC picks the `t` that satisfies it, so deleting it
+  found no violation. (Where the rest of an action reads the chosen value,
+  such a guard does restrict it.) "Some plane presents some token" is not the
+  hazard. A specific plane presenting the token it was handed, after that
+  token was superseded, is. Make the value state.
 - **Two guards on one hole.** Removing either alone found nothing, and that
   was read as "both are redundant". One of them was a pair, and removing half
   of the pair with the other guard gone was a double charge in six states.
@@ -214,9 +230,36 @@ And from the fast-admission specs:
   survive, because a partial list had become a complete one. Run every
   mutant after every change to the model, not only the ones that look
   affected.
-- **A measured run copied from another header.** Two `.cfg` files said "TLC
-  2.19 on an 8-core Apple M2", which was true of neither run. State the jar,
-  the machine and the counts of the run you made.
+- **A measured run copied from another header.** `TerminalOrder.cfg` and
+  `LeaseLifecycle.cfg` each said "TLC 2.19 on an 8-core Apple M2", copied
+  from the two older specs' headers and true of neither new run. State the
+  jar, the machine and the counts of the run you made.
+- **One step where the system has two.** `LeaseLifecycle` first made a
+  renewal and its answer one step, and the owner's last record and its
+  draining write one step. An answer that arrives after the owner has let
+  the lease go could then not be written down, and with it the rule the
+  code needs most: an answer never brings a lease back. Where an action is
+  a message and its reply, or a publish and a write, ask what can happen
+  between the two.
+- **A bound where the sentence says "does not move".** "A revoked lease's
+  expiry is at most a window after its revocation" passed a renewal in the
+  moment of the revocation. The design's sentence was about steps: the
+  expiry does not move. Write that as a property of steps.
+- **No new state is not no new step.** A removal that reaches no new state
+  can still break a property of steps, or liveness: the states are the same
+  and a step between two of them is new. "Reaches no new state" answers for
+  the invariants only.
+- **A time where only an age is asked.** Recording when a pause or a
+  revocation happened multiplied the states by every moment it could
+  happen. The model only ever asked how long ago. An age, counted no
+  further than anything compares it with, gave the same behaviors in a
+  sixth of the states.
+- **A rule only the code can keep.** No condition of Spanner's stops a
+  process from using a lease it was not granted. The first version of
+  `LeaseLifecycle` made that look checked, because a renewal's epoch
+  condition happened to be what stopped it in the model. State such a rule
+  as an assumption, with mutants that widen it, and say that the code keeps
+  it.
 - **A reader of text where there is a parser.** The first guard finder read
   the spec's text. Seven review rounds each found a valid shape it passed
   over (a wrapper, a `LOCAL` definition, a guard on an effect's line), and

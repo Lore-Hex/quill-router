@@ -1,16 +1,22 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "8cdbfe6337a07401a40125f19453e33a8dc2e3fbc9c8f9891cae493c3524dfbd"
+inputs_sha256 = "df401a8a0c4e9f6f69b84c3e04f5c60ec41a04fc555a9bdad9abc2ff499bbc22"
 
 [[guard]]
 action = "OwnerRenew"
 text = '''/\ now <= LastRenew'''
 breaks = "TypeOK"
 why = '''
-The model's bound on renewals: none commits after LastRenew, so that a lease
-nobody finishes can still drain and close before MaxTime. Without it the
-expiry passes the bound TypeOK gives it, and no other invariant breaks.
+LastRenew is a bound of the model: renewals stop so that the lease can close inside it. A later one writes an expiry beyond MaxExpiry.
+'''
+
+[[guard]]
+action = "OwnerRenew"
+text = '''/\ answer = NoAnswer'''
+breaks = "nothing"
+why = '''
+One renewal out at a time is a bound of the model. Without it a second write replaces the answer still on its way, which is that answer lost, so it reaches no new state.
 '''
 
 [[guard]]
@@ -21,25 +27,49 @@ breaks = "CutoffBeforeDrain"
 [[guard]]
 action = "OwnerRenew"
 text = '''/\ ~lease.revoked'''
-breaks = "RevokedExpiryStays"
+breaks = "RevocationBoundsAdmission"
 
 [[guard]]
 action = "OwnerRenew"
 text = '''/\ lease.epoch = epoch'''
-breaks = "SingleWriter"
+breaks = "nothing"
+why = '''
+Without it a later process on the node renews a lease it does not hold. It learns nothing from the answer (RenewAnswer asks for `has`), so the lease lives a window longer and no claim notices. The condition is Spanner's second check of A4, for a process that held a lease it was not granted, which no behavior here has. Removed with RenewAnswer's `has` and Admit's `has`, a later process renews the lease, takes the answer and admits under it (SingleWriter): A4 widened, as in the mutant a-later-process-takes-up-the-lease.
+'''
+
+[[guard]]
+action = "RenewAnswer"
+text = '''/\ answer # NoAnswer'''
+breaks = "CutoffBeforeDrain"
+
+[[guard]]
+action = "RenewAnswer"
+text = '''/\ has'''
+breaks = "nothing"
+why = '''
+By itself the answer only sets `known`, and a process that has let the lease go could have had the answer first: the two orders reach the same states. What the condition stands for is A4, that an answer never brings a lease back, and the mutant an-answer-brings-the-lease-back shows what rests on that. Removed with OwnerRenew's epoch and Admit's `has`, a later process takes an answer to its own renewal and admits (SingleWriter).
+'''
+
+[[guard]]
+action = "AnswerLost"
+text = '''/\ answer # NoAnswer'''
+breaks = "nothing"
+why = '''
+With no answer on its way the action changes nothing.
+'''
 
 [[guard]]
 action = "ReplayedRenew"
 text = '''/\ now <= LastRenew'''
 breaks = "TypeOK"
 why = '''
-The same bound as OwnerRenew's, for the same reason.
+LastRenew is a bound of the model, as for OwnerRenew: a later replay writes an expiry beyond MaxExpiry.
 '''
 
 [[guard]]
 action = "ReplayedRenew"
 text = '''/\ lease.state = "open"'''
-breaks = "OnlyAnOpenLeaseChanges"
+breaks = "DrainingExpiryStays"
 
 [[guard]]
 action = "ReplayedRenew"
@@ -51,24 +81,15 @@ action = "ReplayedRenew"
 text = '''/\ lease.expiry < now + Window'''
 breaks = "nothing"
 why = '''
-An enabling condition: a renewal that would not move the expiry changes no
-variable, and the expiry is never beyond now + Window. Removing it reaches
-no new state.
+A replay that would not move the expiry changes nothing. The condition keeps it from being a step.
 '''
-
-[[guard]]
-action = "Revoke"
-text = '''/\ lease.state = "open"'''
-breaks = "OnlyAnOpenLeaseChanges"
 
 [[guard]]
 action = "Revoke"
 text = '''/\ ~lease.revoked'''
 breaks = "nothing"
 why = '''
-Removing it reaches no new state. A lease revoked a second time, later, is
-in the state that a first revocation at that later time reaches: the first
-one stopped its renewals, and they were free not to happen anyway.
+A second revocation starts the count of the window again, and reaches only states a first revocation at that moment reaches. RevocationBoundsAdmission would then count from the later one, so it says less; the expiry still cannot move after the first, which RevokedExpiryStays checks.
 '''
 
 [[guard]]
@@ -76,10 +97,7 @@ action = "Pause"
 text = '''/\ ~paused'''
 breaks = "nothing"
 why = '''
-It keeps `pausedAt` the time the pause began, which PauseBoundsAdmission
-measures from. Pausing again would move it later, which about doubles the
-states the model reaches, and the claim would then ask for less: nothing
-breaks because the claim weakens, not because the guard is idle.
+One pause is a bound of the model. A second would start the count of its age again, and PauseBoundsAdmission would then measure from the later one.
 '''
 
 [[guard]]
@@ -87,10 +105,7 @@ action = "RefreshView"
 text = '''/\ paused'''
 breaks = "nothing"
 why = '''
-The model refreshes a view only after a pause; before one, Tick keeps every
-view as fresh as can be. Without the guard a process can see a pause that
-has not happened. That reaches new states and breaks no claim: it only
-stops the process admitting.
+Without it a process sees a pause that has not happened and stops admitting: fewer admissions, never more.
 '''
 
 [[guard]]
@@ -98,15 +113,16 @@ action = "RefreshView"
 text = '''/\ ~view.paused'''
 breaks = "nothing"
 why = '''
-Removing it reaches no new state: a view that shows the pause admits
-nothing whatever its age, and refreshed again it is the view a first
-refresh at that moment gives.
+A process that has seen the pause and looks again sees it again, as it would have by looking later the first time.
 '''
 
 [[guard]]
 action = "Admit"
 text = '''/\ has'''
-breaks = "SingleWriter"
+breaks = "nothing"
+why = '''
+A process without the lease in memory has just started and knows no expiry, or has marked the lease draining and is stopped, or dropped it. A dropped lease was not open, and its owner past its cutoff (CutoffBeforeDrain), or it was revoked, and the same admission a moment before the drop was allowed. So this reaches no new state alone: it is the second of two defenses. Removed with OwnerDrains' `handoff = "complete"`, an owner that marked its lease draining before it stopped goes on admitting under it (AdmittedOnlyUnderOpenLease). Removed with OwnerRenew's epoch and RenewAnswer's `has`, a later process admits (SingleWriter).
+'''
 
 [[guard]]
 action = "Admit"
@@ -118,10 +134,7 @@ action = "Admit"
 text = '''/\ Open # HoldIds'''
 breaks = "nothing"
 why = '''
-The model's bound on holds open at once, which also keeps Min(HoldIds \ Open)
-defined. Removing it reaches no new state: every open hold is the lease's
-own process's (SingleWriter), and that process stops at LeaseSize, below
-MaxHolds, in the conjunct after this one.
+MaxHolds is above LeaseSize, and only one process ever admits, so a slot is always free. It keeps `Min` defined when a second process admits, in the mutants that widen A4.
 '''
 
 [[guard]]
@@ -141,7 +154,7 @@ breaks = "PauseBoundsAdmission"
 
 [[guard]]
 action = "Admit"
-text = '''/\ now <= view.at + CacheAge'''
+text = '''/\ view.age <= CacheAge'''
 breaks = "PauseBoundsAdmission"
 
 [[guard]]
@@ -149,8 +162,7 @@ action = "HoldEnds"
 text = '''/\ holds[h].open'''
 breaks = "nothing"
 why = '''
-An enabling condition: without it the step changes no variable, and the
-model reaches no new state.
+Ending a hold that is not open changes nothing.
 '''
 
 [[guard]]
@@ -158,9 +170,7 @@ action = "OwnerStop"
 text = '''/\ has'''
 breaks = "nothing"
 why = '''
-Removing it reaches no new state. A process that does not hold the lease
-has nothing to stop: `stopped` is read only while it holds the lease, and
-taking the lease again resets it.
+`stopped` is read only of a process that holds the lease: by Admit, and by FinalCheckpoint, which asks for `has` itself. Removed with FinalCheckpoint's `has`, a later process stops and publishes the lease's last record, which lists none of its predecessor's holds, and the lease closes over them: mutant a-later-process-publishes-the-last-record.
 '''
 
 [[guard]]
@@ -168,51 +178,36 @@ action = "OwnerStop"
 text = '''/\ ~stopped'''
 breaks = "nothing"
 why = '''
-An enabling condition: without it the step changes no variable, and the
-model reaches no new state.
+Stopping twice changes nothing.
 '''
 
 [[guard]]
-action = "OwnerFinish"
-text = '''/\ stopped'''
+action = "FinalCheckpoint"
+text = '''/\ has'''
 breaks = "nothing"
 why = '''
-The order of stopping and finishing. Without it a process can finish
-without having stopped, which reaches new states (it has forgotten the
-lease with `stopped` unset) and breaks no claim: finishing is one step, in
-which the process forgets the lease, so nothing is admitted after it
-either way.
+A stopped process that has let the lease go could have published its last record first: the two orders reach the same states. A process that has just started is not stopped, and cannot stop without the lease. Removed with OwnerStop's `has`, it can: mutant a-later-process-publishes-the-last-record. Removed with ForcedExitStart's `has`, it can by starting a hand-off.
 '''
 
 [[guard]]
-action = "OwnerFinish"
+action = "FinalCheckpoint"
+text = '''/\ stopped'''
+breaks = "NoOpenHoldOnClosedLease"
+
+[[guard]]
+action = "FinalCheckpoint"
 text = '''/\ Own = {}'''
 breaks = "nothing"
 why = '''
-What makes this a final checkpoint: nothing is open. Removing it reaches no
-new state: with holds open the same write is the forced exit's complete
-hand-off, in one step. It lists them, and Close waits for the list.
+The record lists the holds still open, so one published early is a complete hand-off of them, which a forced exit's manifest also gives. The design's rule, to publish it once none is open, is not what keeps a close from coming over an open hold: the list is.
 '''
-
-[[guard]]
-action = "OwnerFinish"
-text = '''/\ lease.state = "open"'''
-breaks = "EventuallyClosed"
-
-[[guard]]
-action = "OwnerFinish"
-text = '''/\ lease.epoch = epoch'''
-breaks = "NoOpenHoldOnClosedLease"
 
 [[guard]]
 action = "ForcedExitStart"
 text = '''/\ has'''
 breaks = "nothing"
 why = '''
-Removing it reaches no new state. A process that does not hold the lease
-has no holds to list, so what it publishes is a partial hand-off that lists
-nothing, as the lease's own process may before it dies, and
-ForcedExitFinish's epoch condition keeps it from completing one.
+Chunks from a process that does not hold the lease are a partial hand-off, which counts for nothing until its manifest, and only a process that holds the lease publishes one (ForcedExitManifest). Removed with FinalCheckpoint's `has`, a later process starts a hand-off, which stops it, then publishes a last record that lists none of its predecessor's holds, and the lease closes over them (NoOpenHoldOnClosedLease).
 '''
 
 [[guard]]
@@ -220,63 +215,70 @@ action = "ForcedExitStart"
 text = '''/\ handoff = "none"'''
 breaks = "nothing"
 why = '''
-A hand-off starts once. Removing it reaches no new state: starting again
-changes only which chunks the auditor has, and it may have any of them
-after the first start.
+Starting again makes a complete hand-off partial until its manifest, so a close on the list waits longer, never less. A real auditor does not forget a manifest it has: this is the model's one variable for the hand-off.
 '''
 
 [[guard]]
-action = "ForcedExitStart"
-text = '''/\ lease.state = "open"'''
-breaks = "nothing"
-why = '''
-Removing it reaches no new state: a hand-off begun after the lease stopped
-being open is in the state of one begun just before. It cannot be completed
-from there, by ForcedExitFinish's own condition.
-'''
+action = "ForcedExitManifest"
+text = '''/\ has'''
+breaks = "NoOpenHoldOnClosedLease"
 
 [[guard]]
-action = "ForcedExitFinish"
+action = "ForcedExitManifest"
 text = '''/\ handoff = "partial"'''
+breaks = "NoOpenHoldOnClosedLease"
+
+[[guard]]
+action = "OwnerDrains"
+text = '''/\ has'''
 breaks = "nothing"
 why = '''
-The manifest follows the chunks. Without it a process can publish the
-manifest with no chunks before it, which reaches new states (a complete
-hand-off from a process that had not stopped) and breaks no claim: the list
-is of its open holds at that moment, and it forgets the lease in the same
-step.
+A process that let the lease go after its last record could have marked it draining first: the two orders reach the same states.
 '''
 
 [[guard]]
-action = "ForcedExitFinish"
+action = "OwnerDrains"
+text = '''/\ handoff = "complete"'''
+breaks = "nothing"
+why = '''
+Marking a lease draining without its last record is safe by itself: the close then waits on time alone, and the owner, which lets the lease go, admits nothing more. The record is what lets the close come sooner. Removed with Admit's `has`, an owner that has not stopped marks its lease draining and goes on admitting under it (AdmittedOnlyUnderOpenLease).
+'''
+
+[[guard]]
+action = "OwnerDrains"
 text = '''/\ lease.state = "open"'''
 breaks = "LeaseMovesOneWay"
 
 [[guard]]
-action = "ForcedExitFinish"
+action = "OwnerDrains"
 text = '''/\ lease.epoch = epoch'''
-breaks = "NoOpenHoldOnClosedLease"
+breaks = "nothing"
+why = '''
+A process that holds the lease is the one it was granted to (A4), so this never refuses. It is Spanner's second check of A4.
+'''
 
 [[guard]]
 action = "OwnerDrops"
 text = '''/\ has'''
 breaks = "nothing"
 why = '''
-An enabling condition: without it the step changes no variable, and the
-model reaches no new state.
+Letting go of a lease it does not hold changes nothing.
 '''
 
 [[guard]]
 action = "OwnerDrops"
-text = '''/\ lease.state # "open"'''
-breaks = "NoOpenHoldOnClosedLease"
+text = '''/\ lease.state # "open" \/ lease.revoked'''
+breaks = "nothing"
+why = '''
+Letting go of a lease that is open and not revoked is safe: the auditor finishes it on time alone. The condition is when the design has the owner do it.
+'''
 
 [[guard]]
 action = "Restart"
 text = '''/\ epoch < MaxRestarts'''
 breaks = "TypeOK"
 why = '''
-The model's bound on process restarts, which TypeOK states.
+MaxRestarts is a bound of the model.
 '''
 
 [[guard]]
@@ -284,9 +286,7 @@ action = "AuditorRead"
 text = '''/\ lease.state = "open"'''
 breaks = "nothing"
 why = '''
-Without it the auditor can read the expiry of a lease that is no longer
-open, which reaches new states (a read outstanding on a draining or closed
-lease) and breaks no claim: the mark's own condition then matches nothing.
+A read of a lease that is not open leads to a write that changes no row (AuditorMarkRefused).
 '''
 
 [[guard]]
@@ -294,9 +294,7 @@ action = "AuditorRead"
 text = '''/\ audRead = NoRead'''
 breaks = "nothing"
 why = '''
-One read is outstanding at a time. Removing it reaches no new state: a
-second read replaces the first with the expiry that a first read at that
-moment would hold.
+Reading again before the write replaces the expiry read by the lease's expiry now, which is what a refused write and a new read give.
 '''
 
 [[guard]]
@@ -309,18 +307,55 @@ action = "AuditorMark"
 text = '''/\ audRead # NoRead'''
 breaks = "nothing"
 why = '''
-An enabling condition: with no read outstanding the mark matches no lease.
-The step changes no variable, and the model reaches no new state.
+NoRead is no lease's expiry, so with no read outstanding the condition on the expiry read fails by itself.
 '''
 
 [[guard]]
-action = "Close"
+action = "AuditorMark"
+text = '''/\ lease.state = "open"'''
+breaks = "LeaseMovesOneWay"
+
+[[guard]]
+action = "AuditorMark"
+text = '''/\ lease.expiry = audRead'''
+breaks = "CutoffBeforeDrain"
+
+[[guard]]
+action = "AuditorMarkRefused"
+text = '''/\ audRead # NoRead'''
+breaks = "nothing"
+why = '''
+With no read outstanding the action changes nothing.
+'''
+
+[[guard]]
+action = "AuditorMarkRefused"
+text = '''/\ lease.state # "open" \/ lease.expiry # audRead'''
+breaks = "EventuallyClosed"
+
+[[guard]]
+action = "CloseOnTheList"
+text = '''/\ lease.state = "draining"'''
+breaks = "CutoffBeforeDrain"
+
+[[guard]]
+action = "CloseOnTheList"
+text = '''/\ handoff = "complete"'''
+breaks = "NoOpenHoldOnClosedLease"
+
+[[guard]]
+action = "CloseOnTheList"
+text = '''/\ listed = {}'''
+breaks = "NoOpenHoldOnClosedLease"
+
+[[guard]]
+action = "CloseOnTime"
 text = '''/\ lease.state = "draining"'''
 breaks = "LeaseMovesOneWay"
 
 [[guard]]
-action = "Close"
-text = '''/\ HoldsKnownEnded \/ HoldsEndedByTime'''
+action = "CloseOnTime"
+text = '''/\ \E c \in Readings : c >= lease.expiry + MaxLife + Grace'''
 breaks = "NoOpenHoldOnClosedLease"
 
 [[guard]]
@@ -328,5 +363,5 @@ action = "Tick"
 text = '''/\ now < MaxTime'''
 breaks = "TypeOK"
 why = '''
-The model's bound on time, which TypeOK states.
+MaxTime is a bound of the model, late enough for the lease to close on time alone.
 '''

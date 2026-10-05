@@ -123,7 +123,8 @@ new = '''
 state = "planned"
 code = ["fastpath/internal/leaselifecycle"]
 
-# Assumption A1, bounded skew, and the three writes that rest on it.
+# Assumption A1, bounded skew, and what rests on it: the owner's cutoff and
+# the auditor's two conditions on the expiry.
 
 [[LeaseLifecycle.mutants]]
 name = "skew-wider-than-allowed"
@@ -133,6 +134,28 @@ Readings == { c \in 0..(MaxTime + Skew) : c + Skew >= now /\ c <= now + Skew }
 '''
 new = '''
 Readings == { c \in 0..(MaxTime + Skew) : c + Skew + 1 >= now /\ c <= now + Skew }
+'''
+
+# The same widening, by what it costs: section 5.1 says it must break
+# Invariant 1.
+[[LeaseLifecycle.mutants]]
+name = "skew-wider-than-allowed-admits-under-a-draining-lease"
+violates = "AdmittedOnlyUnderOpenLease"
+old = '''
+Readings == { c \in 0..(MaxTime + Skew) : c + Skew >= now /\ c <= now + Skew }
+'''
+new = '''
+Readings == { c \in 0..(MaxTime + Skew) : c + Skew + 1 >= now /\ c <= now + Skew }
+'''
+
+[[LeaseLifecycle.mutants]]
+name = "admit-without-the-skew-allowance"
+violates = "CutoffBeforeDrain"
+old = '''
+WithinCutoff == \E c \in Readings : c + Skew < known
+'''
+new = '''
+WithinCutoff == \E c \in Readings : c < known
 '''
 
 [[LeaseLifecycle.mutants]]
@@ -149,21 +172,24 @@ new = '''
 name = "drain-on-a-stale-read"
 violates = "CutoffBeforeDrain"
 old = '''
-           IF lease.state = "open" /\ lease.expiry = audRead
+    /\ lease.state = "open"
+    /\ lease.expiry = audRead
+    /\ lease' = [lease EXCEPT !.state = "draining"]
 '''
 new = '''
-           IF lease.state = "open"
+    /\ lease.state = "open"
+    /\ lease' = [lease EXCEPT !.state = "draining"]
 '''
 
 [[LeaseLifecycle.mutants]]
 name = "owner-extends-by-its-own-clock"
 violates = "CutoffBeforeDrain"
 old = '''
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
-    /\ known' = now + Window
+    /\ has
+    /\ known' = answer
 '''
 new = '''
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
+    /\ has
     /\ known' \in { c + Window : c \in Readings }
 '''
 
@@ -171,11 +197,11 @@ new = '''
 name = "an-expiry-spanner-never-stored"
 violates = "TypeOK"
 old = '''
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
-    /\ known' = now + Window
+    /\ has
+    /\ known' = answer
 '''
 new = '''
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
+    /\ has
     /\ known' \in { c + Window : c \in Readings }
 '''
 
@@ -183,29 +209,27 @@ new = '''
 name = "renew-a-draining-lease"
 violates = "CutoffBeforeDrain"
 old = '''
-    /\ now <= LastRenew
+    /\ answer = NoAnswer
     /\ lease.state = "open"
     /\ ~lease.revoked
     /\ lease.epoch = epoch
 '''
 new = '''
-    /\ now <= LastRenew
+    /\ answer = NoAnswer
     /\ lease.state # "closed"
     /\ ~lease.revoked
     /\ lease.epoch = epoch
 '''
 
 [[LeaseLifecycle.mutants]]
-name = "owner-keeps-the-lease-after-its-final-checkpoint"
+name = "owner-keeps-the-lease-it-marked-draining"
 violates = "CutoffBeforeDrain"
 old = '''
-    /\ handoff' = "complete"
-    /\ listed' = Own
+    /\ lease' = [lease EXCEPT !.state = "draining"]
     /\ has' = FALSE
 '''
 new = '''
-    /\ handoff' = "complete"
-    /\ listed' = Own
+    /\ lease' = [lease EXCEPT !.state = "draining"]
     /\ has' = has
 '''
 
@@ -220,36 +244,65 @@ new = '''
     /\ Cardinality(Own) < LeaseSize
 '''
 
-# The epoch: a later process on the node never uses the lease.
+# Assumption A4: a process uses only the lease it was granted, until it lets
+# it go. Each mutant adds what a recovery routine, a request that names the
+# lease, or an answer handler that creates what it does not find would do.
 
 [[LeaseLifecycle.mutants]]
-name = "renew-with-a-stale-epoch"
+name = "a-later-process-takes-up-the-lease"
 violates = "SingleWriter"
 old = '''
-    /\ ~lease.revoked
-    /\ lease.epoch = epoch
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
-    /\ known' = now + Window
+    \/ Restart
 '''
 new = '''
-    /\ ~lease.revoked
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
-    /\ known' = now + Window
+    \/ Restart
+    \/ /\ ~has
+       /\ lease.state = "open"
+       /\ has' = TRUE
+       /\ known' = lease.expiry
+       /\ stopped' = FALSE
+       /\ UNCHANGED << now, lease, epoch, answer, holds, handoff, listed,
+                       audRead, paused, pausedFor, view, revokedFor >>
 '''
 
 [[LeaseLifecycle.mutants]]
-name = "renew-with-a-stale-epoch-overfills-the-lease"
+name = "a-later-process-takes-up-the-lease-and-overfills-it"
 violates = "HoldsFitAllocation"
 old = '''
-    /\ ~lease.revoked
-    /\ lease.epoch = epoch
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
-    /\ known' = now + Window
+    \/ Restart
 '''
 new = '''
-    /\ ~lease.revoked
-    /\ lease' = [lease EXCEPT !.expiry = now + Window]
-    /\ known' = now + Window
+    \/ Restart
+    \/ /\ ~has
+       /\ lease.state = "open"
+       /\ has' = TRUE
+       /\ known' = lease.expiry
+       /\ stopped' = FALSE
+       /\ UNCHANGED << now, lease, epoch, answer, holds, handoff, listed,
+                       audRead, paused, pausedFor, view, revokedFor >>
+'''
+
+# An answer that arrives after the process marked the lease draining, applied
+# by a handler that creates the lease it does not find.
+[[LeaseLifecycle.mutants]]
+name = "an-answer-brings-the-lease-back"
+violates = "AdmittedOnlyUnderOpenLease"
+old = '''
+    /\ answer # NoAnswer
+    /\ has
+    /\ known' = answer
+    /\ answer' = NoAnswer
+    /\ UNCHANGED << now, lease, epoch, has, stopped, holds, handoff, audRead,
+                    paused, pausedFor, view, revokedFor, listed >>
+'''
+new = '''
+    /\ answer # NoAnswer
+    /\ has' = TRUE
+    /\ stopped' = (has /\ stopped)
+    /\ known' = answer
+    /\ answer' = NoAnswer
+    /\ UNCHANGED << now, lease, epoch, holds, handoff, audRead,
+                    paused, pausedFor, view, revokedFor, listed >>
 '''
 
 [[LeaseLifecycle.mutants]]
@@ -282,7 +335,7 @@ new = '''
 # from it, so only the row's own expiry shows it.
 [[LeaseLifecycle.mutants]]
 name = "replay-a-renewal-on-a-revoked-lease"
-violates = "RevokedExpiryStays"
+violates_property = "RevokedExpiryStays"
 old = '''
     /\ lease.state = "open"
     /\ ~lease.revoked
@@ -293,17 +346,34 @@ new = '''
     /\ lease.expiry < now + Window
 '''
 
+# A renewal let through in the moment of the revocation and never after.
+# The expiry it writes is a window after the revocation and no later, so a
+# bound on the expiry would pass it; the expiry must not move at all.
+[[LeaseLifecycle.mutants]]
+name = "replay-a-renewal-in-the-moment-of-the-revocation"
+violates_property = "RevokedExpiryStays"
+old = '''
+    /\ lease.state = "open"
+    /\ ~lease.revoked
+    /\ lease.expiry < now + Window
+'''
+new = '''
+    /\ lease.state = "open"
+    /\ (~lease.revoked \/ revokedFor = 0)
+    /\ lease.expiry < now + Window
+'''
+
 [[LeaseLifecycle.mutants]]
 name = "admit-on-a-view-that-says-stop"
 violates = "PauseBoundsAdmission"
 old = '''
     /\ WithinCutoff
     /\ ~view.paused
-    /\ now <= view.at + CacheAge
+    /\ view.age <= CacheAge
 '''
 new = '''
     /\ WithinCutoff
-    /\ now <= view.at + CacheAge
+    /\ view.age <= CacheAge
 '''
 
 [[LeaseLifecycle.mutants]]
@@ -311,42 +381,49 @@ name = "admit-on-a-stale-view"
 violates = "PauseBoundsAdmission"
 old = '''
     /\ ~view.paused
-    /\ now <= view.at + CacheAge
+    /\ view.age <= CacheAge
 '''
 new = '''
     /\ ~view.paused
 '''
 
-# The drain's end condition, and assumption A3.
+# The drain's end, and assumption A3.
 
 [[LeaseLifecycle.mutants]]
 name = "close-before-the-longest-hold-ends"
 violates = "NoOpenHoldOnClosedLease"
 old = '''
-HoldsEndedByTime == \E c \in Readings : c >= lease.expiry + MaxLife + Grace
+    /\ \E c \in Readings : c >= lease.expiry + MaxLife + Grace
 '''
 new = '''
-HoldsEndedByTime == \E c \in Readings : c >= lease.expiry + Grace
+    /\ \E c \in Readings : c >= lease.expiry + Grace
 '''
 
 [[LeaseLifecycle.mutants]]
 name = "close-without-the-grace"
 violates = "NoOpenHoldOnClosedLease"
 old = '''
-HoldsEndedByTime == \E c \in Readings : c >= lease.expiry + MaxLife + Grace
+    /\ \E c \in Readings : c >= lease.expiry + MaxLife + Grace
 '''
 new = '''
-HoldsEndedByTime == \E c \in Readings : c >= lease.expiry + MaxLife
+    /\ \E c \in Readings : c >= lease.expiry + MaxLife
 '''
 
+# A3 is what the close on time alone rests on, so the hold must outlive its
+# life on the list as well: a list that dropped it would close the lease by
+# the other way.
 [[LeaseLifecycle.mutants]]
 name = "a-hold-outlives-its-life"
 violates = "NoOpenHoldOnClosedLease"
 old = '''
                     ELSE IF holds[h].life = 1 THEN NoHold
+                    ELSE [holds[h] EXCEPT !.life = @ - 1]]
+    /\ listed' = { h \in listed : holds[h].life # 1 }
 '''
 new = '''
                     ELSE IF holds[h].life = 1 THEN holds[h]
+                    ELSE [holds[h] EXCEPT !.life = @ - 1]]
+    /\ listed' = listed
 '''
 
 # A partial hand-off's chunks may list no hold at all.
@@ -354,10 +431,27 @@ new = '''
 name = "a-partial-hand-off-counts"
 violates = "NoOpenHoldOnClosedLease"
 old = '''
-HoldsKnownEnded == handoff = "complete" /\ listed = {}
+    /\ lease.state = "draining"
+    /\ handoff = "complete"
+    /\ listed = {}
 '''
 new = '''
-HoldsKnownEnded == (handoff = "partial" \/ handoff = "complete") /\ listed = {}
+    /\ lease.state = "draining"
+    /\ handoff # "none"
+    /\ listed = {}
+'''
+
+[[LeaseLifecycle.mutants]]
+name = "close-while-a-listed-hold-is-open"
+violates = "NoOpenHoldOnClosedLease"
+old = '''
+    /\ lease.state = "draining"
+    /\ handoff = "complete"
+    /\ listed = {}
+'''
+new = '''
+    /\ lease.state = "draining"
+    /\ handoff = "complete"
 '''
 
 [[LeaseLifecycle.mutants]]
@@ -365,37 +459,97 @@ name = "list-the-holds-before-stopping"
 violates = "NoOpenHoldOnClosedLease"
 old = '''
     /\ handoff = "none"
-    /\ lease.state = "open"
     /\ stopped' = TRUE
     /\ handoff' = "partial"
 '''
 new = '''
     /\ handoff = "none"
-    /\ lease.state = "open"
     /\ stopped' = stopped
     /\ handoff' = "partial"
 '''
 
-# A lease moves one way. An owner that did not notice its lease close must
-# not mark it draining again with its final checkpoint.
+# Two guards that are each idle alone (see their rows in the guard table): a
+# process that does not hold the lease may neither stop under it nor publish
+# its last record. Together they keep a later process from telling the
+# auditor that its predecessor's holds have all ended.
 [[LeaseLifecycle.mutants]]
-name = "finish-a-lease-that-has-closed"
+name = "a-later-process-publishes-the-last-record"
+violates = "NoOpenHoldOnClosedLease"
+old = '''
+OwnerStop ==
+    /\ has
+    /\ ~stopped
+    /\ stopped' = TRUE
+    /\ UNCHANGED << now, lease, epoch, has, known, answer, holds, handoff,
+                    audRead, paused, pausedFor, view, revokedFor, listed >>
+
+\* With no hold open, it publishes a final checkpoint: the lease's last
+\* record, which lists the holds still open.
+FinalCheckpoint ==
+    /\ has
+    /\ stopped
+'''
+new = '''
+OwnerStop ==
+    /\ ~stopped
+    /\ stopped' = TRUE
+    /\ UNCHANGED << now, lease, epoch, has, known, answer, holds, handoff,
+                    audRead, paused, pausedFor, view, revokedFor, listed >>
+
+\* With no hold open, it publishes a final checkpoint: the lease's last
+\* record, which lists the holds still open.
+FinalCheckpoint ==
+    /\ stopped
+'''
+
+[[LeaseLifecycle.mutants]]
+name = "a-final-checkpoint-from-an-owner-still-admitting"
+violates = "NoOpenHoldOnClosedLease"
+old = '''
+    /\ has
+    /\ stopped
+    /\ Own = {}
+'''
+new = '''
+    /\ has
+    /\ Own = {}
+'''
+
+# A lease moves one way. An owner that did not notice its lease close must
+# not mark it draining again, and nor must the auditor on an old read.
+[[LeaseLifecycle.mutants]]
+name = "the-owner-marks-a-lease-that-has-closed"
 violates_property = "LeaseMovesOneWay"
 old = '''
-    /\ Own = {}
+    /\ handoff = "complete"
     /\ lease.state = "open"
     /\ lease.epoch = epoch
 '''
 new = '''
-    /\ Own = {}
+    /\ handoff = "complete"
     /\ lease.epoch = epoch
+'''
+
+[[LeaseLifecycle.mutants]]
+name = "the-auditor-marks-a-lease-that-has-closed"
+violates_property = "LeaseMovesOneWay"
+old = '''
+    /\ audRead # NoRead
+    /\ lease.state = "open"
+    /\ lease.expiry = audRead
+    /\ lease' = [lease EXCEPT !.state = "draining"]
+'''
+new = '''
+    /\ audRead # NoRead
+    /\ lease.expiry = audRead
+    /\ lease' = [lease EXCEPT !.state = "draining"]
 '''
 
 # A draining lease's expiry does not move. A renewal that arrives when nobody
 # is listening is the same conditional write as the owner's.
 [[LeaseLifecycle.mutants]]
 name = "replay-a-renewal-on-a-draining-lease"
-violates_property = "OnlyAnOpenLeaseChanges"
+violates_property = "DrainingExpiryStays"
 old = '''
     /\ now <= LastRenew
     /\ lease.state = "open"
@@ -414,10 +568,10 @@ new = '''
 name = "the-auditor-never-closes-on-time"
 violates_property = "EventuallyClosed"
 old = '''
-HoldsEndedByTime == \E c \in Readings : c >= lease.expiry + MaxLife + Grace
+    /\ \E c \in Readings : c >= lease.expiry + MaxLife + Grace
 '''
 new = '''
-HoldsEndedByTime == FALSE
+    /\ FALSE
 '''
 
 [SurfaceCutover]
