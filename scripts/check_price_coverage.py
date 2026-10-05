@@ -72,6 +72,7 @@ from scripts.pricing.providers import (
     scaledown,
     scaleway,
     stepfun,
+    streamlake,
     system1models,
     system1models_eu,
     tencent,
@@ -543,6 +544,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     system1models_eu,
     relace,
     stepfun,
+    streamlake,
     scaledown,
     tencent,
 )
