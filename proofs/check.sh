@@ -11,18 +11,11 @@
 # clock exhausted), not a bug. Safety invariants and temporal properties are
 # still fully checked.
 #
-# -workers auto because this script used to run TLC single-threaded, which was
-# not a deliberate choice — it is just TLC's default. RegionalQuotaLease grew a
-# succession action and about a quarter more states (4,634,802 -> 5,844,105),
-# and at the default one worker it had not finished after fifteen minutes on
-# the machine this was measured on. With workers it completes, in a few
-# minutes rather than the "under three" this comment used to promise: the
-# four -workers auto runs behind this commit (JDK 21) took between 1m26s and
-# 4m06s, and one -workers 2 run (JDK 17) took 3m47s, all on an 8-core Apple
-# M2, all 5,844,105 states / 1,292,173 distinct. The spread is machine load
-# rather than the search. Nothing about the
-# RESULT changes with the worker count — an exhaustive breadth-first search
-# visits the same states either way, and the counts above are identical.
+# -workers auto because TLC's default is one worker, which was never a choice.
+# The retired RegionalQuotaLease spec had not finished at one worker after
+# fifteen minutes and took a few with workers, visiting the same 5,844,105
+# states either way. Nothing about the RESULT changes with the worker count:
+# an exhaustive breadth-first search visits the same states.
 #
 # One thing does change: a parallel search reports the first counterexample
 # any worker hands back, which need not be a shortest one. Re-run a failing
