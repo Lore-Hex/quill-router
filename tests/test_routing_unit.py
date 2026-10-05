@@ -1143,6 +1143,38 @@ def test_confidential_alias_uses_exact_e2e_endpoint_pool() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("model_id", "failing_provider"),
+    [
+        ("deepseek/deepseek-v4.1-flash", "nvidia-nim"),
+        ("qwen/qwen3-235b-a22b-thinking-2507", "chutes"),
+    ],
+)
+def test_provider_incident_preference_preserves_model_and_explicit_pins(
+    monkeypatch: pytest.MonkeyPatch, model_id: str, failing_provider: str,
+) -> None:
+    drop_routes(monkeypatch, model_id)
+    for provider in (failing_provider, "novita"):
+        serve_on_fixture_route(monkeypatch, model_id, provider, author=model_id.split("/")[0])
+
+    def routes(provider: dict) -> list:
+        return chat_route_endpoint_candidates(
+            {"model": model_id, "provider": {"usage": "credits", **provider}}, _settings(),
+        )
+
+    default = routes({})
+    assert [endpoint.provider for _, endpoint in default] == ["novita", failing_provider]
+    assert {model.id for model, _ in default} == {model_id}
+    assert {endpoint.provider for _, endpoint in default} == {"novita", failing_provider}
+    pinned = routes({"only": [failing_provider], "allow_fallbacks": False})
+    assert len(pinned) == 1 and pinned[0][1].provider == failing_provider
+    assert routes({"order": [failing_provider]})[0][1].provider == failing_provider
+    assert routes({"sort": "price"})[0][1].provider == failing_provider
+    if failing_provider == "chutes":
+        confidential = routes({"min_privacy": "confidential"})
+        assert [endpoint.provider for _, endpoint in confidential] == ["chutes"]
+
+
 def test_same_preference_tier_keeps_catalog_order() -> None:
     # Two reliable hosts share the default tier -> original order preserved.
     a = _credits_endpoint("deepinfra")

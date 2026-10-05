@@ -4537,6 +4537,24 @@ def test_evaluate_route_health_ignores_transient_failures() -> None:
     assert len(flags) == 1 and flags[0].failure_rate == 1.0
 
 
+def test_builtin_timeout_still_pages_availability_without_quarantine() -> None:
+    samples = [
+        _route_health_sample(
+            f"deadline-{index}", provider="nvidia-nim", model="deepseek/deepseek-v4.1-flash",
+            status="error", error_type="TimeoutError", age_hours=index,
+        )
+        for index in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("nvidia-nim", "deepseek/deepseek-v4.1-flash")],
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "availability"
+    assert flags[0].failures == flags[0].samples == 6
+    assert flags[0].failure_rate == 1.0
+    assert flags[0].newest_error_type == "TimeoutError"
+
+
 @pytest.mark.parametrize("failure_stride", [3, 4])
 @pytest.mark.parametrize("sample_interval_minutes", [3, 30, 60])
 def test_route_health_pages_sustained_partial_degradation_but_not_recovery(
