@@ -23,6 +23,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "reka",
         "sail-research",
         "sambanova",
+        "streamlake",
         "upstage",
         "bfl",
         "decart",

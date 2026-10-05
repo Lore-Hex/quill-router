@@ -188,6 +188,7 @@ def probe_openai_chat(
     extra_headers: dict[str, str] | None = None,
     expected_content: str | None = None,
     require_message: bool = False,
+    require_usage: bool = False,
     max_tokens: int = 4,
     max_tokens_field: str = "max_tokens",
     endpoint_path: str = "/chat/completions",
@@ -226,7 +227,7 @@ def probe_openai_chat(
         return False
     if response.status_code != 200:
         return False
-    if expected_content is None and not require_message:
+    if expected_content is None and not require_message and not require_usage:
         return True
     try:
         payload = response.json()
@@ -234,6 +235,17 @@ def probe_openai_chat(
         return False
     if not isinstance(payload, dict):
         return False
+    if require_usage:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return False
+        counts = [usage.get(field) for field in ("prompt_tokens", "completion_tokens", "total_tokens")]
+        if any(type(value) is not int or value < 0 for value in counts):
+            return False
+        if counts[0] <= 0 or counts[1] <= 0 or counts[2] != counts[0] + counts[1]:
+            return False
+        if expected_content is None and not require_message:
+            return True
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return False

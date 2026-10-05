@@ -15,6 +15,9 @@ def test_rejected_operator_credentials_block_only_prepaid(
     monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
     # Simulate fresh discovery claiming availability after a key rejection.
+    monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {
+        provider: "operator-credential-rejected",
+    })
     monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
     monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())

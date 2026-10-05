@@ -51,6 +51,7 @@ class DirectOpenAIProviderSpec:
     api_key_env: str | tuple[str, ...]
     explicit_model_map: dict[str, str]
     namespace_unqualified: str | None = None
+    model_id_resolver: Callable[[str], str | None] | None = None
     expected_models: tuple[str, ...] = ()
     preserve_unpriced_model_ids: frozenset[str] = frozenset()
     catalog_url: str | None = None
@@ -69,6 +70,8 @@ class DirectOpenAIProviderSpec:
     reviewed_unpriced_model_ids: frozenset[str] = frozenset()
     canary_max_tokens: int = 16
     canary_expected_content: str | None = None
+    canary_require_usage: bool = False
+    canary_require_message: bool = False
     canary_endpoint_path: str = "/chat/completions"
     canary_extra_body: dict[str, Any] = field(default_factory=dict)
     canary_prompt: str = "Reply PONG"
@@ -117,6 +120,8 @@ class DirectOpenAIProvider:
         mapped = self.spec.explicit_model_map.get(value)
         if mapped is not None:
             return mapped
+        if self.spec.model_id_resolver is not None:
+            return self.spec.model_id_resolver(value)
         if self.spec.namespace_unqualified and "/" not in value:
             return f"{self.spec.namespace_unqualified}/{value.casefold()}"
         return mapped_or_canonical_model_id(value, {})
@@ -241,6 +246,8 @@ class DirectOpenAIProvider:
                 model=self.upstream_id_map[model_id],
                 max_tokens=self.spec.canary_max_tokens,
                 expected_content=self.spec.canary_expected_content,
+                require_usage=self.spec.canary_require_usage,
+                require_message=self.spec.canary_require_message,
                 endpoint_path=self.spec.canary_endpoint_path,
                 extra_body=self.spec.canary_extra_body,
                 prompt=self.spec.canary_prompt,

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from scripts.pricing import refresh
@@ -20,6 +21,29 @@ from trusted_router.image_generation import (
 MANIFEST_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "data" / "provider_models"
 )
+
+
+@pytest.mark.parametrize("status,result,healthy", [
+    (402, None, False), (200, None, False),
+    (200, {"urls": []}, False),
+    (200, {"urls": ["https://images.krea.ai/probe.png"]}, True),
+])
+def test_krea_canary_requires_paid_generation_and_image(
+    monkeypatch: pytest.MonkeyPatch, status: int, result: object, healthy: bool,
+) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        if request.method == "POST":
+            return httpx.Response(status, json={"job_id": "test-job"})
+        return httpx.Response(200, json={"status": "completed", "result": result})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(krea.httpx, "Client", lambda **kw: client)
+    monkeypatch.setattr(krea.time, "sleep", lambda delay: None)
+    assert krea._probe_generation("test-key") is healthy
+    assert calls == (["POST"] if status == 402 else ["POST", "GET"])
 _MEDIA_ROUTES = (
     ("recraft/recraftv4_1", "recraft"),
     ("black-forest-labs/flux-2-klein-4b", "bfl"),

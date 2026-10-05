@@ -1852,7 +1852,8 @@ PROVIDERS: dict[str, Provider] = {
             "Krea exposes an asynchronous media API, not a shared OpenAI-compatible "
             "chat catalog. TrustedRouter supports Krea 2 Medium with exact fixed "
             "per-image billing. The route remains dark until its paid generation "
-            "canary succeeds. No ZDR or confidential-compute claim is tracked."
+            "canary succeeds; Krea requires a funded API balance, separate from "
+            "its workspace credits. No ZDR or confidential-compute claim is tracked."
         ),
         provider_policy_url="https://docs.krea.ai/",
     ),
