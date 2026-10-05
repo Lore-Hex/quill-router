@@ -6,13 +6,13 @@ SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
 LIGHTNING_GOOGLE_PASSTHROUGH_HOLD_REASON = "google-passthrough-disabled"
-# Authenticated inference rejected this deployed operator key on October 3.
-# Catalog discovery can succeed without validating inference credentials.
-# Clear each hold only after a paid-path canary with the replacement key.
-# These holds must not affect a customer's own BYOK credentials.
-PREPAID_PROVIDER_HOLD_REASONS = {
-    "crusoe": "operator-credential-rejected",
-}
+# Hold a provider's prepaid routes when its operator key is rejected, e.g.
+# {"crusoe": "operator-credential-rejected"}. Catalog discovery can succeed
+# without validating inference credentials, so clear a hold only after a
+# paid-path canary with the replacement key. Holds never affect a customer's
+# own BYOK credentials. Crusoe (held October 3) was cleared on October 5 after
+# its replacement key passed paid-path canaries.
+PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
