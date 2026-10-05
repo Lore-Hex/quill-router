@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "df401a8a0c4e9f6f69b84c3e04f5c60ec41a04fc555a9bdad9abc2ff499bbc22"
+inputs_sha256 = "2fb7759b3fa4ef0b7346ec0c7f7726f38b7854bf3277385a1edb2c4f308f6f1c"
 
 [[guard]]
 action = "OwnerRenew"
