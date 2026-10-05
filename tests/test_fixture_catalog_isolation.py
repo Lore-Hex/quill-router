@@ -11,19 +11,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from tests.fixture_routes import (
     clear_catalog_caches,
-    keep_a_changed_catalog_out_of_the_caches,
+    record_the_session_catalog,
     restore_the_session_catalog,
     serve_on_fixture_route,
-    the_catalog_is_the_sessions,
+    start_from_the_session_catalog,
 )
 from tests.pinned_manifests import _deepseek_row, serve_manifest_rows
-from trusted_router import catalog, dashboard
+from trusted_router import catalog, catalog_data, dashboard
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.routes import catalog as catalog_routes
 
@@ -120,23 +121,58 @@ def test_a_catalog_changed_by_hand_never_outlives_its_test_in_a_cached_projectio
     with pytest.MonkeyPatch.context() as monkeypatch:
         route_id = change(monkeypatch)
         # Control: the cache was empty, so the listing was computed from the
-        # changed catalog.
+        # changed catalog, and it is what the cache now holds.
         assert route_id in _listed_route_ids()
+    assert route_id in _listed_route_ids()
+    # What conftest does before the next test.
+    start_from_the_session_catalog()
     assert route_id not in _listed_route_ids()
+
+
+def test_a_projection_cached_under_another_clock_never_outlives_its_test() -> None:
+    """The registry is one of a projection's inputs. The clock that judges a
+    manifest's freshness is another: under a late one, every route of a
+    provider whose manifest has a deadline is gone. A test that cached that
+    listing changed nothing in the registry."""
+    whole = _listed_route_ids()
+    clear_catalog_caches()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(catalog_data, "_utc_now", lambda: datetime(2099, 1, 1, tzinfo=UTC))
+        # Control: routes are missing from what the cache now holds.
+        assert _listed_route_ids() < whole
+    assert _listed_route_ids() < whole
+    start_from_the_session_catalog()
+    assert _listed_route_ids() == whole
 
 
 def test_the_session_catalog_is_recorded_once() -> None:
     """conftest is imported again by a test that runs pytest inside pytest on
     a copy of it. That second call must not take the catalog of the test it
-    is called in for the session's, or wrap the projections twice."""
-    projection = catalog_routes._public_catalog_payload
+    is called in for the session's."""
     with pytest.MonkeyPatch.context() as monkeypatch:
         route_id = _put_into_the_registry(monkeypatch)
-        keep_a_changed_catalog_out_of_the_caches()
-        assert not the_catalog_is_the_sessions()
-    assert catalog_routes._public_catalog_payload is projection
+        record_the_session_catalog()
+        # Control: were this now the session's catalog, there would be nothing
+        # to put back.
+        assert restore_the_session_catalog() == "items"
     assert route_id not in catalog.MODEL_ENDPOINTS
-    assert the_catalog_is_the_sessions()
+    assert restore_the_session_catalog() == ""
+
+
+@pytest.mark.parametrize("change", [_put_into_the_registry, _bound_over_the_registry])
+def test_a_registry_left_changed_is_put_back(change: Callable[[pytest.MonkeyPatch], str]) -> None:
+    """A test that never undid its change: here, one whose change is still in
+    place. The registry is put back all the same, the same dict under the
+    same name."""
+    registry = catalog.MODEL_ENDPOINTS
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        route_id = change(monkeypatch)
+        assert route_id in catalog.MODEL_ENDPOINTS
+        assert restore_the_session_catalog() == "items"
+        assert catalog.MODEL_ENDPOINTS is registry
+        assert route_id not in catalog.MODEL_ENDPOINTS
+    assert restore_the_session_catalog() == ""
+    assert catalog.MODEL_ENDPOINTS is registry
 
 
 def test_a_route_taken_out_and_put_back_keeps_its_place() -> None:
@@ -156,21 +192,35 @@ def test_a_route_taken_out_and_put_back_keeps_its_place() -> None:
 
 
 _INNER = """
+from dataclasses import replace
+
 from tests.fixture_routes import clear_catalog_caches
 from trusted_router import catalog
 from trusted_router.routes import catalog as catalog_routes
 
 ORDER = list(catalog.MODEL_ENDPOINTS)
+ADDED = "anthropic/claude-haiku-4.5@deepinfra/prepaid"
 
 
-def test_leaves_another_order_and_an_empty_cache(monkeypatch):
+def _listed():
+    return {
+        route["id"]
+        for shape in catalog_routes._current_catalog_payload().shapes
+        for route in shape["trustedrouter"].get("endpoints", ())
+    }
+
+
+def test_leaves_another_order_and_its_own_listing_cached(monkeypatch):
+    template = next(e for e in catalog.endpoints_for_model("anthropic/claude-haiku-4.5") if not e.is_byok)
     monkeypatch.delitem(catalog.MODEL_ENDPOINTS, ORDER[0])
+    monkeypatch.setitem(catalog.MODEL_ENDPOINTS, ADDED, replace(template, id=ADDED, provider="deepinfra"))
     clear_catalog_caches()
+    assert ADDED in _listed()
 
 
-def test_starts_from_the_session_order_with_the_listing_cached():
+def test_starts_from_the_session_order_and_listing():
     assert list(catalog.MODEL_ENDPOINTS) == ORDER
-    assert catalog_routes._public_catalog_payload.cache_info().currsize == 1
+    assert ADDED not in _listed()
 """
 
 
@@ -179,8 +229,8 @@ def test_every_test_starts_from_the_session_catalog(
 ) -> None:
     """conftest's own hook, run for real: pytest inside pytest on a copy of
     conftest, as tests/test_lock_order_guard.py does. The first inner test
-    leaves the registry in another order and a cache empty; the second must
-    find neither."""
+    leaves the registry in another order and its own listing in the cache;
+    the second must find neither."""
     (tmp_path / "conftest.py").write_text(Path(__file__).with_name("conftest.py").read_text())
     inner = tmp_path / "test_inner_catalog.py"
     inner.write_text(_INNER)
