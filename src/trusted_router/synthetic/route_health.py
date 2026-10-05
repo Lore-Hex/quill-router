@@ -26,6 +26,7 @@ _CONFIGURATION_ERROR_TYPES = frozenset({
 # do page.
 _TRANSIENT_ERROR_TYPES = frozenset(
     {
+        "TimeoutError",
         "ReadTimeout",
         "ConnectTimeout",
         "WriteTimeout",

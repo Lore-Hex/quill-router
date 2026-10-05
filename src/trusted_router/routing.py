@@ -227,6 +227,12 @@ _PROVIDER_PREFERENCE = {
 # affect only default routing; caller-supplied provider.order/sort still wins.
 _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
     "z-ai/glm-5.2": {"parasail": -1},
+    # Direct probes on 2026-10-05: NVIDIA accepted the model but returned no
+    # headers within 95s; all three Chutes instances lacked evidence support.
+    # Keep both routes observable and explicitly selectable while preferring
+    # other backends for these exact models. Remove after verified recovery.
+    "deepseek/deepseek-v4.1-flash": {"nvidia-nim": 10},
+    "qwen/qwen3-235b-a22b-thinking-2507": {"chutes": 10},
     # Jev's vendor before the relay: one third party instead of two, and a
     # measured 238 ms median against ~330 ms through Vercel (2026-09-19, the
     # gateway's labeled ticket set). The relay stays as the failover.
