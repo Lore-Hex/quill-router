@@ -23,7 +23,9 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 30000,
-      "missing_since": "2026-10-05"
+      "missing_since": "2026-10-05",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "kat-coder-pro-v2",
@@ -45,7 +47,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-10-05"
+      "missing_since": "2026-10-05",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "kat-coder-pro-v2.5",
@@ -67,7 +71,9 @@
       "input_token_price_per_m": 740000,
       "output_token_price_per_m": 2960000,
       "cached_input_token_price_per_m": 150000,
-      "missing_since": "2026-10-05"
+      "missing_since": "2026-10-05",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek-V3",
@@ -868,7 +874,7 @@
       "cached_input_token_price_per_m": 30000
     }
   ],
-  "generated_at": "2026-10-05T07:57:13Z",
+  "generated_at": "2026-10-05T10:14:44Z",
   "model_count": 38,
   "pricing_source": "https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce"
 }

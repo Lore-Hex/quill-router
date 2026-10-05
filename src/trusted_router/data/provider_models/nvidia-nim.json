@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-10-04T15:40:42Z",
+  "generated_at": "2026-10-05T10:14:44Z",
   "model_count": 123,
   "models": [
     {
@@ -1493,7 +1493,8 @@
       "endpoints": [],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "routable_reason": "unsupported-chat-endpoint"
+      "routable_reason": "unsupported-chat-endpoint",
+      "missing_since": "2026-10-05"
     },
     {
       "id": "nvidia/riva-translate-4b-instruct-v2",

@@ -157,8 +157,8 @@
     "model_count": 12,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 12,
-    "route_mode": "BYOK",
+    "route_count": 24,
+    "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
   "darkbloom": {
@@ -271,10 +271,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -694,11 +694,11 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 6,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 6,
+    "route_mode": "Prepaid",
     "slug": "sambanova"
   },
   "scaledown": {
@@ -739,11 +739,11 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 27,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 27,
+    "route_mode": "Prepaid",
     "slug": "streamlake"
   },
   "system1models": {
@@ -892,10 +892,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 19,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 19,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },
