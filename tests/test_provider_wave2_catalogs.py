@@ -53,18 +53,16 @@ def test_provider_owned_pricing_parsers_use_integer_microdollars() -> None:
 
 
 def test_streamlake_parser_isolates_model_rows_on_live_one_line_page() -> None:
-    live_page_shape = (
-        r"<html><script>{\"content\":\""
-        r"\u003ctable\u003e"
-        r"\u003ctr\u003e\u003ctd\u003eKAT-Coder-Pro-V2.5\u003c/td\u003e"
-        r"\u003ctd\u003e0-256K\u003c/td\u003e"
-        r"\u003ctd\u003e$0.74\u003c/td\u003e"
-        r"\u003ctd\u003e$2.96\u003c/td\u003e"
-        r"\u003ctd\u003e-\u003c/td\u003e"
-        r"\u003ctd\u003e$0.15\u003c/td\u003e\u003c/tr\u003e"
-        r"\u003ctr\u003e\u003ctd\u003ePackage 7\u003c/td\u003e"
-        r"\u003ctd\u003e$999.9\u003c/td\u003e\u003c/tr\u003e"
-        r"\u003c/table\u003e\"}</script></html>"
+    from scripts.pricing.base import normalize_parser_input
+
+    table = (
+        '<table><tr><th>Model</th><th>Input Price</th><th>Output Price</th><th>Cache Read</th></tr>'
+        '<tr><td>KAT-Coder-Pro-V2.5</td><td>$0.74</td><td>$2.96</td><td>$0.15</td></tr>'
+        '<tr><td>Package 7</td><td>$999.9</td></tr></table>'
+    )
+    live_page_shape = normalize_parser_input(
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": {"content": table}}}) + '</script>'
     )
 
     assert streamlake_parser.parse(live_page_shape) == {
@@ -172,6 +170,8 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         for row in manifests["streamlake"]["models"]
         if row.get("routable") is not False
         and not provider_model_retired("streamlake", row["id"], row["upstream_id"])
+        # Release-specific leaves deliberately retain their reviewed route set.
+        and row["id"] != "deepseek/deepseek-v4-pro-0813"
     }
     assert streamlake_route_models == streamlake_manifest_models
     assert all(
@@ -213,15 +213,18 @@ def test_streamlake_canary_state_is_machine_owned(
         encoding="utf-8",
     )
     model_id = "kwaipilot/kat-coder-pro-v2"
-    monkeypatch.setattr(streamlake, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(streamlake.CATALOG, "manifest_path", manifest_path)
+    monkeypatch.setattr(streamlake.CATALOG, "_fetched", True)
     monkeypatch.setattr(
-        streamlake,
-        "_DISCOVERED_MANIFEST_ROWS",
+        streamlake.CATALOG,
+        "discovered_rows",
         {
             model_id: {
                 "id": model_id,
                 "upstream_id": "kat-coder-pro-v2",
                 "display_name": "KAT Coder Pro V2",
+                "routable": False,
+                "routable_reason": "provider-canary-failed",
             }
         },
     )
@@ -232,16 +235,16 @@ def test_streamlake_canary_state_is_machine_owned(
         fetched_url=streamlake.URL,
     )
 
-    monkeypatch.setattr(streamlake, "_LIVE_CANARY_OK", False)
     streamlake.write_provider_manifest(result)
     dark = json.loads(manifest_path.read_text())["models"][0]
     assert dark["routable"] is False
     assert dark["routable_reason"] == "provider-canary-failed"
 
-    monkeypatch.setattr(streamlake, "_LIVE_CANARY_OK", True)
+    streamlake.CATALOG.discovered_rows[model_id]["routable"] = True
+    streamlake.CATALOG.discovered_rows[model_id].pop("routable_reason")
     streamlake.write_provider_manifest(result)
     healthy = json.loads(manifest_path.read_text())["models"][0]
-    assert "routable" not in healthy
+    assert healthy["routable"] is True
     assert "routable_reason" not in healthy
 
 
@@ -343,7 +346,7 @@ def test_wave2_hourly_refresh_and_secret_wiring_are_complete() -> None:
         assert f"{env_name}:{secret_name}" in workflow
 
 
-def test_retired_streamlake_is_never_fetched_by_hourly_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retired_streamlake_models_do_not_disable_provider_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     from scripts.pricing import refresh
 
     attempted: list[str] = []
@@ -358,8 +361,8 @@ def test_retired_streamlake_is_never_fetched_by_hourly_refresh(monkeypatch: pyte
     assert failures == []
     assert len(results) == len(refresh.PROVIDER_SLUGS)
     assert set(attempted) == set(refresh.PROVIDER_SLUGS)
-    assert "streamlake" not in attempted
-    assert "streamlake" not in refresh._SELF_HEALING_PARSER_SLUGS
-    raw = json.loads(streamlake.MANIFEST_PATH.read_text())
-    assert len(raw["models"]) == 3
-    assert all(provider_model_retired("streamlake", row["id"], row["upstream_id"]) for row in raw["models"])
+    assert "streamlake" in attempted
+    assert "streamlake" in refresh._SELF_HEALING_PARSER_SLUGS
+    for native in ("kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5"):
+        assert provider_model_retired("streamlake", f"kwaipilot/{native}", native)
+    assert not provider_model_retired("streamlake", "z-ai/glm-5.3-flash", "GLM-5.3-Flash")

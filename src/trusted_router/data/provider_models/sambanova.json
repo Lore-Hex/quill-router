@@ -161,7 +161,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-10-04T15:40:42Z",
+  "generated_at": "2026-10-05T07:55:39Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

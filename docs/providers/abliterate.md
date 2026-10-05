@@ -45,3 +45,13 @@ canaries, deploy the gateway first, and test pinned requests through TR.
 and no server-side retention after completion. They also say requests transit
 another inference provider. That downstream retention and attestation are not
 established. Do not label these routes Confidential, E2EE, or end-to-end ZDR.
+
+## October 5 Recheck
+
+The current key still returns HTTP 200 and non-empty answers for
+`abliterate-0.3-fast`, but both JSON and SSE responses omit `usage`, even with
+`stream_options.include_usage=true`. The SSE stream terminates with `[DONE]`.
+The four model definitions and public prices remain configured, but the
+`upstream-usage-unavailable` hold must remain until the provider supplies
+authoritative billable usage. Do not activate routes using a local tokenizer
+or inferred counts.

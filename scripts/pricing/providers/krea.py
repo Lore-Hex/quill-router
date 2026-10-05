@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from decimal import Decimal, InvalidOperation
@@ -75,6 +76,10 @@ def _probe_generation(api_key: str) -> bool:
                 },
             )
             if response.status_code != 200:
+                if response.status_code == 402:
+                    logging.getLogger(__name__).warning(
+                        "krea: API balance unfunded (separate from workspace compute credits)"
+                    )
                 return False
             payload = response.json()
             job_id = payload.get("job_id") if isinstance(payload, dict) else None
@@ -93,7 +98,13 @@ def _probe_generation(api_key: str) -> bool:
                 state = poll.json()
                 status = state.get("status") if isinstance(state, dict) else None
                 if status == "completed":
-                    return True
+                    result = state.get("result")
+                    urls = result.get("urls") if isinstance(result, dict) else None
+                    # Image jobs return downloadable image URLs. A completed
+                    # state alone is not proof the inference produced an image.
+                    return isinstance(urls, list) and bool(urls) and all(
+                        isinstance(url, str) and url.startswith("https://") for url in urls
+                    )
                 if status in {"failed", "cancelled"}:
                     return False
     except (httpx.HTTPError, TypeError, ValueError):

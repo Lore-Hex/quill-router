@@ -72,9 +72,8 @@ from trusted_router.provider_manifest_policy import (  # noqa: E402
 
 HELD_FOR_REVIEW_HEADING = "Held for price review (last published prices kept):"
 
-# All configured StreamLake models were retired in the October 3 incident.
-# Keep its committed artifacts for history, but do not scrape or self-heal it.
-RETIRED_PROVIDER_SLUGS = frozenset({"streamlake"})
+# Retiring particular models must not disable discovery for an entire provider.
+RETIRED_PROVIDER_SLUGS: frozenset[str] = frozenset()
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
@@ -137,6 +136,7 @@ PROVIDER_SLUGS = [
     "inceptron",
     "morph",
     "atlas_cloud",
+    "streamlake",
     "neurometric",
     "engy",
     "pearl",
@@ -228,6 +228,7 @@ _SELF_HEALING_PARSER_SLUGS = frozenset(
         "novita",
         "openai",
         "siliconflow",
+        "streamlake",
         "thinkingmachines",
         "telnyx",
         "voyage",

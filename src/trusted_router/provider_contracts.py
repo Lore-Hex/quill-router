@@ -6,13 +6,12 @@ SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
 LIGHTNING_GOOGLE_PASSTHROUGH_HOLD_REASON = "google-passthrough-disabled"
-# Authenticated inference rejected both deployed operator keys on October 3.
+# Authenticated inference rejected this deployed operator key on October 3.
 # Catalog discovery can succeed without validating inference credentials.
 # Clear each hold only after a paid-path canary with the replacement key.
 # These holds must not affect a customer's own BYOK credentials.
 PREPAID_PROVIDER_HOLD_REASONS = {
     "crusoe": "operator-credential-rejected",
-    "sambanova": "operator-credential-rejected",
 }
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {

@@ -205,6 +205,7 @@ jobs:
                       NSCALE_API_KEY:trustedrouter-nscale-api-key \
                       AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
                       SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \
+                      STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
                       ARCEE_API_KEY:trustedrouter-arcee-api-key \
                       INCEPTION_API_KEY:trustedrouter-inception-api-key; do
             env="${pair%%:*}"
