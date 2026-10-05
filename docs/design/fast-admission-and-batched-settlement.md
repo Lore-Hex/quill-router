@@ -479,8 +479,9 @@ lease's expiry minus a skew allowance.
   - It keeps serving the lease's holds. Once none is open, it publishes a
     final checkpoint record. It then marks the lease draining, in a write
     conditional on the lease being open and on its epoch, and lets the
-    lease go. A write that changes no row means the auditor marked the
-    lease first.
+    lease go. A write that changes no row means the lease is no longer
+    open: the auditor marked it first, or an earlier try of the same write
+    landed and its answer was lost.
   - The auditor then finishes the lease (§4.8).
 - **Retiring.** An owner leaving in a deploy stops admitting, keeps serving
   and renewing its leases until their holds end (at most 2 h 20 min), then
@@ -532,7 +533,10 @@ lease's expiry minus a skew allowance.
     leases reach its successor. It answers one that names a lease it does
     not hold as an owner past its cutoff does (§4.2): a terminal gets
     `past_cutoff` and goes to the drain log, and a heartbeat gets `retry`.
-    It never takes the lease up.
+    It never takes the lease up: it neither admits under it nor publishes
+    a record for it. Its predecessor's last record, had it published one,
+    would list none of the predecessor's holds, and the auditor would
+    close the lease over them.
   - This is Invariant 6, and only the owner's code can keep it. The epoch
     condition on an owner's writes (§4.2) keeps a process that broke it from
     renewing or draining the lease. It does not keep that process from
@@ -1857,10 +1861,12 @@ What the table's short names hide:
   stayed blocked, which is the v11 hazard.
 - `LeaseLifecycle` cannot check Invariant 6. No rule of Spanner's keeps a
   process from using a lease it was not granted: that is the owner's code.
-  The spec assumes it, and its mutants widen it two ways, a later process
-  that takes the lease up and an answer that brings a finished lease back.
-  They break its single-writer claim, which is Invariant 7 for one lease,
-  the allocation, and the first sentence of Invariant 1. So what the spec
+  The spec assumes it, and its mutants widen it three ways: a later process
+  that takes the lease up, an answer that brings a finished lease back, and
+  a later process that publishes the lease's last record. They break its
+  single-writer claim, which is Invariant 7 for one lease, the allocation,
+  the first sentence of Invariant 1, and the reservation half of Invariant 4.
+  So what the spec
   shows of 6 and 7 is what rests on them, not that they hold. In the model
   the epoch conditions on the owner's writes then hold up nothing, and its
   guard table says so.
@@ -1958,8 +1964,9 @@ What the table's short names hide:
     maximum age must break Invariant 9;
   - that a process uses only the leases it was granted (Invariant 6, §4.3).
     A later process that takes a lease up must break the single-writer
-    claim, and an answer that brings a finished lease back must break the
-    first sentence of Invariant 1;
+    claim, an answer that brings a finished lease back must break the
+    first sentence of Invariant 1, and a later process that publishes a
+    lease's last record must break the reservation half of Invariant 4;
   - the margin within which Pub/Sub's servers agree, on which a rebuild's
     completeness rests (§4.8). An archive reported complete while a record
     received before the tick is missing must break Invariant 4;
