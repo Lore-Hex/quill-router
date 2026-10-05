@@ -372,7 +372,7 @@
   ],
   "provider": "anthropic",
   "source": "https://www.anthropic.com/pricing",
-  "generated_at": "2026-10-05T17:24:21Z",
+  "generated_at": "2026-10-05T23:22:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13
 }

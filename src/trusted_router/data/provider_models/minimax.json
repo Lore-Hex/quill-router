@@ -1,7 +1,7 @@
 {
   "provider": "minimax",
   "source": "https://api.minimax.io/v1/models",
-  "generated_at": "2026-10-05T17:24:21Z",
+  "generated_at": "2026-10-05T23:22:50Z",
   "model_count": 8,
   "models": [
     {
