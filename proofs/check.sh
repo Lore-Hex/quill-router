@@ -45,10 +45,17 @@
 #      prints it on its first line.
 #   3. Run `./proofs/check.sh` again, now with the check. CI runs it on the
 #      pull request that changes the jar, as it does on every pull request.
+#
+# After the specs, check_mutants.py checks manifest.toml: each spec's mutants
+# (a guard removed must break the invariant named for it), its survivors, its
+# variant configurations, that its guard table matches the spec, and that the
+# code and tests it names exist. A spec with no entry there fails.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 JAR="${TLA_TOOLS_JAR:-tla2tools.jar}"
+# TLC_WORKERS lowers the worker count on a machine that is doing other work.
+WORKERS="${TLC_WORKERS:-auto}"
 
 if [[ ! -f "$JAR" ]]; then
   echo "error: $JAR not found. proofs/tla2tools.jar is part of the repository; TLA_TOOLS_JAR names another." >&2
@@ -77,37 +84,49 @@ fi
 failed=0
 for spec in "${specs[@]}"; do
   name="${spec%.tla}"
-  cfg="${name}.cfg"
-  if [[ ! -f "$cfg" ]]; then
-    echo "error: $spec has no $cfg — every spec must declare what is checked." >&2
+  if [[ ! -f "${name}.cfg" ]]; then
+    echo "error: $spec has no ${name}.cfg — every spec must declare what is checked." >&2
     failed=1
     continue
   fi
 
-  # A .cfg naming only a SPECIFICATION checks nothing while looking checked —
-  # TLC would explore the state space and report success having verified no
-  # claim at all. Require at least one INVARIANT or PROPERTY.
-  if ! grep -qE '^[[:space:]]*(INVARIANT|INVARIANTS|PROPERTY|PROPERTIES)\b' "$cfg"; then
-    echo "error: $cfg declares no INVARIANT or PROPERTY — it would pass vacuously." >&2
-    failed=1
-    continue
-  fi
+  # A spec's main configuration is <Spec>.cfg. It may have more, each named
+  # <Spec>.<variant>.cfg: another instance of the same model, for a hazard
+  # that the main instance's constants cannot reach.
+  for cfg in "${name}.cfg" "${name}".*.cfg; do
+    # A .cfg naming only a SPECIFICATION checks nothing while looking checked —
+    # TLC would explore the state space and report success having verified no
+    # claim at all. Require at least one INVARIANT or PROPERTY.
+    if ! grep -qE '^[[:space:]]*(INVARIANT|INVARIANTS|PROPERTY|PROPERTIES)\b' "$cfg"; then
+      echo "error: $cfg declares no INVARIANT or PROPERTY — it would pass vacuously." >&2
+      failed=1
+      continue
+    fi
 
-  echo "=== TLC: $name ==="
-  log="$(mktemp)"
-  # Write the log first and grep the FILE. Piping straight into `grep -q` makes
-  # grep exit on first match, which SIGPIPEs tee/java and — under `pipefail` —
-  # reports a passing check as a failure.
-  java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC \
-      -deadlock -workers auto -config "$cfg" "$spec" >"$log" 2>&1 || true
-  cat "$log"
-  if grep -qE '^Model checking completed\. No error has been found\.' "$log"; then
-    grep -E 'states generated' "$log" | tail -1
-    echo "    OK"
-  else
-    echo "    FAILED — counterexample or error above" >&2
-    failed=1
-  fi
+    echo "=== TLC: ${cfg%.cfg} ==="
+    log="$(mktemp)"
+    # Write the log first and grep the FILE. Piping straight into `grep -q` makes
+    # grep exit on first match, which SIGPIPEs tee/java and — under `pipefail` —
+    # reports a passing check as a failure.
+    java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC \
+        -deadlock -workers "$WORKERS" -config "$cfg" "$spec" >"$log" 2>&1 || true
+    cat "$log"
+    # A spec can stop TLC's search itself (TLCSet("exit", TRUE)), and TLC then
+    # still says checking completed with no error. Its count of the states
+    # left on its queue says whether the search finished.
+    if grep -qE '^Model checking completed\. No error has been found\.' "$log" \
+        && grep -qE '^[0-9]+ states generated, [0-9]+ distinct states found, 0 states left on queue\.$' "$log"; then
+      grep -E 'states generated' "$log" | tail -1
+      echo "    OK"
+    else
+      echo "    FAILED — counterexample or error above" >&2
+      failed=1
+    fi
+  done
 done
+
+python3 check_mutants.py || failed=1
+# The sweep is not repeated here, but the script that runs it is tested.
+python3 guard_sweep.py --self-test || failed=1
 
 exit "$failed"
