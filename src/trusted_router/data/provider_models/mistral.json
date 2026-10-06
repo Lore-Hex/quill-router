@@ -18,16 +18,22 @@
       "id": "mistralai/codestral-2508",
       "upstream_id": "codestral-2508",
       "context_length": 256000,
-      "created": 1791221010,
+      "created": 1791296534,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 900000
+      "output_token_price_per_m": 900000,
+      "supports_reasoning": false,
+      "supported_features": [
+        "function-calling"
+      ],
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "mistral-large-2512",
       "title": "mistral-large-latest",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -39,16 +45,22 @@
       "id": "mistralai/mistral-large",
       "upstream_id": "mistral-large-latest",
       "context_length": 262144,
-      "created": 1791221010,
+      "created": 1791296534,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "supports_reasoning": false,
+      "supported_features": [
+        "function-calling"
+      ],
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "mistral-medium-latest",
       "title": "mistral-medium-3.5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -60,17 +72,23 @@
       "id": "mistralai/mistral-medium-3-5",
       "upstream_id": "mistral-medium-3.5",
       "context_length": 262144,
-      "created": 1791221010,
+      "created": 1791296534,
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 7500000,
-      "routable": true
+      "routable": true,
+      "supports_reasoning": true,
+      "supported_features": [
+        "function-calling"
+      ],
+      "cached_input_token_price_per_m": 150000
     },
     {
       "display_name": "mistral-small-2603",
       "title": "mistral-small-2603",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -82,13 +100,127 @@
       "id": "mistralai/mistral-small-2603",
       "upstream_id": "mistral-small-2603",
       "context_length": 262144,
-      "created": 1791221010,
+      "created": 1791296534,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "supports_reasoning": true,
+      "supported_features": [
+        "function-calling"
+      ],
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "ministral-14b-2512",
+      "title": "ministral-14b-2512",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/ministral-14b-2512",
+      "upstream_id": "ministral-14b-2512",
+      "context_length": 262144,
+      "created": 1791296534,
+      "supports_reasoning": false,
+      "supported_features": [
+        "function-calling"
+      ],
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "ministral-3b-2512",
+      "title": "ministral-3b-2512",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/ministral-3b-2512",
+      "upstream_id": "ministral-3b-2512",
+      "context_length": 131072,
+      "created": 1791296534,
+      "supports_reasoning": false,
+      "supported_features": [
+        "function-calling"
+      ],
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 100000,
+      "cached_input_token_price_per_m": 10000
+    },
+    {
+      "display_name": "ministral-8b-2512",
+      "title": "ministral-8b-2512",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/ministral-8b-2512",
+      "upstream_id": "ministral-8b-2512",
+      "context_length": 262144,
+      "created": 1791296534,
+      "supports_reasoning": false,
+      "supported_features": [
+        "function-calling"
+      ],
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 150000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "mistral-large-4",
+      "title": "mistral-large-4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-large-4",
+      "upstream_id": "mistral-large-4",
+      "context_length": 524288,
+      "created": 1791296534,
+      "supports_reasoning": true,
+      "supported_features": [
+        "function-calling"
+      ],
+      "input_token_price_per_m": 680000,
+      "output_token_price_per_m": 2090000,
+      "cached_input_token_price_per_m": 70000
     }
   ],
   "source": "https://api.mistral.ai/v1/models",
-  "generated_at": "2026-10-05T17:24:21Z",
+  "generated_at": "2026-10-06T14:22:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 4
+  "model_count": 8,
+  "pricing_source": "https://docs.mistral.ai/inference/pricing"
 }

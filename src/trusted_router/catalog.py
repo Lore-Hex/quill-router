@@ -497,6 +497,7 @@ _OPEN_WEIGHT_PREFIXES = (
     "ibm-granite/",
     "meta-llama/",
     "minimax/minimax-m3",
+    "mistralai/mistral-large-4",
     "moonshotai/kimi",
     "nvidia/nemotron",
     "qwen/",
