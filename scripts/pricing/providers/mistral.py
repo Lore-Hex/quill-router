@@ -11,7 +11,7 @@ from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.openai_catalog import discover_available_priced_chat_catalog
 
 SLUG = "mistral"
-URL = "https://mistral.ai/pricing/api/"
+URL = "https://docs.mistral.ai/inference/pricing"
 MODELS_URL = "https://api.mistral.ai/v1/models"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
@@ -44,12 +44,11 @@ def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
     _DISCOVERED_MANIFEST_ROWS = {}
+    UPSTREAM_ID_MAP.clear()
     result = fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
-        _DISCOVERED_MANIFEST_ROWS = {}
-        result.notes.append("MISTRAL_API_KEY unavailable; skipped model discovery")
-        return result
+        raise RuntimeError("MISTRAL_API_KEY unavailable; cannot verify priced model availability")
     payload = fetch_json(
         MODELS_URL,
         extra_headers={"Authorization": f"Bearer {api_key}"},
@@ -73,6 +72,18 @@ def fetch() -> ProviderPricingResult:
     )
     if not discovered:
         raise RuntimeError("mistral: no priced chat models found in authenticated catalog")
+    # The snapshot merger also consumes result.prices; do not let a docs-only
+    # launch bypass the manifest's authenticated availability intersection.
+    result.prices = {model_id: result.prices[model_id] for model_id in discovered}
+    by_upstream = {row["id"]: row for row in rows if isinstance(row.get("id"), str)}
+    for row in discovered.values():
+        capabilities = by_upstream[row["upstream_id"]].get("capabilities", {})
+        row["input_modalities"] = ["text", "image"] if capabilities.get("vision") else ["text"]
+        row["output_modalities"] = ["text"]
+        row["supports_reasoning"] = capabilities.get("reasoning") is True
+        row["supported_features"] = (
+            ["function-calling"] if capabilities.get("function_calling") is True else []
+        )
     _DISCOVERED_MANIFEST_ROWS = discovered
     result.source = "api"
     result.fetched_url = MODELS_URL
@@ -88,4 +99,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=MODELS_URL,
+        pricing_source_url=URL,
     )
