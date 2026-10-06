@@ -19,6 +19,8 @@ from trusted_router.storage_models import generation_id_for_authorization
 
 PURPOSE = "async-settle-ticket"
 TYP = "tr-async-settle-v1"
+# Contract lifetime bound, enforced at signing and verification, not only by settings.
+MAX_TTL_SECONDS = 300
 NativeIdentity = Annotated[Identity, Field(max_length=64)]
 
 
@@ -47,6 +49,7 @@ class TicketClaims(Frozen):
 def validate_claims(claims: Mapping[str, Any], now: int) -> TicketClaims:
     parsed = TicketClaims.model_validate(dict(claims))
     if (parsed.epoch < 1 or not parsed.iat <= now < parsed.exp
+            or not 0 < parsed.exp - parsed.iat <= MAX_TTL_SECONDS
             or parsed.generation_id != generation_id_for_authorization(parsed.authorization_id)):
         raise ValueError("ticket validity")
     return parsed

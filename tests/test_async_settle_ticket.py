@@ -11,11 +11,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from trusted_router.async_settle_ticket import PURPOSE, TicketSigner, verify_ticket
+from trusted_router.async_settle_ticket import PURPOSE, TYP, TicketSigner, verify_ticket
 from trusted_router.billing_snapshot import BillingSnapshot, Eligibility, canonical_hash
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
-from trusted_router.detached_jws import TrustedKey, canonical
+from trusted_router.detached_jws import TrustedKey, b64encode, canonical
 from trusted_router.services.async_settle import (
     Admission,
     AdmissionCache,
@@ -335,3 +335,24 @@ def test_canonical_rejects_nonfinite_numbers(value):
 
     with pytest.raises(ValueError):
         canonical({'value': value})
+
+
+@pytest.mark.parametrize('ttl', [301, 86400, 0, -1])
+def test_ticket_lifetime_above_300s_is_rejected_at_signing_and_verification(ttl):
+    s = signer()
+    claims = {**CLAIMS, 'exp': CLAIMS['iat'] + ttl}
+    with pytest.raises(ValueError):
+        s.sign(claims, claims['iat'])
+    # A hand-built, correctly signed long-lived ticket must fail verification too.
+    header = {'alg': 'EdDSA', 'kid': s.trusted.kid, 'typ': TYP}
+    material = b64encode(canonical(header)) + '.' + b64encode(canonical(claims))
+    token = material + '.' + b64encode(s.private.sign(material.encode('ascii')))
+    with pytest.raises(ValueError):
+        verify_ticket(token, [s.trusted], claims, claims['iat'] + 1)
+
+
+def test_ticket_lifetime_of_exactly_300s_is_accepted():
+    s = signer()
+    claims = {**CLAIMS, 'exp': CLAIMS['iat'] + 300}
+    token = s.sign(claims, claims['iat'])
+    assert verify_ticket(token, [s.trusted], claims, claims['iat'] + 299).exp == claims['exp']
