@@ -32,6 +32,9 @@ _NAME_TO_OR_ID = {
     "Ministral 3 - 3B": "mistralai/ministral-3b-2512",
     "Ministral 3 - 8B": "mistralai/ministral-8b-2512",
     "Ministral 3 - 14B": "mistralai/ministral-14b-2512",
+    "Ministral 3 3B": "mistralai/ministral-3b-2512",
+    "Ministral 3 8B": "mistralai/ministral-8b-2512",
+    "Ministral 3 14B": "mistralai/ministral-14b-2512",
     "Codestral": "mistralai/codestral-2508",
     "Pixtral Large": "mistralai/pixtral-large-2411",
     "Mixtral 8x22B": "mistralai/mixtral-8x22b-instruct",
@@ -41,6 +44,17 @@ _NAME_TO_OR_ID = {
 
 # `<p>$0.4</p>` or `<p>$0.4</p>` — JSON-escaped HTML.
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
+
+
+def _model_id(name: str) -> str | None:
+    if name in _NAME_TO_OR_ID:
+        return _NAME_TO_OR_ID[name]
+    # New numbered first-party chat families still need an exact match in
+    # the authenticated catalog before discovery can publish a route.
+    if re.fullmatch(r"(?:Mistral|Ministral|Devstral|Magistral|Pixtral) [A-Za-z0-9 .-]+", name):
+        slug = re.sub(r"[ .]+", "-", name.casefold())
+        return f"mistralai/{slug}"
+    return None
 
 
 def _to_micro_per_m(text: str | None) -> int | None:
@@ -70,7 +84,7 @@ def _parse_embedded_json(html: str) -> dict:
     name_re = re.compile(r'"name"\s*:\s*"([^"]+)"')
     for m in name_re.finditer(text):
         name = m.group(1)
-        or_id = _NAME_TO_OR_ID.get(name)
+        or_id = _model_id(name)
         if or_id is None:
             continue
         # Skip duplicate occurrences (Mistral references each model in
@@ -138,7 +152,7 @@ def _parse_rendered_cards(html: str) -> dict:
         if not isinstance(name_node, Tag):
             continue
         name = name_node.get_text(" ", strip=True)
-        or_id = _NAME_TO_OR_ID.get(name)
+        or_id = _model_id(name)
         if or_id is None or or_id in out:
             continue
 
@@ -150,7 +164,7 @@ def _parse_rendered_cards(html: str) -> dict:
             recognized_names = {
                 node.get_text(" ", strip=True)
                 for node in card.find_all("p")
-                if isinstance(node, Tag) and node.get_text(" ", strip=True) in _NAME_TO_OR_ID
+                if isinstance(node, Tag) and _model_id(node.get_text(" ", strip=True))
             }
             if len(recognized_names) > 1:
                 # Navigation/page-root containers span multiple models. Any
@@ -177,9 +191,56 @@ def _parse_rendered_cards(html: str) -> dict:
     return out
 
 
+def _parse_tables(html: str) -> dict:
+    """Read the current docs' standard USD/M-token tables by column label."""
+    out: dict = {}
+    soup = BeautifulSoup(html, "html.parser")
+    for table in soup.find_all("table"):
+        if not isinstance(table, Tag):
+            continue
+        if any(
+            node.has_attr("hidden")
+            or node.get("aria-hidden") == "true"
+            or node.get("data-state") == "inactive"
+            for node in [table, *table.parents]
+            if isinstance(node, Tag)
+        ):
+            continue
+        headers = [node.get_text(" ", strip=True).casefold() for node in table.select("thead th")]
+        if set(headers) != {"model", "input", "cached input", "output"} or len(headers) != 4:
+            continue
+        for tr in table.select("tbody tr"):
+            cells = tr.find_all("td", recursive=False)
+            if len(cells) != len(headers):
+                continue
+            values = dict(zip(headers, cells, strict=True))
+            name = values["model"].get_text(" ", strip=True).removesuffix("\u2197").strip()
+            model_id = _model_id(name)
+            if model_id is None:
+                continue
+            row = {}
+            for label, field in (
+                ("input", "prompt_micro_per_m"),
+                ("output", "completion_micro_per_m"),
+                ("cached input", "prompt_cached_micro_per_m"),
+            ):
+                text = values[label].get_text(" ", strip=True)
+                # Never interpret per-page/minute/character rates or a pair
+                # of regional/discounted prices as one token rate.
+                if re.fullmatch(r"\$\d+(?:\.\d+)?", text):
+                    row[field] = _to_micro_per_m(text)
+            if "prompt_micro_per_m" not in row or "completion_micro_per_m" not in row:
+                continue
+            if model_id in out and out[model_id] != row:
+                raise ValueError(f"mistral: conflicting standard prices for {model_id}")
+            out[model_id] = row
+    return out
+
+
 def parse(html: str) -> dict:
     # Support both the older embedded Next.js payload and the current
     # server-rendered API cards. Current visible cards win if both exist.
     out = _parse_embedded_json(html)
     out.update(_parse_rendered_cards(html))
+    out.update(_parse_tables(html))
     return out
