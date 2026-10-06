@@ -12,6 +12,7 @@ from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
 )
+from trusted_router.catalog_data import model_origin_for_model_id
 from trusted_router.catalog_ingest import _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS
 
@@ -40,6 +41,11 @@ def test_muse_spark_routes_use_direct_meta_without_claiming_zdr() -> None:
         model_id = f"meta/muse-spark-{version}"
         assert model_id in MODELS
         assert MODEL_ENDPOINTS[f"{model_id}@meta/prepaid"].upstream_id == f"muse-spark-{version}"
+        origin = model_origin_for_model_id(model_id)
+        assert origin is not None
+        assert origin.country == "US"
+        assert origin.lab_name == "Meta"
+        assert origin.source_url
     assert not any("contributor" in key for key in MODELS if key.startswith("meta/"))
     assert f"{MODEL_ID}@meta/byok" not in MODEL_ENDPOINTS
 

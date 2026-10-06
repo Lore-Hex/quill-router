@@ -3815,6 +3815,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "home, not the location of every team that worked on a model."
         ),
     ),
+    "meta": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Meta",
+        source_url="https://www.sec.gov/Archives/edgar/data/1326801/000162828026003942/meta-20251231.htm",
+        note=(
+            "Meta Platforms, Inc.'s 2025 Form 10-K gives principal executive "
+            "offices in Menlo Park, California. This records the model maker's "
+            "home, not an inference serving region or a data-retention guarantee."
+        ),
+    ),
     "meta-llama": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="Meta",
