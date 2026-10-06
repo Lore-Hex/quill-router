@@ -99,6 +99,12 @@
 (*   write after one in flight carries the owner's total as it then is.     *)
 (*   The history variable `due` counts the landings left.                   *)
 (*                                                                          *)
+(*   OwnerBooksBalance and ShortfallIsTheDeficit. A settle the owner's      *)
+(*   allocation has no room for raises the allocation by the shortfall it   *)
+(*   leaves, and by exactly that: the owner's books are left with no room.  *)
+(*   The shortfall is the lease's deficit, not a settle's overrun of its    *)
+(*   own hold.                                                              *)
+(*                                                                          *)
 (*   StoredShortfallNeverFalls, StoredShortfallWithinOwners and             *)
 (*   StoredShortfallIsTheLarger. The owner's write is the larger of the     *)
 (*   stored total and its own: so a write that lands after the auditor      *)
@@ -687,6 +693,12 @@ Unlanded(l) == Pos(oSf[l] - sfStored[l])
 \* The owner's books: a charge the allocation has no room for raises it.
 OwnerBooksBalance ==
     \A l \in Leases : oUp[l] # "dead" => Remain(l) >= 0
+
+\* By exactly what it lacks: when the owner's shortfall total rises, its
+\* books are left with no room. The shortfall is the lease's deficit, not a
+\* settle's overrun of its own hold.
+ShortfallIsTheDeficit ==
+    [][\A l \in Leases : oSf'[l] > oSf[l] => Remain(l)' = 0]_vars
 
 \* Section 4.2's first claim. A lease's remaining allocation in Spanner is
 \* never less than its open holds, in the log's sense, once everything the

@@ -1492,3 +1492,10 @@ new = '''
                /\ sfStored' = [sfStored EXCEPT ![l] = @ + rise]
                /\ UNCHANGED << usage, booked, hold >>
 '''
+
+# Codex's fifth review: the owner's shortfall is the lease's deficit.
+[[CreditDebt.mutants]]
+name = "a-shortfall-per-hold"
+violates_property = "ShortfallIsTheDeficit"
+old = '           short == Pos(cons + held - mine)'
+new = '           short == Pos(a - 1 - raise)'
