@@ -1037,26 +1037,31 @@ def _authorize_gateway_sync_impl(
     region = choose_region(settings, body.region or None)
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
-    fingerprint_body = dict(body_dict)
-    if is_video_request or is_image_request:
-        # Provider quotes can change between retries. The enclave supplies a
-        # keyed content fingerprint, so media idempotency binds to the logical
-        # request without storing content or coupling replay to a fresh quote.
-        fingerprint_body.pop("additional_cost_reservation_microdollars", None)
-    # Preserve the pre-tagging router's distinction between an absent tags
-    # field and an explicitly supplied empty object. That lets an idempotent
-    # retry carrying tags={} replay an authorization created before rollout.
-    if body.tags is not None:
-        fingerprint_body["tags"] = request_tags
-    else:
-        fingerprint_body.pop("tags", None)
-    body_dict["tags"] = effective_tags
-    request_fingerprint = _gateway_authorize_fingerprint(
-        workspace_id=workspace.id,
-        key_hash=api_key.hash,
-        body=fingerprint_body,
-        idempotency_key=request_idempotency_key,
-    )
+    def prepare_fingerprint() -> tuple[dict[str, Any], str]:
+        fingerprint_body = dict(body_dict)
+        if is_video_request or is_image_request:
+            # Provider quotes can change between retries. The enclave supplies a
+            # keyed content fingerprint, so media idempotency binds to the logical
+            # request without storing content or coupling replay to a fresh quote.
+            fingerprint_body.pop("additional_cost_reservation_microdollars", None)
+        # Preserve the pre-tagging router's distinction between an absent tags
+        # field and an explicitly supplied empty object. That lets an idempotent
+        # retry carrying tags={} replay an authorization created before rollout.
+        if body.tags is not None:
+            fingerprint_body["tags"] = request_tags
+        else:
+            fingerprint_body.pop("tags", None)
+        body_dict["tags"] = effective_tags
+        request_fingerprint = _gateway_authorize_fingerprint(
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            body=fingerprint_body,
+            idempotency_key=request_idempotency_key,
+        )
+        return fingerprint_body, request_fingerprint
+
+    if catalog_video_request:
+        fingerprint_body, request_fingerprint = prepare_fingerprint()
 
     def _replay_response(
         existing_authorization: Any,
@@ -1227,6 +1232,15 @@ def _authorize_gateway_sync_impl(
                 ErrorType.BAD_REQUEST,
             )
     effective_route_preferences = route_preferences
+    if not catalog_video_request:
+        # Main prepares and validates creator models before fingerprinting.
+        # Its resolution-triggered replay still precedes live routing and any
+        # user-model slot acquisition; only catalog requests replay earlier.
+        fingerprint_body, request_fingerprint = prepare_fingerprint()
+        if body.video_resolution is not None:
+            replay = _lookup_replay()
+            if replay is not None:
+                return replay
 
     # The authorization's one clock reading. The estimate, the pricing
     # snapshot and the stored created_at all use it, and settlement prices a
@@ -1495,7 +1509,7 @@ def _authorize_gateway_sync_impl(
         requested_model_id=requested_model_id,
         endpoint=endpoint,
     )
-    if _typed_store is None:
+    if _typed_store is None and (catalog_video_request or body.video_resolution is None):
         replay = _lookup_replay(endpoint_candidates)
         if replay is not None:
             return replay

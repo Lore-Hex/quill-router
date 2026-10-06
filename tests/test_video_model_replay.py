@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from tests.fixtures.generate_gateway_authorizations import (
     authorize,
     money_snapshot,
+    observe_creator_resolution_replay,
     observe_inconsistent_identity,
     observe_race,
     seed_model,
@@ -153,38 +154,57 @@ def test_creator_video_derived_fields_still_replay(backend, kind):
 
 @pytest.mark.parametrize("kind", ["custom", "user"])
 @pytest.mark.parametrize("backend", ["memory", "typed", "legacy"])
-@pytest.mark.parametrize("resolution", [None, "1080p"])
-def test_creator_retry_uses_only_main_late_replay(monkeypatch, kind, backend, resolution):
-    store, _, _, _, body = seed_model(kind, backend=backend)
-    if resolution:
-        body["video_resolution"] = resolution
-    first = authorize(body)
-    events = []
-    route_name = "video_route_endpoint_candidates" if kind == "custom" else "_user_model_gateway_candidate"
-    original_route = getattr(gateway, route_name)
+def test_creator_resolution_replay_equals_recorded_main(monkeypatch, kind, backend):
+    expected = RECORDS["observations"][f"resolution-replay/{backend}/{kind}"]
+    assert expected == {"status": 200, "replay": True, "same_authorization": True,
+                        "retry_live_events": [], "unchanged_authorization": True, "unchanged_money": True}
+    assert observe_creator_resolution_replay(monkeypatch, kind, backend) == expected
 
-    def route(*args, **kwargs):
-        events.append("route")
-        return original_route(*args, **kwargs)
 
-    monkeypatch.setattr(gateway, route_name, route)
-    method = "get_gateway_authorization_by_idempotency_key" if backend == "memory" else "authorize_gateway_typed"
-    original_replay = getattr(type(store), method)
+@pytest.mark.parametrize("kind", ["custom", "user"])
+@pytest.mark.parametrize("backend", ["memory", "typed", "legacy"])
+def test_creator_retry_preserves_main_replay_order(monkeypatch, kind, backend):
+    # Exercise both branches together: only requests with a resolution use
+    # main's early lookup, and even those must prepare and validate first.
+    for resolution in (None, "1080p"):
+        with monkeypatch.context() as patch:
+            store, database, key, _, body = seed_model(kind, backend=backend)
+            if resolution:
+                body["video_resolution"] = resolution
+            first = authorize(body)
+            before = money_snapshot(store, database, key)
+            events = []
+            lookup = ("get_gateway_authorization_by_idempotency_key" if backend == "memory"
+                      else "get_typed_authorization_by_idempotency")
+            late = "get_gateway_authorization_by_idempotency_key" if backend == "memory" else "authorize_gateway_typed"
+            hooks = [
+                (type(store), "get_custom_model" if kind == "custom" else "get_user_model", "prepare"),
+                (gateway, "normalize_routing_inputs", "validate"),
+                (gateway, "_gateway_authorize_fingerprint", "fingerprint"),
+                (gateway, "video_route_endpoint_candidates" if kind == "custom" else "_user_model_gateway_candidate", "route"),
+                (type(store), lookup, "lookup"),
+            ]
+            if late != lookup:
+                hooks.append((type(store), late, "transaction"))
+            for target, name, event in hooks:
+                original = getattr(target, name)
 
-    def late_replay(self, *args, **kwargs):
-        assert events == ["route"]
-        events.append("late-replay")
-        return original_replay(self, *args, **kwargs)
+                def track(*args, _event=event, _original=original, _events=events, **kwargs):
+                    _events.append(_event)
+                    return _original(*args, **kwargs)
 
-    monkeypatch.setattr(type(store), method, late_replay)
-    if backend != "memory":
-        def forbidden(*args, **kwargs):
-            pytest.fail("identical creator retry must go directly through typed admission")
-        monkeypatch.setattr(type(store), "get_typed_authorization_by_idempotency", forbidden)
-    retry = authorize(body)
-    assert events == ["route", "late-replay"]
-    assert retry["idempotent_replay"] is True
-    assert retry["authorization_id"] == first["authorization_id"]
+                patch.setattr(target, name, track)
+            retry = authorize(body)
+            expected = ["prepare", "validate", "fingerprint"]
+            expected += (["lookup"] if resolution else
+                         ["route", "lookup" if backend == "memory" else "transaction"])
+            if kind == "user":
+                # Main also reads the owner model when building the response.
+                expected.append("prepare")
+            assert events == expected
+            assert retry["idempotent_replay"] is True
+            assert retry["authorization_id"] == first["authorization_id"]
+            assert money_snapshot(store, database, key) == before
 
 
 @pytest.mark.parametrize("model", ["tr-custom-model/missing", "tr-user-model/missing"])

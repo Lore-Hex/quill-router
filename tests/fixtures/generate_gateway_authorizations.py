@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -119,6 +119,41 @@ def observe_race(monkeypatch, backend, reverse=False):
             "unchanged_money": True}
 
 
+def observe_creator_resolution_replay(monkeypatch, kind, backend):
+    """Record main's resolution replay before live routing or slot acquisition."""
+    store, database, key, model, body = seed_model(kind, backend=backend)
+    body["video_resolution"] = "1080p"
+    if kind == "user":
+        store.update_user_model(model.id, owner_user_id="owner", patch={"max_concurrency": 1})
+    first = authorize(body)
+    auth = copy.deepcopy(store.get_gateway_authorization(first["authorization_id"]))
+    before = money_snapshot(store, database, key)
+    if kind == "custom":
+        monkeypatch.setitem(gateway.MODELS, MODEL, replace(gateway.MODELS[MODEL], supports_video=False))
+
+    events = []
+    for name in ("video_route_endpoint_candidates" if kind == "custom" else "_user_model_gateway_candidate",
+                 "acquire_user_model_slot"):
+        original = getattr(gateway, name)
+
+        def track(*args, _name=name, _original=original, **kwargs):
+            events.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(gateway, name, track)
+    try:
+        retry = authorize(body)
+    except HTTPException as exc:
+        result = {"status": exc.status_code, "replay": False, "same_authorization": False}
+    else:
+        assert retry.get("invocation_nonce") is None
+        result = {"status": 200, "replay": retry["idempotent_replay"],
+                  "same_authorization": retry["authorization_id"] == first["authorization_id"]}
+    assert store.get_gateway_authorization(auth.id) == auth
+    assert money_snapshot(store, database, key) == before
+    return {**result, "retry_live_events": events, "unchanged_authorization": True, "unchanged_money": True}
+
+
 def record_authorization(kind):
     store, _, key, model, body = seed_model(kind)
     if kind == "catalog":
@@ -147,6 +182,9 @@ def test_record_main(monkeypatch):
     records = {kind: record_authorization(kind) for kind in ("catalog", "user", "chat")}
     observations = {}
     for backend in ("memory", "typed", "legacy"):
+        for kind in ("user", "custom"):
+            with monkeypatch.context() as patch:
+                observations[f"resolution-replay/{backend}/{kind}"] = observe_creator_resolution_replay(patch, kind, backend)
         for reverse in (False, True):
             with monkeypatch.context() as patch:
                 observations[f"race/{backend}/{reverse}"] = observe_race(patch, backend, reverse)

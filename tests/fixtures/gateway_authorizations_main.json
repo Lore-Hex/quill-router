@@ -12,8 +12,8 @@
         "candidate_model_ids": [
           "bytedance/seedance-2.5"
         ],
-        "created_at": "2026-10-06T18:00:09.795357Z",
-        "credit_reservation_id": "efe2555f-11e9-4e47-8d72-5c75c10c2737",
+        "created_at": "2026-10-06T18:24:22.420754Z",
+        "credit_reservation_id": "f88d0989-ab91-4af4-ac81-af6602ba6059",
         "custom_model_id": null,
         "custom_model_markup_basis_points": 0,
         "custom_model_owner_user_id": "",
@@ -37,11 +37,11 @@
         "heartbeat_at": null,
         "heartbeat_hash": null,
         "heartbeat_seq": null,
-        "id": "gwa-f6791d9a41324473829096134c3d86bf",
-        "idempotency_fingerprint": "2fa7902138b27860a10b06b76ba048cd4f355346d80af1850c53d91a5e9f96a0",
+        "id": "gwa-928af2b910614da2878cbc111b368c42",
+        "idempotency_fingerprint": "989d6ac5aa7d846994dd6781d7c574e2387e298d1de0971ca8d09bdf16df539c",
         "idempotency_key": "recorded-video",
         "invocation_nonce": null,
-        "key_hash": "key_n6vIyViXyV63zj7NSkAXv3BB",
+        "key_hash": "key_jhLkBx6j0EOWMxMkoUECSqk9",
         "key_reserved_microdollars": 900000,
         "model_id": "bytedance/seedance-2.5",
         "native_batch_eligible": false,
@@ -66,7 +66,7 @@
         "user_provided_model_id": null,
         "user_provided_model_revision": null,
         "video_pricing_snapshot": "{\"candidates\":[{\"endpoint_id\":\"bytedance/seedance-2.5@venice/prepaid\",\"price_history_version\":1,\"rates\":{\"cache_creation_micro_per_million\":0,\"cached_input_micro_per_million\":0,\"input_micro_per_million\":0,\"output_micro_per_million\":0},\"request_fee_micro\":0,\"rounding\":\"half_up_per_million\",\"tiers\":[]}],\"kind\":\"endpoint\",\"output_token_limit\":1,\"v\":1}",
-        "workspace_id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d"
+        "workspace_id": "eae1653d-121a-44f1-b5f7-00942855de09"
       },
       "credit_account": {
         "auto_refill_amount_microdollars": 0,
@@ -77,7 +77,7 @@
         "shard_count": 1,
         "stripe_customer_id": null,
         "stripe_payment_method_id": null,
-        "workspace_id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d"
+        "workspace_id": "eae1653d-121a-44f1-b5f7-00942855de09"
       },
       "credit_money": {
         "reserved_microdollars": 900000,
@@ -90,7 +90,7 @@
         "budget_alerted": {},
         "budget_strict": false,
         "byok_usage_microdollars": 0,
-        "created_at": "2026-10-06T18:00:09Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "creator_user_id": "owner",
         "disabled": false,
         "expires_at": null,
@@ -98,30 +98,30 @@
         "federated_app_owner_user_id": "",
         "federated_app_suspended": false,
         "federated_home": "",
-        "hash": "key_n6vIyViXyV63zj7NSkAXv3BB",
+        "hash": "key_jhLkBx6j0EOWMxMkoUECSqk9",
         "include_byok_in_limit": true,
-        "label": "sk-tr-v1-0...9C5U",
+        "label": "sk-tr-v1-r...Xd00",
         "limit_daily_microdollars": null,
         "limit_microdollars": 10000000,
         "limit_monthly_microdollars": null,
         "limit_reset": null,
         "limit_weekly_microdollars": null,
-        "lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+        "lookup_hash": "dbb59780f88e4d3b09e4bec9f46573f95e3da5a2eda8d0cb1aaabaa39d211ec9",
         "management": false,
         "name": "recorded",
         "reserved_microdollars": 900000,
-        "salt": "8f7b2cdc7fa7664ad6a16e8ceae97333d410225a55d6a3479287c26fe728ba44",
+        "salt": "5051337a2495c28ab3edd2b0c4e81f95adf58d4c08f73f35fb6e65276ff533db",
         "scopes": [],
-        "secret_hash": "10411342903fc00a9534579b06b6b6a546dbc15743cf1b701652446ade1ced33",
+        "secret_hash": "1e969c288091921b8b64df07a1a930dd4979de12001d116a631108287b86e5fa",
         "tags": {},
         "updated_at": null,
         "usage_microdollars": 0,
         "usage_shard_count": 1,
-        "workspace_id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d"
+        "workspace_id": "eae1653d-121a-44f1-b5f7-00942855de09"
       },
       "request": {
         "additional_cost_reservation_microdollars": 900000,
-        "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+        "api_key_lookup_hash": "dbb59780f88e4d3b09e4bec9f46573f95e3da5a2eda8d0cb1aaabaa39d211ec9",
         "idempotency_key": "recorded-video",
         "max_tokens": 1,
         "model": "bytedance/seedance-2.5",
@@ -137,7 +137,7 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 900000,
-            "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+            "api_key_lookup_hash": "dbb59780f88e4d3b09e4bec9f46573f95e3da5a2eda8d0cb1aaabaa39d211ec9",
             "idempotency_key": "recorded-video",
             "max_tokens": 1,
             "model": "bytedance/seedance-2.5",
@@ -158,7 +158,7 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 900000,
-            "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+            "api_key_lookup_hash": "dbb59780f88e4d3b09e4bec9f46573f95e3da5a2eda8d0cb1aaabaa39d211ec9",
             "idempotency_key": "recorded-video",
             "max_tokens": 400000,
             "model": "bytedance/seedance-2.5",
@@ -179,7 +179,7 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 900000,
-            "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+            "api_key_lookup_hash": "dbb59780f88e4d3b09e4bec9f46573f95e3da5a2eda8d0cb1aaabaa39d211ec9",
             "idempotency_key": "recorded-video",
             "max_tokens": 1,
             "model": "bytedance/seedance-2.5",
@@ -203,10 +203,10 @@
         "billing_pause_reason": "",
         "billing_paused": false,
         "content_storage_enabled": false,
-        "created_at": "2026-10-06T18:00:09Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "deleted": false,
         "federated_home": "",
-        "id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d",
+        "id": "eae1653d-121a-44f1-b5f7-00942855de09",
         "name": "recorded",
         "owner_user_id": "owner"
       }
@@ -223,8 +223,8 @@
         "candidate_model_ids": [
           "anthropic/claude-haiku-4.5"
         ],
-        "created_at": "2026-10-06T18:00:10.046832Z",
-        "credit_reservation_id": "f556da7f-61fe-45c8-a1b5-aaa436b588f6",
+        "created_at": "2026-10-06T18:24:22.478239Z",
+        "credit_reservation_id": "c1ad9df7-e676-42bc-95b2-232ed2dc855e",
         "custom_model_id": null,
         "custom_model_markup_basis_points": 0,
         "custom_model_owner_user_id": "",
@@ -248,11 +248,11 @@
         "heartbeat_at": null,
         "heartbeat_hash": null,
         "heartbeat_seq": null,
-        "id": "gwa-78b785669d7f41c99ea75095b7b615a3",
-        "idempotency_fingerprint": "24dc98e4e48d5bc34af47c09c61104ebae43780d7e212d3fedb59b2904876328",
+        "id": "gwa-d5d4efb0fadd4861a09671e20baa8c6a",
+        "idempotency_fingerprint": "9d2690c57217395423da9207c2a70681e68e5e2953272d0757f60c67fcf28016",
         "idempotency_key": "recorded-video",
         "invocation_nonce": null,
-        "key_hash": "key_4RdfcA--HPES8U47Oysdd66p",
+        "key_hash": "key_43aqHCkUfQ2VFLxHHw30CJrI",
         "key_reserved_microdollars": 6,
         "model_id": "anthropic/claude-haiku-4.5",
         "native_batch_eligible": false,
@@ -277,7 +277,7 @@
         "user_provided_model_id": null,
         "user_provided_model_revision": null,
         "video_pricing_snapshot": null,
-        "workspace_id": "69cff0c1-3118-410b-8db4-603c4032adc5"
+        "workspace_id": "567489c6-749d-4653-b8f0-c53a993c0f8a"
       },
       "credit_account": {
         "auto_refill_amount_microdollars": 0,
@@ -288,7 +288,7 @@
         "shard_count": 1,
         "stripe_customer_id": null,
         "stripe_payment_method_id": null,
-        "workspace_id": "69cff0c1-3118-410b-8db4-603c4032adc5"
+        "workspace_id": "567489c6-749d-4653-b8f0-c53a993c0f8a"
       },
       "credit_money": {
         "reserved_microdollars": 6,
@@ -301,7 +301,7 @@
         "budget_alerted": {},
         "budget_strict": false,
         "byok_usage_microdollars": 0,
-        "created_at": "2026-10-06T18:00:10Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "creator_user_id": "owner",
         "disabled": false,
         "expires_at": null,
@@ -309,30 +309,30 @@
         "federated_app_owner_user_id": "",
         "federated_app_suspended": false,
         "federated_home": "",
-        "hash": "key_4RdfcA--HPES8U47Oysdd66p",
+        "hash": "key_43aqHCkUfQ2VFLxHHw30CJrI",
         "include_byok_in_limit": true,
-        "label": "sk-tr-v1-Z...W70Q",
+        "label": "sk-tr-v1-J...W9l0",
         "limit_daily_microdollars": null,
         "limit_microdollars": 10000000,
         "limit_monthly_microdollars": null,
         "limit_reset": null,
         "limit_weekly_microdollars": null,
-        "lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+        "lookup_hash": "10523e00e668ca6ae9968b3f2ed42a367575d8f8ffc126bfd34b598dc43b7da1",
         "management": false,
         "name": "recorded",
         "reserved_microdollars": 6,
-        "salt": "8bf80212d0b735bdc6960b4d26fd4c7c529760843c4f8865f5c5c5a092e235bd",
+        "salt": "48a5ce98626df4d44b5e3de878c94cdff1db60f7708dc6d901679feac9c1ea4f",
         "scopes": [],
-        "secret_hash": "e298b3bdf8c36cd54b25735043186e302fccb86e4c08e416d9d99e33915699e0",
+        "secret_hash": "a773ee8c109bbe5f0240eb56492ef296ce922cc0a25d3787f17a8dfa1f25e788",
         "tags": {},
         "updated_at": null,
         "usage_microdollars": 0,
         "usage_shard_count": 1,
-        "workspace_id": "69cff0c1-3118-410b-8db4-603c4032adc5"
+        "workspace_id": "567489c6-749d-4653-b8f0-c53a993c0f8a"
       },
       "request": {
         "additional_cost_reservation_microdollars": 0,
-        "api_key_lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+        "api_key_lookup_hash": "10523e00e668ca6ae9968b3f2ed42a367575d8f8ffc126bfd34b598dc43b7da1",
         "idempotency_key": "recorded-video",
         "max_tokens": 1,
         "model": "anthropic/claude-haiku-4.5",
@@ -343,7 +343,7 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 0,
-            "api_key_lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+            "api_key_lookup_hash": "10523e00e668ca6ae9968b3f2ed42a367575d8f8ffc126bfd34b598dc43b7da1",
             "idempotency_key": "recorded-video",
             "max_tokens": 1,
             "model": "anthropic/claude-haiku-4.5",
@@ -359,7 +359,7 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 0,
-            "api_key_lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+            "api_key_lookup_hash": "10523e00e668ca6ae9968b3f2ed42a367575d8f8ffc126bfd34b598dc43b7da1",
             "idempotency_key": "recorded-video",
             "max_tokens": 1,
             "model": "anthropic/claude-haiku-4.5",
@@ -378,10 +378,10 @@
         "billing_pause_reason": "",
         "billing_paused": false,
         "content_storage_enabled": false,
-        "created_at": "2026-10-06T18:00:10Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "deleted": false,
         "federated_home": "",
-        "id": "69cff0c1-3118-410b-8db4-603c4032adc5",
+        "id": "567489c6-749d-4653-b8f0-c53a993c0f8a",
         "name": "recorded",
         "owner_user_id": "owner"
       }
@@ -393,19 +393,19 @@
         "app_markup_basis_points": 0,
         "app_owner_user_id": "",
         "candidate_endpoint_ids": [
-          "tr-user-model/dev-creator-0tlucwcr@trustedrouter/credits"
+          "tr-user-model/dev-creator-rmow624k@trustedrouter/credits"
         ],
         "candidate_model_ids": [
-          "tr-user-model/dev-creator-0tlucwcr"
+          "tr-user-model/dev-creator-rmow624k"
         ],
-        "created_at": "2026-10-06T18:00:09.964596Z",
-        "credit_reservation_id": "d90b7e19-9bd5-407e-b085-ec779336dd9e",
+        "created_at": "2026-10-06T18:24:22.455913Z",
+        "credit_reservation_id": "cde5c5a1-02eb-4b94-a7ea-80f36743007b",
         "custom_model_id": null,
         "custom_model_markup_basis_points": 0,
         "custom_model_owner_user_id": "",
         "custom_model_revision": null,
         "delivered_usage": null,
-        "endpoint_id": "tr-user-model/dev-creator-0tlucwcr@trustedrouter/credits",
+        "endpoint_id": "tr-user-model/dev-creator-rmow624k@trustedrouter/credits",
         "estimated_microdollars": 900000,
         "expires_at": null,
         "finalization_outcome": null,
@@ -423,19 +423,19 @@
         "heartbeat_at": null,
         "heartbeat_hash": null,
         "heartbeat_seq": null,
-        "id": "gwa-8f92079c865246d98e107c9fd06b8112",
-        "idempotency_fingerprint": "fe328287e6cfd19e057eb24f383ee025cb69743ef7999364952a60eee1ce2ddb",
+        "id": "gwa-a3a586dcf99f4568a8792d183a925c4e",
+        "idempotency_fingerprint": "b9cadc96639ff80f4b9b2dd0f1770a65ed6f54e6ba28406d9fdbd30fc8e551c8",
         "idempotency_key": "recorded-video",
         "invocation_nonce": null,
-        "key_hash": "key_DvceK46_P-FdiV2TSOUsfcSX",
+        "key_hash": "key_8dy1yAvg4j0LJOy0gmDuzhpc",
         "key_reserved_microdollars": 900000,
-        "model_id": "tr-user-model/dev-creator-0tlucwcr",
+        "model_id": "tr-user-model/dev-creator-rmow624k",
         "native_batch_eligible": false,
         "pricing_snapshot": null,
         "provider": "trustedrouter",
         "receipt_fee_basis_points": 0,
         "region": "us-central1",
-        "requested_model_id": "tr-user-model/dev-creator-0tlucwcr",
+        "requested_model_id": "tr-user-model/dev-creator-rmow624k",
         "selected_endpoint_id": null,
         "settled": false,
         "settlement": "local",
@@ -449,10 +449,10 @@
         "user_model_completion_price_microdollars_per_m": 200,
         "user_model_owner_user_id": "owner",
         "user_model_prompt_price_microdollars_per_m": 100,
-        "user_provided_model_id": "tr-user-model/dev-creator-0tlucwcr",
+        "user_provided_model_id": "tr-user-model/dev-creator-rmow624k",
         "user_provided_model_revision": 1,
-        "video_pricing_snapshot": "{\"candidates\":[{\"endpoint_id\":\"tr-user-model/dev-creator-0tlucwcr@trustedrouter/credits\",\"price_history_version\":1,\"rates\":{\"cache_creation_micro_per_million\":125,\"cached_input_micro_per_million\":100,\"input_micro_per_million\":100,\"output_micro_per_million\":200},\"request_fee_micro\":0,\"rounding\":\"half_up_per_million\",\"tiers\":[]}],\"kind\":\"endpoint\",\"output_token_limit\":1,\"v\":1}",
-        "workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16"
+        "video_pricing_snapshot": "{\"candidates\":[{\"endpoint_id\":\"tr-user-model/dev-creator-rmow624k@trustedrouter/credits\",\"price_history_version\":1,\"rates\":{\"cache_creation_micro_per_million\":125,\"cached_input_micro_per_million\":100,\"input_micro_per_million\":100,\"output_micro_per_million\":200},\"request_fee_micro\":0,\"rounding\":\"half_up_per_million\",\"tiers\":[]}],\"kind\":\"endpoint\",\"output_token_limit\":1,\"v\":1}",
+        "workspace_id": "a8a47b8b-4396-4e27-a50a-73fb98ee8308"
       },
       "credit_account": {
         "auto_refill_amount_microdollars": 0,
@@ -463,7 +463,7 @@
         "shard_count": 1,
         "stripe_customer_id": null,
         "stripe_payment_method_id": null,
-        "workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16"
+        "workspace_id": "a8a47b8b-4396-4e27-a50a-73fb98ee8308"
       },
       "credit_money": {
         "reserved_microdollars": 900000,
@@ -476,7 +476,7 @@
         "budget_alerted": {},
         "budget_strict": false,
         "byok_usage_microdollars": 0,
-        "created_at": "2026-10-06T18:00:09Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "creator_user_id": "owner",
         "disabled": false,
         "expires_at": null,
@@ -484,33 +484,33 @@
         "federated_app_owner_user_id": "",
         "federated_app_suspended": false,
         "federated_home": "",
-        "hash": "key_DvceK46_P-FdiV2TSOUsfcSX",
+        "hash": "key_8dy1yAvg4j0LJOy0gmDuzhpc",
         "include_byok_in_limit": true,
-        "label": "sk-tr-v1-z...EaEs",
+        "label": "sk-tr-v1-a...9sR4",
         "limit_daily_microdollars": null,
         "limit_microdollars": 10000000,
         "limit_monthly_microdollars": null,
         "limit_reset": null,
         "limit_weekly_microdollars": null,
-        "lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+        "lookup_hash": "d409132cba30df32ed5672aa1e93b3429bc6e1c2f4ca17dc1e9c3f9b5207c075",
         "management": false,
         "name": "recorded",
         "reserved_microdollars": 900000,
-        "salt": "250c7bc3c1d675d5fd7645b0462cc8447c9628ca5a1ac66036d758651c25444c",
+        "salt": "f5356964aecbaf897aaf364d6e60a31587eb6752810238715c492b4caf3aa6d5",
         "scopes": [],
-        "secret_hash": "34d9b9e072ac407d9449ee9edce72595dc7ee0d9df6da07fd651ab233b88e843",
+        "secret_hash": "8a8297c91001bd6fa9e9a2635cf5a884d3f0f56f852cb24ab684e50dcfbe2938",
         "tags": {},
         "updated_at": null,
         "usage_microdollars": 0,
         "usage_shard_count": 1,
-        "workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16"
+        "workspace_id": "a8a47b8b-4396-4e27-a50a-73fb98ee8308"
       },
       "request": {
         "additional_cost_reservation_microdollars": 900000,
-        "api_key_lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+        "api_key_lookup_hash": "d409132cba30df32ed5672aa1e93b3429bc6e1c2f4ca17dc1e9c3f9b5207c075",
         "idempotency_key": "recorded-video",
         "max_tokens": 1,
-        "model": "tr-user-model/dev-creator-0tlucwcr",
+        "model": "tr-user-model/dev-creator-rmow624k",
         "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "route_type": "videos"
       },
@@ -518,10 +518,10 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 900000,
-            "api_key_lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+            "api_key_lookup_hash": "d409132cba30df32ed5672aa1e93b3429bc6e1c2f4ca17dc1e9c3f9b5207c075",
             "idempotency_key": "recorded-video",
             "max_tokens": 1,
-            "model": "tr-user-model/dev-creator-0tlucwcr",
+            "model": "tr-user-model/dev-creator-rmow624k",
             "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "route_type": "videos"
           },
@@ -534,10 +534,10 @@
         {
           "body": {
             "additional_cost_reservation_microdollars": 900000,
-            "api_key_lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+            "api_key_lookup_hash": "d409132cba30df32ed5672aa1e93b3429bc6e1c2f4ca17dc1e9c3f9b5207c075",
             "idempotency_key": "recorded-video",
             "max_tokens": 1,
-            "model": "tr-user-model/dev-creator-0tlucwcr",
+            "model": "tr-user-model/dev-creator-rmow624k",
             "request_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "route_type": "videos"
           },
@@ -550,7 +550,7 @@
       "user_model": {
         "completion_price_microdollars_per_million_tokens": 200,
         "consecutive_dispatch_failures": 0,
-        "created_at": "2026-10-06T18:00:09Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "description": "",
         "display_identity": "handle",
         "display_name": "",
@@ -562,34 +562,34 @@
         "heartbeat_expires_at": null,
         "heartbeat_interval_seconds": null,
         "human_verified": false,
-        "id": "tr-user-model/dev-creator-0tlucwcr",
+        "id": "tr-user-model/dev-creator-rmow624k",
         "kind": "machine",
         "max_concurrency": 4,
         "name": "Recorded video",
         "online": true,
-        "online_changed_at": "2026-10-06T18:00:09Z",
+        "online_changed_at": "2026-10-06T18:24:22Z",
         "owner_user_id": "owner",
         "owner_username": "dev-creator",
-        "owner_workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16",
+        "owner_workspace_id": "a8a47b8b-4396-4e27-a50a-73fb98ee8308",
         "probe_checked_at": null,
         "probe_status": "unprobed",
         "prompt_price_microdollars_per_million_tokens": 100,
         "revision": 1,
-        "slug": "0tlucwcr",
+        "slug": "rmow624k",
         "status": "active",
         "supports_streaming": true,
         "updated_at": null,
-        "upstream_model_id": "0tlucwcr"
+        "upstream_model_id": "rmow624k"
       },
       "workspace": {
         "billing_pause_causes": [],
         "billing_pause_reason": "",
         "billing_paused": false,
         "content_storage_enabled": false,
-        "created_at": "2026-10-06T18:00:09Z",
+        "created_at": "2026-10-06T18:24:22Z",
         "deleted": false,
         "federated_home": "",
-        "id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16",
+        "id": "a8a47b8b-4396-4e27-a50a-73fb98ee8308",
         "name": "recorded",
         "owner_user_id": "owner"
       }
@@ -702,6 +702,54 @@
       "replay": true,
       "same_authorization": true,
       "status": 200,
+      "unchanged_money": true
+    },
+    "resolution-replay/legacy/custom": {
+      "replay": true,
+      "retry_live_events": [],
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_authorization": true,
+      "unchanged_money": true
+    },
+    "resolution-replay/legacy/user": {
+      "replay": true,
+      "retry_live_events": [],
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_authorization": true,
+      "unchanged_money": true
+    },
+    "resolution-replay/memory/custom": {
+      "replay": true,
+      "retry_live_events": [],
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_authorization": true,
+      "unchanged_money": true
+    },
+    "resolution-replay/memory/user": {
+      "replay": true,
+      "retry_live_events": [],
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_authorization": true,
+      "unchanged_money": true
+    },
+    "resolution-replay/typed/custom": {
+      "replay": true,
+      "retry_live_events": [],
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_authorization": true,
+      "unchanged_money": true
+    },
+    "resolution-replay/typed/user": {
+      "replay": true,
+      "retry_live_events": [],
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_authorization": true,
       "unchanged_money": true
     }
   },

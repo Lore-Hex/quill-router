@@ -186,9 +186,12 @@ guarantee is:
 Custom-model and user-provided-model video requests follow main's authorization
 path. The requested model string alone is classified with `is_custom_model_id`
 and `is_user_provided_model_id`; there is no live lookup to choose the path.
-Model preparation and its live checks run at main's position before hashing,
-with no early video replay. Preparation injects the current model ID/revision,
-routes a custom wrapper to its base model, and forces Credits policy, including
+Model preparation and routing validation run at main's position before hashing
+and replay. Requests carrying `video_resolution` retain main's early lookup at
+that point, before live candidate selection or user-model slot acquisition.
+Without a resolution, creator requests retain main's later replay path; the
+expanded pre-preparation lookup is catalog-only. Preparation injects the current
+model ID/revision, routes a custom wrapper to its base model, and forces Credits policy, including
 main's overwriting of inconsistent explicit `custom_model_id` or
 `custom_model_revision`. The later legacy lookup and typed transaction retain
 main's direct-equality-or-legacy-match behavior. Derived video fields and their
