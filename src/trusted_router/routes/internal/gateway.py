@@ -16,6 +16,7 @@ import functools
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -23,6 +24,7 @@ from collections import OrderedDict
 from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
+from itertools import product
 from time import perf_counter
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -791,6 +793,7 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
+    video_allowed_providers = _video_allowed_providers_header(request, body.route_type)
     if body.video_resolution is not None and (
         body.route_type != "videos" or body.video_resolution not in {"480p", "720p", "1080p"}
     ):
@@ -1033,65 +1036,8 @@ def _authorize_gateway_sync_impl(
             ErrorType.BAD_REQUEST,
         )
     region = choose_region(settings, body.region or None)
-    normalized_routing = normalize_routing_inputs(
-        body_dict,
-        settings,
-        resolved_region=region,
-    )
-    route_preferences = normalized_routing.preferences
-    requested_model = MODELS.get(route_model_id) if route_model_id else None
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
-    is_embeddings_request = (
-        requested_model is not None
-        and requested_model.supports_embeddings
-        and not requested_model.supports_chat
-    )
-    # Hosted decision models dispatch on the MODEL, like embeddings: a native
-    # decision request names an ordinary chat model and takes the chat arm.
-    is_decide_request = (
-        requested_model is not None
-        and requested_model.supports_decide
-        and not requested_model.supports_chat
-    )
-    named_decision_chain = NAMED_DECISION_MODEL_PROVIDERS.get(route_model_id or "")
-    supports_live_routing = (
-        body.route_type in {"chat.completions", "responses", "messages"}
-        and named_decision_chain is None
-        and not (is_image_request or is_video_request or is_embeddings_request or is_decide_request)
-    )
-    if not supports_live_routing and (
-        route_preferences.preferred_max_latency or route_preferences.preferred_min_throughput
-    ):
-        raise api_error(
-            501,
-            "Performance preferences currently require a synchronous text-generation endpoint",
-            "not_supported_in_alpha",
-        )
-    if (is_decide_request or named_decision_chain is not None) and body.route_type != "decide":
-        # A decision model has no chat surface. Jev would fail at the provider,
-        # and a named model like trev-1.0 would silently become a plain chat
-        # alias for its backing model on whichever host is cheapest -- not the
-        # thing the name promises. Say so instead.
-        raise api_error(
-            400,
-            f"{route_model_id} is a decision model: call POST {DECIDE_PATH}",
-            ErrorType.MODEL_NOT_SUPPORTED,
-        )
-    if named_decision_chain is not None:
-        # A caller excluding the entire pinned chain is an invalid request,
-        # not an outage. Check policy before live regional availability so a
-        # genuinely unavailable permitted host still returns retryable 503.
-        permitted_hosts = set(named_decision_chain) - route_preferences.ignore
-        if route_preferences.only:
-            permitted_hosts.intersection_update(route_preferences.only)
-        if not permitted_hosts:
-            raise api_error(
-                400,
-                f"Provider filters exclude every supported host for {route_model_id}",
-                ErrorType.BAD_REQUEST,
-            )
-    effective_route_preferences = route_preferences
     fingerprint_body = dict(body_dict)
     if is_video_request or is_image_request:
         # Provider quotes can change between retries. The enclave supplies a
@@ -1128,7 +1074,11 @@ def _authorize_gateway_sync_impl(
         existing_candidates = _authorization_endpoint_candidates(
             existing_authorization,
             fallback or [],
-            privacy_requirements=_required_privacy_postures(effective_route_preferences),
+            privacy_requirements=(
+                frozenset() if is_video_request
+                else _required_privacy_postures(effective_route_preferences)
+            ),
+            video_replay=is_video_request,
         )
         byok_configs = _byok_configs_for_candidates(
             existing_candidates, workspace.id, folded_rows=folded_byok,
@@ -1205,7 +1155,10 @@ def _authorize_gateway_sync_impl(
             return _replay_response(existing_authorization, fallback)
         return None
 
-    if body.video_resolution is not None:
+    early_video_replay = body.video_resolution is not None or bool(
+        is_video_request and presented_idempotency_key and body.request_fingerprint
+    )
+    if early_video_replay:
         # Recover frozen video terms before live catalog filtering can reject
         # a retry. This indexed read never reserves funds: the transaction below
         # still arbitrates concurrent first requests atomically after a miss.
@@ -1213,12 +1166,77 @@ def _authorize_gateway_sync_impl(
         if replay is not None:
             return replay
 
+    normalized_routing = normalize_routing_inputs(
+        body_dict,
+        settings,
+        resolved_region=region,
+    )
+    route_preferences = normalized_routing.preferences
+    requested_model = MODELS.get(route_model_id) if route_model_id else None
+    is_embeddings_request = (
+        requested_model is not None
+        and requested_model.supports_embeddings
+        and not requested_model.supports_chat
+    )
+    # Hosted decision models dispatch on the MODEL, like embeddings: a native
+    # decision request names an ordinary chat model and takes the chat arm.
+    is_decide_request = (
+        requested_model is not None
+        and requested_model.supports_decide
+        and not requested_model.supports_chat
+    )
+    named_decision_chain = NAMED_DECISION_MODEL_PROVIDERS.get(route_model_id or "")
+    supports_live_routing = (
+        body.route_type in {"chat.completions", "responses", "messages"}
+        and named_decision_chain is None
+        and not (is_image_request or is_video_request or is_embeddings_request or is_decide_request)
+    )
+    if not supports_live_routing and (
+        route_preferences.preferred_max_latency or route_preferences.preferred_min_throughput
+    ):
+        raise api_error(
+            501,
+            "Performance preferences currently require a synchronous text-generation endpoint",
+            "not_supported_in_alpha",
+        )
+    if (is_decide_request or named_decision_chain is not None) and body.route_type != "decide":
+        # A decision model has no chat surface. Jev would fail at the provider,
+        # and a named model like trev-1.0 would silently become a plain chat
+        # alias for its backing model on whichever host is cheapest -- not the
+        # thing the name promises. Say so instead.
+        raise api_error(
+            400,
+            f"{route_model_id} is a decision model: call POST {DECIDE_PATH}",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    if named_decision_chain is not None:
+        # A caller excluding the entire pinned chain is an invalid request,
+        # not an outage. Check policy before live regional availability so a
+        # genuinely unavailable permitted host still returns retryable 503.
+        permitted_hosts = set(named_decision_chain) - route_preferences.ignore
+        if route_preferences.only:
+            permitted_hosts.intersection_update(route_preferences.only)
+        if not permitted_hosts:
+            raise api_error(
+                400,
+                f"Provider filters exclude every supported host for {route_model_id}",
+                ErrorType.BAD_REQUEST,
+            )
+    effective_route_preferences = route_preferences
+
     pricing_effective_at = dt.datetime.now(dt.UTC)
     if user_model is not None:
         if is_image_request:
             raise api_error(
                 400,
                 "User-provided models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        if video_allowed_providers is not None:
+            # Owner-dispatch sentinels bypass catalog candidate construction;
+            # they cannot satisfy an enclave video capability constraint.
+            raise api_error(
+                400, "Video provider constraints require catalog video routes",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         if _required_privacy_postures(route_preferences):
@@ -1236,6 +1254,7 @@ def _authorize_gateway_sync_impl(
             defer_no_fallback_selection=True,
             video_resolution=body.video_resolution,
             pricing_effective_at=pricing_effective_at,
+            allowed_providers=video_allowed_providers,
         )
     elif is_image_request:
         if custom_model is not None:
@@ -1467,7 +1486,7 @@ def _authorize_gateway_sync_impl(
         requested_model_id=requested_model_id,
         endpoint=endpoint,
     )
-    if _typed_store is None and body.video_resolution is None:
+    if _typed_store is None and not early_video_replay:
         replay = _lookup_replay(endpoint_candidates)
         if replay is not None:
             return replay
@@ -2398,12 +2417,31 @@ def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) ->
     return key
 
 
+def _video_allowed_providers_header(request: Request, route_type: str | None) -> frozenset[str] | None:
+    """Parse enclave-derived execution constraints without changing request identity."""
+    values = request.headers.getlist("X-Quill-Video-Allowed-Providers")
+    if not values:
+        return None
+    if route_type != "videos" or len(values) != 1 or len(values[0]) > 4096:
+        raise api_error(400, "Invalid X-Quill-Video-Allowed-Providers header", ErrorType.BAD_REQUEST)
+    providers = [value.strip(" \t") for value in values[0].split(",")]
+    if (
+        not 1 <= len(providers) <= 64
+        or len(set(providers)) != len(providers)
+        or any(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", provider) is None
+               or provider not in PROVIDERS for provider in providers)
+    ):
+        raise api_error(400, "Invalid X-Quill-Video-Allowed-Providers header", ErrorType.BAD_REQUEST)
+    return frozenset(providers)
+
+
 def _gateway_authorize_fingerprint(
     *,
     workspace_id: str,
     key_hash: str,
     body: dict[str, Any],
     idempotency_key: str | None = None,
+    legacy_video: bool = False,
 ) -> str:
     # Standard idempotency semantics: the key can replay the same logical
     # request, but a caller cannot reuse it for a different request body.
@@ -2420,6 +2458,14 @@ def _gateway_authorize_fingerprint(
             "spend_lease_admission",
         }
     }
+    if body.get("route_type") == "videos" and not legacy_video:
+        # The enclave HMAC binds the logical request. These values describe
+        # execution and can change when eligible providers change on rollout.
+        for dynamic_key in (
+            "video_resolution", "max_tokens", "max_output_tokens", "max_completion_tokens",
+            "additional_cost_reservation_microdollars",
+        ):
+            material.pop(dynamic_key, None)
     if _is_native_batch_idempotency_key(idempotency_key):
         # One encrypted Batch object is claimed across regions and rolling
         # enclave revisions. These fields are gateway estimates or execution
@@ -2443,9 +2489,10 @@ def _video_cross_region_replay_matches(
 ) -> bool:
     """Recover a video's original hold without changing persisted fingerprints.
 
-    Video content/options are HMAC-bound by the enclave. Its execution region
-    can change on retry; caller provider/region restrictions remain in the body.
-    No other field is relaxed, and ordinary text/image requests are unchanged.
+    Video content/options are HMAC-bound by the enclave. Execution region,
+    resolution, token limits and quotes may change; caller policy stays bound.
+    Legacy hashes are checked exactly against reconstructed execution values,
+    never accepted merely because the stored model or caller scope matches.
     """
     if (
         authorization is None
@@ -2457,20 +2504,47 @@ def _video_cross_region_replay_matches(
         or authorization.idempotency_key != idempotency_key
     ):
         return False
-    original = {**body, "region": authorization.region}
-    if authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
-        workspace_id=workspace_id, key_hash=key_hash,
-        body=original, idempotency_key=idempotency_key,
-    ):
-        return True
-    # Older/internal callers may have omitted the region and used the default.
-    original.pop("region")
-    return bool(authorization.idempotency_fingerprint) and (
-        authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
+    def matches(candidate: dict[str, Any], *, legacy: bool = False) -> bool:
+        return authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
             workspace_id=workspace_id, key_hash=key_hash,
-            body=original, idempotency_key=idempotency_key,
+            body=candidate, idempotency_key=idempotency_key, legacy_video=legacy,
         )
-    )
+
+    original = {**body, "region": authorization.region}
+    omitted_region = dict(body)
+    omitted_region.pop("region", None)
+    originals = (original, omitted_region)
+    if any(matches(candidate) or matches(candidate, legacy=True) for candidate in originals):
+        return True
+
+    snapshot = getattr(authorization, "video_pricing_snapshot", None)
+    try:
+        frozen = json.loads(snapshot) if snapshot else {}
+        # Before token billing, enclaves sent the fixed-price sentinel 1.
+        limit = frozen.get("output_token_limit", 1)
+        resolution = frozen.get("video_tariff_resolution")
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if type(limit) is not int or limit < 1 or resolution not in {None, "480p", "720p", "1080p"}:
+        return False
+    token_fields = ("max_tokens", "max_output_tokens", "max_completion_tokens")
+    # Old enclaves used one or multiple aliases with the same effective limit.
+    # Try absent/frozen/current values per alias to also preserve unchanged
+    # redundant aliases. This bounded comparison covers main and the earlier
+    # resolution-excluding hash without storing or rewriting request content.
+    choices = [tuple(dict.fromkeys((None, limit, body.get(field)))) for field in token_fields]
+    for candidate in originals:
+        for values in product(*choices):
+            legacy_body = {k: v for k, v in candidate.items() if k not in token_fields}
+            legacy_body.pop("additional_cost_reservation_microdollars", None)
+            legacy_body.update({k: v for k, v in zip(token_fields, values, strict=True) if v is not None})
+            for old_resolution in (None, resolution):
+                legacy_body.pop("video_resolution", None)
+                if old_resolution is not None:
+                    legacy_body["video_resolution"] = old_resolution
+                if matches(legacy_body, legacy=True):
+                    return True
+    return False
 
 
 def _new_gateway_authorization_id() -> str:
@@ -2483,6 +2557,7 @@ def _authorization_endpoint_candidates(
     fallback: list[tuple[Model, ModelEndpoint]],
     *,
     privacy_requirements: frozenset[int] = frozenset(),
+    video_replay: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     user_model_pair = _authorized_user_model_pair(authorization)
     if user_model_pair is not None:
@@ -2494,6 +2569,24 @@ def _authorization_endpoint_candidates(
     privacy_excluded = False
     for endpoint_id in endpoint_ids:
         endpoint = _endpoint_for_id_compat(endpoint_id)
+        if video_replay:
+            # Recovery grants no dispatch authority. A catalog removal or
+            # changed privacy posture cannot hide the stored job/hold. Rebuild
+            # identifiers from the frozen route ID when its catalog row is gone;
+            # no current candidate or tariff may be substituted for that route.
+            if endpoint is None:
+                model_id, _, provider_usage = endpoint_id.rpartition("@")
+                provider, _, usage = provider_usage.partition("/")
+                endpoint = ModelEndpoint(
+                    id=endpoint_id, model_id=model_id, provider=provider,
+                    usage_type="BYOK" if usage == "byok" else "Credits",
+                )
+            replay_model = MODELS.get(endpoint.model_id) or Model(
+                id=endpoint.model_id, name=endpoint.model_id,
+                provider=endpoint.provider, context_length=0, supports_video=True,
+            )
+            candidates.append((replay_model, endpoint))
+            continue
         if endpoint is None:
             continue
         # A replay never restores a route the request's privacy floor now

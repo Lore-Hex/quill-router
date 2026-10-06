@@ -151,9 +151,51 @@ requested resolution. The enclave must require this acknowledgment before
 dispatching 1080p to BytePlus. The router change can deploy first: requests
 without `video_resolution` retain their existing pricing, snapshots, and response
 shape, and receive no acknowledgment. Idempotent retries return the frozen
-acknowledgment; changing the resolution under the same idempotency key returns
-409. Settlement uses only the authorization's frozen tariff, even after a
-catalog price refresh.
+acknowledgment. For `route_type: videos`, the authorization fingerprint excludes
+all derived execution fields: `video_resolution`, `max_tokens`,
+`max_output_tokens`, `max_completion_tokens` (the accepted output-limit alias),
+and `additional_cost_reservation_microdollars`. The enclave's
+`request_fingerprint` binds the logical request, including resolution and
+duration; the router continues binding the model and original caller provider
+policy within the workspace, API-key, and idempotency-key scope. A changed
+logical fingerprint, model, or caller policy conflicts with HTTP 409 in that
+scope. Cross-region retries retain the existing region compatibility rule;
+caller region restrictions inside provider policy remain bound. Other route
+types retain their existing fingerprint rules.
+
+Existing stored hashes are not rewritten. Replay also compares legacy hashes
+using the frozen snapshot's original token limit and resolution, with the
+historical alias-presence combinations and omitted-resolution form (including
+the earlier resolution-only exclusion). Pre-snapshot fixed-quote jobs use the
+historical token-limit sentinel of 1. Every comparison still requires an exact
+hash match with the retry's logical identity and original caller policy. Thus
+a fixed-quote Venice authorization with token limits of 1 can replay after an
+enclave rollout sends 400000 and `video_resolution: "1080p"` because BytePlus
+became eligible. Replay returns the original authorization, snapshot, and hold,
+without a new reservation or invented tariff acknowledgment. Settlement uses
+only the authorization's frozen tariff, even after a catalog price refresh.
+
+The authenticated enclave may send `X-Quill-Video-Allowed-Providers` on this
+endpoint for video requests only. It supplies derived capability constraints
+(for example, `byteplus` for seeded Seedance), never a public caller header.
+The router accepts one header value of at most 4096 characters, containing
+1–64 distinct, comma-separated, known canonical provider IDs matching
+`[a-z0-9]+(?:-[a-z0-9]+)*`. Spaces and tabs around IDs are allowed; empty
+members, duplicates, aliases, unknown IDs, repeated header fields, and use on
+another route type return HTTP 400 (`bad_request`). Absence preserves existing
+routing. The header stays outside the authorization body and persisted logical
+identity; the original caller `provider` policy remains fingerprinted.
+
+Every keyed video request carrying `request_fingerprint` looks up and validates
+the existing authorization before live capability, tariff, or provider filtering.
+Valid retries return the original hold with `idempotent_replay: true`, including
+across header rollout, changed capability lists, or execution regions. A replay
+grants no fresh dispatch authority and cannot recreate a missing job. On a miss,
+the header intersects the effective caller policy (`only`, `ignore`, and nonempty
+`order` when fallbacks are disabled) before route selection. All selected,
+fallback, and frozen routes obey that intersection; no eligible route returns a
+4xx before any funds are reserved. Transactional duplicate checks still arbitrate
+concurrent first requests.
 
 An invalid resolution or its use on any other route returns HTTP 400
 (`bad_request`). If resolution filtering removes every candidate, authorization
