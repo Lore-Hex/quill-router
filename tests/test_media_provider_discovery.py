@@ -11,6 +11,7 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
 from scripts.pricing.providers import bfl, fal, krea, recraft
+from trusted_router import provider_lifecycle
 from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.image_generation import (
@@ -264,7 +265,8 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     for model_id, provider in _MEDIA_ROUTES:
         manifest = json.loads((MANIFEST_DIR / f"{provider}.json").read_text())
         row = next(row for row in manifest["models"] if row["id"] == model_id)
-        if row.get("routable") is False:
+        retired = provider_lifecycle.provider_model_retired(provider, model_id, row["upstream_id"])
+        if row.get("routable") is False or retired:
             assert f"{model_id}@{provider}/prepaid" not in endpoints
         else:
             assert model_id in models
@@ -279,7 +281,9 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     assert nscale_model in IMAGE_MODEL_ID_SET
     nscale_manifest = json.loads((MANIFEST_DIR / "nscale.json").read_text())
     nscale_image = next(row for row in nscale_manifest["models"] if row["id"] == nscale_model)
-    if nscale_image.get("routable") is False:
+    if nscale_image.get("routable") is False or provider_lifecycle.provider_model_retired(
+        "nscale", nscale_model, nscale_image["upstream_id"]
+    ):
         assert nscale_model not in models
         assert f"{nscale_model}@nscale/prepaid" not in endpoints
     else:

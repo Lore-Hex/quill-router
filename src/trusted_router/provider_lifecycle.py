@@ -61,6 +61,7 @@ NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
+NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 # Enforcement starts at the confirmed observation, not an invented upstream
 # deprecation date: all three IDs returned UnavailableModel on October 3.
 STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
@@ -166,6 +167,95 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # Nscale's Serverless notices of October 2 and October 6 retire these
+    # exact ids "between 2-4 November 2026" and ask customers to switch "by
+    # 2 November 2026". No time or zone was given, so stop at the earliest
+    # named date, 00:00 UTC. Only Nscale routes retire; the embedding model
+    # and other providers' routes are unaffected, and the recommended
+    # replacements are quoted to customers, never substituted.
+    # Oct 2 notice: retired 2-4 November with no replacement named.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({
+            "black-forest-labs/flux.1-schnell",
+            "deepseek/deepseek-r1-distill-llama-8b",
+            "deepseek/deepseek-r1-distill-qwen-14b",
+            "deepseek/deepseek-r1-distill-qwen-7b",
+            "mistralai/devstral-small-2505",
+            "mistralai/mixtral-8x22b-instruct-v0.1",
+            "moonshotai/kimi-k2.5",
+            "nvidia/nemotron-3-nano-30b-a3b-bf16",
+            "qwen/qwen2.5-coder-3b-instruct",
+            "qwen/qwen2.5-coder-7b-instruct",
+            "qwen/qwen3-235b-a22b",
+            "qwen/qwen3-4b-thinking-2507",
+        }),
+        upstream_ids=frozenset({
+            "black-forest-labs/FLUX.1-schnell",
+            "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            "mistralai/Devstral-Small-2505",
+            "mistralai/mixtral-8x22b-instruct-v0.1",
+            "moonshotai/Kimi-K2.5",
+            "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+            "Qwen/Qwen2.5-Coder-3B-Instruct",
+            "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "Qwen/Qwen3-235B-A22B",
+            "Qwen/Qwen3-4B-Thinking-2507",
+        }),
+        effective_at=NSCALE_NOVEMBER_2026_RETIREMENT_AT,
+    ),
+    # Oct 6 notice: GLM 5.3 recommended.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+        }),
+        upstream_ids=frozenset({
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+        }),
+        effective_at=NSCALE_NOVEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    # Oct 6 notice: Qwen 3.8-27B recommended.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({
+            "qwen/qwen3-4b-instruct-2507",
+            "qwen/qwen3-32b",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "qwen/qwen3-8b",
+            "qwen/qwen2.5-coder-32b-instruct",
+            "qwen/qwen3-14b",
+            "meta-llama/llama-3.1-8b-instruct",
+        }),
+        upstream_ids=frozenset({
+            "Qwen/Qwen3-4B-Instruct-2507",
+            "Qwen/Qwen3-32B",
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            "Qwen/Qwen3-8B",
+            "Qwen/Qwen2.5-Coder-32B-Instruct",
+            "Qwen/Qwen3-14B",
+            "meta-llama/Llama-3.1-8B-Instruct",
+        }),
+        effective_at=NSCALE_NOVEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    # Oct 6 notice: Qwen3.8 Flash Next recommended.
+    _Retirement(
+        provider="nscale",
+        model_ids=frozenset({
+            "qwen/qwen3-235b-a22b-instruct-2507",
+        }),
+        upstream_ids=frozenset({
+            "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        }),
+        effective_at=NSCALE_NOVEMBER_2026_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-flash-next",),
+    ),
     _Retirement(
         provider="streamlake",
         model_ids=frozenset({

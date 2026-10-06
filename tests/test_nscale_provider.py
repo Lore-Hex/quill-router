@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, read_stale_provider_manifest
 from scripts.pricing.manifest import apply_canary_results
 from scripts.pricing.providers import nscale
-from trusted_router import catalog_ingest
+from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.services.inference_errors import default_provider_secret_ref
@@ -292,6 +293,11 @@ def test_nscale_routable_mixed_manifest_builds_image_and_embedding_routes(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    # Exercise route building, not the announced November 2026 retirement.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.NSCALE_NOVEMBER_2026_RETIREMENT_AT - timedelta(days=1),
+    )
     manifest = tmp_path / "nscale.json"
     manifest.write_text('{"provider":"nscale","models":[]}', encoding="utf-8")
     chat_prices, manifest_prices, discovered = nscale._discover(_rows())
