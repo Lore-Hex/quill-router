@@ -1974,14 +1974,15 @@ What the table's short names hide:
   what §4.8 left implicit about a transaction that carries several leases:
   a statement that matched no row is that lease's failed commit, and its
   records stay unacknowledged.
-  - It models the boundary S: a record that lands after the fence tick is
-    above S and ignored, and its claims are about the records at or below
-    S. The log's order is not assumed: a record stored ahead of an earlier
-    one shows as a gap, and the gap rule is what keeps the earlier one from
+  - It models the boundary S: a record first stored after the fence tick
+    is above S, and one stored again is a duplicate of one at or below it;
+    both are ignored, and its claims are about the records at or below S.
+    The log's order is not assumed: a record stored ahead of an earlier one
+    shows as a gap, and the gap rule is what keeps the earlier one from
     being skipped.
   - Its audit holds at each checkpoint, as a member applies it
     (Invariant 2), and a draining lease closes while the members keep
-    working.
+    working, unless a gap stopped it for an operator.
 - `KeyCapFence` is written (#1561), with 8 mutants and a guard table.
   Each condition of Python's enabling rule holds Invariant 8 up alone: the
   grant's version in admission, a checkpoint that applies the change, one
