@@ -64,10 +64,10 @@ def test_frozen_main_effects_and_operation_trace(env, monkeypatch, scenario, suc
     monkeypatch.setattr(storage_gcp_authorize, 'utcnow', lambda: clock)
     monkeypatch.setattr(storage_models, 'utcnow', lambda: clock)
     frozen_globals = dict(vars(gateway))
-    exec(compile((FROZEN/'async_settle_main.txt').read_text(), 'frozen_gateway', 'exec'), frozen_globals)
+    exec(compile((FROZEN/'async_settle_main.txt').read_text(), str(FROZEN/'async_settle_main.txt'), 'exec'), frozen_globals)
     frozen_settle = frozen_globals['_settle_gateway_authorization']
     outbox_globals = dict(vars(outbox))
-    exec(compile((FROZEN/'async_settle_enqueue_main.txt').read_text(), 'frozen_enqueue', 'exec'), outbox_globals)
+    exec(compile((FROZEN/'async_settle_enqueue_main.txt').read_text(), str(FROZEN/'async_settle_enqueue_main.txt'), 'exec'), outbox_globals)
     from trusted_router import storage_gcp_counter_dml as counters
     frozen_counter = dict(vars(counters))
     frozen_storage = dict(vars(storage_gcp_authorize))
