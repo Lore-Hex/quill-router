@@ -12,6 +12,7 @@ driven to the bad schedule. It is written before the code it describes.
 | `SurfaceCutover` | The routed multi-region Cloud Run rollout, with a crash between any two steps | implemented |
 | `TerminalOrder` | One lease's records: which terminal wins, and why the live auditor and a rebuild agree (fast admission §4.5, §4.8) | planned |
 | `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, its last record and its draining write, draining and close under clock skew (fast admission §4.2, §4.3, §4.8) | planned |
+| `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | planned |
 
 `docs/design/fast-admission-and-batched-settlement.md` §5.1 has the plan for
 the fast-admission specs.
@@ -163,7 +164,14 @@ process stops and publishes the lease's last record, listing none of its
 predecessor's holds. Each member's reason names its group, and one group is
 a mutant too. Leaving out `Admit`'s, `OwnerStop`'s and `FinalCheckpoint`'s
 `has`, which every group needs one of, the other 24 removed all together
-break nothing.
+break nothing. `CreditDebt`'s 37 broke a claim the same way, and ten groups
+of two explained it. For example, `Store` asks that the lease is not sealed
+and `OwnerSettle` that it is open: without both, a settle decided after the
+boundary is stored past it (`HoldsCoveredInSpanner`). `Close` asks that
+every hold has a booked terminal and `AuditorApplyRow` that the lease is
+live: without both, a lease closes with a row left and the auditor then
+books it (`ShardIdentity`). Leaving out nine of the groups' members, at
+least one of each group, the other 28 removed all together break nothing.
 
 ## Ways a check proves nothing
 
