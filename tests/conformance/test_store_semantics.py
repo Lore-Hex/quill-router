@@ -2052,6 +2052,56 @@ def _authorize(store: Store, workspace_id: str, key_hash: str, **kw: object) -> 
     return store.create_gateway_authorization(**params)  # type: ignore[arg-type]
 
 
+def test_gateway_authorization_keeps_the_callers_instant(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Gateway authorize prices a request at one instant and passes it as
+    `created_at`; settlement prices at `created_at`. A backend that stamped
+    its own, later reading would bill a request across a scheduled price
+    change at a tariff it was not held at."""
+    instant = "2026-07-29T17:59:59Z"
+    auth = _authorize(store, workspace_id, f"gw-{unique}", created_at=instant)
+    assert auth.created_at == instant  # type: ignore[attr-defined]
+    fetched = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
+    assert fetched is not None
+    assert fetched.created_at == instant
+
+
+def test_typed_gateway_authorization_keeps_the_callers_instant(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """The same on the typed path, which Spanner runs in production."""
+    if not hasattr(store, "authorize_gateway_typed"):
+        pytest.skip("this backend has no typed authorize path")
+    import datetime as dt
+
+    _, key = store.create_api_key(workspace_id=workspace_id, creator_user_id=None, name=f"typed-{unique}")
+    instant = dt.datetime(2026, 7, 29, 17, 59, 59, tzinfo=dt.UTC)
+    outcome, auth = store.authorize_gateway_typed(  # type: ignore[attr-defined]
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+        estimate=10,
+        has_credit_candidate=False,
+        reservation_usage_type="BYOK",
+        model_id="anthropic/claude-opus-4.7",
+        provider="anthropic",
+        requested_model_id="anthropic/claude-opus-4.7",
+        candidate_model_ids=["anthropic/claude-opus-4.7"],
+        region="us",
+        endpoint_id="anthropic/claude-opus-4.7@anthropic/byok",
+        candidate_endpoint_ids=["anthropic/claude-opus-4.7@anthropic/byok"],
+        idempotency_key=None,
+        idempotency_fingerprint=None,
+        expires_at=dt.datetime(2099, 1, 1, tzinfo=dt.UTC),
+        created_at=instant,
+    )
+    assert auth is not None, outcome
+    assert auth.created_at == "2026-07-29T17:59:59Z"
+    fetched = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
+    assert fetched is not None
+    assert fetched.created_at == "2026-07-29T17:59:59Z"
+
+
 def test_gateway_authorization_round_trips(store: Store, workspace_id: str, unique: str) -> None:
     auth = _authorize(store, workspace_id, f"gw-{unique}", app_id=f"app-{unique}")
     fetched = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
