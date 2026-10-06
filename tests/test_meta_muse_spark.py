@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from fastapi.testclient import TestClient
+
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.ingest_openrouter_catalog import PROVIDER_NAME_TO_SLUG
 from scripts.pricing import refresh
@@ -57,3 +60,13 @@ def test_direct_meta_stays_in_automated_catalog_refresh() -> None:
         ("META_API_KEY",),
         "https://api.meta.ai/v1",
     )
+
+
+@pytest.mark.parametrize("version", ["1.1", "1.2", "1.3"])
+def test_meta_model_page_does_not_redirect_to_retired_catalog(
+    client: TestClient, version: str,
+) -> None:
+    path = f"/models/meta/muse-spark-{version}"
+    response = client.get(path, follow_redirects=False)
+    assert response.status_code == 200
+    assert f'<link rel="canonical" href="https://trustedrouter.com{path}">' in response.text
