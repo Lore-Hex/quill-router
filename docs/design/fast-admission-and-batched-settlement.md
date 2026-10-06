@@ -31,9 +31,13 @@ path's settle and leaves leased requests out, and the frozen billing
 snapshot (#1390), a pricing contract the compiled service can share with
 Python and the enclave.
 
-The first three specs, `TerminalOrder`, `LeaseLifecycle` and `CreditDebt`,
-and the tools that check every spec's mutants and guards are written
-(#1515, #1533 and #1549).
+v44 states two rules that writing `AuditorCommit` showed §4.8 needs: a
+reap is conditional on the commit version, and a statement that matched no
+row is that lease's failed commit.
+
+All five specs, `TerminalOrder`, `LeaseLifecycle`, `CreditDebt`,
+`AuditorCommit` and `KeyCapFence`, and the tools that check every spec's
+mutants and guards are written (#1515, #1533, #1549, #1560 and #1561).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -1057,6 +1061,9 @@ synchronous holds, through `settle_atomic`.
   the lease's order: a later record stored without an earlier one shows as
   a gap, and is not booked.
 - One transaction can carry many leases, each its own conditional statement.
+  A statement that matches no row is that lease's failed commit, whatever the
+  others did: the member re-reads that lease and acknowledges none of its
+  records.
 - Winners are stored packed, one row per lease per commit. A row-deletion
   policy removes them once the lease is closed, their pending work is done,
   and 7 days have passed. Spanner's policies delete on a timestamp column, so
@@ -1154,6 +1161,12 @@ by the first-terminal rule.
   inserting a reap row, in a read-write transaction that first reads the
   hold's drain-log rows. A concurrent append for the same hold conflicts with
   that read, and one of the two retries. A terminal already there wins.
+  - The transaction is also conditional on the lease's commit version, as a
+    commit is. Pub/Sub can give a lease back to a member that lost it, after
+    another member committed and acknowledged a newer heartbeat. Nothing is
+    then redelivered to bring the first member's memory up to date, and a
+    reap from it would charge the older snapshot. A refused reap re-reads, as
+    a refused commit does.
 - It books a draining lease's winners in that order: owner records, then the
   drain log.
 
@@ -1945,6 +1958,20 @@ What the table's short names hide:
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
   terminal is reaped at that snapshot by the time its lease closes.
+- `AuditorCommit` is written (#1560), with 18 mutants and a guard
+  table. Writing it showed that a reap has to be conditional on the commit
+  version (§4.8): without that, a member the lease came back to reaps at an
+  older snapshot than the one stored. It also states what §4.8 left
+  implicit about a transaction that carries several leases: a statement
+  that matched no row is that lease's failed commit, and its records stay
+  unacknowledged. The log's order is not assumed: a record stored ahead of
+  an earlier one shows as a gap, and the gap rule is what keeps the earlier
+  one from being skipped.
+- `KeyCapFence` is written (#1561), with 8 mutants and a guard table.
+  Each condition of Python's enabling rule holds Invariant 8 up alone: the
+  grant's version in admission, a checkpoint that applies the change, one
+  that shows none of the key's holds open, one the auditor has booked, and
+  the draining leases among those that could hold the key.
 
 - `CreditDebt` checks that repayment clears the mark: once a workspace's
   signed sum is no longer negative, no row of it stays marked (§4.7).
@@ -1995,7 +2022,16 @@ What the table's short names hide:
   must break the first claim; an owner that skips its write, which must
   break only the second; and an owner's raise that lands after the lease
   has closed, which must break §4.7's identity.
-- `CreditDebt` is written (#1549), with 20 mutants and a guard table.
+- `CreditDebt` is written (#1549), with 34 mutants and a guard table.
+  Codex's reviews of it added claims for seven sentences of the design:
+  money coming in repays debt first, the lowest shard first and each at
+  most to zero; a marked row refuses reservations and grants; an owner's
+  shortfall lands within two of its writes; the stored shortfall total is
+  never more than the owner's; each landing, and each terminal the auditor
+  applies, stores exactly the larger of that total and the one it carried;
+  a lease's allocation is its grant plus every raise, less the returns
+  applied; and a shard's usage is the charges booked against it (§4.2,
+  §4.7).
   Beyond the plan above:
   - the larger-of write (§4.2) is a claim of its own, a property of steps:
     the stored shortfall total never falls. The second claim cannot show
@@ -2089,7 +2125,13 @@ What the table's short names hide:
     them, under one ordering key (§4.2). A log that stores a later record
     without an earlier one must break §4.2's first claim;
   - that a reap charges at most its hold, since a heartbeat's running charge
-    is capped at the hold (§4.8). A reap above it must break the same claim.
+    is capped at the hold (§4.8). A reap above it must break the same claim;
+  - that Pub/Sub gives a member every record of a lease not acknowledged, in
+    the order stored (§4.8). Redelivery that skips one must break Invariant
+    4;
+  - that a checkpoint shows the cache version its owner applies and the
+    key's holds open in its books (§4.6). A checkpoint ahead of its owner's
+    cache must break Invariant 8.
 - **The manifest ties each spec to its code.** A spec's shadow is a pure
   module with property tests that drive it through the spec's actions and
   check its invariants. The manifest gives each spec a state, which the
@@ -3422,3 +3464,14 @@ record.
   Also: Python's second clock reading is #1542 (§4.13), and §5.1 says what
   writing `CreditDebt` added: the larger-of write as a claim of its own,
   four configurations, and two assumptions.
+- **v44.** Two rules that writing `AuditorCommit` showed §4.8 needs:
+  - a reap's transaction is conditional on the commit version, as a commit
+    is: Pub/Sub can give a lease back to a member whose memory another
+    member's commit overtook, and a reap from that memory charges an older
+    snapshot;
+  - with many leases in one transaction, a statement that matched no row is
+    that lease's failed commit, and the member acknowledges none of its
+    records.
+
+  §5.1 says what `AuditorCommit` and `KeyCapFence` show, the claims Codex's
+  reviews added to `CreditDebt`, and the two assumptions the new specs add.
