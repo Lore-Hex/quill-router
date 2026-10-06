@@ -492,6 +492,7 @@ def video_route_endpoint_candidates(
     defer_no_fallback_selection: bool = False,
     video_resolution: str | None = None,
     pricing_effective_at: datetime | None = None,
+    allowed_providers: frozenset[str] | None = None,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Resolve only provider endpoints backed by the attested video worker."""
     inputs = _coerce_routing_inputs(inputs, settings)
@@ -508,6 +509,11 @@ def video_route_endpoint_candidates(
             )
         for endpoint in endpoints_for_model(model.id, at=pricing_effective_at):
             if endpoint.id in seen:
+                continue
+            # Intersect with the normalized caller policy below, before sorting
+            # or selecting a single route. Soft-filter relaxation must never
+            # restore a provider excluded by the enclave's capability set.
+            if allowed_providers is not None and endpoint.provider not in allowed_providers:
                 continue
             if video_resolution is not None:
                 # All provider preferences must see the tariff that authorize
