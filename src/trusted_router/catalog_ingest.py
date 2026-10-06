@@ -1188,6 +1188,26 @@ def _supplemental_provider_models_and_endpoints(
             )
             if token_video and (prompt_cost != 0 or completion_cost <= 0 or "price_tiers" in raw_model):
                 continue
+            resolution_prices = None
+            if "output_token_price_per_m_by_resolution" in raw_model:
+                raw_resolution_prices = raw_model["output_token_price_per_m_by_resolution"]
+                if not token_video or not isinstance(raw_resolution_prices, dict):
+                    continue
+                resolution_prices = {}
+                for resolution, raw_price in raw_resolution_prices.items():
+                    price = _provider_manifest_exact_integer(raw_price)
+                    if (
+                        resolution not in {"480p", "720p", "1080p"}
+                        or price is None or price <= 0
+                        or (resolution in {"480p", "720p"} and price * price_scale != completion_cost)
+                    ):
+                        break
+                    resolution_prices[resolution] = _provider_manifest_customer_price(
+                        price * price_scale,
+                        apply_markup=not provider_model_uses_passthrough_retail_price(provider_slug, model_id),
+                    )
+                if len(resolution_prices) != len(raw_resolution_prices):
+                    continue
             if (embedding or decision) and (
                 prompt_cost <= 0 or completion_cost != 0
                 or "price_tiers" in raw_model or "cached_input_token_price_per_m" in raw_model
@@ -1347,6 +1367,7 @@ def _supplemental_provider_models_and_endpoints(
                         reliability.get("stream_idle_timeout_seconds")
                     ),
                     catalog_valid_until=catalog_valid_until,
+                    output_token_price_per_m_by_resolution=resolution_prices,
                 )
             if provider.supports_byok:
                 byok_id = f"{model_id}@{provider_slug}/byok"
@@ -1375,6 +1396,7 @@ def _supplemental_provider_models_and_endpoints(
                         reliability.get("stream_idle_timeout_seconds")
                     ),
                     catalog_valid_until=catalog_valid_until,
+                    output_token_price_per_m_by_resolution=resolution_prices,
                 )
     return models, endpoints
 

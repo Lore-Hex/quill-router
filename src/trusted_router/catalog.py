@@ -385,7 +385,9 @@ def effective_endpoint(
     )
 
 
-def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
+def endpoints_for_model(
+    model_id: str, *, at: datetime | str | None = None,
+) -> list[ModelEndpoint]:
     endpoints: list[ModelEndpoint] = []
     model = MODELS.get(model_id)
     for endpoint in MODEL_ENDPOINTS.values():
@@ -399,7 +401,7 @@ def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
             endpoint.upstream_id,
         ):
             continue
-        endpoints.append(effective_endpoint(endpoint))
+        endpoints.append(effective_endpoint(endpoint, at=at))
     return endpoints
 
 

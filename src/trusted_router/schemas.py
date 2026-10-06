@@ -357,6 +357,7 @@ class GatewaySettleResponse(BaseModel):
 
 
 class GatewayAuthorizeRequest(_Lenient):
+    video_resolution: str | None = None
     # Enclave-derived opaque routing hints; never persist them with activity.
     cache_affinity_key: str | None = Field(default=None, pattern="^[0-9a-f]{64}$", exclude=True)
     cache_affinity_explicit: bool = Field(default=False, exclude=True)

@@ -24,9 +24,11 @@ MD = """
 ## Pricing
 |**Model ID**|**Online inference**|**Offline inference**|
 |---|---|---|
-|dreamina-seedance-2-5-260628<br><br>> Details|* For 480p and 720p outputs:<br><br> * Input without video: 10.70<br><br> * Input with video: 6.40<br><br>* For 1080p outputs:<br><br> * Input without video: 11.7|Not supported yet|
-|dreamina-seedance-2-0-260128|* For 480p and 720p outputs:<br><br> * Input without video: 7.0<br><br> * Input with video: 4.3|Not supported yet|
+|dreamina-seedance-2-5-260628<br><br>> Details|* For 480p and 720p outputs:<br><br> * Input without video: 10.70<br><br> * Input with video: 6.40<br><br>* For 1080p outputs:<br><br> * Input without video: (Original) 11.7 `Time limited 28% off`<br><br> * Input with video: (Original) 7.0 `Time limited 28% off`|Not supported yet|
+|dreamina-seedance-2-0-260128|* For 480p and 720p outputs:<br><br> * Input without video: 7.0<br><br> * Input with video: 4.3<br><br>* For 1080p outputs:<br><br> * Input without video: 7.7<br><br> * Input with video: 4.7<br><br>* For 4K outputs:<br><br> * Input without video: 4.0<br><br> * Input with video: 2.4|Not supported yet|
 |dreamina-seedance-2-0-fast-260128|* For 480p and 720p outputs:<br><br> * Input without video: (Original) 5.6 `Time limited 25% off`<br><br> * Input with video: (Original) 3.3|Not supported yet|
+Dreamina Seedance 2.0 Fast and Dreamina Seedance 2.0 Mini do not support 1080p.
+The Seedance 2.5 promotion ended 2026-09-17.
 ## Price examples
 """
 
@@ -58,6 +60,29 @@ def test_exact_standard_context_cache_and_video_tariffs():
         assert prices[native].prompt_micro_per_m == 0
         assert prices[native].completion_micro_per_m == output
     assert "deepseek-v4-1-flash-260910" not in prices
+
+
+def test_resolution_tariffs_use_original_prices_and_exclude_video_input_and_4k():
+    _, rows = byteplus.discover(catalog(), byteplus.pricing_markdown(html()))
+    for model, base, high in [("2.5", 10_700_000, 11_700_000), ("2.0", 7_000_000, 7_700_000), ("2.0-fast", 5_600_000, None)]:
+        expected = {"480p": base, "720p": base}
+        if high:
+            expected["1080p"] = high
+        assert rows[f"bytedance/seedance-{model}"]["output_token_price_per_m_by_resolution"] == expected
+
+
+@pytest.mark.parametrize("value", ["unknown", "0", "-1", "NaN", "11.7.0"])
+def test_invalid_1080p_tariff_fails_closed(value):
+    with pytest.raises(RuntimeError):
+        byteplus.parse_prices(MD.replace("(Original) 11.7", f"(Original) {value}"))
+
+
+def test_conflicting_1080p_tariff_fails_closed():
+    with pytest.raises(RuntimeError):
+        byteplus.parse_prices(MD.replace(
+            "* Input without video: (Original) 11.7",
+            "* Input without video: 8.4<br>* For 1080p outputs: * Input without video: (Original) 11.7",
+        ))
 
 
 @pytest.mark.parametrize("bad", [
@@ -123,6 +148,8 @@ def test_refresh_canaries_manifest_and_safety_holds(monkeypatch, tmp_path):
     assert live["bytedance/dola-seed-2-1-turbo-260628"]["routable"]
     assert live["bytedance/seed-2-0-pro-260328"]["routable_reason"] == "provider-canary-failed"
     assert all(live[model]["routable"] for model in byteplus.VIDEO_MODELS.values())
+    assert live["bytedance/seedance-2.5"]["output_token_price_per_m_by_resolution"]["1080p"] == 11_700_000
+    assert "1080p" not in live["bytedance/seedance-2.0-fast"]["output_token_price_per_m_by_resolution"]
     monkeypatch.delenv("BYTEPLUS_API_KEY")
     with pytest.raises(RuntimeError):
         byteplus.fetch()
@@ -149,6 +176,10 @@ def test_deployed_native_video_catalog_uses_exact_token_tariffs():
         assert endpoint.provider == "byteplus"
         assert endpoint.prompt_price_microdollars_per_million_tokens == 0
         assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(rate)
+        assert endpoint.output_token_price_per_m_by_resolution == {
+            resolution: _customer_price(price)
+            for resolution, price in row["output_token_price_per_m_by_resolution"].items()
+        }
 
 
 def test_registration_and_native_token_video_price(monkeypatch, tmp_path):
@@ -172,3 +203,50 @@ def test_registration_and_native_token_video_price(monkeypatch, tmp_path):
     assert ep.prompt_price_microdollars_per_million_tokens == 0
     assert ep.completion_price_microdollars_per_million_tokens == _customer_price(10_700_000)
     assert ep.price_tiers[0].prompt_price_microdollars_per_million_tokens == 0
+
+
+@pytest.mark.parametrize("table,accepted", [
+    ({"480p": 10_700_000, "720p": 10_700_000, "1080p": 11_700_000}, True),
+    ({"1080p": 11_700_000}, True), ({}, True),
+    ({"720p": 10_700_001}, False), ({"480p": 7_000_000}, False),
+    ({"4K": 4_000_000}, False), ({"1080p": 0}, False),
+    ({"1080p": -1}, False), ({"1080p": True}, False),
+    ({"1080p": 1.5}, False), ({"1080p": "unknown"}, False),
+    (None, False), ([], False),
+])
+def test_resolution_table_ingestion_validation(monkeypatch, tmp_path, table, accepted):
+    from trusted_router import catalog_ingest
+    from trusted_router.pricing import _customer_price
+
+    model = "bytedance/seedance-2.5"
+    row = {"id": model, "model_type": "video", "billing_unit": "output_tokens",
+           "endpoints": ["videos"], "input_token_price_per_m": 0,
+           "output_token_price_per_m": 10_700_000,
+           "output_token_price_per_m_by_resolution": table}
+    (tmp_path / "byteplus.json").write_text(json.dumps({"models": [row], "price_scale": "microdollars_per_million"}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    endpoint = endpoints.get(model + "@byteplus/prepaid")
+    assert (endpoint is not None) == accepted
+    if accepted:
+        assert endpoint.output_token_price_per_m_by_resolution == {r: _customer_price(p) for r, p in table.items()}
+
+
+@pytest.mark.parametrize("provider,overrides", [
+    ("byteplus", {"model_type": "chat", "endpoints": ["chat/completions"]}),
+    ("venice", {}),
+    ("byteplus", {"billing_unit": "seconds"}),
+    ("byteplus", {"input_token_price_per_m": 1}),
+    ("byteplus", {"output_token_price_per_m": 0}),
+    ("byteplus", {"price_tiers": []}),
+])
+def test_resolution_table_only_allowed_on_byteplus_token_video(monkeypatch, tmp_path, provider, overrides):
+    from trusted_router import catalog_ingest
+
+    row = {"id": "bytedance/seedance-2.5", "model_type": "video", "billing_unit": "output_tokens",
+           "endpoints": ["videos"], "input_token_price_per_m": 0, "output_token_price_per_m": 10_700_000,
+           "output_token_price_per_m_by_resolution": {"1080p": 11_700_000}, **overrides}
+    (tmp_path / f"{provider}.json").write_text(json.dumps({"models": [row], "price_scale": "microdollars_per_million"}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert not endpoints

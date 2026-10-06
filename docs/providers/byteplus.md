@@ -26,8 +26,10 @@ Other discovered models and input modes have not been certified by these tests.
 The native task create/poll/download/delete adapter is implemented in
 quill-cloud-proxy PR #444. It calls BytePlus, not Venice, and isolates API
 credentials from content downloads. V1 supports four-to-fifteen-second text or
-first-frame image generations at 480p/720p. Video input, reference images and
-1080p remain unsupported because they require separate tariffs.
+first-frame image generations at 480p/720p. With the resolution-aware enclave
+upgrade, Seedance 2.5 and 2.0 also run at 1080p on the direct BytePlus route;
+Seedance 2.0 Fast stops at 720p. Video input, reference-image sets, and 4K
+remain unsupported.
 
 Hourly refresh reads the authenticated ModelArk catalog and the first-party
 standard-inference pricing document. New chat models need a successful canary;
@@ -42,9 +44,27 @@ persists in all storage backends without enrolling video in Stage D. Missing,
 invalid or excessive usage fails closed; refunds release the hold without
 requiring usage. Existing fixed-price provider jobs remain compatible.
 
-Native video list prices for these supported modes are $10.70/M output tokens
-for 2.5, $7/M for 2.0, and $5.60/M for 2.0 Fast, before the standard router
-markup. Account-dependent temporary promotions are not assumed.
+Native video list prices, before the standard router markup:
+
+| Model | 480p / 720p, USD/M output tokens | 1080p, USD/M output tokens |
+| --- | ---: | ---: |
+| Seedance 2.5 | 10.70 | 11.70 |
+| Seedance 2.0 | 7.00 | 7.70 |
+| Seedance 2.0 Fast | 5.60 | Unsupported |
+
+Only the "Input without video" tariff applies to text and first-frame image
+requests. The scraper uses original list prices, including when the document
+shows temporary promotions; the Seedance 2.5 promotion ended September 17, 2026.
+
+The manifest's `output_token_price_per_m_by_resolution` stores these list rates
+in microdollars per million tokens. Ingestion applies the normal router markup.
+The internal authorize request accepts `video_resolution` only for
+`route_type: "videos"`; it freezes and reserves that resolution's tariff and
+returns `data.video_tariff_resolution`. The companion enclave upgrade must
+require this acknowledgment before dispatching 1080p to BytePlus. An older
+enclave omitting the field retains its original 480p/720p billing behavior, so
+the control-plane change can deploy independently. See the
+[wire contract](../video-generation.md#internal-resolution-tariff-contract).
 
 Before enabling `NATIVE_ROUTES_DEPLOYED` in the pricing parser:
 

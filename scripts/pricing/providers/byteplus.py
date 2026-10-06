@@ -98,10 +98,44 @@ def _table(section: str, columns: int) -> list[list[str]]:
     return rows
 
 
+def video_resolution_prices(md: str) -> dict[str, dict[str, int]]:
+    """Parse no-video-input list tariffs, never promotional or video-input rates."""
+    try:
+        video = md.split("# Video generation models", 1)[1].split("## Pricing", 1)[1].split("## Price examples", 1)[0]
+    except IndexError as exc:
+        raise RuntimeError("byteplus: pricing sections changed") from exc
+    prices: dict[str, dict[str, int]] = {}
+    for cells in _table(video, 3):
+        native = cells[0].split("<br>", 1)[0].strip()
+        if native not in VIDEO_MODELS:
+            continue
+        if native in prices:
+            raise RuntimeError("byteplus: conflicting video tariff")
+        text = BeautifulSoup(cells[1], "html.parser").get_text(" ", strip=True)
+        rates = {}
+        for label, resolutions in (("480p and 720p", ("480p", "720p")), ("1080p", ("1080p",))):
+            heading = f"For {label} outputs:"
+            if label == "1080p" and heading not in text:
+                continue
+            matches = re.findall(
+                re.escape(heading) + r"\s*\*?\s*Input without video:\s*(?:\(Original\)\s*)?([0-9.]+)(?=\s|$)",
+                text,
+            )
+            if text.count(heading) != 1 or len(matches) != 1:
+                raise RuntimeError("byteplus: missing or conflicting video tariff")
+            rate = _usd(matches[0])
+            if rate <= 0:
+                raise RuntimeError("byteplus: invalid video tariff")
+            rates.update(dict.fromkeys(resolutions, rate))
+        prices[native] = rates
+    if not VIDEO_MODELS.keys() <= prices.keys():
+        raise RuntimeError("byteplus: required video prices missing")
+    return prices
+
+
 def parse_prices(md: str) -> dict[str, ModelPrice]:
     try:
         standard = md.split("## Online inference (standard)", 1)[1].split("## Online inference (Flex)", 1)[0]
-        video = md.split("# Video generation models", 1)[1].split("## Pricing", 1)[1].split("## Price examples", 1)[0]
     except IndexError as exc:
         raise RuntimeError("byteplus: pricing sections changed") from exc
     tiers: dict[str, list[PriceTier]] = {}
@@ -123,15 +157,10 @@ def parse_prices(md: str) -> dict[str, ModelPrice]:
             None if cells[5] == "-" else _usd(cells[5]),
         ))
     prices = {key: ModelPrice(tiers=[*rows[:-1], replace(rows[-1], max_prompt_tokens=None)]) for key, rows in tiers.items()}
-    for cells in _table(video, 3):
-        native = cells[0].split("<br>", 1)[0].strip()
-        if native not in VIDEO_MODELS:
-            continue
-        text = BeautifulSoup(cells[1], "html.parser").get_text(" ", strip=True)
-        matches = re.findall(r"For 480p and 720p outputs:\s*\* Input without video:\s*(?:\(Original\)\s*)?([0-9.]+)(?=\s|$)", text)
-        if len(matches) != 1 or native in prices:
+    for native, rates in video_resolution_prices(md).items():
+        if native in prices:
             raise RuntimeError("byteplus: missing or conflicting video tariff")
-        prices[native] = ModelPrice(0, _usd(matches[0]))
+        prices[native] = ModelPrice(0, rates["720p"])
     if not VIDEO_MODELS.keys() <= prices.keys() or not tiers:
         raise RuntimeError("byteplus: required standard/video prices missing")
     if errors := validate(prices, []):
@@ -143,6 +172,7 @@ def discover(payload: object, md: str) -> tuple[dict[str, ModelPrice], dict[str,
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise RuntimeError("byteplus: catalog data missing")
     tariffs = parse_prices(md)
+    video_tariffs = video_resolution_prices(md)
     prices: dict[str, ModelPrice] = {}
     rows: dict[str, dict[str, Any]] = {}
     for source in payload["data"]:
@@ -159,6 +189,7 @@ def discover(payload: object, md: str) -> tuple[dict[str, ModelPrice], dict[str,
             reason = "unknown-provider-status"
         elif native in VIDEO_MODELS:
             row.update(model_type="video", billing_unit="output_tokens", endpoints=["videos"], input_modalities=["text", "image"], output_modalities=["video"], context_length=0)
+            row["output_token_price_per_m_by_resolution"] = video_tariffs[native]
             prices[model_id] = tariffs[native]
             if not NATIVE_ROUTES_DEPLOYED:
                 reason = "gateway-upgrade-required"

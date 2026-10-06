@@ -27,8 +27,10 @@ their supported parameters.
 Seedance 2.5, 2.0 and 2.0 Fast are available directly through BytePlus ModelArk.
 Select `"provider": {"only": ["byteplus"]}` to require BytePlus without routing
 through Venice. These routes support text or a first-frame image, 4-15 seconds,
-and 480p or 720p. Video/audio references, last-frame input, reference-image sets,
-and higher resolutions are not supported on these direct routes.
+and 480p or 720p. Seedance 2.5 and 2.0 also support 1080p on the direct BytePlus
+route with the resolution-aware enclave upgrade; 2.0 Fast stops at 720p.
+Video/audio references, last-frame input, reference-image sets, and 4K are not
+supported on these direct routes.
 
 ```json
 {
@@ -43,7 +45,11 @@ and higher resolutions are not supported on these direct routes.
 
 BytePlus bills generated **video output tokens**, not prompt text tokens or a
 fixed fee per second. The route's per-million-token price is frozen when the job
-is authorized. A conservative credit reservation is released at settlement;
+is authorized, using the requested resolution. Before router markup, Seedance
+2.5 costs $10.70/M at 480p/720p and $11.70/M at 1080p; Seedance 2.0 costs
+$7.00/M and $7.70/M respectively. Fast costs $5.60/M at 480p/720p. These are
+list rates for text or first-frame image input; temporary discounts do not apply.
+A conservative credit reservation is released at settlement;
 only the completed task's actual output tokens are charged. Polling a completed
 job does not charge again. Its response includes the final token usage and cost.
 
@@ -130,3 +136,26 @@ base64 data URLs. Local, private-network, and cloud-metadata URLs are rejected.
 - The launch provider temporarily stores generated media while the asynchronous
   job is pending and until download or the 24-hour cleanup deadline. These
   routes are not advertised as provider E2EE or provider ZDR.
+
+### Internal resolution tariff contract
+
+The enclave sends `video_resolution: "480p" | "720p" | "1080p"` on
+`POST /v1/internal/gateway/authorize` with `route_type: "videos"` and the job's
+output-token ceiling in `max_tokens` (the existing output-limit aliases also
+work). The router filters unsupported token-billed endpoints and uses the
+selected resolution rate for both the credit hold and frozen settlement tariff.
+Fixed-quote endpoints such as Venice retain their existing pricing.
+
+A successful response includes `data.video_tariff_resolution` equal to the
+requested resolution. The enclave must require this acknowledgment before
+dispatching 1080p to BytePlus. The router change can deploy first: requests
+without `video_resolution` retain their existing pricing, snapshots, and response
+shape, and receive no acknowledgment. Idempotent retries return the frozen
+acknowledgment; changing the resolution under the same idempotency key returns
+409. Settlement uses only the authorization's frozen tariff, even after a
+catalog price refresh.
+
+An invalid resolution or its use on any other route returns HTTP 400
+(`bad_request`). If resolution filtering removes every candidate, authorization
+returns HTTP 400 (`provider_not_supported`). Token endpoints without a resolution
+table retain their base rate only for 480p/720p.
