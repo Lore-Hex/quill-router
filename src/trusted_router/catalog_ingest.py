@@ -330,9 +330,9 @@ def _authoritative_provider_model_ids(
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:
             continue
-        if provider_model_operator_held(provider_slug, model_id):
-            continue
         upstream_id = str(row.get("upstream_id") or model_id)
+        if provider_model_operator_held(provider_slug, model_id, upstream_id):
+            continue
         if provider_model_retired(provider_slug, model_id, upstream_id, at=at):
             continue
         allowed.add(model_id)
@@ -1138,11 +1138,11 @@ def _supplemental_provider_models_and_endpoints(
             model_id = raw_model.get("id")
             if not isinstance(model_id, str) or not model_id:
                 continue
-            if provider_model_operator_held(provider_slug, model_id):
-                continue
             upstream_id = raw_model.get("upstream_id")
             if not isinstance(upstream_id, str) or not upstream_id:
                 upstream_id = model_id
+            if provider_model_operator_held(provider_slug, model_id, upstream_id):
+                continue
             if _is_provider_deprecated_model(provider_slug, model_id, upstream_id, at=at):
                 continue
             if raw_model.get("model_type") not in (None, "chat", "image", "embedding", "decision", "video"):
@@ -1688,7 +1688,7 @@ def _filter_unserved_provider_endpoints(
         allow[provider_slug] = _authoritative_provider_model_ids(provider_slug, at=at)
 
     def _keep(endpoint: ModelEndpoint) -> bool:
-        if provider_model_operator_held(endpoint.provider, endpoint.model_id):
+        if provider_model_operator_held(endpoint.provider, endpoint.model_id, endpoint.upstream_id):
             return False
         if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS:
             return False

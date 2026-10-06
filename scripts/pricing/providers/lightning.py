@@ -41,7 +41,7 @@ from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 from scripts.pricing.openai_catalog import positive_int
 from trusted_router.provider_contracts import (
-    LIGHTNING_GOOGLE_PASSTHROUGH_HOLD_REASON,
+    THIRD_PARTY_PASSTHROUGH_HOLD_REASON,
     provider_model_operator_held,
 )
 
@@ -187,8 +187,8 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
         operator_hold_reasons={
-            model_id: LIGHTNING_GOOGLE_PASSTHROUGH_HOLD_REASON
-            for model_id in _DISCOVERED_MANIFEST_ROWS
-            if provider_model_operator_held(SLUG, model_id)
+            model_id: THIRD_PARTY_PASSTHROUGH_HOLD_REASON
+            for model_id, row in _DISCOVERED_MANIFEST_ROWS.items()
+            if provider_model_operator_held(SLUG, model_id, str(row.get("upstream_id") or model_id))
         },
     )
