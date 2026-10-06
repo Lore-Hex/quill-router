@@ -54,6 +54,10 @@ OUTBOX_COLUMNS = [
     "created_at",
     "updated_at",
     "terminal_at",
+    "async_version",
+    "workspace_id",
+    "snapshot_hash",
+    "payload_hash",
 ]
 
 AUTO_REFILL_COLUMNS = [
@@ -69,7 +73,7 @@ AUTO_REFILL_COLUMNS = [
     "auto_refill_updated_at",
     "auto_refill_terminal_at",
 ]
-INSERT_COLUMNS = [*OUTBOX_COLUMNS, *AUTO_REFILL_COLUMNS[1:]]
+INSERT_COLUMNS = [*OUTBOX_COLUMNS[:-4], *AUTO_REFILL_COLUMNS[1:]]
 
 # Statuses that must FREEZE the hold — the reaper may not free-release a
 # reservation whose authorization still has an outbox row in one of these
@@ -446,6 +450,8 @@ def _row_from_tuple(values: Any) -> SettleOutboxRow:
         created_at=_ts_str(d["created_at"]) or "",
         updated_at=_ts_str(d["updated_at"]),
         terminal_at=_ts_str(d["terminal_at"]),
+        async_version=d["async_version"], workspace_id=d["workspace_id"],
+        snapshot_hash=d["snapshot_hash"], payload_hash=d["payload_hash"],
     )
 
 
@@ -544,7 +550,7 @@ class SpannerSettleOutbox:
                 "@auto_refill_workspace_id IS NOT NULL THEN @now ELSE "
                 "auto_refill_updated_at END, "
                 "updated_at=@now WHERE authorization_id=@authorization_id "
-                "AND intent_kind=@intent_kind AND status='pending' "
+                "AND intent_kind=@intent_kind AND status='pending' AND async_version IS NULL "
                 "AND (leased_until IS NULL OR leased_until < @now)",
                 params={
                     "settle_origin": row.settle_origin,

@@ -86,6 +86,29 @@ def count_spanner_rpcs() -> Iterator[SpannerRpcCounter]:
         _SPANNER_RPC_COUNTER.reset(token)
 
 
+_STRICT_RPC_DEADLINE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "strict_spanner_deadline", default=False,
+)
+
+
+@contextlib.contextmanager
+def spanner_rpc_deadline(deadline: float) -> Iterator[None]:
+    """Absolute completion/handoff deadline, including rollback and retries.
+
+    Async callers cannot borrow the legacy rollback floor. A failed rollback
+    leaves the transaction discarded, never available for further statements.
+    """
+    existing = _SPANNER_RPC_DEADLINE.get()
+    token = _SPANNER_RPC_DEADLINE.set(min(deadline, existing) if existing else deadline)
+    strict = _STRICT_RPC_DEADLINE.set(True)
+    try:
+        remaining_rpc_budget(2.0)
+        yield
+    finally:
+        _STRICT_RPC_DEADLINE.reset(strict)
+        _SPANNER_RPC_DEADLINE.reset(token)
+
+
 def spanner_rpc_budget(max_seconds: float) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Share one Spanner deadline across every transaction in a hot-path call."""
     if max_seconds <= 0:
@@ -406,7 +429,8 @@ def _rollback_discarded_transaction(transaction: Any) -> None:
     floor = time.monotonic() + _ROLLBACK_FLOOR_SECONDS
     existing_deadline = _SPANNER_RPC_DEADLINE.get()
     token = None
-    if existing_deadline is not None and existing_deadline < floor:
+    if (not _STRICT_RPC_DEADLINE.get()
+            and existing_deadline is not None and existing_deadline < floor):
         token = _SPANNER_RPC_DEADLINE.set(floor)
     try:
         # Best effort: the transaction is discarded either way and the original

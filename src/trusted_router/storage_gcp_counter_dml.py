@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from trusted_router.async_settle_fence import APPLY_PAYLOAD
 from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_counters import UNSHARDED
 
@@ -797,6 +798,21 @@ def claim_reservation_statement(
             "sut": param_types.STRING,
             "terminal_at": param_types.TIMESTAMP,
         }
+    if outbox_available:
+        # Fence rolling legacy writers inside the money transaction. Only the
+        # frozen apply primitive can book an async intent; arithmetic is unchanged.
+        binding = APPLY_PAYLOAD.get()
+        sql += (
+            " AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox a "
+            "WHERE a.authorization_id = tr_reservation.authorization_id "
+            "AND a.async_version=1 AND (@async_hash IS NULL OR "
+            "(a.intent_kind=@async_kind AND "
+            "(a.payload_hash!=@async_hash OR a.actual_cost_micro!=@actual))))"
+        )
+        params["async_hash"] = binding[0] if binding else None
+        params["async_kind"] = binding[1] if binding else None
+        types["async_hash"] = param_types.STRING
+        types["async_kind"] = param_types.STRING
     if expires_before is not None:
         # The reaper's snapshot scan is advisory. This predicate is the final
         # row-count guard, inside the same read-write transaction as booking;

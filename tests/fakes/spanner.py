@@ -1454,7 +1454,7 @@ class _FakeTransaction:
                     "AND expires_at < @reap_now",
                     "reservation-claim-expiry",
                 )
-            guarded = "tr_settle_outbox" in sql
+            guarded = "terminal_at = IF" in sql
             if guarded:
                 _require_pred(
                     sql,
@@ -1491,6 +1491,22 @@ class _FakeTransaction:
                 )
             ):
                 return 0  # missing or already-claimed (replay)
+            if "async_hash" in p:
+                _require_pred(sql, "AND a.async_version=1 AND (@async_hash IS NULL OR "
+                              "(a.intent_kind=@async_kind AND "
+                              "(a.payload_hash!=@async_hash OR a.actual_cost_micro!=@actual))))",
+                              "async-money-fence")
+                aid = rec["authorization_id"]
+                self.read_versions.setdefault(("outbox_auth", aid),
+                                               self.db.settle_outbox_auth_versions.get(aid, 0))
+                for kind in ("settle", "refund"):
+                    frozen = self._settle_outbox_current((aid, kind))
+                    if frozen and frozen.get("async_version") == 1 and (
+                        p["async_hash"] is None or (kind == p["async_kind"] and (
+                            frozen.get("payload_hash") != p["async_hash"]
+                            or frozen["actual_cost_micro"] != p["actual"]))
+                    ):
+                        return 0
             terminal_at = p["terminal_at"]
             if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
                 terminal_at = None
@@ -1565,6 +1581,14 @@ class _FakeTransaction:
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
             self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
+        if sql.startswith("UPDATE tr_reservation SET terminal_at=NULL") and "aid" in p:
+            _require_pred(sql, "WHERE reservation_id=@rid AND authorization_id=@aid AND settled=false",
+                          "async-admission")
+            rec = self._reservation_current(p["rid"])
+            if rec is None or rec.get("authorization_id") != p["aid"] or rec.get("settled"):
+                return 0
+            self.pending_writes.append(("update_reservation", p["rid"], dict(rec, terminal_at=None)))
             return 1
         if sql.startswith("UPDATE tr_reservation SET terminal_at=NULL"):
             _require_pred(
@@ -1857,10 +1881,11 @@ class _FakeTransaction:
                 sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh"
             )
             _require_pred(sql, "status='pending'", "refresh")
+            _require_pred(sql, "async_version IS NULL", "refresh")
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "refresh")
             pk = (p["authorization_id"], p["intent_kind"])
             rec = self._settle_outbox_current(pk)
-            if rec is None or rec["status"] != "pending":
+            if rec is None or rec["status"] != "pending" or rec.get("async_version") is not None:
                 return 0
             leased = rec.get("leased_until")
             if leased is not None and leased >= p["now"]:
