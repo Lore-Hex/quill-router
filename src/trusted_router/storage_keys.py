@@ -491,6 +491,7 @@ class InMemoryApiKeys:
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
+        created_at: str | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -559,6 +560,10 @@ class InMemoryApiKeys:
                 expires_at=expires_at,
                 invocation_nonce=invocation_nonce,
             )
+            if created_at is not None:
+                # The caller's instant, which priced the request; settlement
+                # prices at it.
+                authorization.created_at = created_at
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:
                 self.gateway_authorization_id_by_idempotency_key[
