@@ -784,7 +784,12 @@
       "context_length": 0,
       "input_token_price_per_m": 0,
       "output_token_price_per_m": 7000000,
-      "routable": true
+      "routable": true,
+      "output_token_price_per_m_by_resolution": {
+        "480p": 7000000,
+        "720p": 7000000,
+        "1080p": 7700000
+      }
     },
     {
       "display_name": "dreamina-seedance-2-0-fast",
@@ -807,7 +812,11 @@
       "context_length": 0,
       "input_token_price_per_m": 0,
       "output_token_price_per_m": 5600000,
-      "routable": true
+      "routable": true,
+      "output_token_price_per_m_by_resolution": {
+        "480p": 5600000,
+        "720p": 5600000
+      }
     },
     {
       "display_name": "dreamina-seedance-2-5",
@@ -830,7 +839,12 @@
       "context_length": 0,
       "input_token_price_per_m": 0,
       "output_token_price_per_m": 10700000,
-      "routable": true
+      "routable": true,
+      "output_token_price_per_m_by_resolution": {
+        "480p": 10700000,
+        "720p": 10700000,
+        "1080p": 11700000
+      }
     },
     {
       "display_name": "seededit-3-0-i2i",

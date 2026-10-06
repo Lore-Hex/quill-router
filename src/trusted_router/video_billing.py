@@ -1,8 +1,11 @@
 """Frozen async-video tariffs; content-free and independent of Stage D admission."""
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
+from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.pricing import _flat_tier
 from trusted_router.stage_d import (
     canonical_pricing_snapshot,
     endpoint_cost_microdollars_from_candidate,
@@ -12,9 +15,33 @@ from trusted_router.stage_d import (
 )
 
 
-def video_pricing_snapshot(endpoints: Iterable[Any], output_token_limit: int) -> str:
+def video_endpoint_for_resolution(endpoint: ModelEndpoint, resolution: str) -> ModelEndpoint | None:
+    """Select a customer tariff without mutating the shared catalog endpoint."""
+    if endpoint.completion_price_microdollars_per_million_tokens == 0:
+        return endpoint
+    rates = endpoint.output_token_price_per_m_by_resolution
+    if rates is None:
+        return endpoint if resolution in {"480p", "720p"} else None
+    rate = rates.get(resolution)
+    if rate is None:
+        return None
+    tiers = _flat_tier(0, rate)
+    return replace(
+        endpoint,
+        completion_price_microdollars_per_million_tokens=rate,
+        published_completion_price_microdollars_per_million_tokens=rate,
+        price_tiers=tiers,
+        published_price_tiers=tiers,
+    )
+
+
+def video_pricing_snapshot(
+    endpoints: Iterable[Any], output_token_limit: int, *, resolution: str | None = None,
+) -> str:
     document = endpoint_pricing_document(endpoints)
     document["output_token_limit"] = output_token_limit
+    if resolution is not None:
+        document["video_tariff_resolution"] = resolution
     return canonical_pricing_snapshot(document)
 
 

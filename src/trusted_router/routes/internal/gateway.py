@@ -252,7 +252,11 @@ from trusted_router.user_model_rules import (
     user_model_gateway_pair,
     user_model_is_on_the_clock,
 )
-from trusted_router.video_billing import video_cost_microdollars, video_pricing_snapshot
+from trusted_router.video_billing import (
+    video_cost_microdollars,
+    video_endpoint_for_resolution,
+    video_pricing_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -788,6 +792,10 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
+    if body.video_resolution is not None and (
+        body.route_type != "videos" or body.video_resolution not in {"480p", "720p", "1080p"}
+    ):
+        raise api_error(400, "video_resolution requires route_type videos and 480p, 720p, or 1080p", ErrorType.BAD_REQUEST)
     # key_lookup_ms covers the single folded auth snapshot: key, workspace, the
     # workspace's BYOK range and the boot row (#1428).
     gateway_timing_phase("key_lookup_ms")
@@ -1249,6 +1257,14 @@ def _authorize_gateway_sync_impl(
             session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
             if body.cache_affinity_key else None,
         )
+    if body.video_resolution is not None:
+        endpoint_candidates = [
+            (candidate_model, priced_endpoint)
+            for candidate_model, candidate_endpoint in endpoint_candidates
+            if (priced_endpoint := video_endpoint_for_resolution(
+                effective_endpoint(candidate_endpoint), body.video_resolution,
+            )) is not None
+        ]
     # ``allow_fallbacks=false`` removes alternate models in the resolver, but
     # provider selection must happen after regional, workspace/BYOK, and
     # service-tier eligibility. Truncating the raw catalog first can pin an
@@ -1280,7 +1296,14 @@ def _authorize_gateway_sync_impl(
         )
         if partner_mode is not None
         else max(
-            _endpoint_cost_microdollars(
+            _endpoint_cost_microdollars_from_document(
+                endpoint_pricing_document((candidate_endpoint,)),
+                candidate_endpoint.id,
+                input_tokens,
+                output_tokens,
+            )
+            if body.video_resolution is not None
+            else _endpoint_cost_microdollars(
                 candidate_endpoint,
                 input_tokens,
                 output_tokens,
@@ -1467,8 +1490,10 @@ def _authorize_gateway_sync_impl(
     pricing_snapshot = None
     video_snapshot = (
         video_pricing_snapshot(
-            (effective_endpoint(e, at=pricing_effective_at) for _m, e in endpoint_candidates),
+            (e if body.video_resolution is not None else effective_endpoint(e, at=pricing_effective_at)
+             for _m, e in endpoint_candidates),
             output_tokens,
+            resolution=body.video_resolution,
         )
         if body.route_type == "videos" else None
     )
@@ -2544,6 +2569,10 @@ def _gateway_authorize_response(
     )
     upstream_model = endpoint.upstream_id or model.id
     provider_payload = _gateway_provider_route_payload(endpoint)
+    video_resolution = (
+        parse_pricing_snapshot(authorization.video_pricing_snapshot).get("video_tariff_resolution")
+        if authorization.video_pricing_snapshot else None
+    )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -2585,6 +2614,7 @@ def _gateway_authorize_response(
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
             **({"video_token_billing": True} if authorization.video_pricing_snapshot else {}),
+            **({"video_tariff_resolution": video_resolution} if video_resolution is not None else {}),
             **stage_d,
             "tags": dict(authorization.tags),
             "custom_model": None

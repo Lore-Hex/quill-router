@@ -433,6 +433,8 @@ class ModelEndpoint:
     completion_timeout_seconds: float | None = None
     stream_idle_timeout_seconds: float | None = None
     catalog_valid_until: datetime | None = None
+    # Customer microdollars per million output tokens, including standard markup.
+    output_token_price_per_m_by_resolution: dict[str, int] | None = None
 
     @property
     def is_byok(self) -> bool:
