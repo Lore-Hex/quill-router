@@ -1966,15 +1966,22 @@ What the table's short names hide:
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
   terminal is reaped at that snapshot by the time its lease closes.
-- `AuditorCommit` is written (#1560), with 18 mutants and a guard
+- `AuditorCommit` is written (#1560), with 21 mutants and a guard
   table. Writing it showed that a reap has to be conditional on the commit
   version (§4.8): without that, a member the lease came back to reaps at an
-  older snapshot than the one stored. It also states what §4.8 left
-  implicit about a transaction that carries several leases: a statement
-  that matched no row is that lease's failed commit, and its records stay
-  unacknowledged. The log's order is not assumed: a record stored ahead of
-  an earlier one shows as a gap, and the gap rule is what keeps the earlier
-  one from being skipped.
+  older snapshot than the one stored. A member refused that way re-reads
+  even with nothing to commit, or the lease never closes. It also states
+  what §4.8 left implicit about a transaction that carries several leases:
+  a statement that matched no row is that lease's failed commit, and its
+  records stay unacknowledged.
+  - It models the boundary S: a record that lands after the fence tick is
+    above S and ignored, and its claims are about the records at or below
+    S. The log's order is not assumed: a record stored ahead of an earlier
+    one shows as a gap, and the gap rule is what keeps the earlier one from
+    being skipped.
+  - Its audit holds at each checkpoint, as a member applies it
+    (Invariant 2), and a draining lease closes while the members keep
+    working.
 - `KeyCapFence` is written (#1561), with 8 mutants and a guard table.
   Each condition of Python's enabling rule holds Invariant 8 up alone: the
   grant's version in admission, a checkpoint that applies the change, one
@@ -2030,16 +2037,17 @@ What the table's short names hide:
   must break the first claim; an owner that skips its write, which must
   break only the second; and an owner's raise that lands after the lease
   has closed, which must break §4.7's identity.
-- `CreditDebt` is written (#1549), with 34 mutants and a guard table.
-  Codex's reviews of it added claims for seven sentences of the design:
+- `CreditDebt` is written (#1549), with 36 mutants and a guard table.
+  Codex's reviews of it added claims for eight sentences of the design:
   money coming in repays debt first, the lowest shard first and each at
   most to zero; a marked row refuses reservations and grants; an owner's
-  shortfall lands within two of its writes; the stored shortfall total is
-  never more than the owner's; each landing, and each terminal the auditor
-  applies, stores exactly the larger of that total and the one it carried;
-  a lease's allocation is its grant plus every raise, less the returns
-  applied; and a shard's usage is the charges booked against it (§4.2,
-  §4.7).
+  shortfall is the lease's deficit, its total rising by exactly what the
+  allocation lacks; it lands within two of the owner's writes; the stored
+  shortfall total is never more than the owner's; each landing, and each
+  terminal the auditor applies, stores exactly the larger of that total
+  and the one it carried; a lease's allocation is its grant plus every
+  raise, less the returns applied; and a shard's usage is the charges
+  booked against it (§4.2, §4.7).
   Beyond the plan above:
   - the larger-of write (§4.2) is a claim of its own, a property of steps:
     the stored shortfall total never falls. The second claim cannot show
