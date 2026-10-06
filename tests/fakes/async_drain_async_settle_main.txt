@@ -1,12 +1,10 @@
 """Authorize-only async v1 projection and fail-closed, bounded admission cache.
 
-Fleet health comes from a complete durable observation; a local empty queue
-is never evidence of fleet health.
+PR D must publish fleet-wide drain health; no local empty queue is evidence of
+fleet health. This module adds no settlement writer, worker, or status handler.
 """
 from __future__ import annotations
 
-import logging
-import math
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -50,15 +48,11 @@ class DrainHealth:
 
 class AdmissionCache:
     def __init__(self, read: Callable[[str], Admission], *,
-                 clock: Callable[[], float] = time.monotonic,
-                 health_read: Callable[[], dict[str, Any] | None] | None = None,
-                 wall_clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.read, self.clock = read, clock
         self.lock = threading.Lock()
         self.entries: dict[str, tuple[float, Admission | None]] = {}
         self.health: DrainHealth | None = None
-        self.health_read, self.wall_clock = health_read, wall_clock
-        self.health_read_at = float("-inf")
 
     def eligible(self, workspace_id: str, pilot_cap: int) -> bool:
         # Lock coalesces concurrent misses, including failures. Timestamp at
@@ -67,18 +61,6 @@ class AdmissionCache:
             return False
         try:
             now = self.clock()
-            if self.health_read is not None and not 0 <= now - self.health_read_at < 1:
-                self.health_read_at = now
-                self.health = None
-                try:
-                    self.health = decode_health(self.health_read(), now=self.clock(), wall=self.wall_clock())
-                except Exception:
-                    self.health = None
-                logging.getLogger(__name__).info(
-                    "async_drain.admission health_available=%s data_age_seconds=%s",
-                    self.health is not None,
-                    self.clock() - self.health.observed_at if self.health is not None else None,
-                )
             cached = self.entries.get(workspace_id)
             if cached is None or not 0 <= now - cached[0] < CACHE_SECONDS:
                 if workspace_id not in self.entries and len(self.entries) >= 4096:
@@ -105,28 +87,6 @@ class AdmissionCache:
             )
         finally:
             self.lock.release()
-
-
-def decode_health(value: dict[str, Any] | None, *, now: float, wall: float) -> DrainHealth | None:
-    """Translate durable wall time to monotonic evidence time without rejuvenation."""
-    if value is None or value.get("v") != 1 or value.get("complete") is not True:
-        return None
-    try:
-        observed, heartbeat = value["observed_at"], value["worker_heartbeat"]
-        p95 = value["p95_age_seconds"]
-        if any(type(n) not in (int, float) or not math.isfinite(n) for n in (observed, heartbeat, p95)):
-            return None
-        if not (0 <= wall - observed < CACHE_SECONDS and 0 <= wall - heartbeat < CACHE_SECONDS
-                and observed <= heartbeat and 0 <= p95 <= 5):
-            return None
-        count, samples, micro = value["backlog_count"], value["sample_count"], value["frozen_micro"]
-        if any(type(n) is not int or n < 0 for n in (count, samples, micro)) or count != samples:
-            return None
-        if count == 0 and (micro != 0 or p95 != 0):
-            return None
-        return DrainHealth(now - (wall - observed), p95)
-    except (KeyError, TypeError, ValueError):
-        return None
 
 
 @dataclass
@@ -164,13 +124,7 @@ def load_runtime(settings: Settings, backend: Any) -> Runtime:
     admission = None
     if backend is not None and hasattr(backend, "_database"):
         from trusted_router.storage_gcp_async_admission import read_admission
-        health_read: Callable[[], dict[str, Any] | None] | None = None
-        if settings.async_settle_admission_enabled:
-            from trusted_router.storage_gcp_async_admission import read_health
-            # Recheck at use, so disabling admission also stops health RPCs.
-            def health_read() -> dict[str, Any] | None:
-                return read_health(backend._database) if settings.async_settle_admission_enabled else None
-        admission = AdmissionCache(lambda ws: read_admission(backend._database, ws), health_read=health_read)
+        admission = AdmissionCache(lambda ws: read_admission(backend._database, ws))
     return Runtime(signer, admission, settings.primary_region, settings.async_settle_authority_epoch)
 
 

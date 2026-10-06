@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import product
 from types import SimpleNamespace
 from typing import Any, get_type_hints
@@ -78,6 +78,34 @@ def builder_cases() -> list[SQLCase]:
     cases = []
     from trusted_router.storage_gcp_async_admission import admission_statement
     cases.append(SQLCase("async_admission", [admission_statement("admission-ws")]))
+    from trusted_router.storage_gcp_async_admission import control_statement, unresolved_statement
+    from trusted_router.storage_gcp_settle_outbox import shard_due_statement
+    cases.extend([
+        SQLCase("drain-health-point", [control_statement("fleet-v1")]),
+        SQLCase("drain-health-cadence-point", [control_statement("health-publish-v1")]),
+        SQLCase("drain-health-unresolved", [unresolved_statement()]),
+        SQLCase("drain-shard-due", [shard_due_statement(pt, 0, NOW.isoformat().replace("+00:00", "Z"))]),
+    ])
+    # Exercise generated-column membership for inline done inserts and for
+    # pending rows resolved to done/dead, without changing production INSERTs.
+    for transitioned in (False, True):
+        seed = []
+        for i, status in enumerate(("done", "pending", "dead")):
+            seed.append((
+                "INSERT INTO tr_settle_outbox "
+                "(authorization_id, intent_kind, settle_origin, actual_cost_micro, status, created_at) "
+                "VALUES (@id, 'settle', 'repair', @micro, @status, @created)",
+                {"id": f"sparse-health-{i}", "micro": i + 1,
+                 "status": "pending" if transitioned else status, "created": NOW + timedelta(seconds=i)},
+                {"id": pt.STRING, "micro": pt.INT64, "status": pt.STRING, "created": pt.TIMESTAMP},
+            ))
+            if transitioned:
+                seed.append(("UPDATE tr_settle_outbox SET status=@status WHERE authorization_id=@id "
+                             "AND intent_kind='settle'", {"id": f"sparse-health-{i}", "status": status},
+                             {"id": pt.STRING, "status": pt.STRING}))
+        cases.append(SQLCase(f"drain-health-sparse-{transitioned}", [unresolved_statement()], seed=seed,
+                             expected_rows=[[NOW + timedelta(seconds=1), 2, "pending"],
+                                            [NOW + timedelta(seconds=2), 3, "dead"]]))
     # The DDL column is ARRAY<STRING(32)>, not serialized JSON. Edge strings
     # below are individual causes, so even ['[]'] and [''] are paused.
     from trusted_router.trust_eligibility import billing_paused_row

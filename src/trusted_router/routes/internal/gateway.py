@@ -2334,6 +2334,7 @@ def register(router: APIRouter) -> None:
             drain_settle_outbox,
             limit,
             reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled,
+            **({"settings": settings} if settings.settle_outbox_fast_drain_enabled else {}),
         )
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.

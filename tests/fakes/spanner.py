@@ -531,7 +531,12 @@ class _FakeTransaction:
         *,
         params: dict[str, Any] | None = None,
         param_types: Any = None,
+        **rpc_options: Any,
     ) -> list[list[str]]:
+        if rpc_options:
+            assert 0 < rpc_options["timeout"] <= 0.2
+            assert rpc_options["retry"] is None
+            assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self.db.transaction_execute_sql_calls += 1
         if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
             if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
@@ -2191,7 +2196,12 @@ class _FakeSnapshot:
         *,
         params: dict[str, Any] | None = None,
         param_types: Any = None,
+        **rpc_options: Any,
     ) -> list[list[str]]:
+        if rpc_options:
+            assert 0 < rpc_options["timeout"] <= 0.2
+            assert rpc_options["retry"] is None
+            assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self._reads += 1
         if not self._multi_use and self._reads > 1:
             raise ValueError(
@@ -2566,6 +2576,16 @@ def _execute_settle_outbox_sql(
         if sql.startswith("SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"):
             values.append(rec.get("reservation_id"))
         return [values]
+    if "FORCE_INDEX=tr_settle_outbox_unresolved" in sql:
+        _require_pred(sql, "unresolved_at IS NOT NULL", "fleet-health-unresolved")
+        _require_pred(sql, "ORDER BY unresolved_at", "fleet-health-order")
+        _require_pred(sql, "LIMIT @limit", "fleet-health-bound")
+        # Evaluate the STORED expression on current state, including status changes.
+        rows = sorted((r for r in db.settle_outbox.values()
+                       if r['status'] in ('pending', 'dead') and r.get('created_at') is not None),
+                      key=lambda r: r['created_at'])
+        return [[r.get(c) for c in ('created_at', 'actual_cost_micro', 'status')]
+                for r in rows[:p['limit']]]
     if "next_attempt_at <= @now" in sql and "ORDER BY next_attempt_at" in sql:
         _require_pred(
             sql,
@@ -2585,6 +2605,11 @@ def _execute_settle_outbox_sql(
             and rec.get("next_attempt_at") is not None
             and rec["next_attempt_at"] <= now
         ]
+        if 'shard' in p:
+            _require_pred(sql, "queue_shard=@shard", "fast-due-shard")
+            _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "fast-due-lease")
+            rows = [r for r in rows if r['queue_shard'] == p['shard']
+                    and (r.get('leased_until') is None or r['leased_until'] < now)]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql and "intent_kind != @kind" in sql:
