@@ -142,6 +142,65 @@ def resolution_authorize(client, key, **overrides):
     return client.post("/v1/internal/gateway/authorize", json=payload)
 
 
+@pytest.mark.parametrize("resolution,status", [("720p", 200), ("1080p", 400)])
+def test_resolution_price_ceiling(client, inference_key, resolution, status):
+    response = resolution_authorize(
+        client, inference_key, video_resolution=resolution,
+        provider={"only": ["byteplus"], "max_price": {"completion": 12}},
+    )
+    assert response.status_code == status, response.text
+    if status == 200:
+        auth = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
+        assert auth.estimated_microdollars == 3_386_550
+
+
+@pytest.mark.parametrize("resolution,provider", [("720p", "byteplus"), ("1080p", "venice")])
+def test_resolution_price_sort_before_no_fallback_selection(client, inference_key, monkeypatch, resolution, provider):
+    # Put another provider between BytePlus's two tariffs, so resolution must
+    # change the winner before allow_fallbacks=false selects a single route.
+    monkeypatch.setitem(MODEL_ENDPOINTS, ENDPOINT, replace(
+        MODEL_ENDPOINTS[ENDPOINT], completion_price_microdollars_per_million_tokens=12_000_000,
+        output_token_price_per_m_by_resolution={"720p": 12_000_000, "1080p": 12_000_000},
+    ))
+    response = resolution_authorize(
+        client, inference_key, video_resolution=resolution,
+        provider={"only": ["byteplus", "venice"], "sort": "price", "allow_fallbacks": False},
+    )
+    assert response.status_code == 200, response.text
+    auth = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert auth.candidate_endpoint_ids == [f"{MODEL}@{provider}/prepaid"]
+
+
+def test_resolution_replay_survives_removed_tariff(client, inference_key, monkeypatch):
+    import copy
+
+    first = resolution_authorize(client, inference_key)
+    assert first.status_code == 200, first.text
+    data = first.json()["data"]
+    auth = STORE.get_gateway_authorization(data["authorization_id"])
+    snapshot = auth.video_pricing_snapshot
+    money_before = copy.deepcopy(STORE.credit_money[auth.workspace_id])
+    reservations_before = copy.deepcopy(STORE.api_keys.reservations)
+    assert money_before.reserved_microdollars == 3_703_050
+    endpoint_id = f"{MODEL}@byteplus/prepaid"
+    original = MODEL_ENDPOINTS[endpoint_id]
+    monkeypatch.setitem(MODEL_ENDPOINTS, endpoint_id, replace(
+        original, output_token_price_per_m_by_resolution={"720p": 11_288_500},
+    ))
+    replay = resolution_authorize(client, inference_key)
+    assert replay.status_code == 200, replay.text
+    replay_data = replay.json()["data"]
+    assert replay_data["authorization_id"] == auth.id
+    assert replay_data["credit_reservation_id"] == data["credit_reservation_id"]
+    assert replay_data["video_tariff_resolution"] == "1080p"
+    assert replay_data["idempotent_replay"] is True
+    assert STORE.get_gateway_authorization(auth.id).video_pricing_snapshot == snapshot
+    conflict = resolution_authorize(client, inference_key, request_fingerprint="d" * 64)
+    assert conflict.status_code == 409, conflict.text
+    assert STORE.credit_money[auth.workspace_id] == money_before
+    assert STORE.api_keys.reservations == reservations_before
+
+
 @pytest.mark.parametrize("resolution,tokens,rate,charge", [
     ("1080p", 243_000, 12_343_500, 2_999_471),  # $2.843100 plus 5.5%, rounded up.
     ("720p", 108_000, 11_288_500, 1_219_158),

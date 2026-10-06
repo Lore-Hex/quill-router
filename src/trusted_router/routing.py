@@ -4,6 +4,7 @@ import dataclasses
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
 
@@ -42,6 +43,7 @@ from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.types import ErrorType
+from trusted_router.video_billing import video_endpoint_for_resolution
 
 
 @dataclass(frozen=True)
@@ -488,6 +490,8 @@ def video_route_endpoint_candidates(
     settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
+    video_resolution: str | None = None,
+    pricing_effective_at: datetime | None = None,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Resolve only provider endpoints backed by the attested video worker."""
     inputs = _coerce_routing_inputs(inputs, settings)
@@ -502,9 +506,16 @@ def video_route_endpoint_candidates(
                 f"Model does not support video generation: {model_id}",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
-        for endpoint in endpoints_for_model(model.id):
+        for endpoint in endpoints_for_model(model.id, at=pricing_effective_at):
             if endpoint.id in seen:
                 continue
+            if video_resolution is not None:
+                # All provider preferences must see the tariff that authorize
+                # will freeze, including price caps, sorting and no-fallbacks.
+                priced_endpoint = video_endpoint_for_resolution(endpoint, video_resolution)
+                if priced_endpoint is None:
+                    continue
+                endpoint = priced_endpoint
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
@@ -515,7 +526,7 @@ def video_route_endpoint_candidates(
         raise api_error(
             400,
             "No video route candidates match the requested provider filters",
-            ErrorType.MODEL_NOT_SUPPORTED,
+            ErrorType.PROVIDER_NOT_SUPPORTED if video_resolution is not None else ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
     if not prefs.allow_fallbacks and not defer_no_fallback_selection:

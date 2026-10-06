@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from tests.test_gateway_authorize_spanner_operations import _request, _seed_typed_gateway_store
 from tests.test_video_generation_control_plane import _authorize_video
+from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -100,6 +102,47 @@ def test_typed_video_cross_region_replay_preserves_all_money_rows(
         assert error.value.status_code == 409
         assert database.typed == before
     assert store.get_gateway_authorization(first["authorization_id"]) is not None
+
+
+def test_typed_resolution_replay_survives_removed_tariff(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, database, key = _seed_typed_gateway_store()
+    settings = Settings(environment="test")
+    model = "bytedance/seedance-2.5"
+    body = GatewayAuthorizeRequest(
+        api_key_hash=key.hash, model=model, route_type="videos", video_resolution="1080p",
+        estimated_input_tokens=0, max_output_tokens=300_000,
+        provider={"only": ["byteplus"]},
+        idempotency_key="video-resolution-retry", request_fingerprint="a" * 64,
+    )
+    first = gateway._authorize_gateway_sync(_request(), body, settings)["data"]
+    auth = store.get_gateway_authorization(first["authorization_id"])
+    assert auth is not None and auth.estimated_microdollars == 3_703_050
+    snapshot = auth.video_pricing_snapshot
+    before = copy.deepcopy(database.typed)
+    # A concurrent first request can miss the early lookup. The reservation
+    # transaction must still return the winner without touching money twice.
+    with monkeypatch.context() as race:
+        race.setattr(SpannerStore, "get_typed_authorization_by_idempotency", lambda *args: None)
+        raced = gateway._authorize_gateway_sync(_request(), body, settings)["data"]
+        assert raced["authorization_id"] == first["authorization_id"]
+        assert raced["idempotent_replay"] is True
+        assert database.typed == before
+    endpoint_id = f"{model}@byteplus/prepaid"
+    monkeypatch.setitem(MODEL_ENDPOINTS, endpoint_id, replace(
+        MODEL_ENDPOINTS[endpoint_id], output_token_price_per_m_by_resolution={"720p": 11_288_500},
+    ))
+    replay = gateway._authorize_gateway_sync(_request(), body, settings)["data"]
+    assert replay["authorization_id"] == first["authorization_id"]
+    assert replay["credit_reservation_id"] == first["credit_reservation_id"]
+    assert replay["video_tariff_resolution"] == "1080p"
+    assert replay["idempotent_replay"] is True
+    assert store.get_gateway_authorization(first["authorization_id"]).video_pricing_snapshot == snapshot
+    with pytest.raises(HTTPException) as error:
+        gateway._authorize_gateway_sync(
+            _request(), body.model_copy(update={"request_fingerprint": "b" * 64}), settings,
+        )
+    assert error.value.status_code == 409
+    assert database.typed == before
 
 
 @pytest.mark.parametrize("refund", [False, True])

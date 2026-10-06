@@ -254,7 +254,6 @@ from trusted_router.user_model_rules import (
 )
 from trusted_router.video_billing import (
     video_cost_microdollars,
-    video_endpoint_for_resolution,
     video_pricing_snapshot,
 )
 
@@ -1093,6 +1092,128 @@ def _authorize_gateway_sync_impl(
                 ErrorType.BAD_REQUEST,
             )
     effective_route_preferences = route_preferences
+    fingerprint_body = dict(body_dict)
+    if is_video_request or is_image_request:
+        # Provider quotes can change between retries. The enclave supplies a
+        # keyed content fingerprint, so media idempotency binds to the logical
+        # request without storing content or coupling replay to a fresh quote.
+        fingerprint_body.pop("additional_cost_reservation_microdollars", None)
+    # Preserve the pre-tagging router's distinction between an absent tags
+    # field and an explicitly supplied empty object. That lets an idempotent
+    # retry carrying tags={} replay an authorization created before rollout.
+    if body.tags is not None:
+        fingerprint_body["tags"] = request_tags
+    else:
+        fingerprint_body.pop("tags", None)
+    body_dict["tags"] = effective_tags
+    request_fingerprint = _gateway_authorize_fingerprint(
+        workspace_id=workspace.id,
+        key_hash=api_key.hash,
+        body=fingerprint_body,
+        idempotency_key=request_idempotency_key,
+    )
+
+    def _replay_response(
+        existing_authorization: Any,
+        fallback: list[tuple[Model, ModelEndpoint]] | None = None,
+    ) -> dict[str, Any]:
+        gateway_timing_phase("post_commit_ms")
+        if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
+            # The selector has no upstream idempotency contract. Never repeat
+            # selection (including concurrent replays) on an existing hold.
+            raise api_error(409, "Polyphemus request already admitted; use a new idempotency key for a new request", ErrorType.BAD_REQUEST)
+        # Build the replay response from the STORED authorization (NOT current
+        # routing), so a replay across catalog/pricing/BYOK drift advertises
+        # the endpoint that was actually authorized (codex 3e route review #1).
+        existing_candidates = _authorization_endpoint_candidates(
+            existing_authorization,
+            fallback or [],
+            privacy_requirements=_required_privacy_postures(effective_route_preferences),
+        )
+        byok_configs = _byok_configs_for_candidates(
+            existing_candidates, workspace.id, folded_rows=folded_byok,
+        )
+        broadcast_destinations = [
+            payload
+            for destination in _broadcast_destinations_for_authorize(workspace.id)
+            if (payload := gateway_destination_payload(destination)) is not None
+        ]
+        existing_model, existing_endpoint = existing_candidates[0]
+        existing_usage_type = UsageType.for_endpoint(existing_endpoint)
+        byok_config = (
+            _get_byok_provider(workspace.id, existing_endpoint.provider, byok_configs)
+            if existing_usage_type.is_byok()
+            else None
+        )
+        return _gateway_authorize_response(
+            authorization=existing_authorization,
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            model=existing_model,
+            endpoint=existing_endpoint,
+            requested_model_id=requested_model_id,
+            model_usage_type=existing_usage_type,
+            limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
+            estimate=existing_authorization.estimated_microdollars,
+            credit_reservation_id=existing_authorization.credit_reservation_id,
+            byok_config=byok_config,
+            byok_configs=byok_configs,
+            region=existing_authorization.region or region,
+            settings=settings,
+            broadcast_destinations=broadcast_destinations,
+            endpoint_candidates=existing_candidates,
+            idempotent_replay=True,
+            custom_model=custom_model,
+            stage_d_reason_override="replayed",
+        )
+
+    _typed_store = typed_billing_store(STORE)
+
+    def _lookup_replay(
+        fallback: list[tuple[Model, ModelEndpoint]] | None = None,
+    ) -> dict[str, Any] | None:
+        from trusted_router.storage_legacy_trust import BillingPausedError
+        try:
+            existing_authorization = (
+                _typed_store.get_typed_authorization_by_idempotency(
+                    workspace.id, api_key.hash, request_idempotency_key,
+                )
+                if _typed_store is not None
+                else STORE.get_gateway_authorization_by_idempotency_key(
+                    workspace.id, api_key.hash, request_idempotency_key,
+                )
+            )
+        except BillingPausedError as exc:
+            if settings.speculative_provider_shadow_enabled:
+                with speculation_shadow.isolate("reason"):
+                    speculation_shadow.reason("billing_paused")
+            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
+
+        if existing_authorization is not None:
+            if (
+                existing_authorization.idempotency_fingerprint != request_fingerprint
+                and not _video_cross_region_replay_matches(
+                    existing_authorization, workspace.id, api_key.hash,
+                    fingerprint_body, request_idempotency_key,
+                )
+            ):
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(existing_authorization, fallback)
+        return None
+
+    if body.video_resolution is not None:
+        # Recover frozen video terms before live catalog filtering can reject
+        # a retry. This indexed read never reserves funds: the transaction below
+        # still arbitrates concurrent first requests atomically after a miss.
+        replay = _lookup_replay()
+        if replay is not None:
+            return replay
+
+    pricing_effective_at = dt.datetime.now(dt.UTC)
     if user_model is not None:
         if is_image_request:
             raise api_error(
@@ -1113,6 +1234,8 @@ def _authorize_gateway_sync_impl(
         endpoint_candidates = video_route_endpoint_candidates(
             normalized_routing,
             defer_no_fallback_selection=True,
+            video_resolution=body.video_resolution,
+            pricing_effective_at=pricing_effective_at,
         )
     elif is_image_request:
         if custom_model is not None:
@@ -1257,14 +1380,6 @@ def _authorize_gateway_sync_impl(
             session=(api_key.hash, requested_model_id, region, body.cache_affinity_key)
             if body.cache_affinity_key else None,
         )
-    if body.video_resolution is not None:
-        endpoint_candidates = [
-            (candidate_model, priced_endpoint)
-            for candidate_model, candidate_endpoint in endpoint_candidates
-            if (priced_endpoint := video_endpoint_for_resolution(
-                effective_endpoint(candidate_endpoint), body.video_resolution,
-            )) is not None
-        ]
     # ``allow_fallbacks=false`` removes alternate models in the resolver, but
     # provider selection must happen after regional, workspace/BYOK, and
     # service-tier eligibility. Truncating the raw catalog first can pin an
@@ -1280,7 +1395,6 @@ def _authorize_gateway_sync_impl(
     model, endpoint = endpoint_candidates[0]
 
     output_tokens = body.output_estimate
-    pricing_effective_at = dt.datetime.now(dt.UTC)
     model_estimate = (
         custom_model_cost_microdollars(
             input_tokens=input_tokens,
@@ -1353,101 +1467,10 @@ def _authorize_gateway_sync_impl(
         requested_model_id=requested_model_id,
         endpoint=endpoint,
     )
-    fingerprint_body = dict(body_dict)
-    if is_video_request or is_image_request:
-        # Provider quotes can change between retries. The enclave supplies a
-        # keyed content fingerprint, so media idempotency binds to the logical
-        # request without storing content or coupling replay to a fresh quote.
-        fingerprint_body.pop("additional_cost_reservation_microdollars", None)
-    # Preserve the pre-tagging router's distinction between an absent tags
-    # field and an explicitly supplied empty object. That lets an idempotent
-    # retry carrying tags={} replay an authorization created before rollout.
-    if body.tags is not None:
-        fingerprint_body["tags"] = request_tags
-    else:
-        fingerprint_body.pop("tags", None)
-    body_dict["tags"] = effective_tags
-    request_fingerprint = _gateway_authorize_fingerprint(
-        workspace_id=workspace.id,
-        key_hash=api_key.hash,
-        body=fingerprint_body,
-        idempotency_key=request_idempotency_key,
-    )
-
-    def _replay_response(existing_authorization: Any) -> dict[str, Any]:
-        gateway_timing_phase("post_commit_ms")
-        if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
-            # The selector has no upstream idempotency contract. Never repeat
-            # selection (including concurrent replays) on an existing hold.
-            raise api_error(409, "Polyphemus request already admitted; use a new idempotency key for a new request", ErrorType.BAD_REQUEST)
-        # Build the replay response from the STORED authorization (NOT current
-        # routing), so a replay across catalog/pricing/BYOK drift advertises
-        # the endpoint that was actually authorized (codex 3e route review #1).
-        existing_candidates = _authorization_endpoint_candidates(
-            existing_authorization,
-            endpoint_candidates,
-            privacy_requirements=_required_privacy_postures(effective_route_preferences),
-        )
-        existing_model, existing_endpoint = existing_candidates[0]
-        existing_usage_type = UsageType.for_endpoint(existing_endpoint)
-        byok_config = (
-            _get_byok_provider(workspace.id, existing_endpoint.provider, byok_configs)
-            if existing_usage_type.is_byok()
-            else None
-        )
-        return _gateway_authorize_response(
-            authorization=existing_authorization,
-            workspace_id=workspace.id,
-            key_hash=api_key.hash,
-            model=existing_model,
-            endpoint=existing_endpoint,
-            requested_model_id=requested_model_id,
-            model_usage_type=existing_usage_type,
-            limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
-            estimate=existing_authorization.estimated_microdollars,
-            credit_reservation_id=existing_authorization.credit_reservation_id,
-            byok_config=byok_config,
-            byok_configs=byok_configs,
-            region=existing_authorization.region or region,
-            settings=settings,
-            broadcast_destinations=broadcast_destinations,
-            endpoint_candidates=existing_candidates,
-            idempotent_replay=True,
-            custom_model=custom_model,
-            stage_d_reason_override="replayed",
-        )
-
-    _typed_store = typed_billing_store(STORE)
-    if _typed_store is None:
-        # Non-typed stores still use their legacy authorization index. Typed
-        # Spanner never writes that entity index on the production route after
-        # C1; its reservation transaction below owns idempotency and money
-        # atomically, so probing either index here only adds happy-path RPCs.
-        from trusted_router.storage_legacy_trust import BillingPausedError
-        try:
-            existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
-                workspace.id, api_key.hash, request_idempotency_key
-            )
-        except BillingPausedError as exc:
-            if settings.speculative_provider_shadow_enabled:
-                with speculation_shadow.isolate("reason"):
-                    speculation_shadow.reason("billing_paused")
-            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
-
-        if existing_authorization is not None:
-            if (
-                existing_authorization.idempotency_fingerprint != request_fingerprint
-                and not _video_cross_region_replay_matches(
-                    existing_authorization, workspace.id, api_key.hash,
-                    fingerprint_body, request_idempotency_key,
-                )
-            ):
-                raise api_error(
-                    409,
-                    "Idempotency key was already used for a different gateway request",
-                    ErrorType.CONFLICT,
-                )
-            return _replay_response(existing_authorization)
+    if _typed_store is None and body.video_resolution is None:
+        replay = _lookup_replay(endpoint_candidates)
+        if replay is not None:
+            return replay
     # Suspension stops NEW authorizations. Resolve replay first so a lost
     # response can be recovered and in-flight work can settle under frozen terms.
     app_markup_basis_points, app_owner_user_id = _oauth_app_terms_for_key(api_key)
@@ -1699,7 +1722,7 @@ def _authorize_gateway_sync_impl(
                 fingerprint_body, request_idempotency_key,
             ):
                 release_user_model_slot_after_error()
-                return _replay_response(existing_authorization)
+                return _replay_response(existing_authorization, endpoint_candidates)
         if outcome == "billing_paused":
             release_user_model_slot_after_error()
             if settings.speculative_provider_shadow_enabled:
@@ -1738,7 +1761,7 @@ def _authorize_gateway_sync_impl(
             # Our provisional slot belongs to the id that lost the race, not
             # to the stored authorization — give it back.
             release_user_model_slot_after_error()
-            return _replay_response(authorization)
+            return _replay_response(authorization, endpoint_candidates)
         credit_reservation_id = authorization.credit_reservation_id
     else:
         from trusted_router.spend_windows import (
