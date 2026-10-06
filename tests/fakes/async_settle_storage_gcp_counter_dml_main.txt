@@ -1,0 +1,89 @@
+# Frozen verbatim from PR B 6421a9a6; executed only by the flag-off oracle.
+
+_CLAIM_RESERVATION_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
+    "settled_usage_type=@sut, terminal_at=@terminal_at "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+
+
+_CLAIM_RESERVATION_GUARDED_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
+    "settled_usage_type=@sut, terminal_at = IF("
+    "EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})), NULL, @terminal_at) "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+
+
+def claim_reservation(
+    transaction: Any,
+    param_types: Any,
+    reservation_id: str,
+    *,
+    actual_micro: int,
+    settled_usage_type: str,
+    terminal_at: Any | None = None,
+    defer_retention: bool = False,
+    outbox_available: bool = True,
+    expires_before: Any | None = None,
+) -> bool:
+    """Claim a reservation for settle/refund: first caller wins.
+
+    True = this caller won the claim (row-count 1, settled flipped false->true);
+    False = already settled (row-count 0, a replay) -> do NOT touch counters.
+    Persists `actual_micro` + `settled_usage_type` so the durable reservation
+    records the exact settled amount for audit / reaper reconciliation.
+    """
+    sql, params, types = claim_reservation_statement(
+        param_types, reservation_id, actual_micro=actual_micro,
+        settled_usage_type=settled_usage_type, terminal_at=terminal_at,
+        defer_retention=defer_retention, outbox_available=outbox_available,
+        expires_before=expires_before,
+    )
+    return transaction.execute_update(sql, params=params, param_types=types) == 1
+
+
+def claim_reservation_statement(
+    param_types: Any, reservation_id: str, *, actual_micro: int,
+    settled_usage_type: str, terminal_at: Any | None = None,
+    defer_retention: bool = False, outbox_available: bool = True,
+    expires_before: Any | None = None,
+) -> DmlStatement:
+    """Build the same conditional claim for standalone or batch execution.
+
+    A deferred claim writes ``terminal_at=NULL`` whatever the outbox holds: the
+    guarded form would compute ``IF(EXISTS(...), NULL, NULL)``. So only a claim
+    that arms retention pays for the correlated outbox subquery. Measured
+    2026-10-01 (SPANNER_SYS, one hour) before this: the guarded claim was the
+    costliest statement, ~6.5 ms CPU per execution and 36% of all query CPU, at
+    ~39k executions/hour, one per finalize. Finalize (and reaper) claims all
+    defer retention, so that subquery never changed what they wrote.
+    """
+    resolved_terminal_at = (
+        None if defer_retention else (terminal_at or datetime.now(UTC))
+    )
+    guarded = outbox_available and resolved_terminal_at is not None
+    sql = _CLAIM_RESERVATION_GUARDED_SQL if guarded else _CLAIM_RESERVATION_SQL
+    params = {
+            "rid": reservation_id,
+            "actual": int(actual_micro),
+            "sut": settled_usage_type,
+            "terminal_at": resolved_terminal_at,
+        }
+    types = {
+            "rid": param_types.STRING,
+            "actual": param_types.INT64,
+            "sut": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
+        }
+    if expires_before is not None:
+        # The reaper's snapshot scan is advisory. This predicate is the final
+        # row-count guard, inside the same read-write transaction as booking;
+        # a heartbeat renewal after the scan therefore cannot lose its hold.
+        sql += " AND expires_at < @reap_now"
+        params["reap_now"] = expires_before
+        types["reap_now"] = param_types.TIMESTAMP
+    return sql, params, types
+

@@ -15,10 +15,12 @@ from tests.test_billing_snapshot import CASES
 from tests.test_settle_outbox_drain import (
     _client,
     _make_key,
-    _outbox,
     _seed_credit,
     _typed_credit,
     _typed_key,
+)
+from tests.test_settle_outbox_drain import (
+    _outbox as _legacy_outbox,
 )
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import verify_lookup_ticket, verify_ticket
@@ -34,6 +36,12 @@ WIRE = json.loads((ROOT / 'request_v1.json').read_text())
 NOW = 1791244801
 
 
+def _outbox(store):
+    outbox = _legacy_outbox(store)
+    outbox._async_fence = store.trust_settings.async_settle_enabled
+    return outbox
+
+
 @pytest.fixture
 def env(monkeypatch):
     store, db = make_fake_store(request_record_write_mode="typed",
@@ -42,6 +50,8 @@ def env(monkeypatch):
     configure_store(store)
     rt = runtime()
     cfg = settings(settle_outbox_enabled=True)
+    store.trust_settings = cfg
+    store.settle_outbox._async_fence = True
     monkeypatch.setattr(handler.time, 'time', lambda: NOW)
     try:
         yield store, db, rt, cfg
@@ -242,6 +252,7 @@ def test_drain_and_status_ownership(env, kind):
 def test_dispatch_before_legacy_parser(env, header, enabled):
     body, _, _ = prepare(env)
     cfg = settings(settle_outbox_enabled=True)
+    env[0].trust_settings = cfg
     cfg.async_settle_enabled = enabled
     client = _client(cfg)
     client.app.state.async_settle = env[2]
@@ -348,7 +359,7 @@ def test_enqueue_wins_reaper_and_legacy_fence(env):
     for reaper in [False, True]:
         result = settle_atomic(env[1], env[0]._param_types, reservation_id=auth.credit_reservation_id,
                                actual_micro=900, settled_usage_type='Credits', success=not reaper,
-                               guard_outbox=reaper, outbox_available=True)
+                               guard_outbox=reaper, outbox_available=True, async_fence=True)
         assert result['outcome'] != 'settled'
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
     assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
@@ -499,7 +510,7 @@ def test_legacy_retry_preserves_accepted_amount(env, monkeypatch, outbox_enabled
         id=endpoint.model_id, name='retry', provider=endpoint.provider,
         context_length=1_000_000, prepaid_available=True))
     cfg = settings(settle_outbox_enabled=outbox_enabled)
-    cfg.async_settle_enabled = False
+    cfg.async_settle_enabled = True
     result = gateway._settle_gateway_authorization(
         GatewaySettleRequest(authorization_id=auth.id, selected_endpoint=endpoint.id,
                              actual_input_tokens=100, actual_output_tokens=100),
@@ -688,3 +699,104 @@ def test_accepted_retry_with_changed_cohort_returns_existing(env):
     data = json.loads(result.body)['data']
     assert data['acceptance']['status'] == 'duplicate'
     assert data['trusted_router_settlement']['cost_microdollars'] == 2
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_claim_sql_flag_pin(enabled):
+    from google.cloud.spanner_v1 import param_types as pt
+
+    from trusted_router.storage_gcp_counter_dml import claim_reservation_statement
+
+    sql, params, types = claim_reservation_statement(
+        pt, 'rid', actual_micro=2, settled_usage_type='Credits',
+        defer_retention=True, async_fence=enabled,
+    )
+    expected = ('UPDATE tr_reservation SET settled=true, actual_micro=@actual, '
+                'settled_usage_type=@sut, terminal_at=@terminal_at '
+                'WHERE reservation_id=@rid AND settled=false')
+    expected_params = dict(rid='rid', actual=2, sut='Credits', terminal_at=None)
+    expected_types = dict(rid=pt.STRING, actual=pt.INT64, sut=pt.STRING, terminal_at=pt.TIMESTAMP)
+    if enabled:
+        expected += (
+            ' AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox a '
+            'WHERE a.authorization_id = tr_reservation.authorization_id '
+            "AND a.status IN ('pending', 'dead') "
+            'AND a.async_version=1 AND (@async_hash IS NULL OR '
+            '(a.intent_kind=@async_kind AND '
+            '(a.payload_hash!=@async_hash OR a.actual_cost_micro!=@actual))))'
+        )
+        expected_params.update(async_hash=None, async_kind=None)
+        expected_types.update(async_hash=pt.STRING, async_kind=pt.STRING)
+    assert (sql, params, types) == (expected, expected_params, expected_types)
+
+
+@pytest.mark.parametrize('async_version', [None, 1])
+def test_operator_approved_release(env, async_version):
+    from datetime import UTC, datetime, timedelta
+
+    body, auth, _ = prepare(env)
+    call(env, body)
+    now = datetime.now(UTC)
+    env[1].reservations[auth.credit_reservation_id]['expires_at'] = now - timedelta(seconds=1)
+    row = env[1].settle_outbox[(auth.id, 'settle')]
+    row.update(status='release_approved', async_version=async_version)
+    result = env[0].reap_expired_reservations_result(now=now, limit=10)
+    assert result.count == 1
+    assert _typed_credit(env[1], 'ws-v1')['reserved'] == 0
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
+
+
+def test_expired_handoff_attempts_one_rollback(monkeypatch):
+    from trusted_router import storage_gcp_io as io
+
+    clock = [10.0]
+    calls = []
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+
+    def rollback():
+        calls.append(io.remaining_rpc_budget(2))
+
+    with io.spanner_rpc_deadline(10.5):
+        clock[0] = 10.501
+        io._rollback_discarded_transaction(SimpleNamespace(rollback=rollback))
+    assert len(calls) == 1 and calls[0] == pytest.approx(.05)
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+    assert not io._STRICT_RPC_DEADLINE.get()
+
+
+@pytest.mark.parametrize('elapsed', [.499, .501])
+def test_commit_handoff_boundary(env, monkeypatch, elapsed):
+    body, auth, _ = prepare(env)
+    clock = [10.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    run = env[1].run_in_transaction
+
+    def commit(*args, **kwargs):
+        result = run(*args, **kwargs)
+        clock[0] = 10 + elapsed
+        return result
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', commit)
+    if elapsed < .5:
+        assert call(env, body).status_code == 202
+    else:
+        with pytest.raises(HTTPException) as exc:
+            call(env, body)
+        assert exc.value.status_code == 503
+    assert list(env[1].settle_outbox) == [(auth.id, 'settle')]
+
+
+def test_lookup_ticket_rejects_other_audience(env):
+    from dataclasses import replace
+
+    from trusted_router.async_settle_ticket import TYP
+    from trusted_router.detached_jws import b64encode, canonical
+
+    body, _, _ = prepare(env)
+    signer = env[2].signer
+    claims = verify_lookup_ticket(body['settlement_ticket'], [signer.trusted], NOW).model_dump()
+    claims['aud'] = 'another-purpose'
+    material = b64encode(canonical(dict(alg='EdDSA', kid=signer.trusted.kid, typ=TYP))) + '.' + b64encode(canonical(claims))
+    token = material + '.' + b64encode(signer.private.sign(material.encode('ascii')))
+    with pytest.raises(ValueError, match='ticket lookup validity'):
+        verify_lookup_ticket(token, [replace(signer.trusted, aud='another-purpose')], NOW)

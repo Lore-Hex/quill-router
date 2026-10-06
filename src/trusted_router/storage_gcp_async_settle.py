@@ -45,14 +45,9 @@ def enqueue(outbox: SpannerSettleOutbox, row: SettleOutboxRow, deadline: float) 
     row.created_at = now
     row.updated_at = now
     row.next_attempt_at = now
-    statements = intent_insert_statements(pt, row, now=now, next_attempt_at=now, resolved=False)
-    sql, params, types = statements[0]
-    extra = {"async_version": 1, "workspace_id": row.workspace_id,
-             "snapshot_hash": row.snapshot_hash, "payload_hash": row.payload_hash}
-    sql = sql.replace(") VALUES (", ", " + ", ".join(extra) + ") VALUES (")
-    sql = sql[:-1] + ", " + ", ".join("@" + name for name in extra) + ")"
-    statements[0] = (sql, {**params, **extra}, {**types, "async_version": pt.INT64,
-                    "workspace_id": pt.STRING, "snapshot_hash": pt.STRING, "payload_hash": pt.STRING})
+    statements = intent_insert_statements(
+        pt, row, now=now, next_attempt_at=now, resolved=False, async_metadata=True,
+    )
     counts = [*intent_insert_counts(statements), (1,)]
     statements.append(async_reservation_admission_statement(pt, row))
     opened: list[Any] = []
@@ -64,7 +59,10 @@ def enqueue(outbox: SpannerSettleOutbox, row: SettleOutboxRow, deadline: float) 
             if len(actual) == len(statements) and actual[-1] == 0:
                 raise ReservationNotOpen("Reservation no longer open")
 
-        execute_batch_dml(tx, statements, counts, check_prefix=admission_count)
+        # Leave 50 ms of the handoff budget for rollback of failed statements.
+        # Commit retains the original deadline; a late reply is still unknown.
+        with spanner_rpc_deadline(deadline - 0.05):
+            execute_batch_dml(tx, statements, counts, check_prefix=admission_count)
         if time.monotonic() >= deadline:
             raise DeadlineExceeded("Async handoff budget exhausted before commit")
 

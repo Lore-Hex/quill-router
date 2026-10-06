@@ -905,3 +905,32 @@ one-request overrun bound; retries before handoff are not durable enclave
 storage; sync fallback needs new frozen-price wiring; refunds are first-writer
 zero-charge finalization, not automatic charge reversal; and latency/probe
 claims are not independently established by the inspected artifacts.
+
+
+### PR C flag-off SQL and additive-schema compatibility
+
+`async_settle_enabled=false` preserves the frozen PR B claim SQL, parameters,
+types and RPC count, including deferred-retention claims and unsuccessful sync
+finalize. The async fence, reconciliation point reads and refresh predicate are
+explicitly enabled together. When enabled, the claim's `NOT EXISTS` reads one
+primary-key range of `tr_settle_outbox` by `authorization_id` inside the money
+transaction. This is the only extra claim read and serializes a legacy claim
+against an accepted async intent. It uses the shared pending/dead guard statuses
+(leased work remains pending); `release_approved` and abandoned rows permit the
+operator-approved release. Deployment must keep this protection enabled while
+accepted async intents can race legacy writers; disabling it deliberately restores
+the legacy SQL contract specified for PR C.
+
+Outbox reads use the additive 22-column projection for both flag states; the old
+18-field tuple path is gone. This is safe because `.github/workflows/deploy.yml`
+runs `migrate-schema` before the deploy job invokes `rollout.sh`. Rolling back
+code still works with additive nullable columns. The legacy INSERT remains
+byte-identical; the async INSERT adds its four typed metadata columns in the
+shared builder, without editing an already-built SQL string.
+
+Async batch statements stop 50 ms before the handoff deadline to leave cleanup
+time. Commit may use the remaining budget. A reply at 499 ms can confirm
+acceptance; one at 501 ms cannot produce 202. Cleanup always attempts a bounded
+Rollback RPC, including after an unexpectedly late wakeup: its async floor is
+50 ms, not the legacy two seconds. A scheduler/RPC overrun can therefore extend
+best-effort cleanup past 500 ms; it never extends the acceptance deadline.

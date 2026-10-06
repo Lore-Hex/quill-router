@@ -748,6 +748,7 @@ def claim_reservation(
     defer_retention: bool = False,
     outbox_available: bool = True,
     expires_before: Any | None = None,
+    async_fence: bool = False,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
 
@@ -760,7 +761,7 @@ def claim_reservation(
         param_types, reservation_id, actual_micro=actual_micro,
         settled_usage_type=settled_usage_type, terminal_at=terminal_at,
         defer_retention=defer_retention, outbox_available=outbox_available,
-        expires_before=expires_before,
+        expires_before=expires_before, async_fence=async_fence,
     )
     return transaction.execute_update(sql, params=params, param_types=types) == 1
 
@@ -770,12 +771,19 @@ def claim_reservation_statement(
     settled_usage_type: str, terminal_at: Any | None = None,
     defer_retention: bool = False, outbox_available: bool = True,
     expires_before: Any | None = None,
+    async_fence: bool = False,
 ) -> DmlStatement:
     """Build the same conditional claim for standalone or batch execution.
 
     A deferred claim writes ``terminal_at=NULL`` whatever the outbox holds: the
     guarded form would compute ``IF(EXISTS(...), NULL, NULL)``. So only a claim
-    that arms retention pays for the correlated outbox subquery. Measured
+    that arms retention pays for the retention subquery. With async enabled,
+    a legacy claim racing an accepted async intent must also respect its frozen
+    payload. The NOT EXISTS fence adds one primary-key range read on
+    tr_settle_outbox by authorization_id inside the money transaction, including
+    deferred claims; it is the only extra read. Pending/leased and dead rows
+    freeze holds; operator-approved release and abandoned rows do not. With the
+    flag off, SQL, parameters and types remain byte-identical to legacy. Measured
     2026-10-01 (SPANNER_SYS, one hour) before this: the guarded claim was the
     costliest statement, ~6.5 ms CPU per execution and 36% of all query CPU, at
     ~39k executions/hour, one per finalize. Finalize (and reaper) claims all
@@ -798,13 +806,16 @@ def claim_reservation_statement(
             "sut": param_types.STRING,
             "terminal_at": param_types.TIMESTAMP,
         }
-    if outbox_available:
+    if outbox_available and async_fence:
+        from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL
+
         # Fence rolling legacy writers inside the money transaction. Only the
         # frozen apply primitive can book an async intent; arithmetic is unchanged.
         binding = APPLY_PAYLOAD.get()
         sql += (
-            " AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox a "
+            " AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox a "  # noqa: S608 - fixed guard statuses
             "WHERE a.authorization_id = tr_reservation.authorization_id "
+            f"AND a.status IN ({_GUARD_STATUS_SQL}) "
             "AND a.async_version=1 AND (@async_hash IS NULL OR "
             "(a.intent_kind=@async_kind AND "
             "(a.payload_hash!=@async_hash OR a.actual_cost_micro!=@actual))))"

@@ -1492,7 +1492,8 @@ class _FakeTransaction:
             ):
                 return 0  # missing or already-claimed (replay)
             if "async_hash" in p:
-                _require_pred(sql, "AND a.async_version=1 AND (@async_hash IS NULL OR "
+                _require_pred(sql, "AND a.status IN ('pending', 'dead') "
+                              "AND a.async_version=1 AND (@async_hash IS NULL OR "
                               "(a.intent_kind=@async_kind AND "
                               "(a.payload_hash!=@async_hash OR a.actual_cost_micro!=@actual))))",
                               "async-money-fence")
@@ -1501,7 +1502,7 @@ class _FakeTransaction:
                                                self.db.settle_outbox_auth_versions.get(aid, 0))
                 for kind in ("settle", "refund"):
                     frozen = self._settle_outbox_current((aid, kind))
-                    if frozen and frozen.get("async_version") == 1 and (
+                    if frozen and frozen.get("status") in {"pending", "dead"} and frozen.get("async_version") == 1 and (
                         p["async_hash"] is None or (kind == p["async_kind"] and (
                             frozen.get("payload_hash") != p["async_hash"]
                             or frozen["actual_cost_micro"] != p["actual"]))
@@ -1881,11 +1882,11 @@ class _FakeTransaction:
                 sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh"
             )
             _require_pred(sql, "status='pending'", "refresh")
-            _require_pred(sql, "async_version IS NULL", "refresh")
+            async_fence = "async_version IS NULL" in sql
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "refresh")
             pk = (p["authorization_id"], p["intent_kind"])
             rec = self._settle_outbox_current(pk)
-            if rec is None or rec["status"] != "pending" or rec.get("async_version") is not None:
+            if rec is None or rec["status"] != "pending" or (async_fence and rec.get("async_version") is not None):
                 return 0
             leased = rec.get("leased_until")
             if leased is not None and leased >= p["now"]:

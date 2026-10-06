@@ -152,13 +152,13 @@ def builder_cases() -> list[SQLCase]:
         fields = {field: heartbeat_values[field] if bit else None for field, bit in zip(_AUTHORIZATION_HEARTBEAT_FIELDS, bits, strict=True)}
         seed = gateway_authorization_insert_statement(pt, replace(authorization, **fields), created_at=NOW)
         cases.append(SQLCase("settled-heartbeat-" + "".join(str(int(bit)) for bit in bits), [settled], seed=[seed], expected_counts=[1]))
-    for guarded, expired, deferred in product((False, True), repeat=3):
+    for guarded, expired, deferred, async_fence in product((False, True), repeat=4):
         claim = counters.claim_reservation_statement(
             pt, "acceptance-reservation", actual_micro=1, settled_usage_type="credits",
             terminal_at=NOW, outbox_available=guarded, expires_before=NOW if expired else None,
-            defer_retention=deferred,
+            defer_retention=deferred, async_fence=async_fence,
         )
-        cases.append(SQLCase(f"claim-{guarded}-{expired}-{deferred}", [claim]))
+        cases.append(SQLCase(f"claim-{guarded}-{expired}-{deferred}-{async_fence}", [claim]))
     clear = [gateway_authorization_retention_clear_statement(pt, "acceptance-auth"),
              counters.reservation_retention_clear_statement(pt, "acceptance-reservation")]
     cases.append(SQLCase("enqueue-retention-clear-batch", clear, batch=True))
@@ -304,7 +304,7 @@ def builder_cases() -> list[SQLCase]:
         try:
             statement = counters.claim_reservation_statement(
                 pt, "acceptance-reservation", actual_micro=actual, settled_usage_type="Credits",
-                terminal_at=NOW, defer_retention=True,
+                terminal_at=NOW, defer_retention=True, async_fence=True,
             )
         finally:
             APPLY_PAYLOAD.reset(token)

@@ -31,7 +31,7 @@ MUTATIONS = [
          '        outbox.enqueue(row)\n'
          '        existing = outbox.get(row.authorization_id, row.intent_kind)'),
     ]), ('src/trusted_router/storage_gcp_settle_outbox.py', [
-        ("AND status='pending' AND async_version IS NULL ", "AND status='pending' "),
+        ('("AND async_version IS NULL " if self._async_fence else "")', '""'),
     ])], 'test_duplicate_conflict_expired_and_immutable'),
     ('drop-hash-comparisons', [(HANDLER, [
         ('if billing.canonical_hash(value.snapshot) != claims.snapshot_hash:', 'if False:'),
@@ -60,6 +60,34 @@ MUTATIONS = [
          '                or principal.api_key is None or auth.key_hash != principal.api_key.hash):',
          'if auth is None:'),
     ])], 'test_drain_and_status_ownership[settle]'),
+    ('refresh-fence', [('src/trusted_router/storage_gcp_settle_outbox.py', [
+        ('("AND async_version IS NULL " if self._async_fence else "")', '""'),
+    ])], 'test_duplicate_conflict_expired_and_immutable'),
+    ('lookup-audience', [('src/trusted_router/async_settle_ticket.py', [
+        ('or parsed.aud != key.aud or parsed.aud != "router-settlement"', ''),
+    ])], 'test_lookup_ticket_rejects_other_audience'),
+    ('status-key', [('src/trusted_router/routes/settlements.py', [
+        ('or principal.api_key is None or auth.key_hash != principal.api_key.hash',
+         'or principal.api_key is None'),
+    ])], 'test_drain_and_status_ownership[settle]'),
+    ('fence-when-flag-off', [('src/trusted_router/storage_gcp_counter_dml.py', [
+        ('if outbox_available and async_fence:', 'if outbox_available:'),
+    ])], 'test_claim_sql_flag_pin[False]'),
+    ('drop-fence-when-flag-on', [('src/trusted_router/storage_gcp_counter_dml.py', [
+        ('if outbox_available and async_fence:', 'if False:'),
+    ])], 'test_claim_sql_flag_pin[True]'),
+    # Additional evidence: the frozen oracle itself kills ungated helper work.
+    ('oracle-ungated-claim', [('src/trusted_router/storage_gcp_counter_dml.py', [
+        ('if outbox_available and async_fence:', 'if outbox_available:'),
+    ])], 'tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[False-True-ordinary]'),
+    ('oracle-ungated-reconciliation', [('src/trusted_router/routes/internal/gateway.py', [
+        ('if settings.async_settle_enabled and getattr(STORE, "_database", None) is not None:',
+         'if getattr(STORE, "_database", None) is not None:'),
+    ])], 'tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[False-False-unresolved]'),
+    ('oracle-ungated-refresh', [('src/trusted_router/storage_gcp_settle_outbox.py', [
+        ('("AND async_version IS NULL " if self._async_fence else "")', '"AND async_version IS NULL "'),
+    ])], 'tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[True-True-refresh]'),
+
 ]
 
 
@@ -72,6 +100,7 @@ def main() -> None:
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.pytest_cache'))
         shutil.copy2(ROOT/'pyproject.toml', target/'pyproject.toml')
         for name, files, selection in MUTATIONS:
+            selected_test = selection if '::' in selection else TEST + selection
             originals = {}
             for relative, edits in files:
                 path = target/relative
@@ -83,13 +112,13 @@ def main() -> None:
             try:
                 result = subprocess.run(  # noqa: S603 - fixed executable and test selection
                     [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
-                     '--disable-warnings', '--tb=short', '-x', TEST+selection],
+                     '--disable-warnings', '--tb=short', '-x', selected_test],
                     cwd=target, capture_output=True, text=True, timeout=300,
                     env={**os.environ, 'PYTHONPATH': str(target/'src'), 'PYTHONDONTWRITEBYTECODE': '1'},
                 )
                 log = Path('/tmp')/f'pr-c-mutation-{name}.log'
                 log.write_text(result.stdout + result.stderr)
-                killed = result.returncode == 1 and 'FAILED ' + TEST+selection.split('[')[0] in result.stdout
+                killed = result.returncode == 1 and 'FAILED ' + selected_test.split('[')[0] in result.stdout
                 record = dict(mutation=name, killed=killed, exit_code=result.returncode, log=str(log))
                 results.append(record)
                 print(json.dumps(record), flush=True)
