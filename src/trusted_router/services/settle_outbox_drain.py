@@ -58,7 +58,10 @@ def spanner_settle_outbox() -> SpannerSettleOutbox:
     param_types = getattr(STORE, "_param_types", None)
     if database is None or param_types is None:
         raise RuntimeError("settle outbox drain requires the Spanner store")
-    return SpannerSettleOutbox(database, param_types)
+    return SpannerSettleOutbox(
+        database, param_types,
+        async_fence=bool(getattr(getattr(STORE, "trust_settings", None), "async_settle_protection", False)),
+    )
 
 
 def drain_settle_outbox(

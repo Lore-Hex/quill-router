@@ -59,7 +59,7 @@ def runtime():
 
 
 def settings(**kwargs):
-    return Settings(environment='test', async_settle_enabled=True, **kwargs)
+    return Settings(environment='test', **{'async_settle_enabled': True, 'async_settle_protection': True, **kwargs})
 
 
 def test_literal_wire_and_fixture_signature():
@@ -169,6 +169,9 @@ def test_rollout_never_inherits_key_file():
     lines = [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE' in line]
     assert lines == ['"TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="']
     assert Settings().async_settle_enabled is False
+    assert Settings().async_settle_protection is False
+    assert [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_PROTECTION' in line] == [
+        '"TR_ASYNC_SETTLE_PROTECTION=false"']
 
 
 @pytest.mark.parametrize('field', ['authorization_id', 'workspace_id', 'key_id', 'reservation_id'])
@@ -356,3 +359,24 @@ def test_ticket_lifetime_of_exactly_300s_is_accepted():
     claims = {**CLAIMS, 'exp': CLAIMS['iat'] + 300}
     token = s.sign(claims, claims['iat'])
     assert verify_ticket(token, [s.trusted], claims, claims['iat'] + 299).exp == claims['exp']
+
+
+@pytest.mark.parametrize('admission,protection', [(False, False), (False, True), (True, False)])
+def test_runtime_admission_issues_no_ticket_or_admission_read(monkeypatch, admission, protection):
+    config = settings()
+    config.async_settle_enabled = admission
+    config.async_settle_protection = protection
+    rt = runtime()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('disabled admission must neither sign nor read')
+
+    # Snapshot projection is best-effort: record calls outside its exception handler.
+    calls = []
+    monkeypatch.setattr(rt.admission, 'eligible', lambda *a: calls.append('read') or forbidden())
+    monkeypatch.setattr(type(rt.signer), 'sign', lambda *a: calls.append('sign') or forbidden())
+    result = projection(authorization=authorization(), endpoints=[endpoint()], requested=Eligibility(),
+                        runtime=rt, settings=config)
+    assert not result['async_eligible']
+    assert 'settlement_ticket' not in result
+    assert not calls

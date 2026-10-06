@@ -73,6 +73,24 @@ def verify_ticket(token: str, keys: Sequence[TrustedKey], expected: Mapping[str,
     return parsed
 
 
+def verify_lookup_ticket(token: str, keys: Sequence[TrustedKey], now: int) -> TicketClaims:
+    """Signature/shape validator ONLY for identifying an existing intent.
+
+    It deliberately allows expiration, never a future-issued or wrong-purpose
+    token. Callers must bind the terminal and persisted ownership; fresh INSERT
+    still requires verify_ticket and current authority context.
+    """
+    claims, key, payload = verify(token, keys, TYP, PURPOSE)
+    parsed = TicketClaims.model_validate(claims)
+    if (payload != canonical(claims) or parsed.iss != key.iss
+            or parsed.aud != key.aud or parsed.aud != "router-settlement"
+            or parsed.iat > now or not 0 < parsed.exp - parsed.iat <= MAX_TTL_SECONDS
+            or parsed.epoch < 1
+            or parsed.generation_id != generation_id_for_authorization(parsed.authorization_id)):
+        raise ValueError("ticket lookup validity")
+    return parsed
+
+
 class TicketSigner:
     def __init__(self, private: Ed25519PrivateKey, trusted: TrustedKey) -> None:
         if (trusted.purpose != PURPOSE or not all((trusted.kid, trusted.iss, trusted.aud))

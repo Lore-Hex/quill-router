@@ -1,0 +1,82 @@
+{
+  "disabled": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "disabled"
+    }
+  },
+  "not_eligible": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "not_eligible"
+    }
+  },
+  "cap_exceeded": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "cap_exceeded"
+    }
+  },
+  "ticket_expired": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "ticket_expired"
+    }
+  },
+  "unsupported_cohort": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "unsupported_cohort"
+    }
+  },
+  "admission_stale": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "admission_stale"
+    }
+  },
+  "reservation_not_open": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "reservation_not_open"
+    }
+  },
+  "drain_unhealthy": {
+    "data": {
+      "acceptance": {
+        "status": "sync_required",
+        "payload_hash": null,
+        "settlement_status": null
+      },
+      "reason": "drain_unhealthy"
+    }
+  }
+}

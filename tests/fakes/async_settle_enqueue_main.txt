@@ -1,0 +1,106 @@
+def enqueue(self, row: SettleOutboxRow, *, initial_delay_seconds: int = 0, preserve_existing: bool = False) -> str:
+        """Record a settle intent. Idempotent by (authorization_id, intent_kind):
+
+        - no row yet -> INSERT a pending row (ENQ_INSERTED)
+        - a PENDING row exists -> refresh its frozen inputs to this (latest)
+          delivery (ENQ_REFRESHED) — the enclave may retry with corrected actuals
+        - a terminal row exists (done/dead/release_approved) -> leave it
+          (ENQ_EXISTS_TERMINAL); the charge is already resolved or frozen.
+        """
+        pt = self._pt
+        now = _iso_now()
+        next_attempt_at = (
+            _iso_after_seconds(initial_delay_seconds) if initial_delay_seconds > 0 else now
+        )
+
+        def insert_txn(transaction: Any) -> None:
+            statements = intent_insert_statements(
+                pt, row, now=now, next_attempt_at=next_attempt_at,
+            )
+            # INSERT-as-claim and its retention clears are independent. A failed
+            # INSERT stops the batch; the caller's existing replay path is unchanged.
+            execute_batch_dml(transaction, statements, intent_insert_counts(statements))
+
+        try:
+            run_in_transaction_with_retry(self._database, insert_txn)
+            return ENQ_INSERTED
+        except Exception as exc:  # ALREADY_EXISTS -> the intent is already recorded
+            if not _is_already_exists(exc):
+                raise
+
+        if preserve_existing:
+            # Regional local CAS can precede a failed Spanner commit. Its split
+            # must remain immutable across corrected deliveries and drain replay.
+            return "frozen"
+
+        # Refresh the frozen inputs iff the existing row is still pending AND not
+        # actively leased. A claimed row stays status='pending' while a drain
+        # worker applies it, so refreshing on status alone could overwrite
+        # actual_cost_micro / body out from under an in-flight apply (codex #113
+        # finding 2). The lease fence makes a retry-enqueue a no-op while a drain
+        # holds the row; once the lease lapses (or the drain fails back to
+        # pending) a later enqueue can refresh again.
+        def refresh_txn(transaction: Any) -> int:
+            refreshed = transaction.execute_update(
+                "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "
+                "reservation_id=@reservation_id, actual_cost_micro=@actual_cost_micro, "
+                "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
+                "selected_usage_type=@selected_usage_type, settle_body=@settle_body, "
+                "auto_refill_workspace_id=COALESCE(auto_refill_workspace_id, "
+                "@auto_refill_workspace_id), auto_refill_status=CASE WHEN "
+                "auto_refill_status IS NULL AND @auto_refill_workspace_id IS NOT NULL "
+                "THEN 'pending' ELSE auto_refill_status END, "
+                "auto_refill_next_attempt_at=CASE WHEN auto_refill_status IS NULL AND "
+                "@auto_refill_workspace_id IS NOT NULL THEN @now ELSE "
+                "auto_refill_next_attempt_at END, auto_refill_enqueued_at=CASE WHEN "
+                "auto_refill_status IS NULL AND @auto_refill_workspace_id IS NOT NULL "
+                "THEN @now ELSE auto_refill_enqueued_at END, "
+                "auto_refill_updated_at=CASE WHEN auto_refill_status IS NULL AND "
+                "@auto_refill_workspace_id IS NOT NULL THEN @now ELSE "
+                "auto_refill_updated_at END, "
+                "updated_at=@now WHERE authorization_id=@authorization_id "
+                "AND intent_kind=@intent_kind AND status='pending' "
+                "AND (leased_until IS NULL OR leased_until < @now)",
+                params={
+                    "settle_origin": row.settle_origin,
+                    "reservation_id": row.reservation_id,
+                    "actual_cost_micro": int(row.actual_cost_micro),
+                    "selected_endpoint_id": row.selected_endpoint_id,
+                    "model_id": row.model_id,
+                    "selected_usage_type": row.selected_usage_type,
+                    "settle_body": row.settle_body,
+                    "auto_refill_workspace_id": row.auto_refill_workspace_id,
+                    "now": now,
+                    "authorization_id": row.authorization_id,
+                    "intent_kind": row.intent_kind,
+                },
+                param_types={
+                    "settle_origin": pt.STRING,
+                    "reservation_id": pt.STRING,
+                    "actual_cost_micro": pt.INT64,
+                    "selected_endpoint_id": pt.STRING,
+                    "model_id": pt.STRING,
+                    "selected_usage_type": pt.STRING,
+                    "settle_body": pt.STRING,
+                    "auto_refill_workspace_id": pt.STRING,
+                    "now": pt.TIMESTAMP,
+                    "authorization_id": pt.STRING,
+                    "intent_kind": pt.STRING,
+                },
+            )
+            if refreshed == 1:
+                # Refresh is an outstanding intent too, so its referenced
+                # records must remain ineligible for retention TTL.
+                self._defer_retention(transaction, row.authorization_id, row.reservation_id)
+            return refreshed
+
+        refreshed = run_in_transaction_with_retry(self._database, refresh_txn)
+        if refreshed == 1:
+            return ENQ_REFRESHED
+        # 0-row: classify for accurate observability (codex #113) — a still-pending
+        # row means the refresh was fenced out by an active lease (a drain holds
+        # it), distinct from a genuinely terminal (done/dead/release_approved) row.
+        existing = self.get(row.authorization_id, row.intent_kind)
+        if existing is not None and existing.status == "pending":
+            return ENQ_LEASED
+        return ENQ_EXISTS_TERMINAL

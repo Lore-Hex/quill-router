@@ -3,7 +3,7 @@
     "storage_gcp_analytics_outbox:enqueue_statement": "79aefcba58e80b030f7d48ec211cb998f72478d7347e11905d7a36dbdf4c625e",
     "storage_gcp_counter_dml:reserve_key_statement": "9eb78b975825a2ab99e03b669c8d3dbdbbbae2c0b359ad1a57e9ff5b7d604227",
     "storage_gcp_counter_dml:reservation_insert_statement": "b1ef994b99af7ae79da8a3e3795169c2704edf4e789af3994c3eda292460927e",
-    "storage_gcp_counter_dml:claim_reservation_statement": "6bd7277efedb9c990782e9fff0d9807f73315412bd43c61806a39e59c2f878f8",
+    "storage_gcp_counter_dml:claim_reservation_statement": "d060c661d91a0e5c6f29355b2872ed79059d88fc54a9e4a6e994b895c466f97b",
     "storage_gcp_counter_dml:reservation_retention_clear_statement": "ea44390479712ba4e7d9b80b9e450797a780b107760164a313dbdf293d09e885",
     "storage_gcp_counter_dml:entity_insert_statement": "dd77ee0b463b7c33354554a82a8079efff08126fbe32b9810866da714e332f7b",
     "storage_gcp_generation_records:generation_insert_statement": "487437595bca87fd1a20593f66747ac09dea89d49c3465a189e73e0b21d7c0a5",
@@ -15,13 +15,14 @@
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
     "storage_gcp_request_records:gateway_authorization_retention_clear_statement": "e2b6e9ed483274375b390da089a0927566fcd480026e88c0f9b445ffe1e332d5",
     "storage_gcp_settle_outbox:done_retention_statements": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
-    "storage_gcp_settle_outbox:intent_insert_statements": "c98f699b86c3c3867ecc03d6ece0c93444e5bc82b9d1f59dec87a197740c9406",
+    "storage_gcp_settle_outbox:intent_insert_statements": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_counter_dml:release_credit_no_debt_statement": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
     "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
     "storage_gcp_counter_dml:reserve_credit_statement": "f4b1b3b344f88898212f169cf9242c34f05e2b0b7e30f54584897eb8eb702760",
-    "storage_gcp_async_admission:admission_statement": "7fba577deb934bafbcfabc57b04c3595cf715498b4e97ba87258f98decd7c152"
+    "storage_gcp_async_admission:admission_statement": "7fba577deb934bafbcfabc57b04c3595cf715498b4e97ba87258f98decd7c152",
+    "storage_gcp_async_settle:async_reservation_admission_statement": "7d91ca741f0f5f3ac21cd1c44e0f2701e125c5b6a0c7c372b04729c112263ba1"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -2486,7 +2487,7 @@
       ]
     },
     "storage_gcp_settle_outbox:intent_insert_statements:1": {
-      "fingerprint": "c98f699b86c3c3867ecc03d6ece0c93444e5bc82b9d1f59dec87a197740c9406",
+      "fingerprint": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
       "scenarios": [
         {
           "bindings": {
@@ -2523,14 +2524,74 @@
             "terminal_at": "TIMESTAMP",
             "updated_at": "TIMESTAMP"
           }
+        },
+        {
+          "bindings": {
+            "cols": "=\", \".join([*INSERT_COLUMNS, *OUTBOX_COLUMNS[-4:]])",
+            "binds": "=\", \".join(\"@\"+c for c in [*INSERT_COLUMNS, *OUTBOX_COLUMNS[-4:]])"
+          },
+          "types": {
+            "actual_cost_micro": "INT64",
+            "attempts": "INT64",
+            "authorization_id": "STRING",
+            "auto_refill_attempts": "INT64",
+            "auto_refill_enqueued_at": "TIMESTAMP",
+            "auto_refill_last_error": "STRING",
+            "auto_refill_lease_owner": "STRING",
+            "auto_refill_leased_until": "TIMESTAMP",
+            "auto_refill_next_attempt_at": "TIMESTAMP",
+            "auto_refill_status": "STRING",
+            "auto_refill_terminal_at": "TIMESTAMP",
+            "auto_refill_updated_at": "TIMESTAMP",
+            "auto_refill_workspace_id": "STRING",
+            "created_at": "TIMESTAMP",
+            "intent_kind": "STRING",
+            "last_error": "STRING",
+            "lease_owner": "STRING",
+            "leased_until": "TIMESTAMP",
+            "model_id": "STRING",
+            "next_attempt_at": "TIMESTAMP",
+            "reservation_id": "STRING",
+            "selected_endpoint_id": "STRING",
+            "selected_usage_type": "STRING",
+            "settle_body": "STRING",
+            "settle_origin": "STRING",
+            "status": "STRING",
+            "terminal_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+            "async_version": "INT64",
+            "workspace_id": "STRING",
+            "snapshot_hash": "STRING",
+            "payload_hash": "STRING"
+          }
         }
       ]
     },
     "storage_gcp_settle_outbox:refresh_txn:1": {
-      "fingerprint": "d14013762a31ede92e5bbd0ff49b1d99d6d2048acac6e8a3a95d8fd2803dc049",
+      "fingerprint": "c157ed2a8282a3d8fccc627bea6ca45e7e1b79ac473a9c58d5723d3ef27bdcb6",
       "scenarios": [
         {
-          "bindings": {},
+          "bindings": {
+            "self": "=SpannerSettleOutbox(None, None, async_fence=False)"
+          },
+          "types": {
+            "actual_cost_micro": "INT64",
+            "authorization_id": "STRING",
+            "auto_refill_workspace_id": "STRING",
+            "intent_kind": "STRING",
+            "model_id": "STRING",
+            "now": "TIMESTAMP",
+            "reservation_id": "STRING",
+            "selected_endpoint_id": "STRING",
+            "selected_usage_type": "STRING",
+            "settle_body": "STRING",
+            "settle_origin": "STRING"
+          }
+        },
+        {
+          "bindings": {
+            "self": "=SpannerSettleOutbox(None, None, async_fence=True)"
+          },
           "types": {
             "actual_cost_micro": "INT64",
             "authorization_id": "STRING",
@@ -4160,6 +4221,35 @@
           }
         }
       ]
+    },
+    "storage_gcp_async_settle:async_reservation_admission_statement:1": {
+      "fingerprint": "7d91ca741f0f5f3ac21cd1c44e0f2701e125c5b6a0c7c372b04729c112263ba1",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "rid": "STRING",
+            "aid": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_dml:claim_reservation_statement:1": {
+      "fingerprint": "d060c661d91a0e5c6f29355b2872ed79059d88fc54a9e4a6e994b895c466f97b",
+      "scenarios": [
+        {
+          "bindings": {
+            "_GUARD_STATUS_SQL": "'pending', 'dead'"
+          },
+          "types": {
+            "rid": "STRING",
+            "actual": "INT64",
+            "async_hash": "STRING",
+            "async_kind": "STRING"
+          },
+          "wrapper": "UPDATE tr_reservation SET settled=true WHERE reservation_id=@rid{sql}"
+        }
+      ]
     }
   },
   "sinks": {
@@ -4210,14 +4300,14 @@
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "5e7585836953e755aaf557645a1a8163c9a22b6fba7784135a38d1c8e1b8d5d6",
+    "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:authorize_atomic.txn": "5913141222670dc1e3084ff60dd684202a0443f657b5cbb6fc7b169c20262956",
-    "storage_gcp_authorize:reap_expired_reservations_result": "9d7f819fc199930d94eaa53e939fced804e61b2cbf9f54cbf676ced4c743976e",
+    "storage_gcp_authorize:reap_expired_reservations_result": "950520e715c2750c23ce90bf73b1ab87987fba9ed1dbdd8e7f9b704e601b2bf5",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "55ccd7b9ed868037a53ecb228e6efe40882d39fef33e9bd24bb0061340d95200",
-    "storage_gcp_authorize:typed_finalize_atomic.txn": "daf6b40a020286fff569e85055d887eacd9c5ddc2c0fcb4d087b119f51464abc",
-    "storage_gcp_authorize:settle_atomic.txn": "0ec2b0d2303c8edbbcfff74724c3bee55a72195a523e21f21e04139aabeb3174",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "cf57850af170dd898ca10dc42d13165830d8cc4cccac5d56c4dbc803196c2842",
+    "storage_gcp_authorize:typed_finalize_atomic.txn": "0bda4a3f3d5c05e15b319f7bcc94bdc26944c12bea92efa9001398f96841b998",
+    "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
     "storage_gcp_counter_dml:reserve_credit": "8b28eb55bf811006f16d2baaa3a9100018ba4ac454f0933a46b103fcc0d4bc88",
@@ -4239,7 +4329,7 @@
     "storage_gcp_counter_dml:key_limit_exists": "91b8eb8029af0530303a487ff57f6e2407e243b388e98175906de69f933ead6c",
     "storage_gcp_counter_dml:read_reservation_by_idempotency": "5ef222631a8b3c1caedc551feb8d0d66601c0a4bedde382f7cbdb3d9a9ffed98",
     "storage_gcp_counter_dml:read_reservation": "f1772e5b115030a3e3559277354354703c3edfd1c81727892bdd964ccc4e0f5d",
-    "storage_gcp_counter_dml:claim_reservation": "6d137f1506de4e6959220e09f5f6b65cc3592f52743b080e7aef6d9b24e19f59",
+    "storage_gcp_counter_dml:claim_reservation": "7236e4dc950ce66fac130e8b753fcac8e59bf11b219d923a61660a6a250fc182",
     "storage_gcp_counter_reconcile:audit_typed_invariants": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
     "storage_gcp_counter_reconcile:_confirm_behind_ledger": "08089d2dd3647164ae49ea570aab34b6797757787d8233f2506b9c65e103c166",
     "storage_gcp_counter_reconcile:propose_usage_baselines": "542e2199b35a54736cb75eba85a621f10b7d06fb7bbbd30f4150528feecd1ad1",
@@ -4282,7 +4372,7 @@
     "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
     "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "41fe4f962cfba96ab0bf427d3c0768d751718688df425588401620198defae55",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "d14013762a31ede92e5bbd0ff49b1d99d6d2048acac6e8a3a95d8fd2803dc049",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "c157ed2a8282a3d8fccc627bea6ca45e7e1b79ac473a9c58d5723d3ef27bdcb6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.park.txn": "cc64cd3d3a3f175b60549a053e8caa7ad1b5ce3811aecef12e28287d304cdbe6",
@@ -4332,7 +4422,8 @@
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
-    "storage_gcp_async_admission:read_admission": "22cf4c74d19ee696c71a3270c1e4d922727eccb565cfb451e60f13ea48b60cd4"
+    "storage_gcp_async_admission:read_admission": "22cf4c74d19ee696c71a3270c1e4d922727eccb565cfb451e60f13ea48b60cd4",
+    "storage_gcp_async_settle:enqueue.transaction": "cc4cb864d0a571469052713c221b512692993bc35193bb30ff1356954e83cd88"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

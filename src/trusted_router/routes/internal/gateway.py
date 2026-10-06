@@ -2291,6 +2291,11 @@ def register(router: APIRouter) -> None:
             settings,
         )
 
+    from trusted_router.routes.settlements import AsyncSettlementRoute
+
+    legacy_route_class = router.route_class
+    router.route_class = AsyncSettlementRoute
+
     @router.post("/internal/gateway/settle", responses={200: {"model": GatewaySettleResponse}})
     async def gateway_settle(
         request: Request,
@@ -2315,6 +2320,8 @@ def register(router: APIRouter) -> None:
             settings=settings,
             background_tasks=background_tasks,
         )
+
+    router.route_class = legacy_route_class
 
     @router.post("/internal/gateway/settle-outbox/drain")
     async def gateway_settle_outbox_drain(
@@ -4015,6 +4022,16 @@ def _settle_gateway_authorization(
                         authorization.id,
                         exc_info=True,
                     )
+            if settings.async_settle_protection and durable_intent is not None and durable_intent.async_version == 1:
+                from trusted_router.services.async_settle_handler import finish
+
+                # A concurrent async INSERT won. Discard all newly priced inputs.
+                # Frozen apply uses the ordinary finalize and the original amount.
+                finish(durable_intent, settle_outbox)
+                winner = STORE.get_gateway_authorization(authorization.id)
+                if winner is None or not winner.settled:
+                    raise api_error(503, "Settlement is pending", ErrorType.SERVICE_UNAVAILABLE)
+                return {"data": _already_settled_gateway_data(winner)}
             if refill_required:
                 # A matching fresh INSERT already committed the attachment.
                 # Pre-cutover combined rows have no refill columns. Attaching is
@@ -4212,6 +4229,20 @@ def _settle_gateway_authorization(
             raise
         if refreshed.settled:
             return {"data": _already_settled_gateway_data(refreshed)}
+        if settings.async_settle_protection and getattr(STORE, "_database", None) is not None:
+            # The atomic async fence can reject a rolling synchronous writer
+            # while the reservation remains open. Resolve its frozen winner,
+            # including when the ordinary outbox feature flag has rolled back.
+            from trusted_router.services.async_settle_handler import finish
+
+            existing_outbox = spanner_settle_outbox()
+            for existing_kind in (intent_kind, "refund" if success else "settle"):
+                existing_intent = existing_outbox.get(authorization.id, existing_kind)
+                if existing_intent is not None and existing_intent.async_version == 1:
+                    finish(existing_intent, existing_outbox)
+                    winner = STORE.get_gateway_authorization(authorization.id)
+                    if winner is not None and winner.settled:
+                        return {"data": _already_settled_gateway_data(winner)}
         if outbox_enqueued:
             return {"data": _intent_durable_gateway_data(refreshed, durable_intent)}
         return {"data": _already_settled_gateway_data(refreshed)}

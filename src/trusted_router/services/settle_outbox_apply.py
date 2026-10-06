@@ -16,6 +16,7 @@ from trusted_router.app_markup_billing import (
     app_markup_owner_share_microdollars,
     app_markup_payout_event_id,
 )
+from trusted_router.async_settle_fence import frozen_apply
 from trusted_router.catalog import PROVIDERS, endpoint_for_id
 from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
 from trusted_router.custom_model_billing import (
@@ -120,6 +121,7 @@ def normalized_prompt_accounting(
     return uncached_input, total_input, cache_read, cache_creation
 
 
+@frozen_apply
 def apply_frozen_settle(row: SettleOutboxRow) -> str:
     """Apply one durable outbox row using only its frozen settle inputs.
 
@@ -543,6 +545,21 @@ def _apply_typed(
         if reservation is None:
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
+        if row.async_version == 1:
+            # A legacy writer rejected by the async predicate has NOT observed
+            # a terminal reservation. Keep responsibility pending until apply.
+            if not reservation.get("settled"):
+                return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+            from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
+
+            persisted = spanner_settle_outbox().get(row.authorization_id, row.intent_kind)
+            if persisted is None:
+                # A direct snapshot-bearing sync fallback owns no durable repair
+                # intent. Its losing input cannot replace the winner's evidence.
+                return (ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE if actual_micro > 0
+                        else ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE)
+            if persisted.payload_hash != row.payload_hash:
+                return ApplyOutcome.INVALID_ROW
         if actual_micro > 0:
             # Refunds never carry a generation, so requiring one here made the
             # benign charged-settle-beats-refund replay unreachable and
