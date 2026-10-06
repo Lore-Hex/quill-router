@@ -476,6 +476,7 @@ class SpannerApiKeys:
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
         trust_eligibility_enabled: bool = False,
+        created_at: str | None = None,
     ) -> GatewayAuthorization:
         if deferred_cap_microdollars is not None:
             # Deferred settlement is a PEER-plane mechanism: a plane spending
@@ -536,6 +537,10 @@ class SpannerApiKeys:
             video_pricing_snapshot=video_pricing_snapshot,
             invocation_nonce=invocation_nonce,
         )
+        if created_at is not None:
+            # The caller's instant, which priced the request; settlement
+            # prices at it.
+            auth.created_at = created_at
         if not trust_eligibility_enabled:
             if idempotency_key is None:
                 self._io.write_entity("gateway_authorization", auth.id, auth)

@@ -4598,6 +4598,7 @@ class SpannerStore:
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
+        created_at: str | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -4640,6 +4641,7 @@ class SpannerStore:
             deferred_cap_microdollars=deferred_cap_microdollars,
             invocation_nonce=invocation_nonce,
             expected_pause_epoch=expected_pause_epoch,
+            created_at=created_at,
             trust_eligibility_enabled=bool(self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled),
         )
 
@@ -5099,6 +5101,7 @@ class SpannerStore:
         stage_d_max_output_tokens: int | None = None,
         stage_d_boot_kid: str | None = None,
         invocation_nonce: str | None = None,
+        created_at: dt.datetime | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -5286,6 +5289,7 @@ class SpannerStore:
                     idempotency_scope=scope,
                     idempotency_fingerprint=idempotency_fingerprint,
                     expires_at=expires_at,
+                    created_at=created_at,
                     build_authorization=build_authorization,
                     build_auth_body=build_body,
                     request_record_write_mode=self.request_record_write_mode,
