@@ -23,15 +23,14 @@
       "fixed_output_price_microdollars": {
         "1k": 30000
       },
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 0,
       "output_token_price_per_m": 0
     }
   ],
   "source": "https://api.krea.ai/openapi.json",
   "pricing_source": "https://api.krea.ai/openapi.json",
-  "generated_at": "2026-10-06T03:20:16Z",
+  "generated_at": "2026-10-06T11:19:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1
 }

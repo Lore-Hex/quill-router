@@ -44,6 +44,52 @@ def test_krea_canary_requires_paid_generation_and_image(
     monkeypatch.setattr(krea.time, "sleep", lambda delay: None)
     assert krea._probe_generation("test-key") is healthy
     assert calls == (["POST"] if status == 402 else ["POST", "GET"])
+
+
+@pytest.mark.parametrize("generation_status,expected_routable", [(402, False), (200, True)])
+def test_krea_refresh_recovers_only_after_paid_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    generation_status: int, expected_routable: bool,
+) -> None:
+    path = tmp_path / "krea.json"
+    payload = json.loads(krea.MANIFEST_PATH.read_text())
+    payload["models"][0].update(routable=False, routable_reason="provider-canary-failed")
+    path.write_text(json.dumps(payload))
+    monkeypatch.setattr(krea, "MANIFEST_PATH", path)
+    monkeypatch.setattr(krea, "_DISCOVERED_ROWS", {})
+    monkeypatch.setenv("KREA_API_KEY", "test-key")
+    monkeypatch.setattr(krea, "fetch_json", lambda url: {})
+    monkeypatch.setattr(krea, "_fixed_text_to_image_price", lambda payload: 30_000)
+    monkeypatch.setattr(krea.time, "sleep", lambda delay: None)
+    client_type = httpx.Client
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/jobs":
+            return httpx.Response(200, json={"jobs": []})
+        if request.method == "POST":
+            return httpx.Response(generation_status, json={"job_id": "test-job"})
+        return httpx.Response(200, json={
+            "status": "completed", "result": {"urls": ["https://images.krea.ai/probe.png"]},
+        })
+
+    monkeypatch.setattr(krea.httpx, "Client", lambda **kwargs: client_type(
+        transport=httpx.MockTransport(handler), **kwargs,
+    ))
+    result = krea.fetch()
+    krea.write_provider_manifest(result)
+    row = json.loads(path.read_text())["models"][0]
+    assert (row.get("routable") is not False) is expected_routable
+    assert row["fixed_output_price_microdollars"] == {"1k": 30_000}
+    assert ("POST", krea.GENERATE_PATH) in calls
+    if expected_routable:
+        assert ("GET", "/jobs/test-job") in calls
+        assert not row.get("routable_reason")
+    else:
+        assert row["routable_reason"] == "provider-canary-failed"
+
+
 _MEDIA_ROUTES = (
     ("recraft/recraftv4_1", "recraft"),
     ("black-forest-labs/flux-2-klein-4b", "bfl"),
