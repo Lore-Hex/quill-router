@@ -19,6 +19,10 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import remember_upstream_id
+from trusted_router.provider_contracts import (
+    THIRD_PARTY_PASSTHROUGH_HOLD_REASON,
+    provider_model_operator_held,
+)
 
 SLUG = "cloudflare-workers-ai"
 ACCOUNT_API = "https://api.cloudflare.com/client/v4/accounts/{account_id}"
@@ -241,4 +245,9 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=result.fetched_url or "https://developers.cloudflare.com/workers-ai/",
+        operator_hold_reasons={
+            model_id: THIRD_PARTY_PASSTHROUGH_HOLD_REASON
+            for model_id, row in _DISCOVERED_MANIFEST_ROWS.items()
+            if provider_model_operator_held(SLUG, model_id, str(row.get("upstream_id") or model_id))
+        },
     )

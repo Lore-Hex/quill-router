@@ -19,7 +19,9 @@
       "upstream_id": "anthropic/claude-fable-5",
       "context_length": 1048576,
       "input_token_price_per_m": 10000000,
-      "output_token_price_per_m": 50000000
+      "output_token_price_per_m": 50000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Haiku 4.5",
@@ -42,7 +44,7 @@
       "output_token_price_per_m": 5000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Opus 4.1",
@@ -65,7 +67,7 @@
       "output_token_price_per_m": 75000000,
       "missing_since": "2026-08-28",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Opus 4.5",
@@ -88,7 +90,7 @@
       "output_token_price_per_m": 25000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Opus 4.6",
@@ -111,7 +113,7 @@
       "output_token_price_per_m": 25000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Opus 4.7",
@@ -134,7 +136,7 @@
       "output_token_price_per_m": 25000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Opus 4.8",
@@ -154,7 +156,7 @@
       "upstream_id": "anthropic/claude-opus-4-8",
       "context_length": 1000000,
       "routable": false,
-      "routable_reason": "price-unavailable"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Opus 5",
@@ -177,7 +179,7 @@
       "output_token_price_per_m": 25000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Sonnet 4.5",
@@ -200,7 +202,7 @@
       "output_token_price_per_m": 15000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Sonnet 4.6",
@@ -223,7 +225,7 @@
       "output_token_price_per_m": 15000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Claude Sonnet 5",
@@ -246,7 +248,7 @@
       "output_token_price_per_m": 15000000,
       "missing_since": "2026-09-27",
       "routable": false,
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Gemini 2.5 Flash",
@@ -265,7 +267,7 @@
       "id": "google/gemini-2.5-flash",
       "upstream_id": "google/gemini-2.5-flash",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2500000
@@ -287,7 +289,7 @@
       "id": "google/gemini-2.5-flash-lite-preview-06-17",
       "upstream_id": "google/gemini-2.5-flash-lite-preview-06-17",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000
@@ -309,7 +311,7 @@
       "id": "google/gemini-2.5-pro",
       "upstream_id": "google/gemini-2.5-pro",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000
@@ -331,7 +333,7 @@
       "id": "google/gemini-3-flash-preview",
       "upstream_id": "google/gemini-3-flash-preview",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000
@@ -353,7 +355,7 @@
       "id": "google/gemini-3.1-flash-lite-preview",
       "upstream_id": "google/gemini-3.1-flash-lite-preview",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 1500000
@@ -375,7 +377,7 @@
       "id": "google/gemini-3.1-pro-preview",
       "upstream_id": "google/gemini-3.1-pro-preview",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 12000000
@@ -397,7 +399,7 @@
       "id": "google/gemini-3.5-flash",
       "upstream_id": "google/gemini-3.5-flash",
       "routable": false,
-      "routable_reason": "google-passthrough-disabled",
+      "routable_reason": "third-party-passthrough-disabled",
       "context_length": 1048576,
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 9000000
@@ -555,7 +557,9 @@
       "upstream_id": "openai/gpt-3.5-turbo",
       "context_length": 16385,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 4",
@@ -575,7 +579,9 @@
       "upstream_id": "openai/gpt-4",
       "context_length": 8192,
       "input_token_price_per_m": 30000000,
-      "output_token_price_per_m": 60000000
+      "output_token_price_per_m": 60000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 4 turbo",
@@ -595,7 +601,9 @@
       "upstream_id": "openai/gpt-4-turbo",
       "context_length": 128000,
       "input_token_price_per_m": 10000000,
-      "output_token_price_per_m": 30000000
+      "output_token_price_per_m": 30000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "LitLogger helper",
@@ -615,7 +623,9 @@
       "upstream_id": "openai/gpt-4-turbo-preview",
       "context_length": 128000,
       "input_token_price_per_m": 10000000,
-      "output_token_price_per_m": 30000000
+      "output_token_price_per_m": 30000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 4.1",
@@ -635,7 +645,9 @@
       "upstream_id": "openai/gpt-4.1",
       "context_length": 1047576,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 8000000
+      "output_token_price_per_m": 8000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 4o",
@@ -655,7 +667,9 @@
       "upstream_id": "openai/gpt-4o",
       "context_length": 128000,
       "input_token_price_per_m": 2500000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5",
@@ -675,7 +689,9 @@
       "upstream_id": "openai/gpt-5",
       "context_length": 400000,
       "input_token_price_per_m": 1250000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5 mini",
@@ -695,7 +711,9 @@
       "upstream_id": "openai/gpt-5-mini",
       "context_length": 400000,
       "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5 nano",
@@ -715,7 +733,9 @@
       "upstream_id": "openai/gpt-5-nano",
       "context_length": 400000,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.2",
@@ -735,7 +755,9 @@
       "upstream_id": "openai/gpt-5.2-2025-12-11",
       "context_length": 400000,
       "input_token_price_per_m": 1750000,
-      "output_token_price_per_m": 14000000
+      "output_token_price_per_m": 14000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.4",
@@ -755,7 +777,9 @@
       "upstream_id": "openai/gpt-5.4-2026-03-05",
       "context_length": 1050000,
       "input_token_price_per_m": 2500000,
-      "output_token_price_per_m": 15000000
+      "output_token_price_per_m": 15000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.4 mini",
@@ -775,7 +799,9 @@
       "upstream_id": "openai/gpt-5.4-mini-2026-03-17",
       "context_length": 400000,
       "input_token_price_per_m": 750000,
-      "output_token_price_per_m": 4500000
+      "output_token_price_per_m": 4500000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.4 nano",
@@ -795,7 +821,9 @@
       "upstream_id": "openai/gpt-5.4-nano-2026-03-17",
       "context_length": 400000,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 1250000
+      "output_token_price_per_m": 1250000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.5",
@@ -815,7 +843,9 @@
       "upstream_id": "openai/gpt-5.5-2026-04-23",
       "context_length": 1050000,
       "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 30000000
+      "output_token_price_per_m": 30000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.6 Luna",
@@ -835,7 +865,9 @@
       "upstream_id": "openai/gpt-5.6-luna",
       "context_length": 1050000,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.6 Sol",
@@ -855,7 +887,9 @@
       "upstream_id": "openai/gpt-5.6-sol",
       "context_length": 1050000,
       "input_token_price_per_m": 5000000,
-      "output_token_price_per_m": 30000000
+      "output_token_price_per_m": 30000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "GPT 5.6 Terra",
@@ -875,7 +909,9 @@
       "upstream_id": "openai/gpt-5.6-terra",
       "context_length": 1050000,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 12000000
+      "output_token_price_per_m": 12000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "o3",
@@ -895,7 +931,9 @@
       "upstream_id": "openai/o3",
       "context_length": 200000,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 8000000
+      "output_token_price_per_m": 8000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "o3 mini",
@@ -915,7 +953,9 @@
       "upstream_id": "openai/o3-mini",
       "context_length": 200000,
       "input_token_price_per_m": 1100000,
-      "output_token_price_per_m": 4400000
+      "output_token_price_per_m": 4400000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "Qwen3.8-27B",
@@ -955,7 +995,9 @@
       "upstream_id": "openai/gpt-6-astra",
       "context_length": 1050000,
       "input_token_price_per_m": 10000000,
-      "output_token_price_per_m": 49999999
+      "output_token_price_per_m": 49999999,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "deepseek-v4.1-flash",
@@ -1035,7 +1077,9 @@
       "upstream_id": "openai/gpt-6-sol",
       "context_length": 1050000,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     },
     {
       "display_name": "glm-5.3-flash",
@@ -1075,7 +1119,9 @@
       "upstream_id": "openai/gpt-6.1-sol",
       "context_length": 1050000,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable": false,
+      "routable_reason": "third-party-passthrough-disabled"
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
