@@ -151,16 +151,15 @@ requested resolution. The enclave must require this acknowledgment before
 dispatching 1080p to BytePlus. The router change can deploy first: requests
 without `video_resolution` retain their existing pricing, snapshots, and response
 shape, and receive no acknowledgment. Idempotent retries return the frozen
-acknowledgment. For keyed `route_type: videos` requests carrying the enclave's
-`request_fingerprint`, the compatibility guarantee is:
+acknowledgment. For keyed `route_type: videos` requests naming catalog video
+models and carrying the enclave's `request_fingerprint`, the compatibility
+guarantee is:
 
 1. An identical retry replays at every supported writer version, including
-   main-era user-provided and custom-model authorizations, through both authorize
-   and replay-lookup. Disabled, inactive, off-the-clock models and disabled user
-   dispatch do not block recovery of an existing authorization. The unmodified
-   incoming fingerprint body is always compared with main's hash, after the
-   same request metadata normalization
-   used by authorization (including attribution and tags).
+   main-era catalog authorizations, through both authorize and replay-lookup.
+   The incoming fingerprint body is compared with main's hash after the same
+   request metadata normalization used by authorization (including attribution
+   and tags).
 2. A retry differing only in enclave-derived execution fields replays for
    authorizations made by this version. Those fields are `video_resolution`;
    `max_tokens`, `max_output_tokens`, and `max_completion_tokens`;
@@ -176,16 +175,6 @@ acknowledgment. For keyed `route_type: videos` requests carrying the enclave's
    a snapshot uses the historical fixed-quote token sentinel `1`. These forms
    also cover the earlier resolution-only exclusion. Every reconstructed body
    must match the stored hash exactly; no stored hashes are rewritten.
-   One additional legacy form restores main's model preparation: inject the
-   authorization's frozen `user_provided_model_id` (or `custom_model_id`) and
-   revision as `custom_model_id` and `custom_model_revision`, remove `models`,
-   restore the frozen routed model for a custom wrapper, and apply main's
-   deterministic forced-Credits provider transformation. This form participates
-   in the same region/token/resolution comparisons. It uses no live model state
-   or routing. The requested model must match the frozen requested model;
-   explicitly different model IDs or revisions conflict. Provider policy is
-   compared after main's forced-Credits transformation (which rejected BYOK);
-   all other caller policy fields remain bound.
 3. Any other difference within the same workspace, API key and idempotency-key
    scope returns HTTP 409 and moves no money. The enclave fingerprint binds
    content and options, including prompt, seed, duration and caller resolution.
@@ -193,6 +182,30 @@ acknowledgment. For keyed `route_type: videos` requests carrying the enclave's
    other normalized identity fields. Caller region restrictions inside provider
    policy remain bound. Different caller scopes never recover each other's
    authorizations; they have separate idempotency namespaces.
+
+Custom-model and user-provided-model video requests follow main's authorization
+path. The requested model string alone is classified with `is_custom_model_id`
+and `is_user_provided_model_id`; there is no live lookup to choose the path.
+Model preparation and its live checks run at main's position before hashing,
+with no early video replay. Preparation injects the current model ID/revision,
+routes a custom wrapper to its base model, and forces Credits policy, including
+main's overwriting of inconsistent explicit `custom_model_id` or
+`custom_model_revision`. The later legacy lookup and typed transaction retain
+main's direct-equality-or-legacy-match behavior. Derived video fields and their
+bounded legacy forms above still apply to the prepared fingerprint body.
+A retry while its model is disabled, inactive, off the clock, or user-model
+dispatch is disabled receives main's error before replay. Recovering these
+requests while the model is unavailable is a non-goal. This change does not
+strengthen main's prepared identity equivalence: a custom wrapper and a base
+model request with the same explicit wrapper fields can replay the same hold,
+including a typed transaction race, just as on main.
+
+`POST /internal/gateway/video/replay-lookup` serves catalog video models only.
+The enclave resolves video models from its own catalog and never sends custom
+or user-provided IDs. Either ID form returns HTTP 400 (`bad_request`) after
+internal authentication and before any API-key, authorization, or other store
+read. This endpoint only returns existing authorization identity: a miss is
+`found: false`, and it never reserves money or grants dispatch authority.
 
 Non-goals: this is not arbitrary historical-body recovery or policy equivalence.
 For example, a main-era hash containing a previously supplied unconfigured
@@ -241,7 +254,7 @@ provider must not prevent recovery of a frozen authorization. Absence preserves
 existing routing. The header stays outside the authorization body and persisted
 logical identity; the original caller `provider` policy remains fingerprinted.
 
-Every keyed video request carrying `request_fingerprint` looks up and validates
+Every keyed catalog video request carrying `request_fingerprint` looks up and validates
 the existing authorization before live capability, tariff, or provider filtering.
 Valid retries return the original hold with `idempotent_replay: true`, including
 across header rollout, changed capability lists, or execution regions. A replay

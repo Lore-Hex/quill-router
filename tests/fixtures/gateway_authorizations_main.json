@@ -1,0 +1,709 @@
+{
+  "authorizations": {
+    "catalog": {
+      "authorization": {
+        "additional_cost_reservation_microdollars": 900000,
+        "app_id": "",
+        "app_markup_basis_points": 0,
+        "app_owner_user_id": "",
+        "candidate_endpoint_ids": [
+          "bytedance/seedance-2.5@venice/prepaid"
+        ],
+        "candidate_model_ids": [
+          "bytedance/seedance-2.5"
+        ],
+        "created_at": "2026-10-06T18:00:09.795357Z",
+        "credit_reservation_id": "efe2555f-11e9-4e47-8d72-5c75c10c2737",
+        "custom_model_id": null,
+        "custom_model_markup_basis_points": 0,
+        "custom_model_owner_user_id": "",
+        "custom_model_revision": null,
+        "delivered_usage": null,
+        "endpoint_id": "bytedance/seedance-2.5@venice/prepaid",
+        "estimated_microdollars": 900000,
+        "expires_at": null,
+        "finalization_outcome": null,
+        "finalized_cached_input_tokens": null,
+        "finalized_cost_microdollars": null,
+        "finalized_generation_id": null,
+        "finalized_input_tokens": null,
+        "finalized_model_id": null,
+        "finalized_output_tokens": null,
+        "finalized_provider": null,
+        "finalized_reasoning_tokens": null,
+        "finalized_region": null,
+        "finalized_usage_type": null,
+        "gateway_request_id": null,
+        "heartbeat_at": null,
+        "heartbeat_hash": null,
+        "heartbeat_seq": null,
+        "id": "gwa-f6791d9a41324473829096134c3d86bf",
+        "idempotency_fingerprint": "2fa7902138b27860a10b06b76ba048cd4f355346d80af1850c53d91a5e9f96a0",
+        "idempotency_key": "recorded-video",
+        "invocation_nonce": null,
+        "key_hash": "key_n6vIyViXyV63zj7NSkAXv3BB",
+        "key_reserved_microdollars": 900000,
+        "model_id": "bytedance/seedance-2.5",
+        "native_batch_eligible": false,
+        "pricing_snapshot": null,
+        "provider": "venice",
+        "receipt_fee_basis_points": 0,
+        "region": "us-central1",
+        "requested_model_id": "bytedance/seedance-2.5",
+        "selected_endpoint_id": null,
+        "settled": false,
+        "settlement": "local",
+        "stage_d_boot_kid": null,
+        "stage_d_max_output_tokens": null,
+        "stage_d_prompt_tokens": null,
+        "stage_d_reason": null,
+        "started_at": null,
+        "tags": {},
+        "usage_type": "Credits",
+        "user_model_completion_price_microdollars_per_m": null,
+        "user_model_owner_user_id": null,
+        "user_model_prompt_price_microdollars_per_m": null,
+        "user_provided_model_id": null,
+        "user_provided_model_revision": null,
+        "video_pricing_snapshot": "{\"candidates\":[{\"endpoint_id\":\"bytedance/seedance-2.5@venice/prepaid\",\"price_history_version\":1,\"rates\":{\"cache_creation_micro_per_million\":0,\"cached_input_micro_per_million\":0,\"input_micro_per_million\":0,\"output_micro_per_million\":0},\"request_fee_micro\":0,\"rounding\":\"half_up_per_million\",\"tiers\":[]}],\"kind\":\"endpoint\",\"output_token_limit\":1,\"v\":1}",
+        "workspace_id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d"
+      },
+      "credit_account": {
+        "auto_refill_amount_microdollars": 0,
+        "auto_refill_enabled": false,
+        "auto_refill_threshold_microdollars": 0,
+        "last_auto_refill_at": null,
+        "last_auto_refill_status": null,
+        "shard_count": 1,
+        "stripe_customer_id": null,
+        "stripe_payment_method_id": null,
+        "workspace_id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d"
+      },
+      "credit_money": {
+        "reserved_microdollars": 900000,
+        "total_credits_microdollars": 10000000,
+        "total_usage_microdollars": 0
+      },
+      "key": {
+        "app_id": "",
+        "budget_alert_only": false,
+        "budget_alerted": {},
+        "budget_strict": false,
+        "byok_usage_microdollars": 0,
+        "created_at": "2026-10-06T18:00:09Z",
+        "creator_user_id": "owner",
+        "disabled": false,
+        "expires_at": null,
+        "federated_app_markup_basis_points": 0,
+        "federated_app_owner_user_id": "",
+        "federated_app_suspended": false,
+        "federated_home": "",
+        "hash": "key_n6vIyViXyV63zj7NSkAXv3BB",
+        "include_byok_in_limit": true,
+        "label": "sk-tr-v1-0...9C5U",
+        "limit_daily_microdollars": null,
+        "limit_microdollars": 10000000,
+        "limit_monthly_microdollars": null,
+        "limit_reset": null,
+        "limit_weekly_microdollars": null,
+        "lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+        "management": false,
+        "name": "recorded",
+        "reserved_microdollars": 900000,
+        "salt": "8f7b2cdc7fa7664ad6a16e8ceae97333d410225a55d6a3479287c26fe728ba44",
+        "scopes": [],
+        "secret_hash": "10411342903fc00a9534579b06b6b6a546dbc15743cf1b701652446ade1ced33",
+        "tags": {},
+        "updated_at": null,
+        "usage_microdollars": 0,
+        "usage_shard_count": 1,
+        "workspace_id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d"
+      },
+      "request": {
+        "additional_cost_reservation_microdollars": 900000,
+        "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+        "idempotency_key": "recorded-video",
+        "max_tokens": 1,
+        "model": "bytedance/seedance-2.5",
+        "provider": {
+          "only": [
+            "venice"
+          ]
+        },
+        "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "route_type": "videos"
+      },
+      "retries": [
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 900000,
+            "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 1,
+            "model": "bytedance/seedance-2.5",
+            "provider": {
+              "only": [
+                "venice"
+              ]
+            },
+            "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "route_type": "videos"
+          },
+          "current_status": 200,
+          "main": {
+            "replay": true,
+            "status": 200
+          }
+        },
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 900000,
+            "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 400000,
+            "model": "bytedance/seedance-2.5",
+            "provider": {
+              "only": [
+                "venice"
+              ]
+            },
+            "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "route_type": "videos",
+            "video_resolution": "1080p"
+          },
+          "current_status": 200,
+          "main": {
+            "status": 409
+          }
+        },
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 900000,
+            "api_key_lookup_hash": "7c7a97f57e871f8b8710d8fe559df75b9383e91003f14f169cea7983911050c0",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 1,
+            "model": "bytedance/seedance-2.5",
+            "provider": {
+              "only": [
+                "venice"
+              ]
+            },
+            "request_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "route_type": "videos"
+          },
+          "current_status": 409,
+          "main": {
+            "status": 409
+          }
+        }
+      ],
+      "user_model": null,
+      "workspace": {
+        "billing_pause_causes": [],
+        "billing_pause_reason": "",
+        "billing_paused": false,
+        "content_storage_enabled": false,
+        "created_at": "2026-10-06T18:00:09Z",
+        "deleted": false,
+        "federated_home": "",
+        "id": "797e3e20-d07f-4fcb-93e0-90a80f9b0a6d",
+        "name": "recorded",
+        "owner_user_id": "owner"
+      }
+    },
+    "chat": {
+      "authorization": {
+        "additional_cost_reservation_microdollars": 0,
+        "app_id": "",
+        "app_markup_basis_points": 0,
+        "app_owner_user_id": "",
+        "candidate_endpoint_ids": [
+          "anthropic/claude-haiku-4.5@anthropic/prepaid"
+        ],
+        "candidate_model_ids": [
+          "anthropic/claude-haiku-4.5"
+        ],
+        "created_at": "2026-10-06T18:00:10.046832Z",
+        "credit_reservation_id": "f556da7f-61fe-45c8-a1b5-aaa436b588f6",
+        "custom_model_id": null,
+        "custom_model_markup_basis_points": 0,
+        "custom_model_owner_user_id": "",
+        "custom_model_revision": null,
+        "delivered_usage": null,
+        "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+        "estimated_microdollars": 6,
+        "expires_at": null,
+        "finalization_outcome": null,
+        "finalized_cached_input_tokens": null,
+        "finalized_cost_microdollars": null,
+        "finalized_generation_id": null,
+        "finalized_input_tokens": null,
+        "finalized_model_id": null,
+        "finalized_output_tokens": null,
+        "finalized_provider": null,
+        "finalized_reasoning_tokens": null,
+        "finalized_region": null,
+        "finalized_usage_type": null,
+        "gateway_request_id": null,
+        "heartbeat_at": null,
+        "heartbeat_hash": null,
+        "heartbeat_seq": null,
+        "id": "gwa-78b785669d7f41c99ea75095b7b615a3",
+        "idempotency_fingerprint": "24dc98e4e48d5bc34af47c09c61104ebae43780d7e212d3fedb59b2904876328",
+        "idempotency_key": "recorded-video",
+        "invocation_nonce": null,
+        "key_hash": "key_4RdfcA--HPES8U47Oysdd66p",
+        "key_reserved_microdollars": 6,
+        "model_id": "anthropic/claude-haiku-4.5",
+        "native_batch_eligible": false,
+        "pricing_snapshot": null,
+        "provider": "anthropic",
+        "receipt_fee_basis_points": 0,
+        "region": "us-central1",
+        "requested_model_id": "anthropic/claude-haiku-4.5",
+        "selected_endpoint_id": null,
+        "settled": false,
+        "settlement": "local",
+        "stage_d_boot_kid": null,
+        "stage_d_max_output_tokens": null,
+        "stage_d_prompt_tokens": null,
+        "stage_d_reason": null,
+        "started_at": null,
+        "tags": {},
+        "usage_type": "Credits",
+        "user_model_completion_price_microdollars_per_m": null,
+        "user_model_owner_user_id": null,
+        "user_model_prompt_price_microdollars_per_m": null,
+        "user_provided_model_id": null,
+        "user_provided_model_revision": null,
+        "video_pricing_snapshot": null,
+        "workspace_id": "69cff0c1-3118-410b-8db4-603c4032adc5"
+      },
+      "credit_account": {
+        "auto_refill_amount_microdollars": 0,
+        "auto_refill_enabled": false,
+        "auto_refill_threshold_microdollars": 0,
+        "last_auto_refill_at": null,
+        "last_auto_refill_status": null,
+        "shard_count": 1,
+        "stripe_customer_id": null,
+        "stripe_payment_method_id": null,
+        "workspace_id": "69cff0c1-3118-410b-8db4-603c4032adc5"
+      },
+      "credit_money": {
+        "reserved_microdollars": 6,
+        "total_credits_microdollars": 10000000,
+        "total_usage_microdollars": 0
+      },
+      "key": {
+        "app_id": "",
+        "budget_alert_only": false,
+        "budget_alerted": {},
+        "budget_strict": false,
+        "byok_usage_microdollars": 0,
+        "created_at": "2026-10-06T18:00:10Z",
+        "creator_user_id": "owner",
+        "disabled": false,
+        "expires_at": null,
+        "federated_app_markup_basis_points": 0,
+        "federated_app_owner_user_id": "",
+        "federated_app_suspended": false,
+        "federated_home": "",
+        "hash": "key_4RdfcA--HPES8U47Oysdd66p",
+        "include_byok_in_limit": true,
+        "label": "sk-tr-v1-Z...W70Q",
+        "limit_daily_microdollars": null,
+        "limit_microdollars": 10000000,
+        "limit_monthly_microdollars": null,
+        "limit_reset": null,
+        "limit_weekly_microdollars": null,
+        "lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+        "management": false,
+        "name": "recorded",
+        "reserved_microdollars": 6,
+        "salt": "8bf80212d0b735bdc6960b4d26fd4c7c529760843c4f8865f5c5c5a092e235bd",
+        "scopes": [],
+        "secret_hash": "e298b3bdf8c36cd54b25735043186e302fccb86e4c08e416d9d99e33915699e0",
+        "tags": {},
+        "updated_at": null,
+        "usage_microdollars": 0,
+        "usage_shard_count": 1,
+        "workspace_id": "69cff0c1-3118-410b-8db4-603c4032adc5"
+      },
+      "request": {
+        "additional_cost_reservation_microdollars": 0,
+        "api_key_lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+        "idempotency_key": "recorded-video",
+        "max_tokens": 1,
+        "model": "anthropic/claude-haiku-4.5",
+        "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "route_type": "chat.completions"
+      },
+      "retries": [
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 0,
+            "api_key_lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 1,
+            "model": "anthropic/claude-haiku-4.5",
+            "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "route_type": "chat.completions"
+          },
+          "current_status": 200,
+          "main": {
+            "replay": true,
+            "status": 200
+          }
+        },
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 0,
+            "api_key_lookup_hash": "d7ed9fc2903d3a44cc510ca01b739009e753352e47152e7df2b20655ca3ed63f",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 1,
+            "model": "anthropic/claude-haiku-4.5",
+            "request_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "route_type": "chat.completions"
+          },
+          "current_status": 409,
+          "main": {
+            "status": 409
+          }
+        }
+      ],
+      "user_model": null,
+      "workspace": {
+        "billing_pause_causes": [],
+        "billing_pause_reason": "",
+        "billing_paused": false,
+        "content_storage_enabled": false,
+        "created_at": "2026-10-06T18:00:10Z",
+        "deleted": false,
+        "federated_home": "",
+        "id": "69cff0c1-3118-410b-8db4-603c4032adc5",
+        "name": "recorded",
+        "owner_user_id": "owner"
+      }
+    },
+    "user": {
+      "authorization": {
+        "additional_cost_reservation_microdollars": 900000,
+        "app_id": "",
+        "app_markup_basis_points": 0,
+        "app_owner_user_id": "",
+        "candidate_endpoint_ids": [
+          "tr-user-model/dev-creator-0tlucwcr@trustedrouter/credits"
+        ],
+        "candidate_model_ids": [
+          "tr-user-model/dev-creator-0tlucwcr"
+        ],
+        "created_at": "2026-10-06T18:00:09.964596Z",
+        "credit_reservation_id": "d90b7e19-9bd5-407e-b085-ec779336dd9e",
+        "custom_model_id": null,
+        "custom_model_markup_basis_points": 0,
+        "custom_model_owner_user_id": "",
+        "custom_model_revision": null,
+        "delivered_usage": null,
+        "endpoint_id": "tr-user-model/dev-creator-0tlucwcr@trustedrouter/credits",
+        "estimated_microdollars": 900000,
+        "expires_at": null,
+        "finalization_outcome": null,
+        "finalized_cached_input_tokens": null,
+        "finalized_cost_microdollars": null,
+        "finalized_generation_id": null,
+        "finalized_input_tokens": null,
+        "finalized_model_id": null,
+        "finalized_output_tokens": null,
+        "finalized_provider": null,
+        "finalized_reasoning_tokens": null,
+        "finalized_region": null,
+        "finalized_usage_type": null,
+        "gateway_request_id": null,
+        "heartbeat_at": null,
+        "heartbeat_hash": null,
+        "heartbeat_seq": null,
+        "id": "gwa-8f92079c865246d98e107c9fd06b8112",
+        "idempotency_fingerprint": "fe328287e6cfd19e057eb24f383ee025cb69743ef7999364952a60eee1ce2ddb",
+        "idempotency_key": "recorded-video",
+        "invocation_nonce": null,
+        "key_hash": "key_DvceK46_P-FdiV2TSOUsfcSX",
+        "key_reserved_microdollars": 900000,
+        "model_id": "tr-user-model/dev-creator-0tlucwcr",
+        "native_batch_eligible": false,
+        "pricing_snapshot": null,
+        "provider": "trustedrouter",
+        "receipt_fee_basis_points": 0,
+        "region": "us-central1",
+        "requested_model_id": "tr-user-model/dev-creator-0tlucwcr",
+        "selected_endpoint_id": null,
+        "settled": false,
+        "settlement": "local",
+        "stage_d_boot_kid": null,
+        "stage_d_max_output_tokens": null,
+        "stage_d_prompt_tokens": null,
+        "stage_d_reason": null,
+        "started_at": null,
+        "tags": {},
+        "usage_type": "Credits",
+        "user_model_completion_price_microdollars_per_m": 200,
+        "user_model_owner_user_id": "owner",
+        "user_model_prompt_price_microdollars_per_m": 100,
+        "user_provided_model_id": "tr-user-model/dev-creator-0tlucwcr",
+        "user_provided_model_revision": 1,
+        "video_pricing_snapshot": "{\"candidates\":[{\"endpoint_id\":\"tr-user-model/dev-creator-0tlucwcr@trustedrouter/credits\",\"price_history_version\":1,\"rates\":{\"cache_creation_micro_per_million\":125,\"cached_input_micro_per_million\":100,\"input_micro_per_million\":100,\"output_micro_per_million\":200},\"request_fee_micro\":0,\"rounding\":\"half_up_per_million\",\"tiers\":[]}],\"kind\":\"endpoint\",\"output_token_limit\":1,\"v\":1}",
+        "workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16"
+      },
+      "credit_account": {
+        "auto_refill_amount_microdollars": 0,
+        "auto_refill_enabled": false,
+        "auto_refill_threshold_microdollars": 0,
+        "last_auto_refill_at": null,
+        "last_auto_refill_status": null,
+        "shard_count": 1,
+        "stripe_customer_id": null,
+        "stripe_payment_method_id": null,
+        "workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16"
+      },
+      "credit_money": {
+        "reserved_microdollars": 900000,
+        "total_credits_microdollars": 10000000,
+        "total_usage_microdollars": 0
+      },
+      "key": {
+        "app_id": "",
+        "budget_alert_only": false,
+        "budget_alerted": {},
+        "budget_strict": false,
+        "byok_usage_microdollars": 0,
+        "created_at": "2026-10-06T18:00:09Z",
+        "creator_user_id": "owner",
+        "disabled": false,
+        "expires_at": null,
+        "federated_app_markup_basis_points": 0,
+        "federated_app_owner_user_id": "",
+        "federated_app_suspended": false,
+        "federated_home": "",
+        "hash": "key_DvceK46_P-FdiV2TSOUsfcSX",
+        "include_byok_in_limit": true,
+        "label": "sk-tr-v1-z...EaEs",
+        "limit_daily_microdollars": null,
+        "limit_microdollars": 10000000,
+        "limit_monthly_microdollars": null,
+        "limit_reset": null,
+        "limit_weekly_microdollars": null,
+        "lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+        "management": false,
+        "name": "recorded",
+        "reserved_microdollars": 900000,
+        "salt": "250c7bc3c1d675d5fd7645b0462cc8447c9628ca5a1ac66036d758651c25444c",
+        "scopes": [],
+        "secret_hash": "34d9b9e072ac407d9449ee9edce72595dc7ee0d9df6da07fd651ab233b88e843",
+        "tags": {},
+        "updated_at": null,
+        "usage_microdollars": 0,
+        "usage_shard_count": 1,
+        "workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16"
+      },
+      "request": {
+        "additional_cost_reservation_microdollars": 900000,
+        "api_key_lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+        "idempotency_key": "recorded-video",
+        "max_tokens": 1,
+        "model": "tr-user-model/dev-creator-0tlucwcr",
+        "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "route_type": "videos"
+      },
+      "retries": [
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 900000,
+            "api_key_lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 1,
+            "model": "tr-user-model/dev-creator-0tlucwcr",
+            "request_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "route_type": "videos"
+          },
+          "current_status": 200,
+          "main": {
+            "replay": true,
+            "status": 200
+          }
+        },
+        {
+          "body": {
+            "additional_cost_reservation_microdollars": 900000,
+            "api_key_lookup_hash": "850f94e83fa7ea733124772361111527d4794ebed570e39106cffa4d997bbd07",
+            "idempotency_key": "recorded-video",
+            "max_tokens": 1,
+            "model": "tr-user-model/dev-creator-0tlucwcr",
+            "request_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "route_type": "videos"
+          },
+          "current_status": 409,
+          "main": {
+            "status": 409
+          }
+        }
+      ],
+      "user_model": {
+        "completion_price_microdollars_per_million_tokens": 200,
+        "consecutive_dispatch_failures": 0,
+        "created_at": "2026-10-06T18:00:09Z",
+        "description": "",
+        "display_identity": "handle",
+        "display_name": "",
+        "enabled": true,
+        "encrypted_endpoint_api_key": null,
+        "encrypted_signing_secret": null,
+        "endpoint_key_hint": null,
+        "endpoint_url": "https://owner.example/v1",
+        "heartbeat_expires_at": null,
+        "heartbeat_interval_seconds": null,
+        "human_verified": false,
+        "id": "tr-user-model/dev-creator-0tlucwcr",
+        "kind": "machine",
+        "max_concurrency": 4,
+        "name": "Recorded video",
+        "online": true,
+        "online_changed_at": "2026-10-06T18:00:09Z",
+        "owner_user_id": "owner",
+        "owner_username": "dev-creator",
+        "owner_workspace_id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16",
+        "probe_checked_at": null,
+        "probe_status": "unprobed",
+        "prompt_price_microdollars_per_million_tokens": 100,
+        "revision": 1,
+        "slug": "0tlucwcr",
+        "status": "active",
+        "supports_streaming": true,
+        "updated_at": null,
+        "upstream_model_id": "0tlucwcr"
+      },
+      "workspace": {
+        "billing_pause_causes": [],
+        "billing_pause_reason": "",
+        "billing_paused": false,
+        "content_storage_enabled": false,
+        "created_at": "2026-10-06T18:00:09Z",
+        "deleted": false,
+        "federated_home": "",
+        "id": "eb582c2d-901f-4ce0-be14-7a9e5e7dca16",
+        "name": "recorded",
+        "owner_user_id": "owner"
+      }
+    }
+  },
+  "observations": {
+    "identity/legacy/custom/custom_model_id": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/legacy/custom/custom_model_revision": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/legacy/user/custom_model_id": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/legacy/user/custom_model_revision": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/memory/custom/custom_model_id": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/memory/custom/custom_model_revision": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/memory/user/custom_model_id": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/memory/user/custom_model_revision": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/typed/custom/custom_model_id": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/typed/custom/custom_model_revision": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/typed/user/custom_model_id": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "identity/typed/user/custom_model_revision": {
+      "first_replay": false,
+      "frozen_id_matches_live": true,
+      "frozen_revision": 1,
+      "retry_replay": true
+    },
+    "race/legacy/False": {
+      "replay": true,
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_money": true
+    },
+    "race/legacy/True": {
+      "replay": true,
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_money": true
+    },
+    "race/memory/False": {
+      "replay": true,
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_money": true
+    },
+    "race/memory/True": {
+      "replay": true,
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_money": true
+    },
+    "race/typed/False": {
+      "replay": true,
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_money": true
+    },
+    "race/typed/True": {
+      "replay": true,
+      "same_authorization": true,
+      "status": 200,
+      "unchanged_money": true
+    }
+  },
+  "source_commit": "896a9f0d"
+}

@@ -882,6 +882,12 @@ def _authorize_gateway_sync_impl(
     body_dict, attribution = _gateway_authorize_body(body)
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
+    # Only catalog video requests defer live preparation for early replay.
+    # Classify the request string, never mutable model/catalog state.
+    catalog_video_request = body.route_type == "videos" and not (
+        is_custom_model_id(requested_model_id)
+        or is_user_provided_model_id(requested_model_id)
+    )
     custom_model = None
     user_model = None
     route_model_id = str(body_dict.get("model") or body.model)
@@ -982,8 +988,8 @@ def _authorize_gateway_sync_impl(
                 error_message="User-provided models do not support BYOK routes",
             )
 
-    # Main validates models before idempotency/Batch markers on every non-video route.
-    if body.route_type != "videos":
+    # Preserve main's validation order for non-video and creator-model requests.
+    if not catalog_video_request:
         prepare_model()
     presented_idempotency_key = _gateway_idempotency_key(request, body)
     request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
@@ -996,7 +1002,7 @@ def _authorize_gateway_sync_impl(
 
     def prepare_live_routing() -> None:
         nonlocal route_model_id, native_retention_allowed
-        if body.route_type == "videos":
+        if catalog_video_request:
             prepare_model()
         if partner_mode is not None:
             _force_partner_credit_routes(body_dict)
@@ -1026,7 +1032,7 @@ def _authorize_gateway_sync_impl(
                 ErrorType.BAD_REQUEST,
             )
 
-    if body.route_type != "videos":
+    if not catalog_video_request:
         prepare_live_routing()
     region = choose_region(settings, body.region or None)
     is_video_request = body.route_type == "videos"
@@ -1068,10 +1074,10 @@ def _authorize_gateway_sync_impl(
             existing_authorization,
             fallback or [],
             privacy_requirements=(
-                frozenset() if is_video_request
+                frozenset() if catalog_video_request
                 else _required_privacy_postures(effective_route_preferences)
             ),
-            video_replay=is_video_request,
+            video_replay=catalog_video_request,
         )
         byok_configs = _byok_configs_for_candidates(
             existing_candidates, workspace.id, folded_rows=folded_byok,
@@ -1133,13 +1139,13 @@ def _authorize_gateway_sync_impl(
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
 
         if existing_authorization is not None:
-            replay_matches = existing_authorization.idempotency_fingerprint == request_fingerprint
-            if is_video_request and body.request_fingerprint:
-                replay_matches = _video_cross_region_replay_matches(
+            if (
+                existing_authorization.idempotency_fingerprint != request_fingerprint
+                and not _video_cross_region_replay_matches(
                     existing_authorization, workspace.id, api_key.hash,
                     fingerprint_body, request_idempotency_key,
                 )
-            if not replay_matches:
+            ):
                 raise api_error(
                     409,
                     "Idempotency key was already used for a different gateway request",
@@ -1148,8 +1154,9 @@ def _authorize_gateway_sync_impl(
             return _replay_response(existing_authorization, fallback)
         return None
 
-    early_video_replay = body.video_resolution is not None or bool(
-        is_video_request and presented_idempotency_key and body.request_fingerprint
+    early_video_replay = catalog_video_request and (
+        body.video_resolution is not None
+        or bool(presented_idempotency_key and body.request_fingerprint)
     )
     if early_video_replay:
         # Recover frozen video terms before live catalog filtering can reject
@@ -1160,7 +1167,7 @@ def _authorize_gateway_sync_impl(
             return replay
 
     video_allowed_providers = _video_allowed_providers_header(request, body.route_type)
-    if is_video_request:
+    if catalog_video_request:
         prepare_live_routing()
 
     normalized_routing = normalize_routing_inputs(
@@ -2554,46 +2561,10 @@ def _video_cross_region_replay_matches(
             body=candidate, idempotency_key=idempotency_key, legacy_video=legacy,
         )
 
-    bodies = [body]
-    frozen_user_model_id = getattr(authorization, "user_provided_model_id", None)
-    frozen_custom_model_id = getattr(authorization, "custom_model_id", None)
-    frozen_model_id = frozen_user_model_id or frozen_custom_model_id
-    if frozen_model_id:
-        frozen_revision = getattr(
-            authorization,
-            "user_provided_model_revision" if frozen_user_model_id else "custom_model_revision",
-            None,
-        )
-        # Main hashed after model preparation. Recover only frozen material:
-        # reading today's model would make disabled/offline models unreplayable.
-        # Never overwrite an explicitly different identity supplied on retry.
-        if (
-            body.get("model") != authorization.requested_model_id
-            or body.get("custom_model_id", frozen_model_id) != frozen_model_id
-            or body.get("custom_model_revision", frozen_revision) != frozen_revision
-        ):
-            return False
-        prepared = dict(body)
-        prepared.pop("models", None)
-        prepared["custom_model_id"] = frozen_model_id
-        prepared["custom_model_revision"] = frozen_revision
-        if frozen_custom_model_id:
-            prepared["model"] = authorization.model_id
-        # Reproduce only _force_custom_model_credit_routes' deterministic
-        # transformation. Its live validator also checks today's provider
-        # catalog, which must not block replay after a provider is removed.
-        provider = prepared.get("provider") or {}
-        usage = provider.get("usage") or provider.get("usage_type") or provider.get("billing")
-        if usage is not None and str(usage).strip().lower() not in {"credits", "credit", "prepaid"}:
-            return False
-        prepared["provider"] = {**provider, "usage": "credits"}
-        bodies.append(prepared)
-
-    originals: list[dict[str, Any]] = []
-    for candidate in bodies:
-        omitted_region = dict(candidate)
-        omitted_region.pop("region", None)
-        originals.extend((candidate, {**candidate, "region": authorization.region}, omitted_region))
+    original = {**body, "region": authorization.region}
+    omitted_region = dict(body)
+    omitted_region.pop("region", None)
+    originals = (body, original, omitted_region)
     if any(matches(candidate) or matches(candidate, legacy=True) for candidate in originals):
         return True
 
@@ -2639,7 +2610,7 @@ def _authorization_endpoint_candidates(
     privacy_requirements: frozenset[int] = frozenset(),
     video_replay: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    user_model_pair = _authorized_user_model_pair(authorization, frozen_only=video_replay)
+    user_model_pair = _authorized_user_model_pair(authorization)
     if user_model_pair is not None:
         return [user_model_pair]
     candidates: list[tuple[Model, ModelEndpoint]] = []
@@ -4830,8 +4801,6 @@ def _user_model_gateway_candidate(
 
 def _authorized_user_model_pair(
     authorization: Any,
-    *,
-    frozen_only: bool = False,
 ) -> tuple[Model, ModelEndpoint] | None:
     """Rebuild a user-model sentinel only from authorization-frozen money facts.
 
@@ -4844,7 +4813,7 @@ def _authorized_user_model_pair(
         return None
     name = model_id
     try:
-        live_model = None if frozen_only else STORE.get_user_model(model_id)
+        live_model = STORE.get_user_model(model_id)
     except Exception:
         live_model = None
     if live_model is not None:

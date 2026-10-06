@@ -19,6 +19,7 @@ from trusted_router.schemas import (
     GatewayVideoJobUpdateRequest,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_custom_models import is_custom_model_id, is_user_provided_model_id
 from trusted_router.storage_models import ProviderBenchmarkSample, VideoJob
 from trusted_router.types import ErrorType
 from trusted_router.video_billing import video_cost_microdollars, video_token_billed
@@ -154,6 +155,8 @@ def _replay_lookup(
     require_internal_gateway(request, settings)
     if (
         body.route_type != "videos"
+        or is_custom_model_id(body.model)
+        or is_user_provided_model_id(body.model)
         or not body.idempotency_key
         or not body.request_fingerprint
         or not body.api_key_lookup_hash
