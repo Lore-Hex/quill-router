@@ -20,7 +20,8 @@
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_counter_dml:release_credit_no_debt_statement": "bccbfddb26710596d06e73aa0b32ff02fd15c4f6f1ef9b3173ba6c7500362dbf",
     "storage_gcp_counter_dml:release_key_statement": "03e4c502b085d5bf6aa58ff4a8cab0a2ad54613a8459ab70661000ec92d60471",
-    "storage_gcp_counter_dml:reserve_credit_statement": "f4b1b3b344f88898212f169cf9242c34f05e2b0b7e30f54584897eb8eb702760"
+    "storage_gcp_counter_dml:reserve_credit_statement": "f4b1b3b344f88898212f169cf9242c34f05e2b0b7e30f54584897eb8eb702760",
+    "storage_gcp_async_admission:admission_statement": "7fba577deb934bafbcfabc57b04c3595cf715498b4e97ba87258f98decd7c152"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4148,6 +4149,17 @@
           }
         }
       ]
+    },
+    "storage_gcp_async_admission:admission_statement:1": {
+      "fingerprint": "7fba577deb934bafbcfabc57b04c3595cf715498b4e97ba87258f98decd7c152",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ws": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4319,7 +4331,8 @@
     "storage_trust_reconciliation:read_expected_reconciled_through.matching_markers": "4d22980847192e7ffc460f0306d6864025c7efe26f9c593dbed8c26debedb49d",
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
-    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2"
+    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
+    "storage_gcp_async_admission:read_admission": "22cf4c74d19ee696c71a3270c1e4d922727eccb565cfb451e60f13ea48b60cd4"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

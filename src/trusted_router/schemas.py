@@ -339,6 +339,12 @@ class GatewayAuthorizeData(BaseModel):
         "Consumers must check the terminal authorization disposition before expecting a generation."
     ))
     timing: GatewayTimingData
+    # Optional additions are emitted only for negotiated async-v1 authorizes.
+    billing_snapshot: dict[str, Any] | None = None
+    billing_snapshot_hash: str | None = None
+    settlement_ticket: str | None = None
+    async_eligible: bool | None = None
+    settlement_status_url: str | None = None
 
 
 class GatewayAuthorizeResponse(BaseModel):

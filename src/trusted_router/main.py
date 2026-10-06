@@ -282,6 +282,10 @@ def create_app(
     if surface in {"combined", "internal"} and settings.speculative_provider_shadow_enabled:
         from trusted_router.services.speculation_shadow import install
         install(app, settings)
+    if surface in {"combined", "internal"}:
+        from trusted_router.services.async_settle import load_runtime
+        from trusted_router.storage import typed_billing_store
+        app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,

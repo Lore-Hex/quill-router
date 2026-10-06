@@ -126,5 +126,114 @@
     },
     "reason": "Verified in production run 36749042316 (2026-09-30): this implicit NOT NULL check is absent for the corresponding documented nullable rolling-upgrade column; the column nullability difference is separately and exactly recorded.",
     "verified_against_production": true
+  },
+  {
+    "object": "column/tr_settle_outbox/async_version",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "ORDINAL_POSITION": 30,
+      "SPANNER_TYPE": "INT64",
+      "IS_NULLABLE": true,
+      "IS_GENERATED": "NEVER",
+      "GENERATION_EXPRESSION": null,
+      "IS_STORED": null,
+      "COLUMN_DEFAULT": null,
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "PR B additive async admission schema is intentionally not deployed while the flag is off. Expected absence before scripts/deploy/migrate_async_settle_admission.sh; remove this exact entry after the reviewed migration. Not verified against production in this local worktree.",
+    "verified_against_production": false
+  },
+  {
+    "object": "column/tr_settle_outbox/workspace_id",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "ORDINAL_POSITION": 31,
+      "SPANNER_TYPE": "STRING(64)",
+      "IS_NULLABLE": true,
+      "IS_GENERATED": "NEVER",
+      "GENERATION_EXPRESSION": null,
+      "IS_STORED": null,
+      "COLUMN_DEFAULT": null,
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "PR B additive async admission schema is intentionally not deployed while the flag is off. Expected absence before scripts/deploy/migrate_async_settle_admission.sh; remove this exact entry after the reviewed migration. Not verified against production in this local worktree.",
+    "verified_against_production": false
+  },
+  {
+    "object": "column/tr_settle_outbox/snapshot_hash",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "ORDINAL_POSITION": 32,
+      "SPANNER_TYPE": "STRING(64)",
+      "IS_NULLABLE": true,
+      "IS_GENERATED": "NEVER",
+      "GENERATION_EXPRESSION": null,
+      "IS_STORED": null,
+      "COLUMN_DEFAULT": null,
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "PR B additive async admission schema is intentionally not deployed while the flag is off. Expected absence before scripts/deploy/migrate_async_settle_admission.sh; remove this exact entry after the reviewed migration. Not verified against production in this local worktree.",
+    "verified_against_production": false
+  },
+  {
+    "object": "column/tr_settle_outbox/payload_hash",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "ORDINAL_POSITION": 33,
+      "SPANNER_TYPE": "STRING(64)",
+      "IS_NULLABLE": true,
+      "IS_GENERATED": "NEVER",
+      "GENERATION_EXPRESSION": null,
+      "IS_STORED": null,
+      "COLUMN_DEFAULT": null,
+      "SPANNER_STATE": "COMMITTED"
+    },
+    "reason": "PR B additive async admission schema is intentionally not deployed while the flag is off. Expected absence before scripts/deploy/migrate_async_settle_admission.sh; remove this exact entry after the reviewed migration. Not verified against production in this local worktree.",
+    "verified_against_production": false
+  },
+  {
+    "object": "index/tr_settle_outbox/tr_settle_outbox_workspace_status",
+    "attribute": "object",
+    "production": null,
+    "fixture": {
+      "INDEX_TYPE": "INDEX",
+      "IS_UNIQUE": false,
+      "IS_NULL_FILTERED": true,
+      "INDEX_STATE": "READ_WRITE",
+      "PARENT_TABLE_NAME": null,
+      "columns": [
+        {
+          "COLUMN_NAME": "workspace_id",
+          "ORDINAL_POSITION": 1,
+          "COLUMN_ORDERING": "ASC"
+        },
+        {
+          "COLUMN_NAME": "status",
+          "ORDINAL_POSITION": 2,
+          "COLUMN_ORDERING": "ASC"
+        },
+        {
+          "COLUMN_NAME": "authorization_id",
+          "ORDINAL_POSITION": 3,
+          "COLUMN_ORDERING": "ASC"
+        },
+        {
+          "COLUMN_NAME": "intent_kind",
+          "ORDINAL_POSITION": 4,
+          "COLUMN_ORDERING": "ASC"
+        },
+        {
+          "COLUMN_NAME": "actual_cost_micro",
+          "ORDINAL_POSITION": null,
+          "COLUMN_ORDERING": null
+        }
+      ]
+    },
+    "reason": "PR B additive async admission schema is intentionally not deployed while the flag is off. Expected absence before scripts/deploy/migrate_async_settle_admission.sh; remove this exact entry after the reviewed migration. Not verified against production in this local worktree.",
+    "verified_against_production": false
   }
 ]
