@@ -9,11 +9,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import Field
 
 from trusted_router.billing_snapshot import Digest, Frozen, Identity, UInt
-from trusted_router.speculation_protocol import (
+from trusted_router.detached_jws import (
     TrustedKey,
-    _b64encode,
-    _canonical,
-    _verify,
+    b64encode,
+    canonical,
+    verify,
 )
 from trusted_router.storage_models import generation_id_for_authorization
 
@@ -59,13 +59,13 @@ def verify_ticket(token: str, keys: Sequence[TrustedKey], expected: Mapping[str,
     No partial binding API: future settlement callers must supply all claims.
     Expired-ticket lookup (PR C) must not use this fresh-acceptance validator.
     """
-    claims, key, payload = _verify(token, keys, TYP, PURPOSE)
+    claims, key, payload = verify(token, keys, TYP, PURPOSE)
     parsed = validate_claims(claims, now)
-    if payload != _canonical(claims) or claims["iss"] != key.iss or claims["aud"] != key.aud:
+    if payload != canonical(claims) or claims["iss"] != key.iss or claims["aud"] != key.aud:
         raise ValueError("ticket issuer or encoding")
     # Canonical bytes preserve bool vs integer distinctions and reject missing,
     # extra, or altered bindings; equality of just the snapshot hash is unsafe.
-    if set(expected) != set(TicketClaims.model_fields) or _canonical(dict(expected)) != payload:
+    if set(expected) != set(TicketClaims.model_fields) or canonical(dict(expected)) != payload:
         raise ValueError("ticket binding")
     return parsed
 
@@ -73,7 +73,7 @@ def verify_ticket(token: str, keys: Sequence[TrustedKey], expected: Mapping[str,
 class TicketSigner:
     def __init__(self, private: Ed25519PrivateKey, trusted: TrustedKey) -> None:
         if (trusted.purpose != PURPOSE or not all((trusted.kid, trusted.iss, trusted.aud))
-                or _b64encode(private.public_key().public_bytes_raw()) != trusted.public_key_b64url
+                or b64encode(private.public_key().public_bytes_raw()) != trusted.public_key_b64url
                 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,512}", v) is None
                        for v in (trusted.kid, trusted.iss, trusted.aud))):
             raise ValueError("ticket key configuration")
@@ -82,7 +82,7 @@ class TicketSigner:
     def sign(self, claims: dict[str, Any], now: int) -> str:
         validate_claims(claims, now)
         header = {"alg": "EdDSA", "kid": self.trusted.kid, "typ": TYP}
-        material = _b64encode(_canonical(header)) + "." + _b64encode(_canonical(claims))
-        token = material + "." + _b64encode(self.private.sign(material.encode("ascii")))
+        material = b64encode(canonical(header)) + "." + b64encode(canonical(claims))
+        token = material + "." + b64encode(self.private.sign(material.encode("ascii")))
         verify_ticket(token, [self.trusted], claims, now)
         return token

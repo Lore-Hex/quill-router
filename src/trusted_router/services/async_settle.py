@@ -26,7 +26,7 @@ from trusted_router.billing_snapshot import (
 )
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
-from trusted_router.speculation_protocol import TrustedKey, _b64encode
+from trusted_router.detached_jws import TrustedKey, b64encode
 from trusted_router.storage_models import GatewayAuthorization, generation_id_for_authorization
 
 CACHE_SECONDS = 5.0
@@ -117,7 +117,7 @@ def load_runtime(settings: Settings, backend: Any) -> Runtime:
             raise ValueError("separate kid required")
         signer = TicketSigner(private, TrustedKey(
             settings.async_settle_ticket_kid, PURPOSE,
-            _b64encode(private.public_key().public_bytes_raw()),
+            b64encode(private.public_key().public_bytes_raw()),
             settings.async_settle_ticket_issuer, settings.async_settle_ticket_audience))
     except Exception:
         signer = None

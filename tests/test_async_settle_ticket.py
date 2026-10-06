@@ -15,6 +15,7 @@ from trusted_router.async_settle_ticket import PURPOSE, TicketSigner, verify_tic
 from trusted_router.billing_snapshot import BillingSnapshot, Eligibility, canonical_hash
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
+from trusted_router.detached_jws import TrustedKey, canonical
 from trusted_router.services.async_settle import (
     Admission,
     AdmissionCache,
@@ -24,7 +25,6 @@ from trusted_router.services.async_settle import (
     projection,
     snapshot_projection,
 )
-from trusted_router.speculation_protocol import TrustedKey, _canonical
 from trusted_router.storage_models import GatewayAuthorization
 from trusted_router.types import UsageType
 
@@ -70,7 +70,7 @@ def test_literal_wire_and_fixture_signature():
                                    requested=Eligibility(), runtime=rt, settings=settings(),
                                    now=CLAIMS['iat'])
     response = {'data': {'authorization_id': 'auth-v1', 'generation_id': CLAIMS['generation_id'], **additions}}
-    assert _canonical(response) == _canonical(FIXTURE['response'])  # signature also deterministic
+    assert canonical(response) == canonical(FIXTURE['response'])  # signature also deterministic
     ticket = additions['settlement_ticket']
     assert verify_ticket(ticket, [rt.signer.trusted], CLAIMS, FIXTURE['verify_at']).model_dump() == CLAIMS
     assert signer().sign(CLAIMS, CLAIMS['iat']) == ticket
@@ -85,7 +85,7 @@ def test_literal_is_not_the_catalog_builder_cache_policy():
     assert rates['cache_creation_micro_per_million'] == 625000
     assert output['billing_snapshot_hash'] != CLAIMS['snapshot_hash']
     builder = json.loads((Path(__file__).parent / 'fixtures/async_settlement/authorize_v1_builder.json').read_text())
-    assert _canonical({'data': {'authorization_id': 'auth-v1', 'generation_id': CLAIMS['generation_id'], **output}}) == _canonical(builder['response'])
+    assert canonical({'data': {'authorization_id': 'auth-v1', 'generation_id': CLAIMS['generation_id'], **output}}) == canonical(builder['response'])
     assert verify_ticket(output['settlement_ticket'], [signer().trusted], builder['claims'], CLAIMS['iat'])
     assert output['billing_snapshot_hash'] == canonical_hash(BillingSnapshot.model_validate(output['billing_snapshot']))
 
@@ -126,7 +126,7 @@ def test_bad_signatures_and_trust(change):
         key = replace(key, public_key_b64url=base64.urlsafe_b64encode(public).rstrip(b'=').decode())
     else:
         parts = token.split('.')
-        parts[1] = base64.urlsafe_b64encode(_canonical({**CLAIMS, 'workspace_id': 'wrong'})).rstrip(b'=').decode()
+        parts[1] = base64.urlsafe_b64encode(canonical({**CLAIMS, 'workspace_id': 'wrong'})).rstrip(b'=').decode()
         token = '.'.join(parts)
     with pytest.raises(ValueError):
         verify_ticket(token, [key], CLAIMS, CLAIMS['iat'])
@@ -184,3 +184,154 @@ def test_status_url_encodes_identity_as_one_path_component():
     output = projection(authorization=auth, endpoints=[endpoint()], requested=Eligibility(),
                         runtime=runtime(), settings=settings(), now=CLAIMS['iat'])
     assert output['settlement_status_url'] == '/v1/settlements/auth%2Fv1.settle'
+
+
+def test_shadow_grant_as_ticket_rejected():
+    from trusted_router import detached_jws as jws
+    from trusted_router import speculation_protocol as protocol
+    from trusted_router.services.speculation_shadow import ShadowSigner
+
+    bundle = json.loads((Path(__file__).parent / 'fixtures/speculation_v1/grant-permit-tokens.json').read_text())
+    private = signer().private
+    shadow_key = protocol.TrustedKey(
+        'shadow-test', 'shadow-grant', FIXTURE['public_key'],
+        **{field: bundle['grant_claims'][field] for field in ('iss', 'aud', 'environment', 'plane')},
+    )
+    token = ShadowSigner(private, shadow_key).sign(bundle['grant_claims'], bundle['context'], bundle['now'])
+    trusted = jws.TrustedKey(shadow_key.kid, shadow_key.purpose, shadow_key.public_key_b64url,
+                             shadow_key.iss, shadow_key.aud)
+    with pytest.raises(ValueError, match='^type$'):
+        verify_ticket(token, [trusted], CLAIMS, CLAIMS['iat'])
+    # Exercise purpose independently of typ and schema. A valid shadow grant
+    # cannot acquire ticket authority even if its wire type is allowed here.
+    with pytest.raises(ValueError, match='^purpose$'):
+        jws.verify(token, [trusted], protocol.SHADOW_TYP, PURPOSE)
+    ticket = signer().sign(CLAIMS, CLAIMS['iat'])
+    with pytest.raises(protocol.ProtocolError, match='^type$'):
+        protocol.verify_grant(ticket, [shadow_key], bundle['context'], bundle['now'], shadow=True)
+
+
+@pytest.mark.parametrize('seed', range(256))
+def test_jws_canonical_and_base64_differential(seed):
+    import random
+
+    from trusted_router import detached_jws as jws
+    from trusted_router import speculation_protocol as protocol
+
+    rng = random.Random(seed)  # noqa: S311 - deterministic serialization corpus
+    alphabet = 'abcXYZ09"\\\n\t é漢😀'
+    words = [''.join(rng.choices(alphabet, k=rng.randrange(1, 40))) for _ in range(8)]
+    items = [(str(i) + word, [words[::-1], rng.randrange(-(1 << 100), 1 << 100),
+                            bool(i % 2), None, {'z': i, 'a': words[i]}])
+             for i, word in enumerate(words)]
+    rng.shuffle(items)
+    claims = dict(items)
+    reordered = {key: [value[0], value[1], value[2], value[3], dict(reversed(list(value[4].items())))]
+                 for key, value in reversed(items)}
+    raw = jws.canonical(claims)
+    assert raw == protocol._canonical(claims) == jws.canonical(reordered)
+    assert raw.isascii()
+    assert jws.canonical(True) != jws.canonical(1)
+    assert jws.b64encode(raw) == protocol._b64encode(raw)
+    assert jws.b64decode(jws.b64encode(raw)) == raw
+    binary = bytes(rng.randrange(256) for _ in range(seed + 1))
+    assert jws.b64encode(binary) == protocol._b64encode(binary)
+    assert jws.b64decode(jws.b64encode(binary)) == binary
+
+
+def raw_jws(header=None, payload=None):
+    from trusted_router import detached_jws as jws
+    from trusted_router.async_settle_ticket import TYP
+
+    header = jws.canonical({'alg': 'EdDSA', 'kid': signer().trusted.kid, 'typ': TYP}) if header is None else header
+    payload = jws.canonical(CLAIMS) if payload is None else payload
+    material = jws.b64encode(header) + '.' + jws.b64encode(payload)
+    return material + '.' + jws.b64encode(signer().private.sign(material.encode('ascii')))
+
+
+@pytest.mark.parametrize(('header', 'reason'), [
+    ({'extra': 'field'}, 'fields'), ({'alg': 'none'}, 'algorithm'),
+    ({'alg': 'HS256'}, 'algorithm'), ({'kid': 'wrong'}, 'key'),
+    ({'typ': 'wrong'}, 'type'), ({'kid': ''}, 'string'), ({'kid': True}, 'string'),
+    ({'kid': '<bad>'}, 'string'),
+    (b'{"typ":"tr-async-settle-v1","kid":"async-v1-fixture","alg":"EdDSA"}', 'canonical_header'),
+    (b'[]', 'fields'),
+])
+def test_jws_rejects_headers(header, reason):
+    from trusted_router import detached_jws as jws
+    from trusted_router.async_settle_ticket import TYP
+
+    if isinstance(header, dict):
+        header = jws.canonical({'alg': 'EdDSA', 'kid': signer().trusted.kid, 'typ': TYP, **header})
+    with pytest.raises(ValueError, match='^' + reason + '$'):
+        verify_ticket(raw_jws(header=header), [signer().trusted], CLAIMS, CLAIMS['iat'])
+
+
+@pytest.mark.parametrize('encoded', ['', 'Zg=', 'Zg==', 'Zh', 'Zm9', 'A', 'a+b', 'a/b', 'Zg\n', 'é'])
+def test_jws_rejects_noncanonical_base64(encoded):
+    from trusted_router import detached_jws as jws
+    from trusted_router import speculation_protocol as protocol
+
+    for decode in (jws.b64decode, protocol._b64decode):
+        with pytest.raises(ValueError, match='^base64$'):
+            decode(encoded)
+
+
+@pytest.mark.parametrize(('payload', 'reason'), [
+    (b'{"a":1,"a":2}', 'duplicate_key'), (b'{"a":', 'json'),
+    (b'{"a":NaN}', 'integer'), (b'{"a":Infinity}', 'integer'),
+    (b'{"a":1.5}', 'integer'), (b'{"a":-1}', 'integer'),
+    (b'{"a":9223372036854775808}', 'integer'), (b'{"a":100000000000000000000}', 'integer'),
+    (b'{"a":"\\u0061"}', 'json'), (b'{"a":"\xff"}', 'json'),
+    (b'[' * 17 + b']' * 17, 'json'), (b'[]', 'fields'),
+])
+def test_jws_malformed_payload_parity(payload, reason):
+    from trusted_router import detached_jws as jws
+    from trusted_router import speculation_protocol as protocol
+    from trusted_router.async_settle_ticket import TYP
+
+    trusted = signer().trusted
+    old_key = protocol.TrustedKey(trusted.kid, trusted.purpose, trusted.public_key_b64url)
+    token = raw_jws(payload=payload)
+    for verify, key in ((jws.verify, trusted), (protocol._verify, old_key)):
+        with pytest.raises(ValueError, match='^' + reason + '$'):
+            verify(token, [key], TYP, PURPOSE)
+
+
+@pytest.mark.parametrize('change', ['not-string', 'too-long', 'parts', 'duplicate-kid', 'truncated',
+                                    'bad-public-key', 'reordered-payload', 'padded-header',
+                                    'padded-payload', 'padded-signature'])
+def test_jws_remaining_negative_cases(change):
+    from trusted_router import detached_jws as jws
+
+    token = raw_jws()
+    keys = [signer().trusted]
+    if change == 'not-string':
+        token = None
+    elif change == 'too-long':
+        token = 'a' * 65537 + '.b.c'
+    elif change == 'parts':
+        token += '.extra'
+    elif change == 'duplicate-kid':
+        keys *= 2
+    elif change == 'truncated':
+        h, p, s = token.split('.')
+        token = h + '.' + p + '.' + jws.b64encode(jws.b64decode(s)[:-1])
+    elif change == 'bad-public-key':
+        keys = [replace(keys[0], public_key_b64url=jws.b64encode(b'short'))]
+    elif change == 'reordered-payload':
+        token = raw_jws(payload=json.dumps(CLAIMS).encode('ascii'))
+    else:
+        parts = token.split('.')
+        parts[{'padded-header': 0, 'padded-payload': 1, 'padded-signature': 2}[change]] += '='
+        token = '.'.join(parts)
+    with pytest.raises(ValueError):
+        verify_ticket(token, keys, CLAIMS, CLAIMS['iat'])
+
+
+@pytest.mark.parametrize('value', [float('nan'), float('inf'), float('-inf')])
+def test_canonical_rejects_nonfinite_numbers(value):
+    from trusted_router.detached_jws import canonical
+
+    with pytest.raises(ValueError):
+        canonical({'value': value})

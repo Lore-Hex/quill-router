@@ -12,9 +12,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MUTATIONS = [
+    ('skip-jws-purpose', 'src/trusted_router/detached_jws.py',
+     [('_require(key.purpose == purpose, "purpose")', 'pass  # mutant: ignore key purpose')],
+     'tests/test_async_settle_ticket.py::test_shadow_grant_as_ticket_rejected'),
     ('drop-key-id-binding', 'src/trusted_router/async_settle_ticket.py',
-     [('_canonical(dict(expected)) != payload',
-       '_canonical({k: v for k, v in expected.items() if k != "key_id"}) != _canonical({k: v for k, v in claims.items() if k != "key_id"})')],
+     [('canonical(dict(expected)) != payload',
+       'canonical({k: v for k, v in expected.items() if k != "key_id"}) != canonical({k: v for k, v in claims.items() if k != "key_id"})')],
      'tests/test_async_settle_ticket.py::test_every_claim_is_bound[key_id]'),
     ('accept-expired-ticket', 'src/trusted_router/async_settle_ticket.py',
      [(' or not parsed.iat <= now < parsed.exp', '')],
