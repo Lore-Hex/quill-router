@@ -1,12 +1,12 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "5cc891dffe38fc7b3128c2ca3674969b25641bdc2a1e9f72aa95395dd23520e9"
+inputs_sha256 = "bbee7c020d9269e234d0d9e9e72c6cd2cfdfad62005f74c2babc2622dd7eb0bd"
 
 [[guard]]
 action = "Grant"
 text = '''/\ st[l] = "none"'''
-breaks = "OwnerBooksBalance"
+breaks = "AllocationAccounted"
 
 [[guard]]
 action = "Grant"
@@ -187,7 +187,7 @@ breaks = "StoredCoversOwner"
 [[guard]]
 action = "OwnerFinish"
 text = '''/\ st[l] = "open"'''
-breaks = "StoredCoversOwner"
+breaks = "AllocationAccounted"
 
 [[guard]]
 action = "OwnerFinish"
@@ -330,13 +330,12 @@ Which terminal wins, and when an owner may still decide, publish or be routed to
 [[guard]]
 action = "FrontDoorAppend"
 text = '''/\ h \in Mine(l)'''
-breaks = "StoredCoversOwner"
-cfg = "two"
+breaks = "AllocationAccounted"
 
 [[guard]]
 action = "FrontDoorAppend"
 text = '''/\ hold[h].row = "none"'''
-breaks = "BookedOnce"
+breaks = "AllocationAccounted"
 
 [[guard]]
 action = "FrontDoorAppend"
@@ -486,10 +485,8 @@ MaxSync is a bound of the model.
 [[guard]]
 action = "SyncReserve"
 text = '''/\ ~mark[s]'''
-breaks = "nothing"
-why = '''
-A marked row refuses new spending (Invariant 11's second sentence), which no claim here states. In these bounds no reservation meets a marked row: in `money`, the one variant with one, the workspace goes into debt only through the settle of its one reservation.
-'''
+breaks = "MarkRefusesReservations"
+cfg = "money"
 
 [[guard]]
 action = "SyncReserve"

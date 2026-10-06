@@ -164,14 +164,14 @@ process stops and publishes the lease's last record, listing none of its
 predecessor's holds. Each member's reason names its group, and one group is
 a mutant too. Leaving out `Admit`'s, `OwnerStop`'s and `FinalCheckpoint`'s
 `has`, which every group needs one of, the other 24 removed all together
-break nothing. `CreditDebt`'s 40 broke a claim the same way, and nine groups
+break nothing. `CreditDebt`'s 39 broke a claim the same way, and nine groups
 of two explained it. For example, `Store` asks that the lease is not sealed
 and `OwnerSettle` that it is open: without both, a settle decided after the
 boundary is stored past it (`HoldsCoveredInSpanner`). `Close` asks that
 every hold has a booked terminal and `AuditorApplyRow` that the lease is
 live: without both, a lease closes with a row left and the auditor then
 books it (`ShardIdentity`). Leaving out eight of the groups' members, at
-least one of each group, the other 32 removed all together break nothing.
+least one of each group, the other 31 removed all together break nothing.
 
 ## Ways a check proves nothing
 

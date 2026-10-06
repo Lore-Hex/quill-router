@@ -94,19 +94,44 @@
 (*   lasts only while the owner's write is in flight, or the owner is cut   *)
 (*   off or dead.                                                           *)
 (*                                                                          *)
-(*   StoredShortfallNeverFalls. The owner's write is the larger of the      *)
-(*   stored total and its own, so a write that lands after the auditor      *)
-(*   stored a later total changes nothing. A write that lowered it would    *)
-(*   not show in StoredCoversOwner, which counts the owner's own total as   *)
-(*   not yet landed.                                                        *)
+(*   ShortfallLandsWithinTwoWrites. And for how long: within one of the     *)
+(*   owner's writes landing, or two when a write was already in flight. The *)
+(*   write after one in flight carries the owner's total as it then is.     *)
+(*   The history variable `due` counts the landings left.                   *)
+(*                                                                          *)
+(*   StoredShortfallNeverFalls and StoredShortfallWithinOwners. The owner's *)
+(*   write is the larger of the stored total and its own: so a write that   *)
+(*   lands after the auditor stored a later total changes nothing, and the  *)
+(*   stored total is always one the owner reached, never a sum of two. A    *)
+(*   write that lowered it would not show in StoredCoversOwner, which       *)
+(*   counts the owner's own total as not yet landed.                        *)
+(*                                                                          *)
+(*   AllocationAccounted. A lease's allocation is its grant, plus the       *)
+(*   shortfall total stored and the front doors' raises, less the returns   *)
+(*   applied (the history variable `returned`). Every raise of the          *)
+(*   allocation, and of the reservation behind it, is one of those.         *)
+(*                                                                          *)
+(* THE CLAIMS OF SECTION 4.7 AND INVARIANT 11                               *)
+(*                                                                          *)
+(*   ShardIdentity, per credit shard. BookedOnce: each hold is booked once, *)
+(*   at the charge its terminal names, which the auditor does not choose.   *)
+(*   DebtMarksEveryShard and MarkMeansDebt: debt marks every row, and a     *)
+(*   workspace no longer in debt is not left marked.                        *)
+(*   MarkRefusesReservations: a marked row takes no reservation, and a      *)
+(*   marked workspace no grant.                                             *)
+(*   RepaysDebtFirst: money coming in, a payment or a reservation a return, *)
+(*   a close or a settle frees, goes to the negative shards first, lowest   *)
+(*   first, even when the workspace stays in debt. CreditConserved:         *)
+(*   covering makes and loses no credit.                                    *)
 (*                                                                          *)
 (* THE CONFIGURATIONS                                                       *)
 (*                                                                          *)
 (*   The main one has one lease and two holds. Each variant is there for a  *)
 (*   hazard the main bounds leave out: `silent` (no owner write), `refund`  *)
-(*   (a third hold), `money` (Python's synchronous path and a payment) and  *)
-(*   `two` (a second lease, for the trust allowance). Each .cfg says what   *)
-(*   its own bounds leave out.                                              *)
+(*   (a third hold), `money` (Python's synchronous path, a second           *)
+(*   reservation and a payment smaller than the debt) and `two` (a second   *)
+(*   lease, for the trust allowance). Each .cfg says what its own bounds    *)
+(*   leave out.                                                             *)
 (***************************************************************************)
 
 EXTENDS Integers, Sequences, FiniteSets
@@ -142,10 +167,13 @@ VARIABLES
     log,        \* per lease: stored records the auditor has not applied
     oUp, oStop, oAlloc, oSf,   \* the owner's memory, beyond its holds
     write,      \* the owner's shortfall write in flight: the total it carries
+    due,        \* per lease: the owner's writes that may land before Spanner
+                \* holds its total, 0 when none is owed (a history variable)
+    returned,   \* per lease: the returns the auditor has applied (history)
     syncs, pays, cuts
 
 spanner == << credits, usage, reserved, mark, sync >>
-leaseRows == << st, donor, alloc, booked, sfStored, sealed >>
+leaseRows == << st, donor, alloc, booked, sfStored, sealed, returned >>
 owner == << oUp, oStop, oAlloc, oSf >>
 bounds == << syncs, pays, cuts >>
 vars == << spanner, leaseRows, hold, out, log, owner, write, bounds >>
@@ -225,6 +253,27 @@ Squared(c, u, r) ==
          [c |-> [s \in Shards |-> c[s] + h2[s] - h[s]],
           m |-> [s \in Shards |-> FALSE]]
 
+\* Money x coming in, as headroom h shows it without x, goes to the negative
+\* shards first, lowest first, and what is left to shard s.
+RECURSIVE Distribute(_, _, _)
+Distribute(h, x, s) ==
+    IF x = 0 THEN h
+    ELSE IF \A t \in Shards : h[t] >= 0 THEN [h EXCEPT ![s] = @ + x]
+    ELSE LET neg == CHOOSE t \in Shards :
+                        h[t] < 0 /\ \A v \in Shards : h[v] < 0 => t <= v
+             y   == IF x < -h[neg] THEN x ELSE -h[neg]
+         IN Distribute([h EXCEPT ![neg] = @ + y], x - y, s)
+
+\* What a write that brings money x in on shard s ends with: a payment's
+\* credit, or a reservation a return, a close or a settle frees. Section 4.7:
+\* money coming in repays the negative shards first, in the same
+\* transaction, and the write is then squared like any other. c, u and r
+\* already hold the money on s.
+Inflow(c, u, r, s, x) ==
+    LET h     == Room(c, u, r)
+        after == Distribute([h EXCEPT ![s] = @ - x], x, s)
+    IN Squared([t \in Shards |-> c[t] + after[t] - h[t]], u, r)
+
 \* The exposure a grant counts: remaining allocation, lease by lease.
 Exposure == SumOver([l \in Leases |-> IF Live(l) THEN Remaining(l) ELSE 0], Leases)
 
@@ -253,6 +302,8 @@ Init ==
     /\ oAlloc = [l \in Leases |-> 0]
     /\ oSf = [l \in Leases |-> 0]
     /\ write = [l \in Leases |-> NoWrite]
+    /\ due = [l \in Leases |-> 0]
+    /\ returned = [l \in Leases |-> 0]
     /\ syncs = 0 /\ pays = 0 /\ cuts = 0
 
 ----------------------------------------------------------------------------
@@ -269,8 +320,8 @@ Grant(l, s) ==
     /\ alloc' = [alloc EXCEPT ![l] = LeaseSize]
     /\ reserved' = [reserved EXCEPT ![s] = @ + LeaseSize]
     /\ oAlloc' = [oAlloc EXCEPT ![l] = LeaseSize]
-    /\ UNCHANGED << credits, usage, mark, sync, booked, sfStored, sealed, hold,
-                    out, log, oUp, oStop, oSf, write, bounds >>
+    /\ UNCHANGED << credits, usage, mark, sync, booked, sfStored, sealed, returned, hold,
+                    out, log, oUp, oStop, oSf, write, due, bounds >>
 
 ----------------------------------------------------------------------------
 \* The owner
@@ -290,7 +341,7 @@ Admit(l) ==
         /\ hold[h].lease = NoLease
         /\ \A g \in Holds : hold[g].lease = NoLease => h <= g
         /\ hold' = [hold EXCEPT ![h] = [NoHold EXCEPT !.lease = l]]
-    /\ UNCHANGED << spanner, leaseRows, out, log, owner, write, bounds >>
+    /\ UNCHANGED << spanner, leaseRows, out, log, owner, write, due, bounds >>
 
 \* A terminal the owner decides for hold h, charged a. Deciding it, giving
 \* its record its place in the lease's order and moving the books are one
@@ -307,6 +358,9 @@ Decide(l, h, a, raise) ==
           /\ out' = [out EXCEPT ![l] = Append(@, Rec("term", h, a, sf))]
           /\ write' = [write EXCEPT ![l] =
                            IF OwnerWrites /\ short > 0 /\ @ = NoWrite THEN sf ELSE @]
+          /\ due' = [due EXCEPT ![l] =
+                         IF OwnerWrites /\ short > 0
+                         THEN (IF write[l] = NoWrite THEN 1 ELSE 2) ELSE @]
 
 OwnerSettle(l, h, a) ==
     /\ st[l] = "open"
@@ -338,7 +392,7 @@ OwnerReturn(l) ==
     /\ oAlloc' = [oAlloc EXCEPT ![l] = @ - Free(l)]
     /\ out' = [out EXCEPT ![l] = Append(@, Rec("ret", 0, Free(l), oSf[l]))]
     /\ oStop' = [oStop EXCEPT ![l] = TRUE]
-    /\ UNCHANGED << spanner, leaseRows, hold, log, oUp, oSf, write, bounds >>
+    /\ UNCHANGED << spanner, leaseRows, hold, log, oUp, oSf, write, due, bounds >>
 
 \* Its last hold has ended and its records are stored: it marks the lease
 \* draining.
@@ -350,8 +404,8 @@ OwnerFinish(l) ==
     /\ out[l] = << >>
     /\ st' = [st EXCEPT ![l] = "draining"]
     /\ oStop' = [oStop EXCEPT ![l] = TRUE]
-    /\ UNCHANGED << spanner, donor, alloc, booked, sfStored, sealed, hold, out,
-                    log, oUp, oAlloc, oSf, write, bounds >>
+    /\ UNCHANGED << spanner, donor, alloc, booked, sfStored, sealed, returned, hold, out,
+                    log, oUp, oAlloc, oSf, write, due, bounds >>
 
 \* The owner's shortfall write: the larger of the stored total and its own.
 OwnerWriteLands(l) ==
@@ -367,7 +421,8 @@ OwnerWriteLands(l) ==
           /\ mark' = sq.m
     /\ write' = [write EXCEPT ![l] =
                      IF oUp[l] = "up" /\ oSf[l] > write[l] THEN oSf[l] ELSE NoWrite]
-    /\ UNCHANGED << usage, sync, st, donor, booked, sealed, hold, out, log,
+    /\ due' = [due EXCEPT ![l] = Pos(@ - 1)]
+    /\ UNCHANGED << usage, sync, st, donor, booked, sealed, returned, hold, out, log,
                     owner, bounds >>
 
 \* A write is given up only when its owner cannot retry it, or the lease has
@@ -376,6 +431,7 @@ OwnerWriteEnds(l) ==
     /\ write[l] # NoWrite
     /\ oUp[l] # "up" \/ st[l] = "closed"
     /\ write' = [write EXCEPT ![l] = NoWrite]
+    /\ due' = [due EXCEPT ![l] = 0]
     /\ UNCHANGED << spanner, leaseRows, hold, out, log, owner, bounds >>
 
 OwnerCut(l) ==
@@ -385,7 +441,7 @@ OwnerCut(l) ==
     /\ oUp' = [oUp EXCEPT ![l] = "cut"]
     /\ cuts' = cuts + 1
     /\ UNCHANGED << spanner, leaseRows, hold, out, log, oStop, oAlloc, oSf,
-                    write, syncs, pays >>
+                    write, due, syncs, pays >>
 
 \* It reads its lease row again, and retries a shortfall Spanner lacks.
 OwnerReconnect(l) ==
@@ -394,6 +450,8 @@ OwnerReconnect(l) ==
     /\ write' = [write EXCEPT ![l] =
                      IF OwnerWrites /\ Live(l) /\ oSf[l] > sfStored[l]
                          THEN oSf[l] ELSE NoWrite]
+    /\ due' = [due EXCEPT ![l] =
+                   IF OwnerWrites /\ Live(l) /\ oSf[l] > sfStored[l] THEN 1 ELSE 0]
     /\ UNCHANGED << spanner, leaseRows, hold, out, log, oStop, oAlloc, oSf,
                     bounds >>
 
@@ -402,7 +460,7 @@ OwnerDie(l) ==
     /\ oUp[l] # "dead"
     /\ oUp' = [oUp EXCEPT ![l] = "dead"]
     /\ UNCHANGED << spanner, leaseRows, hold, out, log, oStop, oAlloc, oSf,
-                    write, bounds >>
+                    write, due, bounds >>
 
 ----------------------------------------------------------------------------
 \* The log
@@ -420,7 +478,7 @@ Store(l) ==
        /\ log' = [log EXCEPT ![l] = Append(@, rec)]
        /\ hold' = IF rec.k = "term" THEN [hold EXCEPT ![rec.h].own = "log"] ELSE hold
     /\ out' = [out EXCEPT ![l] = AfterStoring(@)]
-    /\ UNCHANGED << spanner, leaseRows, owner, write, bounds >>
+    /\ UNCHANGED << spanner, leaseRows, owner, write, due, bounds >>
 
 ----------------------------------------------------------------------------
 \* A front door: a terminal for a hold whose owner cannot take it.
@@ -440,8 +498,8 @@ FrontDoorAppend(l, h, a) ==
           /\ credits' = sq.c
           /\ mark' = sq.m
     /\ hold' = [hold EXCEPT ![h].row = "row", ![h].ra = a]
-    /\ UNCHANGED << usage, sync, st, donor, booked, sfStored, sealed, out, log,
-                    owner, write, bounds >>
+    /\ UNCHANGED << usage, sync, st, donor, booked, sfStored, sealed, returned, out, log,
+                    owner, write, due, bounds >>
 
 ----------------------------------------------------------------------------
 \* The auditor
@@ -451,8 +509,8 @@ MarkDraining(l) ==
     /\ st[l] = "open"
     /\ oUp[l] # "up"
     /\ st' = [st EXCEPT ![l] = "draining"]
-    /\ UNCHANGED << spanner, donor, alloc, booked, sfStored, sealed, hold, out,
-                    log, owner, write, bounds >>
+    /\ UNCHANGED << spanner, donor, alloc, booked, sfStored, sealed, returned, hold, out,
+                    log, owner, write, due, bounds >>
 
 \* What booking a charge does to the lease's donor shard: matched, so that
 \* the shard's headroom does not move.
@@ -478,15 +536,17 @@ AuditorApply(l) ==
        IF rec.k = "term"
        THEN /\ Book(l, rec.a, Pos(rec.sf - sfStored[l]))
             /\ hold' = [hold EXCEPT ![rec.h].own = "applied", ![rec.h].b = rec.a]
+            /\ UNCHANGED returned
        ELSE LET r2 == [reserved EXCEPT ![donor[l]] = @ - rec.a]
-                sq == Squared(credits, usage, r2)
+                sq == Inflow(credits, usage, r2, donor[l], rec.a)
             IN /\ alloc' = [alloc EXCEPT ![l] = @ - rec.a]
                /\ reserved' = r2
                /\ credits' = sq.c
                /\ mark' = sq.m
+               /\ returned' = [returned EXCEPT ![l] = @ + rec.a]
                /\ UNCHANGED << usage, booked, sfStored, hold >>
     /\ log' = [log EXCEPT ![l] = Tail(@)]
-    /\ UNCHANGED << sync, st, donor, sealed, out, owner, write, bounds >>
+    /\ UNCHANGED << sync, st, donor, sealed, out, owner, write, due, bounds >>
 
 \* The owner boundary: every stored record is applied, and a record not
 \* stored by now is ignored for good.
@@ -499,8 +559,8 @@ Seal(l) ==
     /\ hold' = [h \in Holds |->
                    IF hold[h].lease = l /\ hold[h].own = "out"
                        THEN [hold[h] EXCEPT !.own = "lost"] ELSE hold[h]]
-    /\ UNCHANGED << spanner, st, donor, alloc, booked, sfStored, log, owner,
-                    write, bounds >>
+    /\ UNCHANGED << spanner, st, donor, alloc, booked, sfStored, returned, log,
+                    owner, write, due, bounds >>
 
 \* A drain-log row, after the boundary. It loses to an owner terminal that
 \* was applied; otherwise it is booked. Its raise was made by its append.
@@ -515,7 +575,7 @@ AuditorApplyRow(l, h) ==
        ELSE /\ Book(l, hold[h].ra, 0)
             /\ hold' = [hold EXCEPT ![h].row = "applied", ![h].b = hold[h].ra]
             /\ UNCHANGED sync
-    /\ UNCHANGED << st, donor, sealed, out, log, owner, write, bounds >>
+    /\ UNCHANGED << st, donor, sealed, returned, out, log, owner, write, due, bounds >>
 
 \* A hold with no terminal anywhere is reaped at its last heartbeat's
 \* running charge.
@@ -527,7 +587,7 @@ AuditorReap(l, h, a) ==
     /\ hold[h].row = "none"
     /\ Book(l, a, 0)
     /\ hold' = [hold EXCEPT ![h].reaped = TRUE, ![h].b = a]
-    /\ UNCHANGED << sync, st, donor, sealed, out, log, owner, write, bounds >>
+    /\ UNCHANGED << sync, st, donor, sealed, returned, out, log, owner, write, due, bounds >>
 
 \* Close releases what the lease still holds.
 Close(l) ==
@@ -535,14 +595,14 @@ Close(l) ==
     /\ st[l] = "draining"
     /\ \A h \in Mine(l) : Applied(h) /\ hold[h].row # "row"
     /\ LET r2 == [reserved EXCEPT ![donor[l]] = @ - Remaining(l)]
-           sq == Squared(credits, usage, r2)
+           sq == Inflow(credits, usage, r2, donor[l], Remaining(l))
        IN /\ reserved' = r2
           /\ credits' = sq.c
           /\ mark' = sq.m
     /\ alloc' = [alloc EXCEPT ![l] = booked[l]]
     /\ st' = [st EXCEPT ![l] = "closed"]
-    /\ UNCHANGED << usage, sync, donor, booked, sfStored, sealed, hold, out,
-                    log, owner, write, bounds >>
+    /\ UNCHANGED << usage, sync, donor, booked, sfStored, sealed, returned, hold, out,
+                    log, owner, write, due, bounds >>
 
 ----------------------------------------------------------------------------
 \* Python's synchronous path, and money coming in
@@ -555,29 +615,29 @@ SyncReserve(s) ==
     /\ sync' = [sync EXCEPT ![s] = @ + 1]
     /\ syncs' = syncs + 1
     /\ UNCHANGED << credits, usage, mark, leaseRows, hold, out, log, owner,
-                    write, pays, cuts >>
+                    write, due, pays, cuts >>
 
 SyncSettle(s, a) ==
     /\ sync[s] >= 1
     /\ LET r2 == [reserved EXCEPT ![s] = @ - 1]
            u2 == [usage EXCEPT ![s] = @ + a]
-           sq == Squared(credits, u2, r2)
+           sq == Inflow(credits, u2, r2, s, Pos(1 - a))
        IN /\ reserved' = r2
           /\ usage' = u2
           /\ credits' = sq.c
           /\ mark' = sq.m
     /\ sync' = [sync EXCEPT ![s] = @ - 1]
-    /\ UNCHANGED << leaseRows, hold, out, log, owner, write, bounds >>
+    /\ UNCHANGED << leaseRows, hold, out, log, owner, write, due, bounds >>
 
 Pay ==
     /\ pays < MaxPays
     /\ LET c2 == [credits EXCEPT ![1] = @ + PaySize]
-           sq == Squared(c2, usage, reserved)
+           sq == Inflow(c2, usage, reserved, 1, PaySize)
        IN /\ credits' = sq.c
           /\ mark' = sq.m
     /\ pays' = pays + 1
     /\ UNCHANGED << usage, reserved, sync, leaseRows, hold, out, log, owner,
-                    write, syncs, cuts >>
+                    write, due, syncs, cuts >>
 
 ----------------------------------------------------------------------------
 
@@ -639,12 +699,35 @@ ShortfallIsBeingWritten ==
         \A l \in Leases :
             (Live(l) /\ oUp[l] = "up" /\ Unlanded(l) > 0) => write[l] # NoWrite
 
+\* And how long: Spanner holds an owner's shortfall within one of its writes
+\* landing, or two when a write was already in flight (section 4.2). The
+\* write that follows one in flight carries the owner's total as it then is.
+ShortfallLandsWithinTwoWrites ==
+    OwnerWrites =>
+        \A l \in Leases :
+            (Live(l) /\ oUp[l] = "up" /\ due[l] = 0) => Unlanded(l) = 0
+
 \* The larger-of write (section 4.2): a write that lands after the auditor
 \* stored a later total, or a repeat of one, changes nothing. So the stored
 \* total never falls. StoredCoversOwner does not see a write that lowers it
 \* for a while, since the owner's own total then counts as not yet landed.
 StoredShortfallNeverFalls ==
     [][\A l \in Leases : sfStored'[l] >= sfStored[l]]_vars
+
+\* And never rises past a total the owner reached: a write lands the larger
+\* of the two totals, not their sum.
+StoredShortfallWithinOwners ==
+    \A l \in Leases : sfStored[l] <= oSf[l]
+
+\* A lease's allocation is its grant, plus the shortfall total stored and
+\* the front doors' raises, less the returns applied: every raise of the
+\* allocation, and of the reservation behind it, is one of those, at the
+\* amount it names.
+DoorRaised(l) ==
+    SumOver([h \in Holds |-> IF hold[h].row # "none" THEN Pos(hold[h].ra - 1) ELSE 0], Mine(l))
+AllocationAccounted ==
+    \A l \in Leases :
+        Live(l) => alloc[l] = LeaseSize + sfStored[l] + DoorRaised(l) - returned[l]
 
 \* Section 4.7's identity, per credit shard.
 ShardIdentity ==
@@ -653,10 +736,16 @@ ShardIdentity ==
             + SumOver([l \in Leases |->
                           IF Live(l) /\ donor[l] = s THEN Remaining(l) ELSE 0], Leases)
 
-\* Each hold is booked once, at its winner's charge.
+\* Each hold is booked once, at its winner's charge: the owner's terminal
+\* at the amount its owner decided, a front door's row at the amount it
+\* appended, a reap at its heartbeat's running charge.
+WinCharge(h) ==
+    IF hold[h].own = "applied" THEN hold[h].oa
+    ELSE IF hold[h].row = "applied" THEN hold[h].ra
+    ELSE hold[h].b
 BookedOnce ==
     \A l \in Leases :
-        booked[l] = SumOver([h \in Holds |-> hold[h].b], { h \in Mine(l) : Applied(h) })
+        booked[l] = SumOver([h \in Holds |-> WinCharge(h)], { h \in Mine(l) : Applied(h) })
 
 \* Invariant 9, the exposure half: the holds open under leases stay within
 \* the allowance.
@@ -671,6 +760,18 @@ DebtMarksEveryShard ==
 \* The v11 hazard: a workspace that is no longer in debt is not left marked.
 MarkMeansDebt ==
     (\E s \in Shards : mark[s]) => Total(RoomNow) < 0
+
+\* Invariant 11, the refusal: a marked row takes no synchronous reservation,
+\* and a marked workspace no grant.
+MarkRefusesReservations ==
+    [][ /\ \A s \in Shards : sync'[s] > sync[s] => ~mark[s]
+        /\ \A l \in Leases : (st[l] = "none" /\ st'[l] = "open") => \A s \in Shards : ~mark[s] ]_vars
+
+\* Money coming in repays debt first (section 4.7): while a shard is still
+\* negative after a step, the step raised only shards that were negative.
+RepaysDebtFirst ==
+    [][ (\E s \in Shards : RoomNow'[s] < 0) =>
+          \A s \in Shards : RoomNow'[s] > RoomNow[s] => RoomNow[s] < 0 ]_vars
 
 \* Covering moves credit between shards and never makes or loses any.
 CreditConserved ==
@@ -695,6 +796,8 @@ TypeOK ==
     /\ oStop \in [Leases -> BOOLEAN]
     /\ oAlloc \in [Leases -> Nat] /\ oSf \in [Leases -> Nat]
     /\ write \in [Leases -> Nat]
+    /\ due \in [Leases -> 0..2]
+    /\ returned \in [Leases -> Nat]
     /\ syncs \in 0..MaxSync /\ pays \in 0..MaxPays /\ cuts \in 0..MaxCuts
 
 =============================================================================

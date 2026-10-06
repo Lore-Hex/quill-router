@@ -1248,7 +1248,7 @@ name = "close-keeps-the-remainder"
 violates = "ShardIdentity"
 old = '''
     /\ LET r2 == [reserved EXCEPT ![donor[l]] = @ - Remaining(l)]
-           sq == Squared(credits, usage, r2)
+           sq == Inflow(credits, usage, r2, donor[l], Remaining(l))
        IN /\ reserved' = r2'''
 new = '''
     /\ LET r2 == reserved
@@ -1336,4 +1336,70 @@ old = '''
 '''
 new = ""
 
+# Codex's first review: five claims that said less than the design.
 
+# Section 4.2: the write that follows one in flight carries the owner's
+# total as it then is, so a shortfall lands within two writes.
+[[CreditDebt.mutants]]
+name = "a-stale-write-requeued"
+violates = "ShortfallLandsWithinTwoWrites"
+old = '''IF oUp[l] = "up" /\ oSf[l] > write[l] THEN oSf[l] ELSE NoWrite]'''
+new = '''IF oUp[l] = "up" /\ oSf[l] > write[l] THEN write[l] ELSE NoWrite]'''
+
+# The larger-of write stores the larger total, not the sum of the two.
+[[CreditDebt.mutants]]
+name = "a-write-adds-its-whole-total"
+violates = "StoredShortfallWithinOwners"
+old = '    /\ LET rise == Pos(write[l] - sfStored[l])'
+new = '    /\ LET rise == write[l]'
+
+# And raises the allocation, and the reservation behind it, by what it
+# stores.
+[[CreditDebt.mutants]]
+name = "a-write-reserves-its-whole-total"
+violates = "AllocationAccounted"
+old = '''
+    /\ LET rise == Pos(write[l] - sfStored[l])
+           r2   == [reserved EXCEPT ![donor[l]] = @ + rise]
+           sq   == Squared(credits, usage, r2)
+       IN /\ sfStored' = [sfStored EXCEPT ![l] = @ + rise]
+          /\ alloc' = [alloc EXCEPT ![l] = @ + rise]'''
+new = '''
+    /\ LET rise == Pos(write[l] - sfStored[l])
+           r2   == [reserved EXCEPT ![donor[l]] = @ + write[l]]
+           sq   == Squared(credits, usage, r2)
+       IN /\ sfStored' = [sfStored EXCEPT ![l] = @ + rise]
+          /\ alloc' = [alloc EXCEPT ![l] = @ + write[l]]'''
+
+# A winner is booked at the amount its terminal names, which the auditor
+# does not choose.
+[[CreditDebt.mutants]]
+name = "owner-terminals-booked-at-nothing"
+violates = "BookedOnce"
+old = '''
+       THEN /\ Book(l, rec.a, Pos(rec.sf - sfStored[l]))
+            /\ hold' = [hold EXCEPT ![rec.h].own = "applied", ![rec.h].b = rec.a]'''
+new = '''
+       THEN /\ Book(l, 0, Pos(rec.sf - sfStored[l]))
+            /\ hold' = [hold EXCEPT ![rec.h].own = "applied", ![rec.h].b = 0]'''
+
+# Section 4.7: a marked row refuses a reservation.
+[[CreditDebt.mutants]]
+name = "a-reservation-on-a-marked-row"
+cfg = "money"
+violates_property = "MarkRefusesReservations"
+old = '''
+    /\ syncs < MaxSync
+    /\ ~mark[s]
+'''
+new = '''
+    /\ syncs < MaxSync
+'''
+
+# Section 4.7: money coming in repays the negative shards first.
+[[CreditDebt.mutants]]
+name = "a-payment-not-to-the-debt"
+cfg = "money"
+violates_property = "RepaysDebtFirst"
+old = '           sq == Inflow(c2, usage, reserved, 1, PaySize)'
+new = '           sq == Squared(c2, usage, reserved)'
