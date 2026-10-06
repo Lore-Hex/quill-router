@@ -1403,3 +1403,29 @@ cfg = "money"
 violates_property = "RepaysDebtFirst"
 old = '           sq == Inflow(c2, usage, reserved, 1, PaySize)'
 new = '           sq == Squared(c2, usage, reserved)'
+
+# Codex's second review: the debt-first rule, and the larger-of write, said
+# exactly.
+
+# Money coming in fills a negative shard only up to zero.
+[[CreditDebt.mutants]]
+name = "repayment-past-zero"
+cfg = "money"
+violates_property = "RepaysDebtFirst"
+old = '             y   == IF x < -h[neg] THEN x ELSE -h[neg]'
+new = '             y   == x'
+
+# And the lowest negative shard first.
+[[CreditDebt.mutants]]
+name = "the-highest-negative-shard-first"
+cfg = "money"
+violates_property = "RepaysDebtFirst"
+old = '                        h[t] < 0 /\ \A v \in Shards : h[v] < 0 => t <= v'
+new = '                        h[t] < 0 /\ \A v \in Shards : h[v] < 0 => t >= v'
+
+# A landing stores a total that something carried, not one more.
+[[CreditDebt.mutants]]
+name = "a-write-lands-more-than-it-carried"
+violates_property = "StoredShortfallIsACarriedTotal"
+old = '    /\ LET rise == Pos(write[l] - sfStored[l])'
+new = '    /\ LET rise == Pos(write[l] + 1 - sfStored[l])'

@@ -99,12 +99,14 @@
 (*   write after one in flight carries the owner's total as it then is.     *)
 (*   The history variable `due` counts the landings left.                   *)
 (*                                                                          *)
-(*   StoredShortfallNeverFalls and StoredShortfallWithinOwners. The owner's *)
-(*   write is the larger of the stored total and its own: so a write that   *)
-(*   lands after the auditor stored a later total changes nothing, and the  *)
-(*   stored total is always one the owner reached, never a sum of two. A    *)
-(*   write that lowered it would not show in StoredCoversOwner, which       *)
-(*   counts the owner's own total as not yet landed.                        *)
+(*   StoredShortfallNeverFalls, StoredShortfallWithinOwners and             *)
+(*   StoredShortfallIsACarriedTotal. The owner's write is the larger of the *)
+(*   stored total and its own: so a write that lands after the auditor      *)
+(*   stored a later total changes nothing, the stored total is never more   *)
+(*   than the owner's, and a change to it takes exactly the total a write   *)
+(*   or a stored record carried. A write that lowered it would not show in  *)
+(*   StoredCoversOwner, which counts the owner's own total as not yet       *)
+(*   landed.                                                                *)
 (*                                                                          *)
 (*   AllocationAccounted. A lease's allocation is its grant, plus the       *)
 (*   shortfall total stored and the front doors' raises, less the returns   *)
@@ -121,8 +123,8 @@
 (*   marked workspace no grant.                                             *)
 (*   RepaysDebtFirst: money coming in, a payment or a reservation a return, *)
 (*   a close or a settle frees, goes to the negative shards first, lowest   *)
-(*   first, even when the workspace stays in debt. CreditConserved:         *)
-(*   covering makes and loses no credit.                                    *)
+(*   first and each at most to zero, even when the workspace stays in debt. *)
+(*   CreditConserved: covering makes and loses no credit.                   *)
 (*                                                                          *)
 (* THE CONFIGURATIONS                                                       *)
 (*                                                                          *)
@@ -176,7 +178,7 @@ spanner == << credits, usage, reserved, mark, sync >>
 leaseRows == << st, donor, alloc, booked, sfStored, sealed, returned >>
 owner == << oUp, oStop, oAlloc, oSf >>
 bounds == << syncs, pays, cuts >>
-vars == << spanner, leaseRows, hold, out, log, owner, write, bounds >>
+vars == << spanner, leaseRows, hold, out, log, owner, write, due, bounds >>
 
 ----------------------------------------------------------------------------
 \* Helpers
@@ -719,6 +721,14 @@ StoredShortfallNeverFalls ==
 StoredShortfallWithinOwners ==
     \A l \in Leases : sfStored[l] <= oSf[l]
 
+\* Exactly: a stored total that changes takes the total that the owner's
+\* write in flight, or a record the log holds, carried. With
+\* StoredShortfallNeverFalls, every landing stores the larger of the two.
+StoredShortfallIsACarriedTotal ==
+    [][\A l \in Leases :
+          sfStored'[l] # sfStored[l] =>
+              sfStored'[l] \in {write[l]} \cup { log[l][i].sf : i \in DOMAIN log[l] }]_vars
+
 \* A lease's allocation is its grant, plus the shortfall total stored and
 \* the front doors' raises, less the returns applied: every raise of the
 \* allocation, and of the reservation behind it, is one of those, at the
@@ -768,10 +778,14 @@ MarkRefusesReservations ==
         /\ \A l \in Leases : (st[l] = "none" /\ st'[l] = "open") => \A s \in Shards : ~mark[s] ]_vars
 
 \* Money coming in repays debt first (section 4.7): while a shard is still
-\* negative after a step, the step raised only shards that were negative.
+\* negative after a step, the step raised only shards that were negative,
+\* each at most to zero, and none while a lower shard stays negative.
 RepaysDebtFirst ==
     [][ (\E s \in Shards : RoomNow'[s] < 0) =>
-          \A s \in Shards : RoomNow'[s] > RoomNow[s] => RoomNow[s] < 0 ]_vars
+          \A s \in Shards : RoomNow'[s] > RoomNow[s] =>
+              /\ RoomNow[s] < 0
+              /\ RoomNow'[s] <= 0
+              /\ \A t \in Shards : t < s => RoomNow'[t] >= 0 ]_vars
 
 \* Covering moves credit between shards and never makes or loses any.
 CreditConserved ==
