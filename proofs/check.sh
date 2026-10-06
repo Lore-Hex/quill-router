@@ -27,14 +27,44 @@
 # One thing does change: a parallel search reports the first counterexample
 # any worker hands back, which need not be a shortest one. Re-run a failing
 # mutant at -workers 1 before quoting a trace length anywhere.
+#
+# The model checker is a pinned input. tla2tools.jar is in the repository and
+# its sha256 is in tla2tools.jar.sha256, which this script checks before it
+# runs anything. It is TLC2 Version 2026.10.04.025638 (rev: 1813307): the
+# tlaplus project's v1.8.0 pre-release as built on 2026-10-04. That release's
+# asset is rebuilt upstream, so its URL returns different bytes on different
+# days, and CI used to run whichever build it had cached first.
+#
+# To move to another build:
+#   1. Try it: `TLA_TOOLS_JAR=/path/to/new/tla2tools.jar ./proofs/check.sh`
+#      runs every spec with it, without the digest check. It must pass.
+#   2. Replace the jar and its pin, from the repository root:
+#        cp /path/to/new/tla2tools.jar proofs/tla2tools.jar
+#        (cd proofs && shasum -a 256 tla2tools.jar > tla2tools.jar.sha256)
+#      and write its version above: `java -cp proofs/tla2tools.jar tlc2.TLC`
+#      prints it on its first line.
+#   3. Run `./proofs/check.sh` again, now with the check. CI runs it on the
+#      pull request that changes the jar, as it does on every pull request.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 JAR="${TLA_TOOLS_JAR:-tla2tools.jar}"
 
 if [[ ! -f "$JAR" ]]; then
-  echo "error: $JAR not found. Download tla2tools.jar into proofs/ or set TLA_TOOLS_JAR." >&2
+  echo "error: $JAR not found. proofs/tla2tools.jar is part of the repository; TLA_TOOLS_JAR names another." >&2
   exit 1
+fi
+digest="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$JAR")"
+if [[ -z "${TLA_TOOLS_JAR:-}" ]]; then
+  pinned="$(cut -d' ' -f1 tla2tools.jar.sha256)"
+  if [[ "$digest" != "$pinned" ]]; then
+    echo "error: tla2tools.jar has sha256 $digest; tla2tools.jar.sha256 pins $pinned." >&2
+    echo "       To move to another build, see the top of this script." >&2
+    exit 1
+  fi
+  echo "tla2tools.jar: sha256 $digest (pinned)"
+else
+  echo "$JAR: sha256 $digest (TLA_TOOLS_JAR, not the pinned jar)"
 fi
 
 shopt -s nullglob
