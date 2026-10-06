@@ -44,7 +44,7 @@ def test_committed_charge(case: dict[str, Any], mode: str, monkeypatch: pytest.M
         ))
     monkeypatch.setattr(gateway, "endpoint_for_id", endpoints.get)
     monkeypatch.setattr(settle_outbox_apply, "endpoint_for_id", endpoints.get)
-    store, db, _bt = make_fake_store()
+    store, db = make_fake_store()  # the Bigtable backend was retired (#1409): two values now
     configure_store(store)
     try:
         ws = "ws-contract"
