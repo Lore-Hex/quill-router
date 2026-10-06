@@ -1,9 +1,12 @@
-"""Frozen e504e22f authorize effects plus live route metadata integration."""
+"""Frozen-main authorize effects plus live route metadata integration.
+
+The oracle compares durable effects and operation traces of the live
+`authorize_atomic` against the frozen main fixture; it deliberately does not
+pin the live source's AST, which main may change at any time (#1542 did).
+"""
 from __future__ import annotations
 
-import ast
 import copy
-from pathlib import Path
 
 import pytest
 from google.cloud.spanner_v1 import param_types
@@ -11,7 +14,6 @@ from google.cloud.spanner_v1 import param_types
 from tests.test_async_settle_admission import request
 from tests.test_async_settle_ticket import runtime, settings
 from tests.test_authorize_hold_time import (
-    _ast_sha256,
     expected_traces,
     hold_trace,  # noqa: F401 - shared RPC tracing fixture
     main,
@@ -26,15 +28,6 @@ from tests.test_gateway_authorize_spanner_operations import (
 from tests.test_spanner_batch_dml import _state
 from trusted_router import storage_gcp_authorize as current
 from trusted_router.routes.internal import gateway
-
-# Exact authorize_atomic from the supplied merged-main base e504e22fd4b5695f13ba4bd262a372a23efdc9c0.
-ATOMIC_SHA256 = '725daa8cc4f5e0faa92c5d465beb54a97fe563b4c519c0d72f2a16170d2e0042'
-
-
-def test_atomic_source_is_byte_identical_in_ast():
-    tree = ast.parse(Path(current.__file__).read_text())
-    node = next(n for n in tree.body if getattr(n, 'name', None) == 'authorize_atomic')
-    assert _ast_sha256(node) == ATOMIC_SHA256
 
 
 @pytest.mark.usefixtures('hold_trace')
