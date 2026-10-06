@@ -62,7 +62,7 @@ def test_held_perplexity_tariff_is_available_only_for_settlement() -> None:
     )
 
 
-@pytest.mark.parametrize("provider", ["crusoe", "sambanova"])
+@pytest.mark.parametrize("provider", ["crusoe", "sambanova", "lightning"])
 def test_rejected_operator_credentials_block_only_prepaid(
     monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
@@ -87,6 +87,27 @@ def test_rejected_operator_credentials_block_only_prepaid(
     assert {"novita/Credits", "novita/BYOK"} <= filtered.keys()
     monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {})
     assert catalog_ingest._filter_unserved_provider_endpoints(endpoints) == endpoints
+
+
+def test_lightning_fresh_discovery_cannot_bypass_operator_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "lightning-ai/future-model"
+    monkeypatch.setattr(catalog_ingest, "PREPAID_PROVIDER_HOLD_REASONS", {
+        "lightning": "operator-credential-rejected",
+    })
+    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
+    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
+    endpoints = {
+        usage: ModelEndpoint(
+            id=usage, model_id=model, provider="lightning", usage_type=usage, upstream_id=model,
+        ) for usage in ("Credits", "BYOK")
+    }
+    # Even a new explicit registration must not bypass the rejected operator key.
+    assert catalog_ingest._filter_unserved_provider_endpoints(
+        endpoints, explicit_model_ids=frozenset({model}),
+    ) == {"BYOK": endpoints["BYOK"]}
 
 
 @pytest.mark.parametrize("native", ["kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5"])

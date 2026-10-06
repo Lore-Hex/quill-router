@@ -5,9 +5,10 @@ Lightning publishes per-model pricing in its `/v1/models` response
 `output_cost_per_token` as USD/token). API-direct path; no HTML
 scraping, no LLM self-heal.
 
-Auth: Bearer token in `LIGHTNING_API_KEY`. Without it, returns 401
-and Lightning keeps its committed state while other providers still
-refresh normally.
+The catalog is public, including when `LIGHTNING_API_KEY` is rejected by
+inference. A successful listing is not evidence that the operator key works.
+Prepaid account holds are enforced separately during catalog construction;
+clear them only after a paid-path inference canary, never from this listing.
 
 OR-canonical model id mapping is small today (just gemma-4 +
 llama-3.3 to start). Extend `_NATIVE_TO_OR_ID` when we add more
