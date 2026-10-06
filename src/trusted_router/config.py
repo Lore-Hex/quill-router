@@ -366,6 +366,13 @@ def operational_analytics_sink_problems(settings: Any) -> list[str]:
 
 
 class Settings(BaseSettings):
+    """Runtime configuration, including independent async admission/protection.
+
+    Safe disable order: turn admission off; wait until no tr_settle_outbox row
+    with async_version=1 is pending/dead (keep draining); then turn protection
+    off. Admission requires protection, including for runtime-mutated settings.
+    """
+
     model_config = SettingsConfigDict(
         env_prefix="TR_",
         env_file=".env",
@@ -889,6 +896,7 @@ class Settings(BaseSettings):
 
     # Dormant async v1 authorize metadata; activation requires later PR gates.
     async_settle_enabled: bool = False
+    async_settle_protection: bool = False
     async_settle_ticket_kid: str = ""
     async_settle_ticket_issuer: str = ""
     async_settle_ticket_audience: str = ""
@@ -1266,6 +1274,17 @@ class Settings(BaseSettings):
         if mode not in {"off", "observe", "act"}:
             raise ValueError("TR_REMEDIATOR_MODE must be one of: off, observe, act")
         return mode
+
+    @property
+    def async_settle_admission_enabled(self) -> bool:
+        """Fail closed even when callers mutate settings without validation."""
+        return self.async_settle_enabled and self.async_settle_protection
+
+    @model_validator(mode="after")
+    def async_settle_requires_protection(self) -> Settings:
+        if self.async_settle_enabled and not self.async_settle_protection:
+            raise ValueError("TR_ASYNC_SETTLE_ENABLED requires TR_ASYNC_SETTLE_PROTECTION")
+        return self
 
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:

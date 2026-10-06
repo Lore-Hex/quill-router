@@ -605,6 +605,7 @@ ENV_VARS=(
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
   # PR B is dormant. Do not inherit a purpose key path from an old revision.
   "TR_ASYNC_SETTLE_ENABLED=false"
+  "TR_ASYNC_SETTLE_PROTECTION=false"
   "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=0"
 )

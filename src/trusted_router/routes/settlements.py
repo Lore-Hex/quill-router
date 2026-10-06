@@ -28,7 +28,7 @@ class AsyncSettlementRoute(APIRoute):
             settings = request.app.state.settings
             modes = request.headers.getlist("X-TR-Settlement-Mode")
             # Exact opt-in. Ordinary callers keep the old validation/auth order.
-            if not settings.async_settle_enabled or modes not in (["async-v1"], ["sync"]):
+            if not settings.async_settle_admission_enabled or modes not in (["async-v1"], ["sync"]):
                 return await legacy(request)
             started = time.monotonic()
             try:

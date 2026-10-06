@@ -260,7 +260,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 raise
             row = intent(value, claims, amount)
             # Expired/disabled/admission-flipped retries still resolve accepted work.
-            if synchronous or now >= claims.exp or not settings.async_settle_enabled:
+            if synchronous or now >= claims.exp or not settings.async_settle_admission_enabled:
                 existing = outbox.get(row.authorization_id, kind)
                 if existing is not None:
                     result = duplicate(outbox, row)

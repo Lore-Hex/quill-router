@@ -70,24 +70,47 @@ MUTATIONS = [
         ('or principal.api_key is None or auth.key_hash != principal.api_key.hash',
          'or principal.api_key is None'),
     ])], 'test_drain_and_status_ownership[settle]'),
-    ('fence-when-flag-off', [('src/trusted_router/storage_gcp_counter_dml.py', [
+    ('fence-when-protection-off', [('src/trusted_router/storage_gcp_counter_dml.py', [
         ('if outbox_available and async_fence:', 'if outbox_available:'),
-    ])], 'test_claim_sql_flag_pin[False]'),
-    ('drop-fence-when-flag-on', [('src/trusted_router/storage_gcp_counter_dml.py', [
+    ])], 'test_claim_sql_protection_pin[False]'),
+    ('drop-fence-when-protection-on', [('src/trusted_router/storage_gcp_counter_dml.py', [
         ('if outbox_available and async_fence:', 'if False:'),
-    ])], 'test_claim_sql_flag_pin[True]'),
+    ])], 'test_claim_sql_protection_pin[True]'),
     # Additional evidence: the frozen oracle itself kills ungated helper work.
     ('oracle-ungated-claim', [('src/trusted_router/storage_gcp_counter_dml.py', [
         ('if outbox_available and async_fence:', 'if outbox_available:'),
     ])], 'tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[False-True-ordinary]'),
     ('oracle-ungated-reconciliation', [('src/trusted_router/routes/internal/gateway.py', [
-        ('if settings.async_settle_enabled and getattr(STORE, "_database", None) is not None:',
+        ('if settings.async_settle_protection and getattr(STORE, "_database", None) is not None:',
          'if getattr(STORE, "_database", None) is not None:'),
     ])], 'tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[False-False-unresolved]'),
     ('oracle-ungated-refresh', [('src/trusted_router/storage_gcp_settle_outbox.py', [
         ('("AND async_version IS NULL " if self._async_fence else "")', '"AND async_version IS NULL "'),
     ])], 'tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[True-True-refresh]'),
 
+    ('amount-comparison-removal', [(HANDLER, [
+        ('if amount != value.terminal.charge_micro:', 'if False:'),
+    ]), ('src/trusted_router/billing_snapshot.py', [
+        ('if envelope.charge_micro != expected or envelope.usage != evaluated.usage:',
+         'if envelope.usage != evaluated.usage:'),
+    ])], 'test_handler_matrix[charge-409-None]'),
+    ('late-confirmation-acceptance', [(HANDLER, [
+        ('if result is not None and time.monotonic() < deadline:', 'if result is not None:'),
+    ])], 'test_commit_handoff_boundary[0.501]'),
+    ('dead-as-failed-status', [(HANDLER, [
+        ('row.status == "release_approved"', 'row.status in {"release_approved", "dead"}'),
+    ])], 'test_mark_park_never_rewrites_async_metadata'),
+    ('protection-follows-admission', [(path, [
+        ('"async_settle_protection"', '"async_settle_enabled"'),
+    ]) for path in ('src/trusted_router/storage_gcp.py',
+                    'src/trusted_router/services/settle_outbox_drain.py')] + [
+        ('src/trusted_router/routes/internal/gateway.py', [
+            ('settings.async_settle_protection', 'settings.async_settle_enabled'),
+        ]),
+    ], 'test_legacy_retry_preserves_accepted_amount[settle-False-False]'),
+    ('second-cleanup-budget', [('src/trusted_router/storage_gcp_io.py', [
+        ('if getattr(transaction, "_tr_async_cleanup_attempted", False):', 'if False:'),
+    ])], 'test_late_batch_cleanup_chain_has_one_budget[True]'),
 ]
 
 

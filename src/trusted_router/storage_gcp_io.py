@@ -424,6 +424,12 @@ def _rollback_discarded_transaction(transaction: Any) -> None:
     rollback = getattr(transaction, "rollback", None)
     if not callable(rollback):
         return
+    # A lost reply leaves SDK rolled_back=False. Share the attempt marker across
+    # the callback wrapper and outer disposer; never grant a second async floor.
+    if _STRICT_RPC_DEADLINE.get():
+        if getattr(transaction, "_tr_async_cleanup_attempted", False):
+            return
+        transaction._tr_async_cleanup_attempted = True
     # Independent floor for the Rollback RPC: the failing statement typically
     # exhausted the shared ContextVar budget, and the bounded RPC wrappers
     # would otherwise raise DeadlineExceeded before the request is even sent.

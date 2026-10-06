@@ -60,7 +60,7 @@ def spanner_settle_outbox() -> SpannerSettleOutbox:
         raise RuntimeError("settle outbox drain requires the Spanner store")
     return SpannerSettleOutbox(
         database, param_types,
-        async_fence=bool(getattr(getattr(STORE, "trust_settings", None), "async_settle_enabled", False)),
+        async_fence=bool(getattr(getattr(STORE, "trust_settings", None), "async_settle_protection", False)),
     )
 
 

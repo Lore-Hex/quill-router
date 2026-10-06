@@ -38,7 +38,7 @@ NOW = 1791244801
 
 def _outbox(store):
     outbox = _legacy_outbox(store)
-    outbox._async_fence = store.trust_settings.async_settle_enabled
+    outbox._async_fence = store.trust_settings.async_settle_protection
     return outbox
 
 
@@ -494,9 +494,10 @@ def test_late_commit_does_not_silently_extend_handoff(env, monkeypatch):
     assert list(env[1].settle_outbox) == [(auth.id, 'settle')]
 
 
+@pytest.mark.parametrize('admission', [True, False])
 @pytest.mark.parametrize('outbox_enabled', [True, False])
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
-def test_legacy_retry_preserves_accepted_amount(env, monkeypatch, outbox_enabled, kind):
+def test_legacy_retry_preserves_accepted_amount(env, monkeypatch, outbox_enabled, kind, admission):
     from tests.test_billing_snapshot import endpoint_from_candidate
     from trusted_router.catalog_data import Model
     from trusted_router.routes.internal import gateway
@@ -510,7 +511,13 @@ def test_legacy_retry_preserves_accepted_amount(env, monkeypatch, outbox_enabled
         id=endpoint.model_id, name='retry', provider=endpoint.provider,
         context_length=1_000_000, prepaid_available=True))
     cfg = settings(settle_outbox_enabled=outbox_enabled)
-    cfg.async_settle_enabled = True
+    cfg.async_settle_enabled = admission
+    env[0].trust_settings = cfg
+    # Refresh must remain immutable even before the legacy claim fence runs.
+    changed = row_for(env, body)
+    changed.actual_cost_micro = 100
+    _outbox(env[0]).enqueue(changed)
+    assert env[1].settle_outbox[(auth.id, 'settle')]['actual_cost_micro'] == 2
     result = gateway._settle_gateway_authorization(
         GatewaySettleRequest(authorization_id=auth.id, selected_endpoint=endpoint.id,
                              actual_input_tokens=100, actual_output_tokens=100),
@@ -702,7 +709,7 @@ def test_accepted_retry_with_changed_cohort_returns_existing(env):
 
 
 @pytest.mark.parametrize('enabled', [False, True])
-def test_claim_sql_flag_pin(enabled):
+def test_claim_sql_protection_pin(enabled):
     from google.cloud.spanner_v1 import param_types as pt
 
     from trusted_router.storage_gcp_counter_dml import claim_reservation_statement
@@ -800,3 +807,71 @@ def test_lookup_ticket_rejects_other_audience(env):
     token = material + '.' + b64encode(signer.private.sign(material.encode('ascii')))
     with pytest.raises(ValueError, match='ticket lookup validity'):
         verify_lookup_ticket(token, [replace(signer.trusted, aud='another-purpose')], NOW)
+
+
+@pytest.mark.parametrize('admission,protection', [(False, False), (False, True), (True, False)])
+def test_runtime_admission_fails_closed(env, admission, protection):
+    body, _, _ = prepare(env)
+    env[3].async_settle_enabled = admission
+    env[3].async_settle_protection = protection
+    result = call(env, body)
+    assert json.loads(result.body)['data']['reason'] == 'disabled'
+    assert not env[1].settle_outbox
+    client = _client(env[3])
+    client.app.state.async_settle = env[2]
+    response = client.post('/v1/internal/gateway/settle', json=body,
+                           headers={'X-TR-Settlement-Mode': 'async-v1'})
+    assert response.status_code == 400
+    assert not env[1].settle_outbox
+
+
+@pytest.mark.parametrize('reply_lost', [False, True])
+def test_late_batch_cleanup_chain_has_one_budget(env, monkeypatch, reply_lost):
+    """Real retry wrapper -> bounded rollback -> enqueue's outer disposer.
+
+    The runner models SDK GoogleAPICallError handling: it discards the handle
+    without its generic-exception rollback. A lost reply leaves rolled_back false.
+    """
+    from google.api_core.exceptions import DeadlineExceeded
+    from google.rpc.status_pb2 import Status
+
+    from trusted_router import storage_gcp_io as io
+
+    body, _, _ = prepare(env)
+    row = row_for(env, body)
+    clock = [10.0]
+    calls = []
+    commits = []
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+
+    def batch_update(statements):
+        clock[0] = 10.501
+        return Status(code=0), [1, 0, 0, 1]
+
+    def rollback():
+        start = clock[0]
+        budget = io.remaining_rpc_budget(2)
+        clock[0] += budget
+        calls.append((start, clock[0]))
+        if reply_lost:
+            raise DeadlineExceeded('rollback reply lost')
+        tx.rolled_back = True
+
+    tx = SimpleNamespace(batch_update=batch_update, rollback=rollback,
+                         committed=None, rolled_back=False)
+
+    def sdk_runner(callback, **kwargs):
+        callback(tx)
+        commits.append(clock[0])
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', sdk_runner)
+    with pytest.raises(DeadlineExceeded, match='before commit'):
+        enqueue(_outbox(env[0]), row, 10.5)
+    assert not commits
+    assert len(calls) == 1, calls
+    assert not env[1].settle_outbox
+    assert calls[0] == pytest.approx((10.501, 10.551))
+    assert clock[0] - 10.501 <= .055
+    assert tx.rolled_back is (not reply_lost)
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+    assert not io._STRICT_RPC_DEADLINE.get()

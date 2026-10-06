@@ -4022,7 +4022,7 @@ def _settle_gateway_authorization(
                         authorization.id,
                         exc_info=True,
                     )
-            if settings.async_settle_enabled and durable_intent is not None and durable_intent.async_version == 1:
+            if settings.async_settle_protection and durable_intent is not None and durable_intent.async_version == 1:
                 from trusted_router.services.async_settle_handler import finish
 
                 # A concurrent async INSERT won. Discard all newly priced inputs.
@@ -4229,7 +4229,7 @@ def _settle_gateway_authorization(
             raise
         if refreshed.settled:
             return {"data": _already_settled_gateway_data(refreshed)}
-        if settings.async_settle_enabled and getattr(STORE, "_database", None) is not None:
+        if settings.async_settle_protection and getattr(STORE, "_database", None) is not None:
             # The atomic async fence can reject a rolling synchronous writer
             # while the reservation remains open. Resolve its frozen winner,
             # including when the ordinary outbox feature flag has rolled back.

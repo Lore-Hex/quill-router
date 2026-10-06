@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction
 from tests.fakes.spanner_order import record_statements
 from tests.test_async_settle_handler import env, prepare, row_for  # noqa: F401
 from tests.test_authorize_hold_time import _ast_sha256
@@ -42,6 +43,7 @@ def test_frozen_source_pins():
 def test_frozen_main_effects_and_operation_trace(env, monkeypatch, scenario, success, outbox_enabled):
     body, auth, _ = prepare(env)
     env[3].async_settle_enabled = False
+    env[3].async_settle_protection = False
     env[0].settle_outbox._async_fence = False
     env[3].settle_outbox_enabled = outbox_enabled
     endpoints = {c['endpoint_id']: endpoint_from_candidate(c) for c in body['billing_snapshot']['candidates']}
@@ -112,11 +114,32 @@ def test_frozen_main_effects_and_operation_trace(env, monkeypatch, scenario, suc
                 patch.setattr(outbox.SpannerSettleOutbox, 'enqueue', outbox_globals['enqueue'])
                 patch.setattr(counters, 'claim_reservation', frozen_counter['claim_reservation'])
                 patch.setattr(storage_gcp_authorize, 'typed_finalize_atomic', frozen_finalize)
+            # Preserve exact SQL bytes, parameters and types, including batch
+            # boundaries and snapshot reads; normalized SQL alone misses drift.
+            raw_calls = []
+
+            def record_raw(cls, method, trace):
+                original = getattr(cls, method)
+
+                def wrapped(self, *args, **kwargs):
+                    trace.append((cls.__name__, method, copy.deepcopy(args), copy.deepcopy(kwargs)))
+                    return original(self, *args, **kwargs)
+
+                patch.setattr(cls, method, wrapped)
+
+            for method in ('execute_update', 'execute_sql', 'batch_update'):
+                record_raw(_FakeTransaction, method, raw_calls)
+            record_raw(_FakeSnapshot, 'execute_sql', raw_calls)
+            rpc_counters = ('snapshot_execute_sql_calls', 'transaction_execute_sql_calls',
+                            'transaction_execute_update_calls', 'transaction_batch_update_calls',
+                            'commits', 'rollback_calls')
+            rpc_before = [getattr(db, name) for name in rpc_counters]
             snapshot_start = len(db.snapshot_sql)
             function = frozen_settle if frozen else gateway._settle_gateway_authorization
             result = function(repair, success=success, settings=env[3])
             result.get('data', {}).pop('timing', None)
             outputs.append((result, {name: copy.deepcopy(getattr(db, name)) for name in names},
-                            [sql for _, sql in calls],
+                            [sql for _, sql in calls], raw_calls,
+                            [getattr(db, name) - before for name, before in zip(rpc_counters, rpc_before, strict=True)],
                             list(zip(db.snapshot_sql[snapshot_start:], db.snapshot_sql_params[snapshot_start:], strict=True))))
     assert outputs[0] == outputs[1]

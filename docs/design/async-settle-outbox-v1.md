@@ -909,17 +909,73 @@ claims are not independently established by the inspected artifacts.
 
 ### PR C flag-off SQL and additive-schema compatibility
 
-`async_settle_enabled=false` preserves the frozen PR B claim SQL, parameters,
-types and RPC count, including deferred-retention claims and unsuccessful sync
-finalize. The async fence, reconciliation point reads and refresh predicate are
-explicitly enabled together. When enabled, the claim's `NOT EXISTS` reads one
-primary-key range of `tr_settle_outbox` by `authorization_id` inside the money
-transaction. This is the only extra claim read and serializes a legacy claim
-against an accepted async intent. It uses the shared pending/dead guard statuses
-(leased work remains pending); `release_approved` and abandoned rows permit the
-operator-approved release. Deployment must keep this protection enabled while
-accepted async intents can race legacy writers; disabling it deliberately restores
-the legacy SQL contract specified for PR C.
+Admission and protection are independent. `async_settle_enabled` admits new
+work; `async_settle_protection` protects accepted work. Both default to false
+and rollout pins `TR_ASYNC_SETTLE_ENABLED=false` and
+`TR_ASYNC_SETTLE_PROTECTION=false` explicitly, never inheriting either value.
+Settings rejects admission on with protection off. Runtime admission checks
+also require both flags, even if settings were mutated without validation.
+Disabling admission stops ticket issuance and async-v1 acceptance; detached
+snapshot metadata remains available. Accepted rows still drain.
+
+With **both false**, the frozen PR B claim/refresh/INSERT SQL, parameters,
+types and RPC counts remain identical, including deferred-retention claims and
+unsuccessful synchronous finalize. Protection alone gates the claim's
+`NOT EXISTS` primary-key range read by authorization ID, the immutable refresh
+predicate, and winner reconciliation. Pending/dead rows are protected (leased
+work remains pending); release-approved and abandoned rows permit the
+operator-approved release. Additive INSERT construction is unchanged.
+
+| Gated site | Classification | Reason |
+|---|---|---|
+| `services/async_settle.snapshot_projection` | Admission (both flags) | Issue tickets and read eligibility only when new work may be accepted. |
+| `routes/settlements.AsyncSettlementRoute` | Admission (both flags) | Opt-in async-v1/snapshot-sync dispatch; ordinary legacy parsing remains unchanged. |
+| `services/async_settle_handler._handle` | Admission (both flags) | New async INSERT acceptance; direct disabled retries may resolve existing rows. |
+| `storage_gcp.SpannerStore.__init__` outbox construction | Protection | Supplies the immutable refresh predicate in `SpannerSettleOutbox.enqueue`. |
+| `services/settle_outbox_drain.spanner_settle_outbox` | Protection | The same immutable predicate for gateway and drain outbox instances. |
+| `storage_gcp.typed_finalize_gateway` | Protection | Claim fence in the generic typed finalizer. |
+| `storage_gcp.typed_finalize_gateway_authorization_result` | Protection | Claim fence in the durable two-commit finalizer. |
+| `storage_gcp.typed_settle_one_commit_result` | Protection | Claim fence in the one-commit finalizer. |
+| `storage_gcp.reap_expired_reservations` | Protection | Propagates the async fence alongside the existing reaper guard. |
+| `storage_gcp.reap_expired_reservations_result` | Protection | Same protection for the richer reaper result path. |
+| `gateway._settle_gateway_authorization`, durable async enqueue winner | Protection | Discards repriced legacy inputs and applies the accepted amount. |
+| `gateway._settle_gateway_authorization`, rejected claim reconciliation | Protection | Resolves the async winner even with admission and ordinary outbox admission off. |
+| `storage_gcp_counter_dml.claim_reservation_statement` | Protection argument | Emits extra predicate/parameters only when `async_fence` is true. |
+| `storage_gcp_settle_outbox.SpannerSettleOutbox.enqueue` | Protection argument | Emits `AND async_version IS NULL` only when `_async_fence` is true. |
+
+The gateway winner reads are necessary for correctness **after** acceptance;
+they must not follow admission. Status lookup and accepted-work drain remain
+available without an admission gate.
+
+Only safe disable order (apply to every serving replica before proceeding):
+
+1. Turn admission off, leaving protection on. No new tickets or async acceptances.
+2. Keep draining until **no** `tr_settle_outbox` row with `async_version=1` is
+   pending/dead. Wait for in-flight admission requests from old revisions too.
+   Dead rows require normal operator resolution; they are not drained merely
+   by disabling admission.
+3. Turn protection off only after the zero-backlog check succeeds.
+
+For each workspace ever admitted, use the bounded workspace-index check below
+with `@ws` bound as STRING, a strong snapshot, low priority, no retries and a
+short deadline (as in `storage_gcp_async_admission.read_admission`). The admission
+reader's broader pending/dead count also safely establishes zero when its trust
+row is available; missing/unavailable/truncated results are never proof of zero.
+Keep the complete admitted-workspace roster: one workspace's zero is not fleet
+clearance. Do not scan entity bodies or infer the roster from an unbounded scan.
+
+```sql
+SELECT COUNT(*) AS unresolved_async
+FROM (
+  SELECT authorization_id
+  FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_workspace_status}
+  WHERE workspace_id=@ws AND status IN ('pending', 'dead') AND async_version=1
+  LIMIT 1001
+)
+```
+
+Any positive count blocks protection disablement; 1001 is a bounded sentinel,
+not an exact backlog size. A read failure also blocks disablement.
 
 Outbox reads use the additive 22-column projection for both flag states; the old
 18-field tuple path is gone. This is safe because `.github/workflows/deploy.yml`
@@ -930,7 +986,9 @@ shared builder, without editing an already-built SQL string.
 
 Async batch statements stop 50 ms before the handoff deadline to leave cleanup
 time. Commit may use the remaining budget. A reply at 499 ms can confirm
-acceptance; one at 501 ms cannot produce 202. Cleanup always attempts a bounded
-Rollback RPC, including after an unexpectedly late wakeup: its async floor is
-50 ms, not the legacy two seconds. A scheduler/RPC overrun can therefore extend
+acceptance; one at 501 ms cannot produce 202. Cleanup attempts one bounded Rollback RPC per discarded transaction, including
+after an unexpectedly late wakeup: its async floor is 50 ms, not the legacy two
+seconds. A per-transaction attempted marker is set before the RPC; a lost reply
+cannot give the outer disposer another floor merely because SDK `rolled_back`
+is still false. A scheduler/RPC overrun can therefore extend
 best-effort cleanup past 500 ms; it never extends the acceptance deadline.
