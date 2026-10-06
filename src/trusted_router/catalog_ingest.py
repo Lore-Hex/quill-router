@@ -1670,7 +1670,9 @@ def _filter_unserved_provider_endpoints(
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
 
-    Six complementary filters apply:
+    Seven complementary filters apply:
+      * operator hold    — drop deliberately disabled provider/model routes for
+        every usage type, including third-party Lightning/Cloudflare passthrough.
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
       * discovery hold   — drop prepaid routes explicitly held by a fresh
