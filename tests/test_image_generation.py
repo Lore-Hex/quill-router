@@ -31,6 +31,7 @@ _IMAGE_ROUTES: dict[str, tuple[str, dict[str, Any]]] = {
     "recraft/recraftv4_1_pro": ("recraft", {"upstream_id": "recraftv4_1_pro"}),
     "decart/lucy-image-2": ("decart", {"upstream_id": "lucy-image-2"}),
     "black-forest-labs/flux-2-klein-4b": ("bfl", {"upstream_id": "flux-2-klein-4b"}),
+    "krea/krea-2-medium": ("krea", {"upstream_id": "krea/krea-2/medium"}),
 }
 
 
@@ -263,21 +264,27 @@ def test_gateway_authorizes_and_settles_only_image_models(
     assert generation.tokens_completion == 1120
 
 
+@pytest.mark.parametrize("model_id,provider,quote", [
+    ("black-forest-labs/flux-2-klein-4b", "bfl", 14_770),
+    ("krea/krea-2-medium", "krea", 31_650),
+])
 def test_fixed_price_image_hold_settles_exactly_once(
     client: TestClient,
     user_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+    provider: str,
+    quote: int,
 ) -> None:
-    _serve_image_models_on_fixture_routes(monkeypatch, "black-forest-labs/flux-2-klein-4b")
+    _serve_image_models_on_fixture_routes(monkeypatch, model_id)
     created = client.post("/v1/keys", headers=user_headers, json={"name": "fixed-images"}).json()
     key_hash = created["data"]["hash"]
-    quote = 14_770
 
     authorize = client.post(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key_hash,
-            "model": "black-forest-labs/flux-2-klein-4b",
+            "model": model_id,
             "estimated_input_tokens": 1,
             "max_output_tokens": 1,
             "route_type": "images",
@@ -288,7 +295,7 @@ def test_fixed_price_image_hold_settles_exactly_once(
     )
     assert authorize.status_code == 200, authorize.text
     auth = authorize.json()["data"]
-    assert auth["provider"] == "bfl"
+    assert auth["provider"] == provider
     assert auth["additional_cost_reservation_microdollars"] == quote
     assert auth["estimated_cost_microdollars"] == quote
 

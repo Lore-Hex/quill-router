@@ -134,7 +134,6 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
     endpoint_providers = {
         endpoint.provider for endpoint in catalog_vehicles.registry_endpoints().values()
     }
-    assert "krea" not in endpoint_providers
     # A ready provider publishes routes while its manifest has a canaried,
     # priced row; one the refresh tombstoned entirely is simply not expected.
     for module in (*MODULES, perplexity):
@@ -177,23 +176,26 @@ def test_every_ready_wave3_provider_serves_a_route() -> None:
     assert ROUTABLE_READY <= endpoint_providers, ROUTABLE_READY - endpoint_providers
 
 
+@pytest.mark.parametrize("provider,model_id", [
+    ("perplexity", "perplexity/sonar"),
+    ("krea", "krea/krea-2-medium"),
+])
 def test_public_routing_status_requires_a_callable_endpoint(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, provider: str, model_id: str,
 ) -> None:
     # The rule on a fixture route: which providers list a model today is not it.
     for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
-        if endpoint.provider == "perplexity":
+        if endpoint.provider == provider:
             monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
-    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "blocked"
+    assert provider_to_openrouter_shape(PROVIDERS[provider])["routing_status"] == "blocked"
     route = ModelEndpoint(
-        id="perplexity/sonar@perplexity/prepaid",
-        model_id="perplexity/sonar",
-        provider="perplexity",
+        id=f"{model_id}@{provider}/prepaid",
+        model_id=model_id,
+        provider=provider,
         usage_type="Credits",
     )
     monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
-    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "active"
-    assert provider_to_openrouter_shape(PROVIDERS["krea"])["routing_status"] == "blocked"
+    assert provider_to_openrouter_shape(PROVIDERS[provider])["routing_status"] == "active"
 
 
 def test_a_route_held_by_a_failed_live_canary_stays_dark(
