@@ -13,6 +13,15 @@ from trusted_router.services.contract_value_preview import safe_value_preview
     ("usage.include", "false", "false"),
     ("prompt_cache_retention", "24h", "24h"),
     ("reasoning.effort", "high", "high"),
+    ("include", ["reasoning.encrypted_content"], ["reasoning.encrypted_content"]),
+    ("include", ["message.output_text.logprobs", "web_search_call.action.sources"],
+     ["message.output_text.logprobs", "web_search_call.action.sources"]),
+    ("modalities", ["text", "audio"], ["text", "audio"]),
+    ("include", [], []),
+    ("include", ["reasoning.encrypted_content", "private-content", "sk-private-key"],
+     ["reasoning.encrypted_content", "[redacted:string]", "[redacted:string]"]),
+    ("include", [{"content": "private-content"}, ["private-content"], None],
+     ["[redacted:object]", "[redacted:array]", None]),
     ("stream", None, None),
     ("usage", {"include": True}, {"include": True}),
     ("usage", {"include": True, "secret": "private-content"}, {"include": True, "_redacted": True}),
@@ -49,3 +58,20 @@ def test_redaction_expansion_is_still_bounded() -> None:
     assert preview is not None and len(preview) <= 100 and truncated
     assert "x" not in preview
     assert json.loads(preview)
+
+
+def test_array_redaction_expansion_is_still_bounded() -> None:
+    preview, truncated = safe_value_preview("include", json.dumps(["x"] * 10))
+    assert preview is not None and len(preview) <= 100 and truncated
+    assert json.loads(preview) == ["[redacted:string]"] * 4
+    assert safe_value_preview("include", preview) == (preview, False)
+
+
+def test_bounded_enclave_array_preview_survives_sink() -> None:
+    preview = json.dumps(["reasoning.encrypted_content"] * 3, separators=(",", ":"))
+    assert safe_value_preview("include", preview) == (preview, False)
+
+
+@pytest.mark.parametrize("path", ["messages", "input", "tools", "metadata", "api_key", "future"])
+def test_array_enum_names_do_not_unlock_content_fields(path: str) -> None:
+    assert safe_value_preview(path, '["reasoning.encrypted_content"]') == ('"[redacted:array]"', False)

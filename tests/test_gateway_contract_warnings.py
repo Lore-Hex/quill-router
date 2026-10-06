@@ -184,13 +184,22 @@ def test_diagnostic_sink_rechecks_path_limit(warnings: list[dict[str, Any]]) -> 
     ("usage", '{"include":true}', '{"include":true}'),
     ("future", '"private customer content"', '"[redacted:string]"'),
     ("messages", '[{"content":"private customer content"}]', '"[redacted:array]"'),
+    ("include", '["reasoning.encrypted_content"]', '["reasoning.encrypted_content"]'),
+    ("include", '["reasoning.encrypted_content","private customer content"]',
+     '["reasoning.encrypted_content","[redacted:string]"]'),
+    ("include", '["reasoning.encrypted_content","reasoning.encrypted_content","reasoning.encrypted_content"]',
+     '["reasoning.encrypted_content","reasoning.encrypted_content","reasoning.encrypted_content"]'),
+    ("modalities", '["text","audio"]', '["text","audio"]'),
 ])
+@pytest.mark.parametrize(("route", "status"), [("/v1/chat/completions", 400), ("/v1/responses", 501)])
 def test_safe_value_preview_survives_sentry_scrubbing(
     client: TestClient, warnings: list[dict[str, Any]], path: str, raw: str, expected: str,
+    route: str, status: int,
 ) -> None:
     key = _key(client)
     payload = _request(key, parameter="other")
-    payload["contract_rejection"].update(parameter_path=path, value_preview=raw, value_truncated=True)
+    payload["route_type"] = route
+    payload["contract_rejection"].update(status=status, parameter_path=path, value_preview=raw, value_truncated=True)
     assert client.post("/v1/internal/gateway/validate", json=payload).status_code == 200
     [event] = warnings
     context = event["contexts"]["gateway_rejection"]
@@ -198,6 +207,8 @@ def test_safe_value_preview_survives_sentry_scrubbing(
     assert context["value_truncated"] is True
     assert context["request_id"] == REQUEST_ID
     assert event["tags"]["workspace_id"] == key["workspace_id"]
+    assert event["tags"]["route"] == route
+    assert event["tags"]["http_status"] == str(status)
     assert event["fingerprint"][-1] == "other"
     assert "private customer content" not in json.dumps(event)
     assert STORE.credit_money[key["workspace_id"]].reserved_microdollars == 0
