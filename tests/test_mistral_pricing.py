@@ -162,6 +162,10 @@ def test_mistral_docs_rejects_conflicting_duplicate_prices() -> None:
         parse(_table("Mistral Large 4") + _table("Mistral Large 4", "$0.34"))
 
 
+def test_mistral_docs_does_not_infer_an_ambiguous_cache_discount() -> None:
+    assert parse(_table("Mistral Large 4").replace("$0.07", "$0.07 $0.14")) == {}
+
+
 @pytest.mark.parametrize("hidden", ['hidden', 'aria-hidden="true"', 'data-state="inactive"'])
 def test_mistral_docs_ignores_hidden_batch_tiers(hidden: str) -> None:
     html = _table("Mistral Large 4") + f"<section {hidden}>{_table('Mistral Large 4', '$0.34')}</section>"

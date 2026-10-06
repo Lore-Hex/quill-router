@@ -231,6 +231,9 @@ def _parse_tables(html: str) -> dict:
                     row[field] = _to_micro_per_m(text)
             if "prompt_micro_per_m" not in row or "completion_micro_per_m" not in row:
                 continue
+            cached_text = values["cached input"].get_text(" ", strip=True)
+            if "prompt_cached_micro_per_m" not in row and cached_text not in {"", "-", "\u2014"}:
+                continue
             if model_id in out and out[model_id] != row:
                 raise ValueError(f"mistral: conflicting standard prices for {model_id}")
             out[model_id] = row
@@ -238,8 +241,7 @@ def _parse_tables(html: str) -> dict:
 
 
 def parse(html: str) -> dict:
-    # Support both the older embedded Next.js payload and the current
-    # server-rendered API cards. Current visible cards win if both exist.
+    # Keep old cards/Next.js fixtures readable; current docs tables win.
     out = _parse_embedded_json(html)
     out.update(_parse_rendered_cards(html))
     out.update(_parse_tables(html))
