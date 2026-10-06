@@ -19,8 +19,6 @@ the fast-admission specs.
 ## Running
 
 ```bash
-curl -fsSL -o proofs/tla2tools.jar \
-  https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
 ./proofs/check.sh                                   # what the `proofs` job runs
 python3 proofs/check_mutants.py --only TerminalOrder  # one spec's manifest
 python3 proofs/guard_sweep.py TerminalOrder           # sweep its guards again
@@ -31,7 +29,9 @@ python3 proofs/guard_sweep.py --verify TerminalOrder  # check its guard table, a
 `TLC_WORKERS=4` lowers the worker count on a machine that is doing other
 work.
 
-It needs a JVM (17 or later) and Python 3.11 or later.
+It needs a JVM (17 or later) and Python 3.11 or later. The model checker,
+`proofs/tla2tools.jar`, is in the repository, pinned by its sha256; the top of
+`check.sh` says how to move to another build.
 
 ## What every spec has
 
