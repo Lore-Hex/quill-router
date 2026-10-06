@@ -43,7 +43,7 @@ def adyen_item(code: str = "REFUND", *, ref: str = "mod1", at: datetime = NOW) -
 
 
 def funded(provider: str, *, payment_first: bool = True) -> tuple[Any, Any, str]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace("owner", "provider-trust", trial_credit_microdollars=0)
     if payment_first:
         credit(store, workspace.id, provider)

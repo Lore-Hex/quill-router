@@ -1164,7 +1164,7 @@ def test_in_memory_oauth_code_expiry_removes_lookup() -> None:
 
 
 def test_gcp_oauth_code_consume_is_one_time_and_hash_only() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     user = store.ensure_user("alice@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -1189,7 +1189,7 @@ def test_gcp_oauth_code_consume_is_one_time_and_hash_only() -> None:
 
 
 def test_gcp_oauth_code_without_client_app_id_defaults_to_legacy() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     user = store.ensure_user("old-oauth-code@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     raw, code = store.create_oauth_authorization_code(
@@ -1212,7 +1212,7 @@ def test_gcp_oauth_code_without_client_app_id_defaults_to_legacy() -> None:
 
 
 def test_gcp_oauth_code_expiry_deletes_code_and_lookup() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     user = store.ensure_user("alice@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     raw, code = store.create_oauth_authorization_code(

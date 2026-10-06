@@ -58,6 +58,9 @@ NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
+# Enforcement starts at the confirmed observation, not an invented upstream
+# deprecation date: all three IDs returned UnavailableModel on October 3.
+STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -90,6 +93,20 @@ class ProviderPrice:
     prompt_microdollars_per_million_tokens: int
     completion_microdollars_per_million_tokens: int
     prompt_cached_microdollars_per_million_tokens: int | None = None
+
+
+# Tencent Singapore prices its own routes independently of DeepSeek direct.
+# The refresh adapter verifies these against the official regional table.
+TENCENT_OFF_PEAK_PRICES = {
+    "deepseek/deepseek-v4.1-flash": ProviderPrice(150_000, 600_000, 3_000),
+    "deepseek/deepseek-v4-flash-0731": ProviderPrice(220_000, 660_000, 7_000),
+    "deepseek/deepseek-v4-pro-0813": ProviderPrice(660_000, 1_980_000, 22_000),
+}
+
+
+def _tencent_period(at: datetime) -> str:
+    local = at.astimezone(_BEIJING_TIME)
+    return "peak" if local.weekday() < 5 and (9 <= local.hour < 12 or 14 <= local.hour < 18) else "off_peak"
 
 
 _DEEPSEEK_V4_FLASH_MODEL_IDS = frozenset(
@@ -131,9 +148,33 @@ class _Retirement:
     model_ids: frozenset[str]
     upstream_ids: frozenset[str]
     effective_at: datetime
+    replacement_model_ids: tuple[str, ...] = ()
+
+    @property
+    def notice_id(self) -> str:
+        # One provider cutover remains the same event if its model list or
+        # replacement advice is corrected before deployment.
+        return f"{self.provider}:{self.effective_at.astimezone(UTC).isoformat()}"
+
+
+def provider_retirements() -> tuple[_Retirement, ...]:
+    """Announced cutovers, including future entries, for operational notices."""
+    return _RETIREMENTS
 
 
 _RETIREMENTS = (
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({
+            "kwaipilot/kat-coder-pro-v2",
+            "kwaipilot/kat-coder-air-v2.5",
+            "kwaipilot/kat-coder-pro-v2.5",
+        }),
+        upstream_ids=frozenset({
+            "kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5",
+        }),
+        effective_at=STREAMLAKE_OCTOBER_2026_RETIREMENT_AT,
+    ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.
     # Dated DeepSeek releases and other providers are unaffected; never
@@ -959,6 +1000,15 @@ def provider_pricing_schedule(
     """Public timing metadata for a provider's variable token pricing."""
     effective_at = _effective_time(at)
 
+    if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
+        return {
+            "kind": "time_of_day", "timezone": "Asia/Shanghai",
+            "current_period": _tencent_period(effective_at), "peak_multiplier": 2,
+            "peak_windows": [{"start": "09:00", "end": "12:00"}, {"start": "14:00", "end": "18:00"}],
+            "weekend_off_peak": {"timezone": "Asia/Shanghai", "days": ["Saturday", "Sunday"]},
+            "rate_locked_at": "authorization",
+        }
+
     if (
         provider_slug == "fireworks"
         and model_id == _FIREWORKS_DSV4_FLASH_0731_MODEL_ID
@@ -1031,6 +1081,14 @@ def provider_price_microdollars(
     early and makes the exact advertised transition deterministic.
     """
     effective_at = _effective_time(at)
+    if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
+        price = TENCENT_OFF_PEAK_PRICES[model_id]
+        multiplier = 2 if _tencent_period(effective_at) == "peak" else 1
+        return ProviderPrice(
+            price.prompt_microdollars_per_million_tokens * multiplier,
+            price.completion_microdollars_per_million_tokens * multiplier,
+            None if price.prompt_cached_microdollars_per_million_tokens is None else price.prompt_cached_microdollars_per_million_tokens * multiplier,
+        )
     if provider_slug == "deepseek":
         prices = _deepseek_prices(model_id, effective_at)
         if prices is not None:

@@ -487,7 +487,7 @@ def test_round_eight_helper_transport_fails_regardless_of_launcher(repo, command
 
 
 @pytest.mark.parametrize("relative", ["clickhouse/build_public_snapshots.py",
-                                      "src/trusted_router/regional_quota_reconcile_gate.py"])
+                                      "src/trusted_router/activity_delivery_repair_cli.py"])
 def test_deploy_program_transport_fails_but_statement_only_is_documented_non_goal(repo, relative):
     path = repo / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -672,12 +672,19 @@ def test_round_fifteen_binary_without_shebang_or_extension_is_skipped(repo):
 
 
 @pytest.mark.parametrize("change", ["duplicate", "remove", "transport"])
-def test_review_note_line_exemption_is_occurrence_bound(repo, change):
-    relative = ".codex-review-1.md"
+def test_review_note_line_exemption_is_occurrence_bound(repo, monkeypatch, change):
+    # A review note at the repository root whose prose names DDL, exempted by
+    # one reviewed line entry; the rest of the note is still scanned.
+    relative = "review-note.md"
+    line = "- The writer needs its new columns before the DDL runs; apply the migration first."
     path = repo / relative
-    shutil.copyfile(schema.ROOT / relative, path)
+    path.write_text("# Review\n" + line + "\n")
+    with pytest.raises(AssertionError, match="unconsumed DDL carrier"):
+        schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
+    monkeypatch.setitem(schema.DDL_EXEMPTIONS["lines"], relative, {
+        schema.normalized_statement(line): {"count": 1, "reason": "Archived review prose; no schema command."},
+    })
     schema.assert_schema_matches(spanner_ddl.DDL, spanner_ddl.SOURCE_DIGESTS, repo)
-    line = next(iter(schema.DDL_EXEMPTIONS["lines"][relative]))
     if change == "duplicate":
         path.write_text(path.read_text() + line + "\n")
     elif change == "remove":

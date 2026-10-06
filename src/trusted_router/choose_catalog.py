@@ -75,10 +75,10 @@ _ROUTE_DESCRIPTIONS = {
     ),
     ZDR_MODEL_ID: "Enforces a zero-retention or stronger provider endpoint for every attempt.",
     E2E_MODEL_ID: (
-        "Enforces provider confidential compute plus provider-side end-to-end encryption."
+        "Requires verified provider confidential compute, end-to-end encryption and explicit zero data retention."
     ),
     CONFIDENTIAL_MODEL_ID: (
-        "Readable alias for the same confidential-compute plus provider-E2EE route pool."
+        "Readable alias for the same verified compute, provider-E2EE and explicit-ZDR route pool."
     ),
     SYNTH_MODEL_ID: (
         "Runs a model panel, judge, and synthesizer. Every inner inference call is billable."

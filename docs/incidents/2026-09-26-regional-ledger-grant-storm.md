@@ -55,8 +55,8 @@ The fleet-wide bound is instance-count dependent: approximately one probe per
 instance per window with stable processes and repeated classified failures, plus
 transaction retries. Replacement processes lose cooldown history; prevention of the alert remains
 unproven at fleet scale. Settlement and reconciliation bypass this admission cooldown.
-The [design](../design/regional-quota-leases.md#admission-ledger-cooldown-2026-09-26)
-describes exact arming and eviction conditions.
+The design document (docs/design/regional-quota-leases.md, removed with the pilot
+on 2026-09-30; see git history) describes exact arming and eviction conditions.
 
 Regression coverage checks zero downstream calls during cooldown, exact global
 fallback, key isolation, expiry/backoff/jitter, success reset, durable quarantine,

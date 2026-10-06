@@ -92,7 +92,7 @@ cleanup_staged_traffic() {
     staged_status=1
   fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
-    deploy_mutex_release
+    deploy_mutex_finish "$staged_status" || staged_status=1
   fi
   exit "$staged_status"
 }
@@ -126,11 +126,14 @@ stop_final_baseline() {
 trap cleanup_staged_traffic EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+export TR_DEPLOY_MUTEX_CLOUD=gcp
 if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
   deploy_mutex_acquire
 fi
+deploy_mutex_assert
 
 shift_traffic() {
+  deploy_mutex_assert
   local new_pct="$1"
   local old_pct=$((100 - new_pct))
   log "shifting traffic: ${new_pct}% ${NEW_REV} / ${old_pct}% ${OLD_REV}"

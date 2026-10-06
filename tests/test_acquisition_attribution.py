@@ -889,7 +889,7 @@ def test_google_reporting_is_server_side_and_disabled_by_default() -> None:
 
 
 def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
-    store, _, _ = make_fake_store()
+    store, _ = make_fake_store()
     now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     touch = {
         "utm_source": "google",

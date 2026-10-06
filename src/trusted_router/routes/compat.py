@@ -19,6 +19,23 @@ def register_compat_stub_routes(router: APIRouter) -> None:
     async def rerank() -> JSONResponse:
         return not_supported()
 
+    @router.get("/private/models/{author}/{slug}")
+    async def private_model(author: str, slug: str) -> JSONResponse:
+        _ = (author, slug)
+        return error_response(404, "Private models are not supported", "private_models_not_supported")
+
+    @router.get("/private/models/{author}/{slug}/endpoints")
+    async def private_model_endpoints(author: str, slug: str) -> JSONResponse:
+        _ = (author, slug)
+        return error_response(404, "Private models are not supported", "private_models_not_supported")
+
+    _add_guardrail_stubs(router)
+    _add_current_openrouter_stubs(router)
+
+
+def register_gateway_compat_stub_routes(router: APIRouter) -> None:
+    """Control-plane stubs for media operations implemented by the gateway."""
+
     @router.post("/videos")
     async def videos() -> JSONResponse:
         return not_supported()
@@ -37,18 +54,9 @@ def register_compat_stub_routes(router: APIRouter) -> None:
         _ = jobId
         return not_supported()
 
-    @router.get("/private/models/{author}/{slug}")
-    async def private_model(author: str, slug: str) -> JSONResponse:
-        _ = (author, slug)
-        return error_response(404, "Private models are not supported", "private_models_not_supported")
-
-    @router.get("/private/models/{author}/{slug}/endpoints")
-    async def private_model_endpoints(author: str, slug: str) -> JSONResponse:
-        _ = (author, slug)
-        return error_response(404, "Private models are not supported", "private_models_not_supported")
-
-    _add_guardrail_stubs(router)
-    _add_current_openrouter_stubs(router)
+    @router.post("/images")
+    async def stub() -> JSONResponse:
+        return not_supported()
 
 
 def register_versioned_compat_stub_routes(router: APIRouter) -> None:
@@ -103,7 +111,6 @@ def _add_current_openrouter_stubs(router: APIRouter) -> None:
         ("/files/{file_id}", "GET"),
         ("/files/{file_id}/content", "GET"),
         ("/generation/feedback", "POST"),
-        ("/images", "POST"),
         ("/model/{author}/{slug}", "GET"),
         ("/observability/destinations", "GET"),
         ("/observability/destinations", "POST"),

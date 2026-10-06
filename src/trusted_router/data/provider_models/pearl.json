@@ -85,10 +85,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 170000,
-      "cached_input_token_price_per_m": 16000
+      "cached_input_token_price_per_m": 16000,
+      "missing_since": "2026-10-04",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek: V4 Pro",
@@ -478,6 +480,6 @@
       "cached_input_token_price_per_m": 4000
     }
   ],
-  "generated_at": "2026-09-28T11:44:42Z",
+  "generated_at": "2026-10-06T03:20:16Z",
   "model_count": 11
 }

@@ -16,7 +16,7 @@ def _user_and_workspace(store: Any, email: str) -> tuple[Any, Any]:
 
 
 def test_grant_credit_dry_run_does_not_mutate() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     _user, workspace = _user_and_workspace(store, "operator@example.com")
     before = live_credit_summary(workspace.id, store=store)
 
@@ -39,8 +39,8 @@ def test_grant_credit_dry_run_does_not_mutate() -> None:
 def test_grant_credit_applies_once_and_reports_authoritative_balance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, _db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _db = make_fake_store()
     _user, workspace = _user_and_workspace(store, "operator@example.com")
     argv = [
         "--email",
@@ -64,8 +64,8 @@ def test_grant_credit_applies_once_and_reports_authoritative_balance(
 def test_grant_credit_does_not_count_as_a_lifetime_topup_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, _db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _db = make_fake_store()
     user, _workspace = _user_and_workspace(store, "operator@example.com")
     base = [
         "--email",
@@ -84,8 +84,8 @@ def test_grant_credit_does_not_count_as_a_lifetime_topup_by_default(
 def test_grant_credit_can_explicitly_count_as_a_lifetime_topup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, _db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _db = make_fake_store()
     user, _workspace = _user_and_workspace(store, "operator@example.com")
 
     assert (
@@ -108,7 +108,7 @@ def test_grant_credit_can_explicitly_count_as_a_lifetime_topup(
 
 
 def test_set_lifetime_topup_is_idempotent_and_does_not_grant_credit() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user, workspace = _user_and_workspace(store, "operator@example.com")
     before = live_credit_summary(workspace.id, store=store)
     argv = [
@@ -127,7 +127,7 @@ def test_set_lifetime_topup_is_idempotent_and_does_not_grant_credit() -> None:
 
 
 def test_grant_credit_requires_workspace_when_selection_is_ambiguous() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user, first = _user_and_workspace(store, "operator@example.com")
     store.update_workspace(first.id, name="Team One")
     store.create_workspace(user.id, "Team Two")

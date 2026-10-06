@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.ai_iq import ai_iq_candidates, ai_iq_catalog_payload, ai_iq_for_model
+from trusted_router.catalog import MODELS
+from trusted_router.catalog_data import Model
 
 
 def test_ai_iq_candidate_mapping_handles_provider_qualified_model_ids() -> None:
@@ -46,7 +49,19 @@ def test_ai_iq_catalog_payload_is_keyed_by_trustedrouter_model_id() -> None:
     assert "unknown/provider-model" not in payload["models"]
 
 
-def test_public_ai_iq_endpoint_is_normalized_for_choose_app(client: TestClient) -> None:
+def test_public_ai_iq_endpoint_is_normalized_for_choose_app(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The endpoint answers for the models the catalog carries. Carry two that
+    # AI IQ profiles, whether or not a host serves them today.
+    for model_id in ("minimax/minimax-m3", "anthropic/claude-opus-4.8"):
+        monkeypatch.setitem(
+            MODELS,
+            model_id,
+            MODELS.get(model_id)
+            or Model(id=model_id, name=model_id, provider=model_id.split("/")[0],
+                     context_length=128_000),
+        )
     response = client.get("/ai-iq/models.json")
 
     assert response.status_code == 200

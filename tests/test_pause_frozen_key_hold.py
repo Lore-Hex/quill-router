@@ -22,7 +22,7 @@ def test_pause_reject_releases_frozen_key_hold(
     store: Any
     db: Any = None
     if backend == "spanner":
-        store, db, _ = make_fake_store(request_record_write_mode="legacy")
+        store, db = make_fake_store(request_record_write_mode="legacy")
     elif backend == "postgres":
         store = postgres_store_on(sqlite_postgres_conn())
     else:
@@ -102,7 +102,7 @@ def test_pause_reject_releases_frozen_key_hold(
 
 
 def test_spanner_paused_pointer_replay_raises_billing_paused() -> None:
-    store, db, _ = make_fake_store(request_record_write_mode="legacy")
+    store, db = make_fake_store(request_record_write_mode="legacy")
     store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "paused-replay", trial_credit_microdollars=1000)
     _, key = store.create_api_key(workspace_id=ws.id, name="key", creator_user_id="owner")
@@ -137,7 +137,7 @@ def test_unarmed_pause_is_inert(backend: str) -> None:
     store: Any
     db: Any = None
     if backend == "spanner":
-        store, db, _ = make_fake_store(request_record_write_mode="legacy")
+        store, db = make_fake_store(request_record_write_mode="legacy")
     elif backend == "postgres":
         store = postgres_store_on(sqlite_postgres_conn())
     else:

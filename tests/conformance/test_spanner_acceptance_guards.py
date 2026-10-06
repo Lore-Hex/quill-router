@@ -116,7 +116,7 @@ def test_acceptance_transaction_always_rolls_back(failure):
 def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
     from unittest.mock import Mock
 
-    from google.cloud import bigtable, spanner
+    from google.cloud import spanner
 
     from tests.conformance import spanner_emulator
     from tests.conformance.test_spanner_emulator_sdk import SDK_METHODS
@@ -124,7 +124,7 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
     originals = [getattr(cls, method) for cls, method, _ in SDK_METHODS]
 
     monkeypatch.setattr(spanner_emulator, "require_emulators", lambda: None)
-    spanner_client, bigtable_client = Mock(), Mock()
+    spanner_client = Mock()
     from datetime import timedelta
 
     from google.cloud.spanner_v1.database_sessions_manager import DatabaseSessionsManager
@@ -139,10 +139,8 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
         return spanner_client
 
     monkeypatch.setattr(spanner, "Client", Mock(side_effect=create_client))
-    monkeypatch.setattr(bigtable, "Client", Mock(return_value=bigtable_client))
     instance = spanner_client.instance.return_value
     database = instance.database.return_value
-    table = bigtable_client.instance.return_value.table.return_value
     def close():
         assert 0 < DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL.total_seconds() < 1
         if failure == "close":
@@ -160,7 +158,6 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
                 assert 0 < len(call.args[0]) <= 20
                 submitted.extend(call.args[0])
             assert tuple(submitted) == spanner_ddl.DDL
-            assert set(table.create.call_args.kwargs["column_families"]) == {"m", "activity", "benchmark", "synthetic", "rollup"}
             instance.delete.assert_not_called()
             if failure == "body":
                 raise RuntimeError("body")
@@ -171,10 +168,6 @@ def test_provisioning_submits_all_ddl_and_cleans_up(monkeypatch, failure):
     else:
         provision()
     database.close.assert_called_once()
-    if failure == "create":
-        table.delete.assert_not_called()
-    else:
-        table.delete.assert_called_once()
     instance.delete.assert_called_once()
     assert DatabaseSessionsManager._MAINTENANCE_THREAD_POLLING_INTERVAL == timedelta(minutes=10)
     assert [getattr(cls, method) for cls, method, _ in SDK_METHODS] == originals
@@ -405,7 +398,11 @@ def test_native_legacy_gaps_are_strict_at_collection():
 def test_native_rollup_gap_is_strict_at_collection(backend):
     from types import SimpleNamespace
 
-    from tests.conformance.conftest import _FAKE_ONLY_GAPS, pytest_collection_modifyitems
+    from tests.conformance.conftest import (
+        _FAKE_ONLY_GAPS,
+        _NATIVE_ROLLUPS_FROM_CLICKHOUSE_WORKER,
+        pytest_collection_modifyitems,
+    )
 
     name = "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option"
     marks = []
@@ -415,7 +412,7 @@ def test_native_rollup_gap_is_strict_at_collection(backend):
     pytest_collection_modifyitems([item])
     assert name not in _FAKE_ONLY_GAPS
     assert len(marks) == 1 and marks[0].name == "xfail" and marks[0].kwargs["strict"] is True
-    assert "#1370" in marks[0].kwargs["reason"]
+    assert marks[0].kwargs["reason"] == _NATIVE_ROLLUPS_FROM_CLICKHOUSE_WORKER
 
 
 @pytest.mark.parametrize("fixture", ["store", "user_credit_transfer_store", "unrelated_store"])

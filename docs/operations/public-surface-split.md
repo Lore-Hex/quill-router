@@ -55,11 +55,17 @@ for secret in \
 done
 ```
 
-The ClickHouse secret grant is required only while
-`TR_ANALYTICS_READ_MODE != bigtable`. The public deploy's complete secret
-allowlist is the derived attribution-cookie key, the deliberately T1-owned Sentry
-DSN, and that conditional ClickHouse read password. It binds no gateway,
+The ClickHouse secret grant is always required: tenant activity and usage are
+read from ClickHouse alone. The public deploy's complete secret allowlist is
+the derived attribution-cookie key, the deliberately T1-owned Sentry DSN, and
+that ClickHouse read password. It binds no gateway,
 payment, observer, SES, BYOK, or OAuth credentials.
+
+The live policy is now declared in `infra/cloud_armor.tf` (adopted on
+2026-10-03) and has only the host rule (900), the all-path ceiling (1200) and
+the default allow; rules 1000 and 1100 below were never kept. Change it there,
+with an owner applying the root. The commands below are the original
+bootstrap, kept for history.
 
 Create the policy out of band. This has the legacy policy's five-rule shape
 (host boundary, two class limits, all-path ceiling, and default allow), with

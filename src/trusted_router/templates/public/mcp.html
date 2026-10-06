@@ -2,6 +2,13 @@
 
 {% block body %}
 <section class="public-section docs-section">
+  <section id="model-advisor">
+    <h2>Model Advisor for ChatGPT</h2>
+    <p>Compare models and provider routes, estimate text-token costs, check linked privacy evidence, and plan a small evaluation. The public advisor endpoint is <code>https://trustedrouter.com/mcp/advisor</code>. It requires no account or API key.</p>
+    <p>Available tools: <code>search_models</code>, <code>compare_models</code>, <code>estimate_cost</code>, <code>get_provider</code>, and <code>search_docs</code>. It reads public catalog and documentation metadata only. It cannot run inference, access balances or private request history, purchase credits, or change your account.</p>
+    <p>Send model names, token counts, and abstract requirements rather than private content or credentials. Cost estimates cover uncached text tokens at current retail rates, not a guaranteed invoice. Catalog privacy evidence is distinct from a live attestation check. ChatGPT still processes your conversation under its own policies.</p>
+    <p>The advisor is <a href="https://github.com/Lore-Hex/LLM-advisor/tree/main/submission/packages/trustedrouter-model-advisor">open source</a>. The authenticated MCP endpoint below remains available for coding agents.</p>
+  </section>
   <div class="panel">
     <div class="panel-head"><h2>Connect your agent</h2><span class="pill good">Remote MCP</span></div>
     <div class="panel-body">
@@ -20,7 +27,7 @@ claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
     }
   }
 }</code></pre>
-      <p class="muted">Every MCP request requires a normal <code>sk-tr-...</code> API key, including catalog and documentation lookups. <code>chat-send</code> is billable and capped to short test messages.</p>
+      <p class="muted">Every request to <code>/mcp</code> requires a normal <code>sk-tr-...</code> API key, including catalog and documentation lookups. <code>chat-send</code> is billable and capped to short test messages. The separate <code>/mcp/advisor</code> endpoint above is public and read-only.</p>
     </div>
   </div>
 

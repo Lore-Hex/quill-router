@@ -76,11 +76,7 @@ EXPECTED_ENV_NAMES = {
     "TR_SPANNER_INSTANCE_ID",
     "TR_SPANNER_DATABASE_ID",
     "TR_SPANNER_POOL_SIZE",
-    "TR_BIGTABLE_INSTANCE_ID",
-    "TR_BIGTABLE_GENERATION_TABLE",
-    "TR_BIGTABLE_MIRROR_WRITES_ENABLED",
     "TR_GENERATION_RECORDS_ENABLED",
-    "TR_ANALYTICS_READ_MODE",
     "TR_REQUEST_RECORD_WRITE_MODE",
     "TR_SETTLE_OUTBOX_ENABLED",
     "TR_ANALYTICS_OUTBOX_ENABLED",
@@ -98,8 +94,6 @@ EXPECTED_ENV_NAMES = {
     "TR_TRUST_GCP_RELEASE_FALLBACK_URLS",
     "TR_TRUST_AWS_RELEASE_URL",
     "TR_TRUST_AZURE_RELEASE_URL",
-    "TR_REGIONAL_QUOTA_LEASES_ENABLED",
-    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
     "TR_FEDERATION_HOME_BASE_URL",
     "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED",
     "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL",
@@ -411,37 +405,6 @@ def test_companion_cloud_state_is_a_legitimate_routed_start(
     assert run.returncode == 0, summarise(run)
 
 
-@pytest.mark.parametrize("stage", ("companion", "routed"))
-def test_internal_deploy_refuses_a_legacy_service_that_still_serves_lease_capability(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str,
-) -> None:
-    # Ledger retirement (2026-09-27): this surface no longer copies the ledger
-    # app-profile maps, and a revision with capability but no map cannot boot.
-    # A legacy service still on the capability-on step is refused as a source.
-    original = SCRIPT_FIXTURES[SCRIPT]
-    capability_on = json.loads(
-        next(reply for pattern, reply in original.responses if "run revisions describe trusted-router-active" in pattern)
-    )
-    for item in capability_on["spec"]["containers"][0]["env"]:
-        if item.get("name") == "TR_REGIONAL_QUOTA_LEASES_ENABLED":
-            item["value"] = "true"
-    responses = tuple(
-        (pattern, json.dumps(capability_on, separators=(",", ":")))
-        if "run revisions describe trusted-router-active" in pattern
-        else (pattern, reply)
-        for pattern, reply in original.responses
-    )
-    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(original, responses=responses))
-    harness = DeployScriptHarness(tmp_path / "legacy-capability-on")
-
-    run = harness.run(SCRIPT, args=(stage,))
-
-    assert run.returncode != 0
-    assert "still serves TR_REGIONAL_QUOTA_LEASES_ENABLED=true; retire the ledger on the legacy service first" in run.stderr
-    mutating = ("create", "update", "deploy", "add-backend", "import")
-    assert not any(any(part in mutating for part in call[1:]) for call in run.calls)
-
-
 def test_missing_internal_runtime_sa_refuses_before_any_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -470,7 +433,6 @@ def test_missing_internal_runtime_sa_refuses_before_any_mutation(
     ("failed_preflight", "message"),
     (
         (r"spanner databases get-iam-policy", "roles/spanner.databaseUser"),
-        (r"bigtable instances get-iam-policy", "roles/bigtable.user"),
         (r"secrets get-iam-policy", "roles/secretmanager.secretAccessor"),
     ),
 )
@@ -524,3 +486,43 @@ def test_missing_stage_d_probe_binding_is_optional_on_first_internal_deploy(
             if name != "TR_STAGE_D_PROBE_API_KEY"
         }
         assert Settings(**_settings_kwargs(call)).stage_d_probe_api_key == ""
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("TR_STORAGE_BACKEND", "spanner-bigtable", "still runs TR_STORAGE_BACKEND=spanner-bigtable"),
+    ],
+)
+def test_internal_refuses_a_legacy_revision_that_still_uses_bigtable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+    message: str,
+) -> None:
+    # Bigtable analytics are retired: the internal surface follows a
+    # control-plane revision that runs spanner-clickhouse.
+    original = SCRIPT_FIXTURES[SCRIPT]
+    responses: list[tuple[str, str]] = []
+    for pattern, response in original.responses:
+        if "revisions describe trusted-router-active" not in pattern:
+            responses.append((pattern, response))
+            continue
+        revision = json.loads(response)
+        for item in revision["spec"]["containers"][0]["env"]:
+            if item.get("name") == name:
+                item["value"] = value
+        responses.append((pattern, json.dumps(revision, separators=(",", ":"))))
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        SCRIPT,
+        replace(original, responses=tuple(responses)),
+    )
+    harness = DeployScriptHarness(tmp_path / "legacy-bigtable-internal")
+
+    run = harness.run(SCRIPT, args=("companion",))
+
+    assert run.returncode != 0, summarise(run)
+    assert message in run.stderr
+    assert not any(call[3:5] == ["run", "deploy"] for call in run.calls)

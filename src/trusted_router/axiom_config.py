@@ -11,7 +11,7 @@ What this gives us that Cloud Logging alone doesn't:
   * Joins across request_id between rate-limit middleware, inference
     services, and storage_gcp_generations swallowed-error logs.
   * The Axiom MCP server (https://mcp.axiom.co/mcp) can query the same
-    dataset, so AI agents can answer "what request_ids saw a Bigtable
+    dataset, so AI agents can answer "what request_ids saw an analytics
     write failure in the last hour?"
 
 Design choices:

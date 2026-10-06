@@ -7,9 +7,9 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten
-from tests.lifecycle_clock import CATALOG_CLOCK
 from trusted_router import provider_lifecycle
-from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog import MODEL_ENDPOINTS, endpoints_for_model
+from trusted_router.catalog_data import ModelEndpoint
 
 _CUTOFF = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 _RETIRING = {
@@ -56,24 +56,42 @@ def test_baseten_routes_retire_at_announced_instant() -> None:
 def test_baseten_retirement_is_provider_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
+    # Provider discovery may remove or add routes independently of an announced
+    # cutoff. Use a self-contained catalog so this test covers only the
+    # provider-scoped lifecycle rule: Baseten serves every retiring model and
+    # successor, and another host serves each retiring model too.
+    served = {**_RETIRING, **_SUCCESSORS}
+    for endpoint_id, endpoint in tuple(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id in served:
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    routes = [("baseten", model_id, upstream_id) for model_id, upstream_id in served.items()]
+    routes += [("another-provider", model_id, model_id) for model_id in _RETIRING]
+    for provider, model_id, upstream_id in routes:
+        endpoint = ModelEndpoint(
+            id=f"{model_id}@{provider}/prepaid",
+            model_id=model_id,
+            provider=provider,
+            usage_type="Credits",
+            upstream_id=upstream_id,
+        )
+        monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
 
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: _CUTOFF - timedelta(microseconds=1),
+    )
     for model_id in _RETIRING:
         providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert "baseten" not in providers
-        if model_id == "nvidia/nemotron-120b-a12b":
-            assert not providers
-        else:
-            assert providers
+        assert providers == {"baseten", "another-provider"}
 
-    for model_id, upstream_id in _SUCCESSORS.items():
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
+    for model_id in _RETIRING:
         providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        # Later retirements are applied when the catalog is imported; rewinding
-        # the runtime clock cannot restore those routes into that snapshot.
-        expected = not provider_lifecycle.provider_model_retired(
-            "baseten", model_id, upstream_id, at=CATALOG_CLOCK
-        )
-        assert ("baseten" in providers) is expected
+        assert providers == {"another-provider"}
+    for model_id in _SUCCESSORS:
+        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+        assert providers == {"baseten"}
 
 
 def test_hourly_refresh_cannot_restore_retired_baseten_routes(

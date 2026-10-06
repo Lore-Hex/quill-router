@@ -64,7 +64,7 @@ def _seed(store, db, ws: str, *, credits: int = 100_000_000, **key_kwargs):
 
 
 def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _seed(store, db, "ws_w", limit_daily_microdollars=1_000)
 
     # Authorize + settle 700 — window counters land in the current windows.
@@ -119,7 +119,7 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
 
 
 def test_weekly_and_monthly_windows_block_independently() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _seed(store, db, "ws_wm", limit_weekly_microdollars=500)
     res = _auth(store, "ws_wm", key.hash, 300)
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
@@ -133,7 +133,7 @@ def test_weekly_and_monthly_windows_block_independently() -> None:
 
 
 def test_refund_and_reaper_do_not_book_window_usage() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _seed(store, db, "ws_rf", limit_daily_microdollars=1_000)
     res = _auth(store, "ws_rf", key.hash, 900)
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
@@ -150,7 +150,7 @@ def test_refund_and_reaper_do_not_book_window_usage() -> None:
 
 
 def test_byok_settle_counts_only_when_key_includes_byok() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     # include_byok=True: BYOK settles count toward windows.
     key_inc = _seed(store, db, "ws_bi", limit_daily_microdollars=10_000)
     res = _auth(store, "ws_bi", key_inc.hash, 600, is_byok=True)
@@ -184,7 +184,7 @@ def test_create_seeds_window_limits_metadata_update_never_reseeds() -> None:
     """C2a: key create seeds config; an update RE-SYNCS the config columns to
     tr_key_limit (typed authorize reads the cap there) WITHOUT clobbering the
     typed-owned spend counters (usage/start/reserved)."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _seed(store, db, "ws_pin", limit_daily_microdollars=5_000)
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     assert row["day_limit_micro"] == 5_000  # config seeded on create
@@ -205,7 +205,7 @@ def test_update_key_overall_limit_reaches_typed_enforcement() -> None:
     """Regression (C2a P1): editing a key's OVERALL cap must reach typed
     enforcement — reserve_key reads limit_micro from tr_key_limit, so an edit
     that only wrote tr_entities would be a silent spend bypass."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
 
     # Lowering a cap takes effect: $10 -> $1, then a $5 authorize is rejected.
     lowered = _seed(store, db, "ws_lower", limit_microdollars=10_000_000)
@@ -283,7 +283,7 @@ def test_inmemory_window_enforcement_and_snapshot() -> None:
 def test_window_check_passes_through_idempotent_replay() -> None:
     """A retry of an ALREADY-COMMITTED authorize must replay, never 429 — the
     snapshot check defers to the txn when a same-fingerprint reservation exists."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     key = _seed(store, db, "ws_replay", limit_daily_microdollars=1_000)
     # First authorize commits with an idempotency scope.
     res = authorize_atomic(

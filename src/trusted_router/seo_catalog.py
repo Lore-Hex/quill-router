@@ -16,13 +16,15 @@ from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
+    PRIVACY_TIER_CONFIDENTIAL,
     PROVIDERS,
     Model,
     ModelEndpoint,
-    endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_meets_privacy_requirement,
     endpoint_zero_data_retention,
     endpoints_for_model,
+    provider_confidential_inference,
 )
 from trusted_router.measured import measured_snapshot
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
@@ -218,7 +220,8 @@ def _model_row(
         ),
         "has_zdr": any(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints),
         "has_confidential": any(
-            endpoint_confidential_compute(endpoint) is True for endpoint in endpoints
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+            for endpoint in endpoints
         ),
         "has_e2e": any(endpoint_e2ee(endpoint) is True for endpoint in endpoints),
         "benchmark_count": len(scores_for_model(model.id)),
@@ -275,14 +278,14 @@ def _provider_row(
     measured: Mapping[str, object] | None,
 ) -> dict[str, object]:
     provider = PROVIDERS[slug]
-    if provider.provider_e2ee and provider.provider_confidential_compute:
-        privacy = "Provider E2EE"
+    if provider_confidential_inference(provider, prepaid=True):
+        privacy = "Confidential + ZDR"
     elif provider.provider_zero_data_retention:
         privacy = "ZDR"
     elif provider.prepaid_zero_data_retention:
         privacy = "ZDR on prepaid"
     elif provider.provider_confidential_compute:
-        privacy = "Confidential compute"
+        privacy = "Provider TEE claim"
     else:
         privacy = "Policy varies"
     availability = measured.get("provider_availability") if measured else None

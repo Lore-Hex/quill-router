@@ -343,14 +343,21 @@ def test_makora_provider_updates_supplemental_manifest(tmp_path: Path, monkeypat
         )
     )
 
-    assert notes == ["makora: refreshed provider_models/makora.json (9 priced rows)"]
+    assert notes == [
+        "makora: refreshed provider_models/makora.json (9 priced rows, tombstoned 2 unavailable)"
+    ]
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
     assert by_id["deepseek/deepseek-v4-flash"]["input_token_price_per_m"] == 113_400
     assert by_id["deepseek/deepseek-v4-flash"]["output_token_price_per_m"] == 279_100
     assert by_id["deepseek/deepseek-v4-flash"]["cached_input_token_price_per_m"] == 85_100
     assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_350_000
-    assert by_id["google/gemma-4-26b-a4b-it"]["input_token_price_per_m"] == 60_000
+    # Missing current prices must not reuse stale prices, even on held routes.
+    assert "input_token_price_per_m" not in by_id["google/gemma-4-26b-a4b-it"]
+    for model_id in ("deepseek/deepseek-v4-flash", "google/gemma-4-26b-a4b-it"):
+        assert by_id[model_id]["routable"] is False
+        assert by_id[model_id]["routable_reason"] == "provider-billing-unavailable"
+    assert by_id["z-ai/glm-5.2"].get("routable") is not False
     assert raw["generated_at"] != "2026-01-01T00:00:00Z"
 
 
@@ -434,7 +441,9 @@ def test_provider_model_manifests_have_hourly_refresh_path() -> None:
     missing_modules = sorted(
         manifest_slugs - provider_modules - aliased_manifest_slugs - legacy_manual
     )
-    missing_hourly = sorted((manifest_slugs & provider_modules) - hourly)
+    missing_hourly = sorted(
+        (manifest_slugs & provider_modules) - hourly - refresh.RETIRED_PROVIDER_SLUGS
+    )
 
     assert not missing_modules
     assert not missing_hourly

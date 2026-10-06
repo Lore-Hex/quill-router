@@ -33,7 +33,7 @@ def backend(request: Any) -> Any:
     elif request.param == "postgres":
         store = postgres_store_on(sqlite_postgres_conn())
     else:
-        store, _, _ = make_fake_store()
+        store, _ = make_fake_store()
     for uid in ["alice", "bob", "carol"]:
         user = User(id=uid, email=f"{uid}@example.com", username=uid, identity_status="approved")
         if isinstance(store, InMemoryStore):
@@ -240,7 +240,7 @@ def test_daily_cap_races_across_owned_workspaces(
     if backend_name == "memory":
         store: Any = InMemoryStore()
     elif backend_name == "spanner":
-        store, _, _ = make_fake_store()
+        store, _ = make_fake_store()
     else:
         dsn = os.environ.get("TR_CONFORMANCE_POSTGRES_DSN")
         if not dsn:
@@ -333,7 +333,7 @@ def test_recipient_lookup_has_identical_read_shape(
         store._run_transaction(lambda tx: store._write_entity_tx(
             tx, "username_user", "bob", {"user_id": recipient.id}))
     else:
-        store, db, _ = make_fake_store()
+        store, db = make_fake_store()
         for user in (sender, recipient):
             store._run_in_transaction(
                 lambda tx, user=user: store._write_entity_tx(tx, "user", user.id, user)

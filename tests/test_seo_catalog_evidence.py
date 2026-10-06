@@ -5,15 +5,17 @@ import re
 from collections.abc import Mapping
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import META_MODEL_IDS, MODELS, PROVIDERS, endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.provider_lifecycle import (
     LIFECYCLE_CLOCK_OVERRIDE_ENV,
     latest_scheduled_cutover,
 )
-from trusted_router.seo_catalog import seo_catalog_evidence
+from trusted_router.seo_catalog import _PAGE_FOCUS_TERMS, seo_catalog_evidence
 
 
 def test_every_dedicated_seo_page_renders_current_catalog_evidence(
@@ -54,14 +56,25 @@ def test_seo_evidence_counts_the_live_public_catalog(
     assert f"<strong>{public_route_count}</strong><span>configured routes</span>" in response.text
 
 
-def test_focused_seo_pages_show_relevant_current_models(client: TestClient) -> None:
-    kimi = client.get("/kimi-k2-api")
-    glm = client.get("/glm-5-api")
-    gemini = client.get("/gemini-flash-alternative")
-
-    assert "kimi-k2.7" in kimi.text.lower()
-    assert "glm-5.2" in glm.text.lower()
-    assert "gemini-3.5-flash" in gemini.text.lower()
+def test_focused_seo_pages_show_relevant_current_models(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A focused page leads with a catalog model that matches its focus terms.
+    # Which one leads follows measured traffic and route counts, so one
+    # matching model per page is carried here on a fixture route.
+    for model_id, host in (
+        ("moonshotai/kimi-k2.7-code", "kimi"),
+        ("z-ai/glm-5.2", "zai"),
+        ("google/gemini-3.5-flash", "google-ai-studio"),
+    ):
+        serve_on_fixture_route(monkeypatch, model_id, host, author=host)
+    for page_key in ("kimi-k2-api", "glm-5-api", "gemini-flash-alternative"):
+        leading = seo_catalog_evidence(page_key, test_mode=True)["models"][0]
+        assert any(
+            term in f"{leading['id']} {leading['name']}".lower()
+            for term in _PAGE_FOCUS_TERMS[page_key]
+        ), (page_key, leading["id"])
+        assert str(leading["id"]).lower() in client.get(f"/{page_key}").text.lower(), page_key
 
 
 def test_visible_featured_models_match_item_list_structured_data(

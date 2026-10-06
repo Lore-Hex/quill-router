@@ -1,0 +1,128 @@
+[
+  {
+    "guard": "_equal:type(left) is not type(right) => False",
+    "function": "_equal",
+    "before": "type(left) is not type(right)",
+    "after": "False",
+    "literal_case": "test_equality_member_order_and_scalar_types"
+  },
+  {
+    "guard": "_equal:type(left) not in (dict, list) => True",
+    "function": "_equal",
+    "before": "type(left) not in (dict, list)",
+    "after": "True",
+    "literal_case": "response_nested_bool_int"
+  },
+  {
+    "guard": "_equal:type(left) not in (str, int, float, bool, type(None)) => False",
+    "function": "_equal",
+    "before": "type(left) not in (str, int, float, bool, type(None))",
+    "after": "False",
+    "literal_case": "test_equality_cycles_and_non_json_values"
+  },
+  {
+    "guard": "_equal:left != right => False",
+    "function": "_equal",
+    "before": "left != right",
+    "after": "False",
+    "literal_case": "response_nested_order"
+  },
+  {
+    "guard": "_equal:id(left) in seen_left or id(right) in seen_right => False",
+    "function": "_equal",
+    "before": "id(left) in seen_left or id(right) in seen_right",
+    "after": "False",
+    "literal_case": "test_equality_rings"
+  },
+  {
+    "guard": "_equal:id(left) in seen_left => False",
+    "function": "_equal",
+    "before": "id(left) in seen_left",
+    "after": "False",
+    "literal_case": "test_equality_one_sided_sharing"
+  },
+  {
+    "guard": "_equal:id(right) in seen_right => False",
+    "function": "_equal",
+    "before": "id(right) in seen_right",
+    "after": "False",
+    "literal_case": "test_equality_one_sided_sharing"
+  },
+  {
+    "guard": "_equal:seen_left.add(id(left)) => pass",
+    "function": "_equal",
+    "before": "seen_left.add(id(left))",
+    "after": "pass",
+    "literal_case": "test_equality_one_sided_sharing"
+  },
+  {
+    "guard": "_equal:seen_right.add(id(right)) => pass",
+    "function": "_equal",
+    "before": "seen_right.add(id(right))",
+    "after": "pass",
+    "literal_case": "test_equality_one_sided_sharing"
+  },
+  {
+    "guard": "_equal:type(left) is dict => False",
+    "function": "_equal",
+    "before": "type(left) is dict",
+    "after": "False",
+    "literal_case": "response_nested_bool_int"
+  },
+  {
+    "guard": "_equal:left.keys() != right.keys() => False",
+    "function": "_equal",
+    "before": "left.keys() != right.keys()",
+    "after": "False",
+    "literal_case": "response_nested_keys"
+  },
+  {
+    "guard": "_equal:left.keys() != right.keys() => list(left) != list(right)",
+    "function": "_equal",
+    "before": "left.keys() != right.keys()",
+    "after": "list(left) != list(right)",
+    "literal_case": "test_equality_member_order_and_scalar_types"
+  },
+  {
+    "guard": "_equal:((left[key], right[key]) for key in left) => zip(left.values(), right.values(), strict=True)",
+    "function": "_equal",
+    "before": "((left[key], right[key]) for key in left)",
+    "after": "zip(left.values(), right.values(), strict=True)",
+    "literal_case": "test_equality_member_order_and_scalar_types"
+  },
+  {
+    "guard": "_equal:len(left) != len(right) => False",
+    "function": "_equal",
+    "before": "len(left) != len(right)",
+    "after": "False",
+    "literal_case": "response_nested_length"
+  },
+  {
+    "guard": "_equal:stack.extend(children) => pass",
+    "function": "_equal",
+    "before": "stack.extend(children)",
+    "after": "pass",
+    "literal_case": "response_nested_bool_int"
+  },
+  {
+    "guard": "_equal:while stack: => while False:",
+    "function": "_equal",
+    "before": "while stack:",
+    "after": "while False:",
+    "literal_case": "response_nested_order"
+  },
+  {
+    "guard": "_equal:return True => return False",
+    "function": "_equal",
+    "before": "return True",
+    "after": "return False",
+    "literal_case": "acceptance_depth_130_unmarked"
+  },
+  {
+    "guard": "_equal:seen_right: set[int] = set() => seen_right = seen_left",
+    "function": "_equal",
+    "before": "seen_right: set[int] = set()",
+    "after": "seen_right = seen_left",
+    "literal_case": "test_equality_one_sided_sharing"
+  }
+]

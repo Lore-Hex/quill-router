@@ -93,7 +93,7 @@ def _federated_claim(store: Any, ws: str, claim_id: str, cost: int) -> None:
 
 
 def test_usage_matching_the_ledger_is_clean() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_ok"
     _credit(store, db, ws, baseline=2_000_000, total_usage=2_450_000)
     _settled(db, "r1", ws, 300_000)
@@ -115,7 +115,7 @@ def test_federated_settlement_is_booked_usage_not_drift() -> None:
     here, because the authorize happened on the other plane. An audit that sums
     only settled reservations reports the whole federated amount as drift.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_federated"
     _credit(store, db, ws, baseline=1_000_000, total_usage=1_875_000)
     _settled(db, "r1", ws, 125_000)
@@ -144,7 +144,7 @@ def test_federated_settlement_is_booked_usage_not_drift() -> None:
 
 def test_expired_settlement_is_retention_gap_not_usage_violation() -> None:
     """The exact production incident: total_usage is lifetime, reservations are not."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_retained"
     _credit(store, db, ws, baseline=2_000_000, total_usage=2_450_000)
     _settled(db, "expired", ws, 300_000)
@@ -168,7 +168,7 @@ def test_expired_settlement_is_retention_gap_not_usage_violation() -> None:
 def test_non_credits_settles_do_not_count_toward_usage() -> None:
     """storage_gcp_authorize passes `book_actual if settled_usage_type ==
     "Credits" else 0`, so a non-Credits settle never reached total_usage."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_mixed"
     _credit(store, db, ws, baseline=0, total_usage=100_000)
     _settled(db, "r1", ws, 100_000)
@@ -180,7 +180,7 @@ def test_non_credits_settles_do_not_count_toward_usage() -> None:
 
 
 def test_real_usage_drift_is_caught_with_its_arithmetic() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_drift"
     _credit(store, db, ws, baseline=2_000_000, total_usage=2_000_000)  # settle never landed
     _settled(db, "r1", ws, 420_000)
@@ -197,7 +197,7 @@ def test_real_usage_drift_is_caught_with_its_arithmetic() -> None:
 
 
 def test_a_missing_baseline_is_unauditable_not_a_violation() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_cleaned"
     _credit(store, db, ws, baseline=None, total_usage=9_999_999)
     _settled(db, "r1", ws, 1_000)
@@ -226,7 +226,7 @@ def test_a_missing_baseline_is_unauditable_not_a_violation() -> None:
 def test_booked_usage_with_no_typed_row_is_a_violation() -> None:
     """The reverse direction, matching the reserved arm: a booking that landed
     nowhere is invisible if you only iterate typed rows."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_orphan"
     _settled(db, "r1", ws, 640_000)
 
@@ -237,7 +237,7 @@ def test_booked_usage_with_no_typed_row_is_a_violation() -> None:
 
 
 def test_repair_dry_run_reports_without_writing() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_repair"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=2_000_000, total_usage=2_000_000)
@@ -257,7 +257,7 @@ def test_repair_dry_run_reports_without_writing() -> None:
 
 
 def test_repair_applies_the_reconstructed_total() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_apply"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=2_000_000, total_usage=2_000_000)
@@ -271,7 +271,7 @@ def test_repair_applies_the_reconstructed_total() -> None:
 
 
 def test_repair_refuses_an_unpaused_workspace() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_live"
     _workspace(store, ws, paused=False)
     _credit(store, db, ws, baseline=0, total_usage=0)
@@ -285,7 +285,7 @@ def test_repair_refuses_an_unpaused_workspace() -> None:
 def test_repair_refuses_while_a_hold_is_open() -> None:
     """An open hold is a settle that has not added its actual yet: repairing now
     writes a total that the settle immediately invalidates."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_draining"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=1_000_000, total_usage=1_000_000)
@@ -298,7 +298,7 @@ def test_repair_refuses_while_a_hold_is_open() -> None:
 
 
 def test_repair_refuses_when_the_baseline_was_cleaned_up() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_nobaseline"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=None, total_usage=5_000_000)
@@ -312,7 +312,7 @@ def test_repair_refuses_when_the_baseline_was_cleaned_up() -> None:
 def test_repair_refuses_to_lower_usage_without_independent_ledger_proof() -> None:
     """total_usage is monotonic, so a computed decrease means the ledger is
     missing rows -- not that the counter is too high."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_down"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=1_000_000, total_usage=5_000_000)
@@ -341,7 +341,7 @@ def test_usage_is_summed_across_shards() -> None:
     """Unlike `reserved`, which is per (scope, shard), both usage ledgers name a
     WORKSPACE. Comparing shard 0 alone against a whole-workspace ledger would
     report every other shard's usage as missing."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_sharded"
     # baseline 1M + settled 1M == 2M, spread 800k/700k/500k across three shards.
     _credit(store, db, ws, baseline=1_000_000, total_usage=800_000)  # shard 0
@@ -369,7 +369,7 @@ def test_a_counter_the_ledger_explains_exactly_needs_no_baseline() -> None:
     counter exactly the baseline is zero -- reconciled, not assumed. Treating
     these as uncheckable reported 94% of the fleet as uncovered.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_postflip"
     _credit(store, db, ws, baseline=None, total_usage=450_000)
     _settled(db, "r1", ws, 300_000)
@@ -395,7 +395,7 @@ def test_a_counter_BELOW_the_ledger_is_surfaced_even_with_no_baseline() -> None:
     -1537, -856, -173 on consecutive snapshots. Failing nightly on that is the
     cry-wolf shape this repo has already paid for once.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_behind"
     _credit(store, db, ws, baseline=None, total_usage=100_000)
     _settled(db, "r1", ws, 900_000)
@@ -416,7 +416,7 @@ def test_a_recorded_baseline_makes_a_pre_ledger_workspace_auditable() -> None:
     is exactly what the credit-JSON cleanup empties, so returning it there would
     arrange the same loss a second time.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_preledger"
     _credit(store, db, ws, baseline=None, total_usage=5_000_000)
     _settled(db, "r1", ws, 1_000_000)
@@ -441,7 +441,7 @@ def test_repair_works_with_no_baseline_when_the_ledger_explains_the_counter() ->
     Refusing these for lack of a baseline would have made the repair tool
     unusable on 94% of the fleet, for a number that is knowably zero.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_reconciled"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=None, total_usage=200_000)
@@ -456,7 +456,7 @@ def test_repair_works_with_no_baseline_when_the_ledger_explains_the_counter() ->
 
 def test_repair_still_refuses_when_history_is_genuinely_missing() -> None:
     """And says what to record, rather than only that it will not proceed."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_history"
     _workspace(store, ws)
     _credit(store, db, ws, baseline=None, total_usage=5_000_000)
@@ -479,7 +479,7 @@ def test_settles_on_a_nonzero_shard_are_not_mistaken_for_lost_history() -> None:
     across 30 workspaces; the mismatch reported 42 workspaces as needing a
     recorded baseline where 13 do.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_sharded_ledger"
     _credit(store, db, ws, baseline=None, total_usage=300_000)  # shard 0 row
     db.typed[CREDIT_BALANCE_TABLE][(ws, 1)] = {
@@ -511,7 +511,7 @@ def test_a_settle_in_flight_is_not_reported_as_drift() -> None:
     Here the shortfall resolves before the confirming read, exactly as an
     in-flight settle does.
     """
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_inflight"
     _credit(store, db, ws, baseline=None, total_usage=400_000)
     _settled(db, "r1", ws, 500_000)  # ledger ahead of the counter
@@ -547,7 +547,7 @@ def test_a_shortfall_that_persists_IS_reported() -> None:
     """The stable kind. One production workspace sits at exactly -9
     microdollars across consecutive reads; that is real and must not be
     excused by the in-flight tolerance."""
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_persistent"
     _credit(store, db, ws, baseline=None, total_usage=400_000)
     _settled(db, "r1", ws, 500_000)

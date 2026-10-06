@@ -16,7 +16,7 @@
       <li>✓ Use <code>trustedrouter/plato-pro-2.0</code> for GLM 5.2 advised by Prometheus 2.0</li>
       <li>✓ Use <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, or <code>trustedrouter/zeus-code-1.0</code> for code-tuned Synth presets</li>
       <li>✓ Add <code>provider.min_privacy = "zdr"</code> for a hard zero-retention floor</li>
-      <li>✓ Add <code>provider.min_privacy = "confidential"</code> to require confidential compute + provider E2EE</li>
+      <li>✓ Add <code>provider.min_privacy = "confidential"</code> to require verified provider compute + E2EE + ZDR</li>
     </ul>
     <a class="btn" href="/docs/migrate-from-openrouter">Migration guide →</a>
   </div>
@@ -34,6 +34,8 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+{% include "public/_api_hosts.html" %}
+
 <section style="margin-top:48px" id="privacy-filters">
   <h2 class="section-center">Fail-closed privacy filters</h2>
   <div class="marketing-grid two">
@@ -46,15 +48,16 @@ const r = await client.chat.completions.create({
       <p>This is a hard minimum. If no endpoint for the selected model and provider filters has a tracked ZDR guarantee, the request fails before inference.</p>
     </div>
     <div class="marketing-card">
-      <h3>Require confidential + E2EE</h3>
+      <h3>Require Confidential: verified compute + E2EE + ZDR</h3>
       <pre><code>{
   "model": "your/model",
   "provider": {"min_privacy": "confidential"}
 }</code></pre>
-      <p>This stronger hard minimum requires both provider-side confidential compute and end-to-end encryption. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
+      <p>Confidential requires all three on the same route: verified provider-side confidential compute, end-to-end encryption and explicit zero data retention. Missing or false ZDR makes a route ineligible even when its compute and encryption are verified. The model's own vendor never qualifies, so a Confidential request never reaches it. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
+      <p>Catalog fields <code>provider_confidential_compute</code> and <code>provider_e2ee</code> report individual technical properties. The Confidential label and endpoint <code>privacy_tier: 3</code> additionally require <code>provider_zero_data_retention: true</code> for that exact route.</p>
     </div>
   </div>
-  <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same confidential + E2EE pool. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
+  <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same verified compute + E2EE + ZDR pool. A TR-funded ZDR agreement qualifies only the funded route, not BYOK. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
 </section>
 
 <section style="margin-top:48px">
@@ -115,6 +118,34 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+<section id="model-changes" style="margin-top:48px">
+  <h2 class="section-center">Model route changes</h2>
+  <p>Poll <a href="https://trustedrouter.com/v1/models/changes"><code>GET https://trustedrouter.com/v1/models/changes</code></a> or subscribe to the <a href="https://trustedrouter.com/v1/models/changes.atom">Atom feed</a>. Both are public and need no API key. They report model and provider-route additions and removals, route metadata changes, confidential route gains and losses, best privacy tier changes, and upcoming provider retirements.</p>
+  <pre><code>GET /v1/models/changes?model=deepseek/deepseek-v4-flash&amp;since=2026-09-01T00:00:00Z
+GET /v1/models/changes.atom?type=confidential_route_lost
+GET /v1/models/changes?upcoming=true</code></pre>
+  <p>Each entry has a stable <code>id</code>, <code>model</code>, <code>type</code>, <code>before</code>, <code>after</code>, <code>recorded_at</code> and <code>effective_at</code>. Results are complete and ordered by <code>(recorded_at, id)</code>, ascending. <code>since</code> is inclusive and filters when entries were recorded, so newly announced future changes are discoverable immediately. Save the greatest <code>recorded_at</code> you receive and deduplicate the next poll by <code>id</code>. Use timezone-qualified timestamps; <code>model</code> matches an exact public id. Repeat <code>type</code> to select several change types. <code>upcoming=true</code> selects future effective dates; <code>false</code> selects changes already effective; omit it for both.</p>
+  <p>Announcements use <code>retirement_scheduled</code>; projected route changes have <code>source: "scheduled"</code> and the announced effective date. They describe the current plan. If a forecast is withdrawn or replaced, it disappears from the current feed and a <code>schedule_cancelled</code> entry identifies its old id. Scheduled pricing policies use <code>pricing_schedule_changed</code>, excluded by default: select that type or add <code>include_prices=true</code>. Ordinary price refreshes and each recurring peak/off-peak switch are omitted to keep subscriptions readable; pricing policy entries contain the recurring schedule.</p>
+  <p><code>trustedrouter.last_route_change_at</code> in <code>/v1/models</code> gives the latest recorded route change that is already effective, or <code>null</code> if none is known. The history starts with a September 1, 2026 baseline and replays committed catalog revisions using their contemporary privacy rules. Backfilled observations use commit dates, not deployment timestamps. Later entries describe catalog observations and announced cutovers; they do not establish release completion, live provider health, capacity, or credential availability. Conditional discovery-expiry deadlines are recorded when observed, rather than forecast as provider retirements.</p>
+</section>
+
+<section id="model-capabilities" style="margin-top:48px">
+  <h2 class="section-center">Model request capabilities</h2>
+  <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
+  <pre><code>"capabilities": {
+  "reasoning_effort": ["none", "low", "medium", "high", "xhigh"],
+  "tools": true,
+  "seed": true,
+  "vision": true,
+  "confidential": false
+}</code></pre>
+  <p>Model-level <code>tools</code> and <code>seed</code> match membership in the model row's final <code>supported_parameters</code>; <code>vision</code> matches image input in <code>architecture.input_modalities</code>. These discovery fields include model declarations and current Credits and BYOK route declarations after known overclaims are removed. Some routes declare less than the model supports: GPT-5.5's OpenAI routes report <code>seed: false</code> even though its model-level discovery union includes seed. <code>tools</code> means function tools; <code>seed</code> means a supported seed control (not guaranteed deterministic output); <code>vision</code> means image input, not image generation. These flags describe each control independently, not every combination.</p>
+  <p>Per route, <code>reasoning_effort</code> has three states: a non-empty list gives verified accepted values; <code>[]</code> means do not send effort because the route is verified to accept none; <code>null</code> means not verified. At model level, it is the union of verified lists, or <code>[]</code> when every route is verified to reject effort, otherwise <code>null</code>. Mistral Large reports <code>[]</code>. Values appear in this order: <code>none</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>. The string <code>"none"</code> is an explicit accepted value, distinct from <code>null</code> and <code>[]</code>. Values describe the top-level chat <code>reasoning_effort</code> control after gateway translation, which can map to a token budget or thinking level. Do not combine it with a conflicting <code>reasoning.enabled</code> or budget setting.</p>
+  <p>Default routing does not filter by parameters. With <code>provider.require_parameters: true</code>, routing keeps only routes whose own <code>supported_parameters</code> include every parameter sent. Check the per-route values first: <code>trustedrouter.endpoints[].capabilities</code> and the route's <code>supported_parameters</code>, because some routes declare less than the model supports. This filters parameter names, not effort values or image input; pin a suitable provider when values differ. <code>GET /v1/models/{author}/{slug}/endpoints</code> also returns each endpoint's <code>trustedrouter.capabilities</code>.</p>
+  <p><code>confidential</code> is an availability flag: at least one current endpoint satisfies the same confidential privacy rule used in routing, including verified compute, end-to-end encryption, zero retention, and exclusion of the model's own vendor. On the confidential host, send <code>provider.min_privacy: "confidential"</code>; the host requires it and ordinary endpoints are excluded. The flag describes catalog eligibility, not live health, your credentials, or capacity. Zero retention alone does not qualify.</p>
+  <p>Routing aliases such as <code>trustedrouter/auto</code>, orchestration models, and hidden routes omit the object because their selected models and internal calls can vary. Absence is not a declaration of no support. The legacy <code>supported_parameters</code> union and <code>architecture.input_modalities</code> remain discovery fields; they need not describe every endpoint.</p>
+</section>
+
 <section style="margin-top:48px">
   <h2 class="section-center">API reference</h2>
   <div class="marketing-grid two">
@@ -158,6 +189,43 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
+<section style="margin-top:48px" id="key-management">
+  <h2>Manage keys at scale</h2>
+  <p>Key management runs on the control plane, <code>{{ control_plane_api_base_url }}</code>, with a management key. Every operation is limited to the caller's workspace. Keep management keys on your server.</p>
+  <h3>List and page through keys</h3>
+  <p><code>GET /v1/keys?limit=100&amp;offset=0</code> returns <code>{"data": [...], "next_offset": 100}</code>. Pass <code>next_offset</code> as the next request's <code>offset</code> with the same <code>limit</code> and filter. A <code>null</code> <code>next_offset</code> marks the last page. <code>limit</code> accepts 1–1000 and <code>offset</code> accepts any non-negative integer. Other values return HTTP 400 with <code>error.type: "bad_request"</code>.</p>
+  <p>Keys sort newest first, with ascending hash as the tie-breaker. Disabled keys are included unless you pass <code>include_disabled=false</code>, which filters before paging. Without <code>limit</code>, the response keeps its original <code>{"data": [...]}</code> shape and lists every key after the offset. <code>offset</code> and <code>include_disabled</code> match OpenRouter's parameters; <code>limit</code> and <code>next_offset</code> are TrustedRouter additions.</p>
+  <p>Each page reads keys and their usage together in one database query. Creating or deleting keys between requests shifts later offsets. To delete every key, collect the hashes first, or keep reading page zero while you delete.</p>
+  <h3>Delete many keys in one request</h3>
+  <pre><code>POST /v1/keys/bulk-delete
+Authorization: Bearer $TR_MANAGEMENT_KEY
+Content-Type: application/json
+
+{"hashes": ["key_first", "key_second"]}
+
+HTTP 200
+{"data": [{"hash": "key_first", "status": "deleted"},
+          {"hash": "key_second", "status": "not_found"}]}</code></pre>
+  <p>Send 1–1000 hashes per request. Results follow the input order, and a repeated hash repeats its first result. Missing keys and keys in another workspace both report <code>not_found</code>. Each group of up to 100 distinct hashes is deleted atomically, together with its lookup indexes. Groups commit independently, so after a failure you can retry the whole request; keys already deleted then report <code>not_found</code>. <code>DELETE /v1/keys/{hash}</code> also deletes atomically and returns <code>{"data": {"deleted": true, "hash": "..."}}</code>, or 404 when the key does not exist.</p>
+  <h3 id="management-rate-limits">Request rate limits and retries</h3>
+  <p>The control plane limits each source IP address, across every credential behind it:</p>
+  <ul>
+    <li><strong>300 state-changing requests per 60 seconds</strong>: <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, and <code>DELETE</code>. Each <code>DELETE /v1/keys/{hash}</code> counts once.</li>
+    <li><strong>2,400 requests per 60 seconds</strong> of any method, including <code>GET /v1/keys</code>.</li>
+  </ul>
+  <p>A request over either limit gets HTTP 429 from the edge, before it reaches the API. That response may be HTML or plain text and need not carry <code>Retry-After</code>. Management calls have no separate per-key request quota. A bulk delete counts as one write, so revoking 1,000 keys takes one request instead of more than three minutes of single deletes.</p>
+  <p>Back off on every 429. Honor <code>Retry-After</code> when present; otherwise use capped exponential backoff with jitter. Database contention returns 503 with <code>error.type: "service_unavailable"</code> and <code>Retry-After: 1</code>; retry it the same way. Inference spend-window limits use the separate <code>RateLimit-*</code> headers below.</p>
+  <h3 id="key-usage-freshness">Usage freshness</h3>
+  <p>Key usage counters advance when a request settles. <code>GET /v1/key</code> reads them from a snapshot up to five seconds old. <code>GET /v1/keys</code> reads them with a strong read.</p>
+  <p>Activity comes from a separate analytics pipeline. It can show a request before <code>GET /v1/key</code> does, or after it, and it trails further when the pipeline has a backlog. <code>data.analytics.drain_lag_seconds</code> in <a href="/status.json">status.json</a> reports that backlog. A key's <code>updated_at</code> changes with its settings, not with usage.</p>
+</section>
+
+<section style="margin-top:48px" id="billing-usage">
+  <h2>Billing and usage</h2>
+  <p>Token counts and token list prices are the starting point for billing. Review the rounding rules below, then inspect credits and activity at <code>{{ control_plane_api_base_url }}</code> to reconcile charges.</p>
+  {% include "public/_minimum_charges.html" %}
+</section>
+
 <section style="margin-top:48px" id="rate-limit-headers">
   <h2 class="section-center">Spend-window rate limits</h2>
   <p>A key with a hard daily, weekly, or monthly spend limit gets the governing window on every response. Values are integer microdollars, the same unit used by the key-limit API. Keys without a hard spend window do not get fabricated rate-limit headers.</p>
@@ -195,7 +263,7 @@ with httpx.Client() as client:
         )))
 
         if response.status_code == 429:
-            time.sleep(max(1, int(response.headers["Retry-After"])))
+            time.sleep(max(1, int(response.headers.get("Retry-After", "5"))))
             continue
 
         response.raise_for_status()
@@ -207,6 +275,14 @@ with httpx.Client() as client:
             time.sleep(reset)</code></pre>
     </div>
   </div>
+</section>
+
+<section class="marketing-section" id="usage-cost">
+  <h2>Cost in response usage</h2>
+  <p>Single-endpoint Chat Completions, Responses, and Anthropic Messages requests return <code>usage.cost_microdollars</code> and <code>usage.total_cost_microdollars</code> when the request's charge is known. Both are integer microdollars: 1,000,000 equals $1. A known free request reports 0; an unknown cost is omitted.</p>
+  <p>For streaming chat, request <code>stream_options.include_usage: true</code> to receive the terminal usage chunk. Responses includes cost in <code>response.completed.response.usage</code>; Messages includes it in <code>message_delta.usage</code>. Answer deltas continue streaming while the terminal event waits briefly for settlement.</p>
+  <p>Eligible standard routes are billed at the prices in effect when the request was authorized. Their streamed usage carries <code>cost_microdollars</code> and <code>total_cost_microdollars</code>, even if settlement is delayed.</p>
+  <p>Other routes report a settled or durable charge when known; an unknown cost is omitted, not shown as zero. BYOK, partner minimums, orchestration, hosted search, video, refunds, receipt surcharges, and custom or app markups retain their existing billing and reporting contracts.</p>
 </section>
 
 {% endblock %}

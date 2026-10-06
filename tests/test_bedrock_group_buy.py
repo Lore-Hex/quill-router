@@ -184,7 +184,7 @@ def test_in_memory_concurrent_edits_leave_one_pledge_and_exact_total() -> None:
 
 
 def test_spanner_fake_edit_and_withdraw_keep_shard_and_projection_atomic() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     first = store.upsert_bedrock_group_buy_pledge(
         _pledge(
             "spanner-user",

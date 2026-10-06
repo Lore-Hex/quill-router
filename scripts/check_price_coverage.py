@@ -39,10 +39,12 @@ from scripts.pricing.model_ids import (
     canonicalize_unqualified_model_id,
 )
 from scripts.pricing.providers import (
+    abliterate,
     aion_labs,
     akashml,
     arcee,
     bfl,
+    byteplus,
     confidential_ai,
     decart,
     fal,
@@ -51,6 +53,7 @@ from scripts.pricing.providers import (
     io_net,
     jina,
     krea,
+    lyceum,
     mancer,
     near_ai,
     nextbit,
@@ -69,6 +72,10 @@ from scripts.pricing.providers import (
     scaledown,
     scaleway,
     stepfun,
+    streamlake,
+    system1models,
+    system1models_eu,
+    tencent,
     upstage,
     wandb,
 )
@@ -488,12 +495,17 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         ("NSCALE_API_KEY",),
         nscale._canonical_id,
     ),
+    ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("byteplus", byteplus.URL, ("BYTEPLUS_API_KEY",), byteplus.canonical_model_id),
+    ("system1models", system1models.URL, (), system1models.canonical_model_id),
+    ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
 )
 
 # Providers on the direct OpenAI catalog adapter. Their credentials are
 # available to the hourly refresh workflow, so a missing workflow secret is a
 # deployment error, not an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    abliterate,
     upstage,
     sail_research,
     reka,
@@ -525,10 +537,16 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     fal,
     nscale,
     nvidia_nim,
+    lyceum,
+    byteplus,
     recraft,
+    system1models,
+    system1models_eu,
     relace,
     stepfun,
+    streamlake,
     scaledown,
+    tencent,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {
@@ -829,13 +847,16 @@ def _provider_glm_model_ids(payload: Any) -> set[str]:
     for row in _json_model_rows(payload):
         if not _active_discovery_row(row):
             continue
-        for key in ("id", "name", "title", "model"):
+        # A display label can name an internal deployment, not another callable
+        # model (GMI exposes H200-dev labels under the standard Flash ID).
+        for key in ("id", "model", "name", "title"):
             raw_id = row.get(key)
             if not isinstance(raw_id, str):
                 continue
             normalized = _normalize_glm_model_id(raw_id)
             if normalized:
                 discovered.add(normalized)
+                break
     return discovered
 
 

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from clickhouse import ingest_outbox
-from clickhouse.backfill_benchmark_samples import normalise
+from clickhouse.benchmark_rows import normalise
 from clickhouse.ingest_outbox import (
     DrainMetrics,
     OutboxRow,
@@ -18,17 +18,11 @@ from clickhouse.ingest_outbox import (
     drain_once,
     normalise_outbox_payload,
 )
-from clickhouse.reconcile_benchmark_samples import (
-    CLICKHOUSE_COLUMNS,
-    _add_row,
-    _reverse_time_key,
-)
 from trusted_router.config import Settings
 from trusted_router.storage_gcp_analytics_outbox import (
     SpannerAnalyticsOutbox,
     analytics_outbox_shard,
 )
-from trusted_router.storage_gcp_generations import SpannerGenerations
 from trusted_router.storage_models import ProviderBenchmarkSample
 from trusted_router.types import UsageType
 
@@ -102,37 +96,7 @@ def test_enqueue_uses_commit_timestamp_and_deterministic_shard() -> None:
     }
 
 
-def test_bigtable_and_outbox_best_effort_attempts_are_independent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    attempts: list[str] = []
-
-    def fail_bigtable(*_args: Any) -> None:
-        attempts.append("bigtable")
-        raise RuntimeError("Bigtable unavailable")
-
-    class FailingOutbox:
-        def enqueue(self, _sample: ProviderBenchmarkSample) -> None:
-            attempts.append("outbox")
-            raise RuntimeError("Spanner unavailable")
-
-    monkeypatch.setattr(
-        "trusted_router.storage_gcp_generations._bt_write_provider_benchmark",
-        fail_bigtable,
-    )
-    generations = object.__new__(SpannerGenerations)
-    generations._bt_table = object()
-    generations._benchmark_family = "benchmark"
-    generations._analytics_outbox = FailingOutbox()
-
-    # Both failures are analytics-only and may not escape to settle callers.
-    generations.record_benchmark(_sample())
-    # The durable Spanner hand-off is authoritative. The migration-only
-    # Bigtable mirror is attempted afterward and cannot prevent the enqueue.
-    assert attempts == ["outbox", "bigtable"]
-
-
-def test_normalise_is_identical_for_backfill_and_outbox_payload() -> None:
+def test_normalise_is_identical_for_row_helper_and_outbox_payload() -> None:
     raw = dataclasses.asdict(_sample())
     # Exercise the coercions that historically diverged between ingestion
     # paths: string status codes and nullable numeric strings.
@@ -146,7 +110,6 @@ def test_normalise_is_identical_for_backfill_and_outbox_payload() -> None:
     assert expected["error_status"] == 429
     assert expected["elapsed_milliseconds"] == 210
     assert expected["workspace_id"] == "ws-analytics-test"
-    assert "workspace_id" in CLICKHOUSE_COLUMNS
 
 
 class _Source:
@@ -583,23 +546,3 @@ def test_invalid_idle_intervals_fail_before_opening_spanner(
     with pytest.raises(SystemExit) as exc:
         ingest_outbox.main()
     assert exc.value.code == 2
-
-
-def test_reconciler_reverse_range_sorts_newer_events_first() -> None:
-    older = dt.datetime(2026, 7, 20, tzinfo=dt.UTC)
-    newer = dt.datetime(2026, 7, 21, tzinfo=dt.UTC)
-    assert _reverse_time_key(newer) < _reverse_time_key(older)
-
-
-def test_reconciler_uses_a_closed_wall_clock_window() -> None:
-    target: dict[str, dict[str, str]] = {}
-    raw = dataclasses.asdict(_sample())
-    lower = dt.datetime(2026, 7, 28, 12, tzinfo=dt.UTC)
-    upper = dt.datetime(2026, 7, 28, 13, tzinfo=dt.UTC)
-
-    _add_row(target, raw, cutoff=lower, upper=upper)
-    assert set(target["2026-07-28"]) == {_sample().id}
-
-    raw["created_at"] = upper.isoformat()
-    _add_row(target, raw, cutoff=lower, upper=upper)
-    assert len(target["2026-07-28"]) == 1

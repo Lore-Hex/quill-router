@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from trusted_router.catalog import (
@@ -177,3 +178,16 @@ def test_pricing_document_is_equivalent_to_every_catalog_endpoint() -> None:
                 cache_creation_tokens=cache_creation,
                 price_tier_input_tokens=tier_basis,
             )
+
+
+def test_catalog_repricing_differs_from_frozen_authorization_price() -> None:
+    # Eligible settlement must use the frozen 49, never the refreshed 63.
+    endpoint = ModelEndpoint(
+        id="reporting-fixture", model_id="reporting-model", provider="anthropic",
+        usage_type="Credits", prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=5_000_000,
+    )
+    snapshot = endpoint_pricing_document((endpoint,))
+    refreshed = replace(endpoint, prompt_price_microdollars_per_million_tokens=2_000_000)
+    assert _endpoint_cost_microdollars_from_document(snapshot, endpoint.id, 14, 7) == 49
+    assert _endpoint_cost_microdollars(refreshed, 14, 7, effective_at=EFFECTIVE_AT) == 63

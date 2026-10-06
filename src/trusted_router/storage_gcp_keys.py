@@ -4,7 +4,7 @@ Sibling of InMemoryApiKeys (storage_keys.py). Both expose the same public
 surface (create / get_by_hash / get_by_raw / list_for_workspace / delete /
 update / reserve_limit / settle_limit / refund_limit /
 create_gateway_authorization / get_gateway_authorization /
-mark_gateway_authorization_settled / add_usage); SpannerBigtableStore's
+mark_gateway_authorization_settled / add_usage); SpannerStore's
 public methods become thin one-line delegations.
 """
 
@@ -24,7 +24,6 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
-from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
@@ -46,6 +45,21 @@ from trusted_router.types import UsageType
 
 _CONSOLE_API_KEYS_SQL = """
     /* console_api_keys */
+    WITH key_page AS (
+      SELECT key_record.id, key_record.body
+      FROM tr_entities AS key_index
+      JOIN tr_entities AS key_record
+        ON key_record.kind='api_key'
+       AND key_record.id=JSON_VALUE(key_index.body, '$.key_id')
+       AND JSON_VALUE(key_record.body, '$.hash')=key_record.id
+      WHERE key_index.kind='api_key_by_workspace'
+        AND STARTS_WITH(key_index.id, @prefix)
+        AND key_index.id=CONCAT(@workspace_id, '#', key_record.id)
+        AND JSON_VALUE(key_record.body, '$.workspace_id')=@workspace_id
+        AND (@include_disabled OR COALESCE(JSON_VALUE(key_record.body, '$.disabled'), 'false') != 'true')
+      ORDER BY JSON_VALUE(key_record.body, '$.created_at') DESC, key_record.id
+      LIMIT @limit OFFSET @offset
+    )
     SELECT
       key_record.body,
       key_limit.shard,
@@ -58,11 +72,7 @@ _CONSOLE_API_KEYS_SQL = """
       key_limit.week_start,
       key_limit.month_usage,
       key_limit.month_start
-    FROM tr_entities AS key_index
-    JOIN tr_entities AS key_record
-      ON key_record.kind='api_key'
-     AND key_record.id=JSON_VALUE(key_index.body, '$.key_id')
-     AND JSON_VALUE(key_record.body, '$.hash')=key_record.id
+    FROM key_page AS key_record
     LEFT JOIN tr_key_limit AS key_limit
       ON key_limit.key_hash=key_record.id
      AND key_limit.shard>=0
@@ -70,10 +80,6 @@ _CONSOLE_API_KEYS_SQL = """
        CAST(JSON_VALUE(key_record.body, '$.usage_shard_count') AS INT64),
        1
      )
-    WHERE key_index.kind='api_key_by_workspace'
-      AND STARTS_WITH(key_index.id, @prefix)
-      AND key_index.id=CONCAT(@workspace_id, '#', key_record.id)
-      AND JSON_VALUE(key_record.body, '$.workspace_id')=@workspace_id
     ORDER BY JSON_VALUE(key_record.body, '$.created_at') DESC,
              key_record.id,
              key_limit.shard
@@ -183,7 +189,14 @@ class SpannerApiKeys:
         keys.sort(key=lambda item: item.created_at, reverse=True)
         return keys
 
-    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+    def list_with_usage_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
         """Fetch every page key and all configured usage shards in one RPC.
 
         The snapshot is deliberately strong.  Key creation, deletion, and
@@ -199,10 +212,16 @@ class SpannerApiKeys:
                     params={
                         "workspace_id": workspace_id,
                         "prefix": f"{workspace_id}#",
+                        "include_disabled": include_disabled,
+                        "limit": limit if limit is not None else 2**63 - 1,
+                        "offset": min(offset, 2**63 - 1),
                     },
                     param_types={
                         "workspace_id": pt.STRING,
                         "prefix": pt.STRING,
+                        "include_disabled": pt.BOOL,
+                        "limit": pt.INT64,
+                        "offset": pt.INT64,
                     },
                 )
             )
@@ -223,15 +242,53 @@ class SpannerApiKeys:
         ]
 
     def delete(self, key_hash: str) -> bool:
-        key = self.get_by_hash(key_hash)
-        if key is None:
-            return False
-        self._io.delete_entities("api_key", [key_hash])
-        self._io.delete_entities("api_key_lookup", [key.lookup_hash])
-        self._io.delete_entities(
-            "api_key_by_workspace", [_workspace_key_id(key.workspace_id, key.hash)]
-        )
-        return True
+        return self._delete_batch([key_hash], workspace_id=None)[key_hash]
+
+    def delete_many(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        hashes = sorted(set(key_hashes))
+        results: dict[str, bool] = {}
+        for start in range(0, len(hashes), 100):
+            results.update(self._delete_batch(hashes[start:start + 100], workspace_id))
+        return results
+
+    def _delete_batch(
+        self, key_hashes: list[str], workspace_id: str | None,
+    ) -> dict[str, bool]:
+        """Read ownership and delete the key plus both indexes in one commit.
+
+        Keep typed accounting rows, as before: an in-flight settlement may
+        still refer to the revoked credential.
+        """
+        pt = self._io.param_types
+
+        def delete_batch_txn(transaction: Any) -> dict[str, bool]:
+            rows = list(transaction.execute_sql(
+                "SELECT id, body FROM tr_entities WHERE kind=@kind "
+                "AND id IN UNNEST(@ids) ORDER BY id",
+                params={"kind": "api_key", "ids": key_hashes},
+                param_types={"kind": pt.STRING, "ids": pt.Array(pt.STRING)},
+            ))
+            results = dict.fromkeys(key_hashes, False)
+            entity_keys = []
+            for key_id, body in rows:
+                key = api_key_from_json(body)
+                if key.hash != key_id or (
+                    workspace_id is not None and key.workspace_id != workspace_id
+                ):
+                    continue
+                results[key_id] = True
+                entity_keys.extend([
+                    ("api_key", key_id),
+                    ("api_key_lookup", key.lookup_hash),
+                    ("api_key_by_workspace", _workspace_key_id(key.workspace_id, key_id)),
+                ])
+            if entity_keys:
+                transaction.delete(
+                    "tr_entities", self._io.spanner_module.KeySet(keys=sorted(entity_keys)),
+                )
+            return results
+
+        return run_in_transaction_with_retry(self._io.database, delete_batch_txn)
 
     def update(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         key = self.get_by_hash(key_hash)
@@ -412,10 +469,10 @@ class SpannerApiKeys:
         user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
+        video_pricing_snapshot: str | None = None,
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
         trust_eligibility_enabled: bool = False,
@@ -476,16 +533,7 @@ class SpannerApiKeys:
             user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
-            spend_lease_token=spend_lease.token if spend_lease else None,
-            spend_lease_id=spend_lease.lease_id if spend_lease else None,
-            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
-            spend_lease_gen=spend_lease.gen if spend_lease else None,
-            spend_lease_iat=spend_lease.iat if spend_lease else None,
-            spend_lease_exp=spend_lease.exp if spend_lease else None,
-            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
-            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
-            spend_lease_status=spend_lease.lease_status if spend_lease else None,
+            video_pricing_snapshot=video_pricing_snapshot,
             invocation_nonce=invocation_nonce,
         )
         if not trust_eligibility_enabled:

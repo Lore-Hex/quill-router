@@ -148,7 +148,8 @@ class _TimedAbortingDatabase:
         self.timeouts: list[float | None] = []
 
     def run_in_transaction(
-        self, func: Callable[..., str], *, timeout_secs: float | None = None
+        self, func: Callable[..., str], *, timeout_secs: float | None = None,
+        transaction_tag: str | None = None,
     ) -> str:
         self.calls += 1
         self.timeouts.append(timeout_secs)
@@ -210,7 +211,8 @@ def test_non_aborted_exceptions_are_not_retried(monkeypatch: pytest.MonkeyPatch)
             self.calls = 0
 
         def run_in_transaction(
-            self, func: Callable[..., str], *, timeout_secs: float | None = None
+            self, func: Callable[..., str], *, timeout_secs: float | None = None,
+            transaction_tag: str | None = None,
         ) -> str:
             self.calls += 1
             raise self.exc
@@ -511,3 +513,33 @@ def test_statement_rpc_shares_total_transaction_deadline(
         database.run_in_transaction(transaction)
     assert [call['timeout'] for call in api.calls] == [20.0, 14.0, 8.0, 2.0]
     assert [call['retry']._timeout for call in api.calls] == [20.0, 14.0, 8.0, 2.0]
+
+
+def test_an_untagged_transaction_is_tagged_with_its_function_name() -> None:
+    """SPANNER_SYS statistics attribute a transaction only by its tag; an
+    untagged one is anonymous. The default is the function's name, bounded to
+    Spanner's 50-character limit, and an explicit tag is kept as given."""
+
+    from trusted_router.storage_gcp_io import default_transaction_tag, run_in_transaction_with_retry
+
+    tags: list[str] = []
+
+    class Database:
+        def run_in_transaction(self, func: Any, **kwargs: Any) -> Any:
+            tags.append(kwargs["transaction_tag"])
+            return func(object())
+
+    def repair_google_ads_delivery_queue() -> Any:
+        def txn(transaction: Any) -> int:
+            return 1
+
+        return txn
+
+    txn = repair_google_ads_delivery_queue()
+    assert run_in_transaction_with_retry(Database(), txn) == 1
+    assert run_in_transaction_with_retry(Database(), txn, transaction_tag="tr_settle_one_commit") == 1
+    tag = default_transaction_tag(txn)
+    assert tags == [tag, "tr_settle_one_commit"]
+    assert tag.startswith("auto:") and tag.endswith("repair_google_ads_delivery_queue.txn")
+    assert len(tag) <= 50 and "<locals>" not in tag
+    assert default_transaction_tag(lambda transaction: None).endswith(".<lambda>")

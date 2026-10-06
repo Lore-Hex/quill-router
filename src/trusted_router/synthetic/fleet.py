@@ -65,8 +65,6 @@ HEARTBEAT_STALE_SECONDS = 11 * 60
 BUILTIN_HEARTBEAT_TARGETS = frozenset(
     {
         "job:settle-outbox-drain",
-        "job:regional-quota-reconcile",
-        "job:spend-lease-reconcile",
         "job:receipt-key-collector",
         "scheduler:auto-refill-outbox",
         "scheduler:home-settlement",

@@ -2078,6 +2078,22 @@ def test_gateway_authorization_idempotency_key_dedupes(
     assert found is not None and found.id == first.id  # type: ignore[attr-defined]
 
 
+def test_video_tariff_persists_without_stage_d_enrollment(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    snapshot = '{"v":1,"kind":"endpoint","output_token_limit":80000}'
+    kh = f"video-{unique}"
+    first = _authorize(store, workspace_id, kh, idempotency_key=unique,
+                       video_pricing_snapshot=snapshot)
+    second = _authorize(store, workspace_id, kh, idempotency_key=unique,
+                        video_pricing_snapshot="new-price")
+    assert first.id == second.id  # type: ignore[attr-defined]
+    stored = store.get_gateway_authorization(first.id)  # type: ignore[attr-defined]
+    assert stored is not None and stored.video_pricing_snapshot == snapshot
+    assert stored.pricing_snapshot is None
+    assert stored.heartbeat_seq is None
+
+
 def test_gateway_idempotency_is_scoped_per_key(
     store: Store, workspace_id: str, unique: str
 ) -> None:

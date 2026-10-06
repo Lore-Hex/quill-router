@@ -7,6 +7,7 @@ import pytest
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import parse
 from scripts.pricing.providers import thinkingmachines
+from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 
 SERVERLESS = [
@@ -222,7 +223,19 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
     assert rows["z-ai/glm-5.3"]["cached_input_token_price_per_m"] == 972_000
 
 
-def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract() -> None:
+@pytest.mark.provider_health
+def test_tinker_still_serves_glm_5_3() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert "z-ai/glm-5.3@thinkingmachines/prepaid" in MODEL_ENDPOINTS
+
+
+def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # The route built from its pinned manifest row: how the catalog publishes
+    # the verified sampler contract holds whatever Thinking Machines lists today.
+    serve_manifest_rows(monkeypatch, tmp_path, "thinkingmachines", [THINKINGMACHINES_GLM_5_3])
     model = MODELS["z-ai/glm-5.3"]
     endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3@thinkingmachines/prepaid"]
 

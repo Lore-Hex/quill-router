@@ -7,8 +7,8 @@ from trusted_router.storage import configure_store
 from trusted_router.strict_budget import strict_budget_slot
 
 
-def test_strict_gateway_holds_refund_backpressure_and_no_regional_lease():
-    store, db, _ = make_fake_store()
+def test_strict_gateway_holds_refund_and_backpressure(caplog):
+    store, db = make_fake_store()
     workspace = store.create_workspace("owner", "strict", trial_credit_microdollars=1_000_000)
     _, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -21,12 +21,7 @@ def test_strict_gateway_holds_refund_backpressure_and_no_regional_lease():
     configure_store(store)
     client = TestClient(
         create_app(
-            Settings(
-                environment="test",
-                regional_quota_leases_enabled=True,
-                regional_quota_lease_issuance_enabled=True,
-                regional_quota_lease_pilot_workspace_ids=workspace.id,
-            ),
+            Settings(environment="test"),
             configure_store_arg=False,
             init_observability=False,
         )
@@ -54,6 +49,14 @@ def test_strict_gateway_holds_refund_backpressure_and_no_regional_lease():
         busy = client.post("/v1/internal/gateway/authorize", json=body)
     assert busy.status_code == 503, busy.text
     assert busy.headers["Retry-After"] == "1"
+    assert "Strict budget authorization is busy" in busy.text
+    assert "Persistent storage" not in busy.text
+    assert db.typed["tr_key_limit"][(key.hash, 0)]["reserved"] == held
+    assert "billing.authorize_strict_budget_busy" in caplog.text
+    assert "billing.strict_budget_busy" in caplog.text
+    assert f"workspace_id={workspace.id}" in caplog.text
+    assert "storage.unavailable" not in caplog.text
+    assert key.hash not in caplog.text
     refunded = client.post(
         "/v1/internal/gateway/refund", json={"authorization_id": data["authorization_id"]}
     )

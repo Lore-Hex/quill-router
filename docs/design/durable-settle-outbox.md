@@ -111,7 +111,7 @@ on **INSERT-as-claim**, which is the *typed-counter* mechanism
 So: `tr_settle_outbox` is a native Spanner table with a real PRIMARY KEY, enqueued
 via INSERT DML that raises `AlreadyExists`. Mirror broadcast's *state machine*,
 not its storage. **InMemory backend: no-op/unsupported** (durability needs
-Spanner); the mechanism is only active on `spanner-bigtable`.
+Spanner); the mechanism is only active on `spanner-clickhouse`.
 
 ### 5.2 Primary key handles settle-vs-refund polarity (SF1)
 
@@ -189,17 +189,11 @@ lease-claims due `pending` rows and for each:
   full `_settle_gateway_authorization` HTTP handler — which would re-run pricing
   and re-fire non-idempotent side effects (budget alerts, auto-refill, metadata
   broadcast, provider-benchmark samples) on every replay (SF7).
-- Spend-lease rows have one corrective exception to the general frozen-cost rule.
-  A rolling pre-clamp revision may have frozen a successful charge above its typed
-  allocation. While the reservation is still unclaimed, the drain caps that charge,
-  re-derives every charge-dependent payout hidden in `settle_body`, and rewrites both
-  fields in the same billing transaction. The rewrite is fenced by
-  `status='pending'` and the drain worker's `lease_owner`; a zero-row rewrite aborts
-  the transaction, so billing cannot commit while durable replay authority is stale.
-  The generation and analytics intent are constructed only from the corrected amount.
-  If an older revision already won the reservation, its historical booked charge is
-  left untouched and used for generation repair, then surfaced for spend-lease
-  quarantine rather than charged again.
+- The frozen amount has no exceptions. Rows whose `settle_body` carries a
+  retired settlement kind (`regional_lease` or `spend_lease`, from the pilots
+  removed in 2026-09) are dead-lettered as `invalid_row` when still unsettled,
+  and the settle route answers 409 for those kinds; the frozen-cost rewrite that
+  once clamped spend-lease charges is gone with the pilot.
 - Interprets the **richer finalize outcome** (§3): `settled_now` or
   `already_settled_with_charge` → `status='done'`; `already_released_free` on a
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
@@ -215,9 +209,6 @@ lease-claims due `pending` rows and for each:
   outbox terminal retention timestamps in the same transaction. The
   authorization keeps only its content-free replay record so a client
   idempotency key remains valid for the full window.
-  Spend-lease finalization follows the same split retention rule: finalization
-  defers retention, and only the existing lease-fenced `mark(done)` arms it after
-  sibling-intent checks.
 - Final `ApplyOutcome` contract for the drain:
   `settled_now` → done. `already_settled_with_charge` means done for settle
   intent; for refund intent with a charged reservation, done plus the same
@@ -258,6 +249,24 @@ lease-claims due `pending` rows and for each:
   legacy finalize contract still marks in a separate commit. Measured motivation:
   `mark_ms` was a full multi-region commit on every settle (p50 224–709 ms, p90
   ~775 ms), one of three serial commits behind the ~3 s settle p90.
+- **One-commit settle (2026-10):** on the happy path the enqueue folds in too.
+  `typed_finalize_atomic(settle_outbox_intent=...)` INSERTs the intent already
+  resolved (exactly the row `mark(done=True)` leaves: status `done`, one
+  attempt, `terminal_at` armed, body dropped, no due time) together with the
+  enqueue's retention clears and the done-mark's retention resolution, in the
+  commit that claims the reservation and books the holds; the post-response
+  benchmark INSERT rides in the same batch. Per authorize+settle round trip:
+  4 read-write commits → 2. Any deviation (claim already taken, reservation or
+  typed authorization missing, intent already recorded, release row-count,
+  abort after retries, the attempt's 5 s budget, an unknown commit outcome)
+  rolls back and runs the unchanged two-commit flow above. That is safe even
+  when the one commit landed but reported failure: the fallback enqueue finds
+  the `done` row (ALREADY_EXISTS, refresh fenced on `pending`), its finalize
+  claims 0 rows, and any intent created afterwards (a concurrent sibling
+  refund) drains to `already_settled_with_charge`, never a second charge.
+  Before the one commit lands nothing is durable and the enclave's redelivery
+  covers it, exactly as before the enqueue committed; the reaper still
+  serializes against it on the `settled=false` claim.
 
 ## 8. Rollout (default-off, Joseph-gated)
 
@@ -363,7 +372,7 @@ Read this first if you are continuing the outbox build.
     (lease-fenced), `mark` (backoff→`dead` at max_attempts), `has_intent`
     (the reaper-guard predicate: freezes on `pending`/`dead`, NOT
     `done`/`release_approved`), `get`.
-  - Wired as `self.settle_outbox` on `SpannerBigtableStore` only. **No live
+  - Wired as `self.settle_outbox` on `SpannerStore` only. **No live
     caller yet** — dormant.
   - Fake Spanner models the table AND asserts every load-bearing SQL predicate
     (`_require_pred`) so a dropped predicate FAILS a test (the MF6 guarantee).

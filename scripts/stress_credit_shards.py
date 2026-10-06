@@ -105,7 +105,7 @@ def _seed(
     shard_count: int,
     estimate_micro: int,
 ) -> tuple[Any, Any, Any]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "stress-workspace"
     total_credits = request_count * estimate_micro
     base, remainder = divmod(total_credits, shard_count)

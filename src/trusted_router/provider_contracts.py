@@ -5,6 +5,14 @@ SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
+LIGHTNING_GOOGLE_PASSTHROUGH_HOLD_REASON = "google-passthrough-disabled"
+# Hold a provider's prepaid routes when its operator key is rejected, e.g.
+# {"crusoe": "operator-credential-rejected"}. Catalog discovery can succeed
+# without validating inference credentials, so clear a hold only after a
+# paid-path canary with the replacement key. Holds never affect a customer's
+# own BYOK credentials. Crusoe (held October 3) was cleared on October 5 after
+# its replacement key passed paid-path canaries.
+PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
@@ -60,7 +68,15 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 
 
 def provider_model_operator_held(provider_slug: str, model_id: str) -> bool:
-    return (provider_slug, model_id) in OPERATOR_HELD_PROVIDER_MODELS
+    # Google passthrough routes are intentionally served directly, not through
+    # Lightning. Cover future discoveries too, but preserve its hosted Gemma
+    # weights: a Google model author is not necessarily a Google backend.
+    lightning_google_passthrough = (
+        provider_slug == "lightning"
+        and model_id.startswith("google/")
+        and not model_id.startswith("google/gemma-")
+    )
+    return lightning_google_passthrough or (provider_slug, model_id) in OPERATOR_HELD_PROVIDER_MODELS
 
 
 def provider_model_requires_exact_global_settlement(

@@ -78,8 +78,9 @@ request analytics. Never loosen the 45% CPU alarm to make operator scans pass.
 
 `reserve` / `settle` / `refund` and anything touching credits are the highest-risk code in the
 repo. Changes there need a differential or conformance test, never review-by-eye. Analytics is
-explicitly *not* worth destabilising money code for — that is why the analytics outbox enqueue
-sits outside the settle transaction and is best-effort.
+explicitly *not* worth destabilising money code for — that is why the benchmark analytics outbox
+enqueue is best-effort. It rides in the settle commit only on the one-commit happy path, whose
+every failure falls back to the durable two-commit settle with that enqueue after the commit.
 
 ## Storage backends
 

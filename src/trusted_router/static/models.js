@@ -10,6 +10,7 @@
   const empty = explorer.querySelector("[data-model-empty]");
   const showMore = explorer.querySelector("[data-model-show-more]");
   const clearButtons = [...explorer.querySelectorAll("[data-model-clear]")];
+  const requestLinks = [...document.querySelectorAll("[data-model-request]")];
   const cards = [...explorer.querySelectorAll("[data-model-card]")];
   const pageSize = Number.parseInt(explorer.dataset.pageSize || "24", 10);
   const params = new URLSearchParams(window.location.search);
@@ -74,6 +75,11 @@
       showMore.textContent = `Show ${Math.min(pageSize, remaining)} more models`;
     }
     clearButtons.forEach((button) => { button.hidden = !query && sort.value === "featured"; });
+    const requestParams = new URLSearchParams({ category: "model" });
+    if (search.value.trim()) requestParams.set("model", search.value.trim().slice(0, 200));
+    requestLinks.forEach((link) => {
+      link.href = `/support?${requestParams.toString()}#support-inquiry`;
+    });
     writeUrl();
   }
 
@@ -138,10 +144,10 @@
   function privacyCell(routes) {
     const postures = routes.map((route) => route.trustedrouter || {});
     const cell = routeCell("Available privacy", undefined, "catalog-privacy-summary");
-    if (postures.some((posture) => posture.provider_confidential_compute === true && posture.provider_e2ee === true)) {
+    if (postures.some((posture) => posture.provider_confidential_compute === true && posture.provider_e2ee === true && posture.provider_zero_data_retention === true)) {
       const badge = element("span", "privacy-badge privacy-confidential", "Confidential");
       badge.dataset.privacy = "confidential";
-      badge.title = "Available route with verified provider confidential compute and end-to-end encryption (E2EE).";
+      badge.title = "Available route with verified provider confidential compute, end-to-end encryption (E2EE), and explicit zero data retention (ZDR).";
       cell.append(badge);
     }
     if (postures.some((posture) => posture.provider_zero_data_retention === true)) {

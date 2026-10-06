@@ -42,6 +42,7 @@ from trusted_router.custom_model_billing import (
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_authorization_id_from_payout_event_id,
 )
+from trusted_router.gateway_boot import GATEWAY_BOOT_KIND, GatewayBoot
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
@@ -84,13 +85,6 @@ from trusted_router.security import (
     new_hash_salt,
     new_key_id,
     verify_api_key,
-)
-from trusted_router.spend_leases import (
-    SPEND_LEASE_ACTIVE_GRANT_KIND,
-    SPEND_LEASE_BOOT_KIND,
-    SPEND_LEASE_GENERATION_KIND,
-    SpendLeaseArtifact,
-    SpendLeaseBoot,
 )
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
@@ -455,6 +449,20 @@ _API_KEY_AUTH_CONTEXT_SQL = """
 
 _CONSOLE_API_KEYS_SQL = """
     /* console_api_keys */
+    WITH key_page AS (
+      SELECT key_record.id, key_record.body
+      FROM tr_entities AS key_index
+      JOIN tr_entities AS key_record
+        ON key_record.kind = 'api_key'
+       AND key_record.id = key_index.body ->> 'key_id'
+       AND key_record.body ->> 'hash' = key_record.id
+      WHERE key_index.kind = 'api_key_by_workspace'
+        AND key_index.id = (%s || '#' || key_record.id)
+        AND key_record.body ->> 'workspace_id' = %s
+        AND (%s OR COALESCE(key_record.body ->> 'disabled', 'false') != 'true')
+      ORDER BY key_record.body ->> 'created_at' DESC, key_record.id
+      LIMIT %s OFFSET %s
+    )
     SELECT
       key_record.body,
       key_limit.shard,
@@ -467,11 +475,7 @@ _CONSOLE_API_KEYS_SQL = """
       key_limit.week_start,
       key_limit.month_usage,
       key_limit.month_start
-    FROM tr_entities AS key_index
-    JOIN tr_entities AS key_record
-      ON key_record.kind = 'api_key'
-     AND key_record.id = key_index.body ->> 'key_id'
-     AND key_record.body ->> 'hash' = key_record.id
+    FROM key_page AS key_record
     LEFT JOIN tr_key_limit AS key_limit
       ON key_limit.workspace_id = %s
      AND key_limit.key_hash = key_record.id
@@ -480,9 +484,6 @@ _CONSOLE_API_KEYS_SQL = """
        CAST(key_record.body ->> 'usage_shard_count' AS BIGINT),
        1
      )
-    WHERE key_index.kind = 'api_key_by_workspace'
-      AND key_index.id = (%s || '#' || key_record.id)
-      AND key_record.body ->> 'workspace_id' = %s
     ORDER BY key_record.body ->> 'created_at' DESC,
              key_record.id,
              key_limit.shard
@@ -1035,13 +1036,13 @@ class PostgresStore:
         )
         return cursor.rowcount == 1
 
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
-        def operation(conn: Any) -> SpendLeaseBoot:
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot:
+        def operation(conn: Any) -> GatewayBoot:
             existing = self._read_entity_tx(
                 conn,
-                SPEND_LEASE_BOOT_KIND,
+                GATEWAY_BOOT_KIND,
                 record.kid,
-                SpendLeaseBoot,
+                GatewayBoot,
                 for_update=True,
             )
             if existing is not None and (
@@ -1057,72 +1058,17 @@ class PostgresStore:
                     approved=existing.approved or record.approved,
                     verified=existing.verified or record.verified,
                     image_digest=record.image_digest or existing.image_digest,
+                    # Replaced, never merged: a declaration can be withdrawn.
+                    declares_usage_heartbeat=record.declares_usage_heartbeat,
+                    declares_stream_open_heartbeat=record.declares_stream_open_heartbeat,
                 )
-            self._write_entity_tx(conn, SPEND_LEASE_BOOT_KIND, record.kid, merged)
+            self._write_entity_tx(conn, GATEWAY_BOOT_KIND, record.kid, merged)
             return merged
 
         return self._run_transaction(operation)
 
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
-        return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
-
-    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
-        entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
-
-        def operation(conn: Any) -> int:
-            existing = self._read_entity_tx(
-                conn,
-                SPEND_LEASE_GENERATION_KIND,
-                entity_id,
-                dict,
-                for_update=True,
-            )
-            generation = int((existing or {}).get("generation", 0)) + 1
-            self._write_entity_tx(
-                conn,
-                SPEND_LEASE_GENERATION_KIND,
-                entity_id,
-                {"key_hash": key_hash, "boot_kid": boot_kid, "generation": generation},
-            )
-            return generation
-
-        return self._run_transaction(operation)
-
-    @staticmethod
-    def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
-        return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
-
-    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
-        return self._read_entity(
-            SPEND_LEASE_ACTIVE_GRANT_KIND,
-            self._spend_lease_pair_id(key_hash, boot_kid),
-            SpendLeaseArtifact,
-        )
-
-    def retain_spend_lease(
-        self,
-        key_hash: str,
-        boot_kid: str,
-        candidate: SpendLeaseArtifact,
-        *,
-        replace: bool,
-    ) -> SpendLeaseArtifact:
-        entity_id = self._spend_lease_pair_id(key_hash, boot_kid)
-
-        def operation(conn: Any) -> SpendLeaseArtifact:
-            existing = self._read_entity_tx(
-                conn,
-                SPEND_LEASE_ACTIVE_GRANT_KIND,
-                entity_id,
-                SpendLeaseArtifact,
-                for_update=True,
-            )
-            if existing is None or (replace and candidate.gen > existing.gen):
-                self._write_entity_tx(conn, SPEND_LEASE_ACTIVE_GRANT_KIND, entity_id, candidate)
-                return candidate
-            return existing
-
-        return self._run_transaction(operation)
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None:
+        return self._read_entity(GATEWAY_BOOT_KIND, kid, GatewayBoot)
 
     def _list_entities(
         self,
@@ -1756,33 +1702,6 @@ class PostgresStore:
                         raise RuntimeError(
                             "archive trust latch did not cover every active shard"
                         )
-                    lease_rows = conn.execute(
-                        "SELECT kind, id, body FROM tr_entities WHERE "
-                        "kind IN ('spend_lease', 'regional_quota_lease')"
-                    ).fetchall()
-                    for lease_kind, lease_id, raw_body in lease_rows:
-                        body = (
-                            json.loads(raw_body)
-                            if isinstance(raw_body, str)
-                            else dict(raw_body)
-                        )
-                        if body.get("workspace_id") != workspace_id:
-                            continue
-                        if lease_kind == "spend_lease" and body.get("state") != "CLOSED":
-                            body["state"] = "TOMBSTONED"
-                            body["closing_at"] = iso_now()
-                        elif (
-                            lease_kind == "regional_quota_lease"
-                            and body.get("state") != "closed"
-                        ):
-                            body["state"] = "quarantined"
-                            body["last_error"] = "workspace_archived"
-                            body["updated_at"] = iso_now()
-                        else:
-                            continue
-                        self._write_entity_tx(
-                            conn, str(lease_kind), str(lease_id), body
-                        )
                 else:
                     owned = self._require_owner_growth_tx(
                         conn,
@@ -2156,7 +2075,18 @@ class PostgresStore:
         self._not_implemented("remove_members")
 
     def list_members(self, workspace_id: str) -> list[Member]:
-        self._not_implemented("list_members")
+        def operation(conn: Any) -> list[Member]:
+            # A LIKE prefix, not an id range: under a locale collation '#' and
+            # '$' sort as ignorable punctuation, so a range can match nothing.
+            rows = conn.execute(
+                "SELECT body FROM tr_entities WHERE kind = %s AND id LIKE %s ESCAPE '\\'"
+                " ORDER BY id",
+                ("member", self._like_prefix(f"{workspace_id}#")),
+            ).fetchall()
+            return [Member(**(json.loads(row[0]) if isinstance(row[0], str) else row[0]))
+                    for row in rows]
+
+        return self._run_transaction(operation)
 
     def user_can_manage(self, user_id: str, workspace_id: str) -> bool:
         self._not_implemented("user_can_manage")
@@ -3009,13 +2939,22 @@ class PostgresStore:
         acquisition_medium: str | None = None,
         acquisition_campaign: str | None = None,
     ) -> EmailSendBlock:
-        self._not_implemented("block_email_sending")
+        block = EmailSendBlock(
+            email=normalize_email(email), reason=reason, bounce_type=bounce_type,
+            feedback_id=feedback_id, mail_class=mail_class, sender_profile=sender_profile,
+            acquisition_source=acquisition_source, acquisition_medium=acquisition_medium,
+            acquisition_campaign=acquisition_campaign,
+        )
+        self._run_transaction(
+            lambda conn: self._write_entity_tx(conn, "email_block", block.email, block),
+        )
+        return block
 
     def is_email_blocked(self, email: str) -> bool:
-        self._not_implemented("is_email_blocked")
+        return self.get_email_block(email) is not None
 
     def get_email_block(self, email: str) -> EmailSendBlock | None:
-        self._not_implemented("get_email_block")
+        return self._read_entity("email_block", normalize_email(email), EmailSendBlock)
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self._run_transaction(
@@ -3026,6 +2965,23 @@ class PostgresStore:
                 {"created_at": iso_now()},
             )
         )
+
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        def txn(conn: Any) -> list[str]:
+            # Seed the row before locking it, including two first-time claimers.
+            self._insert_entity_once_tx(conn, "retirement_notice", workspace_id, {})
+            notices = self._read_entity_tx(
+                conn, "retirement_notice", workspace_id, dict, for_update=True,
+            ) or {}
+            claimed = sorted(set(retirement_ids) - notices.keys())
+            if claimed:
+                notices.update(dict.fromkeys(claimed, occurred_at))
+                self._write_entity_tx(conn, "retirement_notice", workspace_id, notices)
+            return claimed
+
+        return self._run_transaction(txn)
 
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         return self._run_transaction(
@@ -3289,13 +3245,24 @@ class PostgresStore:
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         self._not_implemented("list_keys")
 
-    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+    def list_api_keys_with_usage(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
         """Portable one-statement key-management page projection."""
 
         def read(conn: Any) -> list[ApiKeyUsageSnapshot]:
             rows = conn.execute(
                 _CONSOLE_API_KEYS_SQL,
-                (workspace_id, workspace_id, workspace_id),
+                (
+                    workspace_id, workspace_id, include_disabled,
+                    Int8(limit if limit is not None else 2**63 - 1),
+                    Int8(min(offset, 2**63 - 1)), workspace_id,
+                ),
             ).fetchall()
             grouped: dict[str, tuple[ApiKey, list[list[Any]]]] = {}
             for row in rows:
@@ -3313,32 +3280,53 @@ class PostgresStore:
         return self._run_transaction(read)
 
     def delete_key(self, key_hash: str) -> bool:
-        def delete(conn: Any) -> bool:
-            key = self._read_entity_tx(
-                conn,
-                "api_key",
-                key_hash,
-                ApiKey,
-                for_update=True,
-            )
-            if key is None:
-                return False
-            self._delete_entity_tx(conn, "api_key", key.hash)
-            self._delete_entity_tx(
-                conn,
-                "api_key_lookup",
-                key.lookup_hash,
-            )
-            self._delete_entity_tx(
-                conn,
-                "api_key_by_workspace",
-                workspace_key_id(key.workspace_id, key.hash),
-            )
-            conn.execute(
-                "DELETE FROM tr_key_limit WHERE workspace_id = %s AND key_hash = %s",
-                (key.workspace_id, key.hash),
-            )
-            return True
+        return self._delete_keys_batch([key_hash], workspace_id=None)[key_hash]
+
+    def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        hashes = sorted(set(key_hashes))
+        results: dict[str, bool] = {}
+        for start in range(0, len(hashes), 100):
+            results.update(self._delete_keys_batch(hashes[start:start + 100], workspace_id))
+        return results
+
+    def _delete_keys_batch(
+        self, key_hashes: list[str], workspace_id: str | None,
+    ) -> dict[str, bool]:
+        def delete(conn: Any) -> dict[str, bool]:
+            rows = conn.execute(
+                "SELECT id, body FROM tr_entities WHERE kind = %s "
+                "AND id = ANY(%s) ORDER BY id FOR UPDATE",
+                ("api_key", key_hashes),
+            ).fetchall()
+            results = dict.fromkeys(key_hashes, False)
+            keys = []
+            for key_id, body in rows:
+                key = api_key_from_json(body)
+                if key.hash != key_id or (
+                    workspace_id is not None and key.workspace_id != workspace_id
+                ):
+                    continue
+                results[key_id] = True
+                keys.append(key)
+            if keys:
+                for kind, ids in (
+                    ("api_key", [key.hash for key in keys]),
+                    ("api_key_lookup", [key.lookup_hash for key in keys]),
+                    ("api_key_by_workspace", [
+                        workspace_key_id(key.workspace_id, key.hash) for key in keys
+                    ]),
+                ):
+                    conn.execute(
+                        "DELETE FROM tr_entities WHERE kind = %s AND id = ANY(%s)",
+                        (kind, ids),
+                    )
+                # Preserve the existing Postgres single-delete counter cleanup.
+                for owner in sorted({key.workspace_id for key in keys}):
+                    conn.execute(
+                        "DELETE FROM tr_key_limit WHERE workspace_id = %s AND key_hash = ANY(%s)",
+                        (owner, [key.hash for key in keys if key.workspace_id == owner]),
+                    )
+            return results
 
         return self._run_transaction(delete)
 
@@ -6595,10 +6583,10 @@ class PostgresStore:
         user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
+        video_pricing_snapshot: str | None = None,
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
     ) -> GatewayAuthorization:
@@ -6657,18 +6645,9 @@ class PostgresStore:
             user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
+            video_pricing_snapshot=video_pricing_snapshot,
             settlement=settlement,
             expires_at=expires_at,
-            spend_lease_token=spend_lease.token if spend_lease else None,
-            spend_lease_id=spend_lease.lease_id if spend_lease else None,
-            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
-            spend_lease_gen=spend_lease.gen if spend_lease else None,
-            spend_lease_iat=spend_lease.iat if spend_lease else None,
-            spend_lease_exp=spend_lease.exp if spend_lease else None,
-            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
-            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
-            spend_lease_status=spend_lease.lease_status if spend_lease else None,
             invocation_nonce=invocation_nonce,
         )
 
@@ -7210,13 +7189,6 @@ class PostgresStore:
                 },
             )
             raise
-
-    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
-        outbox = self._operational_analytics_outbox
-        if outbox is None:
-            log.warning("postgres.spend_lease_shadow_outbox_disabled_drop")
-            return
-        outbox.enqueue_spend_lease_shadow(event_id, payload)
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         # indexed_at = created_at lets provider_route_benchmark_samples bound

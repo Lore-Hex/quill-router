@@ -11,6 +11,7 @@ from trusted_router.app_markup_billing import app_markup_microdollars
 from trusted_router.catalog import endpoint_for_id
 from trusted_router.pricing import signed_receipt_price_microdollars
 from trusted_router.stage_d import (
+    billing_pricing_snapshot,
     endpoint_cost_microdollars_from_document,
     parse_pricing_snapshot,
 )
@@ -101,7 +102,7 @@ def heartbeat_gateway_atomic(
                 return reject("stale_seq")
             stored_usage = delivered_usage_counts(authorization.delivered_usage)
             document = parse_pricing_snapshot(authorization.pricing_snapshot)
-            cap_micro = _cap_micro(authorization, credit_reserved_micro)
+            cap_micro = _cap_micro(credit_reserved_micro)
             stored_endpoint_id = str(authorization.selected_endpoint_id)
             return HeartbeatResult(
                 accepted=True,
@@ -137,7 +138,7 @@ def heartbeat_gateway_atomic(
             )
         except ValueError:
             return reject("endpoint_mismatch")
-        cap_micro = _cap_micro(authorization, credit_reserved_micro)
+        cap_micro = _cap_micro(credit_reserved_micro)
         if running_micro > cap_micro:
             return reject("usage_exceeds_cap")
         updated = transaction.execute_update(
@@ -258,6 +259,15 @@ def delivered_usage_charge_microdollars(
 ) -> int:
     """Price a heartbeat through the same frozen downstream fee layers as settle."""
 
+    billing_snapshot = billing_pricing_snapshot(authorization)
+    if billing_snapshot is not None:
+        # Only Fugu's pinned contract admits a private prompt-tier basis, just
+        # as inline settlement and the gateway do. Preserve legacy cohorts.
+        endpoint = endpoint_for_id(endpoint_id)
+        model_id = endpoint.model_id if endpoint is not None else authorization.model_id
+        if provider != "sakana" or model_id != "sakana-ai/fugu-ultra-v1.1":
+            usage = {**usage, "price_tier_input_tokens": 0}
+        document = billing_snapshot
     charge = delivered_usage_cost_microdollars(
         document,
         provider,
@@ -285,11 +295,8 @@ def _usage_exceeds_authorized_tokens(authorization: Any, usage: dict[str, int]) 
     return total_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
 
 
-def _cap_micro(authorization: Any, credit_reserved_micro: Any) -> int:
-    cap = int(credit_reserved_micro)
-    if authorization.spend_lease_allocated_micro is not None:
-        cap = min(cap, int(authorization.spend_lease_allocated_micro))
-    return cap
+def _cap_micro(credit_reserved_micro: Any) -> int:
+    return int(credit_reserved_micro)
 
 
 def _selected_provider(authorization: Any, endpoint_id: str) -> str:

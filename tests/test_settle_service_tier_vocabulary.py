@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal.gateway import _actual_service_tier_or_error
@@ -78,9 +79,16 @@ def _client_and_key() -> tuple[TestClient, dict]:
         ("openai/gpt-4.1-mini", "default"),
     ],
 )
-def test_settle_succeeds_for_each_providers_ordinary_tier(model: str, reported_tier: str) -> None:
+def test_settle_succeeds_for_each_providers_ordinary_tier(
+    monkeypatch: pytest.MonkeyPatch, model: str, reported_tier: str
+) -> None:
     """The exact shape that 502'd in production: a completed Anthropic
     generation reporting its own name for the ordinary tier."""
+    # Each model settles on one fixture route of its own publisher, whatever
+    # the catalog lists for it today.
+    publisher = model.split("/", 1)[0]
+    drop_routes(monkeypatch, model)
+    serve_on_fixture_route(monkeypatch, model, publisher, author=publisher)
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",

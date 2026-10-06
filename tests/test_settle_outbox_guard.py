@@ -187,7 +187,7 @@ def test_guard_sql_literals_come_from_guard_statuses() -> None:
 
 
 def test_pending_row_freezes_hold() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_pending"
     auth = _expired_authorization(store, ws=ws)
     rid, aid = auth["reservation_id"], auth["authorization_id"]
@@ -200,7 +200,7 @@ def test_pending_row_freezes_hold() -> None:
 
 
 def test_dead_row_freezes_hold() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_dead"
     auth = _expired_authorization(store, ws=ws)
     rid, aid = auth["reservation_id"], auth["authorization_id"]
@@ -214,7 +214,7 @@ def test_dead_row_freezes_hold() -> None:
 
 
 def test_release_approved_row_is_reaped() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_release_approved"
     auth = _expired_authorization(store, ws=ws)
     rid, aid = auth["reservation_id"], auth["authorization_id"]
@@ -226,7 +226,7 @@ def test_release_approved_row_is_reaped() -> None:
 
 
 def test_done_row_is_reaped() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_done"
     auth = _expired_authorization(store, ws=ws)
     rid, aid = auth["reservation_id"], auth["authorization_id"]
@@ -239,7 +239,7 @@ def test_done_row_is_reaped() -> None:
 
 
 def test_empty_table_reaper_unchanged() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_empty"
     auth = _expired_authorization(store, ws=ws)
     rid = auth["reservation_id"]
@@ -249,7 +249,7 @@ def test_empty_table_reaper_unchanged() -> None:
 
 
 def test_in_txn_guard_beats_stale_advisory() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_mf2"
     auth = _expired_authorization(store, ws=ws)
     rid, aid = auth["reservation_id"], auth["authorization_id"]
@@ -271,7 +271,7 @@ def test_in_txn_guard_beats_stale_advisory() -> None:
 
 
 def test_settle_atomic_guard_outbox_semantics() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_settle_atomic"
     auth = _expired_authorization(store, ws=ws)
     rid, aid = auth["reservation_id"], auth["authorization_id"]
@@ -312,7 +312,7 @@ def test_probe_falls_back_when_table_missing() -> None:
             raise NotFound("Table not found: tr_settle_outbox")
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_missing_table"
     auth = _expired_authorization(store, ws=ws)
     rid = auth["reservation_id"]
@@ -337,7 +337,7 @@ def test_settle_claim_arms_retention_when_outbox_table_missing() -> None:
             raise NotFound("Table not found: tr_settle_outbox")
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     first = _expired_authorization(store, ws="ws_missing_claim_first")
     second = _expired_authorization(store, ws="ws_missing_claim_second")
     proxied = _ProxyDatabase(store._database, missing_table)
@@ -373,7 +373,7 @@ def test_settle_probe_transient_fails_toward_guarded_sql() -> None:
             claim_sql.append(sql)
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     auth = _expired_authorization(store, ws="ws_transient_claim_probe")
     rid = auth["reservation_id"]
     proxied = _ProxyDatabase(store._database, transient_probe)
@@ -422,7 +422,7 @@ def test_absent_availability_cache_can_flip_to_present(
         "trusted_router.storage_gcp_authorize._OUTBOX_ABSENT_CACHE_SECONDS",
         0.0,
     )
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     before_ddl = _expired_authorization(store, ws="ws_before_outbox_ddl")
     after_ddl = _expired_authorization(store, ws="ws_after_outbox_ddl")
     proxied = _ProxyDatabase(store._database, changing_availability)
@@ -462,7 +462,7 @@ def test_completion_helpers_use_unguarded_sql_when_outbox_table_missing() -> Non
             raise NotFound("Table not found: tr_settle_outbox")
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     auth = _expired_authorization(store, ws="ws_missing_completion_helpers")
     rid, aid = auth["reservation_id"], auth["authorization_id"]
     db.reservations[rid]["settled"] = True
@@ -505,7 +505,7 @@ def test_typed_finalize_threads_missing_outbox_signal_to_completion() -> None:
             raise NotFound("Table not found: tr_settle_outbox")
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     auth = _expired_authorization(store, ws="ws_missing_finalize_completion")
     rid, aid = auth["reservation_id"], auth["authorization_id"]
     proxied = _ProxyDatabase(store._database, missing_table)
@@ -536,7 +536,7 @@ def test_probe_transient_notfound_fails_closed() -> None:
             raise NotFound("Session not found")
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_transient_notfound"
     auth = _expired_authorization(store, ws=ws)
     rid = auth["reservation_id"]
@@ -557,7 +557,7 @@ def test_probe_wrapped_transient_naming_table_fails_closed() -> None:
             raise NotFound("Session not found while querying tr_settle_outbox")
         return None
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws_guard_wrapped_transient"
     auth = _expired_authorization(store, ws=ws)
     rid = auth["reservation_id"]
@@ -583,7 +583,7 @@ def test_probe_does_not_exist_shapes_fail_closed() -> None:
                 raise NotFound(message)
             return None
 
-        store, db, _ = make_fake_store()
+        store, db = make_fake_store()
         ws = f"ws_guard_does_not_exist_{i}"
         auth = _expired_authorization(store, ws=ws)
         rid = auth["reservation_id"]
@@ -596,7 +596,7 @@ def test_probe_does_not_exist_shapes_fail_closed() -> None:
 
 
 def test_guarded_rows_do_not_starve_unguarded() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     ws_a = "ws_guard_starve_a"
     auth_a = _expired_authorization(store, ws=ws_a)
     rid_a, aid_a = auth_a["reservation_id"], auth_a["authorization_id"]
@@ -650,7 +650,7 @@ def test_availability_cache_works_for_unhashable_database() -> None:
             probe_calls += 1
         return None
 
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     first_auth = _expired_authorization(store, ws="ws_unhashable_first")
     second_auth = _expired_authorization(store, ws="ws_unhashable_second")
     proxied = UnhashableNamedProxyDatabase(store._database, count_probes)
@@ -685,7 +685,7 @@ def test_nameless_database_is_not_cached_by_reusable_id() -> None:
             probe_calls += 1
         return None
 
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     first = _expired_authorization(store, ws="ws_nameless_first")
     second = _expired_authorization(store, ws="ws_nameless_second")
     proxied = _ProxyDatabase(store._database, count_probes)

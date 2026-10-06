@@ -42,8 +42,6 @@ from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
-from trusted_router.services.spend_lease_settlement import clamp_spend_lease_charge
-from trusted_router.spend_lease_admission import classify_receipt_replay
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
     KeyWindowLimitExceeded,
@@ -64,6 +62,8 @@ from trusted_router.storage_gcp_counter_dml import (
     read_reservation_by_idempotency,
     reservation_insert_statement,
     reserve_credit,
+    reserve_credit_statement,
+    reserve_credit_with_pause,
     reserve_key,
     reserve_key_statement,
 )
@@ -74,6 +74,7 @@ from trusted_router.storage_gcp_generation_records import (
 )
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
+    _rollback_discarded_transaction,
     remaining_rpc_budget,
     run_in_transaction_with_retry,
     spanner_rpc_budget,
@@ -84,13 +85,13 @@ from trusted_router.storage_gcp_request_records import (
     gateway_authorization_settled_statement,
     mark_gateway_authorization_settled,
     read_gateway_authorization,
-    read_gateway_authorization_admission_columns,
 )
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     GUARD_COUNT_SQL,
+    intent_insert_counts,
     mark_done_unleased_tx,
-    rewrite_frozen_settlement_tx,
+    resolved_intent_statements,
     speculative_done_statements,
 )
 from trusted_router.storage_gcp_stage_d import (
@@ -103,6 +104,7 @@ from trusted_router.storage_models import (
     CustomModelMarkupPayout,
     GatewayAuthorization,
     Generation,
+    SettleOutboxRow,
     UserModelPayout,
 )
 from trusted_router.types import UsageType
@@ -115,6 +117,12 @@ log = logging.getLogger(__name__)
 # hot transaction small; the caller retains the full shard set for its lock-free
 # aggregate precheck and cold-path escrow rebalance.
 MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION = 4
+
+# The one-commit settle is the fast path, not the durable one. Cap it well
+# inside the settle route's 20 s Spanner budget: a contended or wedged attempt
+# then still leaves the durable two-commit fallback about 15 s, while a normal
+# commit (finalize p99 ~1.3 s in the slowest measured hour) never hits the cap.
+ONE_COMMIT_SETTLE_BUDGET_SECONDS = 5.0
 
 
 def bounded_credit_shard_candidates(candidates: tuple[int, ...]) -> tuple[int, ...]:
@@ -132,7 +140,6 @@ class AuthorizeOutcome:
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_MISSING = "key_missing"  # typed key row absent -> fail closed
     IDEMPOTENCY_MISMATCH = "idempotency_mismatch"  # same key, different request body
-    ADMISSION_SCOPE_CONFLICT = "admission_scope_conflict"
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
 
 
@@ -140,24 +147,15 @@ class AuthorizeVerdict(str):
     """String-compatible typed-authorize outcome with its window decision."""
 
     rate_limit: KeyWindowLimitDecision | None
-    spend_lease_bound: bool
-    no_lease_reason: str | None
-    spend_lease_outcome: str | None
 
     def __new__(
         cls,
         outcome: str,
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
-        spend_lease_bound: bool = False,
-        no_lease_reason: str | None = None,
-        spend_lease_outcome: str | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
-        verdict.spend_lease_bound = spend_lease_bound
-        verdict.no_lease_reason = no_lease_reason
-        verdict.spend_lease_outcome = spend_lease_outcome
         return verdict
 
 
@@ -166,6 +164,13 @@ class _Reject(Exception):
 
     def __init__(self, outcome: str) -> None:
         self.outcome = outcome
+
+
+class _RetrySequentialCreditReserve(GoogleAPICallError):
+    """Discard the batch before sequential credit/pause classification.
+
+    Use the same protected API-error rollback lifecycle as key misses.
+    """
 
 
 class _RetrySequentialKeyReserve(GoogleAPICallError):
@@ -278,6 +283,68 @@ def key_lifetime_cap_precheck(
         log.warning(
             "key lifetime-cap snapshot failed; deferring to authorize transaction key=%s",
             key_hash,
+            exc_info=True,
+        )
+        return DEFER
+
+
+def credit_exhaustion_precheck(
+    database: Any,
+    param_types: Any,
+    *,
+    workspace_id: str,
+    estimate: int,
+    idempotency_scope: str | None = None,
+) -> str:
+    """Recheck a cached insufficient-credit verdict without locking any credit row.
+
+    The authorize transaction reserves ``estimate`` on the first credit shard whose
+    ``total_credits - total_usage - reserved`` covers it, after the idempotency
+    replay read and before the pause and key checks. A workspace that keeps
+    retrying against an empty balance would otherwise lock a credit row and roll
+    back on every request, which also delays settles that release that row's holds.
+
+    It reads every credit shard the workspace has, never the process's cached
+    shard count: after a split elsewhere that count can be stale for up to its
+    TTL, and a funded shard beyond it would otherwise turn a payable request
+    into a 402. EXHAUSTED only when no shard covers the estimate on its own and
+    neither does the sum, so no bounded shard prefix and no rebalance could
+    accept it. HEADROOM drops the cache entry; a pending reservation under this
+    idempotency scope, a missing, non-contiguous or NULL row set, or a read
+    failure defers to the transaction (HEADROOM or DEFER). Like
+    the key lifetime-cap precheck this may pass a request the transaction refuses
+    (which re-records the workspace) but must never refuse one it would accept.
+    """
+    pt = param_types
+    try:
+        with database.snapshot(multi_use=True) as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT shard, total_credits, total_usage, reserved "
+                    "FROM tr_credit_balance WHERE workspace_id=@pk ORDER BY shard",
+                    params={"pk": workspace_id},
+                    param_types={"pk": pt.STRING},
+                )
+            )
+            if not rows or [int(row[0]) for row in rows] != list(range(len(rows))):
+                return HEADROOM
+            if any(value is None for row in rows for value in row[1:4]):
+                return HEADROOM
+            available = [
+                int(total_credits) - int(total_usage) - int(reserved)
+                for _, total_credits, total_usage, reserved in rows
+            ]
+            if max(available) >= estimate or sum(available) >= estimate:
+                return HEADROOM
+            if idempotency_scope is not None:
+                existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
+                if existing is not None:
+                    return DEFER
+            return EXHAUSTED
+    except Exception:
+        log.warning(
+            "credit exhaustion snapshot failed; deferring to authorize transaction workspace=%s",
+            workspace_id,
             exc_info=True,
         )
         return DEFER
@@ -412,14 +479,6 @@ def authorize_atomic(
     strict_budget: bool = False,
     enforce_strict_windows: bool = True,
     authorization_id: str | None = None,
-    spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
-    build_authorization_for_lease: (
-        Callable[[str, str, bool], GatewayAuthorization] | None
-    ) = None,
-    also_retry: tuple[type[BaseException], ...] = (),
-    spend_lease_receipt_hash: str | None = None,
-    credit_escrowed_by_spend_lease: bool = False,
-    spend_lease_admission_replay_protection: bool = False,
     trust_settings: Any = None,
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
@@ -477,10 +536,6 @@ def authorize_atomic(
         raise ValueError("credit_shard_candidates exceeds the hot-path transaction limit")
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
-    if credit_escrowed_by_spend_lease and (
-        not has_credit_candidate or spend_lease_hook is None
-    ):
-        raise ValueError("lease-escrowed credit requires a Credits route and spend-lease hook")
     key_candidates = tuple(key_shard_candidates)
     if not key_candidates:
         raise ValueError("key_shard_candidates must not be empty")
@@ -505,28 +560,7 @@ def authorize_atomic(
     )
 
     def _replay(transaction: Any, existing: dict) -> dict:
-        receipt_verdict = "ordinary"
-        if spend_lease_admission_replay_protection:
-            admission = read_gateway_authorization_admission_columns(
-                transaction,
-                pt,
-                str(existing["authorization_id"]),
-            )
-            stored_receipt_hash = (
-                str(admission["spend_lease_receipt_hash"])
-                if admission is not None
-                and admission["spend_lease_receipt_hash"] is not None
-                else None
-            )
-            receipt_verdict = classify_receipt_replay(
-                spend_lease_receipt_hash,
-                stored_receipt_hash,
-            )
-        if receipt_verdict == "scope_conflict":
-            raise _Reject(AuthorizeOutcome.ADMISSION_SCOPE_CONFLICT)
-        if receipt_verdict == "ordinary" and (
-            existing["idempotency_fingerprint"] != idempotency_fingerprint
-        ):
+        if existing["idempotency_fingerprint"] != idempotency_fingerprint:
             raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
         return {
             "outcome": AuthorizeOutcome.REPLAY,
@@ -540,11 +574,17 @@ def authorize_atomic(
         raise ValueError("strict budgets require exactly one key shard")
     speculative = not strict_budget and not skip_key_limit and speculate_key_limit
 
-    def check_key_prefix(counts: Sequence[int]) -> None:
-        # Zero is ambiguous (missing, exhausted, uncapped, BYOK-excluded).
-        # Even a later INSERT error must not override the key business decision.
+    batch_credit = has_credit_candidate and not strict_budget and (speculative or skip_key_limit)
+
+    def check_prefix(counts: Sequence[int]) -> None:
+        # Credit zero means underfunded or paused; key zero means missing,
+        # exhausted, uncapped or BYOK-excluded. Classify only after rollback.
+        # Later INSERT errors must not override the first missed counter.
         # ABORTED is handled first by execute_batch_dml and retries this callback.
-        if counts and counts[0] == 0:
+        if batch_credit and counts and counts[0] == 0:
+            raise _RetrySequentialCreditReserve("speculative credit hold missed")
+        key_index = int(batch_credit)
+        if speculative and len(counts) > key_index and counts[key_index] == 0:
             raise _RetrySequentialKeyReserve("speculative key hold missed")
 
     def txn(transaction: Any) -> dict:
@@ -557,48 +597,40 @@ def authorize_atomic(
         # Reservation/authorization INSERTs below consume the selected shards and holds.
         credit_hold = 0
         selected_credit_shard = UNSHARDED
-        if has_credit_candidate and not credit_escrowed_by_spend_lease:
+        armed = trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled
+        paused = False
+        if batch_credit:
+            selected_credit_shard = shard_candidates[0]
+            credit_hold = estimate
+        elif has_credit_candidate:
             for candidate in shard_candidates:
-                if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
+                if armed:
+                    reserved, paused = reserve_credit_with_pause(
+                        transaction, pt, workspace_id, estimate, shard=candidate,
+                    )
+                else:
+                    reserved = reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate)
+                if reserved:
                     selected_credit_shard = candidate
                     break
             else:
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
-        # Authorize-time pause enforcement belongs to the armed trust program,
-        # not today's path. Shipping it unarmed changed the enclave rollout
-        # gate's behavior in production.
-        if trust_settings is not None and trust_settings.spend_lease_trust_eligibility_enabled:
-            # Pause state is replicated atomically across the credit shards. Read
-            # only the selected shard, whose balance DML already joined this txn's
-            # read set; a workspace-wide scan couples otherwise independent holds
-            # and can exhaust the retry budget under contention. BYOK / lease-
-            # escrowed requests use shard zero. A pause still conflicts on this
-            # shard and rejection rolls back every staged credit hold.
-            from trusted_router.trust_eligibility import billing_paused_tx
-            if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
-                raise _Reject("billing_paused")
+        if armed:
+            # Batched credit checks pause in its UPDATE predicate below.
+            # Returning DML observes pause at the write on the selected row.
+            # Returning both columns preserves the old SELECT's dependencies
+            # on this key, without coupling unrelated credit shards. Spanner
+            # locks cells: reading pause earlier can change race scheduling,
+            # but a conflicting pause still has to serialize or abort/retry.
+            # BYOK has no credit UPDATE and retains its shard-zero read.
+            if not has_credit_candidate:
+                from trusted_router.trust_eligibility import billing_paused_tx
 
-        lease_result: dict[str, Any] = {
-            "bound": False,
-            "no_lease_reason": None,
-            "spend_lease_outcome": None,
-        }
-        # The hook may escrow or release credit, including recovery/pause work.
-        # Its writes share this transaction and roll back if the key rejects;
-        # regional binding happens only after commit. Keep credit before key.
-        if spend_lease_hook is not None:
-            lease_result = spend_lease_hook(transaction, selected_credit_shard)
-        if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
-            no_lease_reason = lease_result.get("no_lease_reason")
-            if no_lease_reason == "scope_arbitrated":
-                reason = "scope_conflict"
-            elif no_lease_reason == "unpaid_workspace":
-                reason = "hold_refused"
-            else:
-                reason = "reuse_lost"
-            raise _Reject(f"admission_rejected:{reason}")
+                paused = billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard)
+            if paused:
+                raise _Reject("billing_paused")
 
         # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
         # entity read can miss only requests already in flight at that commit,
@@ -670,20 +702,10 @@ def authorize_atomic(
             created_at=created_at,
         )
         if request_record_write_mode == "typed":
-            selected_authorization = authorization
-            if build_authorization_for_lease is not None:
-                selected_authorization = build_authorization_for_lease(
-                    authorization_id,
-                    reservation_id,
-                    bool(lease_result.get("bound")),
-                )
-                selected_authorization.created_at = created_at.isoformat().replace(
-                    "+00:00", "Z"
-                )
-            assert selected_authorization is not None
+            assert authorization is not None
             authorization_statement = gateway_authorization_insert_statement(
                 pt,
-                selected_authorization,
+                authorization,
                 created_at=created_at,
             )
         else:
@@ -694,44 +716,44 @@ def authorize_atomic(
                 authorization_id,
                 legacy_auth_body,
             )
+        statements = []
+        if batch_credit:
+            statements.append(reserve_credit_statement(
+                pt, workspace_id, estimate, shard=selected_credit_shard, check_pause=armed,
+            ))
         if speculative:
-            # Ordered server execution: credit (and lease work) precedes key,
-            # and key precedes these new rows. A zero does NOT stop Batch DML.
-            execute_batch_dml(
-                transaction,
-                [reserve_key_statement(
-                    pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
-                ), reservation_statement, authorization_statement],
-                [(1,), (1,), (1,)],
-                check_prefix=check_key_prefix,
-            )
-        else:
-            execute_batch_dml(
-                transaction, [reservation_statement, authorization_statement], [(1,), (1,)]
-            )
+            statements.append(reserve_key_statement(
+                pt, key_hash, estimate, is_byok=is_byok, shard=selected_key_shard,
+            ))
+        # Credit before key; no client RPC between these locks and commit.
+        # A zero does not stop Batch DML: check the prefix before INSERT errors.
+        statements.extend([reservation_statement, authorization_statement])
+        execute_batch_dml(
+            transaction, statements, [(1,)] * len(statements), check_prefix=check_prefix,
+        )
         return {
             "outcome": AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=strict_decision),
             "reservation_id": reservation_id,
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
             "key_shard": selected_key_shard,
-            **lease_result,
         }
 
     try:
         try:
             return run_in_transaction_with_retry(
-                database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
+                database, txn, transaction_tag="tr_authorize",
             )
-        except _RetrySequentialKeyReserve:
+        except (_RetrySequentialCreditReserve, _RetrySequentialKeyReserve):
             # Protected API-error cleanup attempted rollback before the SDK
             # discarded the handle. Cleanup never renews the shared T1 budget.
             # Retry the original decision path once; it handles no-hold success,
             # all shard candidates, and terminal rejection without speculation.
             # IDs, created_at, and candidate order remain stable across attempts.
             speculative = False
+            batch_credit = False
             return run_in_transaction_with_retry(
-                database, txn, transaction_tag="tr_authorize", also_retry=also_retry,
+                database, txn, transaction_tag="tr_authorize",
             )
     except KeyWindowLimitExceeded as exceeded:
         return {"outcome": AuthorizeVerdict(
@@ -780,6 +802,21 @@ class _SettleError(Exception):
 
 class _ReapGuardLost(Exception):
     """Abort a reaper transaction whose final row-count guard lost."""
+
+
+class OneCommitSettleDeclined(Exception):
+    """The one-commit settle rolled back before committing anything.
+
+    Raised inside (or straight after) the transaction whenever the happy path
+    does not hold: the reservation is gone or already claimed, the typed
+    authorization row is absent or terminal, the intent is already recorded, or
+    a release row-count assertion failed. Nothing was written, so the caller
+    runs the durable two-commit settle, which owns every one of those cases.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -832,7 +869,6 @@ def _release_key_or_skip_deleted(
     actual_micro: int,
     *,
     book_to_byok: bool,
-    settled_at: datetime | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
     """Shared key-release classification for settle, reaper, and drain paths.
 
@@ -844,18 +880,11 @@ def _release_key_or_skip_deleted(
     Held/deleted keys and zero-usage refunds retain their historical behavior.
     """
     from trusted_router.storage_gcp_counter_dml import key_limit_exists, release_key
-    from trusted_router.storage_gcp_regional_quota import _check_regional_key_windows
 
     key_hash = str(res["key_hash"])
     key_hold = int(res["key_reserved_micro"])
     key_shard = int(res.get("key_shard", 0) or 0)
     floors = window_floors(utcnow())
-    amounts = (
-        {period: actual_micro if settled_at >= floor else 0 for period, floor in floors.items()}
-        if settled_at is not None else None
-    )
-    if settled_at is not None:
-        _check_regional_key_windows(transaction, param_types, key_hash, key_shard, floors)
     count = release_key(
         transaction,
         param_types,
@@ -863,7 +892,7 @@ def _release_key_or_skip_deleted(
         key_hold,
         int(actual_micro),
         book_to_byok=book_to_byok,
-        window_floors=floors, window_amounts=amounts,
+        window_floors=floors,
         shard=key_shard,
     )
     if count == 1:
@@ -871,11 +900,9 @@ def _release_key_or_skip_deleted(
     # Pre-migration credit-only reservations can legitimately have no key.
     if res["key_hash"] is not None and key_hold == 0 and actual_micro > 0:
         if key_shard != 0:
-            if settled_at is not None:
-                _check_regional_key_windows(transaction, param_types, key_hash, 0, floors)
             recovered = release_key(
                 transaction, param_types, key_hash, 0, int(actual_micro),
-                book_to_byok=book_to_byok, window_floors=floors, window_amounts=amounts,
+                book_to_byok=book_to_byok, window_floors=floors,
                 shard=0,
             )
             if recovered == 1:
@@ -982,10 +1009,9 @@ def settle_atomic(
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
 
-        # A regional authorization spent from an already escrowed lease. The
-        # regional ledger is settled/refunded before this transaction and the
-        # lease reconciler imports aggregate spend later. Releasing counters
-        # here would double-release the grant and recreate the hot global row.
+        # A "RegionalCredits" hold belongs to a retired regional-quota lease
+        # (pilot removed 2026-09): its escrow lived in the retired ledger, so
+        # releasing counters here would double-release the grant.
         if res.get("hold_usage_type") == "RegionalCredits":
             return {
                 "outcome": SettleOutcome.SETTLED,
@@ -1426,11 +1452,6 @@ def _finalize_reaped_reservation_atomic(
                 authorization.selected_endpoint_id,
                 usage,
             )
-            if authorization.settlement == "spend_lease":
-                actual_micro = min(
-                    clamp_spend_lease_charge(authorization, actual_micro),
-                    int(res["credit_reserved_micro"]),
-                )
             _uncached_input, total_input = normalized_delivered_prompt(
                 selected_provider,
                 usage,
@@ -1542,6 +1563,9 @@ def _finalize_reaped_reservation_atomic(
         ):
             raise _ReapGuardLost("authorization retention guard lost")
         # Release credit first and key last, after all other transaction DML.
+        # A "RegionalCredits" hold belongs to a retired regional-quota lease
+        # (pilot removed 2026-09): its escrow lived in the retired ledger, so
+        # nothing on the counters is released for it.
         missing_key_releases = []
         if res.get("hold_usage_type") != "RegionalCredits":
             if res["credit_reserved_micro"] > 0:
@@ -1614,6 +1638,26 @@ def _reap_datetime(value: Any) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _dispose_open_transaction(opened: list[Any]) -> None:
+    """Roll back the one transaction a failed one-commit attempt can leave open.
+
+    Within one runner call only the LAST attempt can still be open: earlier
+    attempts ended in ``Aborted`` (already dead server-side, though the client
+    leaves ``committed`` None and ``rolled_back`` False), and a callback error
+    is rolled back by the runner. Rolling back only the last keeps cleanup to
+    one bounded Rollback, so a burst of aborts before a commit timeout cannot
+    consume the durable fallback's budget.
+    """
+
+    if not opened:
+        return
+    transaction = opened[-1]
+    if getattr(transaction, "committed", None) is None and not getattr(
+        transaction, "rolled_back", False
+    ):
+        _rollback_discarded_transaction(transaction)
+
+
 @spanner_rpc_budget(TXN_BUDGET_SECONDS)
 def typed_finalize_atomic(
     database: Any,
@@ -1635,11 +1679,10 @@ def typed_finalize_atomic(
     user_model_payout: UserModelPayout | None = None,
     app_markup_payout: AppMarkupPayout | None = None,
     custom_model_markup_payout: CustomModelMarkupPayout | None = None,
-    regional_hold_unknown: bool = False,
-    regional_global_micro: int = 0,
-    finalize_regional_hold: Callable[[], tuple[bool, int, datetime | None]] | None = None,
     settle_outbox_done: tuple[str, str] | None = None,
-    settle_outbox_rewrite: tuple[str, str, str, int, str] | None = None,
+    settle_outbox_intent: SettleOutboxRow | None = None,
+    intent_initial_delay_seconds: int = 0,
+    benchmark_statement: DmlStatement | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -1648,6 +1691,18 @@ def typed_finalize_atomic(
     activity row is durable in this commit and the outbox table exists. The
     result carries ``outbox_marked``: True (marked), False (row leased or
     already resolved -- the drain re-derives), or None (not attempted).
+
+    ``settle_outbox_intent`` is the ONE-COMMIT settle: this transaction also
+    INSERTs that intent already resolved (``intent_insert_statements(...,
+    resolved=True)``, with the enqueue's own retention clears) and arms
+    retention exactly as the done-mark would, so the enqueue, the charge and
+    the done-mark commit together. ``benchmark_statement`` (one-commit only)
+    adds the post-commit benchmark INSERT to the same batch. It is the happy
+    path only: any deviation (reservation missing or already claimed, typed
+    authorization absent or terminal, intent already recorded, a release
+    row-count failure) raises ``OneCommitSettleDeclined`` or the API error
+    after rolling back, and the caller runs the durable two-commit settle,
+    which owns those cases. It never runs the sequential fallback below.
 
     ONE transaction reproduces legacy finalize_gateway_authorization's whole
     behavior so a crash can't leave counters charged but the authorization
@@ -1665,10 +1720,10 @@ def typed_finalize_atomic(
         insert_entity_dml_at,
         read_reservation,
         release_credit,
+        release_credit_no_debt_statement,
+        release_key_statement,
         update_entity_body_dml,
     )
-    from trusted_router.storage_gcp_regional_quota import _RegionalWindowAdvanced
-
     pt = param_types
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
@@ -1677,11 +1732,9 @@ def typed_finalize_atomic(
         _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
 
-    # Corrective lease rewrites retain their original ordering/fence. Known
-    # legacy inputs and custom outbox callbacks also keep the sequential path.
+    # Known legacy inputs and custom outbox callbacks keep the sequential path.
     speculate = (
         authorization is not None
-        and settle_outbox_rewrite is None
         and (operational_analytics_outbox is None or callable(
             getattr(operational_analytics_outbox, "activity_insert_statement", None)
         ))
@@ -1690,18 +1743,35 @@ def typed_finalize_atomic(
     mark_done = (
         settle_outbox_done is not None and resolved_outbox_available and activity_durable
     )
+    one_commit = settle_outbox_intent is not None
+    if benchmark_statement is not None and not one_commit:
+        raise ValueError("benchmark_statement rides only in the one-commit settle")
+    if settle_outbox_intent is not None:
+        # A resolved intent is only truthful when this commit itself makes the
+        # activity durable, uses the guarded (outbox-aware) claim, and takes the
+        # speculative shape whose every deviation can roll back to the caller.
+        if settle_outbox_done is not None:
+            raise ValueError("pass settle_outbox_done or settle_outbox_intent, not both")
+        if not (speculate and activity_durable and resolved_outbox_available):
+            raise ValueError("the one-commit settle needs speculation, durable activity and the outbox")
+        if (
+            settle_outbox_intent.authorization_id != authorization_id
+            or settle_outbox_intent.reservation_id != reservation_id
+            or settle_outbox_intent.intent_kind != ("settle" if success else "refund")
+        ):
+            raise ValueError("settle_outbox_intent does not describe this finalize")
     attempts = 0
     eligible_attempts = 0
     fallback_reason = "none"
     rollback_ms = 0.0
     fallback_outcome = "not_attempted"
 
-    def speculative_batch(transaction: Any, *, include_claim: bool) -> None:
+    def speculative_batch(transaction: Any, *, include_claim: bool, res: dict, fold_tail: bool) -> None:
         nonlocal eligible_attempts
         eligible_attempts += 1
         assert authorization is not None
         statements = []
-        reasons = []
+        reasons: list[str | None] = []
         if include_claim:
             statements.append(claim_reservation_statement(
                 pt, reservation_id, actual_micro=book_actual,
@@ -1712,7 +1782,17 @@ def typed_finalize_atomic(
         statements.append(gateway_authorization_settled_statement(pt, authorization))
         reasons.append("typed_zero")
         counts: list[tuple[int, ...]] = [(1,)] * len(statements)
-        if mark_done:
+        if settle_outbox_intent is not None:
+            # The enqueue's whole statement set (INSERT + retention clears),
+            # with the row already in its done state, then the done-mark's
+            # retention resolution. A duplicate intent fails the INSERT
+            # (ALREADY_EXISTS), never a zero count; no prefix reason applies.
+            resolved = resolved_intent_statements(
+                pt, settle_outbox_intent, initial_delay_seconds=intent_initial_delay_seconds,
+            )
+            statements.extend(resolved)
+            counts.extend(intent_insert_counts(resolved))
+        elif mark_done:
             assert settle_outbox_done is not None
             done = speculative_done_statements(
                 pt, authorization_id=settle_outbox_done[0], intent_kind=settle_outbox_done[1],
@@ -1729,25 +1809,77 @@ def typed_finalize_atomic(
                 # PENDING_COMMIT_TIMESTAMP is the last analytics access.
                 statements.append(operational_analytics_outbox.activity_insert_statement(generation))
                 counts.append((1,))
+        if benchmark_statement is not None:
+            # One-commit only; the benchmark outbox is touched nowhere else here.
+            statements.append(benchmark_statement)
+            counts.append((1,))
+
+        # These hot rows are last, credit before key. A miss rolls back ALL
+        # speculative writes before recovery/rollover/deletion classification;
+        # never hold a speculative key lock while running credit recovery.
+        reasons.extend([None] * (len(statements) - len(reasons)))
+        sampled_floors = window_floors(utcnow()) if fold_tail else None
+        if fold_tail:
+            assert sampled_floors is not None
+            statements.append(release_credit_no_debt_statement(
+                pt, res["workspace_id"], res["credit_reserved_micro"], book_actual,
+                shard=res["credit_shard"],
+            ))
+            # The key's release in both window forms: the current one, which
+            # leaves the boundary columns unlocked (#1083), and the rolling one
+            # for a key with a window to roll forward. Exactly one matches.
+            for windows in ("current", "stale"):
+                statements.append(release_key_statement(
+                    pt, str(res["key_hash"]), res["key_reserved_micro"], book_actual,
+                    book_to_byok=book_to_byok, window_floors=sampled_floors,
+                    shard=res["key_shard"], windows=windows,
+                ))
+            counts.extend([(1,), (0, 1), (0, 1)])
+            reasons.extend(["credit_release_zero", None, None])
 
         def check_prefix(row_counts: Sequence[int]) -> None:
-            for count, reason in zip(row_counts, reasons, strict=False):
-                if count == 0:
+            for count, reason, allowed in zip(row_counts, reasons, counts, strict=False):
+                if count == 0 and reason is not None:
                     raise _RetrySequentialFinalize(reason)
-                if count != 1:
+                if count not in allowed:
                     # A malformed earlier count cannot authorize a later fallback.
-                    break
+                    return
+            if fold_tail and len(row_counts) == len(statements) and sum(row_counts[-2:]) != 1:
+                # Neither form matched: a deleted key or a hold the key no
+                # longer covers, which the sequential path classifies.
+                raise _RetrySequentialFinalize("key_release_zero")
 
         execute_batch_dml(transaction, statements, counts, check_prefix=check_prefix)
+        if sampled_floors is not None:
+            # Main samples after credit release/recovery. A batch crossing a
+            # boundary must discard its old-window increments and resample in
+            # the sequential path, before any of these writes can commit.
+            current_floors = window_floors(utcnow())
+            if any(current_floors[window] > floor for window, floor in sampled_floors.items()):
+                raise _RetrySequentialFinalize("window_boundary_advanced")
 
     def txn(transaction: Any) -> dict:
         nonlocal attempts
         attempts += 1
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
+            if one_commit:
+                # Raise (not return) so this attempt commits nothing at all.
+                raise OneCommitSettleDeclined("not_found")
             return {"outcome": SettleOutcome.NOT_FOUND}
-        if speculate and finalize_regional_hold is None:
-            speculative_batch(transaction, include_claim=True)
+        fold_tail = (
+            speculate and success and not res["settled"]
+            and settled_usage_type == "Credits"
+            and isinstance(res["credit_reserved_micro"], int)
+            and isinstance(res["key_reserved_micro"], int)
+            and res["key_reserved_micro"] >= 0 and res["key_hash"] is not None
+            and 0 <= book_actual <= res["credit_reserved_micro"]
+            and res["credit_reserved_micro"] > 0
+            and user_model_payout is None and app_markup_payout is None
+            and custom_model_markup_payout is None
+        )
+        if speculate:
+            speculative_batch(transaction, include_claim=True, res=res, fold_tail=fold_tail)
         else:
             won = claim_reservation(
                 transaction,
@@ -1760,36 +1892,7 @@ def typed_finalize_atomic(
                 outbox_available=resolved_outbox_available,
             )
             if not won:
-                return {
-                    "outcome": SettleOutcome.ALREADY_SETTLED,
-                    "regional_terminal_zero": (
-                        finalize_regional_hold is not None and res.get("actual_micro") == 0
-                    ),
-                }
-
-        # Resolve the terminal winner BEFORE any external local CAS. The
-        # reservation claim serializes us with the reaper; a durable frozen
-        # intent protects a local commit if this transaction later aborts.
-        hold_unknown, global_micro, settled_at = regional_hold_unknown, regional_global_micro, None
-        if finalize_regional_hold is not None:
-            hold_unknown, global_micro, settled_at = finalize_regional_hold()
-
-        if settle_outbox_rewrite is not None:
-            rewrite_aid, rewrite_kind, lease_owner, rewrite_cost, rewrite_body = (
-                settle_outbox_rewrite
-            )
-            rewritten = rewrite_frozen_settlement_tx(
-                transaction,
-                pt,
-                authorization_id=rewrite_aid,
-                intent_kind=rewrite_kind,
-                lease_owner=lease_owner,
-                actual_cost_micro=rewrite_cost,
-                settle_body=rewrite_body,
-                now=now,
-            )
-            if rewritten != 1:
-                raise _SettleError("corrective settle-outbox rewrite lost its lease fence")
+                return {"outcome": SettleOutcome.ALREADY_SETTLED}
 
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
             # Deliberately NOT wrapped in a swallow. The payout is two DML
@@ -1830,10 +1933,8 @@ def typed_finalize_atomic(
             )
 
         if speculate:
-            if finalize_regional_hold is not None:
-                speculative_batch(transaction, include_claim=False)
             request_record_typed = True
-            outbox_marked: bool | None = True if mark_done else None
+            outbox_marked: bool | None = True if (mark_done or one_commit) else None
         else:
             marked = 0
             request_record_typed = False
@@ -1915,7 +2016,7 @@ def typed_finalize_atomic(
         # commit. Credit goes first so its contention cannot extend the key lock.
         # The `!= 1` raises still abort the whole transaction.
         missing_key_releases = []
-        if res["credit_reserved_micro"] > 0:
+        if not fold_tail and res["credit_reserved_micro"] > 0:
             credit_actual = book_actual if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
                 transaction,
@@ -1927,39 +2028,10 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
-        elif (hold_unknown or global_micro > 0) and res.get("hold_usage_type") == "RegionalCredits":
-            # Healthy overruns book ONLY the unbacked excess here. The local
-            # component remains in escrow until reconciliation. If a stale CAS
-            # erased the hold, book the entire charge under this same claim;
-            # closing reconciliation releases the missing hold's unused escrow.
-            credit_actual = (book_actual if hold_unknown else global_micro) if settled_usage_type == "Credits" else 0
-            credit_count = release_credit(
-                transaction,
-                pt,
-                res["workspace_id"],
-                0,
-                credit_actual,
-                shard=res["credit_shard"],
-            )
-            if credit_count != 1:
-                raise _SettleError("regional fallback credit booking row-count != 1")
 
-        # Authorization is already loaded for finalization. No lease read belongs
-        # in this transaction. Missing versions retain the V1 inline contract;
-        # a missing Bigtable hold always uses the existing claimed recovery path.
-        regional_reconciler_owns_key = (
-            res.get("hold_usage_type") == "RegionalCredits"
-            and authorization is not None
-            and authorization.regional_accounting_version == 2
-            and not hold_unknown
-        )
-        # V2 imports the local component with the lease; only its excess is
-        # inline. V1 and missing-hold recovery still own the entire key charge.
-        key_actual = global_micro if regional_reconciler_owns_key else book_actual
-        if not regional_reconciler_owns_key or key_actual > 0:
+        if not fold_tail:
             key_count, warning = _release_key_or_skip_deleted(
-                transaction, pt, res, key_actual, book_to_byok=book_to_byok,
-                settled_at=settled_at,
+                transaction, pt, res, book_actual, book_to_byok=book_to_byok,
             )
             if warning is not None:
                 missing_key_releases.append(warning)
@@ -1975,11 +2047,28 @@ def typed_finalize_atomic(
         }
 
     def run() -> dict:
-        return run_in_transaction_with_retry(
-            database, txn,
-            transaction_tag="tr_finalize" if success else "tr_refund_finalize",
-            also_retry=(_RegionalWindowAdvanced,),
-        )
+        tag = "tr_finalize" if success else "tr_refund_finalize"
+        if not one_commit:
+            return run_in_transaction_with_retry(database, txn, transaction_tag=tag)
+        tag = "tr_settle_one_commit" if success else "tr_refund_one_commit"
+        opened: list[Any] = []
+
+        def tracked(transaction: Any) -> dict:
+            opened.append(transaction)
+            return txn(transaction)
+
+        try:
+            return run_in_transaction_with_retry(database, tracked, transaction_tag=tag)
+        except BaseException:
+            # The runner rolls back failures inside the callback only. A commit
+            # that failed or timed out (including the attempt budget expiring at
+            # the commit boundary) leaves its transaction open, and its locks on
+            # the reservation, intent and counter rows would block the caller's
+            # durable two-commit fallback until Spanner reaps them. Dispose of it
+            # first. If that commit actually landed, the rollback fails harmlessly
+            # and the first-writer-wins claim turns the fallback into a replay.
+            _dispose_open_transaction(opened)
+            raise
 
     try:
         try:
@@ -1990,6 +2079,11 @@ def typed_finalize_atomic(
             # change ALREADY_SETTLED into NOT_FOUND on the fresh observation.
             rollback_ms = (time.monotonic() - exc.rollback_started) * 1000
             fallback_reason = exc.fallback_reason
+            if one_commit:
+                # The happy path did not hold and nothing committed. The
+                # caller's durable two-commit settle owns every such case.
+                fallback_outcome = "one_commit_declined"
+                raise OneCommitSettleDeclined(exc.fallback_reason) from None
             speculate = False
             fallback_outcome = "exception"
             result = run()
@@ -1997,9 +2091,11 @@ def typed_finalize_atomic(
         result["attempts"] = attempts
         _log_missing_key_releases(result)
         return result
-    except _SettleError:
+    except _SettleError as exc:
         if fallback_reason != "none":
             fallback_outcome = SettleOutcome.ERROR
+        if one_commit:
+            raise OneCommitSettleDeclined(f"release_row_count: {exc}") from None
         return {"outcome": SettleOutcome.ERROR}
     finally:
         if eligible_attempts:

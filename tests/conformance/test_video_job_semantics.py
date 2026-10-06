@@ -115,6 +115,28 @@ def test_get_video_job_for_key_is_the_tenant_boundary(
     assert store.get_video_job_for_key(job.id, "wrong-hash") is None
 
 
+def test_token_billed_video_bound_survives_queue_and_replay(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    job = _job(workspace_id, unique)
+    job.quoted_microdollars = 0
+    job.output_token_limit = 80_000
+    stored, created = store.prepare_video_job(job)
+    assert created
+    queued = store.mark_video_job_queued(
+        job.id, provider_job_id=f"cgt-{unique}", quoted_microdollars=0,
+        provider=job.provider, endpoint_id=job.endpoint_id,
+        provider_model=job.provider_model, poll_after_seconds=0,
+    )
+    assert queued is not None and queued.output_token_limit == 80_000
+    replay = _job(workspace_id, unique)
+    replay.output_token_limit = 1
+    again, created = store.prepare_video_job(replay)
+    assert not created and again.id == stored.id
+    assert again.output_token_limit == 80_000
+    assert again.quoted_microdollars == 0
+
+
 def test_a_job_is_claimed_by_exactly_one_lease_owner(
     store: Store, workspace_id: str, unique: str
 ) -> None:

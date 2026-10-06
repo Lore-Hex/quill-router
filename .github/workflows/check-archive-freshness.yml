@@ -132,23 +132,50 @@ jobs:
 
   ssh-metadata-hygiene:
     # This workflow is already one of the exact workflow_ref values trusted
-    # by GCP WIF. A job-level deployment lock keeps reconciliation from
-    # removing the temporary runner key while SCP is still using it.
+    # by GCP WIF. Reconciliation must not remove the temporary runner key a
+    # deploy's snapshot sync is using for SCP, so it skips while a
+    # control-plane deploy runs. It does not join the deploy's concurrency
+    # group: GitHub keeps one pending run per group, so a queued hygiene job
+    # evicted a pending deploy, and the merge it carried was never deployed.
+    # The snapshot sync is the deploy's only SSH user and it does not gate
+    # the deploy (deploy.yml, "Sync shared public analytics snapshots").
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
     concurrency:
-      group: deploy-trusted-router
+      group: ssh-metadata-hygiene
       cancel-in-progress: false
     steps:
+      - name: Skip while a control-plane deploy runs
+        id: deploys
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          running="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml \
+            --status in_progress --json databaseId --jq length)"
+          if [ "$running" != "0" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::A control-plane deploy is running; SSH hygiene runs again tomorrow."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.deploys.outputs.skip == 'false'
       - name: Authenticate to GCP via WIF
+        if: steps.deploys.outputs.skip == 'false'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v3
+        if: steps.deploys.outputs.skip == 'false'
       - name: Reconcile CI SSH metadata
+        if: steps.deploys.outputs.skip == 'false'
         run: >-
           python3 scripts/deploy/gcp_ssh_metadata_hygiene.py
           --project quill-cloud-proxy

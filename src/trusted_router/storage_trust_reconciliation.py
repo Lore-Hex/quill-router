@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable
+import logging
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -11,6 +12,7 @@ from trusted_router.storage_codec import json_body
 from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
+    RecordingReader,
     _read_payment_tx,
     drain_matching_trust_inbox_tx,
     insert_credit_trust_event,
@@ -22,6 +24,123 @@ from trusted_router.trust_reconciliation import (
     BackfillMarker,
     OutstandingAdverse,
 )
+
+log = logging.getLogger(__name__)
+
+# The watermark derivation's reads, as constants: the tier job's bulk pass
+# (trust_tier_bulk.py) answers exactly these queries from one snapshot.
+WORKSPACE_PAYMENT_PROVIDERS_SQL = (
+    "SELECT DISTINCT provider FROM tr_trust_event "
+    "WHERE workspace_id=@workspace_id AND kind='payment'"
+)
+MATCHING_MARKERS_SQL = (
+    "SELECT closed_through FROM tr_trust_backfill "
+    "WHERE provider=@provider AND completed_at IS NOT NULL "
+    "AND unmatched_count=0 AND semantic_mismatch_count=0 "
+    "AND environment=@environment AND source=@source "
+    "AND source_version=@source_version"
+)
+SHARD_WATERMARKS_SQL = (
+    "SELECT shard, trust_reconciled_through FROM tr_credit_balance "
+    "WHERE workspace_id=@workspace_id ORDER BY shard"
+)
+
+
+def expected_reconciled_through(
+    workspace_providers: Iterable[str],
+    qualifying_providers: frozenset[str],
+    matching_markers: Callable[[str], list[Any]],
+) -> datetime | None:
+    """The watermark a workspace's shards should hold.
+
+    Its payment providers, whatever the payments' lifecycle status, that
+    qualify; for each, exactly one matching marker across its account IDs.
+    None when any provider has no matching marker or more than one, and
+    otherwise the earliest ``closed_through``.
+    """
+
+    providers = set(workspace_providers) & qualifying_providers
+    watermarks: list[datetime] = []
+    for provider in sorted(providers):
+        rows = matching_markers(provider)
+        if len(rows) != 1:
+            return None
+        watermarks.append(rows[0])
+    return min(watermarks) if watermarks else None
+
+
+def read_expected_reconciled_through(
+    reader: Any,
+    types: Any,
+    workspace_id: str,
+    qualifying_providers: frozenset[str],
+    *,
+    environment: str,
+) -> tuple[datetime | None, str]:
+    """``expected_reconciled_through`` from ``reader``'s rows, with a digest."""
+
+    from trusted_router.storage_gcp_trust import _digest_value, inputs_digest
+
+    provider_rows = list(
+        reader.execute_sql(
+            WORKSPACE_PAYMENT_PROVIDERS_SQL,
+            params={"workspace_id": workspace_id},
+            param_types={"workspace_id": types.STRING},
+        )
+    )
+    seen: dict[str, list[Any]] = {}
+
+    def matching_markers(provider: str) -> list[Any]:
+        rows = list(
+            reader.execute_sql(
+                MATCHING_MARKERS_SQL,
+                params={
+                    "provider": provider,
+                    "environment": environment,
+                    "source": STRIPE_TRUST_SOURCE,
+                    "source_version": STRIPE_TRUST_SOURCE_VERSION,
+                },
+                param_types={
+                    "provider": types.STRING,
+                    "environment": types.STRING,
+                    "source": types.STRING,
+                    "source_version": types.STRING,
+                },
+            )
+        )
+        # Full precision: two markers that differ only below a microsecond must
+        # sort the same way whichever order the reader returned them in.
+        seen[provider] = sorted((row[0] for row in rows), key=_digest_value)
+        return [row[0] for row in rows]
+
+    providers = sorted({str(row[0]) for row in provider_rows})
+    expected = expected_reconciled_through(providers, qualifying_providers, matching_markers)
+    return expected, inputs_digest(providers, sorted(seen.items()), expected)
+
+
+def watermark_digest(expected_digest: str, shard_rows: Any) -> str:
+    """The digest of a watermark decision: its expected value's inputs and the
+    shards' stored values, which decide whether anything is written."""
+
+    from trusted_router.storage_gcp_trust import inputs_digest
+
+    return inputs_digest(expected_digest, [list(row) for row in shard_rows])
+
+
+def same_instant(left: datetime | None, right: datetime | None) -> bool:
+    """Equal timestamps at full precision; NULL equals only NULL.
+
+    Spanner TIMESTAMP keeps nanoseconds, but ``DatetimeWithNanoseconds``
+    inherits ``datetime``'s microsecond equality, so two values that differ
+    below a microsecond would compare equal and a stale shard would never be
+    rewritten.
+    """
+
+    if left is None or right is None:
+        return left is None and right is None
+    left_ns = getattr(left, "nanosecond", left.microsecond * 1000)
+    right_ns = getattr(right, "nanosecond", right.microsecond * 1000)
+    return left == right and left_ns == right_ns
 
 MARKER_KEY_COLUMNS = (
     "provider",
@@ -323,55 +442,72 @@ class SpannerTrustReconciliationRepository:
         qualifying_providers: frozenset[str],
         *,
         environment: str = "production",
+        observe: Callable[[str, str], None] | None = None,
     ) -> datetime | None:
+        """Write the expected watermark to every shard that lacks it.
+
+        ``observe`` is told ``("watermark_changed", digest)`` when the write
+        changed a stored value. A write after a failed snapshot precheck that
+        stores the value already there is not reported. It is told
+        ``("watermark_refused", digest)`` when the derivation raised on the
+        rows it read, before the error goes on.
+        """
+
         types = self.store._param_types
 
-        def txn(transaction: Any) -> datetime | None:
-            provider_rows = list(
-                transaction.execute_sql(
-                    "SELECT DISTINCT provider FROM tr_trust_event "
-                    "WHERE workspace_id=@workspace_id AND kind='payment'",
-                    params={"workspace_id": workspace_id},
-                    param_types={"workspace_id": types.STRING},
-                )
+        def reconciled_through(reader: Any) -> tuple[datetime | None, str]:
+            return read_expected_reconciled_through(
+                reader, types, workspace_id, qualifying_providers, environment=environment
             )
-            providers = {str(row[0]) for row in provider_rows} & qualifying_providers
-            watermarks: list[datetime] = []
-            for provider in sorted(providers):
-                rows = list(
-                    transaction.execute_sql(
-                        "SELECT closed_through FROM tr_trust_backfill "
-                        "WHERE provider=@provider AND completed_at IS NOT NULL "
-                        "AND unmatched_count=0 AND semantic_mismatch_count=0 "
-                        "AND environment=@environment AND source=@source "
-                        "AND source_version=@source_version",
-                        params={
-                            "provider": provider,
-                            "environment": environment,
-                            "source": STRIPE_TRUST_SOURCE,
-                            "source_version": STRIPE_TRUST_SOURCE_VERSION,
-                        },
-                        param_types={
-                            "provider": types.STRING,
-                            "environment": types.STRING,
-                            "source": types.STRING,
-                            "source_version": types.STRING,
-                        },
+
+        # The tier job replicates every workspace's watermark each run, but the
+        # value only moves when a provider backfill advances. Decide on a
+        # lock-free snapshot first and skip the read-write transaction when every
+        # shard already holds the value; on any read failure, fall through.
+        database = getattr(self.store, "_database", None)
+        if database is not None:
+            try:
+                with database.snapshot(multi_use=True) as snapshot:
+                    expected, _digest = reconciled_through(snapshot)
+                    current = list(
+                        snapshot.execute_sql(
+                            SHARD_WATERMARKS_SQL,
+                            params={"workspace_id": workspace_id},
+                            param_types={"workspace_id": types.STRING},
+                        )
+                    )
+            except Exception:
+                log.info(
+                    "trust.watermark_snapshot_precheck_failed workspace_id=%s",
+                    workspace_id,
+                    exc_info=True,
+                )
+            else:
+                if current and all(same_instant(row[1], expected) for row in current):
+                    return expected
+
+        changed: list[str] = []
+        refused: list[str] = []
+
+        def txn(transaction: Any) -> datetime | None:
+            changed.clear()
+            refused.clear()
+            reader = RecordingReader(transaction)
+            try:
+                reconciled, digest = reconciled_through(reader)
+                shard_rows = list(
+                    reader.execute_sql(
+                        SHARD_WATERMARKS_SQL,
+                        params={"workspace_id": workspace_id},
+                        param_types={"workspace_id": types.STRING},
                     )
                 )
-                if len(rows) != 1:
-                    watermarks = []
-                    break
-                watermarks.append(rows[0][0])
-            reconciled = min(watermarks) if watermarks and providers else None
-            shard_rows = list(
-                transaction.execute_sql(
-                    "SELECT shard FROM tr_credit_balance "
-                    "WHERE workspace_id=@workspace_id ORDER BY shard",
-                    params={"workspace_id": workspace_id},
-                    param_types={"workspace_id": types.STRING},
-                )
-            )
+            except Exception:
+                if (refusal := reader.refusal_digest()) is not None:
+                    refused.append(refusal)
+                raise
+            if not all(same_instant(row[1], reconciled) for row in shard_rows):
+                changed.append(watermark_digest(digest, shard_rows))
             updated = transaction.execute_update(
                 "UPDATE tr_credit_balance SET trust_reconciled_through=@watermark "
                 "WHERE workspace_id=@workspace_id",
@@ -382,7 +518,15 @@ class SpannerTrustReconciliationRepository:
                 raise RuntimeError("trust watermark replication missed an active shard")
             return reconciled
 
-        return self.store._run_in_transaction(txn)
+        try:
+            reconciled = self.store._run_in_transaction(txn)
+        except Exception:
+            if refused and observe is not None:
+                observe("watermark_refused", refused[-1])
+            raise
+        if changed and observe is not None:
+            observe("watermark_changed", changed[-1])
+        return reconciled
 
 
 class PostgresTrustReconciliationRepository:
@@ -562,9 +706,13 @@ class PostgresTrustReconciliationRepository:
                 watermarks.append(rows[0][0])
             reconciled = min(watermarks) if watermarks and providers else None
             shard_rows = conn.execute(
-                "SELECT shard FROM tr_credit_balance WHERE workspace_id=%s ORDER BY shard",
+                "SELECT shard, trust_reconciled_through FROM tr_credit_balance "
+                "WHERE workspace_id=%s ORDER BY shard",
                 (workspace_id,),
             ).fetchall()
+            # Same rule as Spanner: the value moves only when a backfill advances.
+            if shard_rows and all(same_instant(row[1], reconciled) for row in shard_rows):
+                return reconciled
             updated = conn.execute(
                 "UPDATE tr_credit_balance SET trust_reconciled_through=%s "
                 "WHERE workspace_id=%s",
@@ -586,27 +734,47 @@ def trust_reconciliation_repository(store: Any) -> TrustReconciliationRepository
     raise TypeError(f"unsupported trust reconciliation store: {type(target).__name__}")
 
 
+def tier_job_replicates_watermark(store: Any) -> bool:
+    """False only for lightweight test stores without the backfill table."""
+
+    target = getattr(store, "_backend", store)
+    database = getattr(target, "_database", None)
+    fake_tables = getattr(database, "typed", None)
+    return not (isinstance(fake_tables, dict) and "tr_trust_backfill" not in fake_tables)
+
+
 def replicate_tier_job_watermark(
     store: Any,
     workspace_id: str,
     qualifying_providers: frozenset[str],
     *,
     environment: str,
+    observe: Callable[[str, str], None] | None = None,
 ) -> tuple[bool, datetime | None]:
-    """Replicate when supported, while preserving lightweight tier-job fakes."""
+    """Replicate when supported, while preserving lightweight tier-job fakes.
+
+    ``observe`` reaches the Spanner repository, which reports a write that
+    changed a stored watermark (the tier job's shadow comparison).
+    """
 
     replicate = getattr(store, "replicate_workspace_trust_reconciled_through", None)
-    if not callable(replicate):
-        target = getattr(store, "_backend", store)
-        database = getattr(target, "_database", None)
-        fake_tables = getattr(database, "typed", None)
-        if isinstance(fake_tables, dict) and "tr_trust_backfill" not in fake_tables:
-            return False, None
-        try:
-            replicate = trust_reconciliation_repository(store).replicate_workspace_watermark
-        except TypeError:
-            return False, None
-    return True, replicate(
+    if callable(replicate):
+        return True, replicate(
+            workspace_id,
+            qualifying_providers,
+            environment=environment,
+        )
+    if not tier_job_replicates_watermark(store):
+        return False, None
+    try:
+        repository = trust_reconciliation_repository(store)
+    except TypeError:
+        return False, None
+    if isinstance(repository, SpannerTrustReconciliationRepository):
+        return True, repository.replicate_workspace_watermark(
+            workspace_id, qualifying_providers, environment=environment, observe=observe
+        )
+    return True, repository.replicate_workspace_watermark(
         workspace_id,
         qualifying_providers,
         environment=environment,

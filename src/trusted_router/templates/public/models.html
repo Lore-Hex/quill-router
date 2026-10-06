@@ -11,6 +11,9 @@
     <a href="/choose">Guided model chooser</a>
     <a href="/compare/models">Compare models</a>
     <a href="/for-developers">API quickstart</a>
+    <a href="/docs#model-changes">Route change alerts</a>
+    <a href="/v1/models/changes.atom" type="application/atom+xml">Subscribe via Atom</a>
+    <a href="/support?category=model#support-inquiry" data-model-request>Request a model</a>
   </div>
 </section>
 {% endblock %}
@@ -54,7 +57,7 @@
     <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
     {% endfor %}
   </nav>
-  <p class="catalog-privacy-legend"><strong>Confidential</strong> = verified provider compute + E2EE. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#privacy-filters">Privacy routing</a></p>
+  <p class="catalog-privacy-legend"><strong>Confidential</strong> = verified provider compute + E2EE + explicit ZDR. <strong>ZDR</strong> = zero data retention. Labels describe available provider routes, not every route. <a href="/docs#privacy-filters">Privacy routing</a></p>
 
   <div class="model-explorer-status">
     <p><strong data-model-result-count>{{ models|length }} models</strong><span data-model-result-detail> in the public catalog</span></p>
@@ -79,9 +82,11 @@
     >
       <div class="model-card-main">
         <div class="model-card-heading">
+          {% if model.publisher_slug %}
           <a class="model-publisher-logo" href="/providers/{{ model.publisher_slug }}" aria-label="{{ model.provider }} provider page">
             <img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="{{ model.provider }} logo" width="36" height="36" loading="lazy" decoding="async">
           </a>
+          {% endif %}
           <div class="model-card-title">
             <div class="model-card-title-line">
               <h2><a href="{{ model.detail_href }}">{{ model.name }}</a></h2>
@@ -147,6 +152,7 @@
   <div class="model-explorer-empty" data-model-empty hidden>
     <strong>No matching models</strong>
     <p>Try a model family, publisher, provider, or exact API ID.</p>
+    <a class="btn primary" href="/support?category=model#support-inquiry" data-model-request>Request a model</a>
     <button class="btn" type="button" data-model-clear>Clear search</button>
   </div>
 

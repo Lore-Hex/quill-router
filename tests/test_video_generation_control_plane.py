@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 
 import pytest
@@ -13,6 +14,7 @@ from trusted_router.catalog import (
     endpoint_stores_content,
     endpoints_for_model,
 )
+from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.config import Settings
 from trusted_router.routing import video_route_endpoint_candidates
 from trusted_router.security import lookup_hash_api_key
@@ -44,6 +46,9 @@ VIDEO_MODELS = {
 }
 
 NATIVE_VIDEO_PROVIDERS = {
+    "bytedance/seedance-2.5": ("byteplus",),
+    "bytedance/seedance-2.0": ("byteplus",),
+    "bytedance/seedance-2.0-fast": ("byteplus",),
     "lightricks/ltx-2.3": ("ltx",),
     "lightricks/ltx-2.3-fast": ("ltx",),
     "minimax/hailuo-3": ("atlas-cloud",),
@@ -79,6 +84,8 @@ def _authorize_video(
     quote: int = 850_500,
     idempotency_key: str = "video-test-1",
     request_fingerprint: str = "a" * 64,
+    provider: str | None = None,
+    region: str | None = None,
 ) -> dict[str, object]:
     response = client.post(
         "/v1/internal/gateway/authorize",
@@ -91,13 +98,31 @@ def _authorize_video(
             "additional_cost_reservation_microdollars": quote,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            **({"provider": {"only": [provider]}} if provider else {}),
+            **({"region": region} if region else {}),
         },
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]
 
 
+def _manifest_dark_routes() -> set[tuple[str, str]]:
+    """(provider, model id) pairs a committed provider manifest marks dark."""
+    dark: set[tuple[str, str]] = set()
+    for path in _PROVIDER_MODELS_DIR.glob("*.json"):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        dark.update(
+            (raw["provider"], row["id"])
+            for row in raw.get("models", [])
+            if isinstance(row, dict) and row.get("routable") is False
+        )
+    return dark
+
+
 def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
+    # The launch routes are an explicit list. One leaves the catalog only when
+    # its own provider's committed manifest marks the row dark.
+    dark = _manifest_dark_routes()
     for model_id in VIDEO_MODELS:
         model = MODELS[model_id]
         assert model.supports_video is True
@@ -105,9 +130,10 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         assert model.prepaid_available is True
         assert model.byok_available is False
         endpoints = endpoints_for_model(model_id)
-        expected = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
+        hosts = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
         if model_id in NATIVE_VIDEO_PROVIDERS and model_id not in NATIVE_ONLY_VIDEO_MODELS:
-            expected.append("venice")
+            hosts.append("venice")
+        expected = [host for host in hosts if (host, model_id) not in dark]
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
         assert all(endpoint.upstream_id for endpoint in endpoints)
@@ -170,7 +196,7 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     resolution: str,
 ) -> None:
     quote = 850_500
-    auth = _authorize_video(client, inference_key, model=model_id, quote=quote)
+    auth = _authorize_video(client, inference_key, model=model_id, quote=quote, provider=provider)
     authorization = STORE.get_gateway_authorization(str(auth["authorization_id"]))
     assert authorization is not None
     assert authorization.estimated_microdollars == quote

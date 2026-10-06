@@ -1,7 +1,7 @@
 """Backend-neutral encoding helpers shared by every storage adapter.
 
 ``json_body`` used to live in :mod:`trusted_router.storage_gcp_codec` beside
-the Spanner/Bigtable key-shape helpers, but it is not GCP-specific in any
+the Spanner key-shape helpers, but it is not GCP-specific in any
 way: it is a deterministic JSON dumper that happens to understand dataclass
 defaults.  The Postgres adapter already writes its entity bodies with it, and
 the Postgres operational-analytics outbox needs it too.  Keeping it in a

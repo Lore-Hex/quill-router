@@ -1,7 +1,7 @@
 """Spanner-backed SIWE wallet-challenge nonces.
 
 Sibling of InMemoryWalletChallenges (storage_wallet_challenges.py). Both
-implement the same `create` / `consume` surface; SpannerBigtableStore
+implement the same `create` / `consume` surface; SpannerStore
 composes this class via its `_io` adapter so wallet-challenge logic lives
 in its own module rather than scattered through storage_gcp.py.
 """

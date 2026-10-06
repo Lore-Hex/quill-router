@@ -9,8 +9,8 @@ is the only provider in this batch that's already in
 dollars-per-million rather than USD/token).
 
 API-direct, no HTML scraping, no LLM self-heal. Auth: Bearer token in
-`DEEPINFRA_API_KEY`. Without it the fetch 401s and DeepInfra counts as
-one failure under MAX_TOLERATED_FAILURES.
+`DEEPINFRA_API_KEY`. Without it the fetch 401s and DeepInfra keeps its
+committed state while other providers still refresh.
 
 Cached-input rate: DeepInfra exposes `cache_read_tokens` alongside
 `input_tokens` and `output_tokens`. Ingest it when present so repeated

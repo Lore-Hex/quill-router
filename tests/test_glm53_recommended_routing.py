@@ -17,6 +17,7 @@ from trusted_router.routing_candidates import cheap_candidate_models
 GLM53_MODELS = ("z-ai/glm-5.3-flash", "z-ai/glm-5.3")
 
 
+@pytest.mark.catalog_as_built
 def test_auto_routes_start_with_glm53_recommendations() -> None:
     candidates = chat_route_endpoint_candidates(
         {"model": "trustedrouter/auto", "provider": {"usage": "credits"}}, Settings()
@@ -27,6 +28,7 @@ def test_auto_routes_start_with_glm53_recommendations() -> None:
     assert advertised["trustedrouter"]["auto_candidates"][:2] == list(GLM53_MODELS)
 
 
+@pytest.mark.catalog_as_built
 def test_cheap_includes_glm53_without_replacing_price_order() -> None:
     candidates = cheap_candidate_models()
     ids = [model.id for model in candidates]
@@ -84,6 +86,7 @@ def test_cheap_deduplicates_recommendation_that_is_also_cheapest(
     assert len(ids) == 8
 
 
+@pytest.mark.catalog_as_built
 @pytest.mark.parametrize("alias", ["trustedrouter/auto", "trustedrouter/cheap"])
 def test_glm53_recommendations_obey_explicit_privacy_floor(alias: str) -> None:
     candidates = chat_route_endpoint_candidates(

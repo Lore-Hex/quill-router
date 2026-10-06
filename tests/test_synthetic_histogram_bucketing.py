@@ -13,23 +13,14 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-import json
 import math
 import random
 from contextlib import contextmanager
 from typing import Any
 
-from clickhouse.backfill_operational_analytics import insert_rollups as backfill_insert_rollups
 from clickhouse.operational_fingerprint import canonical_fingerprint
 from clickhouse.rollup_synthetic import monthly_from_daily
-from trusted_router.operational_analytics import stable_rows_fingerprint
 from trusted_router.storage_errors import StoreConflict
-from trusted_router.storage_gcp_synthetic_rollups import (
-    _rollup_key,
-    _write_json_row,
-    synthetic_rollups,
-    write_synthetic_rollups,
-)
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
 from trusted_router.storage_postgres import PostgresStore
 from trusted_router.synthetic import status as synthetic_status
@@ -325,78 +316,6 @@ def test_an_odd_legacy_key_never_aborts_a_write_or_a_clickhouse_recompute() -> N
 # --- persistence boundary ------------------------------------------------
 
 
-class _Cell:
-    def __init__(self, value: bytes) -> None:
-        self.value = value
-
-
-class _Row:
-    def __init__(self, value: bytes) -> None:
-        self.cells = {"m": {b"body": [_Cell(value)]}}
-
-
-class _DirectRow:
-    def __init__(self, key: bytes, table: _MiniBigtable) -> None:
-        self.key = key
-        self.table = table
-        self.value: bytes | None = None
-
-    def set_cell(self, _family: str, _qualifier: bytes, value: bytes) -> None:
-        self.value = value
-
-    def commit(self) -> None:
-        if self.value is not None:
-            self.table.rows[self.key] = _Row(self.value)
-
-
-class _MiniBigtable:
-    """Just enough of the Bigtable table API for the rollup write/read path."""
-
-    def __init__(self) -> None:
-        self.rows: dict[bytes, _Row] = {}
-
-    def read_rows(
-        self, *, start_key: bytes, end_key: bytes, limit: int, filter_: Any = None
-    ) -> list[_Row]:
-        return [row for key, row in sorted(self.rows.items()) if start_key <= key < end_key][:limit]
-
-    def direct_row(self, key: bytes) -> _DirectRow:
-        return _DirectRow(key, self)
-
-
-def test_store_round_trip_compacts_a_legacy_body_and_preserves_counts() -> None:
-    # A month rollup persisted before bucketing: one key per millisecond,
-    # well past the bound. Writing ONE more sample through the store must
-    # shrink the persisted body and keep every count.
-    created_at = iso_now()
-    seed = _sample("seed", 150, created_at=created_at)
-    (period, component) = next(
-        (period, component) for period, component in sample_rollup_ids(seed) if period == "month"
-    )
-    legacy_values = list(range(100, 2_100))
-    legacy = new_rollup_for_sample(seed, period=period, component=component, bucket=False)
-    legacy.latency_histogram = _legacy_histogram_of(legacy_values)
-    legacy.sample_count = len(legacy_values)
-    legacy.up_count = len(legacy_values)
-    assert len(legacy.latency_histogram) > MAX_KEYS_TO_TEN_MILLION_MS
-    table = _MiniBigtable()
-    _write_json_row(table, "m", _rollup_key(legacy), legacy)
-
-    write_synthetic_rollups(table, "m", _sample("next", 777, created_at=created_at))
-
-    stored = next(
-        row
-        for row in synthetic_rollups(table, "m", period="month", limit=50)
-        if row.component == component
-    )
-    assert stored.sample_count == len(legacy_values) + 1
-    assert len(stored.latency_histogram) <= MAX_KEYS_TO_TEN_MILLION_MS
-    assert sum(stored.latency_histogram.values()) == len(legacy_values) + 1
-    assert all(str(histogram_bucket(int(key))) == key for key in stored.latency_histogram)
-    exact_p95 = _exact_percentile([*legacy_values, 777], 95)
-    assert percentile_from_histogram(stored.latency_histogram, 95) == histogram_bucket(exact_p95)
-
-
 def test_clickhouse_month_rollups_are_bucketed_even_from_legacy_daily_rows() -> None:
     # clickhouse/rollup_synthetic.py is a second rollup writer: month rows are
     # folded from daily rows it reads back, so it must bucket on its own.
@@ -457,76 +376,6 @@ def test_status_window_percentiles_from_raw_samples_stay_exact() -> None:
     assert window["p95_latency_milliseconds"] == _exact_percentile(latencies, 95) == 1270
     assert window["p50_latency_milliseconds"] == breakdown["p50_latency_milliseconds"]
     assert window["p95_latency_milliseconds"] == breakdown["p95_latency_milliseconds"]
-
-
-def test_bigtable_to_clickhouse_backfill_never_carries_legacy_keys() -> None:
-    class _CapturingClickHouse:
-        def __init__(self) -> None:
-            self.payloads: list[bytes] = []
-
-        def query(self, sql: str, *, input_bytes: bytes | None = None, **_: Any) -> str:
-            assert sql.startswith("INSERT INTO synthetic_status_rollups")
-            assert input_bytes is not None
-            self.payloads.append(input_bytes)
-            return ""
-
-    legacy_values = list(range(100, 2_100))
-    rollup = SyntheticRollup(
-        id="legacy",
-        period="day",
-        period_start="2026-05-01T00:00:00Z",
-        component="canonical_api",
-        target="api",
-        probe_type="tls_health",
-        monitor_region="us-central1",
-        sample_count=len(legacy_values),
-        up_count=len(legacy_values),
-        latency_histogram=_legacy_histogram_of(legacy_values),
-    )
-    clickhouse = _CapturingClickHouse()
-
-    backfill_insert_rollups(clickhouse, [rollup])  # type: ignore[arg-type]
-
-    (line,) = clickhouse.payloads[0].split(b"\n")
-    row = json.loads(line)
-    assert len(row["latency_histogram"]) <= MAX_KEYS_TO_TEN_MILLION_MS
-    assert sum(row["latency_histogram"].values()) == len(legacy_values)
-    assert all(str(histogram_bucket(int(key))) == key for key in row["latency_histogram"])
-    assert len(rollup.latency_histogram) == len(legacy_values)  # input left untouched
-
-
-def test_dual_read_fingerprint_treats_legacy_and_bucketed_rows_as_the_same_row() -> None:
-    # Bigtable keeps a closed period's exact keys forever; the ClickHouse
-    # rebuild of that period is bucketed. The parity fingerprint must fold
-    # both, or the shadow comparison mismatches for as long as the row lives.
-    values = list(range(100, 2_100))
-
-    def rollup(histogram: dict[str, int]) -> SyntheticRollup:
-        return SyntheticRollup(
-            id="closed-day",
-            period="day",
-            period_start="2026-05-01T00:00:00Z",
-            component="canonical_api",
-            target="api",
-            probe_type="tls_health",
-            monitor_region="us-central1",
-            sample_count=len(values),
-            up_count=len(values),
-            latency_histogram=histogram,
-            updated_at="2026-05-02T00:00:00Z",
-        )
-
-    legacy = rollup(_legacy_histogram_of(values))
-    bucketed = rollup(_histogram_of(values))
-    assert legacy.latency_histogram != bucketed.latency_histogram
-    assert stable_rows_fingerprint([legacy], grace_seconds=0) == stable_rows_fingerprint(
-        [bucketed], grace_seconds=0
-    )
-    # A genuinely different row still differs.
-    other = rollup(_histogram_of([v + 500 for v in values]))
-    assert stable_rows_fingerprint([legacy], grace_seconds=0) != stable_rows_fingerprint(
-        [other], grace_seconds=0
-    )
 
 
 def test_parity_timer_fingerprint_folds_rollup_histograms_too() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -28,6 +29,9 @@ from trusted_router.storage_models import Generation, SettleOutboxRow
 def fixture() -> tuple[Any, dict[str, Any]]:
     db = _database()
     db.now = NOW
+    db.typed['tr_key_limit'][('key', 0)].update(
+        day_start=datetime.now(UTC), week_start=datetime.now(UTC), month_start=datetime.now(UTC),
+    )
     accepted = _authorize(db)
     aid, rid = accepted['authorization_id'], accepted['reservation_id']
     auth = _authorization(aid, rid)
@@ -55,7 +59,8 @@ def clone(db: Any) -> Any:
     other = _database()
     other.now = NOW
     for name in ('typed', 'rows', 'reservations', 'gateway_authorizations', 'settle_outbox',
-                 'generation_records', 'operational_analytics_outbox'):
+                 'generation_records', 'operational_analytics_outbox', 'analytics_outbox',
+                 'stage_d_policy_watermarks', 'reservation_idemp'):
         setattr(other, name, copy.deepcopy(getattr(db, name)))
     return other
 
@@ -149,7 +154,7 @@ def test_complete_finalize_differential(
     assert observations[0] == observations[1]
 
 
-@pytest.mark.parametrize('index', range(7))
+@pytest.mark.parametrize('index', range(9))
 @pytest.mark.parametrize('failure', ['sql', 'transport', 'count', 'truncated', 'duplicate'])
 def test_every_successful_prefix_is_discarded(
     monkeypatch: pytest.MonkeyPatch, index: int, failure: str,
@@ -179,7 +184,7 @@ def test_every_successful_prefix_is_discarded(
 
 
 @pytest.mark.parametrize('zero', [None, 0, 1, 2])
-@pytest.mark.parametrize('index', range(7))
+@pytest.mark.parametrize('index', range(9))
 def test_aborted_precedes_even_zero_prefix_and_retries_entire_transaction(
     monkeypatch: pytest.MonkeyPatch, index: int, zero: int | None,
 ) -> None:
@@ -209,8 +214,8 @@ def test_aborted_precedes_even_zero_prefix_and_retries_entire_transaction(
         statements = transaction_statements([call for call in calls if call[0] is tx])
         assert statements[0].startswith('select reservation_id, workspace_id')
         credit_before_key(statements, key_last=tx is transactions[-1], require_both=False)
-    assert not any('tr_credit_balance' in sql or 'tr_key_limit' in sql
-                   for tx, sql in calls if tx is transactions[0])
+    # ABORTED discards even a prefix that reached a hot release (C1).
+    assert db.commits == 3  # authorize, intent, final successful T-F
     assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70
     assert db.typed['tr_key_limit'][('key', 0)]['usage'] == 70
     assert len(db.generation_records) == len(db.operational_analytics_outbox) == 1
@@ -218,7 +223,7 @@ def test_aborted_precedes_even_zero_prefix_and_retries_entire_transaction(
 
 @pytest.mark.parametrize('reason', ['claim_zero', 'typed_zero', 'done_zero'])
 @pytest.mark.parametrize('later_error', [False, True])
-def test_fallback_prefix_precedence_and_no_counter_access(
+def test_fallback_prefix_precedence_and_discarded_counter_writes(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
     reason: str, later_error: bool,
 ) -> None:
@@ -242,7 +247,9 @@ def test_fallback_prefix_precedence_and_no_counter_access(
     assert result['outcome'] == 'settled' and result['attempts'] == 2
     assert db.rollback_calls == 1
     first = transaction_statements([call for call in calls if call[0] is transactions[0]])
-    assert not any('tr_credit_balance' in sql or 'tr_key_limit' in sql for sql in first)
+    credit_before_key(first, key_last=True)
+    assert db.typed['tr_credit_balance'][('workspace', 0)]['total_usage'] == 70
+    assert db.typed['tr_key_limit'][('key', 0)]['usage'] == 70
     for tx in set(t for t, _ in calls):
         statements = transaction_statements([call for call in calls if call[0] is tx])
         if any('tr_credit_balance' in sql for sql in statements):
@@ -436,79 +443,6 @@ def test_real_duplicate_insert_rolls_back_successful_prefix(table: str) -> None:
     assert state(db) == before and db.commits == commits and db.rollback_calls == 1
 
 
-@pytest.mark.parametrize('version', [1, 2])
-@pytest.mark.parametrize('scenario', ['fresh', 'excess', 'missing_hold', 'fence', 'terminal_zero', 'done_zero'])
-def test_regional_entire_committed_state_matches_frozen(
-    monkeypatch: pytest.MonkeyPatch, version: int, scenario: str,
-) -> None:
-    from dataclasses import replace
-
-    from tests.test_regional_accounting_v2 import _authorize as regional_authorize
-    from tests.test_regional_accounting_v2 import _setup
-    from trusted_router import storage_gcp_regional_quota as quota
-
-    store, db, _key, args = _setup()
-    if version == 1:
-        grant = quota.grant_regional_quota_lease
-
-        def v1(*a: Any, **kw: Any) -> Any:
-            lease = replace(grant(*a, **kw), accounting_version=1)
-            store._write_entity('regional_quota_lease', lease.entity_id, lease)
-            return lease
-
-        monkeypatch.setattr(quota, 'grant_regional_quota_lease', v1)
-    auth = regional_authorize(store, args)
-    ledger = store._regional_quota_ledger
-    local = ledger.get(auth.regional_lease_id, region=auth.region)
-    if scenario in {'missing_hold', 'fence'}:
-        ledger._leases[(local.region, local.lease_id)] = replace(
-            local, **({'holds': ()} if scenario == 'missing_hold'
-                      else {'fencing_token': local.fencing_token + 1}),
-        )
-    elif scenario == 'terminal_zero':
-        assert store.typed_finalize_gateway_authorization_result(
-            auth.id, success=False, actual_microdollars=0, selected_usage_type='Credits',
-        ).finalized
-        # Restore an active external hold: the wrapper must clean it up from
-        # the authoritative zero-booked Spanner terminal on the next call.
-        ledger._leases[(local.region, local.lease_id)] = local
-    monkeypatch.setattr(outbox, '_iso_now', lambda: NOW.isoformat())
-    monkeypatch.setattr(current, 'utcnow', lambda: NOW)
-    monkeypatch.setattr('trusted_router.services.regional_quota_leases._utc_now', lambda: NOW)
-    outbox.SpannerSettleOutbox(db, param_types).enqueue(SettleOutboxRow(
-        authorization_id=auth.id, reservation_id=auth.credit_reservation_id,
-        intent_kind='settle', settle_origin='typed', actual_cost_micro=15_001,
-    ))
-    if scenario == 'done_zero':
-        db.settle_outbox[(auth.id, 'settle')]['reservation_id'] = None
-    db.now = NOW
-    saved = clone(db)
-    leases = copy.deepcopy(ledger._leases)
-    observations = []
-    for impl in (frozen.typed_finalize_atomic, current.typed_finalize_atomic):
-        for name in ('typed', 'rows', 'reservations', 'gateway_authorizations', 'settle_outbox',
-                     'generation_records', 'operational_analytics_outbox'):
-            setattr(db, name, copy.deepcopy(getattr(saved, name)))
-        ledger._leases = copy.deepcopy(leases)
-
-        def finalize(*a: Any, impl: Any = impl, **kw: Any) -> Any:
-            kw['now'] = NOW
-            return impl(*a, **kw)
-
-        with monkeypatch.context() as patch:
-            patch.setattr(current, 'typed_finalize_atomic', finalize)
-            try:
-                result = store.typed_finalize_gateway_authorization_result(
-                    auth.id, success=True, actual_microdollars=70 if scenario == 'fresh' else 15_001,
-                    selected_usage_type='Credits', authorization_snapshot=auth,
-                    settle_outbox_done=(auth.id, 'settle'),
-                )
-            except Exception as exc:
-                result = (type(exc), str(exc))
-        observations.append((result, state(db), copy.deepcopy(ledger._leases)))
-    assert observations[0] == observations[1]
-
-
 def test_claim_zero_then_deletion_changes_already_settled_to_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -648,7 +582,9 @@ def _assert_timing(
     assert 'PRIVATE_PAYLOAD_SENTINEL' not in caplog.text
 
 
-@pytest.mark.parametrize('scenario', ['clean', 'claim_zero', 'fallback_aborted', 'fallback_zero_aborted'])
+@pytest.mark.parametrize(
+    'scenario', ['clean', 'stale_windows', 'claim_zero', 'fallback_aborted', 'fallback_zero_aborted'],
+)
 def test_real_sdk_finalize_retry_and_telemetry(
     configured_sdk: Any, monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture, scenario: str,
@@ -663,9 +599,13 @@ def test_real_sdk_finalize_retry_and_telemetry(
     options['generation'].model_id = 'PRIVATE_PAYLOAD_SENTINEL'
     sleep = Mock()
     monkeypatch.setattr(_helpers.time, 'sleep', sleep)
-    responses = [_batch_response([1, 1, 1, 1])]
-    if scenario != 'clean':
-        responses = [_batch_response([0, 1, 1, 1])]
+    # The last two counts are the key's two releases: current windows, then
+    # the rolling form. Exactly one matches.
+    responses = [_batch_response([1, 1, 1, 1, 1, 1, 0])]
+    if scenario == 'stale_windows':
+        responses = [_batch_response([1, 1, 1, 1, 1, 0, 1])]
+    elif scenario != 'clean':
+        responses = [_batch_response([0, 1, 1, 1, 1, 1, 0])]
         if 'aborted' in scenario:
             responses.append(_batch_response(
                 [0] if scenario == 'fallback_zero_aborted' else [], code_pb2.ABORTED,
@@ -679,18 +619,18 @@ def test_real_sdk_finalize_retry_and_telemetry(
     sdk.rpcs.rollback.side_effect = rollback
     with caplog.at_level(logging.INFO, logger=current.log.name):
         result = invoke(sdk.db, options)
-    attempts = 1 if scenario == 'clean' else 3 if 'aborted' in scenario else 2
+    attempts = 1 if scenario in {'clean', 'stale_windows'} else 3 if 'aborted' in scenario else 2
     assert result['outcome'] == 'settled' and result['attempts'] == attempts
     assert len(sdk.transactions) == sdk.rpcs.execute_streaming_sql.call_count == attempts
     sdk.rpcs.commit.assert_called_once()
     assert sdk.rpcs.commit.call_args.kwargs['request'].transaction_id == f'tx-{attempts}'.encode()
     assert all(tx.committed is None for tx in sdk.transactions[:-1])
-    assert sdk.rpcs.rollback.call_count == int(scenario != 'clean')
+    assert sdk.rpcs.rollback.call_count == int(attempts > 1)
     batches = [c.kwargs['request'] for c in sdk.rpcs.execute_batch_dml.call_args_list]
-    assert [len(b.statements) for b in batches] == [4] + [2] * (attempts - 1)
+    assert [len(b.statements) for b in batches] == [7] + [2] * (attempts - 1)
     if attempts > 1:
         assert sdk.rpcs.rollback.call_args.kwargs['transaction_id'] == b'tx-1'
-        assert batches[0].statements[-2:] == batches[1].statements
+        assert batches[0].statements[2:4] == batches[1].statements
     if attempts == 3:
         assert batches[1].statements == batches[2].statements
         assert sdk.transactions[2]._multiplexed_session_previous_transaction_id == (
@@ -701,8 +641,8 @@ def test_real_sdk_finalize_retry_and_telemetry(
         sleep.assert_not_called()
     # Real release DML only executes in the final successful callback.
     updates = [c.kwargs['request'].sql for c in sdk.rpcs.execute_sql.call_args_list]
-    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in updates) == 1
-    assert sum(sql.startswith('UPDATE tr_key_limit') for sql in updates) == 1
+    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in updates) == int(attempts > 1)
+    assert sum(sql.startswith('UPDATE tr_key_limit') for sql in updates) == int(attempts > 1)
     _assert_timing(caplog, attempts=attempts, reason='none' if attempts == 1 else 'claim_zero',
                    outcome='not_attempted' if attempts == 1 else 'settled')
 
@@ -745,7 +685,7 @@ def test_real_sdk_finalize_transport_failure_never_commits(
     options = _sdk_finalize_options(sdk)
     error = ServiceUnavailable('batch transport lost')
     sdk.rpcs.execute_batch_dml.side_effect = (
-        [_batch_response([0, 1, 1, 1]), error]
+        [_batch_response([0, 1, 1, 1, 1, 1]), error]
         if failed_rpc == 'rollback_then_fallback_batch' else error
     )
     if failed_rpc != 'batch':
@@ -760,36 +700,3 @@ def test_real_sdk_finalize_transport_failure_never_commits(
     assert all(tx.committed is None for tx in sdk.transactions)
     updates = [c.kwargs['request'].sql for c in sdk.rpcs.execute_sql.call_args_list]
     assert not any('tr_credit_balance' in sql or 'tr_key_limit' in sql for sql in updates)
-
-
-def test_fallback_rereads_actual_for_regional_terminal_zero(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A zero-booked winner must override the discarded S11's nonzero actual."""
-    monkeypatch.setattr(outbox, '_iso_now', lambda: NOW.isoformat())
-    db, options = fixture()
-    aid, rid = options['authorization_id'], options['reservation_id']
-    db.reservations[rid]['actual_micro'] = 19
-    db.settle_outbox[(aid, 'settle')]['reservation_id'] = None
-    options['finalize_regional_hold'] = lambda: (False, 0, None)
-    original = _FakeTransaction.rollback
-    winner_state = []
-
-    def rollback(tx: Any) -> None:
-        original(tx)
-        refunded = copy.deepcopy(options['authorization'])
-        refunded.record_finalization(
-            success=False, actual_microdollars=0, selected_usage_type='Credits', generation=None,
-        )
-        winning = dict(options, success=False, actual_micro=0, generation=None,
-                       authorization=refunded, auth_body_settled=json_body(refunded),
-                       finalize_regional_hold=None)
-        assert invoke(db, winning, frozen.typed_finalize_atomic)['outcome'] == 'settled'
-        assert db.reservations[rid]['actual_micro'] == 0
-        winner_state.append(state(db))
-
-    monkeypatch.setattr(_FakeTransaction, 'rollback', rollback)
-    result = invoke(db, options)
-    assert result == {'outcome': 'already_settled', 'regional_terminal_zero': True, 'attempts': 2}
-    assert len(winner_state) == 1 and state(db) == winner_state[0]
-    assert db.rollback_calls == 1

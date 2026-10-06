@@ -5,13 +5,71 @@ import hashlib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from fastapi import Request
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import Response
+from fastapi.routing import APIRoute
 
 _ASSET_DIR = Path(__file__).with_name("static")
 _SCHEMA_PATH = _ASSET_DIR / "openapi-public.json"
 _GZIP_SCHEMA_PATH = _ASSET_DIR / "openapi-public.json.gz"
+CONTROL_PLANE_API_SERVER = "https://trustedrouter.com/v1"
+# Every attested gateway region serves the same inference routes.
+INFERENCE_API_SERVERS: tuple[dict[str, str], ...] = (
+    {"url": "https://api.trustedrouter.com/v1", "description": "Global"},
+    {"url": "https://api-europe-west4.quillrouter.com/v1", "description": "EU regional"},
+)
+HTTP_METHODS = frozenset({"delete", "get", "head", "options", "patch", "post", "put", "trace"})
+
+
+def inference_servers() -> list[dict[str, str]]:
+    return [dict(server) for server in INFERENCE_API_SERVERS]
+
+
+def document_router_server(router: APIRouter) -> None:
+    """Label a registered gateway route group before it is mounted bare and under /v1."""
+    for route in router.routes:
+        if isinstance(route, APIRoute):
+            route.openapi_extra = {**(route.openapi_extra or {}), "servers": inference_servers()}
+
+
+def install_operation_servers(app: FastAPI, api: APIRouter) -> None:
+    """Derive account/API ownership from registration, with gateway overrides.
+
+    Public pages and account operations default to the control-plane host.
+    Only registered inference groups and explicitly shared operations opt into
+    the gateway. Work on the generated schema so nested routers and both /v1
+    and bare mounts get the same treatment across FastAPI versions.
+    """
+    original_openapi = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = original_openapi()
+        api_paths = get_openapi(title=app.title, version=app.version, routes=api.routes)["paths"]
+        for path, path_item in schema["paths"].items():
+            for method, operation in path_item.items():
+                if method not in HTTP_METHODS:
+                    continue
+                is_bare_api = method in api_paths.get(path, {})
+                default_server = (
+                    CONTROL_PLANE_API_SERVER if is_bare_api
+                    else CONTROL_PLANE_API_SERVER.removesuffix("/v1")
+                )
+                servers = operation.setdefault("servers", [{"url": default_server}])
+                # OpenAPI appends the path to the server URL. Already-versioned
+                # paths must not become /v1/v1/keys (or /v1/v1/chat/completions).
+                if path.startswith("/v1/"):
+                    operation["servers"] = [
+                        {**server, "url": server["url"].removesuffix("/v1")}
+                        for server in servers
+                    ]
+        return schema
+
+    app.openapi = openapi  # type: ignore[method-assign]
 
 
 @dataclass(frozen=True)

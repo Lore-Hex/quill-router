@@ -36,7 +36,6 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
-from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
     KeyLimitReserveResult,
@@ -180,10 +179,23 @@ class InMemoryApiKeys:
         with self._lock:
             return [key for key in self.keys.values() if key.workspace_id == workspace_id]
 
-    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
-        """Atomically snapshot every key and its display counters."""
+    def list_with_usage_for_workspace(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]:
+        """Atomically snapshot a page of keys and its display counters."""
         with self._lock:
-            keys = [key for key in self.keys.values() if key.workspace_id == workspace_id]
+            keys = [
+                key for key in self.keys.values()
+                if key.workspace_id == workspace_id and (include_disabled or not key.disabled)
+            ]
+            keys.sort(key=lambda key: key.hash)
+            keys.sort(key=lambda key: key.created_at, reverse=True)
+            keys = keys[offset:None if limit is None else offset + limit]
             return [
                 ApiKeyUsageSnapshot(
                     api_key=key,
@@ -202,6 +214,20 @@ class InMemoryApiKeys:
                 return False
             self.key_ids_by_lookup_hash.pop(key.lookup_hash, None)
             return True
+
+    def delete_many(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        results: dict[str, bool] = {}
+        hashes = list(dict.fromkeys(key_hashes))
+        for start in range(0, len(hashes), 100):
+            with self._lock:
+                for key_hash in hashes[start:start + 100]:
+                    key = self.keys.get(key_hash)
+                    results[key_hash] = bool(
+                        key is not None
+                        and key.workspace_id == workspace_id
+                        and self.delete(key_hash)
+                    )
+        return results
 
     def update(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         with self._lock:
@@ -460,10 +486,10 @@ class InMemoryApiKeys:
         user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
+        video_pricing_snapshot: str | None = None,
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
-        spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
@@ -528,18 +554,9 @@ class InMemoryApiKeys:
                 user_model_owner_user_id=user_model_owner_user_id,
                 additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
                 native_batch_eligible=native_batch_eligible,
+                video_pricing_snapshot=video_pricing_snapshot,
                 settlement=settlement,
                 expires_at=expires_at,
-                spend_lease_token=spend_lease.token if spend_lease else None,
-                spend_lease_id=spend_lease.lease_id if spend_lease else None,
-                spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
-                spend_lease_gen=spend_lease.gen if spend_lease else None,
-                spend_lease_iat=spend_lease.iat if spend_lease else None,
-                spend_lease_exp=spend_lease.exp if spend_lease else None,
-                spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
-                spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-                spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
-                spend_lease_status=spend_lease.lease_status if spend_lease else None,
                 invocation_nonce=invocation_nonce,
             )
             self.gateway_authorizations[authorization.id] = authorization

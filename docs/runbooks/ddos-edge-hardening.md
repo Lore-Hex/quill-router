@@ -83,6 +83,16 @@ before that job is deployed.
    Admin API for each region's Ready/traffic/release/ingress/scaling state. It
    never reopens or treats a successful origin request as healthy.
 
+**Live state, 2026-10-03.** The production policies are declared in
+`infra/cloud_armor.tf`, which is now their source of truth. The control
+backend's `trusted-router-legacy-edge` already enforces every rule: the host
+rule (900), the browser proxy and state-changing limits (1000, 1100), a
+gateway-plane limit for `/internal/` paths (1150, 12,000 per 60 seconds per
+IP), and the all-path ceiling (1200). The preview-to-enforced promotion below
+therefore already happened by hand, and two rule descriptions still say
+"preview". Change rules in Terraform, with an owner applying the root, not
+with this reconciler.
+
 The current `rollout.sh` does **not** yet source this reconciler or create the
 four service backends. Do not run the command below on the current branch and
 do not source `_edge_security.sh` manually against production. It is the target

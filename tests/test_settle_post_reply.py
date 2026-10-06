@@ -52,8 +52,26 @@ def optional_executor(monkeypatch: pytest.MonkeyPatch, reset_store: None) -> Any
 
 
 @pytest.fixture
-def scenario(monkeypatch: pytest.MonkeyPatch) -> Any:
-    store, db, bt = make_fake_store(
+def scenario(monkeypatch: pytest.MonkeyPatch, one_commit_scenario: Any) -> Any:
+    """The durable two-commit settle, whose optional writes run after the reply.
+
+    A one-commit settle (the happy path) has no optional write left to run
+    after the reply: its benchmark rides in the money commit. Every deviation
+    falls back to this flow, so its post-reply guarantees stay load-bearing.
+    The one-commit attempt declines exactly as it does on any deviation.
+    """
+    from trusted_router.storage_gcp import SpannerStore
+
+    def declined(self: Any, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(SpannerStore, "typed_settle_one_commit_result", declined)
+    return one_commit_scenario
+
+
+@pytest.fixture
+def one_commit_scenario(monkeypatch: pytest.MonkeyPatch) -> Any:
+    store, db = make_fake_store(
         operational_analytics_outbox_enabled=True,
         generation_records_enabled=True,
         request_record_write_mode="typed",
@@ -81,7 +99,7 @@ def scenario(monkeypatch: pytest.MonkeyPatch) -> Any:
     # re-streams its already-sent body concurrently with background work.
     app.state.original_middleware = list(app.user_middleware)
     app.user_middleware.clear()
-    return store, db, bt, auth, app
+    return store, db, auth, app
 
 
 async def _request(
@@ -122,10 +140,21 @@ def _counts(db: Any) -> tuple[int, int, int, int, int]:
             db.commits)
 
 
+@pytest.mark.parametrize("cold", [False, True])
 def test_reply_operation_count_and_exact_background_payloads(
-    scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any,
+    scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any, cold: bool,
 ) -> None:
-    store, db, bt, auth, app = scenario
+    from trusted_router import storage_gcp_authorize as finalize
+
+    store, db, auth, app = scenario
+    now = dt.datetime.now(dt.UTC)
+    db.typed["tr_key_limit"][(auth.key_hash, 0)].update(
+        day_start=now, week_start=now, month_start=now,
+    )
+    db.name = "projects/test/instances/test/databases/c1"
+    monkeypatch.setattr(finalize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    if not cold:
+        assert finalize._outbox_table_available(db, store._param_types)
     start = _counts(db)
     reply_counts: list[tuple[int, ...]] = []
     transactions: list[tuple[Any, str]] = []
@@ -143,15 +172,14 @@ def test_reply_operation_count_and_exact_background_payloads(
         assert db.settle_outbox[(auth.id, "settle")]["status"] == "done"
         assert len(db.generation_records) == len(db.operational_analytics_outbox) == 1
         assert db.analytics_outbox == []
-        assert bt.committed == []
 
     response = asyncio.run(_request(app, _settle_json(auth.id), on_reply))
     assert response["data"]["disposition"] == "finalized"
     assert optional_executor.wait_idle()
     # Claim, typed finalization, done, retention and evidence share one batch.
-    # No T4 or Bigtable calls precede the response. Total: 14 -> 11 RPCs.
-    assert reply_counts == [(3, 2, 3, 2, 2)]
-    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (4, 2, 4, 2, 3)
+    # C1 folds credit/key and the debt check: 7 warm / 8 cold operations.
+    assert reply_counts == [(2 + int(cold), 1, 0, 2, 2)]
+    assert tuple(a - b for a, b in zip(_counts(db), start, strict=True)) == (3 + int(cold), 1, 1, 2, 3)
     [activity_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_operational_analytics_outbox")]
     [generation_tx] = [tx for tx, sql in transactions if sql.startswith("INSERT INTO tr_generation")]
     credit_tx = [tx for tx, sql in transactions if sql.startswith("UPDATE tr_credit_balance")]
@@ -165,34 +193,72 @@ def test_reply_operation_count_and_exact_background_payloads(
     [benchmark] = db.analytics_outbox
     assert benchmark["event_id"] == expected.id
     assert json.loads(benchmark["payload"]) == json.loads(json_body(expected))
-    assert len(bt.committed) == 9
-    activity_rows = [row for key, row in bt.rows.items() if not key.startswith(b"benchmark")]
-    benchmark_rows = [row for key, row in bt.rows.items() if key.startswith(b"benchmark")]
-    assert len(activity_rows) == 3 and len(benchmark_rows) == 6
-    for row in activity_rows:
-        assert json.loads(row[store.activity_family][b"body"][0].value) == json.loads(json_body(generation))
-    for row in benchmark_rows:
-        assert json.loads(row[store.benchmark_family][b"body"][0].value) == json.loads(json_body(expected))
 
 
-@pytest.mark.parametrize("target", [
-    "activity", "benchmark_outbox", "benchmark_mirror", "refund_outbox", "refund_mirror",
-])
+@pytest.mark.parametrize("refund", [False, True])
+def test_one_commit_reply_carries_every_write_and_leaves_nothing_optional(
+    one_commit_scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any,
+    refund: bool,
+) -> None:
+    """The happy path commits once, before the reply, with its benchmark inside
+    that commit. Nothing is left for the post-reply executor, and nothing
+    commits after the reply (before: the enqueue and finalize commits, then a
+    post-reply benchmark commit)."""
+    store, db, auth, app = one_commit_scenario
+    start = _counts(db)
+    submitted: list[str] = []
+    real_submit = optional_executor.submit
+
+    def spy(task: Any, *args: Any, **kwargs: Any) -> None:
+        submitted.append(task.__name__)
+        real_submit(task, *args, **kwargs)
+
+    monkeypatch.setattr(optional_executor, "submit", spy)
+    kind = "refund" if refund else "settle"
+    reply_counts: list[tuple[int, ...]] = []
+
+    def on_reply() -> None:
+        reply_counts.append(tuple(a - b for a, b in zip(_counts(db), start, strict=True)))
+        assert db.gateway_authorizations[auth.id]["settled"] is True
+        assert db.settle_outbox[(auth.id, kind)]["status"] == "done"
+        assert len(db.analytics_outbox) == 1
+        records = 0 if refund else 1
+        assert len(db.generation_records) == len(db.operational_analytics_outbox) == records
+
+    body = _settle_json(auth.id)
+    if refund:
+        body.update(status="error", error_status=503, error_type="provider_error")
+    response = asyncio.run(_request(app, body, on_reply, refund=refund))
+    assert response["data"]["disposition"] == "finalized"
+    assert optional_executor.wait_idle()
+    assert submitted == []
+    # One read-write commit carries everything, and it lands before the reply.
+    assert reply_counts[0][4] == 1
+    assert _counts(db)[4] - start[4] == 1
+    assert len(db.analytics_outbox) == 1
+    [benchmark] = db.analytics_outbox
+    if refund:
+        assert json.loads(benchmark["payload"])["status"] == "error"
+    else:
+        [record] = db.generation_records.values()
+        generation = store.get_generation(record["generation_id"])
+        assert generation is not None
+        expected = ProviderBenchmarkSample.from_generation(generation)
+        assert benchmark["event_id"] == expected.id
+        assert json.loads(benchmark["payload"]) == json.loads(json_body(expected))
+
+
+@pytest.mark.parametrize("target", ["benchmark_outbox", "refund_outbox"])
 @pytest.mark.parametrize("fail", [False, True])
 def test_stalled_or_failing_writes_do_not_hold_the_reply(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, target: str, fail: bool,
     optional_executor: Any,
 ) -> None:
-    store, db, bt, auth, app = scenario
+    store, db, auth, app = scenario
     # Exercise the full HTTP middleware stack for the latency guarantee.
     app.user_middleware = app.state.original_middleware
     replied, entered, release = threading.Event(), threading.Event(), threading.Event()
-    if target in {"benchmark_outbox", "refund_outbox"}:
-        owner, name = SpannerAnalyticsOutbox, "enqueue"
-    else:
-        from trusted_router import storage_gcp_generations
-        owner = storage_gcp_generations
-        name = "_bt_write_generation" if target == "activity" else "_bt_write_provider_benchmark"
+    owner, name = SpannerAnalyticsOutbox, "enqueue"
     original = getattr(owner, name)
 
     def blocked(*args: Any, **kwargs: Any) -> Any:
@@ -227,7 +293,7 @@ class _ProcessStopped(BaseException):
 
 
 def test_restart_after_reply_repairs_activity_and_preserves_durable_broadcast(scenario: Any) -> None:
-    store, db, bt, auth, app = scenario
+    store, db, auth, app = scenario
     destination = store.create_broadcast_destination(
         workspace_id=auth.workspace_id, type="webhook", name="durable",
         endpoint="https://example.invalid/events",
@@ -236,7 +302,7 @@ def test_restart_after_reply_repairs_activity_and_preserves_durable_broadcast(sc
     def stop_at_reply() -> None:
         assert db.gateway_authorizations[auth.id]["settled"] is True
         assert len(db.operational_analytics_outbox) == 1
-        assert not bt.committed and not db.analytics_outbox
+        assert not db.analytics_outbox
         raise _ProcessStopped()
 
     with pytest.raises(_ProcessStopped):
@@ -267,34 +333,32 @@ def test_unexpected_background_error_does_not_abort_later_tasks(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
     optional_executor: Any,
 ) -> None:
-    store, db, bt, auth, app = scenario
+    store, db, auth, app = scenario
     later: list[str] = []
 
     def fail(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("unexpected mirror failure")
+        raise RuntimeError("unexpected analytics failure")
 
-    monkeypatch.setattr(type(store.generation_store), "mirror_after_commit", fail)
+    monkeypatch.setattr(type(store.generation_store), "post_commit_analytics", fail)
     monkeypatch.setattr(gateway, "record_successful_api_call_safely", lambda *a, **kw: later.append("ran"))
     response = asyncio.run(_request(app, _settle_json(auth.id), lambda: None))
     assert response["data"]["disposition"] == "finalized"
     assert optional_executor.wait_idle()
     assert later == ["ran"]
-    assert "settle_post_commit_mirrors_failed" in caplog.text
+    assert "settle_post_commit_analytics_failed" in caplog.text
 
 
 @pytest.mark.parametrize("refund", [False, True])
 def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
     scenario: Any, monkeypatch: pytest.MonkeyPatch, optional_executor: Any, refund: bool,
 ) -> None:
-    store, db, bt, auth, app = scenario
+    store, db, auth, app = scenario
     release = threading.Event()
     entered = threading.Barrier(post_commit.WORKERS + 1)
     write_lock = threading.Lock()
     started: list[str] = []
-    # Block each of the optional RPC stages. The first four chains remain
-    # stalled throughout admission; every queued stage also sees the gate.
-    from trusted_router import storage_gcp_generations
-
+    # Block the optional RPC stage. The first four chains remain stalled
+    # throughout admission; every queued stage also sees the gate.
     def stall(original: Any) -> Any:
         def blocked(*args: Any, **kwargs: Any) -> Any:
             with write_lock:
@@ -308,8 +372,6 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
                 return original(*args, **kwargs)
         return blocked
 
-    for name in ("_bt_write_generation", "_bt_write_provider_benchmark"):
-        monkeypatch.setattr(storage_gcp_generations, name, stall(getattr(storage_gcp_generations, name)))
     monkeypatch.setattr(SpannerAnalyticsOutbox, "enqueue", stall(SpannerAnalyticsOutbox.enqueue))
     count = post_commit.MAX_IN_FLIGHT + 16
     _typed_credit(db, auth.workspace_id)["total_credits"] = 10**12
@@ -382,7 +444,7 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
             release.set()
     assert optional_executor.wait_idle()
     assert optional_executor.in_flight == 0
-    assert len(started) == post_commit.MAX_IN_FLIGHT * (2 if refund else 3)
+    assert len(started) == post_commit.MAX_IN_FLIGHT
     assert all(name.startswith("settle-post-commit") for name in started)
     admitted = submitted_payloads[:post_commit.MAX_IN_FLIGHT]
     expected = [
@@ -393,14 +455,6 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
     assert {row["event_id"]: json.loads(row["payload"]) for row in db.analytics_outbox} == {
         sample.id: json.loads(json_body(sample)) for sample in expected
     }
-    assert len(bt.committed) == post_commit.MAX_IN_FLIGHT * (6 if refund else 9)
-    expected_payloads = {sample.id: json.loads(json_body(sample)) for sample in expected}
-    if not refund:
-        expected_payloads.update({g.id: json.loads(json_body(g)) for g in admitted})
-    for row in bt.rows.values():
-        for columns in row.values():
-            payload = json.loads(columns[b"body"][0].value)
-            assert payload == expected_payloads[payload["id"]]
 
 
 def test_full_executor_submission_does_not_wait_for_a_slot(

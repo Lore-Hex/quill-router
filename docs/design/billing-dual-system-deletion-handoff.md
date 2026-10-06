@@ -31,9 +31,8 @@ Two residuals that DISSOLVE once legacy is gone (do NOT try to fix them before S
 git -C /Users/jperla/claude/quill-router worktree add /Users/jperla/claude/qr-billing -b <slug> origin/main
 cd /Users/jperla/claude/qr-billing
 export VIRTUAL_ENV=/Users/jperla/claude/quill-router/.venv; export PATH="$VIRTUAL_ENV/bin:$PATH"
-export TR_STORAGE_BACKEND=spanner-bigtable TR_GCP_PROJECT_ID=quill-cloud-proxy \
+export TR_STORAGE_BACKEND=spanner-clickhouse TR_GCP_PROJECT_ID=quill-cloud-proxy \
   TR_SPANNER_INSTANCE_ID=trusted-router-nam6 TR_SPANNER_DATABASE_ID=trusted-router \
-  TR_BIGTABLE_INSTANCE_ID=trusted-router-logs TR_BIGTABLE_GENERATION_TABLE=trustedrouter-generations \
   PYTHONPATH=src
 # Tests: PYTHONPATH=src python3 -m pytest tests/ -q -k billing
 ```

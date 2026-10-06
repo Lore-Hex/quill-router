@@ -1,0 +1,1824 @@
+{
+  "fixture_version": 1,
+  "rules": [
+    {
+      "after": "pass",
+      "before": "_require(type(value) is int and 0 <= value <= MAX_INT, \"integer\")",
+      "function": "_integer",
+      "guard": "_integer:_require(type(value) is int and 0 <= value <= MAX_INT, \"integer\") => pass",
+      "literal_case": "bool_integer"
+    },
+    {
+      "after": "pass",
+      "before": "_require(isinstance(value, str) and bool(value) and all(\n        0x20 <= ord(c) <= 0x7E and c not in '\\\\\"<>&' for c in value\n    ), \"string\")",
+      "function": "_string",
+      "guard": "_string:_require(isinstance(value, str) and bool(value) and all(\n        0x20 <= ord(c) <= 0x7E and c not in '\\\\\"<>&' for c in value\n    ), \"string\") => pass",
+      "literal_case": "string_empty"
+    },
+    {
+      "after": "pass",
+      "before": "_require(isinstance(value, str) and re.fullmatch(\"[0-9a-f]{64}\", value) is not None,\n             \"hash\")",
+      "function": "_hash",
+      "guard": "_hash:_require(isinstance(value, str) and re.fullmatch(\"[0-9a-f]{64}\", value) is not None,\n             \"hash\") => pass",
+      "literal_case": "invalid_hash"
+    },
+    {
+      "after": "pass",
+      "before": "_require(isinstance(value, dict) and set(value) == set(\n        (strings + \" \" + integers + \" \" + nested).split()), \"fields\")",
+      "function": "_object",
+      "guard": "_object:_require(isinstance(value, dict) and set(value) == set(\n        (strings + \" \" + integers + \" \" + nested).split()), \"fields\") => pass",
+      "literal_case": "unknown_field"
+    },
+    {
+      "after": "pass",
+      "before": "_require(not any(duplicates), \"duplicate_key\")",
+      "function": "_json",
+      "guard": "_json:_require(not any(duplicates), \"duplicate_key\") => pass",
+      "literal_case": "payload_duplicate"
+    },
+    {
+      "after": "pass",
+      "before": "_require(len(digits) <= 19, \"integer\")",
+      "function": "_parse_int",
+      "guard": "_parse_int:_require(len(digits) <= 19, \"integer\") => pass",
+      "literal_case": "payload_number_huge"
+    },
+    {
+      "after": "pass",
+      "before": "_require(depth <= 16, \"json\")",
+      "function": "_depth",
+      "guard": "_depth:_require(depth <= 16, \"json\") => pass",
+      "literal_case": "depth17"
+    },
+    {
+      "after": "pass",
+      "before": "_require(bool(value) and re.fullmatch(r\"[A-Za-z0-9_-]+\", value) is not None, \"base64\")",
+      "function": "_b64decode",
+      "guard": "_b64decode:_require(bool(value) and re.fullmatch(r\"[A-Za-z0-9_-]+\", value) is not None, \"base64\") => pass",
+      "literal_case": "base64_empty"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_b64encode(raw) == value, \"base64\")",
+      "function": "_b64decode",
+      "guard": "_b64decode:_require(_b64encode(raw) == value, \"base64\") => pass",
+      "literal_case": "base64_trailing_bits"
+    },
+    {
+      "after": "pass",
+      "before": "_require(isinstance(token, str) and len(token) <= 65536 and token.count(\".\") == 2,\n             \"compact\")",
+      "function": "_verify",
+      "guard": "_verify:_require(isinstance(token, str) and len(token) <= 65536 and token.count(\".\") == 2,\n             \"compact\") => pass",
+      "literal_case": "compact_extra"
+    },
+    {
+      "after": "pass",
+      "before": "_require(header_bytes == _canonical(header), \"canonical_header\")",
+      "function": "_verify",
+      "guard": "_verify:_require(header_bytes == _canonical(header), \"canonical_header\") => pass",
+      "literal_case": "header_whitespace"
+    },
+    {
+      "after": "pass",
+      "before": "_require(header[\"alg\"] == \"EdDSA\", \"algorithm\")",
+      "function": "_verify",
+      "guard": "_verify:_require(header[\"alg\"] == \"EdDSA\", \"algorithm\") => pass",
+      "literal_case": "algorithm_none"
+    },
+    {
+      "after": "pass",
+      "before": "_require(header[\"typ\"] == typ, \"type\")",
+      "function": "_verify",
+      "guard": "_verify:_require(header[\"typ\"] == typ, \"type\") => pass",
+      "literal_case": "unknown_type"
+    },
+    {
+      "after": "pass",
+      "before": "_require(len(matches) == 1, \"key\")",
+      "function": "_verify",
+      "guard": "_verify:_require(len(matches) == 1, \"key\") => pass",
+      "literal_case": "key_ambiguous"
+    },
+    {
+      "after": "pass",
+      "before": "_require(key.purpose == purpose, \"purpose\")",
+      "function": "_verify",
+      "guard": "_verify:_require(key.purpose == purpose, \"purpose\") => pass",
+      "literal_case": "real_type_shadow_key"
+    },
+    {
+      "after": "pass",
+      "before": "_require(isinstance(claims, dict), \"fields\")",
+      "equivalent": "Equivalent: both callers immediately call exact-object schema validation, which rejects every nondict as fields before accessing members.",
+      "function": "_verify",
+      "guard": "_verify:_require(isinstance(claims, dict), \"fields\") => pass",
+      "literal_case": "depth16"
+    },
+    {
+      "after": "pass",
+      "before": "_require(payload == _canonical(claims), \"canonical_payload\")",
+      "function": "_check_canonical",
+      "guard": "_check_canonical:_require(payload == _canonical(claims), \"canonical_payload\") => pass",
+      "literal_case": "payload_whitespace"
+    },
+    {
+      "after": "pass",
+      "before": "_require(type(route[\"stage_d\"]) is bool, \"stage_d\")",
+      "function": "_route_schema",
+      "guard": "_route_schema:_require(type(route[\"stage_d\"]) is bool, \"stage_d\") => pass",
+      "literal_case": "precedence_stage_schema_version"
+    },
+    {
+      "after": "pass",
+      "before": "_require(isinstance(claims[\"permits\"], list) and bool(claims[\"permits\"]), \"permits\")",
+      "function": "_grant_schema",
+      "guard": "_grant_schema:_require(isinstance(claims[\"permits\"], list) and bool(claims[\"permits\"]), \"permits\") => pass",
+      "literal_case": "empty_permits"
+    },
+    {
+      "after": "pass",
+      "before": "_require(product <= MAX_INT, \"overflow\")",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:_require(product <= MAX_INT, \"overflow\") => pass",
+      "literal_case": "money_product_overflow"
+    },
+    {
+      "after": "pass",
+      "before": "_require(total <= MAX_INT, \"overflow\")",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:_require(total <= MAX_INT, \"overflow\") => pass",
+      "literal_case": "money_sum_overflow"
+    },
+    {
+      "after": "pass",
+      "before": "_require(claims[\"v\"] == 1, \"version\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(claims[\"v\"] == 1, \"version\") => pass",
+      "literal_case": "unknown_version"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(claims[field], getattr(key, field)), \"identity\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(_equal(claims[field], getattr(key, field)), \"identity\") => pass",
+      "literal_case": "identity_iss"
+    },
+    {
+      "after": "pass",
+      "before": "_require(field in context and _equal(claims[field], context[field]), \"binding\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(field in context and _equal(claims[field], context[field]), \"binding\") => pass",
+      "literal_case": "binding_key_id"
+    },
+    {
+      "after": "pass",
+      "before": "_require(route[\"stage_d\"] is True, \"stage_d\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(route[\"stage_d\"] is True, \"stage_d\") => pass",
+      "literal_case": "stage_d_false"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(route, context.get(\"route\")), \"route\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(_equal(route, context.get(\"route\")), \"route\") => pass",
+      "literal_case": "route_endpoint_id"
+    },
+    {
+      "after": "pass",
+      "before": "_require(route[\"region\"] == claims[\"region\"], \"route\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(route[\"region\"] == claims[\"region\"], \"route\") => pass",
+      "literal_case": "route_region_disagrees"
+    },
+    {
+      "after": "pass",
+      "before": "_require(0 < route[\"input_bound\"] <= 8192 and 0 < route[\"output_limit\"] <= 512,\n             \"token_bound\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < route[\"input_bound\"] <= 8192 and 0 < route[\"output_limit\"] <= 512,\n             \"token_bound\") => pass",
+      "literal_case": "output_bound_over"
+    },
+    {
+      "after": "pass",
+      "before": "_require(route[\"adapter_capability_version\"] > 0, \"adapter\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(route[\"adapter_capability_version\"] > 0, \"adapter\") => pass",
+      "literal_case": "adapter_zero"
+    },
+    {
+      "after": "pass",
+      "before": "_require(claims[\"tier\"] in (2, 3), \"tier\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(claims[\"tier\"] in (2, 3), \"tier\") => pass",
+      "literal_case": "tier_one"
+    },
+    {
+      "after": "pass",
+      "before": "_require(claims[\"paid_headroom_micro\"] >= 5_000_000, \"paid_headroom\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(claims[\"paid_headroom_micro\"] >= 5_000_000, \"paid_headroom\") => pass",
+      "literal_case": "unpaid"
+    },
+    {
+      "after": "pass",
+      "before": "_require(history[\"count\"] >= 20 and history[\"sequence\"] >= history[\"count\"], \"history_count\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(history[\"count\"] >= 20 and history[\"sequence\"] >= history[\"count\"], \"history_count\") => pass",
+      "literal_case": "history_19"
+    },
+    {
+      "after": "pass",
+      "before": "_require(issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued\n             and history[\"last_success_at\"] >= issued - 30\n             and history[\"clean_since\"] <= issued - 900, \"history_time\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued\n             and history[\"last_success_at\"] >= issued - 30\n             and history[\"clean_since\"] <= issued - 900, \"history_time\") => pass",
+      "literal_case": "stale_last_success"
+    },
+    {
+      "after": "pass",
+      "before": "_require(0 < claims[\"exp\"] - issued <= 30 and issued < claims[\"start_before\"], \"lifetime\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < claims[\"exp\"] - issued <= 30 and issued < claims[\"start_before\"], \"lifetime\") => pass",
+      "literal_case": "ttl_too_long"
+    },
+    {
+      "after": "pass",
+      "before": "_require(issued <= now < deadline, \"start_window\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(issued <= now < deadline, \"start_window\") => pass",
+      "literal_case": "start_plus_28"
+    },
+    {
+      "after": "pass",
+      "before": "_require(0 < ceiling <= 10_000, \"ceiling\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < ceiling <= 10_000, \"ceiling\") => pass",
+      "literal_case": "over_cap_money"
+    },
+    {
+      "after": "pass",
+      "before": "_require(0 < b_micro <= ceiling, \"cost\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(0 < b_micro <= ceiling, \"cost\") => pass",
+      "literal_case": "cost_10001"
+    },
+    {
+      "after": "pass",
+      "before": "_require(permit[\"ordinal\"] not in ordinals, \"ordinal\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(permit[\"ordinal\"] not in ordinals, \"ordinal\") => pass",
+      "literal_case": "duplicate_ordinal"
+    },
+    {
+      "after": "pass",
+      "before": "_require(b_micro <= permit[\"b_micro\"] <= ceiling, \"permit_cost\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(b_micro <= permit[\"b_micro\"] <= ceiling, \"permit_cost\") => pass",
+      "literal_case": "underfunded_permit"
+    },
+    {
+      "after": "pass",
+      "before": "_require(\"tier_ceiling_micro\" in context, \"tier_ceiling\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(\"tier_ceiling_micro\" in context, \"tier_ceiling\") => pass",
+      "literal_case": "missing_tier_ceiling"
+    },
+    {
+      "after": "pass",
+      "before": "_require(sum(p[\"b_micro\"] for p in permits) <= allowance, \"allowance\")",
+      "function": "verify_grant",
+      "guard": "verify_grant:_require(sum(p[\"b_micro\"] for p in permits) <= allowance, \"allowance\") => pass",
+      "literal_case": "allowance_sum_not_max"
+    },
+    {
+      "after": "pass",
+      "before": "_require(not grant.shadow, \"dry_run_cannot_dispatch\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(not grant.shadow, \"dry_run_cannot_dispatch\") => pass",
+      "literal_case": "dry_run_cannot_dispatch"
+    },
+    {
+      "after": "pass",
+      "before": "_require(claims[\"v\"] == 1, \"version\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(claims[\"v\"] == 1, \"version\") => pass",
+      "literal_case": "descriptor_version"
+    },
+    {
+      "after": "pass",
+      "before": "_require(key.kid == g[\"boot_id\"], \"descriptor_boot\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(key.kid == g[\"boot_id\"], \"descriptor_boot\") => pass",
+      "literal_case": "descriptor_wrong_boot_signer"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(claims[field], g[field]), \"descriptor_binding\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(_equal(claims[field], g[field]), \"descriptor_binding\") => pass",
+      "literal_case": "descriptor_key_id"
+    },
+    {
+      "after": "pass",
+      "before": "_require(claims[\"grant_sha256\"] == sha256(grant.compact.encode(\"ascii\")), \"grant_hash\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(claims[\"grant_sha256\"] == sha256(grant.compact.encode(\"ascii\")), \"grant_hash\") => pass",
+      "literal_case": "descriptor_shadow_hash"
+    },
+    {
+      "after": "pass",
+      "before": "_require(claims[\"request_sha256\"] == sha256(request_bytes), \"request_hash\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(claims[\"request_sha256\"] == sha256(request_bytes), \"request_hash\") => pass",
+      "literal_case": "descriptor_wire_lf"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(claims[\"execution_id\"], execution_id) and _equal(claims[\"invocation_nonce\"], invocation_nonce),\n             \"invocation\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(_equal(claims[\"execution_id\"], execution_id) and _equal(claims[\"invocation_nonce\"], invocation_nonce),\n             \"invocation\") => pass",
+      "literal_case": "descriptor_nonce"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(claims[field], g[\"route\"][field]), \"descriptor_route\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(_equal(claims[field], g[\"route\"][field]), \"descriptor_route\") => pass",
+      "literal_case": "descriptor_endpoint"
+    },
+    {
+      "after": "pass",
+      "before": "_require(any(p[\"ordinal\"] == claims[\"ordinal\"] and p[\"b_micro\"] == claims[\"b_micro\"]\n                 for p in g[\"permits\"]), \"descriptor_permit\")",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_require(any(p[\"ordinal\"] == claims[\"ordinal\"] and p[\"b_micro\"] == claims[\"b_micro\"]\n                 for p in g[\"permits\"]), \"descriptor_permit\") => pass",
+      "literal_case": "descriptor_ordinal"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(response.get(\"authorization\"), authorization), \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(response.get(\"authorization\"), authorization), \"authorization\") => pass",
+      "literal_case": "response_stage_d_integer"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(authorization.get(field), d[field]), \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(authorization.get(field), d[field]), \"authorization\") => pass",
+      "literal_case": "marker_unmarked_key"
+    },
+    {
+      "after": "pass",
+      "before": "_require(authorization.get(\"billing_mode\") == \"ordinary\", \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(authorization.get(\"billing_mode\") == \"ordinary\", \"authorization\") => pass",
+      "literal_case": "unmarked_spend_lease"
+    },
+    {
+      "after": "pass",
+      "before": "_require(marker[\"v\"] == 1, \"version\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(marker[\"v\"] == 1, \"version\") => pass",
+      "literal_case": "marker_version"
+    },
+    {
+      "after": "pass",
+      "before": "_require(marker[\"descriptor_sha256\"] == sha256(descriptor.compact.encode(\"ascii\")), \"descriptor_hash\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(marker[\"descriptor_sha256\"] == sha256(descriptor.compact.encode(\"ascii\")), \"descriptor_hash\") => pass",
+      "literal_case": "marker_hash"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(marker[field], d[field]), \"marker_binding\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(marker[field], d[field]), \"marker_binding\") => pass",
+      "literal_case": "marker_invocation_nonce"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(authorization.get(field), expected), \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(_equal(authorization.get(field), expected), \"authorization\") => pass",
+      "literal_case": "marker_authorization_id"
+    },
+    {
+      "after": "pass",
+      "before": "_require(authorization.get(\"billing_mode\") == \"ordinary\" and\n             authorization.get(\"stage_d\") is True, \"authorization\")",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:_require(authorization.get(\"billing_mode\") == \"ordinary\" and\n             authorization.get(\"stage_d\") is True, \"authorization\") => pass",
+      "literal_case": "authorization_stage_d"
+    },
+    {
+      "after": "pass",
+      "before": "_require(previous.shadow == candidate.shadow, \"renewal\")",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:_require(previous.shadow == candidate.shadow, \"renewal\") => pass",
+      "literal_case": "renewal_domain_isolated"
+    },
+    {
+      "after": "pass",
+      "before": "_require(_equal(old[field], new[field]), \"renewal\")",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:_require(_equal(old[field], new[field]), \"renewal\") => pass",
+      "literal_case": "renewal_identity_workspace_id"
+    },
+    {
+      "after": "pass",
+      "before": "_require(new[\"grant_id\"] != old[\"grant_id\"] and new[\"generation\"] > old[\"generation\"]\n             and new[\"iat\"] >= old[\"iat\"] and new[\"workspace_epoch\"] >= old[\"workspace_epoch\"]\n             and new[\"key_epoch\"] >= old[\"key_epoch\"]\n             and new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"], \"renewal\")",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:_require(new[\"grant_id\"] != old[\"grant_id\"] and new[\"generation\"] > old[\"generation\"]\n             and new[\"iat\"] >= old[\"iat\"] and new[\"workspace_epoch\"] >= old[\"workspace_epoch\"]\n             and new[\"key_epoch\"] >= old[\"key_epoch\"]\n             and new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"], \"renewal\") => pass",
+      "literal_case": "renewal_same_generation"
+    },
+    {
+      "after": "pass",
+      "before": "_require(previous.compact == candidate.compact, \"replay_conflict\")",
+      "function": "descriptor_replay",
+      "guard": "descriptor_replay:_require(previous.compact == candidate.compact, \"replay_conflict\") => pass",
+      "literal_case": "descriptor_permit_reuse"
+    },
+    {
+      "after": "pass",
+      "before": "_require(source == \"authenticated_router\", \"verdict_source\")",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:_require(source == \"authenticated_router\", \"verdict_source\") => pass",
+      "literal_case": "provider_source"
+    },
+    {
+      "after": "pass",
+      "before": "_require(400 <= status <= 599, \"verdict_status\")",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:_require(400 <= status <= 599, \"verdict_status\") => pass",
+      "literal_case": "success_status"
+    },
+    {
+      "after": "pass",
+      "before": "_require(all(0x20 <= byte <= 0x7E and byte != 0x5C for byte in raw), \"json\")",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:_require(all(0x20 <= byte <= 0x7E and byte != 0x5C for byte in raw), \"json\") => pass",
+      "literal_case": "payload_escaped_ascii"
+    },
+    {
+      "after": "isinstance(value, int)",
+      "before": "type(value) is int",
+      "function": "_integer",
+      "guard": "_integer:type(value) is int => isinstance(value, int)",
+      "literal_case": "bool_integer"
+    },
+    {
+      "after": "value",
+      "before": "0 <= value",
+      "function": "_integer",
+      "guard": "_integer:0 <= value => True",
+      "literal_case": "money_negative"
+    },
+    {
+      "after": "0 <= value",
+      "before": "0 <= value <= MAX_INT",
+      "function": "_integer",
+      "guard": "_integer:value <= MAX_INT => True",
+      "literal_case": "overflow_integer"
+    },
+    {
+      "after": "True",
+      "before": "isinstance(value, str)",
+      "function": "_string",
+      "guard": "_string:isinstance(value, str) => True",
+      "literal_case": "string_scalar"
+    },
+    {
+      "after": "True",
+      "before": "bool(value)",
+      "function": "_string",
+      "guard": "_string:bool(value) => True",
+      "literal_case": "string_empty"
+    },
+    {
+      "after": "ord(c)",
+      "before": "0x20 <= ord(c)",
+      "function": "_string",
+      "guard": "_string:0x20 <= ord(c) => True",
+      "literal_case": "context_string_control"
+    },
+    {
+      "after": "0x20 <= ord(c)",
+      "before": "0x20 <= ord(c) <= 0x7E",
+      "function": "_string",
+      "guard": "_string:ord(c) <= 0x7E => True",
+      "literal_case": "context_string_unicode"
+    },
+    {
+      "after": "True",
+      "before": "c not in '\\\\\"<>&'",
+      "function": "_string",
+      "guard": "_string:c not in '\\\\\"<>&' => True",
+      "literal_case": "string_less"
+    },
+    {
+      "after": "True",
+      "before": "isinstance(value, str)",
+      "equivalent": "Equivalent: every public path validates these claims with _string before _hash. Nonstrings cannot reach the redundant hash type conjunct.",
+      "function": "_hash",
+      "guard": "_hash:isinstance(value, str) => True",
+      "literal_case": "hash_type"
+    },
+    {
+      "after": "True",
+      "before": "isinstance(value, dict)",
+      "function": "_object",
+      "guard": "_object:isinstance(value, dict) => True",
+      "literal_case": "header_scalar"
+    },
+    {
+      "after": "set(value) <= set(",
+      "before": "set(value) == set(",
+      "function": "_object",
+      "guard": "_object:set(value) == set( => set(value) <= set(",
+      "literal_case": "missing_provenance"
+    },
+    {
+      "after": "    pass",
+      "before": "    _integer(number)",
+      "function": "_parse_int",
+      "guard": "_parse_int:    _integer(number) =>     pass",
+      "literal_case": "header_number_negative"
+    },
+    {
+      "after": "return 1",
+      "before": "raise ProtocolError(\"integer\")",
+      "function": "_constant",
+      "guard": "_constant:raise ProtocolError(\"integer\") => return 1",
+      "literal_case": "exponent"
+    },
+    {
+      "after": "raise ProtocolError(\"input\") from exc",
+      "before": "raise ProtocolError(\"json\") from exc",
+      "function": "_json",
+      "guard": "_json:raise ProtocolError(\"json\") from exc => raise ProtocolError(\"input\") from exc",
+      "literal_case": "json_bad"
+    },
+    {
+      "after": "True",
+      "before": "byte != 0x5C",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:byte != 0x5C => True",
+      "literal_case": "payload_escaped_ascii"
+    },
+    {
+      "after": "    pass",
+      "before": "    _depth(text)",
+      "function": "_json",
+      "guard": "_json:    _depth(text) =>     pass",
+      "literal_case": "depth17"
+    },
+    {
+      "after": "True",
+      "before": "bool(value)",
+      "function": "_b64decode",
+      "guard": "_b64decode:bool(value) => True",
+      "literal_case": "key_zero_public"
+    },
+    {
+      "after": "raise ProtocolError(\"input\") from exc",
+      "before": "raise ProtocolError(\"base64\") from exc",
+      "function": "_b64decode",
+      "guard": "_b64decode:raise ProtocolError(\"base64\") from exc => raise ProtocolError(\"input\") from exc",
+      "literal_case": "base64_length"
+    },
+    {
+      "after": "True",
+      "before": "isinstance(token, str)",
+      "function": "_verify",
+      "guard": "_verify:isinstance(token, str) => True",
+      "literal_case": "compact_nonstring"
+    },
+    {
+      "after": "True",
+      "before": "len(token) <= 65536",
+      "function": "_verify",
+      "guard": "_verify:len(token) <= 65536 => True",
+      "literal_case": "compact_too_long"
+    },
+    {
+      "after": "True",
+      "before": "token.count(\".\") == 2",
+      "function": "_verify",
+      "guard": "_verify:token.count(\".\") == 2 => True",
+      "literal_case": "compact_extra"
+    },
+    {
+      "after": "True",
+      "before": "key.kid == header[\"kid\"]",
+      "function": "_verify",
+      "guard": "_verify:key.kid == header[\"kid\"] => True",
+      "literal_case": "real_valid"
+    },
+    {
+      "after": "signature, b\"wrong\"",
+      "before": "signature, (h + \".\" + p).encode(\"ascii\")",
+      "function": "_verify",
+      "guard": "_verify:signature, (h + \".\" + p).encode(\"ascii\") => signature, b\"wrong\"",
+      "literal_case": "real_valid"
+    },
+    {
+      "after": "pass",
+      "before": "raise ProtocolError(\"signature\") from exc",
+      "function": "_verify",
+      "guard": "_verify:raise ProtocolError(\"signature\") from exc => pass",
+      "literal_case": "signature_bitflip"
+    },
+    {
+      "after": "True",
+      "before": "isinstance(claims[\"permits\"], list)",
+      "function": "_grant_schema",
+      "guard": "_grant_schema:isinstance(claims[\"permits\"], list) => True",
+      "literal_case": "scalar_permits"
+    },
+    {
+      "after": "True",
+      "before": "bool(claims[\"permits\"])",
+      "function": "_grant_schema",
+      "guard": "_grant_schema:bool(claims[\"permits\"]) => True",
+      "literal_case": "empty_permits"
+    },
+    {
+      "after": "False",
+      "before": "product % 1_000_000 != 0",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:product % 1_000_000 != 0 => False",
+      "literal_case": "money_fractional"
+    },
+    {
+      "after": "total = 0",
+      "before": "total = maximum_request_fees_micro",
+      "function": "cost_ceiling",
+      "guard": "cost_ceiling:total = maximum_request_fees_micro => total = 0",
+      "literal_case": "money_fees"
+    },
+    {
+      "after": "(tier_ceiling_micro + 99) // 100",
+      "before": "tier_ceiling_micro // 100",
+      "function": "workspace_allowance",
+      "guard": "workspace_allowance:tier_ceiling_micro // 100 => (tier_ceiling_micro + 99) // 100",
+      "literal_case": "allowance_odd_tier"
+    },
+    {
+      "after": "(paid_headroom_micro + 9) // 10",
+      "before": "paid_headroom_micro // 10",
+      "function": "workspace_allowance",
+      "guard": "workspace_allowance:paid_headroom_micro // 10 => (paid_headroom_micro + 9) // 10",
+      "literal_case": "allowance_odd_headroom"
+    },
+    {
+      "after": ")",
+      "before": ", 1_000_000)",
+      "function": "workspace_allowance",
+      "guard": "workspace_allowance:, 1_000_000) => )",
+      "literal_case": "allowance_dollar_cap"
+    },
+    {
+      "after": "",
+      "before": "field in context and ",
+      "function": "verify_grant",
+      "guard": "verify_grant:field in context and  => ",
+      "literal_case": "missing_context_binding"
+    },
+    {
+      "after": "    pass",
+      "before": "    _route_schema(context.get(\"route\"))",
+      "function": "verify_grant",
+      "guard": "verify_grant:    _route_schema(context.get(\"route\")) =>     pass",
+      "literal_case": "context_coercion_stage_d"
+    },
+    {
+      "after": "route[\"input_bound\"]",
+      "before": "0 < route[\"input_bound\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < route[\"input_bound\"] => True",
+      "literal_case": "input_bound_zero"
+    },
+    {
+      "after": "0 < route[\"input_bound\"]",
+      "before": "0 < route[\"input_bound\"] <= 8192",
+      "function": "verify_grant",
+      "guard": "verify_grant:route[\"input_bound\"] <= 8192 => True",
+      "literal_case": "input_bound_over"
+    },
+    {
+      "after": "route[\"output_limit\"]",
+      "before": "0 < route[\"output_limit\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < route[\"output_limit\"] => True",
+      "literal_case": "output_bound_zero"
+    },
+    {
+      "after": "0 < route[\"output_limit\"]",
+      "before": "0 < route[\"output_limit\"] <= 512",
+      "function": "verify_grant",
+      "guard": "verify_grant:route[\"output_limit\"] <= 512 => True",
+      "literal_case": "output_bound_over"
+    },
+    {
+      "after": "claims[\"tier\"] >= 2",
+      "before": "claims[\"tier\"] in (2, 3)",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"tier\"] in (2, 3) => claims[\"tier\"] >= 2",
+      "literal_case": "tier_four"
+    },
+    {
+      "after": "True",
+      "before": "history[\"count\"] >= 20",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"count\"] >= 20 => True",
+      "literal_case": "history_19"
+    },
+    {
+      "after": "True",
+      "before": "history[\"sequence\"] >= history[\"count\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"sequence\"] >= history[\"count\"] => True",
+      "literal_case": "history_retry_dedupe"
+    },
+    {
+      "after": "history[\"window_start\"]",
+      "before": "issued - 600 <= history[\"window_start\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:issued - 600 <= history[\"window_start\"] => True",
+      "literal_case": "old_history_window"
+    },
+    {
+      "after": "issued - 600 <= history[\"window_start\"] and history[\"last_success_at\"] <= issued",
+      "before": "issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"window_start\"] <= history[\"last_success_at\"] => True",
+      "literal_case": "future_history_window"
+    },
+    {
+      "after": "issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"]",
+      "before": "issued - 600 <= history[\"window_start\"] <= history[\"last_success_at\"] <= issued",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"last_success_at\"] <= issued => True",
+      "literal_case": "future_last_success"
+    },
+    {
+      "after": "True",
+      "before": "history[\"last_success_at\"] >= issued - 30",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"last_success_at\"] >= issued - 30 => True",
+      "literal_case": "stale_last_success"
+    },
+    {
+      "after": "True",
+      "before": "history[\"clean_since\"] <= issued - 900",
+      "function": "verify_grant",
+      "guard": "verify_grant:history[\"clean_since\"] <= issued - 900 => True",
+      "literal_case": "unclean_history"
+    },
+    {
+      "after": "claims[\"exp\"] - issued",
+      "before": "0 < claims[\"exp\"] - issued",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < claims[\"exp\"] - issued => True",
+      "literal_case": "ttl_zero"
+    },
+    {
+      "after": "0 < claims[\"exp\"] - issued",
+      "before": "0 < claims[\"exp\"] - issued <= 30",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"exp\"] - issued <= 30 => True",
+      "literal_case": "ttl_too_long"
+    },
+    {
+      "after": "True",
+      "before": "issued < claims[\"start_before\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:issued < claims[\"start_before\"] => True",
+      "literal_case": "start_before_issue"
+    },
+    {
+      "after": "MAX_INT, claims[\"exp\"] - MARGIN",
+      "before": "claims[\"start_before\"], claims[\"exp\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"start_before\"], claims[\"exp\"] - MARGIN => MAX_INT, claims[\"exp\"] - MARGIN",
+      "literal_case": "short_explicit_at"
+    },
+    {
+      "after": "MAX_INT",
+      "before": "claims[\"exp\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"exp\"] - MARGIN => MAX_INT",
+      "literal_case": "short_expiry_at"
+    },
+    {
+      "after": "MAX_INT",
+      "before": "claims[\"key_expires_at\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"key_expires_at\"] - MARGIN => MAX_INT",
+      "literal_case": "short_key_at"
+    },
+    {
+      "after": "MAX_INT",
+      "before": "route[\"price_expires_at\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:route[\"price_expires_at\"] - MARGIN => MAX_INT",
+      "literal_case": "short_price_at"
+    },
+    {
+      "after": "MAX_INT",
+      "before": "claims[\"trust_fresh_until\"] - MARGIN",
+      "function": "verify_grant",
+      "guard": "verify_grant:claims[\"trust_fresh_until\"] - MARGIN => MAX_INT",
+      "literal_case": "short_trust_at"
+    },
+    {
+      "after": "now",
+      "before": "issued <= now",
+      "function": "verify_grant",
+      "guard": "verify_grant:issued <= now => True",
+      "literal_case": "future_iat"
+    },
+    {
+      "after": "issued <= now <= deadline",
+      "before": "issued <= now < deadline",
+      "function": "verify_grant",
+      "guard": "verify_grant:now < deadline => now <= deadline",
+      "literal_case": "start_plus_28"
+    },
+    {
+      "after": "ceiling",
+      "before": "0 < ceiling",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < ceiling => True",
+      "literal_case": "zero_ceiling"
+    },
+    {
+      "after": "0 < ceiling",
+      "before": "0 < ceiling <= 10_000",
+      "function": "verify_grant",
+      "guard": "verify_grant:ceiling <= 10_000 => True",
+      "literal_case": "over_cap_money"
+    },
+    {
+      "after": "b_micro",
+      "before": "0 < b_micro",
+      "function": "verify_grant",
+      "guard": "verify_grant:0 < b_micro => True",
+      "literal_case": "cost_zero"
+    },
+    {
+      "after": "0 < b_micro",
+      "before": "0 < b_micro <= ceiling",
+      "function": "verify_grant",
+      "guard": "verify_grant:b_micro <= ceiling => True",
+      "literal_case": "cost_10001"
+    },
+    {
+      "after": "permit[\"b_micro\"]",
+      "before": "b_micro <= permit[\"b_micro\"]",
+      "function": "verify_grant",
+      "guard": "verify_grant:b_micro <= permit[\"b_micro\"] => True",
+      "literal_case": "underfunded_permit"
+    },
+    {
+      "after": "b_micro <= permit[\"b_micro\"]",
+      "before": "b_micro <= permit[\"b_micro\"] <= ceiling",
+      "function": "verify_grant",
+      "guard": "verify_grant:permit[\"b_micro\"] <= ceiling => True",
+      "literal_case": "over_cap_permit"
+    },
+    {
+      "after": "max(p[\"b_micro\"] for p in permits)",
+      "before": "sum(p[\"b_micro\"] for p in permits)",
+      "function": "verify_grant",
+      "guard": "verify_grant:sum(p[\"b_micro\"] for p in permits) => max(p[\"b_micro\"] for p in permits)",
+      "literal_case": "allowance_sum_not_max"
+    },
+    {
+      "after": "True",
+      "before": "_equal(claims[\"execution_id\"], execution_id)",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_equal(claims[\"execution_id\"], execution_id) => True",
+      "literal_case": "descriptor_execution"
+    },
+    {
+      "after": "True",
+      "before": "_equal(claims[\"invocation_nonce\"], invocation_nonce)",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:_equal(claims[\"invocation_nonce\"], invocation_nonce) => True",
+      "literal_case": "descriptor_nonce"
+    },
+    {
+      "after": "True",
+      "before": "p[\"ordinal\"] == claims[\"ordinal\"]",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:p[\"ordinal\"] == claims[\"ordinal\"] => True",
+      "literal_case": "descriptor_ordinal"
+    },
+    {
+      "after": "True",
+      "before": "p[\"b_micro\"] == claims[\"b_micro\"]",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:p[\"b_micro\"] == claims[\"b_micro\"] => True",
+      "literal_case": "descriptor_cost"
+    },
+    {
+      "after": "response.get(\"speculation_accepted\") is None",
+      "before": "\"speculation_accepted\" not in response",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:\"speculation_accepted\" not in response => response.get(\"speculation_accepted\") is None",
+      "literal_case": "marker_null"
+    },
+    {
+      "after": "True",
+      "before": "authorization.get(\"stage_d\") is True",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:authorization.get(\"stage_d\") is True => True",
+      "literal_case": "authorization_stage_d"
+    },
+    {
+      "after": "False",
+      "before": "previous.compact == candidate.compact",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:previous.compact == candidate.compact => False",
+      "literal_case": "renewal_exact_replay"
+    },
+    {
+      "after": "True",
+      "before": "new[\"grant_id\"] != old[\"grant_id\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"grant_id\"] != old[\"grant_id\"] => True",
+      "literal_case": "renewal_same_grant_id"
+    },
+    {
+      "after": "True",
+      "before": "new[\"generation\"] > old[\"generation\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"generation\"] > old[\"generation\"] => True",
+      "literal_case": "renewal_same_generation"
+    },
+    {
+      "after": "True",
+      "before": "new[\"iat\"] >= old[\"iat\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"iat\"] >= old[\"iat\"] => True",
+      "literal_case": "renewal_old_iat"
+    },
+    {
+      "after": "True",
+      "before": "new[\"workspace_epoch\"] >= old[\"workspace_epoch\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"workspace_epoch\"] >= old[\"workspace_epoch\"] => True",
+      "literal_case": "renewal_old_workspace_epoch"
+    },
+    {
+      "after": "True",
+      "before": "new[\"key_epoch\"] >= old[\"key_epoch\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"key_epoch\"] >= old[\"key_epoch\"] => True",
+      "literal_case": "renewal_old_key_epoch"
+    },
+    {
+      "after": "True",
+      "before": "new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"]",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:new[\"history\"][\"sequence\"] >= old[\"history\"][\"sequence\"] => True",
+      "literal_case": "renewal_old_history_sequence"
+    },
+    {
+      "after": "status",
+      "before": "400 <= status",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:400 <= status => True",
+      "literal_case": "success_status"
+    },
+    {
+      "after": "400 <= status",
+      "before": "400 <= status <= 599",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status <= 599 => True",
+      "literal_case": "verdict_status_upper"
+    },
+    {
+      "after": "False",
+      "before": "reason in KEY_REASONS",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in KEY_REASONS => False",
+      "literal_case": "verdict:lifetime_limit"
+    },
+    {
+      "after": "reason in KEY_REASONS and key_id",
+      "before": "reason in KEY_REASONS and workspace_id and key_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in KEY_REASONS and workspace_id and key_id => reason in KEY_REASONS and key_id",
+      "literal_case": "verdict_key_without_workspace"
+    },
+    {
+      "after": "reason in KEY_REASONS and workspace_id",
+      "before": "reason in KEY_REASONS and workspace_id and key_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in KEY_REASONS and workspace_id and key_id => reason in KEY_REASONS and workspace_id",
+      "literal_case": "verdict_key_without_key"
+    },
+    {
+      "after": "(reason in WORKSPACE_REASONS or status == 402)",
+      "before": "workspace_id and (reason in WORKSPACE_REASONS or status == 402)",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:workspace_id and (reason in WORKSPACE_REASONS or status == 402) => (reason in WORKSPACE_REASONS or status == 402)",
+      "literal_case": "verdict_workspace_without_workspace"
+    },
+    {
+      "after": "False",
+      "before": "reason in WORKSPACE_REASONS",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:reason in WORKSPACE_REASONS => False",
+      "literal_case": "verdict_billing_paused"
+    },
+    {
+      "after": "False",
+      "before": "status == 402",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status == 402 => False",
+      "literal_case": "verdict_reasonless_402"
+    },
+    {
+      "after": "False",
+      "before": "status == 429",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status == 429 => False",
+      "literal_case": "verdict:rate_unknown"
+    },
+    {
+      "after": "status == 429",
+      "before": "status == 429 and workspace_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status == 429 and workspace_id => status == 429",
+      "literal_case": "verdict_rate_without_workspace"
+    },
+    {
+      "after": "rate_scope == \"key\"",
+      "before": "rate_scope == \"key\" and key_id",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:rate_scope == \"key\" and key_id => rate_scope == \"key\"",
+      "literal_case": "verdict_rate_key_missing_id"
+    },
+    {
+      "after": "True",
+      "before": "rate_scope == \"key\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:rate_scope == \"key\" => True",
+      "literal_case": "verdict:rate_unknown"
+    },
+    {
+      "after": "",
+      "before": "scope == \"none\" and ",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:scope == \"none\" and  => ",
+      "literal_case": "verdict_workspace_reason_500"
+    },
+    {
+      "after": "False",
+      "before": "status >= 500",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:status >= 500 => False",
+      "literal_case": "verdict_generic_500"
+    },
+    {
+      "after": "\"commit_required_with_real_rights\": False",
+      "before": "\"commit_required_with_real_rights\": scope != \"none\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"commit_required_with_real_rights\": scope != \"none\" => \"commit_required_with_real_rights\": False",
+      "literal_case": "verdict:credit"
+    },
+    {
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'iss':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:iss",
+      "literal_case": "identity_iss"
+    },
+    {
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'aud':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:aud",
+      "literal_case": "identity_aud"
+    },
+    {
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'environment':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:environment",
+      "literal_case": "identity_environment"
+    },
+    {
+      "after": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):\n        if field == 'plane':\n            continue",
+      "before": "for field in (\"iss\", \"aud\", \"environment\", \"plane\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:plane",
+      "literal_case": "identity_plane"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:workspace_id",
+      "literal_case": "binding_workspace_id"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'key_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:key_id",
+      "literal_case": "binding_key_id"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'lookup_digest':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:lookup_digest",
+      "literal_case": "binding_lookup_digest"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'boot_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:boot_id",
+      "literal_case": "binding_boot_id"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'stable_slot_id':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:stable_slot_id",
+      "literal_case": "binding_stable_slot_id"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'region':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:region",
+      "literal_case": "binding_region"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'generation':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:generation",
+      "literal_case": "binding_generation"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'workspace_epoch':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:workspace_epoch",
+      "literal_case": "binding_workspace_epoch"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'key_epoch':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:key_epoch",
+      "literal_case": "binding_key_epoch"
+    },
+    {
+      "after": "for field in BINDINGS:\n        if field == 'image_policy_version':\n            continue",
+      "before": "for field in BINDINGS:",
+      "function": "verify_grant",
+      "guard": "verify_grant:identity:image_policy_version",
+      "literal_case": "binding_image_policy_version"
+    },
+    {
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'grant_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:grant_id",
+      "literal_case": "descriptor_grant_id"
+    },
+    {
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:workspace_id",
+      "literal_case": "descriptor_workspace_id"
+    },
+    {
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:key_id",
+      "literal_case": "descriptor_key_id"
+    },
+    {
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'boot_id':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:boot_id",
+      "literal_case": "descriptor_boot_id"
+    },
+    {
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'workspace_epoch':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:workspace_epoch",
+      "literal_case": "descriptor_workspace_epoch"
+    },
+    {
+      "after": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):\n        if field == 'key_epoch':\n            continue",
+      "before": "for field in (\"grant_id\", \"workspace_id\", \"key_id\", \"boot_id\", \"workspace_epoch\", \"key_epoch\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:identity:key_epoch",
+      "literal_case": "descriptor_key_epoch"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:workspace_id",
+      "literal_case": "renewal_identity_workspace_id"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:key_id",
+      "literal_case": "renewal_identity_key_id"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'lookup_digest':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:lookup_digest",
+      "literal_case": "renewal_identity_lookup_digest"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'boot_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:boot_id",
+      "literal_case": "renewal_identity_boot_id"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'stable_slot_id':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:stable_slot_id",
+      "literal_case": "renewal_identity_stable_slot_id"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'iss':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:iss",
+      "literal_case": "renewal_identity_iss"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'aud':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:aud",
+      "literal_case": "renewal_identity_aud"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'environment':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:environment",
+      "literal_case": "renewal_identity_environment"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'plane':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:plane",
+      "literal_case": "renewal_identity_plane"
+    },
+    {
+      "after": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):\n        if field == 'region':\n            continue",
+      "before": "for field in (\"workspace_id\", \"key_id\", \"lookup_digest\", \"boot_id\", \"stable_slot_id\",\n                  \"iss\", \"aud\", \"environment\", \"plane\", \"region\"):",
+      "function": "renewal_verdict",
+      "guard": "renewal_verdict:identity:region",
+      "literal_case": "renewal_identity_region"
+    },
+    {
+      "after": "False",
+      "before": "type(left) is not type(right)",
+      "function": "_equal",
+      "guard": "_equal:type(left) is not type(right) => False",
+      "literal_case": "response_nested_bool_int"
+    },
+    {
+      "after": "True",
+      "before": "type(left) not in (dict, list)",
+      "function": "_equal",
+      "guard": "_equal:type(left) not in (dict, list) => True",
+      "literal_case": "response_nested_bool_int"
+    },
+    {
+      "after": "False",
+      "before": "type(left) not in (str, int, float, bool, type(None))",
+      "function": "_equal",
+      "guard": "_equal:type(left) not in (str, int, float, bool, type(None)) => False",
+      "literal_case": "test_equality_cycles_and_non_json_values"
+    },
+    {
+      "after": "False",
+      "before": "left != right",
+      "function": "_equal",
+      "guard": "_equal:left != right => False",
+      "literal_case": "response_nested_order"
+    },
+    {
+      "after": "False",
+      "before": "pair in completed",
+      "function": "_equal",
+      "guard": "_equal:pair in completed => False",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "if False:",
+      "before": "if exiting:",
+      "function": "_equal",
+      "guard": "_equal:if exiting: => if False:",
+      "literal_case": "acceptance_depth_130_unmarked"
+    },
+    {
+      "after": "False",
+      "before": "pair in active",
+      "function": "_equal",
+      "guard": "_equal:pair in active => False",
+      "literal_case": "test_equality_cycles_and_non_json_values"
+    },
+    {
+      "after": "False",
+      "before": "type(left) is dict",
+      "function": "_equal",
+      "guard": "_equal:type(left) is dict => False",
+      "literal_case": "response_nested_bool_int"
+    },
+    {
+      "after": "False",
+      "before": "left.keys() != right.keys()",
+      "function": "_equal",
+      "guard": "_equal:left.keys() != right.keys() => False",
+      "literal_case": "response_nested_keys"
+    },
+    {
+      "after": "False",
+      "before": "len(left) != len(right)",
+      "function": "_equal",
+      "guard": "_equal:len(left) != len(right) => False",
+      "literal_case": "response_nested_length"
+    },
+    {
+      "after": "pair = (id(left), id(left))",
+      "before": "pair = (id(left), id(right))",
+      "function": "_equal",
+      "guard": "_equal:pair = (id(left), id(right)) => pair = (id(left), id(left))",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "completed.add(pair)",
+      "function": "_equal",
+      "guard": "_equal:completed.add(pair) => pass",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "active.remove(pair)",
+      "function": "_equal",
+      "guard": "_equal:active.remove(pair) => pass",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "active.add(pair)",
+      "function": "_equal",
+      "guard": "_equal:active.add(pair) => pass",
+      "literal_case": "test_equality_cycles_and_non_json_values"
+    },
+    {
+      "after": "pass",
+      "before": "stack.append((left, right, True))",
+      "function": "_equal",
+      "guard": "_equal:stack.append((left, right, True)) => pass",
+      "literal_case": "test_acceptance_shared_subtrees"
+    },
+    {
+      "after": "pass",
+      "before": "stack.extend((a, b, False) for a, b in children)",
+      "function": "_equal",
+      "guard": "_equal:stack.extend((a, b, False) for a, b in children) => pass",
+      "literal_case": "response_nested_bool_int"
+    },
+    {
+      "after": "while False:",
+      "before": "while stack:",
+      "function": "_equal",
+      "guard": "_equal:while stack: => while False:",
+      "literal_case": "response_nested_order"
+    },
+    {
+      "after": "return False",
+      "before": "return True",
+      "function": "_equal",
+      "guard": "_equal:return True => return False",
+      "literal_case": "acceptance_depth_130_unmarked"
+    },
+    {
+      "after": "if False:",
+      "before": "if quoted:",
+      "function": "_depth",
+      "guard": "_depth:if quoted: => if False:",
+      "literal_case": "depth_in_string"
+    },
+    {
+      "after": "if False:\n                quoted = False",
+      "before": "if char == '\"':\n                quoted = False",
+      "function": "_depth",
+      "guard": "_depth:if char == '\"':\n                quoted = False => if False:\n                quoted = False",
+      "literal_case": "depth17_after_string"
+    },
+    {
+      "after": "elif False:\n            quoted = True",
+      "before": "elif char == '\"':\n            quoted = True",
+      "function": "_depth",
+      "guard": "_depth:elif char == '\"':\n            quoted = True => elif False:\n            quoted = True",
+      "literal_case": "depth_in_string"
+    },
+    {
+      "after": "elif False:",
+      "before": "elif char in \"[{\":",
+      "function": "_depth",
+      "guard": "_depth:elif char in \"[{\": => elif False:",
+      "literal_case": "depth17"
+    },
+    {
+      "after": "elif False:",
+      "before": "elif char in \"]}\":",
+      "function": "_depth",
+      "guard": "_depth:elif char in \"]}\": => elif False:",
+      "literal_case": "depth_siblings"
+    },
+    {
+      "after": "raise",
+      "before": "raise ProtocolError(\"input\") from exc",
+      "function": "_public",
+      "guard": "_public:raise ProtocolError(\"input\") from exc => raise",
+      "literal_case": "input_boundary"
+    },
+    {
+      "after": "\"unused_credit_exhausted\"",
+      "before": "\"credit_exhausted\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:credit_exhausted",
+      "literal_case": "reason_credit_exhausted"
+    },
+    {
+      "after": "\"unused_billing_denied\"",
+      "before": "\"billing_denied\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:billing_denied",
+      "literal_case": "reason_billing_denied"
+    },
+    {
+      "after": "\"unused_trust_ineligible\"",
+      "before": "\"trust_ineligible\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:trust_ineligible",
+      "literal_case": "reason_trust_ineligible"
+    },
+    {
+      "after": "\"unused_trust_demoted\"",
+      "before": "\"trust_demoted\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:trust_demoted",
+      "literal_case": "reason_trust_demoted"
+    },
+    {
+      "after": "\"unused_abuse_latched\"",
+      "before": "\"abuse_latched\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:abuse_latched",
+      "literal_case": "reason_abuse_latched"
+    },
+    {
+      "after": "\"unused_payment_failed\"",
+      "before": "\"payment_failed\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:payment_failed",
+      "literal_case": "reason_payment_failed"
+    },
+    {
+      "after": "\"unused_trust_reconciliation_stale\"",
+      "before": "\"trust_reconciliation_stale\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:trust_reconciliation_stale",
+      "literal_case": "reason_trust_reconciliation_stale"
+    },
+    {
+      "after": "\"unused_workspace_paused\"",
+      "before": "\"workspace_paused\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:workspace_paused",
+      "literal_case": "reason_workspace_paused"
+    },
+    {
+      "after": "\"unused_billing_paused\"",
+      "before": "\"billing_paused\"",
+      "function": "<module>",
+      "guard": "WORKSPACE_REASONS:billing_paused",
+      "literal_case": "reason_billing_paused"
+    },
+    {
+      "after": "\"unused_key_revoked\"",
+      "before": "\"key_revoked\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_revoked",
+      "literal_case": "reason_key_revoked"
+    },
+    {
+      "after": "\"unused_key_disabled\"",
+      "before": "\"key_disabled\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_disabled",
+      "literal_case": "reason_key_disabled"
+    },
+    {
+      "after": "\"unused_key_expired\"",
+      "before": "\"key_expired\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_expired",
+      "literal_case": "reason_key_expired"
+    },
+    {
+      "after": "\"unused_key_invalid\"",
+      "before": "\"key_invalid\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_invalid",
+      "literal_case": "reason_key_invalid"
+    },
+    {
+      "after": "\"unused_key_limit_exceeded\"",
+      "before": "\"key_limit_exceeded\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_limit_exceeded",
+      "literal_case": "reason_key_limit_exceeded"
+    },
+    {
+      "after": "\"unused_key_window_limit_exceeded\"",
+      "before": "\"key_window_limit_exceeded\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_window_limit_exceeded",
+      "literal_case": "reason_key_window_limit_exceeded"
+    },
+    {
+      "after": "\"unused_key_strict_limit_exceeded\"",
+      "before": "\"key_strict_limit_exceeded\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_strict_limit_exceeded",
+      "literal_case": "reason_key_strict_limit_exceeded"
+    },
+    {
+      "after": "\"unused_key_spend_limit_imposed\"",
+      "before": "\"key_spend_limit_imposed\"",
+      "function": "<module>",
+      "guard": "KEY_REASONS:key_spend_limit_imposed",
+      "literal_case": "reason_key_spend_limit_imposed"
+    },
+    {
+      "after": "\"unused_authorize_timeout\"",
+      "before": "\"authorize_timeout\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"authorize_timeout\" => \"unused_authorize_timeout\"",
+      "literal_case": "breaker_authorize_timeout"
+    },
+    {
+      "after": "\"unused_transport_error\"",
+      "before": "\"transport_error\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"transport_error\" => \"unused_transport_error\"",
+      "literal_case": "breaker_transport_error"
+    },
+    {
+      "after": "\"unused_infrastructure_error\"",
+      "before": "\"infrastructure_error\"",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:\"infrastructure_error\" => \"unused_infrastructure_error\"",
+      "literal_case": "breaker_infrastructure_error"
+    },
+    {
+      "after": "status",
+      "before": "503 if scope != \"none\" else status",
+      "function": "classify_verdict",
+      "guard": "classify_verdict:503 if scope != \"none\" else status => status",
+      "literal_case": "verdict:credit"
+    },
+    {
+      "after": "fixturf",
+      "before": "fixture",
+      "function": "<fixture>",
+      "guard": "fixture_pin",
+      "literal_case": "fixture_pins"
+    },
+    {
+      "after": "False",
+      "before": "not condition",
+      "function": "_require",
+      "guard": "_require:not condition => False",
+      "literal_case": "bool_integer"
+    },
+    {
+      "after": "REAL_TYP",
+      "before": "SHADOW_TYP if shadow else REAL_TYP",
+      "function": "verify_grant",
+      "guard": "verify_grant:SHADOW_TYP if shadow else REAL_TYP => REAL_TYP",
+      "literal_case": "shadow_valid"
+    },
+    {
+      "after": "\"grant\"",
+      "before": "\"shadow-grant\" if shadow else \"grant\"",
+      "function": "verify_grant",
+      "guard": "verify_grant:\"shadow-grant\" if shadow else \"grant\" => \"grant\"",
+      "literal_case": "shadow_valid"
+    },
+    {
+      "after": "for field in (\"routing_policy_hash\", \"catalog_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:field:routing_policy_hash:for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "literal_case": "route_policy_hash_format"
+    },
+    {
+      "after": "for field in (\"routing_policy_hash\", \"catalog_hash\"):\n        if field == 'catalog_hash':\n            continue",
+      "before": "for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "function": "verify_grant",
+      "guard": "verify_grant:field:catalog_hash:for field in (\"routing_policy_hash\", \"catalog_hash\"):",
+      "literal_case": "route_hash_bad"
+    },
+    {
+      "after": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):\n        if field == 'grant_sha256':\n            continue",
+      "before": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:grant_sha256:for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_grant_hash_format"
+    },
+    {
+      "after": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):\n        if field == 'request_sha256':\n            continue",
+      "before": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:request_sha256:for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_hash_malformed"
+    },
+    {
+      "after": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:routing_policy_hash:for field in (\"grant_sha256\", \"request_sha256\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_route_hash_format"
+    },
+    {
+      "after": "for field in (\"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'endpoint_id':\n            continue",
+      "before": "for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:endpoint_id:for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_endpoint"
+    },
+    {
+      "after": "for field in (\"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_descriptor",
+      "guard": "verify_descriptor:field:routing_policy_hash:for field in (\"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "descriptor_routing_policy_hash"
+    },
+    {
+      "after": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):\n        if field == 'invocation_nonce':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:invocation_nonce:for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "literal_case": "unmarked_invocation_nonce"
+    },
+    {
+      "after": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:workspace_id:for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "literal_case": "unmarked_workspace_id"
+    },
+    {
+      "after": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:key_id:for field in (\"invocation_nonce\", \"workspace_id\", \"key_id\"):",
+      "literal_case": "unmarked_key_id"
+    },
+    {
+      "after": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'invocation_nonce':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:invocation_nonce:for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "marker_invocation_nonce"
+    },
+    {
+      "after": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'endpoint_id':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:endpoint_id:for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "marker_endpoint_id"
+    },
+    {
+      "after": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:routing_policy_hash:for field in (\"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\"):",
+      "literal_case": "marker_routing_policy_hash"
+    },
+    {
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'authorization_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:authorization_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_authorization_id"
+    },
+    {
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'invocation_nonce':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "equivalent": "Equivalent: the pre-marker loop already binds authorization invocation_nonce to the descriptor; marker nonce also binds to that descriptor before this loop.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:invocation_nonce:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_invocation_nonce"
+    },
+    {
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'endpoint_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:endpoint_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_endpoint_id"
+    },
+    {
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'routing_policy_hash':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:routing_policy_hash:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_routing_policy_hash"
+    },
+    {
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'workspace_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "equivalent": "Equivalent: the pre-marker loop already binds authorization workspace_id to the descriptor; marker nonce also binds to that descriptor before this loop.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:workspace_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_workspace_id"
+    },
+    {
+      "after": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):\n        if field == 'key_id':\n            continue",
+      "before": "for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "equivalent": "Equivalent: the pre-marker loop already binds authorization key_id to the descriptor; marker nonce also binds to that descriptor before this loop.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:field:key_id:for field in (\"authorization_id\", \"invocation_nonce\", \"endpoint_id\", \"routing_policy_hash\",\n                  \"workspace_id\", \"key_id\"):",
+      "literal_case": "authorization_key_id"
+    },
+    {
+      "after": "True and",
+      "before": "authorization.get(\"billing_mode\") == \"ordinary\" and",
+      "equivalent": "Equivalent: ordinary billing was already required before the marker-presence branch; no mutation or external call intervenes.",
+      "function": "verify_acceptance",
+      "guard": "verify_acceptance:authorization.get(\"billing_mode\") == \"ordinary\" and => True and",
+      "literal_case": "unmarked_spend_lease"
+    },
+    {
+      "after": "0 <= byte",
+      "before": "0x20 <= byte",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:0x20 <= byte => 0 <= byte",
+      "literal_case": "trailing_newline"
+    },
+    {
+      "after": "0x20 <= byte <= 0xFF",
+      "before": "0x20 <= byte <= 0x7E",
+      "function": "_json_bytes",
+      "guard": "_json_bytes:0x20 <= byte <= 0x7E => 0x20 <= byte <= 0xFF",
+      "literal_case": "raw_del"
+    },
+    {
+      "after": "    pass",
+      "before": "    _json_bytes(payload)",
+      "function": "_verify",
+      "guard": "_verify:    _json_bytes(payload) =>     pass",
+      "literal_case": "precedence_payload_bytes_signature"
+    },
+    {
+      "after": "parse_int=_parse_int, parse_float=_constant, parse_constant=_constant",
+      "before": "parse_int=str, parse_float=str, parse_constant=str",
+      "function": "_json",
+      "guard": "_json:parse_int=str, parse_float=str, parse_constant=str => parse_int=_parse_int, parse_float=_constant, parse_constant=_constant",
+      "literal_case": "payload_malformed_float_exponent"
+    },
+    {
+      "after": "pass",
+      "before": "duplicates.append(key in result)",
+      "function": "_pairs",
+      "guard": "_pairs:duplicates.append(key in result) => pass",
+      "literal_case": "payload_duplicate"
+    }
+  ]
+}

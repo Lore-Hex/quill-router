@@ -405,6 +405,33 @@ def test_gateway_authorization_freezes_user_model_attribution(
     assert authorization.user_model_owner_user_id == created["owner_user_id"]
 
 
+@pytest.mark.parametrize(
+    "provider",
+    [{"min_privacy": "confidential"}, {"min_privacy": "zdr"}, {"min_privacy": "no_store"}, {"zdr": True}],
+)
+def test_gateway_refuses_a_privacy_floor_for_a_user_model(
+    dispatch_client: TestClient, provider: dict[str, Any]
+) -> None:
+    """The owner's endpoint carries no tracked privacy posture."""
+    client = dispatch_client
+    key = _create_key(client)
+    created = _create(client)
+    _online(created)
+    body = {
+        "api_key_hash": key["hash"],
+        "model": created["id"],
+        "estimated_input_tokens": 10,
+        "max_output_tokens": 10,
+    }
+    refused = client.post("/v1/internal/gateway/authorize", json={**body, "provider": provider})
+    assert refused.status_code == 400
+    assert refused.json()["error"]["message"] == (
+        "User-provided models cannot meet a provider privacy floor"
+    )
+    allowed = client.post("/v1/internal/gateway/authorize", json=body)
+    assert allowed.status_code == 200, allowed.text
+
+
 def test_gateway_settle_uses_frozen_prices_and_pays_owner_once(
     dispatch_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -815,6 +842,51 @@ def test_local_inference_dispatches_user_model_before_frozen_catalog_routing(
     )
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "owner reply"
+
+
+def test_local_inference_refuses_a_privacy_floor_for_a_user_model(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _create(client)
+    _online(created)
+    calls: list[object] = []
+
+    async def fake_dispatch(*_args: Any, **_kwargs: Any) -> BufferedUserModelDispatch:
+        calls.append(object())
+        return BufferedUserModelDispatch(
+            body={
+                "id": "chatcmpl-local-user-model",
+                "object": "chat.completion",
+                "model": created["id"],
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "owner reply"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            first_token_seconds=0.01,
+            elapsed_seconds=0.02,
+        )
+
+    monkeypatch.setattr("trusted_router.routes.inference.dispatch_user_model", fake_dispatch)
+    body = {"model": created["id"], "messages": [{"role": "user", "content": "hello"}]}
+    refused = client.post(
+        "/v1/chat/completions",
+        headers=inference_headers,
+        json={**body, "provider": {"min_privacy": "confidential"}},
+    )
+    assert refused.status_code == 400
+    assert refused.json()["error"]["message"] == (
+        "User-provided models cannot meet a provider privacy floor"
+    )
+    assert not calls
+    allowed = client.post("/v1/chat/completions", headers=inference_headers, json=body)
+    assert allowed.status_code == 200, allowed.text
+    assert len(calls) == 1
 
 
 def test_local_user_model_dispatch_bills_pays_and_refunds_owner_failure(

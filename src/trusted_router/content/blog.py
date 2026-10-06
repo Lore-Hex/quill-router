@@ -49,6 +49,84 @@ FEATURED_SLUGS: tuple[str, ...] = (
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="trev-zev-lev-private-decisions",
+        title="Good decisions with zero data retention",
+        description=(
+            "Trev, Zev and Lev on AnyEval's 231 public JevBench tasks, compared "
+            "with Jev on score, cost and elapsed time. Require a ZDR provider in one API call."
+        ),
+        published_date="2026-09-29",
+        source_label="See the public JevBench results",
+        source_url="https://anyeval.com/eval/jevbench",
+        og_image="/static/og/blog/trev-zev-lev-private-decisions.png",
+        body_html="""
+<figure class="blog-hero-image">
+  <img src="/static/og/blog/trev-zev-lev-private-decisions.png" width="1200" height="630" alt="AnyEval public JevBench score, cost and elapsed time for Jev, Zev, Trev and Lev. Jev leads on score and cost. Full values are in the table below. ZDR requires an explicit provider filter." />
+</figure>
+<p>You can make useful decisions with a model while requiring zero data retention. Trev, Zev and Lev are three options on TrustedRouter, and we now have a bigger test of how they compare with Jev. On <a href="https://anyeval.com/eval/jevbench">AnyEval's public JevBench results</a>, Zev passes 194 of 231 problems. Jev passes 199. Five decisions separate them on this set. For an application that needs to classify a customer message or check a record against a policy, that makes Zev worth trying.</p>
+
+<p>These models take a state and a set of questions and return typed answers with probabilities. You can ask whether a ticket needs a refund, which queue it belongs in, and how urgent it is in the same call. Your code gets fields it can use. Trev is our default decision configuration. Zev uses GLM 5.2 Fast. Lev uses Llama 3.3 70B. Each name fixes a configuration and an allowed set of hosts; each uses the same <a href="/docs/decide">decide API</a>.</p>
+
+<h2>Score, cost and speed belong together</h2>
+<div class="model-table-wrap" role="region" aria-label="Decision model benchmark comparison" tabindex="0">
+<table class="data-table" id="decision-benchmark">
+  <caption>AnyEval snapshot, 29 September 2026. Public JevBench tasks.</caption>
+  <thead><tr><th scope="col">Model</th><th scope="col">Passed</th><th scope="col">Pass rate</th><th scope="col">Mean model cost per run</th><th scope="col">Mean eval elapsed time</th></tr></thead>
+  <tbody>
+    <tr><th scope="row"><a href="https://anyeval.com/eval/jevbench/model/typesafe-ai/jev">Jev</a></th><td>199 / 231</td><td>86.1%</td><td>$0.000040</td><td>15.0 s</td></tr>
+    <tr><th scope="row"><a href="https://anyeval.com/eval/jevbench/model/trustedrouter/zev-1.0">Zev 1.0</a></th><td>194 / 231</td><td>84.0%</td><td>$0.0019</td><td>11.9 s</td></tr>
+    <tr><th scope="row"><a href="https://anyeval.com/eval/jevbench/model/trustedrouter/trev-1.0">Trev 1.0</a></th><td>187 / 231</td><td>81.0%</td><td>$0.000305</td><td>94.5 s</td></tr>
+    <tr><th scope="row"><a href="https://anyeval.com/eval/jevbench/model/trustedrouter/lev-1.0">Lev 1.0</a></th><td>178 / 231</td><td>77.1%</td><td>$0.000898</td><td>11.7 s</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Jev leads all three here and has the lowest measured model cost. Zev is 2.2 percentage points behind it, Trev 5.2, and Lev 9.1. I would start with Zev for the closest result on this benchmark, then test Trev and Lev on the decisions my application actually makes. Lev's gap deserves attention. Calling every model interchangeable would hide information you need to choose one.</p>
+
+<p>At those recorded averages, a thousand eval runs would cost about $0.04 for Jev, $0.31 for Trev, $0.90 for Lev and $1.90 for Zev in model charges. That is small enough to test all four on your own labeled examples before choosing. At millions of decisions it becomes a budget, and Jev's price advantage matters. Zev's higher score than Trev and Lev comes with a higher measured cost.</p>
+
+<p>Speed matters just as much when a decision sits in a live request. Zev and Lev have shorter mean elapsed times than Jev in this snapshot; Trev has a much longer one. These are whole eval run times, with the harness and any waiting or retries included, rather than isolated API service times. The aggregate does not explain Trev's 94.5 seconds, so I would not use it to promise a production latency. Our <a href="/docs/decide">smaller support ticket tests</a> report model timings in the hundreds of milliseconds, on different requests and hosts. For a production choice, measure p50 and p95 through the exact ZDR route you intend to use, under your expected concurrency. Keep those measurements separate from this quality benchmark.</p>
+
+<p>This is the public set: 72 original tasks, 48 easy tasks and 111 hard tasks. The private and held out tiers are excluded. AnyEval computes the score from the first run of each problem; repeated runs do not add new problems to the denominator. Its displayed Wilson intervals are 81 to 90% for Jev, 79 to 88% for Zev, 75 to 85% for Trev and 71 to 82% for Lev. Overlapping intervals do not establish equivalence. A pass rate also does not establish that a model's probabilities are calibrated for your customers.</p>
+
+<p>The cost column is AnyEval's recorded mean model cost per run, excluding its safety monitors. It includes repeated runs, so its denominator differs from the score. It is a measurement of those requests, not a fixed price for every decision. Several runs lack the underlying provider identity, especially Trev's. These results therefore do not isolate provider effects or establish scores for the specific ZDR routes below. The <a href="https://anyeval.com/eval/jevbench">leaderboard and individual traces</a> let you inspect the evidence rather than take our summary on faith. AnyEval is part of our own ecosystem, so treat this as public, inspectable evidence rather than an independent endorsement.</p>
+
+<h2>Make privacy a routing requirement</h2>
+<p>A model name alone does not promise ZDR. Retention depends on the provider serving it. For a concrete starting point, pin Trev to <a href="https://www.cerebras.ai/privacy-policy">Cerebras</a>, Zev to <a href="https://docs.baseten.co/observability/security">Baseten's synchronous Model API</a>, or Lev to <a href="https://www.parasail.io/legal/terms-of-service">Parasail's serverless service</a>. Our catalog classifies those paths as ZDR based on their published policies. Cerebras says it does not retain inference inputs or outputs; Baseten documents ZDR for synchronous inference; Parasail limits content retention to generating and delivering the response. Those policies still allow operational or account metadata.</p>
+
+<p>The request below pins Zev to Baseten and sets <code>provider.min_privacy</code> to <code>"zdr"</code>. That is a hard eligibility requirement. A request must fail if no eligible route remains. Removing the provider pin broadens the candidate set; removing the privacy requirement can admit hosts with a different retention policy. Our unrestricted named model chains should not be described as universally ZDR.</p>
+
+<pre><code>curl https://api.trustedrouter.com/v1/decide \\
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "trustedrouter/zev-1.0",
+    "provider": {"only": ["baseten"], "min_privacy": "zdr"},
+    "state": "I was charged twice for order A-1. Please reverse the duplicate charge.",
+    "questions": {
+      "refund": {
+        "type": "boolean",
+        "instructions": "Is the customer asking for money back or a charge reversal?"
+      },
+      "route": {
+        "type": "choice",
+        "instructions": "Which team should handle this ticket?",
+        "criteria": {
+          "billing": "Charges, refunds and payments",
+          "technical": "Application bugs and outages"
+        }
+      }
+    }
+  }'</code></pre>
+
+<p>To try Trev, change <code>model</code> to <code>trustedrouter/trev-1.0</code> and <code>provider.only</code> to <code>["cerebras"]</code>. For Lev, use <code>trustedrouter/lev-1.0</code> and <code>["parasail"]</code>. Keep the privacy floor. Check the current <a href="/providers">provider policies</a> and <a href="/docs/provider-routing">routing documentation</a> before sending sensitive data. If your application exports content to its own logs or an optional observability destination, that is a separate retention decision.</p>
+
+<p>What about Jev itself? <a href="https://docs.typesafe.ai/legal">TypeSafe offers enterprise ZDR on request</a> and says it does not train on customer data. We have not configured that enterprise ZDR arrangement for TrustedRouter's Jev route. That is the scope of this comparison. It would be wrong to say Jev cannot offer ZDR.</p>
+
+<p>There are two privacy boundaries here. Your decision state terminates inside TrustedRouter's attested gateway, and the upstream model host processes it to produce the answer. You can <a href="https://trust.trustedrouter.com/">verify our gateway attestation</a> yourself. Provider ZDR is a retention policy; it does not prove confidential execution at that provider, and our gateway attestation does not attest its GPUs. For customer messages, internal records and policy checks, you can now evaluate the decision quality and explicitly choose the retention requirement in the same API call.</p>
+""",
+    ),
+    BlogPost(
         slug="most-llm-calls-are-decisions",
         title="Most LLM calls are decisions",
         description=(

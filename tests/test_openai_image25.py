@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from scripts.pricing import base
 from scripts.pricing.parsers import openai as parser
 from scripts.pricing.providers import openai
+from tests.pinned_manifests import OPENAI_GPT_IMAGE_2_5, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
 from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
@@ -26,6 +27,13 @@ Batch
 | gpt-image-2.5-flare | Image | $4 | $1 | $15 |
 | gpt-image-2.5-flare | Text | $2.5 | $0.625 | - |
 """
+
+
+@pytest.fixture
+def image_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """OpenAI's image routes, built from their pinned manifest rows: image
+    billing is a rule of OpenAI's routes whatever OpenAI lists today."""
+    serve_manifest_rows(monkeypatch, tmp_path, "openai", OPENAI_GPT_IMAGE_2_5)
 
 
 @pytest.mark.parametrize("invalid", ["empty", "bad-total", "fractional", "boolean"])
@@ -115,6 +123,7 @@ def test_image_discovery_uses_native_image_canary_not_chat(
 
 
 @pytest.mark.parametrize("model", sorted(OPENAI_IMAGE_MODEL_IDS))
+@pytest.mark.usefixtures("image_routes")
 def test_image_catalog_and_exact_cached_billing(client: TestClient, model: str) -> None:
     endpoint = MODEL_ENDPOINTS[f"{model}@openai/prepaid"]
     assert not MODELS[model].supports_chat
@@ -133,6 +142,15 @@ def test_image_catalog_and_exact_cached_billing(client: TestClient, model: str) 
     assert row["supports_streaming"] is False  # completion-only, not native partial renders
 
 
+@pytest.mark.provider_health
+@pytest.mark.parametrize("model", sorted(OPENAI_IMAGE_MODEL_IDS))
+def test_openai_serves_gpt_image_2_5(model: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert f"{model}@openai/prepaid" in MODEL_ENDPOINTS
+
+
+@pytest.mark.usefixtures("image_routes")
 def test_image_cached_settlement_is_exactly_once(
     client: TestClient, user_headers: dict[str, str],
 ) -> None:

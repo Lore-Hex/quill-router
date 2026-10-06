@@ -51,6 +51,114 @@ Verify `/health` returns 200 with no review backlog. Alerts stay strict; future
 reconciler failures include an allowlisted `failure_code`, never upstream text
 or payment secrets. A source merge alone does not prove production recovery.
 
+## Transient sidecar reads
+
+The September 30 receiving check raised `ReadTimeout` after its 20-second
+read deadline at 06:08:37 UTC. The next scheduled check passed at 06:09:22 UTC;
+funding reconciliation reported zero uncredited or review-required payments.
+The old log did not identify which readiness GET stalled, and sidecar diagnostic
+logging is intentionally disabled to avoid persisting payment secrets. The
+evidence establishes a transient read timeout, not its upstream cause or an
+exhausted liquidity balance.
+
+The initial repair retried the four allowlisted GET operations once after a
+transport timeout/disconnect. Following Lexe's October 4 guidance, these reads
+now share a three-attempt total budget for transport failures and HTTP 500,
+502, 503, and 504. Backoff uses equal jitter: 125-250ms before the first retry,
+then 250-500ms before the second. Retry read/write deadlines are five seconds
+and connection/pool deadlines one second; normal first-attempt deadlines are
+unchanged. These are per-I/O timeouts, not a total request-duration promise.
+
+Recovered attempts emit warning-level retry/recovery events. Exhaustion emits
+an error and leaves readiness closed; a short retry budget is not intended to
+hide an extended outage. HTTP 4xx, other statuses, invalid data, wrong
+wallet/authority and expired credentials still fail closed without replay.
+Invoice create/cancel POSTs and unknown endpoints are never replayed. Existing
+receiving and funding alert policies and thresholds are unchanged.
+
+## Node 0.10.5 permission expansion (October 1)
+
+Receiving checks began failing at 18:49 UTC while the deployed image and secret
+version were unchanged. A read-only reproduction using the same pinned sidecar
+and credential found node version 0.10.5 with one additional effective permission:
+`get_user_settings`. The wallet matched, the credential still expires in December,
+and no extra explicit permissions were configured. The strict allowlist correctly
+failed closed on an unreviewed capability, but generic `ValueError` handling
+misclassified one invoice as `invoice_invalid`.
+
+The capability was reviewed against Lexe commit
+[`aab30588`](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api-core/src/revocable_clients/scopes.rs).
+It belongs to `read_info`; its
+[handler](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/node/src/server/user.rs)
+only clones settings under a read lock. The runtime and operator preflight now
+explicitly allow this getter, not `update_user_settings`, spending, channel
+management, or arbitrary future permissions. No credential authority is changed.
+
+Readiness failures now log static reason codes and are classified as
+`wallet_unavailable`, distinct from invoice validation failures. Allow the existing
+worker to authenticate and re-read the reviewed invoice after deploy; do not clear
+its review flag or rewrite financial rows manually. Fixed external-response
+fixtures cover the 0.10.5 expansion, future-permission rejection, and recovery of
+paid/unpaid reviewed rows without duplicate invoice creation or credit delivery.
+
+## Readiness HTTP failure (October 2)
+
+The receiving check failed once at 21:52:35 UTC with `RuntimeError`, then
+recovered on the next heartbeat at 21:53:36 UTC. Funding delivery stayed at
+zero uncredited and zero review-required payments. The surrounding five-minute
+Cloud Run request-log window contained no customer HTTP requests; no customer
+HTTP failure was observed. This was not the October 1 permission rejection or
+evidence of low BTC liquidity.
+
+The readiness code raises this error for a non-200 response from the attesting
+Lexe sidecar, but the old diagnostic discarded the operation and HTTP status.
+Lexe subsequently reported a deployment beginning at 21:51:45 UTC, with a
+backend restart at 21:51:57, overlapping our failure. The deployment completed
+normally. Their surviving journal had no system failure or attestation error;
+startup application logs were no longer retained. A rollout interruption is
+therefore the most likely cause, not a proven endpoint/status or an excluded
+attestation failure. This evidence is separate from the creation race below.
+
+The October 3 diagnostic repair added static operation and HTTP status. The
+October 4 extension also records allowlisted method/path, attempt count, an
+optional numeric Lexe error code, and a locally generated trace ID. It sends
+the same 16-character `lexe-trace-id` across attempts so Lexe can correlate
+the request. Caller-supplied trace IDs are replaced, never logged. Unknown
+operations/methods/paths are labeled `unknown`; query parameters are omitted.
+
+Lexe's reviewed [ErrorResponse schema](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api-core/src/error.rs)
+defines `code` as u16 but permits sensitive `msg`/`data`. We retain only that
+integer from a bounded, uncompressed JSON body (at most 4KiB); absent, malformed,
+oversized, slow, or unreadable diagnostic bodies leave the code unknown and
+do not replace the original HTTP status. The [trace header contract](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api/src/trace.rs)
+defines a client-originated 16-character alphanumeric ID. No raw error body,
+payment index, invoice, preimage, wallet identity, or credential is logged.
+Keep sidecar diagnostic logging off. For a recurrence, send Lexe the UTC time,
+allowlisted method/path, status, numeric error code and trace ID, not payment
+secrets. Retry only the transient GET cases described above.
+
+## Concurrent creation reconciliation (October 4)
+
+The October 3 23:50:37 UTC alert reported `reconcile_failed`, not a Lexe HTTP
+failure. A successful 624ms create request overlapped it, receiving checks stayed
+healthy, and delivery had no uncredited or review backlog. The retained log does
+not prove that invoice's exact interleaving. A deterministic two-instance test
+reproduces the same error: one caller holds the durable creation claim while a
+second scans the payment feed before the first creation has become visible.
+
+The adapter now distinguishes `InvoiceCreationPending` from genuine failures.
+Within the existing 60-second grace, callers return the current invoice state
+without marking failure, granting credit, or issuing another invoice. Pending
+events contain only the local invoice ID. The page hides the QR and payment
+actions until an invoice exists and shows `Preparing invoice`; polling retains
+the same invoice and key. A cancel during creation is not reported as canceled.
+
+The grace does not suppress HTTP errors, invalid authority, invoice validation,
+or credit-delivery errors. Unresolved creation after the grace still becomes
+`creation_ambiguous` and requires review. Alerts and thresholds are unchanged.
+Tests cover independent SQLite/PostgreSQL service instances, a lost create
+acknowledgement, concurrent API polling/cancel, and exactly-once credit recovery.
+
 ## Owner setup and recovery
 
 Use a dedicated private directory outside disposable Git worktrees. The setup

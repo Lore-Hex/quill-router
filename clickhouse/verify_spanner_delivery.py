@@ -11,12 +11,15 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
-from clickhouse.backfill_operational_analytics import ClickHouse
 from clickhouse.ingest_operational_outbox import (
     OperationalOutboxRow,
     normalise_operational_event,
 )
-from clickhouse.operational_fingerprint import canonical_fingerprint, clickhouse_rows
+from clickhouse.local_clickhouse import ClickHouse
+from clickhouse.operational_fingerprint import (
+    activity_rows_by_generation,
+    canonical_fingerprint,
+)
 from trusted_router.storage_gcp_operational_analytics_outbox import activity_payload
 from trusted_router.storage_models import Generation
 
@@ -100,13 +103,12 @@ def verify_delivery(
         )
         event.row.pop("ingest_version", None)
         expected[generation.id] = event.row
-    actual = clickhouse_rows(
-        clickhouse,
-        table="activity_generations",
-        id_column="generation_id",
-        ids=list(expected),
-    )
-    missing = sorted(set(expected) - set(actual))
+    stored = activity_rows_by_generation(clickhouse, list(expected))
+    missing = sorted(set(expected) - set(stored))
+    # One generation stored under two sort keys is double-counted by every
+    # aggregate; report it rather than compare an arbitrary one of its rows.
+    duplicated = sorted(gid for gid, rows in stored.items() if len(rows) > 1)
+    actual = {gid: rows[0] for gid, rows in stored.items() if len(rows) == 1}
     mismatched: list[str] = []
     mismatch_fields: collections.Counter[str] = collections.Counter()
     for generation_id in sorted(set(expected) & set(actual)):
@@ -129,13 +131,15 @@ def verify_delivery(
                 mismatch_fields[field] += 1
     return {
         "sampled": len(expected),
-        "found": len(actual),
+        "found": len(stored),
         "missing": len(missing),
         "mismatched": len(mismatched),
+        "duplicated": len(duplicated),
         "missing_ids": missing[:20],
         "mismatched_ids": mismatched[:20],
+        "duplicated_ids": duplicated[:20],
         "mismatch_fields": dict(sorted(mismatch_fields.items())),
-        "ok": not missing and not mismatched,
+        "ok": not missing and not mismatched and not duplicated,
     }
 
 

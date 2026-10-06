@@ -14,7 +14,7 @@ from trusted_router.storage_postgres import PostgresStore
 
 @pytest.mark.parametrize("count", [0, 1, 10])
 def test_spanner_custom_model_list_is_one_read_statement(count: int) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user(f"custom-list-{count}@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     for index in range(count):
@@ -39,7 +39,7 @@ def test_spanner_custom_model_list_is_one_read_statement(count: int) -> None:
 
 @pytest.mark.parametrize("count", [0, 1, 3])
 def test_spanner_user_model_list_is_one_read_statement(count: int) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user(f"user-model-list-{count}@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     for index in range(count):
@@ -64,7 +64,7 @@ def test_spanner_user_model_list_is_one_read_statement(count: int) -> None:
 
 @pytest.mark.parametrize("count", [0, 1, 3])
 def test_spanner_user_model_batch_lookup_is_at_most_one_statement(count: int) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user(f"user-model-batch-{count}@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     model_ids: list[str] = []
@@ -138,7 +138,7 @@ def test_postgres_user_model_batch_lookup_is_one_statement(
 
 
 def test_spanner_owner_model_join_rejects_noncanonical_and_unsafe_pointers() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     alice = store.ensure_user("owner-index-alice@example.com")
     bob = store.ensure_user("owner-index-bob@example.com")
     alice_workspace = store.list_workspaces_for_user(alice.id)[0]
@@ -198,7 +198,7 @@ def test_spanner_owner_model_join_rejects_noncanonical_and_unsafe_pointers() -> 
 
 
 def test_spanner_batched_model_decoders_ignore_future_fields() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("future-model-fields@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     model = store.create_user_model(

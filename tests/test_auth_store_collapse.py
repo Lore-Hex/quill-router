@@ -271,7 +271,7 @@ def test_key_revocation_is_visible_on_the_next_api_request(
 
 
 def test_spanner_session_context_uses_one_read_rpc() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("spanner-session-fanout@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     raw, _session = store.create_auth_session(
@@ -293,7 +293,7 @@ def test_spanner_session_context_uses_one_read_rpc() -> None:
 
 
 def test_spanner_api_key_context_uses_one_read_rpc() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user = store.ensure_user("spanner-key-fanout@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
     raw, api_key = store.create_api_key(
@@ -314,7 +314,7 @@ def test_spanner_api_key_context_uses_one_read_rpc() -> None:
 
 
 def test_spanner_session_context_excludes_noncanonical_member_row() -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     user = store.ensure_user("spanner-rogue-member@example.com")
     fallback_workspace = store.list_workspaces_for_user(user.id)[0]
     other_user = store.ensure_user("spanner-rogue-target@example.com")
@@ -527,7 +527,7 @@ def _collision_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[Any, str, str]:
     if backend == "spanner":
-        store, _database, _bigtable = make_fake_store()
+        store, _database = make_fake_store()
         user = store.ensure_user("spanner-collision@example.com")
         workspace = store.list_workspaces_for_user(user.id)[0]
         _raw_session, session = store.create_auth_session(

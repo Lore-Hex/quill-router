@@ -52,7 +52,7 @@ from trusted_router.operational_analytics_freshness import (
 )
 from trusted_router.routes import public as public_routes
 from trusted_router.storage import STORE
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 
 ROOT = Path(__file__).resolve().parent.parent
 NOW = dt.datetime(2026, 9, 5, 12, 0, tzinfo=dt.UTC)
@@ -373,8 +373,8 @@ class _StoreDatabase:
         return _StoreSnapshot(self)
 
 
-def _store(database: _StoreDatabase) -> tuple[SpannerBigtableStore, _ScanSpy]:
-    store = object.__new__(SpannerBigtableStore)
+def _store(database: _StoreDatabase) -> tuple[SpannerStore, _ScanSpy]:
+    store = object.__new__(SpannerStore)
     spy = _ScanSpy()
     store._operational_analytics_outbox = spy  # type: ignore[assignment]
     store._database = database
@@ -633,7 +633,7 @@ def test_no_production_request_path_calls_the_shard_head_scan() -> None:
     /status.json build path goes through -- calls it, so the 16-shard MIN
     scan cannot come back on a request path without failing this test.
     """
-    freshness = inspect.getsource(SpannerBigtableStore.operational_analytics_outbox_freshness)
+    freshness = inspect.getsource(SpannerStore.operational_analytics_outbox_freshness)
     assert not _SCAN_CALL.search(freshness)
 
     routes = sorted((ROOT / "src/trusted_router/routes").rglob("*.py"))
@@ -656,7 +656,7 @@ def test_no_production_request_path_calls_the_shard_head_scan() -> None:
 
 def test_the_poller_and_the_store_agree_on_the_heartbeat_row() -> None:
     """Two literal copies, because the poller cannot import the store's."""
-    assert worker.HEARTBEAT_TABLE == SpannerBigtableStore.entity_table == "tr_entities"
+    assert worker.HEARTBEAT_TABLE == SpannerStore.entity_table == "tr_entities"
     assert worker.HEARTBEAT_KIND == OUTBOX_HEARTBEAT_KIND
     assert worker.HEARTBEAT_ID == OUTBOX_HEARTBEAT_ID
     assert worker.HEARTBEAT_SCHEMA_VERSION == OUTBOX_HEARTBEAT_SCHEMA_VERSION

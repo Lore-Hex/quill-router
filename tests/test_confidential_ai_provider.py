@@ -219,20 +219,30 @@ def test_reviewed_missing_price_does_not_block_other_provider_refreshes(monkeypa
 
 
 def test_live_manifest_builds_credits_route_with_cache_billing_and_zdr_not_e2e() -> None:
+    # Each routable row of the committed manifest, and nothing else, becomes
+    # one Credits route; a row the refresh tombstoned is simply not expected.
+    manifest = json.loads(confidential_ai.MANIFEST_PATH.read_text(encoding="utf-8"))
+    rows = {row["id"]: row for row in manifest["models"] if row.get("routable") is not False}
     _models, endpoints = _supplemental_provider_models_and_endpoints()
     matches = [e for e in endpoints.values() if e.provider == confidential_ai.SLUG]
-    assert len(matches) == 1
-    endpoint = matches[0]
-    assert endpoint.model_id == FLASH
-    assert endpoint.upstream_id == NATIVE_FLASH
-    assert endpoint.usage_type == "Credits"
-    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(200_000)
-    assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(400_000)
-    assert endpoint.price_tiers[
-        0
-    ].prompt_cached_price_microdollars_per_million_tokens == _customer_price(18_000)
-    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
-    assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+    assert sorted(endpoint.model_id for endpoint in matches) == sorted(rows)
+    for endpoint in matches:
+        row = rows[endpoint.model_id]
+        assert endpoint.upstream_id == row["upstream_id"]
+        assert endpoint.usage_type == "Credits"
+        assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(
+            row["input_token_price_per_m"]
+        )
+        assert endpoint.completion_price_microdollars_per_million_tokens == _customer_price(
+            row["output_token_price_per_m"]
+        )
+        assert endpoint.price_tiers[
+            0
+        ].prompt_cached_price_microdollars_per_million_tokens == _customer_price(
+            row["cached_input_token_price_per_m"]
+        )
+        assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
+        assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
 
 
 def test_hourly_refresh_has_narrow_secret_binding() -> None:

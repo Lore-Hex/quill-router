@@ -65,6 +65,10 @@ class EmailService:
     def enabled(self) -> bool:
         return self._client is not None
 
+    def can_receive_product_email(self, email: str) -> bool:
+        """Check local bounce/complaint feedback; SES enforces account suppression on send."""
+        return not STORE.is_email_blocked(email)
+
     def send(self, message: EmailMessage) -> bool:
         """Returns True iff the message was handed off to SES. False means
         the caller should display the URL inline (dev), refuse the action

@@ -7,14 +7,17 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-import hashlib
 import json
 import re
-import struct
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 import httpx
 
+from trusted_router.clickhouse_endpoints import (
+    parse_endpoints,
+    request_timeout,
+    send_with_failover,
+)
 from trusted_router.client_reliability import tenant_client_reliability_summary
 from trusted_router.storage_models import (
     Generation,
@@ -22,7 +25,6 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
 )
-from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 from trusted_router.types import UsageType
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -55,9 +57,10 @@ class OperationalAnalyticsClient:
         database: str = "tr",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        if not base_url:
+        # One URL, or an ordered comma-separated list: see clickhouse_endpoints.
+        self._endpoints = parse_endpoints(base_url)
+        if not self._endpoints:
             raise ValueError("operational analytics ClickHouse URL is required")
-        self._base_url = base_url.rstrip("/")
         self._user = user
         self._password = password
         self._database = _identifier(database, label="database")
@@ -75,14 +78,19 @@ class OperationalAnalyticsClient:
             query_params[f"param_{key}"] = str(value)
         with httpx.Client(
             auth=(self._user, self._password),
-            timeout=httpx.Timeout(timeout_seconds),
+            timeout=request_timeout(self._endpoints, timeout_seconds),
             transport=self._transport,
         ) as client:
-            response = client.post(
-                self._base_url,
-                params=query_params,
-                content=sql,
-                headers={"content-type": "text/plain; charset=utf-8"},
+            response = send_with_failover(
+                client,
+                self._endpoints,
+                lambda endpoint: client.build_request(
+                    "POST",
+                    endpoint,
+                    params=query_params,
+                    content=sql,
+                    headers={"content-type": "text/plain; charset=utf-8"},
+                ),
             )
             response.raise_for_status()
             payload = response.json()
@@ -211,6 +219,30 @@ FORMAT JSON
             },
         )
         return [_benchmark_sample(row) for row in rows]
+
+    def route_workspaces(
+        self, *, provider: str, model: str, start_at: str, end_at: str,
+    ) -> list[str]:
+        """Workspaces with a generation on this exact route in [start, end).
+
+        Read the same activity table as /v1/activity, without its recent-row
+        limit: a busy workspace must not hide another workspace's one call.
+        Only workspace ids leave ClickHouse; no keys or content are selected.
+        """
+        rows = self._query(
+            """
+SELECT DISTINCT workspace_id
+FROM activity_generations FINAL
+WHERE provider = {provider:String} AND model = {model:String}
+  AND created_at >= parseDateTime64BestEffort({start_at:String}, 3)
+  AND created_at < parseDateTime64BestEffort({end_at:String}, 3)
+  AND workspace_id != ''
+ORDER BY workspace_id
+FORMAT JSON
+""",
+            params={"provider": provider, "model": model, "start_at": start_at, "end_at": end_at},
+        )
+        return [str(row["workspace_id"]) for row in rows]
 
     def activity_generations(
         self,
@@ -516,60 +548,3 @@ def _client_event(row: dict[str, Any]) -> dict[str, Any]:
 
 def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
-
-
-def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tuple[int, str]:
-    """Fingerprint only rows old enough to have drained from the outbox."""
-    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
-    stable: list[dict[str, Any]] = []
-    for row in rows:
-        payload = (
-            dataclasses.asdict(cast(Any, row))
-            if dataclasses.is_dataclass(row)
-            else dict(row)
-        )
-        # Rebuild timestamps are expected to differ across stores. Raw tenant
-        # and key identifiers are intentionally replaced by opaque surrogates
-        # in ClickHouse, so they are not parity fields either.
-        for volatile in ("updated_at", "workspace_id", "key_hash"):
-            payload.pop(volatile, None)
-        # Synthetic rollup histograms are bucketed on write, but a Bigtable
-        # row for an already-closed period keeps its pre-bucketing exact keys
-        # (it is never rewritten) while the ClickHouse rebuild of the same
-        # period is bucketed. Fold both to the same shape before comparing.
-        for field in ROLLUP_HISTOGRAM_FIELDS:
-            histogram = payload.get(field)
-            if not isinstance(histogram, dict):
-                continue
-            try:
-                payload[field] = compact_histogram(histogram)
-            except (TypeError, ValueError):
-                # A count that is not an integer cannot be folded; compare the
-                # row as stored rather than turning a shadow read into a raise.
-                continue
-        speed = payload.get("speed_tokens_per_second")
-        if speed is not None and "input_tokens" in payload:
-            # The long-lived provider benchmark table intentionally stores
-            # this one metric as Float32. Canonicalize the Bigtable value to
-            # the same representation before comparing the two stores.
-            payload["speed_tokens_per_second"] = struct.unpack(
-                "!f",
-                struct.pack("!f", float(speed)),
-            )[0]
-        created_at = payload.get("created_at") or payload.get("period_start")
-        if created_at:
-            try:
-                parsed = dt.datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
-            except ValueError:
-                parsed = cutoff
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=dt.UTC)
-            if parsed > cutoff:
-                continue
-        stable.append(payload)
-    canonical_rows = sorted(
-        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str)
-        for row in stable
-    )
-    encoded = "\n".join(canonical_rows)
-    return len(stable), hashlib.sha256(encoded.encode("utf-8")).hexdigest()

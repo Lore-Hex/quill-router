@@ -6,7 +6,7 @@ from tests.fakes.spanner import make_fake_store
 
 
 def test_gcp_wallet_challenge_and_verification_tokens_are_one_shot() -> None:
-    store, _db, _bt = make_fake_store()
+    store, _db = make_fake_store()
 
     nonce, challenge = store.create_wallet_challenge(
         address="0x" + "a" * 40,
@@ -39,7 +39,7 @@ def test_gcp_wallet_challenge_and_verification_tokens_are_one_shot() -> None:
 
 
 def test_gcp_wallet_user_email_and_membership_are_uuid_keyed() -> None:
-    store, _db, _bt = make_fake_store()
+    store, _db = make_fake_store()
 
     wallet_user = store.create_wallet_user("0x" + "c" * 40)
     same_wallet = store.create_wallet_user("0x" + "C" * 40)
@@ -74,7 +74,7 @@ def test_gcp_wallet_user_email_and_membership_are_uuid_keyed() -> None:
 
 
 def test_gcp_creator_usernames_are_unique_case_insensitive_and_immutable() -> None:
-    store, _db, _bt = make_fake_store()
+    store, _db = make_fake_store()
     alice = store.ensure_user("alice@example.com")
     bob = store.ensure_user("bob@example.com")
 

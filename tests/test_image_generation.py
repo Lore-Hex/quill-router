@@ -1,17 +1,67 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog_data import Model
 from trusted_router.catalog_registry import MODELS
-from trusted_router.image_generation import IMAGE_MODEL_ID_SET, OPENAI_IMAGE_MODEL_IDS
+from trusted_router.image_generation import (
+    IMAGE_MODEL_ID_SET,
+    OPENAI_IMAGE_MODEL_IDS,
+    image_input_modalities,
+)
 from trusted_router.storage import STORE
+
+# Image routes the tests below ride, priced as their hosts publish them today.
+# Fixed-price models bill per image from FIXED_IMAGE_PRICES_MICRODOLLARS.
+_IMAGE_ROUTES: dict[str, tuple[str, dict[str, Any]]] = {
+    "google/gemini-3.1-flash-image": (
+        "google-ai-studio",
+        {
+            "upstream_id": "gemini-3.1-flash-image",
+            "prompt_price_microdollars_per_million_tokens": 527_500,
+            "completion_price_microdollars_per_million_tokens": 63_300_000,
+        },
+    ),
+    "recraft/recraftv4_1": ("recraft", {"upstream_id": "recraftv4_1"}),
+    "recraft/recraftv4_1_pro": ("recraft", {"upstream_id": "recraftv4_1_pro"}),
+    "decart/lucy-image-2": ("decart", {"upstream_id": "lucy-image-2"}),
+    "black-forest-labs/flux-2-klein-4b": ("bfl", {"upstream_id": "flux-2-klein-4b"}),
+}
+
+
+def _serve_image_models_on_fixture_routes(
+    monkeypatch: pytest.MonkeyPatch, *model_ids: str
+) -> None:
+    """Which hosts list an image model today is provider state; what the
+    catalog says about one comes from image_generation.py."""
+    for model_id in model_ids:
+        host, route = _IMAGE_ROUTES[model_id]
+        fields = {
+            "prompt_price_microdollars_per_million_tokens": 0,
+            "completion_price_microdollars_per_million_tokens": 0,
+            **route,
+        }
+        serve_on_fixture_route(
+            monkeypatch, model_id, host, author=host,
+            model=Model(
+                id=model_id, name=model_id, provider=host, context_length=32_768,
+                supports_chat=False,
+                input_modalities=tuple(image_input_modalities(model_id)),
+                output_modalities=("image",),
+            ),
+            **fields,
+        )
 
 
 def test_image_catalog_is_machine_readable_and_matches_general_filter(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _serve_image_models_on_fixture_routes(monkeypatch, *_IMAGE_ROUTES)
     response = client.get("/v1/images/models")
     assert response.status_code == 200, response.text
     models = response.json()["data"]
@@ -95,7 +145,12 @@ def test_image_filters_exclude_models_without_active_routes(
     assert dedicated.json()["data"] == filtered.json()["data"] == []
 
 
-def test_image_endpoint_catalog_reports_resolution_prices(client: TestClient) -> None:
+def test_image_endpoint_catalog_reports_resolution_prices(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _serve_image_models_on_fixture_routes(
+        monkeypatch, "google/gemini-3.1-flash-image", "black-forest-labs/flux-2-klein-4b"
+    )
     response = client.get("/v1/images/models/google/gemini-3.1-flash-image/endpoints")
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -146,7 +201,9 @@ def test_image_endpoint_catalog_reports_resolution_prices(client: TestClient) ->
 def test_gateway_authorizes_and_settles_only_image_models(
     client: TestClient,
     user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _serve_image_models_on_fixture_routes(monkeypatch, "google/gemini-3.1-flash-image")
     created = client.post("/v1/keys", headers=user_headers, json={"name": "images"}).json()
     key_hash = created["data"]["hash"]
 
@@ -209,7 +266,9 @@ def test_gateway_authorizes_and_settles_only_image_models(
 def test_fixed_price_image_hold_settles_exactly_once(
     client: TestClient,
     user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _serve_image_models_on_fixture_routes(monkeypatch, "black-forest-labs/flux-2-klein-4b")
     created = client.post("/v1/keys", headers=user_headers, json={"name": "fixed-images"}).json()
     key_hash = created["data"]["hash"]
     quote = 14_770

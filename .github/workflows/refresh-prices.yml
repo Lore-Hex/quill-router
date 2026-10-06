@@ -1,4 +1,4 @@
-# Hourly upstream-price refresh.
+# Upstream-price refresh.
 #
 # Pulls each keyed provider's published prices, runs a self-healing
 # parser layer (LLM-rewrites the parser when validation fails), and
@@ -14,19 +14,25 @@
 #     LLM-generated parser before it's persisted to disk.
 #   * The runtime (TR control plane / enclave) does NOT call any
 #     pricing endpoint. It reads prices from the committed snapshot
-#     at startup. If every upstream is down for an hour, last hour's
-#     prices stay live.
+#     at startup. If every upstream is down, the last published prices
+#     stay live.
 
 name: Refresh upstream prices
 
 on:
   schedule:
-    # Top of every hour, UTC.
-    - cron: "0 * * * *"
+    # Hourly at :37. GitHub delays schedule events under load, names the
+    # start of every hour as a high-load time, and may discard queued runs.
+    # Moving the minute does not restore an hourly cadence: from 2026-09-21
+    # to 09-27 this cron (at :00) and provider-catalog-health.yml's (at :17)
+    # each started 5 or 6 scheduled runs a day.
+    - cron: "37 * * * *"
   workflow_dispatch: {}
 
-# Belt-and-suspenders: cron once-per-hour scheduling already prevents
-# overlap, but if a manual run kicks off mid-cron-fire, this serializes.
+# One run at a time: a successful run takes about 30-45 minutes, and a run
+# re-dispatches this workflow when main advances. GitHub keeps one pending
+# run per group; a newer run replaces an older pending one, never the one
+# in progress.
 concurrency:
   group: refresh-prices
   cancel-in-progress: false
@@ -124,9 +130,8 @@ jobs:
         # provider's /v1/models call needs the right key; without
         # them the respective adapter returns 401 and the new
         # gemma-4 endpoints drop from the snapshot. Each scraper
-        # tolerates a missing key (counts as one failure under
-        # MAX_TOLERATED_FAILURES), but the hourly bot should always
-        # have them — same per-secret IAM pattern.
+        # keeps committed state on a missing key, but the hourly bot should
+        # always have them — same per-secret IAM pattern.
         # Phala discovery uses its public inference.phala.com catalog;
         # no inference credential is needed for that read-only feed.
         run: |
@@ -163,7 +168,6 @@ jobs:
                       INCEPTRON_API_KEY:trustedrouter-inceptron-api-key \
                       MORPH_API_KEY:trustedrouter-morph-api-key \
                       ATLAS_CLOUD_API_KEY:trustedrouter-atlas-cloud-api-key \
-                      STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
                       NEUROMETRIC_API_KEY:trustedrouter-neurometric-api-key \
                       ENGY_API_KEY:trustedrouter-engy-api-key \
                       CONFIDENTIAL_AI_API_KEY:trustedrouter-confidential-ai-api-key \
@@ -176,8 +180,13 @@ jobs:
                       DECART_API_KEY:trustedrouter-decart-api-key \
                       NVIDIA_NIM_API_KEY:trustedrouter-nvidia-nim-api-key \
                       IONET_API_KEY:trustedrouter-io-net-api-key \
+                      TENCENT_API_KEY:trustedrouter-tencent-tokenhub-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       REGOLO_API_KEY:trustedrouter-regolo-api-key \
+                      LYCEUM_API_KEY:trustedrouter-lyceum-api-key \
+                      BYTEPLUS_API_KEY:trustedrouter-byteplus-api-key \
+                      SYSTEM1MODELS_GLOBAL_API_KEY:trustedrouter-system1models-global-api-key \
+                      SYSTEM1MODELS_EU_API_KEY:trustedrouter-system1models-eu-api-key \
                       PRIVATEMODE_API_KEY:trustedrouter-privatemode-api-key \
                       FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
                       JINA_API_KEY:trustedrouter-jina-api-key \
@@ -192,9 +201,11 @@ jobs:
                       NEXTBIT_API_KEY:trustedrouter-nextbit-api-key \
                       AKASHML_API_KEY:trustedrouter-akashml-api-key \
                       MANCER_API_KEY:trustedrouter-mancer-api-key \
+                      ABLITERATE_API_KEY:trustedrouter-abliterate-api-key \
                       NSCALE_API_KEY:trustedrouter-nscale-api-key \
                       AION_LABS_API_KEY:trustedrouter-aion-labs-api-key \
                       SAMBANOVA_API_KEY:trustedrouter-sambanova-api-key \
+                      STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
                       ARCEE_API_KEY:trustedrouter-arcee-api-key \
                       INCEPTION_API_KEY:trustedrouter-inception-api-key; do
             env="${pair%%:*}"
@@ -301,6 +312,9 @@ jobs:
           echo "::error title=Price/model coverage gate::Catalog publication is blocked; the last known-good snapshot remains live."
           exit 1
 
+      - name: Record model route changes and upcoming schedules
+        run: uv run python scripts/update_model_changes.py
+
       - name: Validate generated catalog before commit
         # The refresh can change parsers, provider manifests, model ownership,
         # routing, pricing, and SEO output in one pass. GitHub suppresses
@@ -329,6 +343,8 @@ jobs:
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
             src/trusted_router/data/provider_models/ \
+            src/trusted_router/data/model_changes.jsonl \
+            src/trusted_router/data/model_changes_state.json \
             src/trusted_router/static/og/providers/ \
             scripts/pricing/parsers/
 
@@ -552,10 +568,10 @@ jobs:
           fi
 
       - name: Reconcile held-price issue
-        # The refresh holds a provider whose prices spiked at its last
-        # published prices and publishes the rest. The issue stays open until
-        # a person closes it: a later run without the hold may only mean the
-        # provider's fetch failed and fell back to its published prices.
+        # The refresh keeps providers with price spikes or refresh failures at
+        # their committed state and publishes the rest. The issue stays open
+        # until a person closes it; a successful run alone does not verify a
+        # pending price change or repair a provider account.
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -571,9 +587,9 @@ jobs:
             --jq "map(select(.title == \"${title}\"))[0].number // empty")
           if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
             {
-              echo "These providers' routes rose 2x or more (or both prices went to zero), so the hourly refresh kept their last published prices and published every other provider."
+              echo "These providers had a price spike or refresh failure. The hourly refresh kept their committed manifests and prices (or kept them absent), while other providers refreshed. A majority of providers failing aborts publication for the whole run."
               echo
-              echo "If a change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. A held provider's expiring manifest still fails closed 14 days after its last publish."
+              echo "Repair fetch, parser, or manifest failures using the reasons below. If a price change is real, verify it against the provider's own price source and add the exact transition to APPROVED_ENDPOINT_PRICE_TRANSITIONS in scripts/check_price_spike.py, then close this issue. Manifest expiry and canary gates still apply; holding a provider does not renew its freshness."
               echo
               echo "Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo

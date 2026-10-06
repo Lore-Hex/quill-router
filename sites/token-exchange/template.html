@@ -8,18 +8,21 @@
   <link rel="canonical" href="https://$domain/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="$name">
-  <meta property="og:description" content="$headline Secure – Smart – Scalable – Savings">
+  <meta property="og:description" content="$headline $lead">
   <meta property="og:url" content="https://$domain/">
   <meta property="og:image" content="https://$domain/assets/og-$slug.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#0b0c0e">
+  <meta name="theme-color" content="#050706">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
   <link rel="preload" href="/assets/archivo.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/assets/river-close.webp" as="image" fetchpriority="high">
   <link rel="stylesheet" href="/assets/exchange.css?v=$version">
+  <noscript><style>.hero-provider-track{animation:none}.hero-provider-group+.hero-provider-group{display:none}.hero-provider-row{max-width:none;width:100%;overflow-x:auto;mask-image:none;scrollbar-width:thin}.hero-provider-group a{min-width:0}</style></noscript>
   <script src="/assets/exchange.js?v=$version" defer></script>
+  <script src="/assets/live-evidence.js?v=$version" defer></script>
   <script type="application/ld+json">$schema</script>
 </head>
 <body data-market="$slug">
@@ -32,34 +35,47 @@
       <a href="#buyers">How it works</a>
       <a href="#sellers">For suppliers</a>
       <details class="market-picker market-directory"><summary>Markets <svg class="market-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m4 6 4 4 4-4"/></svg></summary><nav aria-label="Market directory">$markets</nav></details>
-      <a class="button secondary nav-action" data-attribution href="$brief_url">Explore the brochure</a>
+      <a class="button secondary nav-action" href="#brochure">Get the overview</a>
     </nav>
   </header>
   <main id="main">
     <section class="hero">
+      <div class="hero-photo" aria-hidden="true"></div>
       <div class="shell hero-copy">
-        <p class="hero-values">Secure <span aria-hidden="true">·</span> Smart <span aria-hidden="true">·</span> Scalable <span aria-hidden="true">·</span> Savings</p>
         <h1>$hero_headline</h1>
         <p class="lead">$lead</p>
-        <div class="actions"><a class="button primary" data-attribution href="$buyer_url">Request an allocation</a><a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a></div>
+        <div class="actions"><a class="button primary" href="#brochure">See why it's cheaper</a><a class="button secondary" href="https://trustedrouter.com/trust">Verify a live route</a></div>
+      </div>
+      <div class="hero-providers">
+        <p>Providers on TrustedRouter</p>
+        <div class="hero-provider-row"><div class="hero-provider-track">$provider_ticker</div></div>
       </div>
     </section>
-    <section class="market-band"><div class="shell section"><p class="eyebrow">$region / Workload priorities</p><div class="market-intro"><h2>$focus</h2></div><div class="columns sectors">$sectors</div></div></section>
+    <section class="market-band"><div class="shell section"><p class="eyebrow">Workload priorities</p><div class="market-intro"><h2>$focus</h2></div><div class="columns sectors">$sectors</div></div></section>
     <section class="shell section" id="buyers">
-      <div class="section-intro"><p class="eyebrow">How the exchange works</p><h2>$buyer_heading</h2><p>$buyer_copy</p><a class="button primary pilot-action" data-attribution href="$buyer_url">Plan an enterprise pilot</a></div>
+      <div class="section-intro"><p class="eyebrow">How the exchange works</p><h2>$buyer_heading</h2><p>$buyer_copy</p></div>
       <ol class="exchange-steps"><li>Plan capacity for your workload</li><li>Route through pre-approved providers</li><li>Review attestation evidence</li></ol>
       $catalogue
-      <div class="provider-strip">
-        <p>Providers on TrustedRouter</p>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-openai.png" width="32" height="32" alt=""><span>OpenAI</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-anthropic.png" width="32" height="32" alt=""><span>Anthropic</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-mistral.png" width="32" height="32" alt=""><span>Mistral</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-google-vertex.png" width="32" height="32" alt=""><span>Google Vertex AI</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-deepseek.png" width="32" height="32" alt=""><span>DeepSeek</span></a>
-        <a href="https://trustedrouter.com/providers"><img src="/assets/provider-grok.png" width="32" height="32" alt=""><span>xAI</span></a>
-      </div>
     </section>
 
+    <section class="brochure" id="brochure" aria-labelledby="brochure-title">
+      <div class="brochure-art" aria-hidden="true"></div>
+      <div class="shell section brochure-inner">
+        <p class="eyebrow">Take it to your team</p>
+        <h2 id="brochure-title">A <span class="headline-accent">clearer</span> way to buy AI.</h2>
+        <p class="brochure-lead">Secure. Intelligent. Cheaper. Get the nine-page Token Exchange brochure to share how the exchange works, its economics, routing and trust model, and how to get started, with your engineering, security and finance teams.</p>
+        <ol class="brochure-contents" aria-label="What is inside"><li>The marketplace, its architecture and three ways to use it</li><li>Economics, intelligent routing and trust</li><li>Founder, backers, proof and next steps</li></ol>
+        <form id="brochure-form" action="https://trustedrouter.com/token-exchange/brief" method="post">
+          <label for="brochure-email">Work email</label>
+          <div class="brochure-row"><input id="brochure-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="320" placeholder="you@company.com" required aria-describedby="brochure-privacy brochure-status"><button class="button primary" type="submit" disabled>Download the brochure</button></div>
+          <div class="honeypot" aria-hidden="true"><label for="brochure-website">Website</label><input id="brochure-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+          <p id="brochure-privacy" class="form-note">We'll use your email to follow up about enterprise AI. By requesting the brochure, you agree to this contact. <a href="https://trustedrouter.com/privacy">Privacy policy</a>.</p>
+          <p id="brochure-status" class="form-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <noscript><p class="form-note">Email <a href="mailto:enterprise@trustedrouter.com?subject=Token%20Exchange%20brochure">enterprise@trustedrouter.com</a> to request your copy.</p></noscript>
+        </form>
+        <p class="brochure-contact">Prefer a conversation? <a href="mailto:enterprise@trustedrouter.com">enterprise@trustedrouter.com</a></p>
+      </div>
+    </section>
     <section class="privacy-band"><div class="shell section"><div class="trust-intro"><h2>A market needs <span class="headline-accent">trust.</span></h2><p class="trust-copy">TrustedRouter does not keep prompt or output logs. Zero data retention is a provider policy, separate from confidential inference. Review provider retention and attestation evidence for your route.</p><a class="button secondary trust-action" href="https://trustedrouter.com/trust">Review the trust center</a></div>$regional_health</div></section>
     <section class="shell section" id="sellers"><div class="supplier-overview">
       <div class="supplier-art" aria-hidden="true"><svg viewBox="0 0 320 260" focusable="false"><defs><linearGradient id="supply-light" gradientUnits="userSpaceOnUse" x1="56" y1="0" x2="264" y2="0"><stop stop-color="#cce8d7"/><stop offset="1" stop-color="#6891cf"/></linearGradient></defs><g class="supply-lines"><path d="M56 130H104C164 130 146 58 210 58H264"/><path d="M56 130H264"/><path d="M56 130H104C164 130 146 202 210 202H264"/></g><g class="supply-signals"><path pathLength="100" d="M56 130H104C164 130 146 58 210 58H264"/><path pathLength="100" d="M56 130H264"/><path pathLength="100" d="M56 130H104C164 130 146 202 210 202H264"/></g><circle class="supply-origin" cx="56" cy="130" r="22"/><circle cx="264" cy="58" r="7"/><circle cx="264" cy="130" r="7"/><circle cx="264" cy="202" r="7"/></svg></div>
@@ -80,11 +96,11 @@
     <div class="closing-gap" aria-hidden="true"></div>
     <section class="closing" aria-labelledby="closing-title">
       <div class="shell closing-panel">
-        <div class="closing-copy"><h2 id="closing-title">Join the intelligence <span class="headline-accent">exchange.</span></h2><div class="actions"><a class="button primary" data-attribution href="$buyer_url">Buy tokens</a><a class="button secondary" data-attribution href="$seller_url">Sell capacity</a></div></div>
-        <div class="closing-art" aria-hidden="true"><span class="closing-color"></span><span class="closing-grain"></span></div>
+        <div class="closing-copy"><h2 id="closing-title">Join the intelligence <span class="headline-accent">exchange.</span></h2><div class="actions"><a class="button primary" href="#brochure">Get started</a><a class="button secondary" data-attribution href="$seller_url">Sell capacity</a></div></div>
+        <div class="closing-art" aria-hidden="true"><span class="closing-grain"></span></div>
       </div>
     </section>
   </main>
-  <footer class="shell"><div class="footer-top"><div class="brand"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name<small>Powered by <a href="https://trustedrouter.com/">TrustedRouter</a></small></span></div><a class="back-to-top" href="#top" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></a><div class="footer-contact"><a href="mailto:help@trustedrouter.com" aria-label="Email us at help@trustedrouter.com"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg><span>Email us</span></a></div></div><div class="geo-scroll footer-markets"><nav class="market-links" aria-label="Exchange markets">$markets</nav><button class="geo-prev" type="button" aria-label="Scroll footer markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll footer markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div><div class="legal"><span>Operated by Lore Hex Corp, a Delaware corporation.</span><a href="https://trustedrouter.com/privacy">Privacy</a><a href="https://trustedrouter.com/terms">Terms</a><a href="https://trustedrouter.com/token-exchange">Exchange overview</a></div></footer>
+  <footer class="shell"><div class="footer-top"><div class="brand"><img src="/assets/mark.svg" width="30" height="30" alt=""><span>$name<small>Powered by <a href="https://trustedrouter.com/">TrustedRouter</a></small></span></div><a class="back-to-top" href="#top" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></a><div class="footer-contact"><a href="mailto:help@trustedrouter.com" aria-label="Email us at help@trustedrouter.com"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></svg><span>Email us</span></a></div></div><div class="geo-scroll footer-markets"><nav class="market-links" aria-label="Exchange markets">$markets</nav><button class="geo-prev" type="button" aria-label="Scroll footer markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll footer markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div><div class="legal"><span>Operated by Lore Hex Corp, a Delaware corporation.</span><a href="https://trustedrouter.com/media-kit">Media kit</a><a href="https://trustedrouter.com/privacy">Privacy</a><a href="https://trustedrouter.com/terms">Terms</a><a href="https://trustedrouter.com/token-exchange">Exchange overview</a></div></footer>
 </body>
 </html>

@@ -1,0 +1,13 @@
+{
+  "source": "https://anyeval.com/eval/jevbench",
+  "retrieved_date": "2026-09-29",
+  "scope": "231 public JevBench tasks; original 72, easy 48, hard 111. Private tiers excluded.",
+  "score_selection": "First run per problem. Mean model cost includes reruns and excludes AnyEval safety monitors.",
+  "privacy_caveat": "These are named-model measurements, not a separate ZDR-provider evaluation. Provider identity is missing from some runs.",
+  "models": [
+    {"id": "typesafe-ai/jev", "label": "Jev", "passed": 199, "problems": 231, "mean_model_cost_usd": "0.000040", "mean_eval_elapsed_seconds": 15.0, "runs": 252, "runs_missing_provider": 0, "wilson_percent_rounded": [81, 90], "example_zdr_provider": null},
+    {"id": "trustedrouter/zev-1.0", "label": "Zev 1.0", "passed": 194, "problems": 231, "mean_model_cost_usd": "0.0019", "mean_eval_elapsed_seconds": 11.9, "runs": 231, "runs_missing_provider": 1, "wilson_percent_rounded": [79, 88], "example_zdr_provider": "baseten"},
+    {"id": "trustedrouter/trev-1.0", "label": "Trev 1.0", "passed": 187, "problems": 231, "mean_model_cost_usd": "0.000305", "mean_eval_elapsed_seconds": 94.5, "runs": 260, "runs_missing_provider": 258, "wilson_percent_rounded": [75, 85], "example_zdr_provider": "cerebras"},
+    {"id": "trustedrouter/lev-1.0", "label": "Lev 1.0", "passed": 178, "problems": 231, "mean_model_cost_usd": "0.000898", "mean_eval_elapsed_seconds": 11.7, "runs": 231, "runs_missing_provider": 2, "wilson_percent_rounded": [71, 82], "example_zdr_provider": "parasail"}
+  ]
+}

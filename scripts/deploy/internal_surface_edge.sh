@@ -28,7 +28,9 @@ ROLLBACK_CAPTURE="${STATE_DIR}/${URL_MAP}.pre-internal-cutover.capture.json"
 
 print_policy_bootstrap() {
   cat >&2 <<EOF
-Owner action required. The deploy identity must not receive securityPolicies.create:
+Owner action required. The deploy identity must not receive securityPolicies.create.
+The policy is declared in infra/cloud_armor.tf; prefer an owner \`terraform apply\` of that root.
+The original bootstrap commands follow:
   gcloud compute security-policies create ${INTERNAL_EDGE_POLICY} --project=${PROJECT_ID} --global --type=CLOUD_ARMOR --description="TrustedRouter authenticated internal M2M edge"
   gcloud compute security-policies describe ${INTERNAL_EDGE_POLICY} --project=${PROJECT_ID} --global
 EOF

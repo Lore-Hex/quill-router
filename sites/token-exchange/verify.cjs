@@ -42,8 +42,18 @@ const assert = require('node:assert/strict');
         assert.equal(await mainNav.isVisible(), false);
         assert(await menu.evaluate(el => el === document.activeElement));
       }
-      assert.equal(await page.locator('.hero').evaluate(el => getComputedStyle(el, '::before').animationName), 'none');
-      assert.equal(await page.locator('.provider-strip a').count(), 6);
+      // The hero and closing box render the river photograph; the provider marquee holds still for reduced motion.
+      const heroPhoto = page.locator('.hero-photo');
+      assert.equal(await heroPhoto.count(), 1);
+      const heroImage = await heroPhoto.evaluate(el => getComputedStyle(el).backgroundImage);
+      const closingImage = await page.locator('.closing-art').evaluate(el => getComputedStyle(el, '::before').backgroundImage);
+      for (const image of [heroImage, closingImage]) {
+        const url = image.match(/^url\("([^"]+)"\)$/)[1];
+        assert((await page.request.get(url)).ok(), `${market.slug} artwork ${url} did not resolve at ${width}`);
+      }
+      assert.equal(await page.locator('.hero-provider-track').evaluate(el => getComputedStyle(el).animationName), 'none');
+      assert.equal(await page.locator('.hero-provider-group:first-child a').count(), 6);
+      assert.equal(await page.locator('.hero-provider-group[aria-hidden="true"] a:not([tabindex="-1"])').count(), 0);
       const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
       assert.equal(await footerNav.getByRole('link').count(), markets.length);
       assert.equal(await footerNav.locator('[aria-current="page"]').textContent(), market.region);
@@ -66,7 +76,9 @@ const assert = require('node:assert/strict');
         assert.equal(new URL(href).searchParams.get('utm_source'), 'launch-test');
         assert.equal(new URL(href).searchParams.get('secret'), null);
       }
-      assert.equal(await page.locator('.closing [data-attribution]').count(), 2);
+      assert.equal(await page.locator('.closing [data-attribution]').count(), 1);
+      assert.equal(await page.locator('a[href="#brochure"]').count(), 3);
+      assert.equal(await page.locator('#brochure-form button[type=submit]').isDisabled(), false);
       assert.equal(await page.locator('.trust-evidence .catalogue').count(), 1);
       const supplierArt = page.locator('.supplier-art');
       await supplierArt.scrollIntoViewIfNeeded();
@@ -93,9 +105,10 @@ const assert = require('node:assert/strict');
   const heroGeometry = () => mobile.locator('.hero').evaluate(hero => {
     const rect = hero.getBoundingClientRect();
     const actions = hero.querySelector('.actions').getBoundingClientRect();
-    const art = getComputedStyle(hero, '::before');
+    const photo = hero.querySelector('.hero-photo');
+    const art = photo.getBoundingClientRect();
     return {height:rect.height, actionsTop:actions.top - rect.top,
-      artHeight:art.height, artLeft:art.left, mask:art.maskImage};
+      artHeight:art.height, artTop:art.top - rect.top, artSize:getComputedStyle(photo).backgroundSize};
   });
   for (const [width, height] of [[390,700], [320,600]]) {
     await mobile.setViewportSize({width,height});
@@ -119,8 +132,47 @@ const assert = require('node:assert/strict');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
   assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
   assert(await fallback.locator('.supplier-art').isVisible());
+  assert(await fallback.locator('#brochure-form button[type=submit]').isDisabled());
+  assert(await fallback.locator('#brochure-form a[href^="mailto:"]').isVisible());
   await fallback.close();
+  // The brochure form against a stand-in for trustedrouter.com: preflight, a rejected address, then a download.
+  const brochure = await browser.newPage({viewport:{width:1440,height:900}});
+  let brochureRequests = 0;
+  await brochure.route('https://trustedrouter.com/token-exchange/brief', async route => {
+    const request = route.request();
+    const cors = {'Access-Control-Allow-Origin': 'http://127.0.0.1:8089', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Vary': 'Origin'};
+    if (request.method() === 'OPTIONS') return route.fulfill({status:204, headers:cors});
+    brochureRequests += 1;
+    assert.equal(request.headers()['content-type'], 'application/json');
+    const body = request.postDataJSON();
+    assert.equal(body.resource, 'brochure');
+    assert.equal(body.website, '');
+    assert.deepEqual(body.campaign, {utm_source:'linkedin', utm_campaign:'ny-launch'});
+    // A reply the page cannot read, as when an outer layer refuses the request.
+    if (body.email === 'blocked@example.com') return route.abort();
+    if (body.email === 'nope@invalid') return route.fulfill({status:422, headers:{...cors, 'Content-Type':'application/json'}, body:JSON.stringify({ok:false, error:'invalid_email'})});
+    return route.fulfill({status:200, headers:{...cors, 'Content-Type':'application/pdf'}, body:Buffer.from('%PDF-1.4\n%stand-in\n')});
+  });
+  await brochure.goto('http://127.0.0.1:8089/new-york/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
+  await brochure.getByRole('link', {name:'Get the overview', exact:true}).first().click();
+  await brochure.waitForFunction(() => location.hash === '#brochure');
+  const form = brochure.locator('#brochure-form');
+  await form.locator('input[name=email]').fill('nope@invalid');
+  await form.locator('button[type=submit]').click();
+  await brochure.locator('#brochure-status[data-state="error"]').waitFor();
+  assert.equal(await brochure.locator('#brochure-status').textContent(), 'Please enter a valid email address.');
+  assert.equal(await form.locator('input[name=email]').getAttribute('aria-invalid'), 'true');
+  await form.locator('input[name=email]').fill('blocked@example.com');
+  await form.locator('button[type=submit]').click();
+  await brochure.waitForFunction(() => document.querySelector('#brochure-status').dataset.state === 'error' && document.querySelector('#brochure-status').textContent.startsWith('Something went wrong'));
+  assert.equal(await brochure.locator('#brochure-status').textContent(), 'Something went wrong. Try again or email enterprise@trustedrouter.com.');
+  await form.locator('input[name=email]').fill('ada@example.com');
+  const [download] = await Promise.all([brochure.waitForEvent('download'), form.locator('button[type=submit]').click()]);
+  assert.equal(download.suggestedFilename(), 'TrustedRouter-Token-Exchange-Brochure.pdf');
+  await brochure.locator('#brochure-status[data-state="success"]').waitFor();
+  assert.equal(brochureRequests, 3);
+  await brochure.close();
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log(`PASS: ${markets.length} markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation; ${markets.length} reviewed OG images checked.`);
+  console.log(`PASS: ${markets.length} markets x 3 viewports; images, overflow, attribution, FAQ, menu, reduced motion, mobile hero resize, no-JS navigation, brochure form (no-JS fallback, rejected address, unreadable reply, campaign fields, download); ${markets.length} reviewed OG images checked.`);
 })().catch(error => {console.error(error); process.exit(1);});

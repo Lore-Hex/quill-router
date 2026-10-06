@@ -19,7 +19,6 @@ from tests.fakes.spanner_order import record_statements
 from tests.test_spanner_batch_dml import NOW, _authorization, _database, _state
 from trusted_router import storage_gcp_authorize as current
 from trusted_router.storage_gcp_codec import json_body
-from trusted_router.storage_gcp_counter_dml import entity_insert_statement
 
 
 @pytest.fixture
@@ -44,7 +43,7 @@ SCENARIOS = [
     'accepted', 'insufficient', 'missing', 'uncapped', 'byok_excluded',
     'byok_included', 'byok_insufficient', 'skip', 'no_credit', 'zero_estimate',
     'later_shard', 'missing_first_shard', 'all_missing', 'mixed_missing_exhausted',
-    'rollover', 'usage_and_byok_cap', 'paused', 'receipt_unbound',
+    'rollover', 'usage_and_byok_cap', 'paused',
 ]
 
 
@@ -99,17 +98,7 @@ def test_frozen_sequential_equivalence(
             key.update(usage=400, byok_usage=450, reserved=100)
         elif scenario == 'paused':
             db.typed['tr_credit_balance'][('workspace', 0)]['billing_pause_causes'] = ['manual']
-        elif scenario == 'receipt_unbound':
-            opts['spend_lease_receipt_hash'] = 'receipt'
 
-        # Simulate transactional hook bookkeeping. Its row must disappear along
-        # with credit/reservation writes on rejection, and persist once on success.
-        def hook(tx: Any, shard: int) -> dict[str, Any]:
-            sql, params, types = entity_insert_statement(param_types, 'hook', 'id', '{}')
-            tx.execute_update(sql, params=params, param_types=types)
-            return {'bound': False, 'no_lease_reason': None, 'spend_lease_outcome': None}
-
-        opts['spend_lease_hook'] = hook
         result = module.authorize_atomic(db, param_types, **opts)
         # Replay must return the stored winner and preserve every hold and row.
         if result['outcome'] == current.AuthorizeOutcome.ACCEPTED:
@@ -122,7 +111,7 @@ def test_frozen_sequential_equivalence(
     assert run(current) == run(frozen)
 
 
-@pytest.mark.parametrize('index', [1, 2])
+@pytest.mark.parametrize('index', [2, 3])
 @pytest.mark.parametrize('code', [code_pb2.ALREADY_EXISTS, code_pb2.FAILED_PRECONDITION])
 def test_zero_key_count_precedes_later_insert_error(
     monkeypatch: pytest.MonkeyPatch, index: int, code: int,
@@ -134,7 +123,7 @@ def test_zero_key_count_precedes_later_insert_error(
 
     def partial(tx: Any, statements: Any, **kwargs: Any) -> Any:
         status, counts = original(tx, statements[:index], **kwargs)
-        assert status.code == 0 and counts[0] == 0
+        assert status.code == 0 and counts[1] == 0
         return Status(code=code, message='later insert failure'), counts
 
     monkeypatch.setattr(_FakeTransaction, 'batch_update', partial)
@@ -163,10 +152,10 @@ def test_zero_count_retries_with_same_ids_and_releases_unique_scope(
     assert db.rollback_calls == 1 and db.commits == 1
     assert len(batches) == 2
     speculative, sequential = batches
-    predicted = speculative[1][1]
+    predicted = speculative[2][1]
     final = sequential[0][1]
     assert predicted == {**final, 'key_reserved_micro': 100}
-    assert speculative[2] == sequential[1]
+    assert speculative[3] == sequential[1]
     assert len(db.reservations) == len(db.gateway_authorizations) == 1
     assert next(iter(db.reservations.values()))['key_reserved_micro'] == 0
 
@@ -231,7 +220,7 @@ def test_sequential_fallback_shares_authorize_deadline(
     original = _FakeTransaction.batch_update
 
     def batch(tx: Any, statements: Any, **kwargs: Any) -> Any:
-        if len(statements) == 3:
+        if len(statements) == 4:
             clock[0] += elapsed
         return original(tx, statements, **kwargs)
 
@@ -377,7 +366,7 @@ def configured_sdk(
         return ExecuteBatchDmlResponse(
             status=Status(),
             result_sets=[ResultSet(stats=ResultSetStats(row_count_exact=n))
-                         for n in ([0, 1, 1] if size == 3 else [1, 1])],
+                         for n in ([1, 0, 1, 1] if size == 4 else [1, 1])],
         )
 
     api.execute_streaming_sql.side_effect = read
@@ -392,8 +381,9 @@ def configured_sdk(
 
 @pytest.mark.parametrize('elapsed', [6, 21], ids=['remaining-budget', 'exhausted-budget'])
 @pytest.mark.parametrize('cleanup', ['ok', 'failed', 'expired'])
+@pytest.mark.parametrize('miss', ['credit', 'key'])
 def test_speculation_miss_configured_rollback_floor(
-    configured_sdk: Any, elapsed: int, cleanup: str,
+    configured_sdk: Any, elapsed: int, cleanup: str, miss: str,
 ) -> None:
     from google.api_core.exceptions import DeadlineExceeded, ServiceUnavailable
 
@@ -404,7 +394,10 @@ def test_speculation_miss_configured_rollback_floor(
 
     def spend_budget(**kwargs: Any) -> Any:
         response = batch(**kwargs)
-        if len(kwargs['request'].statements) == 3:
+        if len(kwargs['request'].statements) == 4:
+            if miss == 'credit':
+                response.result_sets[0].stats.row_count_exact = 0
+                response.result_sets[1].stats.row_count_exact = 1
             sdk.clock[0] += elapsed
         return response
 
@@ -440,9 +433,9 @@ def test_speculation_miss_configured_rollback_floor(
         # The fallback reruns both authoritative checks before inserting.
         assert sdk.rpcs.execute_streaming_sql.call_count == 2
         assert ['tr_credit_balance' in call.kwargs['request'].sql
-                for call in sdk.rpcs.execute_sql.call_args_list] == [True, True, False]
+                for call in sdk.rpcs.execute_sql.call_args_list] == [True, False]
         assert [len(call.kwargs['request'].statements)
-                for call in sdk.rpcs.execute_batch_dml.call_args_list] == [3, 2]
+                for call in sdk.rpcs.execute_batch_dml.call_args_list] == [4, 2]
     sdk.rpcs.rollback.assert_called_once()
     call = sdk.rpcs.rollback.call_args.kwargs
     assert call['transaction_id'] == b'tx-1'
@@ -466,7 +459,7 @@ def test_aborted_during_sequential_fallback(configured_sdk: Any, monkeypatch: py
     retry_info.Pack(RetryInfo(retry_delay={'seconds': 1}))
     sdk.rpcs.execute_batch_dml.side_effect = [
         ExecuteBatchDmlResponse(status=Status(), result_sets=[
-            ResultSet(stats=ResultSetStats(row_count_exact=n)) for n in [0, 1, 1]
+            ResultSet(stats=ResultSetStats(row_count_exact=n)) for n in [1, 0, 1, 1]
         ]),
         ExecuteBatchDmlResponse(status=Status(code=code_pb2.ABORTED, details=[retry_info])),
         ExecuteBatchDmlResponse(status=Status(), result_sets=[
@@ -477,7 +470,7 @@ def test_aborted_during_sequential_fallback(configured_sdk: Any, monkeypatch: py
     assert result['outcome'] == 'accepted'
     assert len(sdk.transactions) == 3
     assert [len(c.kwargs['request'].statements)
-            for c in sdk.rpcs.execute_batch_dml.call_args_list] == [3, 2, 2]
+            for c in sdk.rpcs.execute_batch_dml.call_args_list] == [4, 2, 2]
     # ABORTED stays with the SDK; the retry retains sequential shape and IDs.
     batches = sdk.rpcs.execute_batch_dml.call_args_list
     assert batches[1].kwargs['request'].statements == batches[2].kwargs['request'].statements
@@ -498,8 +491,8 @@ def _operation_count(db: Any) -> int:
 
 
 @pytest.mark.parametrize(('scenario', 'parent_count', 'round2_count'), [
-    ('accepted', 5, 4), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
-    ('key_rejection', 5, 9), ('credit_rejection', 3, 3), ('skip', 4, 4),
+    ('accepted', 5, 3), ('byok_excluded', 5, 5), ('uncapped_direct', 6, 6),
+    ('key_rejection', 5, 8), ('credit_rejection', 3, 6), ('skip', 4, 3),
 ])
 def test_operation_counts_with_metadata_hint(
     stable_ids: None, scenario: str, parent_count: int, round2_count: int,

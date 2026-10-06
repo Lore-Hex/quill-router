@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Ramp the three secondary Cloud Run regions serially while the reconcilers
-# deploy. The serving revision is resolved immediately before each ramp; the
-# workflow's job-start snapshot is diagnostic context only.
+# Ramp the three secondary Cloud Run regions serially. The serving revision
+# is resolved immediately before each ramp; the workflow's job-start snapshot
+# is diagnostic context only.
 
 set -euo pipefail
 
@@ -229,9 +229,6 @@ ramp_secondary() {
 # no-traffic warm was joined successfully by the deploy job before this script
 # was started. Keep the three secondary 10/50/100 ramps explicit, serial, and
 # stop-on-failure; no traffic move ever overlaps a sibling traffic move.
-# The regional quota and spend-lease reconciler workers used to deploy in the
-# background here; both ledgers are retired (2026-09-27) and
-# retire_ledger_workers.sh removes the workers after this ramp.
 
 held=""
 ramped=""

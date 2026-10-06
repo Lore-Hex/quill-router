@@ -15,7 +15,7 @@
     {% if provider.id == 'trustedrouter' %}
     <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
     {% else %}
-    <p>These privacy labels describe {{ provider.name }}, the upstream model provider. ZDR is a retention policy; verified confidential inference additionally requires attested provider compute and end-to-end encryption.</p>
+    <p>These privacy labels describe {{ provider.name }}, the upstream model provider. Confidential requires all three: verified provider compute, end-to-end encryption and explicit zero data retention. Account and billing metadata are outside the content-retention claim.</p>
     {% endif %}
     <table>
       <tbody>

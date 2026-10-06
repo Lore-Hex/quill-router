@@ -1,0 +1,98 @@
+{
+  "provider": "abliterate",
+  "models": [
+    {
+      "display_name": "abliterate-0.3-balanced",
+      "title": "abliterate-0.3-balanced",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "abliterate/abliterate-0.3-balanced",
+      "upstream_id": "abliterate-0.3-balanced",
+      "created": 1700000000,
+      "routable": false,
+      "routable_reason": "upstream-usage-unavailable",
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 2000000
+    },
+    {
+      "display_name": "abliterate-0.3-clever",
+      "title": "abliterate-0.3-clever",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "abliterate/abliterate-0.3-clever",
+      "upstream_id": "abliterate-0.3-clever",
+      "created": 1700000000,
+      "routable": false,
+      "routable_reason": "upstream-usage-unavailable",
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 5000000
+    },
+    {
+      "display_name": "abliterate-0.3-fast",
+      "title": "abliterate-0.3-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "abliterate/abliterate-0.3-fast",
+      "upstream_id": "abliterate-0.3-fast",
+      "created": 1700000000,
+      "routable": false,
+      "routable_reason": "upstream-usage-unavailable",
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1000000
+    },
+    {
+      "display_name": "abliterated-research-0.1",
+      "title": "abliterated-research-0.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "abliterate/abliterated-research-0.1",
+      "upstream_id": "abliterated-research-0.1",
+      "created": 1700000000,
+      "routable": false,
+      "routable_reason": "upstream-usage-unavailable",
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 20000000
+    }
+  ],
+  "source": "https://abliterate.ai/api/v1/models",
+  "pricing_source": "https://abliterate.ai/docs",
+  "generated_at": "2026-10-06T03:20:16Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 4
+}

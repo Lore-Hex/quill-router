@@ -6,8 +6,10 @@ set -euo pipefail
 umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="${TR_RELEASE_CHECKOUT:-$REPO_ROOT}"
 cd "$REPO_ROOT"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
+source "${SCRIPT_DIR}/_aws_session.sh"
 source "${SCRIPT_DIR}/cloud_bake_gate.sh"
 source "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
@@ -53,8 +55,11 @@ IMAGE_TAG="${RELEASE:0:7}"
 CI="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml --commit "$RELEASE" \
   --limit 1 --json conclusion --jq '.[0].conclusion')"
 [ "$CI" = success ] || die "CI must pass for this exact release"
-[ "$(aws sts get-caller-identity --query Account --output text)" = 330422590279 ] \
-  || die "wrong AWS account"
+# Check the command's status as well as its output: a call that prints the
+# account and then fails must not pass.
+CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)" \
+  || die "cannot read the AWS account"
+[ "$CALLER_ACCOUNT" = 330422590279 ] || die "wrong AWS account"
 
 WORK="$(mktemp -d)"
 export DOCKER_CONFIG="${WORK}/docker"
@@ -80,7 +85,7 @@ cleanup() {
     fi
   fi
   rm -rf "$WORK"
-  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then deploy_mutex_release; fi
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then deploy_mutex_finish "$rc" || rc=1; fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -88,8 +93,18 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 export TR_DEPLOY_MUTEX_CLOUD=aws
 deploy_mutex_acquire
-cloud_bake_gate aws
-python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws >/dev/null
+# The wait above can outlast the job's first AWS session.
+aws_refresh_session || exit 1
+bake_status=0
+cloud_bake_gate aws || bake_status=$?
+if [ "$bake_status" -eq 75 ]; then
+  log "automatic promotion is already current or superseded; no production mutation"
+  exit 0
+fi
+[ "$bake_status" -eq 0 ] || exit "$bake_status"
+python3 "${SCRIPT_DIR}/cloud_serving_release.py" aws >/dev/null \
+  || die "AWS fleet serving evidence is inconsistent or unstable before rollout;" \
+         "inspect each region with cloud_serving_release.py aws-region REGION SERVICE (the reader prints nothing on purpose)"
 
 SOURCE_REPO=us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router
 SOURCE_DIGEST="$(gcloud artifacts docker images describe "${SOURCE_REPO}:${IMAGE_TAG}" \
@@ -121,6 +136,7 @@ for region in "${REGIONS[@]}"; do
 done
 
 for index in "${!REGIONS[@]}"; do
+  deploy_mutex_assert
   region="${REGIONS[$index]}"
   service="${SERVICES[$index]}"
   # Verify live tasks/targets immediately before touching this region.

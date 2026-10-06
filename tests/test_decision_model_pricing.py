@@ -262,9 +262,13 @@ def test_the_scraper_checks_the_alias_the_catalog_actually_calls() -> None:
     # If the catalog ever pins a version instead of `jev-latest`, the page check
     # has to follow, or it verifies the price of an id nobody sends.
     from trusted_router.catalog import endpoints_for_model
+    from trusted_router.catalog_data import _DECISION_SPECS
 
+    spec = next(spec for spec in _DECISION_SPECS if spec["id"] == JEV)
+    assert (spec["provider"], spec["upstream_id"]) == (typesafe.SLUG, typesafe.UPSTREAM_ALIAS)
+    # And the route, while TypeSafe lists Jev, calls it as configured.
     upstream = {e.upstream_id for e in endpoints_for_model(JEV) if e.provider == typesafe.SLUG}
-    assert upstream == {typesafe.UPSTREAM_ALIAS}
+    assert upstream <= {typesafe.UPSTREAM_ALIAS}
 
 
 def test_typesafe_refuses_a_non_text_page() -> None:

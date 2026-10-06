@@ -9,7 +9,7 @@ from trusted_router.storage_models import Generation
 # now lives in the backend-neutral :mod:`trusted_router.storage_codec`.  It is
 # re-exported here (rather than moved outright) so the twelve existing
 # ``from trusted_router.storage_gcp_codec import json_body`` sites keep working
-# unchanged.  Everything else below really is a Spanner/Bigtable key shape.
+# unchanged.  Everything else below really is a Spanner key shape.
 __all__ = [
     "byok_id",
     "generation_workspace_id",

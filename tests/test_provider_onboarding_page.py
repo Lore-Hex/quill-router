@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from trusted_router.provider_contract import (
@@ -8,6 +9,63 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
     PROVIDER_CATALOG_V2_SCHEMA_URL,
 )
+
+
+def test_provider_application_collects_complete_integration_and_energy_profile(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/marketplace")
+    assert response.status_code == 200
+    soup = BeautifulSoup(response.text, "html.parser")
+    template = soup.select_one('[aria-label="Provider onboarding email template"] pre code')
+    assert template is not None
+    application = template.get_text()
+    for field in (
+        "Service being offered:",
+        "Own inference hardware or reseller:",
+        "Downstream inference operators:",
+        "Ownership / parent company:",
+        "Operational metadata: fields and retention period:",
+        "ZDR terms: policy URL or applicable agreement:",
+        "ZDR scope: models, tiers, regions, account opt-ins, exceptions:",
+        "Dynamic placement and cross-region failover:",
+        "Region pinning: exact parameter, values, and guarantee:",
+        "Actual serving region: response field or header:",
+        "Storage, logging, cache, and backup locations:",
+        "Attestation verifier, source, releases, and measurements:",
+        "Key binding, GPU/downstream coverage, operator access:",
+        "Inference powered by 100% renewable energy? Yes / Partly / No / Unknown:",
+        "Renewable electricity percentage:",
+        "Covered models, regions, facilities, and downstream operators:",
+        "Reporting period and measurement method:",
+        "Hourly matching or annual matching:",
+        "On-site generation, PPAs, RECs / Guarantees of Origin:",
+        "Carbon offsets (report separately, not as renewable electricity):",
+        "Public evidence URL or independent assurance report:",
+        "Exceptions and next review date:",
+        "Authentication format and available key scopes (no key):",
+        "Pricing page and machine-readable source:",
+        "Prompt caching: eligibility, TTL, isolation, and usage fields:",
+        "Non-token, batch, priority, and long-context charges:",
+        "Billing: prepaid/postpaid, minimum spend, invoice reconciliation:",
+        "Production entitlement, test credit, funding and quota requirements:",
+        "Error codes, Retry-After, request ID and rate-limit headers:",
+        "Redacted provider-checker JSON report and probe date:",
+        "Approved public company details and evidence links:",
+        "API key: DO NOT INCLUDE",
+    ):
+        assert field in application, field
+
+    assert "headquarters address is not an inference-location guarantee" in response.text
+    assert "No training is not the same as zero retention" in response.text
+    assert "not the public catalog" in response.text
+    assert "Exclude third-party BYOK passthrough" in response.text
+    energy = soup.select_one('[aria-labelledby="provider-energy-heading"]')
+    assert energy is not None
+    assert "failover capacity" in energy.get_text()
+    assert "not just your offices" in energy.get_text()
+    assert "do not establish 100% renewable electricity" in energy.get_text()
+    assert "not independently verified certification" in energy.get_text()
 
 
 def test_provider_onboarding_page_has_machine_readable_requirements(

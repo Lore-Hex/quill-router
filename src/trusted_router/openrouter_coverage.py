@@ -15,7 +15,7 @@ class RouteCoverage:
 
 
 ROUTE_COVERAGE: tuple[RouteCoverage, ...] = (
-    RouteCoverage("/activity", "GET", "real", "Bigtable-backed metadata activity."),
+    RouteCoverage("/activity", "GET", "real", "ClickHouse-backed metadata activity."),
     RouteCoverage("/analytics/meta", "GET", "stub", "Analytics queries are not supported."),
     RouteCoverage("/analytics/query", "POST", "stub", "Analytics queries are not supported."),
     RouteCoverage("/audio/speech", "POST", "stub", "Audio is not supported."),

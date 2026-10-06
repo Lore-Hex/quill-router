@@ -18,7 +18,7 @@ from trusted_router.operational_analytics_freshness import (
     OutboxFreshness,
     analytics_status_from_reading,
 )
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_postgres import PostgresStore
 
 
@@ -42,7 +42,7 @@ def _enqueue(sink: DirectOperationalAnalyticsSink, event_id: str) -> None:
 
 
 def _gcp_reading(sink: DirectOperationalAnalyticsSink) -> OutboxFreshness:
-    store = object.__new__(SpannerBigtableStore)
+    store = object.__new__(SpannerStore)
     store._operational_analytics_outbox = sink
     return store.operational_analytics_outbox_freshness()
 

@@ -121,5 +121,18 @@ def test_venice_committed_catalog_records_migration() -> None:
     assert rows[_OLD]["upstream_id"] == "deepseek-v4-flash"
     assert rows[_NEW]["upstream_id"] == "deepseek-v4-1-flash"
     assert (f"{_OLD}@venice/prepaid" in catalog.MODEL_ENDPOINTS) is catalog_predates(_CUTOFF)
-    endpoint = catalog.MODEL_ENDPOINTS[f"{_NEW}@venice/prepaid"]
-    assert endpoint.upstream_id == "deepseek-v4-1-flash"
+    # The replacement is routed at its exact upstream ID while its row is
+    # routable; a row the refresh tombstoned is dark.
+    endpoint = catalog.MODEL_ENDPOINTS.get(f"{_NEW}@venice/prepaid")
+    if rows[_NEW].get("routable") is False:
+        assert endpoint is None
+    else:
+        assert endpoint is not None
+        assert endpoint.upstream_id == "deepseek-v4-1-flash"
+
+
+@pytest.mark.provider_health
+def test_venice_serves_the_v4_1_flash_replacement() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert f"{_NEW}@venice/prepaid" in catalog.MODEL_ENDPOINTS

@@ -99,6 +99,64 @@ def test_minimax_live_discovery_requires_new_model_before_manifest_write(
     assert set(result.prices) == {"minimax/minimax-m3", "minimax/minimax-m4"}
 
 
+def test_minimax_marks_the_windows_its_api_reports(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest = tmp_path / "minimax.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"id": "minimax/minimax-m3", "upstream_id": "MiniMax-M3", "context_length": 524_288},
+                    {
+                        "id": "minimax/minimax-m2.7",
+                        "upstream_id": "MiniMax-M2.7",
+                        "context_length": 204_800,
+                        "context_length_source": "api",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(minimax, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(minimax, "EXPECTED_MODELS", ["minimax/minimax-m3", "minimax/minimax-m2.7"])
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+    monkeypatch.setattr(
+        minimax,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {"id": "MiniMax-M3", "status": 1, "context_length": 1_000_000},
+                # The API stopped reporting this model's window.
+                {"id": "MiniMax-M2.7", "status": 1},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        minimax,
+        "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(
+            slug="minimax",
+            prices={
+                "minimax/minimax-m3": ModelPrice(300_000, 1_200_000),
+                "minimax/minimax-m2.7": ModelPrice(300_000, 1_200_000),
+            },
+            source="deterministic",
+        ),
+    )
+
+    minimax.write_provider_manifest(minimax.fetch())
+
+    rows = {row["id"]: row for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]}
+    assert rows["minimax/minimax-m3"]["context_length"] == 1_000_000
+    assert rows["minimax/minimax-m3"]["context_length_source"] == "api"
+    # The last window stays, but it is no longer the API's report.
+    assert rows["minimax/minimax-m2.7"]["context_length"] == 204_800
+    assert "context_length_source" not in rows["minimax/minimax-m2.7"]
+
+
 def test_xiaomi_parser_reads_official_mimo_payg_prices() -> None:
     html = """
     #### MiMo-V2.5-Pro

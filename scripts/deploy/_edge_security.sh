@@ -2,6 +2,15 @@
 # Cloud Armor and trusted edge-identity reconciliation for global external
 # Application Load Balancer backends. This file defines functions only; the
 # caller owns authentication, PROJECT_ID, gc(), and log().
+#
+# Source of truth: the live Cloud Armor policies (trusted-router-legacy-edge,
+# trusted-router-public-edge, trusted-router-internal-edge,
+# lightning-router-funding) are declared in infra/cloud_armor.tf, which an
+# owner applies. Do not point _reconcile_cloud_armor_policy at one of those
+# policies: it would be a second writer, and the next Terraform apply would
+# revert it. The defaults below match the live legacy-edge thresholds
+# (rules 1000, 1100 and 1200), but the live policy also has rule 1150 and
+# enforces every rule; infra/cloud_armor.tf is the exact definition.
 
 _edge_require_positive_integer() {
   local name="$1"

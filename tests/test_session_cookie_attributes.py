@@ -13,6 +13,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 
@@ -71,10 +72,7 @@ def production_settings() -> Settings:
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
         ses_from_email="noreply@example.com",
-        storage_backend="spanner-bigtable",
-        spanner_instance_id="trusted-router",
-        spanner_database_id="trusted-router",
-        bigtable_instance_id="trusted-router-logs",
+        **PRODUCTION_SPANNER_STORAGE,
         google_client_id="g-prod",
         google_client_secret="g-prod-secret",  # noqa: S106 - test fixture.
         google_oauth_redirect_url="https://trustedrouter.com/google_oauth_callback",
@@ -135,10 +133,7 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
         ses_from_email="noreply@example.com",
-        storage_backend="spanner-bigtable",
-        spanner_instance_id="i",
-        spanner_database_id="d",
-        bigtable_instance_id="b",
+        **PRODUCTION_SPANNER_STORAGE,
         byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
     response = Response()
@@ -222,10 +217,7 @@ def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
         ses_from_email="noreply@example.com",
-        storage_backend="spanner-bigtable",
-        spanner_instance_id="i",
-        spanner_database_id="d",
-        bigtable_instance_id="b",
+        **PRODUCTION_SPANNER_STORAGE,
         byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
     response = Response()

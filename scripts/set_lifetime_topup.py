@@ -12,12 +12,10 @@ import os
 import sys
 from typing import Any
 
-os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-bigtable")
+os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-clickhouse")
 os.environ.setdefault("TR_GCP_PROJECT_ID", "quill-cloud-proxy")
 os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
-os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
-os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
 
 from trusted_router.config import Settings
 from trusted_router.money import dollars_to_microdollars, format_money_precise

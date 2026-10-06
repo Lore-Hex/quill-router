@@ -597,6 +597,29 @@ test("model picker triangle is keyboard adjustable", async ({ page }) => {
   await expect(page.locator("#speedWeight")).toHaveText("33");
 });
 
+test("model picker Confidential requires ZDR even when compute and E2EE are verified", async ({ page }) => {
+  await page.route("**/choose/catalog.json", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.models.forEach((model, index) => {
+      model.endpoints.forEach((endpoint) => {
+        endpoint.confidential_compute = true;
+        endpoint.e2ee = true;
+        endpoint.zero_data_retention = index % 2 === 0 ? null : false;
+        endpoint.privacy_tier = 3; // Stale tier must not override the retention facts.
+      });
+    });
+    await route.fulfill({ json: payload });
+  });
+  await page.goto("/static/choose-app.html");
+  await expect(page.locator("#loadState")).toContainText("independently scored models");
+  await page.getByRole("button", { name: /Simple/ }).click();
+  await page.getByRole("button", { name: /Any/ }).click();
+  await expect(page.locator(".model-card").first()).toBeVisible();
+  await page.locator("#privacy").selectOption("3");
+  await expect(page.locator(".model-card")).toHaveCount(0);
+});
+
 test("model picker fails closed when route facts are unavailable", async ({ page }) => {
   await page.route("**/choose/catalog.json", async (route) => {
     await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });

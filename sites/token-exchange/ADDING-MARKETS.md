@@ -42,6 +42,13 @@ reviewed market and adapt these fields:
 | `buyer_heading`, `buyer_copy` | Preserve the approved shared buying message unless a verified requirement needs a change. |
 | `evidence_snapshot` | A reviewed local snapshot whose scope matches the displayed claims. |
 
+Add the canonical `domain` to
+`src/trusted_router/data/token_exchange_origins.json` so the TrustedRouter app
+accepts the market's brochure form; the site tests fail until it is listed. That
+list ships with the app, so deploy the app before publishing the market.
+`deploy.py publish` and `deploy.py check-brochure` refuse until the live app
+accepts the domain.
+
 Some records retain `intro`; the current template does not display it. Useful
 details belong in rendered fields, not only in unused JSON.
 
@@ -87,7 +94,9 @@ A release document or uptime chart does not establish all three for every model.
 Do not infer local offices, certifications, customer endorsements or compliance
 from market branding. Keep eligibility qualifications where required. If adding
 a new evidence profile, cover its selection and labels in `test_evidence.py`.
-Snapshot refresh is an explicit step; the build does not fetch live evidence.
+The build emits empty panels; `live-evidence.js` loads the shared request-time
+feed. Checked-in snapshots are historical review artifacts, never a runtime
+fallback. New evidence bindings must also be added to the backend feed profiles.
 
 ## Create the matching social image
 

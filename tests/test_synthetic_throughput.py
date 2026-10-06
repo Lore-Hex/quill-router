@@ -8,7 +8,10 @@ from typing import Any
 import httpx
 import pytest
 
+from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
+from trusted_router.money import token_cost_microdollars
 from trusted_router.storage_models import ProviderBenchmarkSample
 from trusted_router.synthetic import cli as cli_module
 from trusted_router.synthetic.probes import (
@@ -67,7 +70,43 @@ def test_throughput_round_robin_visits_every_route_once_per_cycle() -> None:
     assert THROUGHPUT_INTERVAL_SECONDS == 60
 
 
+def test_monthly_full_cap_cost_prices_every_probe_at_its_routes_credits_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fixture routes: the projection holds for any prices, and what today's
+    # top routes charge is provider state.
+    for provider, model, prompt_price, completion_price in (
+        ("cerebras", "fixture/throughput-a", 1_000_000, 3_000_000),
+        ("novita", "fixture/throughput-b", 250_000, 2_000_000),
+    ):
+        route = ModelEndpoint(
+            id=f"{model}@{provider}/prepaid",
+            model_id=model,
+            provider=provider,
+            usage_type="Credits",
+            prompt_price_microdollars_per_million_tokens=prompt_price,
+            completion_price_microdollars_per_million_tokens=completion_price,
+        )
+        monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
+    candidates = [
+        ("cerebras", "fixture/throughput-a"),
+        ("novita", "fixture/throughput-b"),
+        # No Credits route: it costs nothing and still takes its turn.
+        ("cerebras", "fixture/unrouted"),
+    ]
+
+    # A probe is 64 input and 512 output tokens: 64 + 1,536 microdollars on
+    # the first route and 16 + 1,024 on the second. A month of one probe a
+    # minute is 43,200 probes, 14,400 cycles of the three candidates.
+    assert projected_monthly_cost_microdollars(candidates) == (1_600 + 1_040) * 14_400
+
+
+@pytest.mark.provider_health
 def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
+    """Live provider state: today's top routes and their prices set the
+    projection, and a host raising a price can lift it past the reviewed
+    budget. provider-catalog-health.yml reports it hourly, and the price
+    refresh does not wait on it."""
     candidates = throughput_candidates(limit=200)
     projected = projected_monthly_cost_microdollars(candidates)
 
@@ -76,7 +115,24 @@ def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
 
 
 @pytest.mark.asyncio
-async def test_throughput_probe_measures_effective_end_to_end_speed() -> None:
+async def test_throughput_probe_measures_effective_end_to_end_speed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A sample is priced at the served route's Credits price. The route is a
+    # fixture: whether Cerebras lists the model today is provider state.
+    route = ModelEndpoint(
+        id="cerebras/gpt-oss-120b@cerebras/prepaid",
+        model_id="cerebras/gpt-oss-120b",
+        provider="cerebras",
+        usage_type="Credits",
+        upstream_id="gpt-oss-120b",
+        prompt_price_microdollars_per_million_tokens=400_000,
+        completion_price_microdollars_per_million_tokens=800_000,
+    )
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if (endpoint.provider, endpoint.model_id) == (route.provider, route.model_id):
+            monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
+    monkeypatch.setitem(MODEL_ENDPOINTS, route.id, route)
     captured: list[dict[str, Any]] = []
     chunks = [
         b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
@@ -126,7 +182,9 @@ async def test_throughput_probe_measures_effective_end_to_end_speed() -> None:
     assert sample.ttfb_milliseconds == 100
     assert sample.elapsed_milliseconds == 1000
     assert sample.speed_tokens_per_second == 251.0
-    assert sample.total_cost_microdollars > 0
+    assert sample.total_cost_microdollars == (
+        token_cost_microdollars(19, 400_000) + token_cost_microdollars(251, 800_000)
+    )
     assert sample.finish_reason == "length"
     assert captured[0]["max_tokens"] == 512
     assert captured[0]["stream_options"] == {"include_usage": True}

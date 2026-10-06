@@ -33,7 +33,7 @@ def _seed(store: Any, db: Any, ws: str, *, usage: int, settled: int) -> None:
 
 
 def test_only_counters_exceeding_their_ledger_are_proposed() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed(store, db, "ws_explained", usage=500_000, settled=500_000)   # baseline 0
     _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)  # 4M of history
 
@@ -44,8 +44,8 @@ def test_only_counters_exceeding_their_ledger_are_proposed() -> None:
 
 
 def test_recording_makes_the_workspace_auditable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
     _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)
     assert audit_typed_invariants(store).usage_unauditable == 1
 
@@ -65,7 +65,7 @@ def test_recording_makes_the_workspace_auditable(monkeypatch: pytest.MonkeyPatch
 
 
 def test_dry_run_writes_nothing() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)
 
     assert record_usage_baselines.main([], store=store) == 0
@@ -78,8 +78,8 @@ def test_apply_refuses_without_independent_retained_ledger_verification(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
     _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)
 
     assert record_usage_baselines.main(["--apply"], store=store) == 2
@@ -90,8 +90,8 @@ def test_apply_refuses_without_independent_retained_ledger_verification(
 
 def test_an_existing_baseline_is_never_overwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     """A second, different value for one workspace means one is wrong."""
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
     _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)
     store._write_entity(
         USAGE_BASELINE_KIND,
@@ -118,8 +118,8 @@ def test_a_baseline_recorded_between_propose_and_write_is_not_clobbered(
     mutation that deleted the in-transaction guard left every other test in this
     file green.
     """
-    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
-    store, db, _ = make_fake_store()
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
     _seed(store, db, "ws_race", usage=5_000_000, settled=1_000_000)
 
     # Built while nothing was recorded, exactly as the CLI builds it.

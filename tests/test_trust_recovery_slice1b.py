@@ -43,7 +43,7 @@ def _adverse(
 def _store_with_payment(
     *, credited: int = 1_000, charged: int = 1_200
 ) -> tuple[Any, Any, str]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace("owner", "recovery", trial_credit_microdollars=0)
     assert store.credit_workspace_typed_direct(
         workspace.id,
@@ -136,7 +136,10 @@ def test_dispute_then_refund_reversal_keeps_full_claim_until_dispute_won() -> No
     assert _balance(database, workspace_id) == 1_000
 
 
-def test_multi_shard_debit_takes_maximum_safe_and_pauses_for_remainder() -> None:
+def test_multi_shard_debit_takes_maximum_safe_and_pauses_for_remainder(monkeypatch: Any) -> None:
+    from trusted_router import storage_gcp
+
+    monkeypatch.setattr(storage_gcp, "DEFAULT_NEW_BILLING_SHARDS", 16)
     store, database, workspace_id = _store_with_payment()
     shards = {
         shard: row
@@ -205,7 +208,7 @@ def test_later_topup_absorbs_oldest_debt_and_clears_only_recovery_cause() -> Non
 
 
 def test_inbox_before_payment_drains_in_payment_transaction() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace("owner", "inbox", trial_credit_microdollars=0)
     adverse = _adverse(amount=600)
     assert store.record_adverse_trust_event(adverse).outcome == "inbox"
@@ -285,7 +288,7 @@ def test_release_without_payment_debt_never_reads_the_shard_set(monkeypatch: Any
     """F4 (2026-09-05 convoy): the all-shard read takes ReaderShared on every
     credit shard while the settle holds Exclusive on one of them. A workspace
     with no payment claim — the common case — must not pay for it."""
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace = store.create_workspace("owner", "no-debt", trial_credit_microdollars=1_000)
     database.typed["tr_credit_balance"][(workspace.id, 0)]["reserved"] = 50
     seen = _transaction_sql_spy(monkeypatch)

@@ -7,8 +7,8 @@ import hashlib
 import inspect
 import json
 import re
+import sqlite3
 import textwrap
-import threading
 from typing import Any
 
 import httpx
@@ -32,9 +32,8 @@ from clickhouse.rollup_synthetic import (
 from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
-    stable_rows_fingerprint,
 )
-from trusted_router.storage_gcp import SpannerBigtableStore
+from trusted_router.storage_gcp import SpannerStore
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
     activity_payload,
@@ -56,6 +55,53 @@ from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
 )
 from trusted_router.types import UsageType
+
+
+def test_retirement_route_workspaces_exact_route_and_half_open_window() -> None:
+    # Execute the shipped selection SQL on fixture rows, translating only
+    # ClickHouse's parameter/timestamp/result syntax. Removing either route
+    # predicate or a time boundary changes the resulting workspace ids.
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE activity_generations (workspace_id TEXT, provider TEXT, model TEXT, created_at TEXT)")
+    conn.executemany("INSERT INTO activity_generations VALUES (?, ?, ?, ?)", [
+        ("start", "tinfoil", "model", "2026-08-02T12:00:00.000Z"),
+        ("before", "tinfoil", "model", "2026-08-02T11:59:59.999Z"),
+        ("recent", "tinfoil", "model", "2026-09-01T11:59:59.999Z"),
+        ("recent", "tinfoil", "model", "2026-09-01T11:00:00.000Z"),
+        ("end", "tinfoil", "model", "2026-09-01T12:00:00.000Z"),
+        ("future", "tinfoil", "model", "2026-09-01T12:00:00.001Z"),
+        ("other-provider", "near-ai", "model", "2026-09-01T11:00:00.000Z"),
+        ("other-model", "tinfoil", "model-other", "2026-09-01T11:00:00.000Z"),
+        ("", "tinfoil", "model", "2026-09-01T11:00:00.000Z"),
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.content.decode()
+        assert "FROM activity_generations FINAL" in query
+        assert "LIMIT" not in query
+        query = query.replace(" FINAL", "").replace("FORMAT JSON", "")
+        query = re.sub(r"parseDateTime64BestEffort\((\{\w+:String\}), 3\)", r"\1", query)
+        query = re.sub(r"\{(\w+):String\}", r":\1", query)
+        params = {key.removeprefix("param_"): value for key, value in request.url.params.items()}
+        rows = conn.execute(query, params).fetchall()
+        return httpx.Response(200, json={"data": [dict(row) for row in rows]})
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test", user="read", password="test",  # noqa: S106
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert client.route_workspaces(
+            provider="tinfoil", model="model",
+            start_at="2026-08-02T12:00:00.000Z", end_at="2026-09-01T12:00:00.000Z",
+        ) == ["recent", "start"]
+        assert client.route_workspaces(
+            provider="tinfoil' OR 1=1 --", model="model",
+            start_at="2026-08-02T12:00:00.000Z", end_at="2026-09-01T12:00:00.000Z",
+        ) == []
+    finally:
+        conn.close()
 
 
 def _generation() -> Generation:
@@ -458,7 +504,7 @@ def test_clickhouse_route_benchmark_reader_uses_one_partitioned_query() -> None:
     ]
 
 
-def test_gcp_route_health_batch_read_does_not_shadow_to_bigtable() -> None:
+def test_gcp_route_health_batch_read_uses_clickhouse_directly() -> None:
     class FakeAnalytics:
         def __init__(self) -> None:
             self.calls: list[dict[str, object]] = []
@@ -479,7 +525,7 @@ def test_gcp_route_health_batch_read_does_not_shadow_to_bigtable() -> None:
             )
             return []
 
-    store = object.__new__(SpannerBigtableStore)
+    store = object.__new__(SpannerStore)
     analytics = FakeAnalytics()
     store._operational_analytics = analytics  # type: ignore[assignment]
 
@@ -1086,87 +1132,6 @@ def test_client_event_reader_binds_since_limit_and_normalizes_failures() -> None
             "attempt_request_id": ["rlog_0123456789abcdef0123456789abcdef"],
         }
     ]
-
-
-def _read_router(mode: str) -> SpannerBigtableStore:
-    store = object.__new__(SpannerBigtableStore)
-    store._analytics_read_mode = mode
-    store._analytics_dual_read_grace_seconds = 0
-    store._analytics_parity_log_lock = threading.Lock()
-    store._analytics_last_parity_log = {}
-    return store
-
-
-def test_dual_read_returns_bigtable_and_tolerates_clickhouse_failure() -> None:
-    store = _read_router("dual")
-    result = store._analytics_read(
-        "test",
-        bigtable=lambda: ["bigtable"],
-        clickhouse=lambda: (_ for _ in ()).throw(RuntimeError("down")),
-    )
-    assert result == ["bigtable"]
-
-
-def test_clickhouse_primary_falls_back_to_bigtable() -> None:
-    store = _read_router("clickhouse")
-    result = store._analytics_read(
-        "test",
-        bigtable=lambda: ["fallback"],
-        clickhouse=lambda: (_ for _ in ()).throw(RuntimeError("down")),
-    )
-    assert result == ["fallback"]
-
-
-def test_parity_fingerprint_ignores_rebuild_time_opaque_ids_and_order() -> None:
-    first = [
-        {
-            "id": "one",
-            "created_at": "2020-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "workspace_id": "raw-workspace",
-            "key_hash": "raw-key-hash",
-            "requests": 2,
-        },
-        {"id": "two", "created_at": "2020-01-02T00:00:00Z", "requests": 3},
-    ]
-    second = [
-        {"id": "two", "created_at": "2020-01-02T00:00:00Z", "requests": 3},
-        {
-            "id": "one",
-            "created_at": "2020-01-01T00:00:00Z",
-            "updated_at": "2026-07-31T00:00:00Z",
-            "workspace_id": analytics_surrogate("workspace", "raw-workspace"),
-            "key_hash": analytics_surrogate("api-key", "raw-key-hash"),
-            "requests": 2,
-        },
-    ]
-    assert stable_rows_fingerprint(first, grace_seconds=0) == stable_rows_fingerprint(
-        second,
-        grace_seconds=0,
-    )
-
-
-def test_parity_fingerprint_matches_clickhouse_float32_benchmark_storage() -> None:
-    high_precision = [
-        {
-            "id": "bench-one",
-            "created_at": "2020-01-01T00:00:00Z",
-            "input_tokens": 1,
-            "speed_tokens_per_second": 1.234567890123,
-        }
-    ]
-    stored_float32 = [
-        {
-            "id": "bench-one",
-            "created_at": "2020-01-01T00:00:00Z",
-            "input_tokens": 1,
-            "speed_tokens_per_second": 1.2345678806304932,
-        }
-    ]
-    assert stable_rows_fingerprint(
-        high_precision,
-        grace_seconds=0,
-    ) == stable_rows_fingerprint(stored_float32, grace_seconds=0)
 
 
 def _synthetic_sample(

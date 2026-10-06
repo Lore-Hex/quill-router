@@ -10,9 +10,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scripts/deploy/_clickhouse_bundle.sh
 source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
+# shellcheck source=scripts/deploy/_clickhouse_publisher.sh
+source "${SCRIPT_DIR}/_clickhouse_publisher.sh"
 PROJECT="${PROJECT:-quill-cloud-proxy}"
-ZONE="${ZONE:-us-central1-a}"
-NAME="${NAME:-tr-clickhouse-1}"
+# The workers run on the publisher only (G1 in
+# docs/design/clickhouse-high-availability.md): tr-clickhouse-1 until a takeover.
+# Hold the role lock while choosing the node and installing, so a takeover
+# cannot move the publisher underneath this run.
+clickhouse_role_lock_take clickhouse_live_ingestion || exit 1
+trap 'clickhouse_role_lock_release' EXIT
+NAME="${NAME:-$(clickhouse_publisher)}"
+ZONE="${ZONE:-$(clickhouse_zone_of "$NAME")}"
 SECRET="${SECRET:-trustedrouter-clickhouse-password}"
 
 ssh_node() {
@@ -32,9 +40,10 @@ if [ -n "$external_ip" ]; then
   echo "refusing deployment: $NAME has external IP $external_ip" >&2
   exit 1
 fi
+require_clickhouse_publisher "$NAME"
 
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
-trap 'rm -f "$archive"' EXIT
+trap 'clickhouse_role_lock_release; rm -f "$archive"' EXIT
 build_clickhouse_bundle "$ROOT" "$archive"
 
 ssh_node --command="sudo mkdir -p /opt/tr-clickhouse"
@@ -60,10 +69,6 @@ ssh_node --command="sudo sh -c '
     -r /opt/tr-clickhouse/clickhouse/requirements-live.txt
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-ingest.service \
     /etc/systemd/system/tr-clickhouse-ingest.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.service \
-    /etc/systemd/system/tr-clickhouse-reconcile.service
-  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.timer \
-    /etc/systemd/system/tr-clickhouse-reconcile.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.service \
     /etc/systemd/system/tr-clickhouse-workspace-directory.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.timer \
@@ -91,6 +96,14 @@ ssh_node --command="sudo sh -c '
   set -a
   . /etc/tr-clickhouse-ingest.env
   set +a
+  # 001 and 002 are single-node schema files, applied here only for the node-local
+  # _staging tables in 002. On a freshly rebuilt node their CREATE TABLE IF
+  # NOT EXISTS would create NON-replicated canonical tables, and the drain
+  # would write rows that never replicate. Refuse unless every canonical
+  # table already exists as a replica (G7 in
+  # docs/design/clickhouse-high-availability.md).
+  (cd /opt/tr-clickhouse && /opt/tr-clickhouse/venv/bin/python -m clickhouse.require_replicated_tables \
+    provider_benchmark_samples provider_analytics_hourly provider_analytics_daily provider_analytics_monthly)
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/001_provider_benchmark_samples.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
@@ -101,6 +114,14 @@ ssh_node --command="sudo sh -c '
     --multiquery < /opt/tr-clickhouse/clickhouse/012_activity_generations_workspace_id.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/014_reservation_overruns.sql
+  # The benchmark reconciler replayed Bigtable history into ClickHouse. The
+  # Bigtable analytics backend is retired (2026-09-29) and the archive
+  # extraction above never deletes files, so an already-provisioned node
+  # keeps the old unit files and modules: stop, disable and remove them.
+  systemctl disable --now tr-clickhouse-reconcile.timer \
+    tr-clickhouse-reconcile.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/tr-clickhouse-reconcile.service \
+    /etc/systemd/system/tr-clickhouse-reconcile.timer
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
@@ -121,13 +142,11 @@ ssh_node --command="sudo sh -c '
   done
   systemctl enable --now tr-clickhouse-workspace-directory.timer
   systemctl enable --now tr-clickhouse-overrun-rollup.timer
-  systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer
   systemctl enable --now tr-clickhouse-rollup-hourly.timer
   systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
-  systemctl is-active tr-clickhouse-reconcile.timer
   systemctl is-active tr-clickhouse-overrun-rollup.timer
   systemctl is-active tr-clickhouse-archive.timer
   systemctl is-active tr-clickhouse-archive-restore.timer

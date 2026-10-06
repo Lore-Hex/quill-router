@@ -126,11 +126,11 @@ the row with the highest version, so **any later re-insert of a mutated row
 with a newer `ingest_version` restores `synthetic = 0`** and the backfill
 quietly disappears at the next merge.
 
-`tr-clickhouse-reconcile.service` replays historical rows from Bigtable and is
-exactly such a re-inserter. Before running the backfill, confirm it cannot
-replay the pre-cutover window — or accept that the backfill must be re-run
-after any reconcile that touches it. Bigtable's stored generations predate
-`synthetic`, so a replay reintroduces the defect at the source.
+`tr-clickhouse-reconcile.service` replayed historical rows from Bigtable and
+was exactly such a re-inserter; it is retired with the Bigtable analytics
+backend (2026-09-29). Before running the backfill, confirm that no other job
+re-inserts the pre-cutover window — or accept that the backfill must be
+re-run after any replay that touches it.
 
 This is the reason to prefer verifying with `FINAL` and to re-check a week
 later rather than declaring the backfill done when `system.mutations` reports

@@ -110,7 +110,7 @@ def test_every_pricing_parser_has_a_fixture_and_contract_case() -> None:
     assert not [
         slug for slug in sorted(parser_slugs) if not (FIXTURE_DIR / f"{slug}.html").exists()
     ]
-    assert refresh._SELF_HEALING_PARSER_SLUGS == parser_slugs - {
+    assert refresh._SELF_HEALING_PARSER_SLUGS == parser_slugs - refresh.RETIRED_PROVIDER_SLUGS - {
         "cerebras",
         "grok",
         "makora",

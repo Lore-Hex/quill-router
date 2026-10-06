@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.openrouter_coverage import ROUTE_COVERAGE
@@ -208,10 +209,7 @@ def _production_app(surface: str):
         "environment": "production",
         "service_surface": surface,
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
-        "storage_backend": "spanner-bigtable",
-        "spanner_instance_id": "trusted-router",
-        "spanner_database_id": "trusted-router",
-        "bigtable_instance_id": "trusted-router-logs",
+        **PRODUCTION_SPANNER_STORAGE,
     }
     if surface == "control":
         values.update(

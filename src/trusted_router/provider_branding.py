@@ -19,6 +19,11 @@ class ProviderBrand:
 
 
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
+    "abliterate": ProviderBrand(
+        "https://abliterate.ai/",
+        description="OpenAI-compatible abliterated chat and research models. Paid routing is pending verified upstream usage accounting.",
+        resources=(("API and pricing", "https://abliterate.ai/docs"), ("Service terms", "https://abliterate.ai/terms")),
+    ),
     "aion-labs": ProviderBrand("https://www.aionlabs.ai/"),
     "akashml": ProviderBrand("https://akashml.com/"),
     "arcee": ProviderBrand("https://www.arcee.ai/"),
@@ -75,6 +80,9 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "sambanova": ProviderBrand("https://sambanova.ai/"),
     "scaleway": ProviderBrand("https://www.scaleway.com/"),
     "regolo": ProviderBrand("https://regolo.ai/"),
+    "lyceum": ProviderBrand("https://lyceum.technology/"),
+    "system1models": ProviderBrand("https://system1models.ai/"),
+    "system1models-eu": ProviderBrand("https://system1models.ai/eu"),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),
@@ -124,7 +132,16 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "nscale": ProviderBrand("https://www.nscale.com/"),
     "confidential-ai": ProviderBrand("https://confidential.ai/"),
     "scaledown": ProviderBrand("https://scaledown.ai/"),
-    "near-ai": ProviderBrand("https://near.ai/"),
+    "near-ai": ProviderBrand(
+        "https://near.ai/",
+        resources=(
+            ("Confidential inference and zero-retention declaration", "https://near.ai/"),
+            ("Cloud Terms: route-specific privacy (section 7.2)", "https://near.ai/terms-of-service"),
+            ("Privacy policy: Cloud website and account data", "https://near.ai/privacy-policy"),
+            ("Customer Data Processing Agreement", "https://near.ai/near-ai-data-processing-agreement-for-customers"),
+            ("Direct completions and TLS attestation verification", "https://docs.near.ai/cloud/experimental/direct-completions"),
+        ),
+    ),
     "openai": ProviderBrand("https://openai.com/"),
     "ovhcloud": ProviderBrand("https://www.ovhcloud.com/"),
     "parasail": ProviderBrand("https://www.parasail.io/"),

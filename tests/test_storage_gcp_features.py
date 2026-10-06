@@ -41,7 +41,7 @@ def _seed_workspace_and_key(store) -> tuple[str, str]:
 
 
 def test_gcp_video_jobs_are_idempotent_leased_and_cleaned_without_content() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     job = VideoJob(
         id="job-gcp-video",
         workspace_id="ws-video",
@@ -122,7 +122,7 @@ def test_gcp_video_jobs_are_idempotent_leased_and_cleaned_without_content() -> N
 
 
 def test_gcp_keys_default_to_hard_budgets_and_allow_alert_opt_in() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("gcp-budget-default@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -148,7 +148,7 @@ def test_gcp_keys_default_to_hard_budgets_and_allow_alert_opt_in() -> None:
 
 
 def test_gcp_auth_session_full_lifecycle() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("session-owner@example.com")
 
     raw, session = store.create_auth_session(
@@ -184,7 +184,7 @@ def test_gcp_auth_session_full_lifecycle() -> None:
 
 
 def test_gcp_auth_session_expired_token_returns_none_and_purges() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     user = store.ensure_user("expired-session@example.com")
 
     raw, session = store.create_auth_session(
@@ -207,7 +207,7 @@ def test_gcp_auth_session_expired_token_returns_none_and_purges() -> None:
 
 
 def test_gcp_auth_session_pending_state_can_be_promoted() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("wallet-pending@example.com")
 
     raw, session = store.create_auth_session(
@@ -231,7 +231,7 @@ def test_gcp_auth_session_pending_state_can_be_promoted() -> None:
 
 
 def test_gcp_email_blocks_block_lookup_and_normalization() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
 
     block = store.block_email_sending(
         email="Bouncy@Example.com",
@@ -258,7 +258,7 @@ def test_gcp_email_blocks_block_lookup_and_normalization() -> None:
 
 
 def test_gcp_email_blocks_record_message_once_dedupes() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
 
     assert store.record_sns_message_once("msg-aaaa") is True
     assert store.record_sns_message_once("msg-aaaa") is False
@@ -271,7 +271,7 @@ def test_gcp_email_blocks_record_message_once_dedupes() -> None:
 
 
 def test_gcp_byok_upsert_idempotent_and_list_by_workspace() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("byok-owner@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -300,7 +300,7 @@ def test_gcp_byok_upsert_idempotent_and_list_by_workspace() -> None:
 
 
 def test_gcp_byok_delete_returns_false_for_missing_provider() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("byok-delete@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -319,7 +319,7 @@ def test_gcp_byok_delete_returns_false_for_missing_provider() -> None:
 
 
 def test_gcp_oauth_code_create_consume_and_replay() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("oauth-flow@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -347,7 +347,7 @@ def test_gcp_oauth_code_create_consume_and_replay() -> None:
 
 
 def test_gcp_oauth_code_expiry_sweeps_lookup_and_returns_none() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     user = store.ensure_user("oauth-expiry@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -374,7 +374,7 @@ def test_gcp_oauth_code_expiry_sweeps_lookup_and_returns_none() -> None:
 
 
 def test_gcp_oauth_code_tampered_secret_rejected() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     user = store.ensure_user("oauth-tamper@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
 
@@ -398,7 +398,7 @@ def test_gcp_oauth_code_tampered_secret_rejected() -> None:
 
 
 def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace_id, key_hash = _seed_workspace_and_key(store)
 
     auth = store.create_gateway_authorization(
@@ -442,7 +442,7 @@ def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
 def test_gcp_add_generation_rolls_cost_into_per_key_counters() -> None:
     from trusted_router.storage_models import Generation
 
-    store, db, _ = make_fake_store()
+    store, db = make_fake_store()
     workspace_id, key_hash = _seed_workspace_and_key(store)
 
     prepaid = Generation(
@@ -496,7 +496,7 @@ def test_gcp_add_generation_rolls_cost_into_per_key_counters() -> None:
 
 
 def test_gcp_rate_limit_increments_in_same_window_and_rolls_over() -> None:
-    store, _db, _ = make_fake_store()
+    store, _db = make_fake_store()
     now = dt.datetime(2026, 5, 3, 12, 0, 1, tzinfo=dt.UTC)
 
     first = store.hit_rate_limit(
@@ -526,7 +526,7 @@ def test_gcp_rate_limit_increments_in_same_window_and_rolls_over() -> None:
 
 def test_gcp_zero_key_hold_never_mutates_api_key() -> None:
     for limit, include_byok, usage_type in [(None, True, "Credits"), (100, False, "BYOK")]:
-        store, db, _ = make_fake_store()
+        store, db = make_fake_store()
         workspace_id, _ = _seed_workspace_and_key(store)
         _, key = store.create_api_key(
             workspace_id=workspace_id, name="zero-hold", creator_user_id=None,

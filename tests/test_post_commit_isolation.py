@@ -6,6 +6,7 @@ import threading
 from typing import Any
 
 import anyio
+import pytest
 from starlette.background import BackgroundTasks
 
 from tests.test_gateway_fallback_billing import (
@@ -19,7 +20,9 @@ from trusted_router.storage import STORE, InMemoryStore, configure_store
 _REAL_EXECUTOR = post_commit.POST_COMMIT
 
 
-def test_refund_assertions_and_store_teardown_with_real_workers_occupied() -> None:
+def test_refund_assertions_and_store_teardown_with_real_workers_occupied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     entered = threading.Barrier(post_commit.WORKERS + 1)
     release = threading.Event()
 
@@ -35,7 +38,7 @@ def test_refund_assertions_and_store_teardown_with_real_workers_occupied() -> No
             _REAL_EXECUTOR.submit(blocked)
         entered.wait(timeout=5)
         # Call the existing test unchanged, including its immediate row check.
-        refund_assertion_path()
+        refund_assertion_path(monkeypatch)
         original = STORE.target
         assert post_commit.POST_COMMIT.in_flight == 0
     finally:

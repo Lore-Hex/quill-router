@@ -63,7 +63,7 @@ PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
 
 PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
 
-PRIVACY_TIER_CONFIDENTIAL = 3  # confidential compute + provider-side e2ee
+PRIVACY_TIER_CONFIDENTIAL = 3  # verified compute + provider-side e2ee + explicit ZDR, not the vendor
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
@@ -85,7 +85,7 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_STANDARD: "Standard",
     PRIVACY_TIER_NO_STORE: "No-store",
     PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
-    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE",
+    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE + ZDR",
 }
 
 # provider_headquarters_country records the legal home of the entity that
@@ -133,6 +133,11 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "abliterate": (
+        "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
+        "a legal operating entity or headquarters country, and the terms refer "
+        "to an unnamed upstream inference provider. Excluded from jurisdiction filters."
+    ),
     "telluvian": (
         "Checked Telluvian's product and privacy pages for selector integration; "
         "the contracting operator's jurisdiction has not been verified. Excluded from US/EU filters."
@@ -414,6 +419,9 @@ class ModelEndpoint:
     usage_type: str
     upstream_id: str | None = None
     supported_parameters: tuple[str, ...] = ()
+    # Registry construction fills None from the model for legacy/static routes;
+    # ingested routes retain their own declarations instead of the model union.
+    input_modalities: tuple[str, ...] | None = None
     prompt_price_microdollars_per_million_tokens: int = 0
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
@@ -813,38 +821,56 @@ PROVIDERS: dict[str, Provider] = {
         name="Privatemode",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,
         provider_policy=(
             "Requests and responses are encrypted between TrustedRouter's enclave "
             "and release-pinned Privatemode workloads after attestation verification. "
             "Verification failures reject the request; there is no plaintext fallback. "
-            "Cache-routing metadata is visible to the provider edge. No separate "
-            "ZDR commitment is inferred from encryption."
+            "Privatemode explicitly states that prompts and responses are not stored "
+            "after a request completes and are not used for training. Transient "
+            "inference state may remain in a salt-isolated, in-memory prompt cache "
+            "inside confidential workers until eviction. "
+            "Operational metadata is retained for up to 90 days; per-key token usage "
+            "is retained permanently for billing. Cache-routing metadata is visible "
+            "to the provider edge. ZDR describes prompt/output retention, not metadata."
         ),
-        provider_policy_url="https://docs.privatemode.ai/security/attestation/overview/",
+        provider_policy_url=(
+            "https://docs.privatemode.ai/security/trust-and-compliance/#data-processing-and-retention"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_DE,
     ),
     # NEAR AI direct endpoints terminate TLS inside the measured model TEE.
     # TrustedRouter verifies the live TLS SPKI, fresh nonce, Intel TDX quote,
     # NVIDIA GPU evidence, compose-manager action log, and release-pinned
-    # workload before sending prompt bytes. No ZDR/no-store claim is inferred
-    # from confidential compute alone.
+    # workload before sending prompt bytes. ZDR comes from NEAR AI's explicit
+    # confidential-inference declaration, not from attestation alone. Its
+    # Cloud Terms section 7.2 limits privacy claims to the relevant route.
     "near-ai": Provider(
         slug="near-ai",
         name="NEAR AI",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,
         provider_policy=(
+            "NEAR AI declares zero data retention for its hosted confidential "
+            "inference. On TrustedRouter this covers only release-pinned direct "
+            "Private TEE routes, not NEAR AI's Incognito or Attested Third-Party "
+            "routes. ZDR describes inference content, not account, billing or "
+            "operational metadata. Cloud Terms section 7.2 makes retention "
+            "route-specific; the general privacy policy covers Cloud website "
+            "and account-administration data, not an all-services ZDR guarantee. "
             "TrustedRouter connects directly to the model workload and verifies "
             "the live TLS key, Intel TDX quote, NVIDIA GPUs, deployment action "
             "log, and pinned workload inside the TrustedRouter enclave before "
-            "sending content. Verification fails closed. No separate ZDR claim "
-            "is currently tracked."
+            "sending content. Verification fails closed."
         ),
-        provider_policy_url="https://docs.near.ai/cloud/verification/tls/",
+        provider_policy_url="https://near.ai/",
         # Jasnah, Inc. d/b/a NEAR AI identifies itself as a Delaware
         # corporation in its first-party Acceptable Use Policy.
         # https://near.ai/acceptable-use-policy
@@ -1719,6 +1745,19 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://akashml.com/",
     ),
+    "abliterate": Provider(
+        slug="abliterate",
+        name="Abliterate",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Abliterate says prompts and completions are discarded after each request, "
+            "but they transit an upstream inference provider whose retention is not "
+            "identified in its terms. End-to-end ZDR and confidential inference are "
+            "unverified. Paid routes are held pending upstream token-usage accounting."
+        ),
+        provider_policy_url="https://abliterate.ai/terms",
+    ),
     "mancer": Provider(
         slug="mancer",
         name="Mancer",
@@ -1813,7 +1852,8 @@ PROVIDERS: dict[str, Provider] = {
             "Krea exposes an asynchronous media API, not a shared OpenAI-compatible "
             "chat catalog. TrustedRouter supports Krea 2 Medium with exact fixed "
             "per-image billing. The route remains dark until its paid generation "
-            "canary succeeds. No ZDR or confidential-compute claim is tracked."
+            "canary succeeds; Krea requires a funded API balance, separate from "
+            "its workspace credits. No ZDR or confidential-compute claim is tracked."
         ),
         provider_policy_url="https://docs.krea.ai/",
     ),
@@ -1833,13 +1873,12 @@ PROVIDERS: dict[str, Provider] = {
     "byteplus": Provider(
         slug="byteplus",
         name="BytePlus ModelArk",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "The BytePlus ModelArk key authenticates and discovers direct model IDs, "
-            "but this account has not activated the model service. Routes remain "
-            "dark until activation, a paid canary, and exact first-party pricing "
-            "all succeed."
+            "Direct BytePlus ModelArk inference. Availability and standard token "
+            "prices are refreshed from BytePlus's native catalog and pricing "
+            "documentation. Video availability requires a verified native adapter."
         ),
         provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
     ),
@@ -1878,6 +1917,23 @@ PROVIDERS: dict[str, Provider] = {
         # IO.NET Inc., Delaware corporation: public privacy policy section 1.
         # Operator jurisdiction is not US-only inference; Canada is also declared.
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "lyceum": Provider(
+        slug="lyceum",
+        name="Lyceum",
+        supports_prepaid=True,
+        supports_byok=False,
+        supports_embeddings=True,
+        provider_policy=(
+            "Lyceum's terms state that inference inputs and outputs are used only "
+            "to generate results, are not stored beyond technical necessity, and "
+            "are not used for training or analysis. No account-specific ZDR or "
+            "verified confidential-compute guarantee is tracked; these routes "
+            "remain Standard. German company jurisdiction is not a guarantee "
+            "that every model executes in the EU."
+        ),
+        provider_policy_url="https://lyceum.technology/legal/terms/index.html",
+        provider_headquarters_country="DE",
     ),
     "regolo": Provider(
         slug="regolo",
@@ -1982,6 +2038,29 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.liquid.ai/",
     ),
+    **{
+        slug: Provider(
+            slug=slug,
+            name=f"System1 Models ({tier})",
+            supports_chat=False,
+            supports_prepaid=True,
+            supports_byok=False,
+            stores_content=False,
+            provider_policy=(
+                "Typed decision models, not chat completions. System1 states that prompts "
+                "and outputs are processed in memory, never stored or used for training. "
+                "Operational billing metadata is retained. No confidential-compute or "
+                "E2EE claim is made. "
+                + ("This route enforces the EU tier; inference stays within the EU (currently Finland)."
+                   if tier == "EU" else
+                   "Global uses spare EU capacity and may use worldwide capacity for opted-in keys; "
+                   "it is not an EU residency guarantee.")
+            ),
+            provider_policy_url="https://system1models.ai/legal/privacy",
+            provider_headquarters_country="DE",
+        )
+        for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
+    },
     "typesafe": Provider(
         slug="typesafe",
         name="TypeSafe AI",
@@ -2036,13 +2115,13 @@ PROVIDERS: dict[str, Provider] = {
     "tencent": Provider(
         slug="tencent",
         name="Tencent Cloud TokenHub",
-        supports_prepaid=False,
-        supports_byok=False,
+        supports_prepaid=True,
+        supports_byok=True,
         provider_policy=(
-            "The TokenHub inference key authenticates and its provider-native "
-            "catalog is discoverable, but inference is blocked by insufficient "
-            "account balance. Routes remain dark until a paid canary succeeds "
-            "and exact first-party postpaid prices are joined."
+            "TokenHub's Singapore API uses global resource scheduling, not a "
+            "Singapore-only inference guarantee. Only canaried chat routes with "
+            "matching regional USD prices are enabled. No verified contractual "
+            "ZDR, confidential-compute, or upstream E2EE claim is tracked."
         ),
         provider_policy_url="https://www.tencentcloud.com/document/product/1300/80632",
     ),
@@ -2142,6 +2221,11 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "byteplus",
+        "abliterate",
+        "system1models",
+        "system1models-eu",
+        "lyceum",
         "privatemode",
         "telluvian",
         "vercel-ai-gateway",
@@ -2230,6 +2314,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "arcee",
         "inception",
         "io-net",
+        "tencent",
         "scaleway",
         "featherless",
         "sakana",
@@ -2356,12 +2441,15 @@ class NamedDecisionModel(NamedTuple):
     # at 1516 ms but would double the advertised output price; slower perfect
     # hosts and hosts with errors or missed checks were excluded.
     # gemmev moved to Gemma 4 26B A4B on 2026-09-28, when DeepInfra dropped
-    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, one
-    # at a time: W&B 1387 ms, nextbit 1587 ms, io.net 1738 ms, each 87/87 with
-    # 24/24 valid calls. SiliconFlow also passed (2034 ms) but would raise the
-    # advertised price 40%. Makora, Scaleway and Cloudflare think by default
-    # (about 1,000 output tokens a decision, 5-15x the cost) and were excluded;
-    # Gemma 4 31B Turbo scored 84/87.
+    # Gemma 4 E4B, its only host. Measured the same way, each host pinned, in
+    # three runs that day (two of them after the gateway tuned the model), 72
+    # calls per host: nextbit 1760 ms median and 2260 ms p90, W&B 1940 and 2936,
+    # io.net 1964 and 2701; every host 87/87 with 24/24 valid calls in every run.
+    # One run alone had W&B first (1387 ms), so the order comes from all three.
+    # SiliconFlow also passed (2034 ms) but would raise the advertised price 40%.
+    # Makora, Scaleway and Cloudflare think by default (about 1,000 output tokens
+    # a decision, 5-15x the cost) and were excluded; Gemma 4 31B Turbo scored
+    # 84/87.
     # The rest are pinned to the single host they were measured on. The
     # attested gateway asks for exactly this chain and authorize enforces it,
     # so neither side can widen it alone.
@@ -2408,7 +2496,7 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
         GEMMEV_1_0_MODEL_ID,
         "TrustedRouter Gemmev 1.0",
         "google/gemma-4-26b-a4b-it",
-        ("wandb", "nextbit", "io-net"),
+        ("nextbit", "wandb", "io-net"),
     ),
 )
 
@@ -2739,6 +2827,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 )
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "system1models-eu",
     "mistral",
     "regolo",
     "google-vertex",
@@ -2853,15 +2942,17 @@ SYNTH_QUALITY_MODEL_ORDER = (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
-# Every member must serve the 1M window this model advertises. minimax-m3 tops
-# out at 524288 and was only ever eligible here because upstream reseller
-# metadata over-reported its context; routing does not filter candidates by
-# capacity, so a large request could land on it and fail at the provider.
+# Every member must serve the 1M window this model advertises, by its catalog
+# window (#966). Routing does not filter a member's hosts by capacity.
 SYNTH_QUALITY_1M_MODEL_ORDER = (
+    "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
 )
+# A member whose catalog window falls below this leaves the panel; the rest
+# keep their order.
+SYNTH_QUALITY_1M_MIN_MEMBER_CONTEXT = 1_000_000
 
 SYNTH_PROMETHEUS_2_MODEL_ORDER = (
     "minimax/minimax-m3",
@@ -3254,7 +3345,7 @@ NATIVE_DECISION_MODEL_PROVIDERS: dict[str, str] = {
     "meta-llama/llama-3.3-70b-instruct": "sambanova",
     "google/gemini-3.1-flash-lite": "google-ai-studio",
     "openai/gpt-oss-20b": "deepinfra",
-    "google/gemma-4-26b-a4b-it": "wandb",
+    "google/gemma-4-26b-a4b-it": "nextbit",
     "deepseek/deepseek-v4.1-flash": "wafer",
 }
 
@@ -4005,6 +4096,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "the cerebras PROVIDER jurisdiction, not as a model origin."
         ),
     ),
+    **{
+        slug: ModelOrigin(
+            country=None,
+            lab_name="System1 Models (serving namespace)",
+            source_url="https://system1models.ai/models",
+            note=(
+                "System1's regional profiles serve Plumb, Winnow and JevOmni "
+                "decision models. The serving company's German jurisdiction "
+                "does not establish the origin of the underlying weights."
+            ),
+        )
+        for slug in ("system1models", "system1models-eu")
+    },
 }
 
 # Vendor prefixes at or above this many catalog models must have a MODEL_ORIGINS
@@ -4022,3 +4126,130 @@ def model_origin_for_model_id(model_id: str) -> ModelOrigin | None:
     if not rest:
         return None
     return MODEL_ORIGINS.get(prefix)
+
+
+# A model's publisher is its maker, named by the author prefix of its id (`qwen`
+# in `qwen/qwen3.7-max`) and never by Model.provider: that is the default route,
+# which for an author without a routing mapping is whichever host lists the
+# model first. Routing reads catalog_ingest._AUTHOR_TO_PROVIDER_SLUG, which is a
+# different map: it sends meta-llama to Cerebras.
+#
+# An author is listed here only when a PROVIDERS entry is its maker's own API.
+# Hosts and resellers are not, including a multi-lab hosting catalog that a
+# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
+# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
+# is published by TrustedRouter, not by its internal selector host.
+MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
+    # The maker's API under the author's own name.
+    "aion-labs": "aion-labs",
+    "alibaba": "alibaba",
+    "anthropic": "anthropic",
+    "baidu": "baidu",
+    "cohere": "cohere",
+    "decart": "decart",
+    "deepseek": "deepseek",
+    "inception": "inception",
+    "kling": "kling",
+    "krea": "krea",
+    "minimax": "minimax",
+    "mistral": "mistral",
+    "morph": "morph",
+    "neurometric": "neurometric",
+    "openai": "openai",
+    "parasail": "parasail",
+    "perplexity": "perplexity",
+    "poolside": "poolside",
+    "recraft": "recraft",
+    "reka": "reka",
+    "runway": "runway",
+    "scaledown": "scaledown",
+    "stepfun": "stepfun",
+    "tencent": "tencent",
+    "thinkingmachines": "thinkingmachines",
+    "trustedrouter": "trustedrouter",
+    "upstage": "upstage",
+    "voyage": "voyage",
+    "xiaomi": "xiaomi",
+    "zero-g": "zero-g",
+    # The maker's API under another name.
+    "arcee-ai": "arcee",
+    "black-forest-labs": "bfl",
+    "bytedance": "byteplus",
+    "bytedance-seed": "byteplus",
+    "deepseek-ai": "deepseek",
+    # Alibaba's Tongyi labs (Fun-Audio, Z-Image, Wan) publish through Model Studio.
+    "funaudiollm": "alibaba",
+    "google": "google-ai-studio",
+    "jina-ai": "jina",
+    # Kuaishou's own platform for its Kwaipilot KAT models, under their native ids.
+    "kwaipilot": "streamlake",
+    "lightricks": "ltx",
+    "minimaxai": "minimax",
+    "mistralai": "mistral",
+    "moonshot": "kimi",
+    "moonshotai": "kimi",
+    # Mistral NeMo, built with NVIDIA, is on Mistral's own API.
+    "nv-mistralai": "mistral",
+    # Baidu's PaddlePaddle models (PaddleOCR-VL) are on Baidu's Qianfan API.
+    "paddlepaddle": "baidu",
+    "qwen": "alibaba",
+    "sakana-ai": "sakana",
+    "stepfun-ai": "stepfun",
+    # GLM's original Tsinghua organisation; Z.ai now publishes GLM.
+    "thudm": "zai",
+    "tongyi-mai": "alibaba",
+    "typesafe-ai": "typesafe",
+    "wan-ai": "alibaba",
+    "x-ai": "grok",
+    "xai": "grok",
+    "xiaomimimo": "xiaomi",
+    "z-ai": "zai",
+    "zai-org": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
+}
+
+# Author prefixes that name no maker: a host's namespace for other labs' weights
+# (cerebras/gpt-oss-120b is OpenAI's model, fal/flux-1-schnell Black Forest
+# Labs', lightning-ai/glm-5.3 Z.ai's; phala/* ids select Phala's hosted tier),
+# and stealth/*, whose maker is unannounced.
+AUTHORS_NAMING_NO_MAKER = frozenset({"cerebras", "fal", "lightning-ai", "phala", "stealth"})
+
+
+def maker_provider_slug(model_id: str) -> str | None:
+    """The PROVIDERS slug of the model maker's own API, when TrustedRouter has one."""
+    author = model_id.split("/", 1)[0].lower()
+    if author in AUTHORS_NAMING_NO_MAKER:
+        return None
+    slug = MAKER_PROVIDER_BY_AUTHOR.get(author)
+    return slug if slug in PROVIDERS else None
+
+
+# Hosts a model maker's company runs besides the API above. They deliver a
+# prompt to the vendor as surely as its own API does: Google runs Vertex AI,
+# Microsoft runs Azure AI Foundry, NVIDIA runs NIM, and Meta via OpenRouter is
+# Meta's Llama API.
+MAKER_OPERATED_HOSTS_BY_AUTHOR: dict[str, frozenset[str]] = {
+    "google": frozenset({"google-vertex"}),
+    "meta-llama": frozenset({"meta"}),
+    "microsoft": frozenset({"azure"}),
+    "nvidia": frozenset({"nvidia-nim"}),
+}
+
+
+def model_vendor_provider_slugs(model_id: str) -> frozenset[str]:
+    """Every PROVIDERS entry that delivers a prompt to the model's own vendor.
+
+    That is the maker's own API, the hosts its company runs, and a provider
+    named like the model's author.
+    """
+    author = model_id.split("/", 1)[0].lower()
+    if author in AUTHORS_NAMING_NO_MAKER:
+        return frozenset()
+    slugs = set(MAKER_OPERATED_HOSTS_BY_AUTHOR.get(author, ()))
+    maker = maker_provider_slug(model_id)
+    if maker is not None:
+        slugs.add(maker)
+    if author in PROVIDERS:
+        slugs.add(author)
+    return frozenset(slug for slug in slugs if slug in PROVIDERS)

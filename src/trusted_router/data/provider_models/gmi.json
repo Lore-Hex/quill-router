@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-09-28T11:44:42Z",
-  "model_count": 103,
+  "generated_at": "2026-10-06T03:20:16Z",
+  "model_count": 105,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -416,7 +416,7 @@
       "status": 1,
       "id": "deepseek/deepseek-r1-0528",
       "upstream_id": "deepseek-ai/DeepSeek-R1-0528",
-      "context_length": 163840,
+      "context_length": 131072,
       "input_token_price_per_m": 570000,
       "output_token_price_per_m": 2290000,
       "cached_input_token_price_per_m": 230000
@@ -437,7 +437,7 @@
       "status": 1,
       "id": "deepseek/deepseek-v3-0324",
       "upstream_id": "deepseek-ai/DeepSeek-V3-0324",
-      "context_length": 163840,
+      "context_length": 128000,
       "input_token_price_per_m": 290000,
       "output_token_price_per_m": 1140000,
       "cached_input_token_price_per_m": 110000
@@ -2485,6 +2485,62 @@
       "input_token_price_per_m": 435000,
       "output_token_price_per_m": 870000,
       "cached_input_token_price_per_m": 3600
+    },
+    {
+      "display_name": "MiMo-V2.6-Flash",
+      "title": "XiaomiMiMo/MiMo-V2.6-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-flash",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.6-Flash",
+      "context_length": 1050000,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
+    },
+    {
+      "display_name": "gpt-6.1-sol",
+      "title": "openai/gpt-6.1-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.1-sol",
+      "upstream_id": "openai/gpt-6.1-sol",
+      "context_length": 1050000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 100000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 271999,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 10000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 200000
+        }
+      ]
     }
   ],
   "price_scale": "microdollars_per_million"

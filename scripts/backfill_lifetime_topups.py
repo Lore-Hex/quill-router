@@ -20,12 +20,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-bigtable")
+os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-clickhouse")
 os.environ.setdefault("TR_GCP_PROJECT_ID", "quill-cloud-proxy")
 os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
-os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
-os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
 
 from trusted_router.config import Settings
 from trusted_router.money import (
@@ -914,8 +912,8 @@ def main(
     if args.expected_total_microdollars is not None and args.expected_total_microdollars < 0:
         print("REFUSED: --expected-total-microdollars cannot be negative")
         return 2
-    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-bigtable":
-        print("REFUSED: --apply requires TR_STORAGE_BACKEND=spanner-bigtable")
+    if args.apply and os.environ.get("TR_STORAGE_BACKEND") != "spanner-clickhouse":
+        print("REFUSED: --apply requires TR_STORAGE_BACKEND=spanner-clickhouse")
         return 2
     try:
         cutover = _parse_timestamp(args.cutover)

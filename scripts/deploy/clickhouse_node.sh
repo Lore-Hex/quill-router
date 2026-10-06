@@ -14,7 +14,7 @@
 set -euo pipefail
 
 PROJECT="${PROJECT:-quill-cloud-proxy}"
-ZONE="${ZONE:-us-central1-a}"          # colocated with Bigtable/Spanner to keep the ingest scan local
+ZONE="${ZONE:-us-central1-a}"          # colocated with Spanner to keep the ingest scan local
 NAME="${NAME:-tr-clickhouse-1}"
 MACHINE="${MACHINE:-e2-standard-4}"    # 4 vCPU / 16 GB
 DISK_GB="${DISK_GB:-500}"

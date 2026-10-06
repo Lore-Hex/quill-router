@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from trusted_router.catalog import META_MODEL_IDS, MODEL_ENDPOINTS, PROVIDERS
+from trusted_router.catalog_privacy import provider_confidential_inference
 
 
 @dataclass(frozen=True)
@@ -42,12 +43,12 @@ def provider_og_facts(provider_slug: str) -> ProviderOgFacts:
     else:
         route_mode = "Catalog profile"
 
-    if provider.provider_e2ee and provider.provider_confidential_compute:
-        privacy = "E2EE + confidential"
+    if provider_confidential_inference(provider, prepaid=True):
+        privacy = "Confidential + ZDR"
     elif provider.provider_zero_data_retention or provider.prepaid_zero_data_retention:
         privacy = "Zero retention"
     elif provider.provider_confidential_compute:
-        privacy = "Confidential compute"
+        privacy = "Provider TEE claim"
     else:
         privacy = "Policy documented"
 

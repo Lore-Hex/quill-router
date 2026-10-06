@@ -50,7 +50,7 @@ def _console_client(store: Any, email: str) -> tuple[TestClient, Any, Any]:
 def test_console_api_key_page_uses_two_read_rpcs_regardless_of_key_count(
     key_count: int,
 ) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     client, user, workspace = _console_client(
         store,
         f"console-batch-{key_count}@example.com",
@@ -78,7 +78,7 @@ def test_console_api_key_page_uses_two_read_rpcs_regardless_of_key_count(
 
 
 def test_spanner_bulk_key_usage_sums_only_complete_configured_shards() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-shards@example.com")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -129,7 +129,7 @@ def test_spanner_bulk_key_usage_sums_only_complete_configured_shards() -> None:
 
 
 def test_spanner_bulk_key_usage_preserves_missing_row_fallback() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-missing-typed@example.com")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -155,7 +155,7 @@ def test_spanner_bulk_key_usage_preserves_missing_row_fallback() -> None:
 
 def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
     """Differentially pin the old list+point-read result without concurrent writes."""
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-differential@example.com")
     keys: list[ApiKey] = []
     for index in range(3):
@@ -215,14 +215,18 @@ def test_spanner_bulk_projection_matches_the_legacy_fanout_values() -> None:
                     if usage is None
                     else dict(usage["windows"])
                 ),
+                typed_usage_available=usage is not None,
             )
         )
 
     assert store.list_api_keys_with_usage(workspace.id) == expected
 
 
-def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards() -> None:
-    store, database, _bigtable = make_fake_store()
+def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp
+
+    monkeypatch.setattr(storage_gcp, "DEFAULT_NEW_BILLING_SHARDS", 3)
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-incomplete-shards@example.com")
     _raw, key = store.create_api_key(
         workspace_id=workspace.id,
@@ -238,7 +242,7 @@ def test_spanner_bulk_key_usage_fails_closed_on_incomplete_shards() -> None:
 
 
 def test_spanner_bulk_key_list_rejects_dangling_noncanonical_and_foreign_rows() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-owner@example.com")
     other_user, other_workspace = _workspace(store, "console-foreign@example.com")
     _raw, older = store.create_api_key(
@@ -292,7 +296,7 @@ def test_spanner_bulk_key_list_rejects_dangling_noncanonical_and_foreign_rows() 
 
 
 def test_spanner_bulk_key_projection_is_strong_and_read_your_write() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     user, workspace = _workspace(store, "console-immediate@example.com")
     snapshot_start = len(database.snapshot_calls)
     _raw, key = store.create_api_key(
@@ -312,7 +316,7 @@ def test_spanner_bulk_key_projection_is_strong_and_read_your_write() -> None:
     assert store.delete_key(key.hash) is True
     assert store.list_api_keys_with_usage(workspace.id) == []
     calls = database.snapshot_calls[snapshot_start:]
-    assert len(calls) == 6
+    assert len(calls) == 5  # Delete now reads inside its transaction, not a snapshot.
     assert calls == [{}] * len(calls)
 
 
@@ -373,7 +377,7 @@ def test_console_key_projection_keeps_the_existing_template_shape() -> None:
 
 
 def test_spanner_console_does_not_render_or_mutate_a_foreign_workspace_key() -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     client, _user, workspace = _console_client(store, "console-security@example.com")
     other_user, other_workspace = _workspace(store, "console-security-other@example.com")
     _raw, own = store.create_api_key(
@@ -443,9 +447,9 @@ def test_postgres_bulk_key_projection_uses_one_portable_statement(
 
     class Connection:
         def __init__(self) -> None:
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
+            self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
-        def execute(self, sql: str, params: tuple[str, ...]) -> Result:
+        def execute(self, sql: str, params: tuple[Any, ...]) -> Result:
             self.calls.append((sql, params))
             return Result()
 
@@ -465,10 +469,16 @@ def test_postgres_bulk_key_projection_uses_one_portable_statement(
     assert "key_index.id = (%s || '#' || key_record.id)" in sql
     assert "key_record.body ->> 'workspace_id' = %s" in sql
     assert "key_record.body ->> 'hash' = key_record.id" in sql
-    assert params == ("ws-postgres", "ws-postgres", "ws-postgres")
+    assert params == ("ws-postgres", "ws-postgres", True, 2**63 - 1, 0, "ws-postgres")
+    assert isinstance(params[3], Int8)
+    assert isinstance(params[4], Int8)
+    assert sql.index("LIMIT %s OFFSET %s") < sql.index("LEFT JOIN tr_key_limit")
+    assert "COALESCE(key_record.body ->> 'disabled', 'false') != 'true'" in sql
     assert len(snapshots) == 1
     assert snapshots[0].usage_microdollars == 42
     assert snapshots[0].windows["daily"] == 7
+    store.list_api_keys_with_usage("ws-postgres", limit=2, offset=3, include_disabled=False)
+    assert connection.calls[-1][1] == ("ws-postgres", "ws-postgres", False, 2, 3, "ws-postgres")
 
 
 def test_postgres_key_limit_seed_binds_small_limits_as_int8(

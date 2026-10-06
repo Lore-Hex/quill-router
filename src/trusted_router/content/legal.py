@@ -15,7 +15,7 @@ from trusted_router.config import Settings
 SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
     {
         "name": "Google Cloud Platform",
-        "purpose": "Cloud hosting, Confidential Space, Cloud Run, Spanner, Bigtable, KMS, Secret Manager, and operational infrastructure.",
+        "purpose": "Cloud hosting, Confidential Space, Cloud Run, Spanner, KMS, Secret Manager, and operational infrastructure.",
         "data_access": "Prompt traffic on the production API terminates inside the attested gateway. GCP services store metadata, billing records, secrets, and operational logs as configured. TrustedRouter never logs prompt/output content; ordinary synchronous and streaming inference does not retain it. The opt-in Batch API temporarily retains enclave-encrypted artifacts for up to 30 days.",
         "policy_url": "https://cloud.google.com/security/compliance",
     },

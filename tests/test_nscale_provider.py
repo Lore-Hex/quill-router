@@ -15,6 +15,7 @@ from scripts.pricing.manifest import apply_canary_results
 from scripts.pricing.providers import nscale
 from trusted_router import catalog_ingest
 from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
+from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
 
@@ -422,19 +423,10 @@ def test_stale_mixed_manifest_recovers_only_chat_token_prices(tmp_path: Path) ->
 def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
     raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
     assert raw["provider"] == nscale.SLUG
-    assert raw["model_count"] >= 15
-    assert {row["model_type"] for row in raw["models"]} == {
-        "chat",
-        "embedding",
-        "image",
-    }
     routable = [row for row in raw["models"] if row.get("routable") is not False]
     blocked = [row for row in raw["models"] if row.get("routable") is False]
-    assert routable
-    assert blocked
-    assert all(
-        row.get("routable_reason") == "provider-canary-failed" for row in blocked
-    )
+    # A blocked row says why (a failed canary, a missing price, a delisting).
+    assert all(row.get("routable_reason") for row in blocked)
     assert all(
         row["input_token_price_per_m"] > 0
         and row["output_token_price_per_m"] > 0
@@ -447,8 +439,15 @@ def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
         for row in routable
         if row["model_type"] == "embedding"
     )
+    # A routable image row is priced per image, for the same variants as its
+    # runtime price in image_generation.FIXED_IMAGE_PRICES_MICRODOLLARS (a model
+    # without one raises "missing fixed image pricing"). Whether Nscale's price
+    # still equals that audited constant is
+    # test_nscale_lists_its_image_at_the_audited_price.
     assert all(
-        row["fixed_output_price_microdollars"] == {"1k": 1_364}
+        row["fixed_output_price_microdollars"].keys()
+        == FIXED_IMAGE_PRICES_MICRODOLLARS.get(row["id"], {}).keys()
+        and all(price > 0 for price in row["fixed_output_price_microdollars"].values())
         for row in routable
         if row["model_type"] == "image"
     )
@@ -464,6 +463,31 @@ def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
     assert nscale.SLUG in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert nscale.SLUG in refresh.PROVIDER_SLUGS
     assert default_provider_secret_ref(nscale.SLUG) == "env://NSCALE_API_KEY"
+
+
+@pytest.mark.provider_health
+def test_nscale_lists_its_image_at_the_audited_price() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. Billing charges the audited
+    # image_generation.FIXED_IMAGE_PRICES_MICRODOLLARS, not this price: when
+    # Nscale's moves, a human reviews and updates that constant.
+    raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
+    routable = [row for row in raw["models"] if row.get("routable") is not False]
+    assert all(
+        row["fixed_output_price_microdollars"] == {"1k": 1_364}
+        for row in routable
+        if row["model_type"] == "image"
+    )
+
+
+@pytest.mark.provider_health
+def test_nscale_still_lists_its_catalog() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert raw["model_count"] >= 15
+    assert {row["model_type"] for row in raw["models"]} == {"chat", "embedding", "image"}
+    assert any(row.get("routable") is not False for row in raw["models"])
 
 
 def test_nscale_secret_is_refreshed_hourly() -> None:

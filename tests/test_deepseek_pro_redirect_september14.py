@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from scripts.pricing import base
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import deepseek
+from tests.pinned_manifests import DEEPSEEK_DIRECT_ROWS, serve_manifest_rows
 from trusted_router import catalog
 from trusted_router import provider_lifecycle as lifecycle
 from trusted_router.provider_lifecycle import ProviderPrice
@@ -14,6 +16,13 @@ PRO = "deepseek/deepseek-v4-pro"
 PINNED_PRO = "deepseek/deepseek-v4-pro-0813"
 FLASH = "deepseek/deepseek-flash"
 REDIRECT_AT = datetime(2026, 9, 14, 4, tzinfo=UTC)
+
+
+@pytest.fixture
+def direct_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """DeepSeek's direct routes, built from its pinned manifest rows: its price
+    schedule and redirect apply to DeepSeek's own routes whatever it lists today."""
+    serve_manifest_rows(monkeypatch, tmp_path, "deepseek", DEEPSEEK_DIRECT_ROWS)
 
 
 @pytest.mark.parametrize("model", [PRO, PINNED_PRO])
@@ -73,6 +82,7 @@ def test_discovery_publishes_distinct_live_pro_price_and_flash_version(monkeypat
     assert deepseek._DISCOVERED_MANIFEST_ROWS[FLASH]["display_name"] == "DeepSeek V4.1 Flash (rolling)"
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_pro_customer_quote_before_redirect_is_not_flash_priced():
     endpoint = catalog.MODEL_ENDPOINTS[f"{PRO}@deepseek/prepaid"]
     assert _endpoint_cost_microdollars(

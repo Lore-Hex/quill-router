@@ -25,6 +25,8 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="SAMBANOVA_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
         expected_models=("minimax/minimax-m3", "openai/gpt-oss-120b"),
+        canary_require_usage=True,
+        canary_require_message=True,
     ),
     manifest_path=MANIFEST_PATH,
 )

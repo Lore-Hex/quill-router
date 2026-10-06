@@ -3,12 +3,14 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-09-28T11:44:42Z",
+  "generated_at": "2026-10-06T03:20:16Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
+      "routable": false,
+      "routable_reason": "provider-billing-unavailable",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
       "display_name": "deepseek-ai/DeepSeek-V4-Flash",
       "context_length": 1048576,
@@ -44,7 +46,8 @@
         "reasoning",
         "json_mode",
         "structured_outputs"
-      ]
+      ],
+      "missing_since": "2026-10-04"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -95,7 +98,7 @@
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "google/gemma-4-26B-A4B",
       "display_name": "google/gemma-4-26B-A4B",
-      "context_length": 262144,
+      "context_length": 256000,
       "endpoints": [
         "chat/completions"
       ],
@@ -131,7 +134,8 @@
         "json_mode"
       ],
       "cached_input_token_price_per_m": 32000,
-      "routable": true
+      "routable": false,
+      "routable_reason": "provider-billing-unavailable"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -556,8 +560,8 @@
         "max_tokens",
         "seed"
       ],
-      "input_token_price_per_m": 1050000,
-      "output_token_price_per_m": 4200000,
+      "input_token_price_per_m": 240000,
+      "output_token_price_per_m": 3930000,
       "cached_input_token_price_per_m": 190000
     },
     {
@@ -634,16 +638,14 @@
       ],
       "supported_parameters": [
         "temperature",
-        "min_p",
         "top_p",
         "max_tokens",
         "top_k",
-        "stop",
-        "logit_bias"
+        "stop"
       ],
-      "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 6000
+      "input_token_price_per_m": 270000,
+      "output_token_price_per_m": 1150000,
+      "cached_input_token_price_per_m": 9000
     }
   ]
 }

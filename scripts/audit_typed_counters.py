@@ -1,7 +1,7 @@
 """Daily read-only typed-billing invariant audit.
 
 Runs the typed-side reserved invariant auditor against the production
-Spanner/Bigtable store. Exit codes are intentionally distinct for scheduled
+Spanner store. Exit codes are intentionally distinct for scheduled
 workflow alerting:
 
   0: invariant report clean
@@ -21,12 +21,10 @@ from trusted_router.storage import create_store
 from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants
 
 _DEFAULT_ENV = {
-    "TR_STORAGE_BACKEND": "spanner-bigtable",
+    "TR_STORAGE_BACKEND": "spanner-clickhouse",
     "TR_GCP_PROJECT_ID": "quill-cloud-proxy",
     "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
     "TR_SPANNER_DATABASE_ID": "trusted-router",
-    "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
-    "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
 }
 _MAX_SAMPLES = 100_000
 
@@ -83,10 +81,10 @@ def main(
     try:
         settings = settings_factory()
         backend = str(getattr(settings, "storage_backend", "")).lower()
-        if backend != "spanner-bigtable":
+        if backend != "spanner-clickhouse":
             print(
                 "ERROR: refusing to audit because TR_STORAGE_BACKEND is not "
-                f"spanner-bigtable (resolved {backend or '<empty>'})",
+                f"spanner-clickhouse (resolved {backend or '<empty>'})",
                 file=sys.stderr,
             )
             return 2

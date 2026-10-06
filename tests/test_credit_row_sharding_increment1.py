@@ -92,7 +92,7 @@ def test_credit_grant_distribution_puts_remainder_on_shard_zero() -> None:
 
 
 def test_authorize_records_credit_shard_and_settle_releases_that_shard() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-shard-plumbing"
     _seed_sharded_credit(store, database, workspace_id, [2_000_000, 2_000_000, 2_000_000])
     _raw, key = store.api_keys.create(
@@ -140,7 +140,7 @@ def test_authorize_records_credit_shard_and_settle_releases_that_shard() -> None
 
 
 def test_idempotent_replay_keeps_original_credit_shard() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-shard-replay"
     _seed_sharded_credit(store, database, workspace_id, [1_000_000, 1_000_000, 1_000_000])
     _raw, key = store.api_keys.create(
@@ -175,7 +175,7 @@ def test_idempotent_replay_keeps_original_credit_shard() -> None:
 
 
 def test_pre_migration_reservation_falls_back_to_ws_shard() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-old-reservation"
     _seed_sharded_credit(store, database, workspace_id, [1_000_000])
     database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["reserved"] = 200_000
@@ -212,7 +212,7 @@ def test_pre_migration_reservation_falls_back_to_ws_shard() -> None:
 
 
 def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-grant-shards"
     _seed_sharded_credit(store, database, workspace_id, [40, 30, 30])
 
@@ -232,7 +232,7 @@ def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
 
 
 def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-grant-missing-shard"
     _seed_sharded_credit(store, database, workspace_id, [50, 50])
     del database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 1)]
@@ -253,7 +253,7 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
 def test_guarded_debit_rebalances_to_shard_zero_once_before_retry(
     totals: list[int], remaining: list[int],
 ) -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-debit-rebalance"
     _seed_sharded_credit(store, database, workspace_id, totals)
 
@@ -279,7 +279,7 @@ def test_guarded_debit_rebalances_to_shard_zero_once_before_retry(
 
 
 def test_typed_credit_snapshot_sums_only_configured_shards() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-summary-shards"
     _seed_sharded_credit(store, database, workspace_id, [50, 30, 20])
     rows = database.typed[CREDIT_BALANCE_TABLE]
@@ -294,7 +294,7 @@ def test_typed_credit_snapshot_sums_only_configured_shards() -> None:
 
 
 def test_typed_credit_snapshot_fails_closed_on_missing_configured_shard() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-summary-gap"
     _seed_sharded_credit(store, database, workspace_id, [50, 50])
     del database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 1)]
@@ -304,7 +304,7 @@ def test_typed_credit_snapshot_fails_closed_on_missing_configured_shard() -> Non
 
 
 def test_generic_credit_metadata_write_does_not_overwrite_sharded_sub_budgets() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-mirror-shards"
     account = CreditAccount(workspace_id=workspace_id, shard_count=2)
 
@@ -314,7 +314,7 @@ def test_generic_credit_metadata_write_does_not_overwrite_sharded_sub_budgets() 
 
 
 def test_invariant_audit_is_credit_shard_aware() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-audit-shards"
     _seed_sharded_credit(store, database, workspace_id, [60, 40])
     rows = database.typed[CREDIT_BALANCE_TABLE]

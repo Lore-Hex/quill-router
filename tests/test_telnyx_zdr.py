@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
@@ -22,6 +24,30 @@ from trusted_router.routing import chat_route_endpoint_candidates
 POLICY_URL = "https://telnyx.com/privacy-policy"
 
 
+@pytest.fixture
+def telnyx_glm_5_2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Telnyx serves GLM-5.2 on fixture routes, and the catalog carries the model
+    even if every host has delisted it: its ZDR posture is a rule of Telnyx's
+    routes, whatever the hosts list today."""
+    for usage_type in ("Credits", "BYOK"):
+        serve_on_fixture_route(
+            monkeypatch, "z-ai/glm-5.2", "telnyx", author="zai",
+            usage_type=usage_type, upstream_id="zai-org/GLM-5.2",
+        )
+
+
+@pytest.mark.provider_health
+def test_telnyx_serves_glm_5_2() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    assert {
+        endpoint.usage_type
+        for endpoint in endpoints_for_model("z-ai/glm-5.2")
+        if endpoint.provider == "telnyx"
+    } == {"Credits", "BYOK"}
+
+
+@pytest.mark.usefixtures("telnyx_glm_5_2")
 def test_telnyx_hosted_chat_routes_are_zdr_not_confidential() -> None:
     provider = PROVIDERS["telnyx"]
     assert provider.stores_content is False
@@ -47,6 +73,7 @@ def test_telnyx_hosted_chat_routes_are_zdr_not_confidential() -> None:
         assert endpoint_e2ee(endpoint) is not True
 
 
+@pytest.mark.usefixtures("telnyx_glm_5_2")
 def test_telnyx_can_satisfy_pinned_zdr_routing() -> None:
     candidates = chat_route_endpoint_candidates(
         {

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router import provider_locations
 from trusted_router.catalog import PROVIDERS
 from trusted_router.config import Settings
@@ -117,7 +118,16 @@ def test_provider_pages_expose_location_evidence_and_limits(test_settings: Setti
         assert url in html
 
 
-def test_telnyx_and_pearl_do_not_overstate_guarantees(test_settings: Settings) -> None:
+def test_telnyx_and_pearl_do_not_overstate_guarantees(
+    test_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Telnyx serves a model with a region declaration here, as fixtures,
+    # whatever it lists today.
+    serve_on_fixture_route(monkeypatch, "moonshotai/kimi-k2.6", "telnyx", author="kimi")
+    monkeypatch.setattr(provider_locations, "_telnyx_location_snapshot", lambda: telnyx_model_locations({
+        "provider": "telnyx", "generated_at": "2026-09-27T00:00:00Z",
+        "models": [{"id": "moonshotai/kimi-k2.6", "provider_regions": ["USA", "EU"]}],
+    }))
     html = public_provider_detail_html(test_settings, "telnyx")
     assert "not per-request receipts or enforced residency guarantees" in html
     assert "Catalog snapshot:" in html
@@ -165,10 +175,11 @@ def test_deepinfra_no_longer_claims_us_only() -> None:
 
 
 def test_catalog_and_gateway_share_model_availability_contract(monkeypatch) -> None:
-    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_to_openrouter_shape
+    from trusted_router.catalog import MODELS, model_to_openrouter_shape
     from trusted_router.routes.internal.gateway import _gateway_candidate_payload
 
-    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.provider == "telnyx" and e.usage_type == "Credits")
+    # Any Telnyx Credits route; this one is a fixture, whatever Telnyx lists today.
+    endpoint = serve_on_fixture_route(monkeypatch, "moonshotai/kimi-k2.6", "telnyx", author="kimi")
     model = MODELS[endpoint.model_id]
     monkeypatch.setattr(provider_locations, "_telnyx_location_snapshot", lambda: telnyx_model_locations({
         "provider": "telnyx", "generated_at": "2026-09-27T00:00:00Z",
@@ -187,10 +198,14 @@ def test_catalog_and_gateway_share_model_availability_contract(monkeypatch) -> N
     assert inference_location_metadata("telnyx", "not/in/catalog")["advertised_regions"] == []
 
 
-def test_public_endpoints_return_region_metadata(client) -> None:
-    from trusted_router.catalog import MODEL_ENDPOINTS
-
-    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.provider == "telnyx" and e.usage_type == "Credits")
+def test_public_endpoints_return_region_metadata(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Any Telnyx Credits route with a region declaration; both are fixtures,
+    # whatever Telnyx lists today.
+    endpoint = serve_on_fixture_route(monkeypatch, "moonshotai/kimi-k2.6", "telnyx", author="kimi")
+    monkeypatch.setattr(provider_locations, "_telnyx_location_snapshot", lambda: telnyx_model_locations({
+        "provider": "telnyx", "generated_at": "2026-09-27T00:00:00Z",
+        "models": [{"id": endpoint.model_id, "provider_regions": ["USA", "EU"]}],
+    }))
     response = client.get(f"/v1/models/{endpoint.model_id}/endpoints")
     assert response.status_code == 200
     row = next(e for e in response.json()["data"] if e["endpoint_id"] == endpoint.id)

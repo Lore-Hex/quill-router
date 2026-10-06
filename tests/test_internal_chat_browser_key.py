@@ -20,6 +20,7 @@ import datetime as dt
 
 from fastapi.testclient import TestClient
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal.chat_browser_key import (
@@ -178,10 +179,7 @@ def test_issue_chat_browser_key_secure_flag_in_production() -> None:
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
         ses_from_email="noreply@example.com",
-        storage_backend="spanner-bigtable",
-        spanner_instance_id="i",
-        spanner_database_id="d",
-        bigtable_instance_id="b",
+        **PRODUCTION_SPANNER_STORAGE,
         byok_kms_key_name=(
             "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
         ),

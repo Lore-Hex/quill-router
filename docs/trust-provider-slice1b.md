@@ -1,8 +1,11 @@
 # PayPal and Adyen trust facts — PR 1b
 
-This slice adds adverse facts to the existing verified webhooks. Eligibility stays
-inert: `TR_TRUST_QUALIFYING_PROVIDERS` defaults to `stripe,x402`, and rollout keeps
-`TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false`. PR 2 owns arming and admission.
+This slice adds adverse facts to the existing verified webhooks. Eligibility stayed
+inert at the time: `TR_TRUST_QUALIFYING_PROVIDERS` defaults to `stripe,x402`, and the
+rollout then kept `TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false`. Since the
+spend-lease pilot's removal (2026-09) that flag, whose name predates the removal,
+arms only the authorize-time billing-pause gate (`trust_eligibility.billing_paused_tx`)
+and the rollout renders it `true`; there is no spend-lease admission.
 
 ## Integration contract
 

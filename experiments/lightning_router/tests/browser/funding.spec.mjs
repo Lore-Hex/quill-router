@@ -1,5 +1,36 @@
 import { expect, test } from "./fixtures.mjs";
 
+test("pending creation hides the QR until the existing invoice is ready", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let ready = false;
+  let creates = 0;
+  await page.route("**/api/invoices", async (route) => {
+    creates += 1;
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), bolt11: "", qr: null } });
+  });
+  await page.route("**/api/invoices/*/refresh", async (route) => {
+    const response = await route.fetch();
+    const invoice = await response.json();
+    await route.fulfill({ response, json: ready ? invoice : { ...invoice, bolt11: "", qr: null } });
+  });
+  await page.goto("/");
+  await expect(page.locator("#invoice-state")).toHaveText("Preparing invoice");
+  await expect(page.locator("#qr")).toBeHidden();
+  await expect(page.locator("#qr")).not.toHaveAttribute("src");
+  await expect(page.locator("#invoice-actions")).toBeHidden();
+  await expect(page.locator("#wallet-link")).not.toHaveAttribute("href");
+  await expect(page.locator("#new-invoice")).toBeHidden();
+  const id = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")).invoice.id);
+  ready = true;
+  await expect(page.locator("#qr")).toBeVisible({ timeout: 12000 });
+  await expect(page.locator("#invoice-state")).toHaveText("Waiting for payment");
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")).invoice.id)).toBe(id);
+  expect(creates).toBe(1);
+  await expect(page.locator("#account")).toBeHidden();
+  await expect(page.locator("#error")).toBeEmpty();
+});
+
 test("QR first, real balance transition, reload and model setup tabs", async ({ page, request }) => {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));

@@ -1,0 +1,9 @@
+{
+  "attestation.jwt": "3637066ff185818581fb01794834d527556d210466e2994da75aa96f10069884",
+  "capture.json": "6eecb5219b0b52d388613e07dd4ae737e174a631bf1024b2dc392ec78998f51c",
+  "certificate.der": "d44ea850320d2cca9fa0b7671b18ffebb96a1b0522297b9f0a70d484698b48a5",
+  "followup-attestation.jwt": "32f520b2c6ae6c404028fb3d9bde988a702e9100d6a26bb3af5021e2911bd2f2",
+  "gcp-release.json": "60b183bee08d03c425fa079617ac4510f36ab84c9f660c7b3cb4a359109170c5",
+  "initial-check.json": "79e52235582d5a0d99749a767fca22ff367dae241c3c0e1398ced43a9e0d23d8",
+  "verification.txt": "47aa01b40d991981cdac8e6161f2188245322395bbcf7c5da562eceaaf78ccac"
+}

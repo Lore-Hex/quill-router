@@ -1,0 +1,822 @@
+[
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 0,
+    "name": "zero-usage",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 0,
+        "cached_input_micro_per_million": 0,
+        "input_micro_per_million": 0,
+        "output_micro_per_million": 0
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 0,
+    "name": "free-tokens",
+    "usage": {
+      "cache_creation_tokens": 40,
+      "cache_read_tokens": 30,
+      "input_tokens": 100,
+      "output_tokens": 20,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 17,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 17,
+    "name": "request-fee-only",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 7,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 83,
+    "name": "all-components",
+    "usage": {
+      "cache_creation_tokens": 19,
+      "cache_read_tokens": 17,
+      "input_tokens": 11,
+      "output_tokens": 13,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 0,
+        "cached_input_micro_per_million": 0,
+        "input_micro_per_million": 9007199254740993,
+        "output_micro_per_million": 0
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 9007199254740993,
+    "name": "large-exact-integer",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 1000000,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "minimum-i",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 1,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-i-499999",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 499999,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-i-500000",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 500000,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-i-500001",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 500001,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "minimum-o",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 1,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-o-499999",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 499999,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-o-500000",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 500000,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-o-500001",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 500001,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "minimum-r",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 1,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-r-499999",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 499999,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-r-500000",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 500000,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-r-500001",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 500001,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "minimum-w",
+    "usage": {
+      "cache_creation_tokens": 1,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-w-499999",
+    "usage": {
+      "cache_creation_tokens": 499999,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-w-500000",
+    "usage": {
+      "cache_creation_tokens": 500000,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 1,
+    "name": "half-up-w-500001",
+    "usage": {
+      "cache_creation_tokens": 500001,
+      "cache_read_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1,
+        "cached_input_micro_per_million": 1,
+        "input_micro_per_million": 1,
+        "output_micro_per_million": 1
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": []
+    },
+    "expected_microdollars": 4,
+    "name": "round-components-before-sum",
+    "usage": {
+      "cache_creation_tokens": 500000,
+      "cache_read_tokens": 500000,
+      "input_tokens": 500000,
+      "output_tokens": 500000,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "max_prompt_tokens": null,
+          "rates": {
+            "cache_creation_micro_per_million": 2500000,
+            "cached_input_micro_per_million": 200000,
+            "input_micro_per_million": 2000000,
+            "output_micro_per_million": 6000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 120,
+    "name": "tier-99",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 99,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "max_prompt_tokens": null,
+          "rates": {
+            "cache_creation_micro_per_million": 2500000,
+            "cached_input_micro_per_million": 200000,
+            "input_micro_per_million": 2000000,
+            "output_micro_per_million": 6000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 121,
+    "name": "tier-100",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 100,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "max_prompt_tokens": null,
+          "rates": {
+            "cache_creation_micro_per_million": 2500000,
+            "cached_input_micro_per_million": 200000,
+            "input_micro_per_million": 2000000,
+            "output_micro_per_million": 6000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 244,
+    "name": "tier-101",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 101,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "max_prompt_tokens": null,
+          "rates": {
+            "cache_creation_micro_per_million": 2500000,
+            "cached_input_micro_per_million": 200000,
+            "input_micro_per_million": 2000000,
+            "output_micro_per_million": 6000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 232,
+    "name": "cache-counts-select-tier",
+    "usage": {
+      "cache_creation_tokens": 3,
+      "cache_read_tokens": 8,
+      "input_tokens": 90,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 0
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "max_prompt_tokens": null,
+          "rates": {
+            "cache_creation_micro_per_million": 2500000,
+            "cached_input_micro_per_million": 200000,
+            "input_micro_per_million": 2000000,
+            "output_micro_per_million": 6000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 116,
+    "name": "private-tier-basis",
+    "usage": {
+      "cache_creation_tokens": 3,
+      "cache_read_tokens": 8,
+      "input_tokens": 90,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 100
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 1250000,
+        "cached_input_micro_per_million": 100000,
+        "input_micro_per_million": 1000000,
+        "output_micro_per_million": 3000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        },
+        {
+          "max_prompt_tokens": null,
+          "rates": {
+            "cache_creation_micro_per_million": 2500000,
+            "cached_input_micro_per_million": 200000,
+            "input_micro_per_million": 2000000,
+            "output_micro_per_million": 6000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 232,
+    "name": "invalid-private-tier-basis",
+    "usage": {
+      "cache_creation_tokens": 3,
+      "cache_read_tokens": 8,
+      "input_tokens": 90,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 102
+    }
+  },
+  {
+    "candidate": {
+      "endpoint_id": "fixture-endpoint",
+      "price_history_version": 1,
+      "rates": {
+        "cache_creation_micro_per_million": 0,
+        "cached_input_micro_per_million": 0,
+        "input_micro_per_million": 9000000,
+        "output_micro_per_million": 9000000
+      },
+      "request_fee_micro": 0,
+      "rounding": "half_up_per_million",
+      "tiers": [
+        {
+          "max_prompt_tokens": 100,
+          "rates": {
+            "cache_creation_micro_per_million": 1250000,
+            "cached_input_micro_per_million": 100000,
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 3000000
+          }
+        }
+      ]
+    },
+    "expected_microdollars": 122,
+    "name": "last-bounded-tier",
+    "usage": {
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "input_tokens": 101,
+      "output_tokens": 7,
+      "price_tier_input_tokens": 0
+    }
+  }
+]

@@ -200,7 +200,7 @@ def test_apply_rejects_nonpositive_cost(home: InMemoryStore) -> None:
 
 
 def _spanner_home() -> tuple[Any, Any]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     store._write_entity("workspace", WS, Workspace(id=WS, name="w", owner_user_id="u-1"))
     store._write_entity("credit", WS, CreditAccount(workspace_id=WS))
     database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(WS, 0)] = {

@@ -14,6 +14,7 @@ from google.rpc.status_pb2 import Status
 
 from trusted_router import storage_gcp_counter_dml as counters
 from trusted_router.spend_windows import window_floors
+from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_batch_dml import DmlStatement
 from trusted_router.storage_gcp_generation_records import generation_insert_statement
 from trusted_router.storage_gcp_operational_analytics_outbox import (
@@ -30,10 +31,16 @@ from trusted_router.storage_gcp_settle_outbox import (
     _DONE_ROW_SQL,
     SpannerSettleOutbox,
     done_retention_statements,
+    resolved_intent_statements,
     speculative_done_statements,
 )
 from trusted_router.storage_gcp_strict_budget import reserve_strict_key
-from trusted_router.storage_models import GatewayAuthorization, Generation, SettleOutboxRow
+from trusted_router.storage_models import (
+    GatewayAuthorization,
+    Generation,
+    ProviderBenchmarkSample,
+    SettleOutboxRow,
+)
 from trusted_router.types import UsageType
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -46,6 +53,7 @@ class SQLCase:
     batch: bool = False
     seed: list[DmlStatement] | None = None
     expected_counts: list[int] | None = None
+    expected_rows: list[list[Any]] | None = None
 
 
 class Capture:
@@ -68,6 +76,26 @@ class Capture:
 
 def builder_cases() -> list[SQLCase]:
     cases = []
+    # The DDL column is ARRAY<STRING(32)>, not serialized JSON. Edge strings
+    # below are individual causes, so even ['[]'] and [''] are paused.
+    from trusted_router.trust_eligibility import billing_paused_row
+
+    for index, causes in enumerate([None, [], [''], ['[]'], ['["x"]'], [' '], ['[ ]'], ['x'], ['x', 'y']]):
+        for armed in (False, True):
+            seed = (
+                "INSERT INTO tr_credit_balance "
+                "(workspace_id, shard, total_credits, total_usage, reserved, billing_pause_causes) "
+                "VALUES (@ws, 0, 1000, 0, 0, @causes)",
+                {"ws": "hold-time-ws", "causes": causes},
+                {"ws": pt.STRING, "causes": pt.Array(pt.STRING)},
+            )
+            statement = counters.reserve_credit_statement(
+                pt, "hold-time-ws", 100, check_pause=armed,
+            )
+            cases.append(SQLCase(
+                f"authorize_hold_time_pause/{index}/{armed}", [statement], batch=True,
+                seed=[seed], expected_counts=[int(not armed or not billing_paused_row([causes, None]))],
+            ))
     authorization = GatewayAuthorization(
         id="acceptance-auth", workspace_id="acceptance-ws", key_hash="acceptance-key",
         model_id="acceptance-model", provider="acceptance-provider", usage_type=UsageType.CREDITS,
@@ -83,10 +111,6 @@ def builder_cases() -> list[SQLCase]:
     )
     outbox = SpannerOperationalAnalyticsOutbox(None, pt)
     insert_auth = gateway_authorization_insert_statement(pt, authorization, created_at=NOW)
-    insert_admission = gateway_authorization_insert_statement(
-        pt, replace(authorization, spend_lease_admission_receipt="{}", spend_lease_receipt_hash="a" * 64),
-        created_at=NOW,
-    )
     insert_reservation = counters.reservation_insert_statement(
         pt, reservation_id="acceptance-reservation", workspace_id="acceptance-ws",
         key_hash="acceptance-key", ws_shard=0, credit_shard=0, key_shard=0,
@@ -98,7 +122,7 @@ def builder_cases() -> list[SQLCase]:
     reserve_key = counters.reserve_key_statement(pt, "acceptance-key", 1, is_byok=False, shard=0)
     gen = generation_insert_statement(pt, generation, terminal_at=NOW)
     activity = outbox.activity_insert_statement(generation)
-    for name, statement in (("authorization", insert_auth), ("admission", insert_admission),
+    for name, statement in (("authorization", insert_auth),
                             ("reservation", insert_reservation), ("entity", entity),
                             ("reserve-key", reserve_key), ("generation", gen), ("activity", activity)):
         cases.append(SQLCase(name, [statement]))
@@ -143,13 +167,36 @@ def builder_cases() -> list[SQLCase]:
     cases.append(SQLCase("speculative-done-batch", speculative_done_statements(
         pt, authorization_id="acceptance-auth", intent_kind="settle", reservation_id="acceptance-reservation",
     ), batch=True))
-    for byok, amounts in product((False, True), repeat=2):
+    for hold, actual, reserved, debt in ((100, 70, 100, 0), (100, 70, 99, 0),
+                                         (100, 70, 100, 50), (100, 100, 100, 50),
+                                         (100, 130, 100, 50)):
+        credit = counters.release_credit_no_debt_statement(
+            pt, "acceptance-workspace", hold, actual, shard=0,
+        )
+        seed_credit = (
+            "INSERT INTO tr_credit_balance (workspace_id, shard, total_credits, reserved) "
+            "VALUES (@ws, 0, 1000, @reserved)",
+            {"ws": "acceptance-workspace", "reserved": reserved},
+            {"ws": pt.STRING, "reserved": pt.INT64},
+        )
+        seed_debt = (
+            "INSERT INTO tr_trust_event (workspace_id, event_id, kind, provider, "
+            "occurred_at, recorded_at, unrecovered_micro) "
+            "VALUES (@ws, 'acceptance-debt', 'payment', 'stripe', @now, @now, @debt)",
+            {"ws": "acceptance-workspace", "now": NOW, "debt": debt},
+            {"ws": pt.STRING, "now": pt.TIMESTAMP, "debt": pt.INT64},
+        )
+        cases.append(SQLCase(
+            f"c1-credit-{hold}-{actual}-{reserved}-{debt}", [credit],
+            seed=[seed_credit, seed_debt],
+            expected_counts=[int(reserved >= hold and (hold <= actual or debt == 0))],
+        ))
+    for byok in (False, True):
         capture = Capture()
         counters.release_key(capture, pt, "acceptance-key", 1, 1, book_to_byok=byok,
-                             window_floors=window_floors(NOW),
-                             window_amounts={"daily": 1, "weekly": 1, "monthly": 1} if amounts else None)
+                             window_floors=window_floors(NOW))
         for index, statement in enumerate(capture.statements):
-            cases.append(SQLCase(f"release-key-{byok}-{amounts}-{index}", [statement]))
+            cases.append(SQLCase(f"release-key-{byok}-{index}", [statement]))
     for enforce in (False, True):
         capture = Capture()
         reserve_strict_key(capture, pt, "acceptance-key", 1, is_byok=False, enforce_windows=enforce)
@@ -171,7 +218,44 @@ def builder_cases() -> list[SQLCase]:
             writes.append(gen)
         if include_activity:
             writes.append(activity)
+        writes.extend([
+            counters.release_credit_no_debt_statement(pt, "acceptance-workspace", 100, 70, shard=0),
+            counters.release_key_statement(pt, "acceptance-key", 100, 70, book_to_byok=False,
+                                           window_floors=window_floors(NOW), shard=0),
+        ])
         cases.append(SQLCase(f"settle-batch-{claim_hold}-{done_outbox}-{include_generation}-{include_activity}", writes, batch=True, seed=[insert_auth, insert_reservation]))
+    # The one-commit settle: claim, settled authorization, the intent INSERTed
+    # already resolved with the enqueue's retention clears, the done-mark's
+    # retention resolution, request records, activity and benchmark intents.
+    benchmark = SpannerAnalyticsOutbox(None, pt).enqueue_statement(
+        ProviderBenchmarkSample.from_generation(generation)
+    )
+    for intent_kind, refill in (("settle", False), ("settle", True), ("refund", False)):
+        intent = SettleOutboxRow(
+            authorization_id="acceptance-auth", intent_kind=intent_kind, settle_origin="typed",
+            actual_cost_micro=1, reservation_id="acceptance-reservation",
+            selected_endpoint_id="acceptance-endpoint", model_id="acceptance-model",
+            selected_usage_type="Credits", settle_body="{}",
+            auto_refill_workspace_id="acceptance-ws" if refill else None,
+        )
+        writes = [
+            counters.claim_reservation_statement(
+                pt, "acceptance-reservation", actual_micro=1, settled_usage_type="credits",
+                terminal_at=NOW, defer_retention=True,
+            ),
+            settled,
+            *resolved_intent_statements(pt, intent, initial_delay_seconds=60),
+        ]
+        if intent_kind == "settle":
+            writes.extend([gen, activity])
+        writes.append(benchmark)
+        # Counts: claim, settled, INSERT; nothing to clear on fresh rows; then
+        # both records arm (no sibling intent); then the request-record INSERTs.
+        cases.append(SQLCase(
+            f"one-commit-{intent_kind}-{refill}", writes, batch=True,
+            seed=[insert_auth, insert_reservation],
+            expected_counts=[1, 1, 1, 0, 0, 1, 1, *([1, 1] if intent_kind == "settle" else []), 1],
+        ))
     for has_reservation, refill in product((False, True), repeat=2):
         capture = Capture()
         database = SimpleNamespace(run_in_transaction=lambda fn, capture=capture, **_kw: fn(capture))

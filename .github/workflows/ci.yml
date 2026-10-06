@@ -28,13 +28,14 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy
+      - name: Catalog change history is current
+        run: uv run python scripts/update_model_changes.py --check
 
   spanner-emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
-      BIGTABLE_EMULATOR_HOST: 127.0.0.1:8086
       TR_CONFORMANCE_EMULATOR_SCHEMA: "1"
       TR_SPANNER_POOL_SIZE: "2"
     services:
@@ -43,31 +44,20 @@ jobs:
         ports:
           - 9010:9010
           - 9020:9020
-      bigtable:
-        image: gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:7617d937e9360d769de4ef66266a8caae503c1dbbd050c93404d3f30045c5125
-        # The SDK image's default bash stays alive while the step below starts
-        # the emulator. GitHub services have no `command` field.
-        options: --interactive --tty
-        ports:
-          - 8086:8086
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
-      - name: Start Bigtable emulator in the service container
-        run: |
-          docker exec -d ${{ job.services.bigtable.id }} /bin/sh -c \
-            'exec gcloud beta emulators bigtable start --host-port=0.0.0.0:8086 --quiet > /tmp/bigtable-emulator.log 2>&1'
       - name: Sync
         run: uv sync --frozen
-      - name: Wait for both emulators (fail if unavailable)
+      - name: Wait for the Spanner emulator (fail if unavailable)
         run: |
           uv run python - <<'PY'
           import socket
           import time
           deadline = time.monotonic() + 60
-          pending = {9010, 9020, 8086}
+          pending = {9010, 9020}
           while pending and time.monotonic() < deadline:
               for port in tuple(pending):
                   try:
@@ -88,14 +78,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: >-
           uv run pytest -q -rsx
+          tests/conformance/test_speculation_shadow_native.py
           tests/conformance/test_spanner_schema.py
           tests/conformance/test_spanner_sql_acceptance.py
+          tests/conformance/test_spanner_schema_audit.py
+          tests/test_consolidate_starter_credit.py
       - name: Emulator logs
         if: failure()
         run: |
           docker logs ${{ job.services.spanner.id }}
-          docker logs ${{ job.services.bigtable.id }}
-          docker exec ${{ job.services.bigtable.id }} cat /tmp/bigtable-emulator.log || true
 
   frontend:
     runs-on: ubuntu-latest
@@ -106,10 +97,10 @@ jobs:
           node-version: "20"
       - name: Install npm deps
         run: npm ci
-      - name: TypeScript build (verify dashboard.js matches dashboard.ts)
+      - name: TypeScript build (verify the committed .js matches its .ts)
         run: |
           npx tsc
-          git diff --exit-code -- src/trusted_router/static/dashboard.js
+          git diff --exit-code -- src/trusted_router/static/dashboard.js src/trusted_router/static/token-index.js
       - name: ESLint
         run: npx eslint frontend/src
       - name: Stylelint
@@ -359,8 +350,12 @@ jobs:
         run: npx playwright install --with-deps chromium
       # playwright.config.js starts the app itself (uv run uvicorn, memory
       # backend) and waits on /health — no DB service containers needed.
+      - name: Homepage JavaScript regression checks
+        run: node --test tests/js/homepage_*.test.cjs
       - name: Browser smoke
         run: npm run test:browser
+      - name: Redesigned homepage browser smoke
+        run: npx playwright test --config playwright.homepage.config.js
 
   # The BYOK envelope ordering constraint, checked against the DIFF rather than
   # against a deploy.

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,10 +30,7 @@ from trusted_router.storage_gcp_request_records import (
     _SETTLED_PAYLOAD_SQL,
     authorization_typed_columns,
 )
-from trusted_router.storage_gcp_settle_outbox import (
-    mark_done_unleased_tx,
-    rewrite_frozen_settlement_tx,
-)
+from trusted_router.storage_gcp_settle_outbox import mark_done_unleased_tx
 from trusted_router.storage_models import (
     AppMarkupPayout,
     CustomModelMarkupPayout,
@@ -64,11 +60,7 @@ def typed_finalize_atomic(
     user_model_payout: UserModelPayout | None = None,
     app_markup_payout: AppMarkupPayout | None = None,
     custom_model_markup_payout: CustomModelMarkupPayout | None = None,
-    regional_hold_unknown: bool = False,
-    regional_global_micro: int = 0,
-    finalize_regional_hold: Callable[[], tuple[bool, int, datetime | None]] | None = None,
     settle_outbox_done: tuple[str, str] | None = None,
-    settle_outbox_rewrite: tuple[str, str, str, int, str] | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -95,8 +87,6 @@ def typed_finalize_atomic(
         release_credit,
         update_entity_body_dml,
     )
-    from trusted_router.storage_gcp_regional_quota import _RegionalWindowAdvanced
-
     pt = param_types
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
@@ -120,36 +110,7 @@ def typed_finalize_atomic(
             outbox_available=resolved_outbox_available,
         )
         if not won:
-            return {
-                "outcome": SettleOutcome.ALREADY_SETTLED,
-                "regional_terminal_zero": (
-                    finalize_regional_hold is not None and res.get("actual_micro") == 0
-                ),
-            }
-
-        # Resolve the terminal winner BEFORE any external local CAS. The
-        # reservation claim serializes us with the reaper; a durable frozen
-        # intent protects a local commit if this transaction later aborts.
-        hold_unknown, global_micro, settled_at = regional_hold_unknown, regional_global_micro, None
-        if finalize_regional_hold is not None:
-            hold_unknown, global_micro, settled_at = finalize_regional_hold()
-
-        if settle_outbox_rewrite is not None:
-            rewrite_aid, rewrite_kind, lease_owner, rewrite_cost, rewrite_body = (
-                settle_outbox_rewrite
-            )
-            rewritten = rewrite_frozen_settlement_tx(
-                transaction,
-                pt,
-                authorization_id=rewrite_aid,
-                intent_kind=rewrite_kind,
-                lease_owner=lease_owner,
-                actual_cost_micro=rewrite_cost,
-                settle_body=rewrite_body,
-                now=now,
-            )
-            if rewritten != 1:
-                raise _SettleError("corrective settle-outbox rewrite lost its lease fence")
+            return {"outcome": SettleOutcome.ALREADY_SETTLED}
 
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
             # Deliberately NOT wrapped in a swallow. The payout is two DML
@@ -282,44 +243,14 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
-        elif (hold_unknown or global_micro > 0) and res.get("hold_usage_type") == "RegionalCredits":
-            # Healthy overruns book ONLY the unbacked excess here. The local
-            # component remains in escrow until reconciliation. If a stale CAS
-            # erased the hold, book the entire charge under this same claim;
-            # closing reconciliation releases the missing hold's unused escrow.
-            credit_actual = (book_actual if hold_unknown else global_micro) if settled_usage_type == "Credits" else 0
-            credit_count = release_credit(
-                transaction,
-                pt,
-                res["workspace_id"],
-                0,
-                credit_actual,
-                shard=res["credit_shard"],
-            )
-            if credit_count != 1:
-                raise _SettleError("regional fallback credit booking row-count != 1")
 
-        # Authorization is already loaded for finalization. No lease read belongs
-        # in this transaction. Missing versions retain the V1 inline contract;
-        # a missing Bigtable hold always uses the existing claimed recovery path.
-        regional_reconciler_owns_key = (
-            res.get("hold_usage_type") == "RegionalCredits"
-            and authorization is not None
-            and authorization.regional_accounting_version == 2
-            and not hold_unknown
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, book_actual, book_to_byok=book_to_byok,
         )
-        # V2 imports the local component with the lease; only its excess is
-        # inline. V1 and missing-hold recovery still own the entire key charge.
-        key_actual = global_micro if regional_reconciler_owns_key else book_actual
-        if not regional_reconciler_owns_key or key_actual > 0:
-            key_count, warning = _release_key_or_skip_deleted(
-                transaction, pt, res, key_actual, book_to_byok=book_to_byok,
-                settled_at=settled_at,
-            )
-            if warning is not None:
-                missing_key_releases.append(warning)
-            if res["key_reserved_micro"] > 0 and key_count != 1:
-                raise _SettleError("key release row-count != 1")
+        if warning is not None:
+            missing_key_releases.append(warning)
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
 
         return {
             "outcome": SettleOutcome.SETTLED,
@@ -336,7 +267,6 @@ def typed_finalize_atomic(
             txn,
             attempts_out=attempts_box,
             transaction_tag="tr_finalize" if success else "tr_refund_finalize",
-            also_retry=(_RegionalWindowAdvanced,),
         )
         result["attempts"] = attempts_box[0] if attempts_box else 1
         _log_missing_key_releases(result)

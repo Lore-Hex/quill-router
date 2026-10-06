@@ -6,6 +6,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.auth import SESSION_COOKIE_NAME
 from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
@@ -55,16 +56,12 @@ def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
         Settings(
             environment="production",
             service_surface="internal",
-            storage_backend="spanner-bigtable",
+            **PRODUCTION_SPANNER_STORAGE,
             internal_gateway_token="token",  # noqa: S106 - placeholder test secret.
             operator_token="operator-token",  # noqa: S106 - placeholder test secret.
             operator_identities="ops@example.com",
             observer_internal_token="observer-token",  # noqa: S106 - test secret.
             sentry_dsn="https://example@sentry.invalid/1",
-            spanner_instance_id="inst",
-            spanner_database_id="db",
-            bigtable_instance_id="bt",
-            settle_outbox_enabled=True,
         )
     ) is False
 

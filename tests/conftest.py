@@ -21,14 +21,41 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 import tests.lifecycle_freeze  # noqa: F401 - import-time side effect, see above
 
 # Likewise one catalog-freshness instant, pinned before trusted_router.main
-# builds its app and prewarms the public catalog (see the module).
-from tests import catalog_freshness_freeze
-from trusted_router import catalog_data, post_commit
+# builds its app and prewarms the public catalog (see the module). Then any
+# vehicle route a provider delisted is put back, also before the app is built:
+# the money-path tests ride on a few real routes (tests/catalog_vehicles.py).
+from tests import (
+    catalog_freshness_freeze,
+    catalog_vehicles,  # import-time side effect, see above
+)
+from tests.fixture_routes import (
+    clear_catalog_caches,
+    record_the_session_catalog,
+    start_from_the_session_catalog,
+)
+from trusted_router import catalog_data, catalog_registry, post_commit
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.routes import catalog as catalog_routes
 from trusted_router.storage import STORE, InMemoryStore, configure_store
+
+# The session's catalog is complete: the data, and the vehicles put back above.
+record_the_session_catalog()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Every test starts from the session's catalog, before any of its fixtures
+    runs: the registry in the session's order, and in each process-wide cache
+    the session's own projection of it (tests/fixture_routes.py).
+
+    The order, because undoing a monkeypatch.delitem puts a route back at the
+    end of the registry, and a route's place there is the order a model's
+    routes are listed and tried in. The projections, because a test that
+    filled a cache from its own catalog would otherwise leave that to every
+    test after it in the process."""
+    start_from_the_session_catalog()
 
 
 class InlinePostCommitExecutor(post_commit.PostCommitExecutor):
@@ -92,6 +119,31 @@ def live_monitors_judge_catalog_freshness_on_the_real_clock(
     catalog_routes._public_catalog_payload.cache_clear()
     yield
     catalog_routes._public_catalog_payload.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def the_catalog_as_built_has_no_vehicles(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """The vehicle routes and models this session put back
+    (tests/catalog_vehicles.py) are taken out for a test that asks about the
+    catalog the data built, where a vehicle would otherwise pass: a
+    provider_health test (does a provider still serve a route) and a
+    catalog_as_built test (is every member of a fixed list still cataloged).
+    The cached catalog projections are emptied on each side, so that neither
+    view of the catalog outlives the test."""
+    if not catalog_vehicles.VEHICLES_ADDED or not any(
+        request.node.get_closest_marker(marker) for marker in ("provider_health", "catalog_as_built")
+    ):
+        yield
+        return
+    for key in catalog_vehicles.VEHICLES_ADDED:
+        for registry in (catalog_registry.MODEL_ENDPOINTS, catalog_registry.MODELS):
+            if key in registry:
+                monkeypatch.delitem(registry, key)
+    clear_catalog_caches()
+    yield
+    clear_catalog_caches()
 
 
 @pytest.fixture(autouse=True)

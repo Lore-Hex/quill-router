@@ -389,7 +389,7 @@ def test_together_pricing_is_on_hourly_refresh_path() -> None:
     workflow = Path(".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
 
     assert refresh.PROVIDER_SLUGS[0] == "together"
-    assert "0 * * * *" in workflow
+    assert "37 * * * *" in workflow
     assert "trustedrouter-together-api-key" in workflow
     assert "TOGETHER_API_KEY" in workflow
     assert "minimax/minimax-m3" in together.EXPECTED_MODELS

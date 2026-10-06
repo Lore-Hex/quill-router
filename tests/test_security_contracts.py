@@ -11,6 +11,7 @@ import sentry_sdk.integrations.logging as sentry_logging
 from fastapi.testclient import TestClient
 
 import trusted_router.sentry_config as sentry_config
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.auth import bootstrap_management_key
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -106,11 +107,7 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
         operator_identities="ops@example.com",
         observer_internal_token="observer-prod-sentry-test",  # noqa: S106 - test config.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
-        storage_backend="spanner-bigtable",
-        spanner_instance_id="trusted-router",
-        spanner_database_id="trusted-router",
-        bigtable_instance_id="trusted-router-logs",
-        settle_outbox_enabled=True,
+        **PRODUCTION_SPANNER_STORAGE,
     )
     disabled = TestClient(
         create_app(
@@ -157,10 +154,7 @@ def test_production_rejects_spoofable_user_header_auth() -> None:
                 aws_access_key_id="test-access-key",
                 aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
                 ses_from_email="noreply@example.com",
-                storage_backend="spanner-bigtable",
-                spanner_instance_id="trusted-router",
-                spanner_database_id="trusted-router",
-                bigtable_instance_id="trusted-router-logs",
+                **PRODUCTION_SPANNER_STORAGE,
                 byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
             ),
             configure_store_arg=False,

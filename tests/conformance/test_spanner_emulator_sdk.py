@@ -229,7 +229,7 @@ def test_production_staleness_callers_remain_valid(method, args, kwargs, seconds
 
     from tests.fakes.spanner import make_fake_store
 
-    store, fake, _ = make_fake_store()
+    store, fake = make_fake_store()
     getattr(store, method)(*args, **kwargs)
     expected = {"exact_staleness": timedelta(seconds=seconds)}
     if multi_use:

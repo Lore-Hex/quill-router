@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+import pytest
+
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
@@ -17,6 +20,35 @@ from trusted_router.image_generation import (
 
 MANIFEST_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "data" / "provider_models"
+)
+
+
+@pytest.mark.parametrize("status,result,healthy", [
+    (402, None, False), (200, None, False),
+    (200, {"urls": []}, False),
+    (200, {"urls": ["https://images.krea.ai/probe.png"]}, True),
+])
+def test_krea_canary_requires_paid_generation_and_image(
+    monkeypatch: pytest.MonkeyPatch, status: int, result: object, healthy: bool,
+) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        if request.method == "POST":
+            return httpx.Response(status, json={"job_id": "test-job"})
+        return httpx.Response(200, json={"status": "completed", "result": result})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(krea.httpx, "Client", lambda **kw: client)
+    monkeypatch.setattr(krea.time, "sleep", lambda delay: None)
+    assert krea._probe_generation("test-key") is healthy
+    assert calls == (["POST"] if status == 402 else ["POST", "GET"])
+_MEDIA_ROUTES = (
+    ("recraft/recraftv4_1", "recraft"),
+    ("black-forest-labs/flux-2-klein-4b", "bfl"),
+    ("decart/lucy-image-2", "decart"),
+    (fal.MODEL_ID, fal.SLUG),
 )
 
 
@@ -137,11 +169,38 @@ def test_fal_h3_max_parser_rejects_ambiguous_standard_prices() -> None:
         raise AssertionError("ambiguous fal prices must fail closed")
 
 
-def test_media_manifests_match_runtime_fixed_price_contract() -> None:
+def _discovered_image_prices() -> dict[str, dict[str, int]]:
     discovered: dict[str, dict[str, int]] = {}
     for provider in ("recraft", "bfl", "decart", "nscale", "krea", "fal"):
         discovered.update(_manifest_prices(provider))
-    assert discovered == FIXED_IMAGE_PRICES_MICRODOLLARS
+    return discovered
+
+
+def test_media_manifests_match_runtime_fixed_price_contract() -> None:
+    # Billing and public pricing read the runtime prices: image_generation's
+    # FIXED_IMAGE_PRICES_MICRODOLLARS, and the enclave's audited per-second
+    # video registry. A manifest price is what discovery saw upstream, so this
+    # holds whatever the providers charge today: every fixed-price image row
+    # has a runtime price for the same variants (a row without one raises
+    # "missing fixed image pricing"), and the manifests price exactly the
+    # audited video models by the second.
+    assert {model_id: set(prices) for model_id, prices in _discovered_image_prices().items()} == {
+        model_id: set(prices) for model_id, prices in FIXED_IMAGE_PRICES_MICRODOLLARS.items()
+    }
+    assert set(_manifest_video_prices("decart")) == {
+        "decart/lucy-2.5",
+        "decart/lucy-vton-3.5",
+        "decart/lucy-restyle-2",
+    }
+    assert set(_manifest_video_prices("fal")) == {"minimax/h3-max"}
+
+
+@pytest.mark.provider_health
+def test_media_providers_charge_the_audited_runtime_prices() -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it. A difference is a provider price
+    # change for a human to review, and to deploy in the audited runtime prices.
+    assert _discovered_image_prices() == FIXED_IMAGE_PRICES_MICRODOLLARS
     assert _manifest_video_prices("decart") == {
         "decart/lucy-2.5": 40_000,
         "decart/lucy-vton-3.5": 40_000,
@@ -156,14 +215,14 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     assert expected <= GATEWAY_PREPAID_PROVIDER_SLUGS
 
     models, endpoints = _supplemental_provider_models_and_endpoints()
-    for model_id, provider in (
-        ("recraft/recraftv4_1", "recraft"),
-        ("black-forest-labs/flux-2-klein-4b", "bfl"),
-        ("decart/lucy-image-2", "decart"),
-        (fal.MODEL_ID, fal.SLUG),
-    ):
-        assert model_id in models
-        assert f"{model_id}@{provider}/prepaid" in endpoints
+    for model_id, provider in _MEDIA_ROUTES:
+        manifest = json.loads((MANIFEST_DIR / f"{provider}.json").read_text())
+        row = next(row for row in manifest["models"] if row["id"] == model_id)
+        if row.get("routable") is False:
+            assert f"{model_id}@{provider}/prepaid" not in endpoints
+        else:
+            assert model_id in models
+            assert f"{model_id}@{provider}/prepaid" in endpoints
 
     # Video routes are installed from the audited enclave registry, not the
     # generic chat/image manifest ingester.
@@ -191,6 +250,15 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     else:
         assert krea_model in models
         assert f"{krea_model}@krea/prepaid" in endpoints
+
+
+@pytest.mark.provider_health
+@pytest.mark.parametrize(("model_id", "provider"), _MEDIA_ROUTES)
+def test_media_provider_serves_its_route(model_id: str, provider: str) -> None:
+    # Live provider state: provider-catalog-health.yml reports it hourly, and
+    # the price refresh does not wait on it.
+    _models, endpoints = _supplemental_provider_models_and_endpoints()
+    assert f"{model_id}@{provider}/prepaid" in endpoints
 
 
 def test_fixed_media_price_change_fails_before_manifest_write(tmp_path: Path) -> None:

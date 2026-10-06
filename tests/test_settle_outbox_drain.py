@@ -23,22 +23,15 @@ from tests.fakes.spanner import (
     _ParamTypes,
     make_fake_store,
 )
-from trusted_router.app_markup_billing import (
-    APP_MARKUP_PAYOUT_SETTLE_FIELD,
-    app_markup_microdollars_from_charge,
-    app_markup_owner_share_microdollars,
-)
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
-from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.services import auto_refill as auto_refill_mod
 from trusted_router.services import auto_refill_outbox_drain as auto_refill_drain_mod
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
 from trusted_router.services.auto_refill import AutoRefillOutcome
 from trusted_router.services.auto_refill_outbox_drain import AutoRefillDrainPass
-from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_authorize import (
@@ -72,31 +65,48 @@ TIMING_FIELDS = ("total_ms", "auth_ms", "enqueue_ms", "finalize_ms", "mark_ms")
 
 
 @pytest.fixture
-def fake_store() -> Iterator[tuple[Any, Any, Any]]:
-    store, db, bt = make_fake_store()
+def fake_store() -> Iterator[tuple[Any, Any]]:
+    store, db = make_fake_store()
     configure_store(store)
     try:
-        yield store, db, bt
+        yield store, db
     finally:
         configure_store(InMemoryStore())
 
 
 @pytest.fixture
-def prod_shaped_store() -> Iterator[tuple[Any, Any, Any]]:
+def prod_shaped_store() -> Iterator[tuple[Any, Any]]:
     """The store as production runs it: the ClickHouse delivery intent is
     written INSIDE the finalize transaction (operational analytics outbox on,
     typed request records). That in-commit durability is what allows the
     settle-outbox done-mark to be folded into the same commit."""
-    store, db, bt = make_fake_store(
+    store, db = make_fake_store(
         operational_analytics_outbox_enabled=True,
         request_record_write_mode="typed",
         generation_records_enabled=True,
     )
     configure_store(store)
     try:
-        yield store, db, bt
+        yield store, db
     finally:
         configure_store(InMemoryStore())
+
+
+@pytest.fixture
+def two_commit_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the durable two-commit settle (enqueue commit, then finalize commit).
+
+    It is the fallback for every deviation from the one-commit happy path, so
+    its windows (between enqueue and finalize) stay load-bearing. The one-commit
+    attempt declines here exactly as it does on any deviation: before writing.
+    Patch the backend class, never the STORE proxy (AGENTS.md, issue #333).
+    """
+    from trusted_router.storage_gcp import SpannerStore
+
+    def declined(self: Any, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(SpannerStore, "typed_settle_one_commit_result", declined)
 
 
 def _client(settings: Settings, *, raise_server_exceptions: bool = True) -> TestClient:
@@ -335,19 +345,17 @@ def _settle_timing_records(caplog: pytest.LogCaptureFixture) -> list[logging.Log
     ]
 
 
-def _stamp_spend_lease_binding(
-    db: Any,
-    auth: GatewayAuthorization,
-    *,
-    allocation_micro: int,
-) -> None:
+def _stamp_retired_settlement(db: Any, auth: GatewayAuthorization, settlement: str) -> None:
+    """Rewrite a stored authorization the way the retired regional-quota and
+    spend-lease pilots left their rows: the settlement kind plus payload keys
+    the current reader no longer knows and must ignore."""
     record = db.gateway_authorizations[auth.id]
     payload = json.loads(record["payload"])
     binding = {
-        "settlement": "spend_lease",
+        "settlement": settlement,
         "spend_lease_id": "lease-settle-clamp",
         "spend_lease_gen": 7,
-        "spend_lease_allocated_micro": allocation_micro,
+        "spend_lease_allocated_micro": 500,
     }
     payload.update(binding)
     record.update(binding)
@@ -358,9 +366,9 @@ def _stamp_spend_lease_binding(
 
 
 def test_park_leaves_attempts_unchanged_and_respects_lease(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     row = _row(
         GatewayAuthorization(
@@ -396,8 +404,8 @@ def test_park_leaves_attempts_unchanged_and_respects_lease(
     assert after.next_attempt_at != before.next_attempt_at
 
 
-def test_mark_force_dead_goes_dead_immediately(fake_store: tuple[Any, Any, Any]) -> None:
-    store, _db, _bt = fake_store
+def test_mark_force_dead_goes_dead_immediately(fake_store: tuple[Any, Any]) -> None:
+    store, _db = fake_store
     ob = _outbox(store)
     auth = GatewayAuthorization(
         id="gwa-force-dead",
@@ -419,8 +427,8 @@ def test_mark_force_dead_goes_dead_immediately(fake_store: tuple[Any, Any, Any])
     assert got.last_error == "invalid"
 
 
-def test_fake_requires_park_and_typed_dml_predicates(fake_store: tuple[Any, Any, Any]) -> None:
-    store, _db, _bt = fake_store
+def test_fake_requires_park_and_typed_dml_predicates(fake_store: tuple[Any, Any]) -> None:
+    store, _db = fake_store
     auth = GatewayAuthorization(
         id="gwa-mf6",
         workspace_id="ws-mf6",
@@ -479,9 +487,9 @@ def test_fake_requires_park_and_typed_dml_predicates(fake_store: tuple[Any, Any,
 
 
 def test_flag_on_successful_typed_settle_enqueues_frozen_done_row(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-route-settle"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -508,10 +516,10 @@ def test_flag_on_successful_typed_settle_enqueues_frozen_done_row(
 
 
 def test_internal_settle_enqueues_auto_refill_without_charging_in_process(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-internal-auto-refill"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -591,14 +599,153 @@ def _internal_settle(auth: GatewayAuthorization, **body_updates: Any) -> dict[st
     )["data"]
 
 
+def _expand_batches(
+    settle_operations: list[tuple[Any, str, dict[str, Any]]],
+) -> list[tuple[Any, str, dict[str, Any]]]:
+    return [
+        (reader, " ".join(statement.split()), values)
+        for reader, sql, params in settle_operations
+        for statement, values in (
+            [(statement, values) for statement, values, _ in params["statements"]]
+            if sql == "BATCH" else [(sql, params)]
+        )
+    ]
+
+
+def _phases(settle_operations: list[tuple[Any, str, dict[str, Any]]]) -> list[tuple[str, str, str]]:
+    transactions: dict[Any, str] = {}
+    observed = []
+    for reader, sql, _params in settle_operations:
+        phase = "ro"
+        if isinstance(reader, _FakeTransaction):
+            if reader not in transactions:
+                transactions[reader] = ["t1", "t3", "t4"][len(transactions)]
+            phase = transactions[reader]
+        table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
+        observed.append((phase, sql.split()[0], table[1] if table else ""))
+    return observed
+
+
 def test_fresh_settle_round_trip_order(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A fresh settle is ONE read-write transaction: the intent is inserted
+    already resolved beside the claim, the request records and the activity
+    intent, with the hot counter releases last (credit, then key)."""
     from trusted_router import storage_gcp_authorize
 
-    store, db, _bt = prod_shaped_store
+    store, db = prod_shaped_store
+    ws = "ws-fresh-rtt"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    now = dt.datetime.now(dt.UTC)
+    _typed_key(db, key.hash).update(day_start=now, week_start=now, month_start=now)
+    # Pin the cold schema probe so test ordering cannot change this count.
+    monkeypatch.setattr(storage_gcp_authorize, "_OUTBOX_AVAILABILITY_CACHE", {})
+    settle_operations.clear()
+    data = _internal_settle(auth)
+    assert data["disposition"] == "finalized", data
+    assert db.gateway_authorizations[auth.id]["settled"] is True
+    # The authorization and intent reads, the reservation read, ONE batch that
+    # carries every write including the counter releases, the commit, and the
+    # post-commit broadcast read.
+    assert len(settle_operations) == 6
+    batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
+    assert [len(group) for group in batches] == [12]
+    assert all(set(params) == set(types) for _, params, types in batches[0])
+    assert batches[0][2][0] == (
+        f"INSERT INTO tr_settle_outbox ({', '.join(INSERT_COLUMNS)}) "  # noqa: S608
+        f"VALUES ({', '.join('@' + c for c in INSERT_COLUMNS)})"  # noqa: S608
+    )
+    settle_operations = _expand_batches(settle_operations)
+    assert _phases(settle_operations) == [
+        ("ro", "SELECT", "tr_gateway_authorization"),
+        ("ro", "SELECT", "tr_settle_outbox"),
+        ("t1", "SELECT", "tr_reservation"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "INSERT", "tr_settle_outbox"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "UPDATE", "tr_gateway_authorization"),
+        ("t1", "UPDATE", "tr_reservation"),
+        ("t1", "INSERT", "tr_generation"),
+        ("t1", "INSERT", "tr_operational_analytics_outbox"),
+        ("t1", "UPDATE", "tr_credit_balance"),  # the no-debt check is inside it
+        ("t1", "UPDATE", "tr_key_limit"),  # current windows
+        ("t1", "UPDATE", "tr_key_limit"),  # a window to roll forward
+        ("t1", "COMMIT", ""),
+        ("ro", "SELECT", "tr_entities"),
+    ]
+    params = [params for _, _, params in settle_operations]
+    statements = [sql for _, sql, _ in settle_operations]
+    cost = data["cost_microdollars"]
+    assert params[0] == {"authorization_id": auth.id}
+    assert params[2] == {"rid": auth.credit_reservation_id}
+    assert statements[3].endswith("WHERE reservation_id=@rid AND settled=false")
+    assert params[3] == {
+        "rid": auth.credit_reservation_id, "actual": cost, "sut": "Credits", "terminal_at": None,
+    }
+    assert statements[4].endswith("WHERE authorization_id=@authorization_id AND settled=false")
+    payload = json.loads(params[4]["payload"])
+    assert payload["credit_reservation_id"] == auth.credit_reservation_id
+    assert payload["finalized_cost_microdollars"] == cost
+    inserted = params[5]
+    assert {name: inserted[name] for name in (
+        "authorization_id", "intent_kind", "reservation_id", "actual_cost_micro",
+        "selected_endpoint_id", "status", "attempts", "settle_body", "next_attempt_at",
+        "lease_owner", "leased_until", "last_error",
+    )} == {
+        "authorization_id": auth.id, "intent_kind": "settle",
+        "reservation_id": auth.credit_reservation_id, "actual_cost_micro": cost,
+        "selected_endpoint_id": ENDPOINT_ID, "status": "done", "attempts": 1,
+        "settle_body": None, "next_attempt_at": None, "lease_owner": None,
+        "leased_until": None, "last_error": None,
+    }
+    assert inserted["created_at"] == inserted["updated_at"] == inserted["terminal_at"]
+    assert {name: value for name, value in inserted.items() if name.startswith("auto_refill_")} == {
+        "auto_refill_workspace_id": ws, "auto_refill_status": "pending",
+        "auto_refill_attempts": 0, "auto_refill_last_error": None,
+        "auto_refill_next_attempt_at": inserted["auto_refill_next_attempt_at"],
+        "auto_refill_lease_owner": None, "auto_refill_leased_until": None,
+        "auto_refill_enqueued_at": inserted["created_at"],
+        "auto_refill_updated_at": inserted["created_at"], "auto_refill_terminal_at": None,
+    }
+    assert inserted["auto_refill_next_attempt_at"] > inserted["created_at"]
+    assert "SET terminal_at=NULL" in statements[6] and params[6] == {"authorization_id": auth.id}
+    assert "SET terminal_at=NULL" in statements[7] and params[7] == {"rid": auth.credit_reservation_id}
+    for index, record_id in ((8, auth.id), (9, auth.credit_reservation_id)):
+        assert statements[index].startswith("UPDATE tr_") and "SET terminal_at=IF(" in statements[index]
+        assert params[index] == {
+            "aid": auth.id, "kind": "settle", "record_id": record_id, "now": inserted["created_at"],
+        }
+    assert params[12] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
+    assert "NOT EXISTS" in statements[12]
+    assert params[13]["kh"] == key.hash and params[13]["hold"] == ESTIMATE
+    assert params[13]["actual"] == cost and params[14] == params[13]
+    assert "day_start =" not in statements[13] and " AND NOT (" in statements[14]
+    assert params[16] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
+    assert _typed_credit(db, ws)["total_usage"] == cost
+    row = db.settle_outbox[(auth.id, "settle")]
+    assert row["status"] == "done" and row["auto_refill_status"] == "pending"
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+
+
+@pytest.mark.usefixtures("two_commit_settle")
+def test_two_commit_settle_round_trip_order(
+    prod_shaped_store: tuple[Any, Any],
+    settle_operations: list[tuple[Any, str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The durable fallback keeps its exact order: enqueue commit, then the
+    finalize commit with the done-mark folded in (#1027)."""
+    from trusted_router import storage_gcp_authorize
+
+    store, db = prod_shaped_store
     ws = "ws-fresh-rtt"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -611,7 +758,7 @@ def test_fresh_settle_round_trip_order(
     data = _internal_settle(auth)
     assert data["disposition"] != "intent_durable", data
     assert db.gateway_authorizations[auth.id]["settled"] is True
-    assert len(settle_operations) == 11
+    assert len(settle_operations) == 8
     reader, label, batch_params = settle_operations[1]
     assert label == "BATCH"
     batch = batch_params["statements"]
@@ -643,7 +790,7 @@ def test_fresh_settle_round_trip_order(
     # The done UPDATE returns the stored reservation; its dependent retention
     # and evidence writes share the next RPC. Expand batches to pin SQL order.
     final_batches = [params["statements"] for _, sql, params in settle_operations if sql == "BATCH"]
-    assert [len(group) for group in final_batches] == [3, 7]
+    assert [len(group) for group in final_batches] == [3, 10]
     settle_operations = [
         (reader, " ".join(statement.split()), values)
         for reader, sql, params in settle_operations
@@ -668,7 +815,7 @@ def test_fresh_settle_round_trip_order(
         ("t3", "INSERT", "tr_generation"),
         ("t3", "INSERT", "tr_operational_analytics_outbox"),
         ("t3", "UPDATE", "tr_credit_balance"),
-        ("t3", "SELECT", "tr_trust_event"),
+        ("t3", "UPDATE", "tr_key_limit"),
         ("t3", "UPDATE", "tr_key_limit"),
         ("t3", "COMMIT", ""),
         ("ro", "SELECT", "tr_entities"),
@@ -714,10 +861,25 @@ def test_fresh_settle_round_trip_order(
     assert params[9]["aid"] == auth.id and params[9]["kind"] == "settle"
     assert params[9]["lease_owner"] is None and params[9]["status"] == "done"
     assert "lease_owner IS NULL" in statements[9]
+    from trusted_router.spend_windows import window_floors
+    from trusted_router.storage_gcp_counter_dml import (
+        release_credit_no_debt_statement,
+        release_key_statement,
+    )
+
+    assert final_batches[-1][-3] == release_credit_no_debt_statement(
+        store._param_types, ws, ESTIMATE, cost, shard=0,
+    )
+    assert final_batches[-1][-2:] == [
+        release_key_statement(
+            store._param_types, key.hash, ESTIMATE, cost, shard=0,
+            book_to_byok=False, window_floors=window_floors(now), windows=windows,
+        )
+        for windows in ("current", "stale")
+    ]
     assert params[14] == {"hold": ESTIMATE, "actual": cost, "ws": ws, "shard": 0}
-    assert params[15] == {"pk": ws}
-    assert params[16]["kh"] == key.hash and params[16]["hold"] == ESTIMATE
-    assert params[16]["actual"] == cost
+    assert params[15]["kh"] == key.hash and params[15]["hold"] == ESTIMATE
+    assert params[15]["actual"] == cost and params[16] == params[15]
     assert params[18] == {"kind": "broadcast_destination_by_workspace", "prefix": ws + "#"}
     assert _typed_credit(db, ws)["total_usage"] == cost
 
@@ -748,18 +910,23 @@ def _assert_refill_repair(
 
 @pytest.mark.parametrize("case", ["existing", "different_workspace", "historical", "leased", "corrected", "inserted_other_workspace"])
 def test_nonfresh_settle_keeps_refill_repair(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
     case: str,
 ) -> None:
-    store, db, _bt = prod_shaped_store
+    store, db = prod_shaped_store
     ws = "ws-refill-repair"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
     auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
     outbox = _outbox(store)
     if case == "inserted_other_workspace":
+        # The injected INSERT is the two-commit enqueue; a fresh one-commit
+        # settle never calls it. Every other case already has an intent row,
+        # so its one-commit attempt declines (ALREADY_EXISTS) on its own.
+        request.getfixturevalue("two_commit_settle")
         enqueue = SpannerSettleOutbox.enqueue
 
         def wrong_workspace(self: Any, row: SettleOutboxRow, **kwargs: Any) -> str:
@@ -803,12 +970,18 @@ def test_nonfresh_settle_keeps_refill_repair(
 
 @pytest.mark.parametrize("existing", [False, True])
 def test_request_snapshot_loses_to_refund_after_s1(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     settle_operations: list[tuple[Any, str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
     existing: bool,
 ) -> None:
-    store, db, _bt = prod_shaped_store
+    if not existing:
+        # The race window between the enqueue and finalize commits exists only
+        # in the two-commit flow (an existing intent declines one-commit itself).
+        # tests/test_settle_one_commit.py covers the one-commit counterpart.
+        request.getfixturevalue("two_commit_settle")
+    store, db = prod_shaped_store
     ws = "ws-refund-race-rtt"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -856,16 +1029,23 @@ def test_request_snapshot_loses_to_refund_after_s1(
                for reader, sql, params in settle_operations)
 
 
+@pytest.mark.parametrize(
+    "method", ["typed_settle_one_commit_result", "typed_finalize_gateway_authorization_result"],
+)
 def test_route_finalize_snapshot_preserves_types_and_is_detached(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    method: str,
 ) -> None:
     from fastapi import BackgroundTasks
 
     from trusted_router.routes.internal.gateway import _settle_gateway_authorization
     from trusted_router.schemas import GatewaySettleRequest
 
-    store, _db, _bt = prod_shaped_store
+    if method == "typed_finalize_gateway_authorization_result":
+        request.getfixturevalue("two_commit_settle")
+    store, _db = prod_shaped_store
     ws = "ws-route-snapshot-copy"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -873,7 +1053,7 @@ def test_route_finalize_snapshot_preserves_types_and_is_detached(
     auth.usage_type = UsageType.CREDITS
     auth.tags = {"frozen": "original"}
     expected = copy.deepcopy(auth)
-    original = type(store).typed_finalize_gateway_authorization_result
+    original = getattr(type(store), method)
     received: list[GatewayAuthorization] = []
 
     def finalize(self: Any, authorization_id: str, **kwargs: Any) -> TypedFinalizeResult:
@@ -889,7 +1069,7 @@ def test_route_finalize_snapshot_preserves_types_and_is_detached(
         assert asdict(auth) == asdict(expected)
         return original(self, authorization_id, **kwargs)
 
-    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
+    monkeypatch.setattr(type(store), method, finalize)
     data = _settle_gateway_authorization(
         GatewaySettleRequest(**_settle_json(auth.id)),
         success=True,
@@ -903,9 +1083,9 @@ def test_route_finalize_snapshot_preserves_types_and_is_detached(
 
 
 def test_finalize_request_snapshot_is_detached_and_identity_checked(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = prod_shaped_store
+    store, db = prod_shaped_store
     ws = "ws-snapshot-copy"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -926,10 +1106,10 @@ def test_finalize_request_snapshot_is_detached_and_identity_checked(
     assert _typed_credit(db, ws)["total_usage"] == 70
 
 def test_combined_settle_preserves_in_process_auto_refill(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-combined-auto-refill"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -955,11 +1135,11 @@ def test_combined_settle_preserves_in_process_auto_refill(
 
 
 def test_inline_failure_after_stripe_then_cross_minute_drain_creates_one_payment_intent(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One settlement has one Stripe identity across combined and control paths."""
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-auto-refill-cross-surface"
     _seed_credit(store, ws, total=1_000_000)
     store.update_auto_refill_settings(
@@ -1033,11 +1213,11 @@ def test_inline_failure_after_stripe_then_cross_minute_drain_creates_one_payment
 
 @pytest.mark.parametrize("existing_status", ("leased", "dead"))
 def test_internal_settle_attaches_refill_to_pre_cutover_row_before_finalize(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     existing_status: str,
 ) -> None:
     """A pre-cutover settlement row cannot silently lose its refill sub-work."""
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = f"ws-pre-cutover-{existing_status}"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1072,10 +1252,10 @@ def test_internal_settle_attaches_refill_to_pre_cutover_row_before_finalize(
 
 
 def test_auto_refill_drain_is_idempotent_after_duplicate_enqueue(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-auto-refill-duplicate"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1122,10 +1302,10 @@ def test_auto_refill_drain_is_idempotent_after_duplicate_enqueue(
 
 
 def test_stale_auto_refill_queue_emits_page_worthy_signal(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-stale-auto-refill")
     row = _row(auth)
     row.auto_refill_workspace_id = auth.workspace_id
@@ -1150,9 +1330,9 @@ def test_stale_auto_refill_queue_emits_page_worthy_signal(
 
 
 def test_auto_refill_freshness_reads_only_the_sparse_pending_index(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
 
     assert _outbox(store).auto_refill_pending_freshness() == (None, 0)
 
@@ -1221,10 +1401,10 @@ def test_auto_refill_pass_does_not_hide_application_bugs(
 
 
 def test_settle_emits_timing_line(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-route-timing"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1248,10 +1428,10 @@ def test_settle_emits_timing_line(
 
 
 def test_settle_replay_emits_no_timing_line(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-route-timing-replay"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1270,8 +1450,8 @@ def test_settle_replay_emits_no_timing_line(
     assert _settle_timing_records(caplog) == []
 
 
-def test_flag_on_refund_enqueues_refund_done_row(fake_store: tuple[Any, Any, Any]) -> None:
-    store, _db, _bt = fake_store
+def test_flag_on_refund_enqueues_refund_done_row(fake_store: tuple[Any, Any]) -> None:
+    store, _db = fake_store
     ws = "ws-route-refund"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1289,8 +1469,8 @@ def test_flag_on_refund_enqueues_refund_done_row(fake_store: tuple[Any, Any, Any
     assert row.settle_origin == "typed"
 
 
-def test_flag_off_settle_creates_no_outbox_row(fake_store: tuple[Any, Any, Any]) -> None:
-    store, _db, _bt = fake_store
+def test_flag_off_settle_creates_no_outbox_row(fake_store: tuple[Any, Any]) -> None:
+    store, _db = fake_store
     ws = "ws-route-off"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1303,8 +1483,8 @@ def test_flag_off_settle_creates_no_outbox_row(fake_store: tuple[Any, Any, Any])
     assert _outbox(store).get(auth.id, "settle") is None
 
 
-def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws-route-free-first"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1327,11 +1507,17 @@ def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any,
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"] == {
+        "timing": resp.json()["data"]["timing"],
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": False,
         "disposition": "intent_durable",
         "finalization_outcome": "pending",
+        "cost_microdollars": 697,
+        "cost": 0.000697,
+        "model": MODEL_ID,
+        "provider": "anthropic",
+        "usage_type": "Credits",
     }
     row = _outbox(store).get(auth.id, "settle")
     assert row is not None and row.status == "pending"
@@ -1339,10 +1525,10 @@ def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any,
 
 
 def test_enqueue_failure_does_not_fail_settle(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-route-enqueue-fails"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1367,11 +1553,11 @@ def test_enqueue_failure_does_not_fail_settle(
 
 
 def test_broadcast_enqueue_failure_after_commit_does_not_fail_or_double_charge(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-route-broadcast-enqueue-fails"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1407,10 +1593,10 @@ def test_broadcast_enqueue_failure_after_commit_does_not_fail_or_double_charge(
 
 
 def test_activity_pending_first_observation_parks_and_stamps_note(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     auth = _bare_authorization("gwa-activity-fresh")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1439,10 +1625,10 @@ def test_activity_pending_first_observation_parks_and_stamps_note(
 
 
 def test_activity_pending_second_cycle_preserves_original_since(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-two-cycles")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1470,10 +1656,10 @@ def test_activity_pending_second_cycle_preserves_original_since(
 
 
 def test_typed_park_preserves_expired_activity_window(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-typed-outage")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1515,10 +1701,10 @@ def test_typed_park_preserves_expired_activity_window(
 
 
 def test_typed_park_without_activity_stamp_uses_plain_note(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     auth = _bare_authorization("gwa-typed-outage-plain-note")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1539,10 +1725,10 @@ def test_typed_park_without_activity_stamp_uses_plain_note(
 
 
 def test_inline_zero_cost_activity_failure_keeps_payload_without_park_note(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-activity-inline-zero-fails"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1577,10 +1763,10 @@ def test_inline_zero_cost_activity_failure_keeps_payload_without_park_note(
 
 
 def test_inline_zero_cost_without_park_note_resolves_after_index_succeeds(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, bt = fake_store
+    store, db = fake_store
     ws = "ws-activity-inline-zero-repaired"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1612,7 +1798,6 @@ def test_inline_zero_cost_without_park_note_resolves_after_index_succeeds(
     pending = ob.get(auth.id, "settle")
     assert pending is not None and pending.status == "pending"
     assert pending.last_error is None
-    assert bt.committed == []
     db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     result = drain_mod.drain_settle_outbox(10)
@@ -1621,14 +1806,13 @@ def test_inline_zero_cost_without_park_note_resolves_after_index_succeeds(
     completed = ob.get(auth.id, "settle")
     assert completed is not None and completed.status == "done"
     assert len(index_attempts) == 2
-    assert bt.committed
 
 
 def test_zero_cost_activity_pending_keeps_retrying_and_preserves_payload(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-activity-zero-retry"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1657,10 +1841,10 @@ def test_zero_cost_activity_pending_keeps_retrying_and_preserves_payload(
 
 
 def test_zero_cost_activity_pending_resolves_after_index_succeeds(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, bt = fake_store
+    store, db = fake_store
     ws = "ws-activity-zero-repaired"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -1680,7 +1864,6 @@ def test_zero_cost_activity_pending_resolves_after_index_succeeds(
 
     first = drain_mod.drain_settle_outbox(10)
     assert first["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
-    assert bt.committed == []
     db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     second = drain_mod.drain_settle_outbox(10)
@@ -1689,14 +1872,13 @@ def test_zero_cost_activity_pending_resolves_after_index_succeeds(
     assert second["outcomes"] == {ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1}
     assert completed is not None and completed.status == "done"
     assert len(index_attempts) == 2
-    assert bt.committed
 
 
 def test_activity_pending_old_row_with_new_window_still_parks(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-old-row-new-window")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1724,11 +1906,11 @@ def test_activity_pending_old_row_with_new_window_still_parks(
 
 
 def test_activity_pending_over_window_marks_dead_preserves_payload_and_alerts(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-expired")
     ob = _outbox(store)
     ob.enqueue(
@@ -1770,7 +1952,7 @@ def test_activity_pending_over_window_marks_dead_preserves_payload_and_alerts(
     assert f"reservation_id={auth.credit_reservation_id}" in alerts[0]
     assert "CHARGE IS ALREADY APPLIED" in alerts[0]
     assert "Spanner is correct" in alerts[0]
-    assert "only the per-request Bigtable activity row is missing" in alerts[0]
+    assert "only the per-request ClickHouse activity row is missing" in alerts[0]
     assert "row is now dead" in alerts[0]
     assert "settle_body PRESERVED" in alerts[0]
     assert "set the row back to pending to let the drain retry" in alerts[0]
@@ -1778,11 +1960,11 @@ def test_activity_pending_over_window_marks_dead_preserves_payload_and_alerts(
 
 
 def test_activity_pending_lost_lease_skips_false_alert(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-lost-lease")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1818,10 +2000,10 @@ def test_activity_pending_lost_lease_skips_false_alert(
 
 
 def test_lost_lease_dead_letter_alerts_only_when_fence_wins(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ob = _outbox(store)
     stale_auth = _bare_authorization("gwa-missing-stale-owner")
     winner_auth = _bare_authorization("gwa-missing-winning-owner")
@@ -1875,10 +2057,10 @@ def test_lost_lease_dead_letter_alerts_only_when_fence_wins(
 
 
 def test_activity_pending_escalation_keeps_retention_pinned(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-activity-retention"
     _seed_credit(store, ws)
@@ -1914,10 +2096,10 @@ def test_activity_pending_escalation_keeps_retention_pinned(
 
 
 def test_activity_pending_dead_row_reset_to_pending_is_reclaimed(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-retry-dead")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -1947,11 +2129,11 @@ def test_activity_pending_dead_row_reset_to_pending_is_reclaimed(
 
 
 def test_drain_resolves_late_intent_after_reaped_snapshot_and_logs_loss(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     auth = _bare_authorization("gwa-late-reaped-snapshot")
     ob = _outbox(store)
     ob.enqueue(_row(auth, cost=777_777))
@@ -1972,11 +2154,11 @@ def test_drain_resolves_late_intent_after_reaped_snapshot_and_logs_loss(
 
 
 def test_reaper_pass_emits_metrics_and_burst_alert(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     alerts: list[tuple[str, list[str], dict[str, str]]] = []
     monkeypatch.setattr(
         type(store),
@@ -2033,12 +2215,12 @@ def test_reaper_pass_emits_metrics_and_burst_alert(
     ids=["malformed", "naive"],
 )
 def test_activity_pending_malformed_or_naive_since_still_parks(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     since: str,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-malformed")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -2075,11 +2257,11 @@ def test_activity_pending_malformed_or_naive_since_still_parks(
 
 
 def test_activity_pending_future_since_is_clamped(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth = _bare_authorization("gwa-activity-future")
     ob = _outbox(store)
     ob.enqueue(_row(auth))
@@ -2121,8 +2303,8 @@ def test_activity_pending_future_since_is_clamped(
     )
 
 
-def test_drain_reaps_expired_unguarded_holds(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_drain_reaps_expired_unguarded_holds(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws-drain-reap-unguarded"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2140,10 +2322,10 @@ def test_drain_reaps_expired_unguarded_holds(fake_store: tuple[Any, Any, Any]) -
 
 
 def test_drain_reap_respects_outbox_guard(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-drain-reap-guard"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2184,8 +2366,8 @@ def test_drain_reap_respects_outbox_guard(
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
 
 
-def test_drain_reap_limit_respected(fake_store: tuple[Any, Any, Any]) -> None:
-    store, db, _bt = fake_store
+def test_drain_reap_limit_respected(fake_store: tuple[Any, Any]) -> None:
+    store, db = fake_store
     ws = "ws-drain-reap-limit"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2206,10 +2388,10 @@ def test_drain_reap_limit_respected(fake_store: tuple[Any, Any, Any]) -> None:
 
 
 def test_zero_cost_settle_reaper_race_indexes_activity_and_resolves_done(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, bt = fake_store
+    store, db = fake_store
     ws = "ws-drain-zero-reaper-race"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2240,7 +2422,6 @@ def test_zero_cost_settle_reaper_race_indexes_activity_and_resolves_done(
     assert _typed_credit(db, ws) == credit_before
     assert _typed_key(db, key.hash) == key_before
     assert _generation_count(db) == 0
-    assert bt.committed
     messages = [rec.message for rec in caplog.records]
     assert any(
         "settle intent found reservation already zero-resolved" in msg
@@ -2254,10 +2435,10 @@ def test_zero_cost_settle_reaper_race_indexes_activity_and_resolves_done(
 
 
 def test_nonzero_settle_reaper_race_still_alerts_lost_charge(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-drain-nonzero-reaper-race"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2293,10 +2474,10 @@ def test_nonzero_settle_reaper_race_still_alerts_lost_charge(
 
 
 def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, bt = fake_store
+    store, db = fake_store
     ws = "ws-drain-zero-replay"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2308,8 +2489,6 @@ def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
     credit_before = dict(_typed_credit(db, ws))
     key_before = dict(_typed_key(db, key.hash))
     generation_count_before = _generation_count(db)
-    committed_before = list(bt.committed)
-    activity_rows_before = set(bt.rows)
     assert generation_count_before == 1
     caplog.set_level(logging.WARNING)
 
@@ -2323,8 +2502,6 @@ def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
     assert _typed_credit(db, ws) == credit_before
     assert _typed_key(db, key.hash) == key_before
     assert _generation_count(db) == generation_count_before
-    assert len(bt.committed) > len(committed_before)
-    assert set(bt.rows) == activity_rows_before
     messages = [rec.message for rec in caplog.records]
     assert any(
         "settle intent found reservation already zero-resolved" in msg
@@ -2337,9 +2514,9 @@ def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
 
 
 def test_lost_charge_recovery_end_to_end(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ws = "ws-drain-recover"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2383,51 +2560,10 @@ def test_lost_charge_recovery_end_to_end(
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [
-        LeaseSettlementError("unknown regional reservation"),
-        RegionalLeaseLedgerError("regional ledger unavailable"),
-    ],
-)
-def test_regional_settlement_failure_is_retryable_after_outbox_enqueue(
-    fake_store: tuple[Any, Any, Any],
-    failure: Exception,
-) -> None:
-    store, db, _bt = fake_store
-    ws = "ws-regional-settle-retry"
-    _seed_credit(store, ws)
-    key = _make_key(store, ws)
-    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
-
-    def fail_finalize(*_args: Any, **_kwargs: Any) -> TypedFinalizeResult:
-        raise failure
-
-    store.typed_finalize_gateway_authorization_result = fail_finalize
-    client = _client(Settings(environment="test", settle_outbox_enabled=True))
-
-    response = client.post(
-        "/v1/internal/gateway/settle",
-        json=_settle_json(auth.id),
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"] == {
-        "authorization_id": auth.id,
-        "settled": False,
-        "already_settled": False,
-        "disposition": "intent_durable",
-        "finalization_outcome": "pending",
-    }
-    row = _outbox(store).get(auth.id, "settle")
-    assert row is not None and row.status == "pending"
-    assert db.reservations[auth.credit_reservation_id]["settled"] is False
-
-
 def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-outbox-repair"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -2475,10 +2611,10 @@ def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
 
 
 def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-drain-sibling-refund"
     _seed_credit(store, ws)
@@ -2522,10 +2658,10 @@ def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
 
 
 def test_charged_settle_with_no_generation_dead_letters_as_invalid_row(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-drain-malformed-settle"
     _seed_credit(store, ws)
@@ -2555,9 +2691,9 @@ def test_charged_settle_with_no_generation_dead_letters_as_invalid_row(
 
 
 def test_drain_leaves_terminal_rows_for_spanner_ttl(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, db, _bt = fake_store
+    store, db = fake_store
     ob = _outbox(store)
     for aid in (
         "gwa-old-done-a",
@@ -2604,11 +2740,11 @@ def test_drain_leaves_terminal_rows_for_spanner_ttl(
 
 
 def test_drain_switch_coverage(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     ws = "ws-drain-switch"
     _seed_credit(store, ws)
@@ -2662,11 +2798,11 @@ def test_drain_switch_coverage(
 
 
 def test_drain_resolves_recovery_outcomes_and_warning_gates(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     cases = {
         "gwa-refund-kept-charge": ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE,
@@ -2738,10 +2874,10 @@ def test_drain_resolves_recovery_outcomes_and_warning_gates(
 
 
 def test_drain_resolve_errors_do_not_abort_later_rows(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     first = _bare_authorization("gwa-resolve-error")
     second = _bare_authorization("gwa-resolve-ok")
@@ -2778,7 +2914,7 @@ def test_drain_resolve_errors_do_not_abort_later_rows(
 
 
 def test_drain_clamps_limit_to_500(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert fake_store is not None
@@ -2834,11 +2970,11 @@ def _parse_iso(text: str | None) -> dt.datetime:
     ids=["already_exists", "failed_precondition", "invalid_argument"],
 )
 def test_deterministic_apply_error_parks_without_burning_attempts(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     auth = _bare_authorization("gwa-deterministic-error")
     ob.enqueue(_row(auth))
@@ -2867,10 +3003,10 @@ def test_deterministic_apply_error_parks_without_burning_attempts(
 
 
 def test_transient_apply_error_keeps_the_attempt_counted_backoff(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     auth = _bare_authorization("gwa-transient-error")
     ob.enqueue(_row(auth))
@@ -2896,10 +3032,10 @@ def test_transient_apply_error_keeps_the_attempt_counted_backoff(
 
 
 def test_drain_stops_at_its_wall_clock_budget_and_reports_deferred(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ob = _outbox(store)
     auths = [_bare_authorization(f"gwa-budget-{index:02d}") for index in range(10)]
     for auth in auths:
@@ -2940,8 +3076,8 @@ def test_drain_stops_at_its_wall_clock_budget_and_reports_deferred(
     assert result["recovered_micro"] == 3 * 777_777
 
 
-def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]) -> None:
-    _store, _db, _bt = fake_store
+def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any]) -> None:
+    _store, _db = fake_store
     token = "internal-test-token"  # noqa: S105 - test token.
     client = _client(Settings(environment="test", internal_gateway_token=token))
 
@@ -2988,7 +3124,7 @@ def _typed_settle_body(auth: GatewayAuthorization, **overrides: Any) -> dict[str
 
 
 def test_user_model_inline_typed_finalize_pays_owner_once_and_replay_is_a_noop(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
     """The path prod actually takes: inline typed finalize WINS on Spanner.
 
@@ -2998,7 +3134,7 @@ def test_user_model_inline_typed_finalize_pays_owner_once_and_replay_is_a_noop(
     duplicate HTTP settle and the outbox repair replay must leave the payout
     at one movement / one increment.
     """
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-inline-win"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -3030,12 +3166,12 @@ def test_user_model_inline_typed_finalize_pays_owner_once_and_replay_is_a_noop(
 
 
 def test_user_model_payout_movement_pk_is_a_real_second_guard(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
     """If the movement row already exists (a prior path paid this
     authorization), the finalize must NOT bump earnings again — the PK is
     the guard behind the claim, and it has to be load-bearing on its own."""
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-second-guard"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -3056,12 +3192,12 @@ def test_user_model_payout_movement_pk_is_a_real_second_guard(
 
 
 def test_user_model_settle_does_not_double_bill_cached_prompt_tokens(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
     """Owner endpoints speak the OpenAI dialect: prompt_tokens already
     includes the cached subset. Billing input + cache_read double-charged the
     prompt and let an owner reporting cached==prompt double their revenue."""
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-cache"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -3082,12 +3218,12 @@ def test_user_model_settle_does_not_double_bill_cached_prompt_tokens(
 
 
 def test_user_model_settle_is_capped_at_the_authorized_hold(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The token counts are the payee's own meter; the caller's hold is the
     ceiling on both the charge and the 70% payout."""
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-cap"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -3107,11 +3243,11 @@ def test_user_model_settle_is_capped_at_the_authorized_hold(
 
 
 def test_user_model_settle_accepts_the_callers_raw_model_spelling(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
     """The enclave may echo the caller's spelling as selected_model; a refused
     settle here strands the hold, so it must compare normalized."""
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-raw-spelling"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -3125,9 +3261,9 @@ def test_user_model_settle_accepts_the_callers_raw_model_spelling(
 
 
 def test_user_model_settle_refuses_a_different_model_id(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
 ) -> None:
-    store, _db, _bt = fake_store
+    store, _db = fake_store
     ws = "ws-user-model-wrong-model"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
@@ -3174,13 +3310,20 @@ def _settle_with_sql_spy(
     return auth, calls, _client(Settings(environment="test", settle_outbox_enabled=True))
 
 
+@pytest.mark.parametrize("path", ["one_commit", "two_commit"])
 def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    request: pytest.FixtureRequest,
+    path: str,
 ) -> None:
-    store, db, _bt = prod_shaped_store
+    if path == "two_commit":
+        request.getfixturevalue("two_commit_settle")
+    store, db = prod_shaped_store
     auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-done")
+    now = dt.datetime.now(dt.UTC)
+    _typed_key(db, auth.key_hash).update(day_start=now, week_start=now, month_start=now)
 
     with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
         resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
@@ -3195,29 +3338,46 @@ def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
     assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
     assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
 
-    marks = [
-        txn for txn, sql in calls if sql.startswith("UPDATE tr_settle_outbox SET status=@status")
-    ]
-    assert len(marks) == 1, "the done-mark must run exactly once"
-    [mark_txn] = marks
     finalize_tables = {
         txn for txn, sql in calls if "tr_reservation" in sql or "tr_credit_balance" in sql
     }
-    assert mark_txn in finalize_tables, (
-        "the done-mark ran in its own transaction, not the finalize's"
-    )
+    marks = [
+        txn for txn, sql in calls if sql.startswith("UPDATE tr_settle_outbox SET status=@status")
+    ]
+    if path == "one_commit":
+        # The intent is born resolved: no done-mark UPDATE exists at all, and
+        # its INSERT shares the finalize transaction (the only one).
+        assert marks == []
+        inserts = [txn for txn, sql in calls if sql.startswith("INSERT INTO tr_settle_outbox")]
+        assert len(inserts) == 1 and inserts[0] in finalize_tables
+        assert len({txn for txn, _sql in calls}) == 1
+    else:
+        assert len(marks) == 1, "the done-mark must run exactly once"
+        [mark_txn] = marks
+        assert mark_txn in finalize_tables, (
+            "the done-mark ran in its own transaction, not the finalize's"
+        )
 
     [record] = _settle_timing_records(caplog)
     assert isinstance(record.args, tuple)
     assert record.args[7] == 0.0  # mark_ms: no standalone mark commit
+    # commit_path: a declined one-commit attempt is reported as the fallback.
+    assert record.args[8] == ("one_commit" if path == "one_commit" else "fallback")
+    if path == "one_commit":
+        assert record.args[5] == 0.0  # enqueue_ms: no separate enqueue commit
 
 
-def test_inline_spend_lease_overrun_caps_charge_generation_typed_cost_and_outbox(
-    prod_shaped_store: tuple[Any, Any, Any],
+@pytest.mark.parametrize("settlement", ["spend_lease", "regional_lease"])
+def test_inline_settle_of_retired_settlement_kind_is_refused_before_intent_or_charge(
+    prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    settlement: str,
 ) -> None:
-    store, db, _bt = prod_shaped_store
+    """Rows the retired regional-quota and spend-lease pilots left behind
+    cannot be settled: the ledger that held their escrow is gone. The route
+    refuses with 409 before it freezes an intent or touches money."""
+    store, db = prod_shaped_store
     enqueued: list[SettleOutboxRow] = []
     real_enqueue = SpannerSettleOutbox.enqueue
 
@@ -3226,121 +3386,57 @@ def test_inline_spend_lease_overrun_caps_charge_generation_typed_cost_and_outbox
         return real_enqueue(self, row, **kwargs)
 
     monkeypatch.setattr(SpannerSettleOutbox, "enqueue", capture)
-    ws = "ws-spend-lease-inline-clamp"
+    ws = f"ws-retired-{settlement}"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
-    allocation = 500
-    markup_basis_points = 2_500
-    app_owner = "owner-spend-lease-inline-clamp"
-    auth = _typed_authorization(
-        store,
-        workspace_id=ws,
-        key_hash=key.hash,
-        app_id="app-spend-lease-inline-clamp",
-        app_markup_basis_points=markup_basis_points,
-        app_owner_user_id=app_owner,
-    )
-    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    _stamp_retired_settlement(db, auth, settlement)
     settings = Settings(
         environment="test",
         settle_outbox_enabled=True,
         operational_analytics_outbox_enabled=True,
-        spend_lease_issuance_enabled=True,
-        spend_lease_binding_enabled=True,
-        spend_lease_bigtable_app_profiles="us-central1=tr-spend-us-central1",
-        spend_lease_pilot_workspace_ids=ws,
-        spend_lease_signing_secret_name="test-secret",  # noqa: S106
     )
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.ERROR):
         response = _client(settings).post(
             "/v1/internal/gateway/settle",
             json=_settle_json(auth.id),
         )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["cost_microdollars"] == allocation
-    assert _typed_credit(db, ws)["total_usage"] == allocation
-    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == allocation
-    typed_auth = db.gateway_authorizations[auth.id]
-    assert typed_auth["finalized_cost_microdollars"] == allocation
-    outbox = db.settle_outbox[(auth.id, "settle")]
-    assert outbox["actual_cost_micro"] == allocation
-    markup = app_markup_microdollars_from_charge(allocation, markup_basis_points)
-    payout = app_markup_owner_share_microdollars(markup)
-    [frozen] = enqueued
-    assert frozen.actual_cost_micro == allocation
-    assert json.loads(frozen.settle_body or "{}")[APP_MARKUP_PAYOUT_SETTLE_FIELD] == payout
-    [generation] = db.generation_records.values()
-    generation_payload = json.loads(generation["payload"])
-    assert generation_payload["total_cost_microdollars"] == allocation
-    assert generation_payload["app_markup_microdollars"] == markup
-    [analytics] = db.operational_analytics_outbox
-    assert json.loads(analytics["payload"])["total_cost_microdollars"] == allocation
-    assert store.earnings_summary(app_owner)["total_earned"] == payout
-
-    replay = _client(settings).post(
-        "/v1/internal/gateway/settle",
-        json=_settle_json(auth.id),
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["type"] == "conflict"
+    assert enqueued == []
+    assert (auth.id, "settle") not in db.settle_outbox
+    assert db.reservations[auth.credit_reservation_id]["settled"] is False
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert db.generation_records == {}
+    assert db.operational_analytics_outbox == []
+    assert (
+        f"billing.settle_retired_settlement authorization_id={auth.id} settlement={settlement}"
+        in caplog.text
     )
-    assert replay.status_code == 200, replay.text
-    assert replay.json()["data"]["already_settled"] is True
-    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == allocation
-    assert store.earnings_summary(app_owner)["total_earned"] == payout
-    assert "billing.spend_lease_settle_capped_to_allocation" in caplog.text
-
-
-def test_eager_mirror_runs_after_won_finalize_not_lost_replay(
-    prod_shaped_store: tuple[Any, Any, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store, db, _bt = prod_shaped_store
-    ws = "ws-spend-lease-eager-winner"
-    _seed_credit(store, ws)
-    key = _make_key(store, ws)
-    winner = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
-    loser = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
-    _stamp_spend_lease_binding(db, winner, allocation_micro=ESTIMATE)
-    _stamp_spend_lease_binding(db, loser, allocation_micro=ESTIMATE)
-    mirrored: list[str] = []
-    monkeypatch.setattr(
-        "trusted_router.routes.internal.gateway.mirror_finalized_spend_lease_best_effort",
-        lambda _store, committed: mirrored.append(committed.id),
-    )
-    real_finalize = type(store).typed_finalize_gateway_authorization_result
-
-    def finalize_with_lost_replay(self: Any, authorization_id: str, **kwargs: Any) -> Any:
-        if authorization_id == loser.id:
-            return TypedFinalizeResult(finalized=False, activity_indexed=False)
-        return real_finalize(self, authorization_id, **kwargs)
-
-    monkeypatch.setattr(
-        type(store),
-        "typed_finalize_gateway_authorization_result",
-        finalize_with_lost_replay,
-    )
-    client = _client(Settings(environment="test", settle_outbox_enabled=True))
-
-    won = client.post("/v1/internal/gateway/settle", json=_settle_json(winner.id))
-    lost = client.post("/v1/internal/gateway/settle", json=_settle_json(loser.id))
-
-    assert won.status_code == lost.status_code == 200
-    assert mirrored == [winner.id]
 
 
 def test_flag_off_settle_body_outbox_and_charge_ignore_lease_named_extras(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _db, _bt = prod_shaped_store
+    store, _db = prod_shaped_store
     captured: list[SettleOutboxRow] = []
     real_enqueue = SpannerSettleOutbox.enqueue
+    real_one_commit = type(store).typed_settle_one_commit_result
 
     def capture(self: SpannerSettleOutbox, row: SettleOutboxRow, **kwargs: Any) -> str:
         captured.append(row)
         return real_enqueue(self, row, **kwargs)
 
+    def capture_one_commit(self: Any, authorization_id: str, **kwargs: Any) -> Any:
+        # The fresh path persists the same frozen intent inside its commit.
+        captured.append(kwargs["settle_intent"])
+        return real_one_commit(self, authorization_id, **kwargs)
+
     monkeypatch.setattr(SpannerSettleOutbox, "enqueue", capture)
+    monkeypatch.setattr(type(store), "typed_settle_one_commit_result", capture_one_commit)
     client = _client(Settings(environment="test", settle_outbox_enabled=True))
     responses = []
     for suffix, extras in (
@@ -3378,16 +3474,18 @@ def test_flag_off_settle_body_outbox_and_charge_ignore_lease_named_extras(
             row.authorization_id, "normalized"
         )
         normalized_rows.append(frozen)
+    assert len(normalized_rows) == 2
     assert normalized_rows[0] == normalized_rows[1]
 
 
+@pytest.mark.usefixtures("two_commit_settle")
 def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A drain worker that claimed the row between enqueue and finalize keeps it."""
-    store, db, _bt = prod_shaped_store
+    store, db = prod_shaped_store
     auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-leased")
     original_enqueue = SpannerSettleOutbox.enqueue
 
@@ -3416,14 +3514,14 @@ def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(
 
 
 def test_without_in_commit_activity_durability_the_standalone_mark_still_runs(
-    fake_store: tuple[Any, Any, Any],
+    fake_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """No operational-analytics outbox in the commit: durability is only
     established by the post-commit index write, so the finalize transaction
     must NOT mark the intent done; the standalone mark after the index does."""
-    store, db, _bt = fake_store
+    store, db = fake_store
     auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-fallback")
 
     with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
@@ -3446,13 +3544,13 @@ def test_without_in_commit_activity_durability_the_standalone_mark_still_runs(
 
 
 def test_folded_mark_defers_retention_while_a_sibling_intent_is_outstanding(
-    prod_shaped_store: tuple[Any, Any, Any],
+    prod_shaped_store: tuple[Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Settle and refund intents share the authorization; while the refund is
     still pending, the folded settle mark must leave the shared records
     TTL-ineligible exactly as the standalone mark did."""
-    store, db, _bt = prod_shaped_store
+    store, db = prod_shaped_store
     auth, _calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-sibling")
     _outbox(store).enqueue(_row(auth, intent="refund"), initial_delay_seconds=60)
 
@@ -3463,171 +3561,6 @@ def test_folded_mark_defers_retention_while_a_sibling_intent_is_outstanding(
     assert db.settle_outbox[(auth.id, "refund")]["status"] == "pending"
     assert db.gateway_authorizations[auth.id]["terminal_at"] is None
     assert db.reservations[auth.credit_reservation_id].get("terminal_at") is None
-
-
-def _regional_snapshot_authorization(store: Any, ws: str, key: Any) -> GatewayAuthorization:
-    from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
-
-    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
-    outcome, auth = store.authorize_gateway_regional(
-        authorization_id="gwa-regional-snapshot", workspace_id=ws, key_hash=key.hash,
-        key_usage_shards=key.usage_shard_count, estimate=10_000,
-        model_id=MODEL_ID, provider=PROVIDER, requested_model_id=MODEL_ID,
-        candidate_model_ids=[MODEL_ID], region="us-central1", endpoint_id=ENDPOINT_ID,
-        candidate_endpoint_ids=[ENDPOINT_ID], idempotency_key="snapshot",
-        idempotency_fingerprint="f" * 64, tags={"snapshot": "regional"},
-        expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=2),
-        lease_ttl_seconds=60, lease_max_microdollars=100_000,
-        lease_max_available_basis_points=1000, lease_shard_count=1,
-    )
-    assert outcome == "accepted" and auth is not None
-    return auth
-
-
-@pytest.mark.parametrize("reread", [True, False])
-def test_fresh_regional_settle_round_trip_order(
-    prod_shaped_store: tuple[Any, Any, Any],
-    settle_operations: list[tuple[Any, str, dict[str, Any]]],
-    monkeypatch: pytest.MonkeyPatch, reread: bool,
-) -> None:
-    from trusted_router import storage_gcp_authorize
-
-    store, db, _bt = prod_shaped_store
-    ws = "ws-regional-snapshot-rtt"
-    _seed_credit(store, ws)
-    key = _make_key(store, ws, limit=None)
-    auth = _regional_snapshot_authorization(store, ws, key)
-    original = type(store).typed_finalize_gateway_authorization_result
-
-    def finalize(self: Any, aid: str, **kwargs: Any) -> TypedFinalizeResult:
-        assert kwargs["authorization_snapshot"] == auth
-        assert kwargs["authorization_snapshot"] is not auth
-        if reread:
-            kwargs["authorization_snapshot"] = None
-        return original(self, aid, **kwargs)
-
-    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
-    monkeypatch.setattr(storage_gcp_authorize, "_OUTBOX_AVAILABILITY_CACHE", {})
-    settle_operations.clear()
-    data = _internal_settle(auth)
-    assert data["disposition"] == "finalized"
-    expected = [
-        ("ro", "SELECT", "tr_gateway_authorization"),
-        # S2-S4 (intent INSERT and both retention clears) are one batch (#1340).
-        ("t1", "BATCH", ""),
-        ("t1", "COMMIT", ""),
-        *([("ro", "SELECT", "tr_gateway_authorization")] if reread else []),
-        ("ro", "SELECT", "tr_settle_outbox"),
-        ("t3", "SELECT", "tr_reservation"),
-        ("t3", "UPDATE", "tr_reservation"),
-        ("t3", "BATCH", ""),
-        ("t3", "COMMIT", ""),
-        ("t4", "INSERT", "tr_operational_analytics_outbox"),
-        ("t4", "COMMIT", ""),
-        ("ro", "SELECT", "tr_entities"),
-    ]
-    transactions: dict[Any, str] = {}
-    observed = []
-    for reader, sql, _params in settle_operations:
-        phase = "ro"
-        if isinstance(reader, _FakeTransaction):
-            if reader not in transactions:
-                transactions[reader] = ["t1", "t3", "t4"][len(transactions)]
-            phase = transactions[reader]
-        table = re.search(r"(?:FROM|INTO|UPDATE) (tr_\w+)", sql)
-        observed.append((phase, sql.split()[0], table[1] if table else ""))
-    assert observed == expected
-    # 13 -> 11 with the snapshot; the legacy re-read adds one.
-    assert len(observed) == 11 + int(reread)
-    local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
-    assert local.spent_microdollars == data["cost_microdollars"]
-    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == data["cost_microdollars"]
-    assert db.settle_outbox[(auth.id, "settle")]["status"] == "done"
-
-
-@pytest.mark.parametrize("reread", [False, True])
-@pytest.mark.parametrize("case", ["ledger_unavailable", "existing_intent"])
-def test_regional_snapshot_deferral_preserves_frozen_intent(
-    prod_shaped_store: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch,
-    reread: bool, case: str,
-) -> None:
-    store, db, _bt = prod_shaped_store
-    ws = "ws-snapshot-deferral"
-    _seed_credit(store, ws)
-    key = _make_key(store, ws, limit=None)
-    auth = _regional_snapshot_authorization(store, ws, key)
-    outbox = _outbox(store)
-    original = type(store).typed_finalize_gateway_authorization_result
-
-    def finalize(self: Any, aid: str, **kwargs: Any) -> TypedFinalizeResult:
-        if reread:
-            kwargs["authorization_snapshot"] = None
-        return original(self, aid, **kwargs)
-
-    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
-    if case == "existing_intent":
-        assert outbox.enqueue(_row(auth, origin="typed", cost=123), preserve_existing=True) == "inserted"
-        before = outbox.get(auth.id, "settle")
-    with monkeypatch.context() as unavailable:
-        if case == "ledger_unavailable":
-            def fail(*args: Any, **kwargs: Any) -> Any:
-                raise RegionalLeaseLedgerError("ledger temporarily unavailable")
-            unavailable.setattr(type(store._regional_quota_ledger), "settle", fail)
-        data = _internal_settle(auth)
-    assert data["disposition"] == "intent_durable"
-    assert not db.reservations[auth.credit_reservation_id]["settled"]
-    assert store.get_gateway_authorization(auth.id).settlement == "regional_lease"
-    row = outbox.get(auth.id, "settle")
-    assert row is not None and row.status == "pending"
-    if case == "existing_intent":
-        assert row.actual_cost_micro == before.actual_cost_micro == 123
-        assert row.settle_body == before.settle_body
-    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
-    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
-    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
-
-
-def test_spend_route_passes_snapshot_and_rereads_committed_mirror(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tests.test_spend_lease_authorize import _store_binding_harness
-    from trusted_router.routes.internal import gateway
-
-    store, db, key, plan, _ledger = _store_binding_harness()
-    configure_store(store)
-    outcome, auth = store.authorize_gateway_typed(
-        workspace_id="workspace-1", key_hash=key.hash, authorization_id="authorization-bound",
-        estimate=500, has_credit_candidate=True, reservation_usage_type="Credits",
-        model_id=MODEL_ID, provider=PROVIDER, requested_model_id=MODEL_ID,
-        candidate_model_ids=[MODEL_ID], region="us-central1", endpoint_id=ENDPOINT_ID,
-        candidate_endpoint_ids=[ENDPOINT_ID], idempotency_key="idem-bound",
-        idempotency_fingerprint="fingerprint-bound",
-        expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=2),
-        spend_lease_binding_plan=plan,
-    )
-    assert outcome == "accepted" and auth.settlement == "spend_lease"
-    original = type(store).typed_finalize_gateway_authorization_result
-    received = []
-    mirrored = []
-
-    def finalize(self: Any, aid: str, **kwargs: Any) -> TypedFinalizeResult:
-        snapshot = kwargs["authorization_snapshot"]
-        assert snapshot == auth and snapshot is not auth
-        received.append(snapshot)
-        return original(self, aid, **kwargs)
-
-    def mirror(_store: Any, committed: GatewayAuthorization) -> None:
-        assert committed.settled and committed.finalized_cost_microdollars == 500
-        assert committed is not received[0]
-        mirrored.append(committed)
-
-    monkeypatch.setattr(type(store), "typed_finalize_gateway_authorization_result", finalize)
-    monkeypatch.setattr(gateway, "mirror_finalized_spend_lease_best_effort", mirror)
-    monkeypatch.setattr(gateway, "_endpoint_cost_microdollars", lambda *a, **kw: 15_001)
-    data = _internal_settle(auth)
-    assert data["cost_microdollars"] == 500
-    assert len(received) == len(mirrored) == 1
-    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == 500
 
 
 @pytest.mark.parametrize("sibling", ["pending", "dead", "done", "missing", "release_approved"])
@@ -3794,59 +3727,6 @@ def test_finalize_guarded_sql_matches_sequential_money(
     assert states[0] == states[1]
 
 
-@pytest.mark.parametrize("scenario", ["fresh", "replay", "refund", "pending_sibling", "dead_sibling"])
-def test_regional_guarded_sql_matches_sequential_finalize(
-    monkeypatch: pytest.MonkeyPatch, scenario: str,
-) -> None:
-    from tests.fakes import settle_done_sequential as reference
-    from tests.fakes import settle_finalize_sequential as frozen_finalize
-    from trusted_router import storage_gcp_authorize as finalize
-
-    observations = []
-    for sequential in (True, False):
-        store, db, _ = make_fake_store(
-            operational_analytics_outbox_enabled=True, request_record_write_mode="typed",
-            generation_records_enabled=True,
-        )
-        configure_store(store)
-        ws = "ws-regional-done-differential"
-        _seed_credit(store, ws)
-        key = _make_key(store, ws, limit=None)
-        auth = _regional_snapshot_authorization(store, ws, key)
-        if scenario.endswith("sibling"):
-            _outbox(store).enqueue(_row(auth, intent="refund"))
-            db.settle_outbox[(auth.id, "refund")]["status"] = scenario.split("_")[0]
-        with monkeypatch.context() as patch:
-            if sequential:
-                patch.setattr(finalize, "typed_finalize_atomic", frozen_finalize.typed_finalize_atomic)
-                def old_mark(tx: Any, pt: Any, **kw: Any) -> bool:
-                    kw.pop("retention_statements", None)
-                    return reference.mark_done_unleased_tx(tx, pt, **kw)
-                patch.setattr(frozen_finalize, "mark_done_unleased_tx", old_mark)
-                def old_batch(tx: Any, statements: Any, counts: Any) -> None:
-                    for (sql, params, types), allowed in zip(statements, counts, strict=True):
-                        assert tx.execute_update(sql, params=params, param_types=types) in allowed
-                patch.setattr(frozen_finalize, "execute_batch_dml", old_batch)
-            if scenario == "refund":
-                assert store.typed_finalize_gateway_authorization_result(
-                    auth.id, success=False, actual_microdollars=0, selected_usage_type="Credits",
-                ).finalized
-            data = _internal_settle(auth)
-            if scenario == "replay":
-                replay = _internal_settle(auth)
-                assert replay["cost_microdollars"] == data["cost_microdollars"]
-        local = store._regional_quota_ledger.get(auth.regional_lease_id, region=auth.region)
-        row = db.reservations[auth.credit_reservation_id]
-        intent = db.settle_outbox.get((auth.id, "settle"))
-        observations.append((
-            data, local.spent_microdollars, row["actual_micro"], row.get("terminal_at") is None,
-            db.gateway_authorizations[auth.id].get("terminal_at") is None,
-            None if intent is None else (intent["status"], intent["attempts"]),
-            len(db.generation_records), len(db.operational_analytics_outbox),
-        ))
-    assert observations[0] == observations[1]
-
-
 @pytest.mark.parametrize("reservation", [None, "", "absent", "foreign"])
 @pytest.mark.parametrize("sibling", [False, True])
 def test_done_uses_stored_reservation_and_preserves_foreign_authorization_guard(
@@ -3877,3 +3757,12 @@ def test_done_uses_stored_reservation_and_preserves_foreign_authorization_guard(
         assert db.settle_outbox[("auth", "settle")]["attempts"] == 8
         outcomes.append((db.gateway_authorizations, db.reservations, db.settle_outbox))
     assert outcomes[0] == outcomes[1]
+
+
+def test_outbox_delayed_stamps_read_the_same_clock_as_now(monkeypatch):
+    """One clock: pinning _iso_now pins every delayed timestamp too."""
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_iso_now", lambda: "2026-10-03T14:15:05Z")
+    assert outbox_module._iso_after_seconds(0) == "2026-10-03T14:15:05Z"
+    assert outbox_module._iso_after_seconds(60) == "2026-10-03T14:16:05Z"

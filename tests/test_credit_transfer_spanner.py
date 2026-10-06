@@ -60,7 +60,7 @@ def _seed(
     them rather than by the race a test means to stage. The one concurrency
     test arms its barrier itself, after setup.
     """
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     usage = usage or [0] * len(totals)
     reserved = reserved or [0] * len(totals)
     store._write_entity(

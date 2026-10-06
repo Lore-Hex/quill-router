@@ -129,10 +129,4 @@ else
   ensure_policy tr_settle_outbox
 fi
 
-if $APPLY; then
-  (cd "$REPO_ROOT" && uv run python "${SCRIPT_DIR}/configure_bigtable_retention.py" --apply)
-else
-  (cd "$REPO_ROOT" && uv run python "${SCRIPT_DIR}/configure_bigtable_retention.py")
-fi
-
 log "complete; no DELETE, DROP, or terminal_at backfill was executed"

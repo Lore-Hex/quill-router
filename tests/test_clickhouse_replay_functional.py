@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from clickhouse.backfill_benchmark_samples import normalise
+from clickhouse.benchmark_rows import normalise
 from clickhouse.rollup_analytics import RollupPartition, recompute_partition
 
 pytestmark = pytest.mark.skipif(

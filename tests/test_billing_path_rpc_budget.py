@@ -8,6 +8,20 @@ inserting a new helper between `@spanner_rpc_budget(...)` and
 function that writes billing state unguarded -- while still compiling, still
 importing, and still passing every behavioural test in the suite.
 
+Warm lookup authorize spends four sequential Spanner operations, armed or
+unarmed: one strong auth-context/BYOK/boot snapshot, the idempotency read,
+the credit/key/reservation/authorization batch, and commit. The authorize
+hold-time batch leaves only the commit RPC after the first credit write.
+The exact sequence is pinned in
+``test_gateway_authorize_spanner_operations.py``; the 20-second deadline stays.
+
+C1 ordinary success settle (hold > actual, no recovery debt, current windows)
+uses seven warm operations, eight with the cold outbox-schema probe: authorization
+snapshot, durable-intent batch and commit, reservation read, finalize batch and
+commit, broadcast snapshot. Credit release, no-debt check and key usage share the
+finalize batch; guard misses roll back and classify in a fresh transaction under
+the same deadline. Refunds and exceptional paths keep their original tail.
+
 That is exactly what happened on the settle-failover-Sentry branch: the budget
 landed on an observability helper. A behavioural test cannot catch it, because
 the budget only changes what happens under RPC pressure. So this asserts the
@@ -19,10 +33,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from trusted_router.routes.internal.gateway import (
-    _BILLING_PATH_SPANNER_BUDGET_SECONDS,
-    _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS,
-)
+from trusted_router.routes.internal.gateway import _BILLING_PATH_SPANNER_BUDGET_SECONDS
 
 ROOT = Path(__file__).resolve().parents[1]
 GATEWAY = ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py"
@@ -41,7 +52,6 @@ BILLING_PATH_FUNCTIONS = frozenset(
 )
 
 _BUDGET = "spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)"
-_SHADOW_BUDGET = "spanner_rpc_budget(_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS)"
 
 
 def _functions_carrying_the_budget() -> frozenset[str]:
@@ -85,35 +95,3 @@ def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
     """The enclave's direct control-plane client has a 25-second header cap."""
 
     assert _BILLING_PATH_SPANNER_BUDGET_SECONDS == 20.0
-
-
-def test_non_authoritative_spend_shadow_has_its_own_background_budget() -> None:
-    """Background evidence tolerates cross-region retries without client latency."""
-
-    tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
-    shadow_functions = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for decorator in node.decorator_list
-        if ast.unparse(decorator) == _SHADOW_BUDGET
-    }
-
-    assert shadow_functions == {"_persist_spend_lease_shadow"}
-    assert _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS == 5.0
-
-
-def test_spend_shadow_recording_is_not_decorated_as_a_spanner_call() -> None:
-    """The request-thread helper may enqueue only; it cannot call Spanner."""
-
-    tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
-    record = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "_record_spend_lease_shadow"
-    )
-    assert not record.decorator_list
-    calls = {ast.unparse(node.func) for node in ast.walk(record) if isinstance(node, ast.Call)}
-    assert "STORE.record_spend_lease_shadow" not in calls
-    assert "_SPEND_LEASE_SHADOW_DISPATCHER.submit" in calls

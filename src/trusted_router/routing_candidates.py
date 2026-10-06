@@ -77,6 +77,7 @@ from trusted_router.catalog_data import (
     SYNTH_PROMETHEUS_2_MODEL_ORDER,
     SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_PROMETHEUS_4_MODEL_ORDER,
+    SYNTH_QUALITY_1M_MIN_MEMBER_CONTEXT,
     SYNTH_QUALITY_1M_MODEL_ORDER,
     SYNTH_ZEUS_3_MODEL_ORDER,
     ZDR_MODEL_ID,
@@ -379,6 +380,15 @@ def _models_for_ids(model_ids: tuple[str, ...]) -> list[Model]:
     return models
 
 
+def prometheus_1m_candidate_models() -> list[Model]:
+    """Prometheus 1.0 1M's members that serve its 1M window, in its order."""
+    return [
+        model
+        for model in _models_for_ids(SYNTH_QUALITY_1M_MODEL_ORDER)
+        if model.context_length >= SYNTH_QUALITY_1M_MIN_MEMBER_CONTEXT
+    ]
+
+
 def socrates_candidate_models() -> list[Model]:
     return _models_for_ids(SOCRATES_CATALOG_MODEL_ORDER)
 
@@ -410,7 +420,7 @@ def meta_candidate_models(model_id: str) -> list[Model]:
     if advisor_order is not None:
         return _models_for_ids(advisor_order)
     if model_id == PROMETHEUS_1_0_1M_MODEL_ID:
-        return _models_for_ids(SYNTH_QUALITY_1M_MODEL_ORDER)
+        return prometheus_1m_candidate_models()
     if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_4_0_MODEL_ID):
         return _models_for_ids(SYNTH_PROMETHEUS_4_MODEL_ORDER)
     if model_id == PROMETHEUS_3_0_MODEL_ID:

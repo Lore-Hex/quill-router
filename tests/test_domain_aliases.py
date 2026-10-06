@@ -10,6 +10,7 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
 from trusted_router.config import Settings
 from trusted_router.domains import (
     configured_control_domains,
@@ -494,10 +495,7 @@ def test_production_oauth_requires_credentials_for_every_backup_domain() -> None
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",
         "ses_from_email": "noreply@example.com",
-        "storage_backend": "spanner-bigtable",
-        "spanner_instance_id": "trusted-router",
-        "spanner_database_id": "trusted-router",
-        "bigtable_instance_id": "trusted-router-logs",
+        **PRODUCTION_SPANNER_STORAGE,
         "byok_kms_key_name": "projects/test/locations/global/keyRings/test/cryptoKeys/test",
         "trusted_domain_aliases": "allyrouter.com,uptimerouter.com",
         "google_client_id": "canonical-google",

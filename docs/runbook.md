@@ -22,6 +22,7 @@ Index:
 - [A provider serves a model but TR's `/v1/models` doesn't list it](#missing-model)
 - [Adding a brand-new provider to TR](#new-provider)
 - [Adding a model to an existing provider](#new-model)
+- [Preview and enable route retirement notices](#retirement-notices)
 - [Rotating a provider API key](#rotate-key)
 - [Spinning up Phala / RedPill again after a key issue](#phala-revive)
 - [Settle outbox: flip, verify, monitor, roll back](#settle-outbox)
@@ -30,10 +31,54 @@ Index:
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 - [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
-- [Spend-lease binding (pilot)](#spend-lease-binding-pilot)
-- [Spend-lease reconciler](#spend-lease-reconciler)
+- [Authorize-time billing-pause gate](#billing-pause-gate)
 
 ---
+
+## <a id="retirement-notices"></a>Preview and enable route retirement notices
+
+`TR_RETIREMENT_NOTICES_MODE` defaults to `off`, including in
+`scripts/deploy/rollout.sh`. Change the checked-in rollout setting to `preview`
+first. The control/combined service runs the same in-process startup loop used
+by activation reminders: an initial pass after 5–30 seconds, then every 24
+hours. No additional cron or public route is needed.
+
+Preview sends one summary per UTC day to
+`TR_RETIREMENT_NOTICES_PREVIEW_EMAIL` (Joseph's operational-report address in
+the rollout), or logs it when the address is unset. It lists workspace IDs,
+eligible recipient counts, models, UTC cutovers and impact; it contains no
+customer addresses or workspace names. The daily report uses the existing
+durable event replay guard, so concurrent replicas do not each email a report.
+Customer notice claims are untouched. After Joseph reviews the preview,
+change the checked-in mode to `send` through the normal release workflow.
+
+The worker queries the existing operational ClickHouse activity table for
+each exact provider/model pair in `[run time - 30 days, run time)`. It considers
+cutovers between one hour and 45 days away, inclusive; past retirements never
+produce catch-up mail. It delivers one grouped message per eligible owner or
+admin per workspace. Deleted workspaces, foreign-plane shadows, unverified,
+disabled or suspended users and local email blocks are excluded. The local
+block list is fed by SES bounce/complaint notifications; SES itself drops sends
+to addresses on its account-level suppression list.
+
+Impact applies all known retirements up to each cutover to today's available
+catalog routes and uses the router's own confidential/ZDR checks. Hourly
+manifest refresh deadlines are freshness checks, not retirement announcements.
+Other future catalog changes cannot be predicted. Remaining BYOK routes are
+identified as requiring a provider key, and provider restrictions are called
+out. Lifecycle entries can optionally name `replacement_model_ids`; a named
+replacement is advice, never an automatic model substitution. Notices link to
+`/models` and explain the workspace's recent route usage.
+
+The durable `retirement_notice` entity is keyed by workspace ID and records
+claimed provider/UTC-cutover IDs and claim times. A provider's same cutover is
+one retirement even if its model list or replacement advice is edited. The
+batch commits before SES, as activation reminders do. Claims never expire:
+retries and concurrent replicas cannot resend, including after a partial or
+failed send. Consequently, a crash after claiming can lose delivery; inspect
+`retirement_notice.send_failed` and `retirement_notice.pass_completed` rather
+than deleting claims to retry blindly. No billing-path changes or database
+migration are required. Each cloud uses its own existing store and analytics.
 
 ## <a id="router-core-page"></a>Router-core four-nines page fires
 
@@ -95,12 +140,12 @@ replicated ClickHouse. Bigtable is only a temporary migration mirror and is not
 part of the `spanner-clickhouse` runtime.
 
 Spanner degraded:
-1. Check whether regional quota leases can continue authorizing bounded spend.
-2. If leases cannot be refreshed and holds cannot be made safely, fail closed
-   for prepaid requests rather than granting unlimited credit.
-3. BYOK requests may continue only if they do not require prepaid credit holds
-   and key-limit enforcement is still local/leased.
-4. After recovery, reconcile reservations and stuck authorizations.
+1. Every prepaid authorization reserves credit in Spanner; there is no regional
+   lease fallback. If holds cannot be made safely, fail closed for prepaid
+   requests rather than granting unlimited credit.
+2. BYOK requests may continue only if they do not require prepaid credit holds
+   and their key-limit holds still succeed.
+3. After recovery, reconcile reservations and stuck authorizations.
 
 ClickHouse degraded:
 1. Keep inference and Spanner settlement alive. Never make ClickHouse part of
@@ -340,8 +385,9 @@ In deploy workflow status, **deployed** now means the primary is live: all four
 regional revisions are warm, and `us-central1` has completed its 10/50/100 ramp
 and unchanged three-minute canary (normally about nine minutes). The
 `rollout-secondaries` follow-on job imports the same generation fence, keeps the
-same lock held while the three secondary ramps and regional-quota reconciler
-converge, and releases it only after that work finishes or fails. Thus another
+same lock held while the three secondary ramps, the synthetic-monitor job
+deploy, and the opt-in trust-job re-image converge, and releases it only after
+that work finishes or fails. Thus another
 cloud's rollout cannot interleave in the middle of GCP convergence.
 `verify-cloud-complete` still gates full-cloud convergence after the follow-on;
 the public-surface companion remains outside the mutex and starts only after
@@ -365,8 +411,8 @@ The variable is read independently at job start by both `deploy` and
 `rollout-secondaries`. Changing it does not alter an already-running job's
 environment: cancel an in-flight workflow if that job has started ramping, then
 re-pin traffic as needed. Held secondary regions are reported in the ramp
-summary; the reconcilers, public-surface companion, and full-cloud verification
-continue to run.
+summary; the synthetic-monitor and trust-job deploys, public-surface companion,
+and full-cloud verification continue to run.
 
 Clear the control after the incident:
 
@@ -1552,67 +1598,19 @@ for entry in \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```
-## <a id="spend-lease-binding-pilot"></a>Spend-lease binding (pilot)
 
-`TR_SPEND_LEASE_BINDING_ENABLED` makes issued spend leases authoritative for
-allocation, arbitration, the authorize pre-read, and the mint-entry rule.
-Since 2026-09-27 production pins both `TR_SPEND_LEASE_ISSUANCE_ENABLED` and
-binding **off** (the spend-lease Bigtable ledger is being retired); only the
-workspace in `TR_SPEND_LEASE_PILOT_WORKSPACE_IDS` was ever eligible. An
-explicit `TR_SPEND_LEASE_BINDING_ENABLED=true` is refused by the rollout,
-because binding without issuance cannot boot.
+## <a id="billing-pause-gate"></a>Authorize-time billing-pause gate
 
-There is no operator override: the rollout renders
-`TR_SPEND_LEASE_BINDING_ENABLED=false` literally and rejects any other value
-before a revision exists. The former unit-4 fence (which refused a
-binding-enabled image without the settlement clamp) is gone with the binding
-path it guarded.
-
-## <a id="spend-lease-reconciler"></a>Spend-lease reconciler
-
-**Retired 2026-09-27.** No release deploys this worker any more:
-`scripts/deploy/regional_quota_drain_gate.sh` proves both ledgers are drained
-before the capability-off rollout, and `scripts/deploy/retire_ledger_workers.sh`
-deletes the `trusted-router-spend-lease-reconcile` schedule and every
-`trusted-router-spend-lease-reconciler-*` job after the ramp (the same for the
-regional quota reconciler) - or defers, with a workflow warning, while any
-region still serves a capability-on revision. The alerts and CLI below
-describe the retired worker. Once the release log shows `ledger reconciler
-workers retired` and `controls/ledger-retirement.json` exists in the deploy
-mutex bucket, a `spend_lease.*` heartbeat alert means an alert rule outlived
-the job; before that, it means what it always meant.
-
-The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job ran once
-per minute with a 50-second task deadline. It is intentionally active while
-spend-lease binding is off: an empty pass verifies the regional Bigtable
-profiles, records both lag values as zero, publishes
-`job:spend-lease-reconcile`, and exits.
-
-Until the spend-lease Bigtable table and fixed regional app profiles are
-provisioned, the job reports `spend_lease.reconciler_ledger_unprovisioned` as
-a clean idle pass and records its heartbeat; this means the job is alive while
-binding remains off, not that the ledger health proof was weakened or skipped.
-Once provisioning lands, the next scheduled execution automatically performs
-the conditional-write and strong-read proof through every configured profile.
-
-For `spend_lease.reconcile_lag_exceeded`, compare
-`eligibility_lag_seconds` with `open_age_lag_seconds`. Eligibility lag measures
-rows that have already produced the frozen/zero-open close proof. Open-age lag
-also includes expired dead rows, so a pre-eligibility failure cannot disappear
-from the signal. Inspect `spend_lease_open` by `lease_id`, including `phase`,
-`attempts`, `last_error`, and all three close timestamps. Do not manually
-release credit: close step 2 deliberately couples release, lease guards, fence
-slot accounting, and `global_closed_at` in one transaction.
-
-For a dead row, repair the reported cause, then run:
-
-```bash
-python -m trusted_router.spend_lease_reconcile_cli requeue-dead LEASE_ID
-```
-
-Omit `LEASE_ID` to requeue all dead rows. A quarantine alert requires comparing
-the local allocation proof with the strong typed authorization before any
-operator action; quarantined allocations remain open and can retain escrow.
+`TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true` (rendered by `rollout.sh`) arms
+`trust_eligibility.billing_paused_tx`: the typed and legacy authorize paths read
+the workspace's billing-pause state inside their own transaction and reject a
+new hold while it is paused. The setting's name predates the 2026-09 removal of
+the regional-quota and spend-lease pilots. Only one other `TR_SPEND_LEASE_*`
+variable is still read, `TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS` (rendered
+empty); every `TR_REGIONAL_QUOTA_*` variable and the remaining `TR_SPEND_LEASE_*`
+variables are gone, and Settings ignores them if set. The retired pilot sections
+(spend-lease binding, spend-lease reconciler, ledger drain gate and worker
+retirement) are in git history: `git log -- docs/runbook.md`.
 
 ## <a id="route-health-postgres"></a>Route-health reads on Postgres (AWS, Azure)
 
@@ -1638,4 +1636,3 @@ It works in pages of at most 1,000 rows, one transaction each, and logs a
 checkpoint after every page. Rerunning it is safe, and `--after <id>` resumes
 from a checkpoint. A row whose `created_at` does not parse, or names no instant
 representable in UTC, keeps a NULL `indexed_at` and is skipped.
-

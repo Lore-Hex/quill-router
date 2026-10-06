@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing.parsers import deepseek as deepseek_parser
+from tests.pinned_manifests import DEEPSEEK_DIRECT_ROWS, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, effective_endpoint
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -22,6 +24,13 @@ from trusted_router.storage import STORE
 _FLASH = "deepseek/deepseek-v4-flash"
 _FLASH_DATED = "deepseek/deepseek-v4-flash-0731"
 _PRO = "deepseek/deepseek-v4-pro"
+
+
+@pytest.fixture
+def direct_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """DeepSeek's direct routes, built from its pinned manifest rows: the
+    schedule prices DeepSeek's own routes whatever DeepSeek lists today."""
+    serve_manifest_rows(monkeypatch, tmp_path, "deepseek", DEEPSEEK_DIRECT_ROWS)
 
 
 def test_deepseek_parser_uses_off_peak_as_static_schedule_baseline() -> None:
@@ -222,6 +231,7 @@ def test_deepseek_schedule_does_not_change_third_party_route_prices() -> None:
     ) is None
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_model_endpoints_publish_direct_deepseek_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -243,6 +253,7 @@ def test_model_endpoints_publish_direct_deepseek_schedule(
     assert direct["trustedrouter"]["pricing_schedule"]["rate_locked_at"] == "authorization"
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_deepseek_pricing_page_explains_variable_direct_rate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -269,6 +280,7 @@ def test_deepseek_pricing_page_explains_variable_direct_rate(
         (_PRO, "peak", 1_392_600, 4_177_800, 46_420),
     ],
 )
+@pytest.mark.usefixtures("direct_routes")
 def test_effective_endpoint_applies_markup_and_real_cached_rate(
     model_id: str,
     period: str,
@@ -285,6 +297,7 @@ def test_effective_endpoint_applies_markup_and_real_cached_rate(
     assert priced.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == cached
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_deepseek_cached_tokens_are_billed_at_announced_cache_rate() -> None:
     endpoint = MODEL_ENDPOINTS[f"{_PRO}@deepseek/prepaid"]
     actual = _endpoint_cost_microdollars(
@@ -302,6 +315,7 @@ def test_deepseek_cached_tokens_are_billed_at_announced_cache_rate() -> None:
     )
 
 
+@pytest.mark.usefixtures("direct_routes")
 def test_gateway_settlement_uses_authorization_time_for_deepseek_price(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

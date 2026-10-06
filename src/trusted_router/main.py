@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -30,6 +31,7 @@ from trusted_router.catalog_ingest import report_refused_manifest_rows
 from trusted_router.config import Settings, get_settings
 from trusted_router.dashboard import public_not_found_html, public_not_found_markdown
 from trusted_router.errors import error_response
+from trusted_router.gateway_timing import gateway_error_timing_fields
 from trusted_router.markdown_negotiation import (
     MARKDOWN_CONTENT_TYPE,
     is_public_page_path,
@@ -38,6 +40,8 @@ from trusted_router.markdown_negotiation import (
 from trusted_router.middleware import register_http_middleware
 from trusted_router.post_commit import close_post_commit
 from trusted_router.public_openapi import (
+    document_router_server,
+    install_operation_servers,
     load_public_openapi_payload,
     public_openapi_response,
 )
@@ -59,6 +63,7 @@ from trusted_router.routes.chat_proxy import register_chat_proxy_routes
 from trusted_router.routes.client_events import register_client_events_routes
 from trusted_router.routes.compat import (
     register_compat_stub_routes,
+    register_gateway_compat_stub_routes,
     register_versioned_compat_stub_routes,
 )
 from trusted_router.routes.console import register_console_routes
@@ -78,6 +83,7 @@ from trusted_router.routes.internal import (
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.routes.mcp import register_mcp_routes
+from trusted_router.routes.mcp_advisor import register_advisor_mcp_routes
 from trusted_router.routes.notify import register_notify_public_routes, register_notify_routes
 from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_apps import register_oauth_app_routes
@@ -220,7 +226,7 @@ def create_app(
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
-        # No-op unless TR_CLICKHOUSE_URL is set; Bigtable stays authoritative.
+        # No-op unless TR_CLICKHOUSE_URL is set; the store stays authoritative.
         configure_analytics_sink(create_analytics_sink(settings))
     if init_observability:
         init_sentry(settings)
@@ -243,7 +249,10 @@ def create_app(
             "many providers, with provider fallback, zero-retention routing, and an "
             "attested gateway whose running source commit and image digest can be "
             "verified.\n\n"
-            "Base URL: https://api.trustedrouter.com/v1\n"
+            "Inference base URL: https://api.trustedrouter.com/v1\n"
+            "Account and key management base URL: https://trustedrouter.com/v1\n"
+            "Management calls to the inference host return 404. "
+            "GET /v1/key is available on both hosts.\n"
             "Authentication: `Authorization: Bearer <api key>`\n\n"
             "Further machine-readable entry points: "
             "https://trustedrouter.com/llms.txt (index), "
@@ -270,6 +279,9 @@ def create_app(
     async def _close_post_commit() -> None:
         close_post_commit()
 
+    if surface in {"combined", "internal"} and settings.speculative_provider_shadow_enabled:
+        from trusted_router.services.speculation_shadow import install
+        install(app, settings)
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,
@@ -411,6 +423,27 @@ def create_app(
 
             _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
 
+    if surface in {"combined", "control"} and settings.retirement_notices_mode != "off":
+
+        @app.on_event("startup")
+        async def _start_retirement_notice_loop() -> None:  # pragma: no cover - thread wiring
+            import asyncio as _asyncio
+            import logging as _logging
+            import random as _random
+
+            from trusted_router.services.retirement_notices import run_retirement_notice_pass
+
+            async def loop() -> None:
+                await _asyncio.sleep(_random.uniform(5, 30))  # noqa: S311
+                while True:
+                    try:
+                        await _asyncio.to_thread(run_retirement_notice_pass, settings)
+                    except Exception:
+                        _logging.getLogger(__name__).exception("retirement notice pass failed")
+                    await _asyncio.sleep(24 * 60 * 60)
+
+            _asyncio.create_task(loop())  # noqa: RUF006 - lifetime is the process
+
     # In-process synthetic monitor. See the settings docstring for why the
     # trigger lives here rather than in each cloud's own scheduler. Deployments
     # that use this observer owner must pin the service to one replica; the AWS
@@ -524,7 +557,7 @@ def create_app(
             headers = dict(exc.headers or {})
             headers["vary"] = "Accept"
             return HTMLResponse(
-                public_not_found_html(settings, request.url.path),
+                public_not_found_html(settings, request.scope["path"]),
                 status_code=404,
                 headers=headers,
             )
@@ -571,13 +604,21 @@ def create_app(
         if template:
             # Routes under a mounted sub-app carry the mount in root_path.
             template = f"{request.scope.get('root_path') or ''}{template}"
+        workspace_id = getattr(request.state, "billing_workspace_id", None)
+        try:
+            workspace_id = str(UUID(workspace_id)) if isinstance(workspace_id, str) else "unknown"
+        except ValueError:
+            workspace_id = "unknown"
+        timing = " ".join(f"{name}={value}" for name, value in gateway_error_timing_fields(exc).items())
         _storage_error_logger.warning(
-            "%s method=%s route=%s request_id=%s error_class=%s",
+            "%s method=%s route=%s request_id=%s error_class=%s workspace_id=%s%s",
             event,
             request.method,
             template or "<unmatched>",
             getattr(request.state, "request_id", None),
             type(exc).__name__,
+            workspace_id,
+            f" {timing}" if timing else "",
         )
 
     async def aborted_exception_handler(request: Request, exc: Exception) -> Response:
@@ -589,6 +630,7 @@ def create_app(
             503,
             "The request was aborted due to transient database contention; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
+            data=getattr(exc, "gateway_timing_data", None),
         )
         response.headers["Retry-After"] = "1"
         return response
@@ -602,11 +644,19 @@ def create_app(
         app.add_exception_handler(conflict_type, aborted_exception_handler)
 
     async def unavailable_exception_handler(request: Request, exc: Exception) -> Response:
-        _log_storage_503(request, exc, "storage.unavailable")
+        from trusted_router.strict_budget import StrictBudgetBusy
+
+        strict_busy = isinstance(exc, StrictBudgetBusy)
+        _log_storage_503(
+            request, exc, "billing.strict_budget_busy" if strict_busy else "storage.unavailable"
+        )
         response = error_response(
             503,
-            "Persistent storage is temporarily unavailable; retry.",
+            "Strict budget authorization is busy; retry with backoff."
+            if strict_busy
+            else "Persistent storage is temporarily unavailable; retry.",
             ErrorType.SERVICE_UNAVAILABLE,
+            data=getattr(exc, "gateway_timing_data", None),
         )
         response.headers["Retry-After"] = "1"
         return response
@@ -620,6 +670,7 @@ def create_app(
         register_public_routes(app, settings)
     if surface in {"combined", "public"}:
         register_bedrock_group_buy_public_routes(app, settings)
+        register_advisor_mcp_routes(app, settings)
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
     if surface in {"combined", "control"}:
@@ -659,6 +710,7 @@ def create_app(
             methods=["GET", "HEAD"],
             include_in_schema=False,
         )
+    install_operation_servers(app, api)
     return app
 
 
@@ -786,7 +838,12 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_workspace_routes(router)
         if _control_plane_inference_enabled(settings):
             register_inference_routes(inference_router)
+            document_router_server(inference_router)
             router.include_router(inference_router)
+        gateway_compat = APIRouter()
+        register_gateway_compat_stub_routes(gateway_compat)
+        document_router_server(gateway_compat)
+        router.include_router(gateway_compat)
         register_compat_stub_routes(router)
         register_signup_routes(router)
         register_email_verify_routes(router)

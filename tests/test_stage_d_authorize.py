@@ -22,7 +22,12 @@ from trusted_router.stage_d import canonical_pricing_snapshot, endpoint_pricing_
 from trusted_router.storage import configure_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
-from trusted_router.storage_models import CreditAccount, GatewayAuthorization, Workspace
+from trusted_router.storage_models import (
+    CreditAccount,
+    GatewayAuthorization,
+    GatewayBoot,
+    Workspace,
+)
 from trusted_router.types import UsageType
 
 FIXTURES = Path(__file__).parent / "fixtures" / "stage_d"
@@ -48,6 +53,20 @@ def test_invocation_nonce_is_limited_to_64_characters() -> None:
         ({"pilot_workspace_ids": frozenset({"other"})}, "workspace_not_pilot"),
         ({"heartbeat_enabled": False}, "heartbeats_disabled"),
         ({"boot_accepted": False}, "boot_not_accepted"),
+        ({"require_heartbeat_declaration": True}, "heartbeat_undeclared"),
+        ({"require_heartbeat_declaration": True, "heartbeat_declared": True}, "ok"),
+        # Until the setting is on, the declaration is stored and not read.
+        ({"heartbeat_declared": False}, "ok"),
+        ({"heartbeat_declared": True}, "ok"),
+        # An unaccepted boot is refused for that, whatever it declared.
+        (
+            {"boot_accepted": False, "require_heartbeat_declaration": True,
+             "heartbeat_declared": True},
+            "boot_not_accepted",
+        ),
+        # The declaration is asked before the stream test: a boot that does
+        # not heartbeat is the reason, even for a request that does not stream.
+        ({"require_heartbeat_declaration": True, "stream": None}, "heartbeat_undeclared"),
         ({"stream": None}, "not_streaming"),
         ({"route_type": "embeddings"}, "route"),
         ({"mixed": True}, "mixed_usage_type"),
@@ -80,7 +99,7 @@ def test_stage_d_eligibility_has_each_closed_reason(
 
 
 def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-workspace", name="Stage D", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
@@ -156,6 +175,7 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
         candidate_endpoint_ids=[endpoint.id],
         idempotency_key="stage-d-ineligible",
         idempotency_fingerprint="e" * 64,
+        video_pricing_snapshot=snapshot,
         expires_at=datetime.now(UTC) + timedelta(hours=2),
         stage_d_reason="not_streaming",
         stage_d_prompt_tokens=100,
@@ -163,6 +183,8 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
     )
     assert ineligible_outcome == AuthorizeOutcome.ACCEPTED
     assert ineligible is not None
+    reloaded = store.get_gateway_authorization(ineligible.id)
+    assert reloaded is not None and reloaded.video_pricing_snapshot == snapshot
     ineligible_row = db.gateway_authorizations[ineligible.id]
     assert [ineligible_row[column] for column in (
         "started_at",
@@ -175,7 +197,7 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
     )] == [None] * 7
 
 
-def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> None:
+def test_stage_d_authorize_payload_uses_snapshot_and_estimate_cap() -> None:
     document = json.loads((FIXTURES / "pricing_document.json").read_bytes())
     authorization = GatewayAuthorization(
         id="gwa-stage-d-eligible",
@@ -184,11 +206,10 @@ def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> N
         model_id="model",
         provider="anthropic",
         usage_type=UsageType.CREDITS,
-        estimated_microdollars=500,
+        estimated_microdollars=300,
         pricing_snapshot=canonical_pricing_snapshot(document),
         heartbeat_seq=0,
         stage_d_reason="ok",
-        spend_lease_allocated_micro=300,
     )
     expected = json.loads((FIXTURES / "authorize_response_eligible.json").read_bytes())["data"]
     assert {
@@ -215,10 +236,11 @@ def test_stage_d_authorize_payload_uses_snapshot_and_lease_allocation_cap() -> N
     } == expected_ineligible
 
 
+@pytest.mark.parametrize("app_markup,receipt", [(0, False), (1_250, False), (0, True), (1_250, True)])
 def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, app_markup: int, receipt: bool,
 ) -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-fees", name="Stage D fees", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
@@ -242,7 +264,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     monkeypatch.setattr(
         gateway,
         "_oauth_app_terms_for_key",
-        lambda _key: (1_250, "app-owner"),
+        lambda _key: (app_markup, "app-owner"),
     )
     body = GatewayAuthorizeRequest(
         api_key_hash=key.hash,
@@ -252,7 +274,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
         max_output_tokens=100,
         stream=True,
         route_type="chat.completions",
-        inference_receipt=True,
+        inference_receipt=receipt,
     )
 
     response = gateway._authorize_gateway_sync(
@@ -273,10 +295,91 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     )["data"]
 
     stored = db.gateway_authorizations[response["authorization_id"]]
-    assert json.loads(stored["payload"])["app_markup_basis_points"] == 1_250
-    assert response["receipt_fee_basis_points"] == 1_200
+    assert json.loads(stored["payload"])["app_markup_basis_points"] == app_markup
+    assert response["receipt_fee_basis_points"] == (1_200 if receipt else 0)
+    assert response["candidate_cost_reporting"] is (app_markup == 0 and not receipt)
     assert response["stage_d"] == {"eligible": True, "reason": "ok"}
     assert response["candidate_prices"]
+
+
+@pytest.mark.parametrize(
+    ("require", "declares", "expected"),
+    [
+        # Off, the setting changes nothing: today's cohort, whatever is stored.
+        (False, False, {"eligible": True, "reason": "ok"}),
+        (False, True, {"eligible": True, "reason": "ok"}),
+        (True, False, {"eligible": False, "reason": "heartbeat_undeclared"}),
+        (True, True, {"eligible": True, "reason": "ok"}),
+    ],
+)
+def test_stage_d_cohort_reads_the_declaration_stored_on_the_boot(
+    monkeypatch: pytest.MonkeyPatch,
+    require: bool,
+    declares: bool,
+    expected: dict[str, object],
+) -> None:
+    store, db = make_fake_store(request_record_write_mode="typed")
+    workspace = Workspace(id="stage-d-declared", name="Declared", owner_user_id="user-1")
+    store._write_entity("workspace", workspace.id, workspace)
+    store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
+        "workspace_id": workspace.id,
+        "shard": 0,
+        "total_credits": 1_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
+    _raw, key = store.api_keys.create(
+        workspace_id=workspace.id,
+        name="stage-d-declared",
+        creator_user_id=workspace.owner_user_id,
+        limit_microdollars=1_000_000,
+    )
+    store.observe_gateway_boot(
+        GatewayBoot(
+            kid="boot-declared",
+            jwk={"kty": "OKP", "crv": "Ed25519", "x": "AA"},
+            approved=True,
+            verified=True,
+            image_digest="sha256:" + "11" * 32,
+            attestation_kind="gcp-cs-jwt",
+            registered_at="2026-10-04T00:00:00Z",
+            declares_usage_heartbeat=declares,
+        )
+    )
+    configure_store(store)
+    # The signature check is not under test; the record it read is.
+    monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
+
+    response = gateway._authorize_gateway_sync(
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [(b"x-tr-boot-auth", b"kid=boot-declared,sig=x")],
+            }
+        ),
+        GatewayAuthorizeRequest(
+            api_key_hash=key.hash,
+            idempotency_key="stage-d-declared",
+            model="anthropic/claude-haiku-4.5",
+            estimated_input_tokens=100,
+            max_output_tokens=100,
+            stream=True,
+            route_type="chat.completions",
+        ),
+        Settings(
+            environment="test",
+            stage_d_eligibility_enabled=True,
+            stage_d_pilot_workspace_ids=workspace.id,
+            stage_d_require_heartbeat_declaration=require,
+        ),
+    )["data"]
+
+    assert response["stage_d"] == expected
 
 
 def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
@@ -339,7 +442,7 @@ def test_stage_d_empty_cohort_admits_arbitrary_workspace(
 def test_stage_d_replay_is_always_ineligible_and_echoes_stored_nonce(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    store, db = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-replay", name="Stage D replay", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))

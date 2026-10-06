@@ -542,7 +542,7 @@ def test_delivery_lease_prevents_double_claim() -> None:
 
 
 def test_spanner_conversion_and_due_pointer_commit_together() -> None:
-    store, _database, _table = make_fake_store()
+    store, _database = make_fake_store()
     record = _attribution(workspace_id="ws-spanner-google")
     assert store.create_acquisition_attribution(record)
 

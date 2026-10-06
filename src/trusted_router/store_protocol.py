@@ -1,7 +1,7 @@
 """Static contract for the storage backend.
 
 `Store` enumerates every public method that route code, services, or auth
-relies on. `InMemoryStore` and `SpannerBigtableStore` both implement it,
+relies on. `InMemoryStore` and `SpannerStore` both implement it,
 which lets mypy verify that route code only touches the declared surface
 and that the two backends stay signature-compatible — a missing or
 drifted method on either implementation becomes a static-typing error
@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from trusted_router.gateway_boot import GatewayBoot
 from trusted_router.operational_analytics_freshness import OutboxFreshness
-from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_models import (
     AcquisitionAttribution,
@@ -72,7 +72,7 @@ from trusted_router.types import UsageType
 
 @runtime_checkable
 class Store(Protocol):
-    """Public surface that both InMemoryStore and SpannerBigtableStore satisfy."""
+    """Public surface that both InMemoryStore and SpannerStore satisfy."""
 
     # Lifecycle ---------------------------------------------------------------
     def reset(self) -> None: ...
@@ -393,6 +393,15 @@ class Store(Protocol):
     def get_email_block(self, email: str) -> EmailSendBlock | None: ...
     def record_sns_message_once(self, message_id: str) -> bool: ...
     def record_webhook_event_once(self, source: str, event_id: str) -> bool: ...
+    def claim_retirement_notices(
+        self, workspace_id: str, retirement_ids: list[str], *, occurred_at: str,
+    ) -> list[str]:
+        """Atomically record and return unclaimed ids, once per workspace ever.
+
+        The whole batch is claimed before email delivery. Claims never expire,
+        including when delivery fails, and contain no recipient addresses.
+        """
+        ...
 
     # API keys ----------------------------------------------------------------
     def create_api_key(
@@ -494,7 +503,17 @@ class Store(Protocol):
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None: ...
     def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None: ...
     def list_keys(self, workspace_id: str) -> list[ApiKey]: ...
-    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]: ...
+    def list_api_keys_with_usage(
+        self,
+        workspace_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        include_disabled: bool = True,
+    ) -> list[ApiKeyUsageSnapshot]: ...
+    def delete_keys(self, workspace_id: str, key_hashes: list[str]) -> dict[str, bool]:
+        """Delete only owned keys, in batches of at most 100; deduplicate input."""
+        ...
     def delete_key(self, key_hash: str) -> bool: ...
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None: ...
     def reserve_key_limit(
@@ -944,6 +963,7 @@ class Store(Protocol):
         user_model_owner_user_id: str | None = ...,
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
+        video_pricing_snapshot: str | None = ...,
         # Deferred settlement. `settlement="deferred_home"` records that this
         # spend is debt owed to the home plane's ledger rather than a debit
         # here; `expires_at` is what lets the reaper reclaim its admitted
@@ -954,7 +974,6 @@ class Store(Protocol):
         settlement: str = ...,
         expires_at: str | None = ...,
         deferred_cap_microdollars: int | None = ...,
-        spend_lease: SpendLeaseArtifact | None = ...,
         invocation_nonce: str | None = ...,
         expected_pause_epoch: int | None = ...,
     ) -> GatewayAuthorization: ...
@@ -979,7 +998,6 @@ class Store(Protocol):
     # Generations + activity --------------------------------------------------
     def add_generation(self, generation: Generation) -> None: ...
     def record_client_events_batch(self, payload: dict[str, Any]) -> None: ...
-    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None: ...
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None: ...
     def provider_benchmark_samples(
         self,
@@ -1093,19 +1111,9 @@ class Store(Protocol):
         legacy_after: str | None = ...,
     ) -> list[ReceiptKey]: ...
 
-    # Stage A spend-lease boot identity + monotonic grant generation --------
-    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot: ...
-    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None: ...
-    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int: ...
-    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None: ...
-    def retain_spend_lease(
-        self,
-        key_hash: str,
-        boot_kid: str,
-        candidate: SpendLeaseArtifact,
-        *,
-        replace: bool,
-    ) -> SpendLeaseArtifact: ...
+    # Attested gateway boot identity (Stage D heartbeats) -------------------
+    def observe_gateway_boot(self, record: GatewayBoot) -> GatewayBoot: ...
+    def get_gateway_boot(self, kid: str) -> GatewayBoot | None: ...
 
     # Rate limiting -----------------------------------------------------------
     def hit_rate_limit(
@@ -1175,16 +1183,11 @@ class TypedBillingStore(Protocol):
         native_batch_eligible: bool = ...,
         expires_at: Any = ...,
         window_limits: dict[str, int] | None = ...,
-        spend_lease: SpendLeaseArtifact | None = ...,
-        spend_lease_binding_plan: Any = ...,
+        video_pricing_snapshot: str | None = ...,
         pricing_snapshot: str | None = ...,
         stage_d_reason: str | None = ...,
         stage_d_prompt_tokens: int | None = ...,
         stage_d_max_output_tokens: int | None = ...,
-        spend_lease_admission_receipt: str | None = ...,
-        spend_lease_receipt_hash: str | None = ...,
-        credit_escrowed_by_spend_lease: bool = ...,
-        spend_lease_admission_replay_protection: bool = ...,
         stage_d_boot_kid: str | None = ...,
         invocation_nonce: str | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
@@ -1225,3 +1228,17 @@ class SnapshotReaperStore(Protocol):
         limit: int = ...,
         snapshot_booking_enabled: bool = ...,
     ) -> Any: ...
+
+
+# Optional observation contract, deliberately separate from money-capable Store.
+class ShadowTransaction(Protocol):
+    def get(self, table: str, identity: str) -> dict[str, Any] | None: ...
+    def put(self, table: str, identity: str, value: dict[str, Any]) -> None: ...
+
+
+class ShadowStore(Protocol):
+    def transaction(self, operation: Any) -> Any: ...
+    def read(self, table: str, identity: str) -> dict[str, Any] | None: ...
+    def ready(self) -> None: ...
+    def resolve(self, lookup: str, now: int) -> dict[str, Any]: ...
+    def boot(self, kid: str) -> Any: ...

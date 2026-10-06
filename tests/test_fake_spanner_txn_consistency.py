@@ -38,7 +38,7 @@ def _seed_shard(db, ws: str, shard: int, credits: int, usage: int) -> None:
 
 
 def test_guarded_dml_sees_the_txn_pinned_view_and_conflict_aborts() -> None:
-    store, db, _bt = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws-txn-consistency"
     _seed_shard(db, ws, 0, credits=1_000, usage=0)
 
@@ -90,7 +90,7 @@ def test_guarded_dml_sees_the_txn_pinned_view_and_conflict_aborts() -> None:
 
 
 def test_repeat_read_in_one_txn_is_stable_despite_concurrent_commit() -> None:
-    store, db, _bt = make_fake_store()
+    store, db = make_fake_store()
     ws = "ws-repeat-read"
     _seed_shard(db, ws, 0, credits=1_000, usage=0)
     pk = (ws, 0)
@@ -128,7 +128,7 @@ def test_mf2_guard_zero_count_aborts_when_enqueue_commits_before_claim() -> None
     version. Without it, the claim committed against a guard it never saw."""
     from trusted_router.storage_gcp_settle_outbox import GUARD_COUNT_SQL
 
-    store, db, _bt = make_fake_store()
+    store, db = make_fake_store()
     aid = "gwa-mf2-race"
     counts: list[int] = []
 

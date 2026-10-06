@@ -10,7 +10,6 @@ from trusted_router.app_markup_billing import (
     app_markup_owner_share_microdollars,
     app_markup_payout_event_id,
 )
-from trusted_router.routes.internal import gateway
 from trusted_router.storage import STORE
 from trusted_router.storage_models import generation_id_for_authorization
 
@@ -175,41 +174,6 @@ def test_memory_settle_books_charge_payout_share_and_replay_once(
     _settle(client, auth)
     movements = STORE.list_credit_movements(f"user:{owner.id}")
     assert [m.movement_id for m in movements].count(app_markup_payout_event_id(auth.id)) == 1
-
-
-def test_spend_lease_clamp_derives_payout_from_final_charge(
-    client: TestClient,
-    user_headers: dict[str, str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    owner, raw_key = _mint_app_key(
-        client, user_headers, app_id="spend-clamp-markup", bps=30_000
-    )
-    auth = _authorize(client, raw_key, "spend-clamp-markup")
-    auth.estimated_microdollars = 400
-    # Regional settlement no longer caps charges; app markup remains excluded
-    # there. The spend-lease cap still must derive payout from the final charge.
-    auth.settlement = "spend_lease"
-    auth.spend_lease_allocated_micro = 400
-    before = STORE.credit_money_snapshot(auth.workspace_id)
-    assert before is not None
-    monkeypatch.setattr(gateway, "_endpoint_cost_microdollars", lambda *_args, **_kwargs: 200)
-
-    _settle(client, auth)
-
-    generation = STORE.get_generation(generation_id_for_authorization(auth.id))
-    assert generation is not None
-    after = STORE.credit_money_snapshot(auth.workspace_id)
-    assert after is not None
-    charge = generation.total_cost_microdollars
-    markup = generation.app_markup_microdollars
-    payout = STORE.earnings_summary(owner.id)["total_earned"]
-    assert charge == 400
-    assert markup == 300
-    assert payout == 210
-    assert charge == (charge - markup) + markup
-    assert payout + (markup - payout) == markup
-    assert after[1] - before[1] == charge
 
 
 @pytest.mark.parametrize("base", [0, 1, 2, 17, 101, 200, 999])

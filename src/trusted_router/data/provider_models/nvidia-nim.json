@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-28T11:44:42Z",
+  "generated_at": "2026-10-06T03:20:16Z",
   "model_count": 123,
   "models": [
     {
@@ -675,7 +675,7 @@
       "upstream_id": "mistralai/mistral-nemotron",
       "display_name": "mistralai/mistral-nemotron",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -688,7 +688,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-09-28"
+      "missing_since": "2026-09-28",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "mistralai/mixtral-8x22b-v0.1",
@@ -1492,7 +1493,8 @@
       "endpoints": [],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "routable_reason": "unsupported-chat-endpoint"
+      "routable_reason": "unsupported-chat-endpoint",
+      "missing_since": "2026-10-05"
     },
     {
       "id": "nvidia/riva-translate-4b-instruct-v2",
@@ -1934,10 +1936,9 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-90b-vision-instruct",
       "upstream_id": "meta/llama-3.2-90b-vision-instruct",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "display_name": "meta/llama-3.3-70b-instruct",

@@ -45,6 +45,7 @@ SENSITIVE_KEYS = {
 # regression test in test_security_contracts.py both consume this set so
 # adding a new format means editing one list, not two.
 SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
+    "abliterate_api_key",
     "sk-tr-v1-",
     "sk-or-v1-",
     "anthropic_api_key",
@@ -66,6 +67,7 @@ SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
     "wandb_api_key",
     "nscale_api_key",
     "regolo_api_key",
+    "lyceum_api_key",
     "privatemode_api_key",
     "confidential_ai_api_key",
     "cohere_api_key",

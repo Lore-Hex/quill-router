@@ -37,7 +37,7 @@ def _freeze(database: Any, reservation_id: str, status: str) -> None:
 def test_apply_arms_settled_null_rows_and_terminates(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     for index in range(3):
         _seed_reservation(database, f"res-{index}")
 
@@ -61,7 +61,7 @@ def test_apply_excludes_frozen_intent_rows_and_stops(
     outbox_status: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     for index in range(3):
         _seed_reservation(database, f"res-{index}")
     _freeze(database, "res-1", outbox_status)
@@ -81,7 +81,7 @@ def test_apply_excludes_frozen_intent_rows_and_stops(
 
 
 def test_apply_never_touches_open_holds() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     _seed_reservation(database, "settled")
     _seed_reservation(database, "open", settled=False)
 
@@ -92,7 +92,7 @@ def test_apply_never_touches_open_holds() -> None:
 
 
 def test_apply_preserves_already_armed_rows() -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     existing = datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
     _seed_reservation(database, "already-armed", terminal_at=existing)
     _seed_reservation(database, "candidate")
@@ -106,7 +106,7 @@ def test_apply_preserves_already_armed_rows() -> None:
 def test_dry_run_mutates_nothing_and_reports_candidates_and_exclusions(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     _seed_reservation(database, "eligible")
     _seed_reservation(database, "frozen")
     _seed_reservation(database, "open", settled=False)
@@ -140,7 +140,7 @@ def test_dry_run_mutates_nothing_and_reports_candidates_and_exclusions(
 def test_apply_processes_more_candidates_than_batch_in_multiple_batches(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     for index in range(5):
         _seed_reservation(database, f"res-{index}")
 
@@ -165,7 +165,7 @@ def test_race_row_becomes_eligible_after_empty_select_is_still_armed(
     behind a false "all excluded" STOP (review finding on #357)."""
     import scripts.backfill_reservation_terminal_at as mod
 
-    store, database, _bigtable = make_fake_store()
+    store, database = make_fake_store()
     _seed_reservation(database, "res-race")
     _freeze(database, "res-race", "pending")
 

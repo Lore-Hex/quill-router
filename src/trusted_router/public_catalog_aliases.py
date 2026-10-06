@@ -8,6 +8,7 @@ LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
     "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning": (
         "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
     ),
+    "minimaxai/minimax-m2.5": "minimax/minimax-m2.5",
     "nvidia/nemotron-120b-a12b": "nvidia/nemotron-3-120b-a12b",
     "nvidia/nvidia-nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-ultra-550b-a55b",
     "xiaomi/mimo-v2-flash": "xiaomimimo/mimo-v2-flash",

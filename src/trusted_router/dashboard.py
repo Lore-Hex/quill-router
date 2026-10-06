@@ -15,6 +15,7 @@ from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 from typing import Any, TypedDict, cast
+from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -38,6 +39,7 @@ from trusted_router.catalog import (
     MODELS,
     MONITOR_MODEL_ID,
     NATIVE_DECISION_MODEL_IDS,
+    PRIVACY_TIER_CONFIDENTIAL,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -46,6 +48,7 @@ from trusted_router.catalog import (
     decide_url,
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
     endpoint_zero_data_retention,
     endpoints_for_model,
@@ -56,9 +59,11 @@ from trusted_router.catalog import (
     offers_chat,
     orchestration_primitive,
     orchestration_role,
+    provider_confidential_inference,
     provider_is_routable,
     providers_for_display,
 )
+from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
 from trusted_router.competitor_comparisons import (
     COMPETITOR_COMPARISONS,
     CompetitorComparison,
@@ -84,7 +89,8 @@ from trusted_router.content.legal import (
     soc2_readiness_packet,
     subprocessor_packet,
 )
-from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
+from trusted_router.content.token_index import token_index_context
+from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
@@ -197,6 +203,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/benchmarks/reports/2026-06",
     "/benchmarks/reports/2026-07",
     "/rankings",
+    "/index",
     "/leaderboard",
     "/leaderboard/video",
     "/status",
@@ -232,6 +239,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/portkey-alternative",
     "/confidential-computing-llm",
     "/badge",
+    "/media-kit",
     "/tinfoil-alternative",
     "/sign-in-with-trustedrouter",
     *(f"/{slug}" for slug in COMPANY_SIGNIN_PAGES),
@@ -855,11 +863,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         faq_items=(
             (
                 "Is the DeepSeek API safe to use?",
-                f"It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through non-Chinese hosting providers inside a hardware-attested gateway. Prompts do not go to the model vendor. {CONTENT_HANDLING_CLAIM} You can verify the attestation live at any time instead of relying on a policy.",
+                f"It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through a hardware-attested gateway, and DeepSeek's own API is one of its routes. {VENDOR_EXCLUSION_CLAIM} {CONTENT_HANDLING_CLAIM} You can verify the attestation live at any time instead of relying on a policy.",
             ),
             (
                 "Does using DeepSeek through TrustedRouter send data to China?",
-                "No. DeepSeek V4 routes are served by non-Chinese hosting providers on attested infrastructure, so prompts never reach the model vendor. Zero-Data-Retention routes add a contractual guarantee that providers keep nothing, and TEE routes keep the prompt sealed even from the hosting provider. Each route's privacy tier is listed on the models page, and the attestation backing the claim is checkable live.",
+                f"It can on Standard routing, where DeepSeek's own API is one of the V4 routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention routes add a contractual guarantee that providers keep nothing. Each route's privacy tier is listed on the models page, and the gateway's attestation is checkable live.",
             ),
             (
                 "How do I require DeepSeek zero data retention?",
@@ -882,7 +890,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Do my prompts go to Zhipu or z.ai?",
-                f"No. GLM routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. {CONTENT_HANDLING_CLAIM}",
+                f"They can on Standard routing, where Z.AI's own API is one of the GLM routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. {CONTENT_HANDLING_CLAIM}",
             ),
             (
                 "Why does GLM answer more questions through TrustedRouter than on the vendor API?",
@@ -920,11 +928,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "chinese-ai-models-us-hosted": PublicPage(
         template="public/seo_chinese_ai_models_us_hosted.html",
         title="Qwen, GLM, Kimi & DeepSeek APIs Hosted on US Infrastructure",
-        description="Use Qwen, GLM, Kimi, and DeepSeek through US-hosted attested infrastructure. Prompts never reach the model vendor, and you can verify that live.",
+        description="Use Qwen, GLM, Kimi, and DeepSeek through US-hosted attested infrastructure. With Confidential privacy, prompts never reach the model vendor, and you can verify the gateway live.",
         faq_items=(
             (
                 "Do my prompts go to China when I use Qwen, GLM, or Kimi through TrustedRouter?",
-                "No. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served via non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available per route; on the TEE tier, end-to-end confidential compute means even the hosting provider cannot read your prompt. You can verify the gateway live through the attestation endpoint described on the security page.",
+                f"They can on Standard routing, where the vendors' own APIs are among the routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention and TEE tiers are available per route; on the TEE tier, end-to-end confidential compute means even the hosting provider cannot read your prompt. You can verify the gateway live through the attestation endpoint described on the security page.",
             ),
             (
                 "Is the GLM served through TrustedRouter the same model as the vendor-hosted API?",
@@ -955,7 +963,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Do my prompts go to MiniMax when I use this API?",
-                f"No. MiniMax M3 routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available. {CONTENT_HANDLING_CLAIM} You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
+                f"They can on Standard routing, where MiniMax's own API is one of the M3 routes. {VENDOR_EXCLUSION_CLAIM} Zero-Data-Retention routes are available. {CONTENT_HANDLING_CLAIM} You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
             ),
             (
                 "How do I switch from OpenRouter to TrustedRouter for MiniMax M3?",
@@ -1028,7 +1036,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models does TrustedRouter serve?",
-                "TrustedRouter has 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4 Pro and Flash, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, Mistral, and Nemotron 3 Ultra, plus meta-routes that pick the best, cheapest, or fastest route per request. Chinese open-weight models are served by non-Chinese hosting providers on attested infrastructure, so your prompts do not go to the model vendor.",
+                f"TrustedRouter has 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4 Pro and Flash, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, Mistral, and Nemotron 3 Ultra, plus meta-routes that pick the best, cheapest, or fastest route per request. {VENDOR_EXCLUSION_CLAIM}",
             ),
         ),
     ),
@@ -1097,7 +1105,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can we use open-weight models like DeepSeek or Qwen without sending data to the model vendor?",
-                "Yes. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served by non-Chinese hosting providers on attested infrastructure, with Zero-Data-Retention and TEE tiers available, so prompts do not go to the model vendor. For legal work that means access to frontier open-weight models without adding the model vendor to your disclosure chain.",
+                f"Yes. {VENDOR_EXCLUSION_CLAIM} For legal work that means access to frontier open-weight models without adding the model vendor to your disclosure chain. Standard routing can include a vendor's own API, so set the Confidential tier for matters that require it.",
             ),
         ),
     ),
@@ -1181,7 +1189,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which model routes are cheapest for coding agents?",
-                "trustedrouter/cheap automatically selects the cheapest capable route and runs it in a TEE, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
+                "trustedrouter/cheap automatically selects the cheapest capable route, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
             ),
             (
                 "Is my code private when an agent routes through TrustedRouter?",
@@ -1189,7 +1197,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Can I use DeepSeek, Kimi, or GLM in Cline without sending code to the model vendor?",
-                "Yes. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, with Zero-Data-Retention and TEE tiers available. Prompts do not go to the model vendor. You get the capability of the open weights while your codebase stays inside infrastructure you can verify.",
+                f"Yes. {VENDOR_EXCLUSION_CLAIM} Standard routing can include a vendor's own API, so set the Confidential tier for code that must not reach it. With it, you get the capability of the open weights while your codebase stays inside infrastructure you can verify.",
             ),
         ),
     ),
@@ -1258,7 +1266,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can I use for document extraction?",
-                "There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. Chinese open-weight models are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route in a TEE, and automatic fallback covers provider outages.",
+                f"There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. {VENDOR_EXCLUSION_CLAIM} Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route, and automatic fallback covers provider outages.",
             ),
         ),
     ),
@@ -1323,7 +1331,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Which models can an agent pay for with x402?",
-                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route in a TEE, and trustedrouter/fast optimizes for latency. Per-model pricing is listed at /pricing.",
+                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route, and trustedrouter/fast optimizes for latency. Per-model pricing is listed at /pricing.",
             ),
             (
                 "Is my agent's prompt private when it pays per request?",
@@ -1351,8 +1359,9 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "What do the privacy tiers mean?",
                 "The TrustedRouter gateway hop is attested on every request. Open permits any "
                 "upstream posture. Zero-retention (ZDR) requires a provider endpoint whose "
-                "verified policy or contract retains nothing. TEE requires provider confidential "
-                "compute plus provider-side end-to-end encryption.",
+                "verified policy or contract retains no prompt or output content. Confidential "
+                "requires verified provider confidential compute, provider-side end-to-end "
+                "encryption, and explicit ZDR on the same route.",
             ),
             (
                 "Which models are fastest?",
@@ -1576,6 +1585,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Let agents add TrustedRouter prepaid credits with Stripe x402 while "
             "prompt traffic stays inside the attested API gateway."
+        ),
+    ),
+    "index": PublicPage(
+        template="public/token_index.html",
+        og_card="index.png",
+        og_alt="NYTE Token Index: what AI inference costs, per billion tokens",
+        title="NYTE Token Index: AI Inference Prices",
+        description=(
+            "The NYTE Token Index tracks what AI inference costs in US dollars per billion tokens, "
+            "with Frontier, Advanced, Professional and Efficient grade indices."
         ),
     ),
     "green-tokens": PublicPage(
@@ -1844,6 +1863,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Run LLM routing through confidential computing with GCP Confidential Space, "
             "open source gateway code, remote attestation, protected TLS keys, and no prompt logs."
+        ),
+    ),
+    "media-kit": PublicPage(
+        template="public/media_kit.html",
+        title="TrustedRouter Media Kit | Logos and Brand Assets",
+        description=(
+            "Download TrustedRouter logos, transparent PNGs, SVGs, social images, "
+            "and company information for press, partners, and creators."
         ),
     ),
     "badge": PublicPage(
@@ -2282,6 +2309,7 @@ def _env() -> Environment:
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    env.globals["vendor_exclusion_claim"] = VENDOR_EXCLUSION_CLAIM
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
@@ -2316,6 +2344,7 @@ def dashboard_html(
     site_url = site_url or canonical_site_url
     alternate_brand = brand_name != "TrustedRouter"
     page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
+    homepage_enabled = settings.homepage_landscape_enabled and not alternate_brand
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment not in {"local", "test"} else DEV_USER_FALLBACK,
@@ -2325,17 +2354,25 @@ def dashboard_html(
         "googleEnabled": settings.google_oauth_enabled,
         "githubEnabled": settings.github_oauth_enabled,
     }
+    from trusted_router.homepage import homepage_context
+
+    homepage = homepage_context(resolved_api_base_url) if homepage_enabled else {}
     return (
         _env()
-        .get_template("dashboard.html")
+        .get_template("homepage/index.html" if homepage_enabled else "dashboard.html")
         .render(
+            **homepage,
+            homepage_noindex=environment in {"local", "test"},
             organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,
             site_url=site_url,
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=f"https://{domain}/og.png",
+            og_image=(
+                f"https://{domain}/static/homepage/social-card-v1.jpg"
+                if homepage_enabled else f"https://{domain}/og.png"
+            ),
             og_title=page_title,
             og_description=OG_DESCRIPTION,
             og_image_width=OG_IMAGE_WIDTH,
@@ -2757,6 +2794,7 @@ def public_page_html(
         robots_meta=robots_meta,
         extra_context=(
             _green_tokens_context() if page_key == "green-tokens"
+            else token_index_context() if page_key == "index"
             else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None
         ),
     )
@@ -3081,7 +3119,8 @@ def _render_public_page(
 
 
 def public_not_found_html(settings: Settings, requested_path: str) -> str:
-    safe_path = requested_path if requested_path.startswith("/") else f"/{requested_path}"
+    # ASGI paths are decoded user input, not the trusted paths of published pages.
+    safe_path = "/" + quote(requested_path.lstrip("/"), safe="/")
     return _render_public_page(
         settings,
         _NOT_FOUND_PAGE,
@@ -4926,11 +4965,33 @@ def docs_llms_full_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
-def _model_publisher(model: Model) -> Provider:
-    # A TrustedRouter orchestration's publisher is not its internal selector host.
-    if model.id in META_MODEL_IDS and model.id.startswith("trustedrouter/"):
-        return PROVIDERS["trustedrouter"]
-    return PROVIDERS[model.provider]
+@dataclass(frozen=True)
+class _ModelPublisher:
+    """A model's maker as public pages name it.
+
+    `provider` is the maker's own PROVIDERS entry, with a logo and a
+    /providers page; a maker without one is named by `name` alone, with no link
+    and no logo. `name` is None when the model id names no maker.
+    """
+
+    name: str | None
+    provider: Provider | None = None
+
+    @property
+    def slug(self) -> str | None:
+        return self.provider.slug if self.provider is not None else None
+
+
+def _model_publisher(model: Model) -> _ModelPublisher:
+    author = model.id.split("/", 1)[0]
+    key = author.lower()
+    if key in AUTHORS_NAMING_NO_MAKER:
+        return _ModelPublisher(None)
+    slug = maker_provider_slug(model.id)
+    if slug is not None:
+        provider = PROVIDERS[slug]
+        return _ModelPublisher(provider.name, provider)
+    return _ModelPublisher(_BRAND_DISPLAY_NAMES.get(key, author))
 
 
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
@@ -5040,11 +5101,11 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             endpoint_zero_data_retention(endpoint) is True for endpoint in route_endpoints
         ),
         "confidential_available": any(
-            endpoint_confidential_compute(endpoint) is True for endpoint in route_endpoints
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
+            for endpoint in route_endpoints
         ),
         "e2e_available": any(
-            endpoint_confidential_compute(endpoint) is True
-            and endpoint_e2ee(endpoint) is True
+            endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
             for endpoint in route_endpoints
         ),
         "orchestration_primitive": orchestration_primitive(model.id),
@@ -5059,6 +5120,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             (
                 model.id,
                 model.name,
+                publisher.name or "",
                 model.provider,
                 provider.name,
                 *provider_search_terms,
@@ -5187,8 +5249,7 @@ def _endpoint_provider_views(
                 "slug": slug,
                 "logo_url": provider_logo_url(slug),
                 "confidential_available": any(
-                    endpoint_confidential_compute(endpoint) is True
-                    and endpoint_e2ee(endpoint) is True
+                    endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
                     for endpoint in provider_endpoints
                 ),
                 "zdr_available": any(
@@ -5207,8 +5268,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
     routing_status = "active" if provider_is_routable(provider) else "blocked"
     confidential_verified = (
         provider.slug != "trustedrouter"
-        and provider.provider_confidential_compute is True
-        and provider.provider_e2ee is True
+        and provider_confidential_inference(provider, prepaid=True)
     )
     return {
         "id": provider.slug,
@@ -5348,7 +5408,7 @@ def _provider_faq_items(
 def _provider_privacy_tier(provider: Provider) -> str:
     if provider.slug == "trustedrouter":
         return "TR gateway"
-    if provider.provider_e2ee and provider.provider_confidential_compute:
+    if provider_confidential_inference(provider, prepaid=True):
         return "Confidential"
     if provider.provider_zero_data_retention:
         return "ZDR"
@@ -5890,9 +5950,12 @@ def _model_faq_items(
             fallback_provider=model.provider,
         )
     ] if credits_endpoints else []
-    publisher = _model_publisher(model)
-    if provider_names and publisher.slug != model.provider:
-        provider_names = [publisher.name]
+    # An orchestration's host is its internal selector, so its publisher is
+    # named instead. Every other model lists the hosts that serve it, which
+    # need not include its maker.
+    publisher_name = _model_publisher(model).name
+    if provider_names and model.id in META_MODEL_IDS and publisher_name is not None:
+        provider_names = [publisher_name]
     if not provider_names:
         provider_answer = "no Credits provider route"
     elif len(provider_names) == 1:
@@ -6215,10 +6278,10 @@ def _cheapest_total_microdollars(model: Model) -> int:
 
 def _privacy_summary(model: Model) -> str:
     endpoints = _credits_endpoints(endpoints_for_model(model.id))
-    if any(endpoint_e2ee(endpoint) for endpoint in endpoints):
-        return "has provider E2EE route"
+    if any(endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL) for endpoint in endpoints):
+        return "has Confidential route (E2EE + ZDR)"
     if any(endpoint_confidential_compute(endpoint) for endpoint in endpoints):
-        return "has confidential-compute route"
+        return "has provider TEE claim"
     if any(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints):
         return "has ZDR route"
     return "provider posture varies"
@@ -6265,6 +6328,9 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
     return sorted(rows, key=lambda row: str(row["id"]))
 
 
+# Makers' names, keyed by the author prefix of the model id. A maker without its
+# own provider entry is published under this name, or under its prefix as the
+# id spells it.
 _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "trustedrouter": "TrustedRouter",
     "anthropic": "Anthropic",
@@ -6284,7 +6350,26 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
     "bytedance": "ByteDance",
     "xiaomi": "Xiaomi",
     "nousresearch": "Nous Research",
-    "phala": "Phala",
+    "aisingapore": "AI Singapore",
+    "baichuan": "Baichuan",
+    "bsc-lt": "BSC-LT",
+    "gryphe": "Gryphe",
+    "ibm-granite": "IBM",
+    "inclusionai": "inclusionAI",
+    "intel": "Intel",
+    "jetbrains": "JetBrains",
+    "meituan-longcat": "Meituan LongCat",
+    "meta": "Meta",
+    "microsoft": "Microsoft",
+    "nvidia": "NVIDIA",
+    "openbmb": "OpenBMB",
+    "openpipe": "OpenPipe",
+    "pixverse": "PixVerse",
+    "sao10k": "Sao10K",
+    "shengshu": "ShengShu",
+    "swiss-ai": "Swiss AI",
+    "undi95": "Undi95",
+    "yutori": "Yutori",
 }
 
 
@@ -6326,8 +6411,12 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
     else:
         cheapest_micro_per_m = min(prompt_prices)
     cheapest_usd_per_m = cheapest_micro_per_m / MICRODOLLARS_PER_DOLLAR
-    brand_slug = _model_publisher(model).slug
-    brand_name = _BRAND_DISPLAY_NAMES.get(brand_slug, brand_slug.title())
+    # The brand is the publisher the page names; its logo only comes with the
+    # maker's own provider entry, and a model id that names no maker has none.
+    publisher = _model_publisher(model)
+    brand: dict[str, object] = {"@type": "Brand", "name": publisher.name}
+    if publisher.slug is not None:
+        brand["logo"] = _absolute_url(settings, provider_logo_url(publisher.slug))
     return {
         "@type": "Service",
         "name": model.name,
@@ -6343,11 +6432,7 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
             "name": "TrustedRouter",
             "url": f"https://{settings.trusted_domain}/",
         },
-        "brand": {
-            "@type": "Brand",
-            "name": brand_name,
-            "logo": _absolute_url(settings, provider_logo_url(brand_slug)),
-        },
+        **({"brand": brand} if publisher.name is not None else {}),
         "areaServed": "Worldwide",
         "offers": {
             "@type": "Offer",

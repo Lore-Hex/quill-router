@@ -127,7 +127,7 @@ def test_memory_reconciliation_applies_once_reports_orphan_and_dry_run_is_read_o
 
 
 def test_spanner_fake_reconciliation_scans_applies_once_and_reports_orphan() -> None:
-    store, database, _bigtable = make_fake_store(generation_records_enabled=True)
+    store, database = make_fake_store(generation_records_enabled=True)
     now = datetime.now(UTC)
     created_at = now.isoformat().replace("+00:00", "Z")
     model = _model(

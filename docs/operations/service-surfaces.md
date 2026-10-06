@@ -165,9 +165,12 @@ group-buy selections, and workflow wiring when #712 installs the split edge
 identity, services, and callers together. This is not an alternative
 production topology.
 
-The regional-quota reconciler Cloud Run Job also declares an explicit
-`TR_SERVICE_SURFACE=control`. It is a one-shot `worker` CLI and mounts no HTTP
-routes; `control` is the narrow role compatible with its existing Sentry and
-account-ledger storage bindings without granting either an internal gateway or
-observer credential. Worker validation skips the interactive control
-service's Stripe, attribution-cookie, and OAuth requirements.
+The one-shot trust Cloud Run Jobs (`scripts/deploy/trust_reconciler.sh`,
+`trust_tier_job.sh`, and `trust_backfill_job.sh`) also declare an explicit
+`TR_SERVICE_SURFACE=control` with `TR_ENVIRONMENT=worker`. They are `worker`
+CLIs and mount no HTTP routes; `control` is the narrow role compatible with
+their existing Sentry and account-ledger storage bindings without granting
+either an internal gateway or observer credential. Worker validation skips the
+interactive control service's Stripe, attribution-cookie, and OAuth
+requirements. The regional-quota and spend-lease reconciler jobs that used the
+same role were removed with those pilots in 2026-09.

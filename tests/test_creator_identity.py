@@ -93,7 +93,7 @@ def test_username_claim_requires_identity_and_is_unique_and_immutable(
 
 
 def test_spanner_username_index_enforces_global_ownership() -> None:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     alice = store.ensure_user("alice@example.com")
     bob = store.ensure_user("bob@example.com")
 

@@ -24,7 +24,7 @@ validate_synthetic_monitor_candidate() {
   log "validating synthetic monitor key against the dedicated production workspace"
   printf '%s' "$value" | (
     cd "$repo_root"
-    TR_STORAGE_BACKEND=spanner-bigtable \
+    TR_STORAGE_BACKEND=spanner-clickhouse \
       TR_GCP_PROJECT_ID="$PROJECT_ID" \
       TR_SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
       TR_SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
@@ -206,6 +206,9 @@ ensure_secret_from_env_file "NVIDIA_NIM_API_KEY" "trustedrouter-nvidia-nim-api-k
 ensure_secret_from_env_file "WANDB_API_KEY" "trustedrouter-wandb-api-key"
 ensure_secret_from_env_file "NSCALE_API_KEY" "trustedrouter-nscale-api-key"
 ensure_secret_from_env_file "REGOLO_API_KEY" "trustedrouter-regolo-api-key"
+ensure_secret_from_env_file "LYCEUM_API_KEY" "trustedrouter-lyceum-api-key"
+ensure_secret_from_env_file "SYSTEM1MODELS_GLOBAL_API_KEY" "trustedrouter-system1models-global-api-key"
+ensure_secret_from_env_file "SYSTEM1MODELS_EU_API_KEY" "trustedrouter-system1models-eu-api-key"
 ensure_secret_from_env_file "PRIVATEMODE_API_KEY" "trustedrouter-privatemode-api-key"
 ensure_secret_from_env_file "CONFIDENTIAL_AI_API_KEY" "trustedrouter-confidential-ai-api-key"
 ensure_secret_from_env_file "SCALEDOWN_API_KEY" "trustedrouter-scaledown-api-key"
@@ -215,6 +218,7 @@ ensure_secret_from_env_file "REKA_API_KEY" "trustedrouter-reka-api-key" "REKA_PE
 ensure_secret_from_env_file "NEXTBIT_API_KEY" "trustedrouter-nextbit-api-key"
 ensure_secret_from_env_file "AKASHML_API_KEY" "trustedrouter-akashml-api-key"
 ensure_secret_from_env_file "MANCER_API_KEY" "trustedrouter-mancer-api-key"
+ensure_secret_from_env_file "ABLITERATE_API_KEY" "trustedrouter-abliterate-api-key"
 ensure_secret_from_env_file "AION_LABS_API_KEY" "trustedrouter-aion-labs-api-key"
 ensure_secret_from_env_file "SAMBANOVA_API_KEY" "trustedrouter-sambanova-api-key"
 ensure_secret_from_env_file "ARCEE_API_KEY" "trustedrouter-arcee-api-key"
@@ -340,8 +344,13 @@ grant_tr_deploy_secret_access "trustedrouter-decart-api-key"
 grant_tr_deploy_secret_access "trustedrouter-nvidia-nim-api-key"
 grant_tr_deploy_secret_access "trustedrouter-wandb-api-key"
 grant_tr_deploy_secret_access "trustedrouter-io-net-api-key"
+grant_tr_deploy_secret_access "trustedrouter-abliterate-api-key"
+grant_tr_deploy_secret_access "trustedrouter-tencent-tokenhub-api-key"
 grant_tr_deploy_secret_access "trustedrouter-scaleway-api-key"
 grant_tr_deploy_secret_access "trustedrouter-regolo-api-key"
+grant_tr_deploy_secret_access "trustedrouter-lyceum-api-key"
+grant_tr_deploy_secret_access "trustedrouter-system1models-global-api-key"
+grant_tr_deploy_secret_access "trustedrouter-system1models-eu-api-key"
 grant_tr_deploy_secret_access "trustedrouter-privatemode-api-key"
 grant_tr_deploy_secret_access "trustedrouter-featherless-api-key"
 grant_tr_deploy_secret_access "trustedrouter-jina-api-key"
@@ -349,6 +358,7 @@ grant_tr_deploy_secret_access "trustedrouter-sakana-api-key"
 grant_tr_deploy_secret_access "trustedrouter-perplexity-api-key"
 grant_tr_deploy_secret_access "trustedrouter-krea-api-key"
 grant_tr_deploy_secret_access "trustedrouter-fal-api-key"
+grant_tr_deploy_secret_access "trustedrouter-byteplus-api-key"
 # Authenticated hourly discovery for the former runtime-only providers was
 # approved by the operator on 2026-09-27; the refresh workflow reads these the
 # same way it reads every other provider key above.
@@ -377,7 +387,7 @@ grant_tr_deploy_secret_access "trustedrouter-routable-withdraw-from-account-id"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
-# Bigtable write failures, etc.). The runtime SA reads
+# analytics write failures, etc.). The runtime SA reads
 # AXIOM_API_TOKEN from Secret Manager; the dataset name is plain
 # config and lives in env, not in Secret Manager.
 ensure_secret_from_env_file "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token" "AXIOM_TOKEN" "AXIOM_API_KEY"

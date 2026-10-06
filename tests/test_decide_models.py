@@ -9,7 +9,9 @@ chat, pinned to one provider.
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -17,7 +19,9 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from tests.fixture_routes import bypass_catalog_caches, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
+from tests.pinned_manifests import TYPESAFE_JEV
 from trusted_router.catalog import (
     MODELS,
     NATIVE_DECISION_MODEL_IDS,
@@ -36,10 +40,16 @@ from trusted_router.catalog_data import (
     PRIVATE_PROXY_MODEL_TARGETS,
     TREV_1_0_MODEL_ID,
     ZEV_1_0_MODEL_ID,
+    Model,
+    ModelEndpoint,
 )
+from trusted_router.catalog_privacy import endpoint_stores_content, endpoint_zero_data_retention
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.provider_lifecycle import FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
+from trusted_router.provider_lifecycle import (
+    FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT,
+    provider_model_retired,
+)
 from trusted_router.routing import decide_route_endpoint_candidates
 from trusted_router.storage import STORE, InMemoryStore
 
@@ -49,6 +59,36 @@ AUTHORIZE = "/v1/internal/gateway/authorize"
 
 
 JEV_HOSTS = [("typesafe", "jev-latest"), ("vercel-ai-gateway", JEV)]
+
+
+def _jev_built_from_its_pinned_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Model:
+    """Jev as the catalog builds it from TypeSafe's pinned row, whatever TypeSafe
+    lists today; its relay is then priced at the spec's checked-in cost."""
+    from trusted_router import catalog_ingest
+
+    (tmp_path / "typesafe.json").write_text(
+        json.dumps({"provider": "typesafe", "price_scale": "microdollars_per_million", "models": [TYPESAFE_JEV]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    return catalog_ingest._decision_models()[JEV]
+
+
+def _serve_jev_as_built(monkeypatch: pytest.MonkeyPatch, model: Model | None = None) -> None:
+    """Jev's routes as the builder makes them from its spec: the vendor's, then
+    the relay's. The catalog drops a route whose host's manifest goes dark, and
+    TypeSafe or Vercel delisting Jev must not fail a rule about what the spec
+    builds or how a request for Jev routes. Whether both hosts still serve it
+    is test_every_decision_spec_route_is_still_served, a provider_health check."""
+    from trusted_router import catalog, catalog_ingest
+
+    model = model or catalog.MODELS.get(JEV) or catalog_ingest._decision_models()[JEV]
+    monkeypatch.setitem(catalog.MODELS, JEV, model)
+    for endpoint in (
+        catalog_ingest._endpoint(model, usage_type="Credits"),
+        *catalog_ingest._decision_fallback_endpoints({JEV: model}).values(),
+    ):
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, endpoint.id, endpoint)
 
 
 def _expected_active_chain(model_id: str) -> tuple[str, ...]:
@@ -82,19 +122,22 @@ OFFERED_NAMED_IDS = [model_id for model_id in PRESENT_NAMED_IDS if _serving_chai
 PRESENT_NATIVE_IDS = [model_id for model_id in NATIVE_DECISION_MODEL_IDS if model_id in MODELS]
 
 
-def test_jev_is_an_input_only_decision_model() -> None:
-    model = MODELS[JEV]
+def test_jev_is_an_input_only_decision_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    model = _jev_built_from_its_pinned_row(monkeypatch, tmp_path)
     assert model.supports_decide and not model.supports_chat and not model.supports_embeddings
     assert model.provider == "typesafe"
     assert model.upstream_id == "jev-latest"
-    assert model.prompt_price_microdollars_per_million_tokens > 42_000  # cost plus markup
+    assert model.prompt_price_microdollars_per_million_tokens == 44_310  # $0.042 per million, plus 5.5%
     assert model.completion_price_microdollars_per_million_tokens == 0
     assert all(
         tier.completion_price_microdollars_per_million_tokens == 0 for tier in model.price_tiers
     )
 
 
-def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback() -> None:
+def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _serve_jev_as_built(monkeypatch, _jev_built_from_its_pinned_row(monkeypatch, tmp_path))
     endpoints = endpoints_for_model(JEV)
     # Each host is called by ITS name for the model: the vendor's alias is not
     # the relay's id, and sending one to the other is a 404 on every request.
@@ -102,8 +145,9 @@ def test_jev_runs_at_its_vendor_with_the_relay_as_a_priced_fallback() -> None:
     for endpoint in endpoints:
         assert endpoint.usage_type == "Credits" and not endpoint.is_byok
         # The host that serves a request bills it, so EACH endpoint carries a
-        # real input price and meters no output.
-        assert endpoint.prompt_price_microdollars_per_million_tokens > 42_000, endpoint.id
+        # real input price and meters no output: TypeSafe's pinned $0.042 per
+        # million, and the relay's checked-in $0.042, each plus 5.5%.
+        assert endpoint.prompt_price_microdollars_per_million_tokens == 44_310, endpoint.id
         assert endpoint.completion_price_microdollars_per_million_tokens == 0, endpoint.id
         assert not PROVIDERS[endpoint.provider].supports_chat
         assert not PROVIDERS[endpoint.provider].supports_byok
@@ -116,12 +160,31 @@ def test_every_decision_fallback_route_became_an_endpoint() -> None:
     # A fallback on a provider missing from PROVIDERS or the prepaid set is
     # skipped by the builder. Silently losing the failover is the failure this
     # guards: the vendor has an outage and there is nowhere to go.
+    from trusted_router import catalog_ingest
+    from trusted_router.catalog_data import _DECISION_SPECS, GATEWAY_PREPAID_PROVIDER_SLUGS
+
+    models = catalog_ingest._decision_models()
+    built = catalog_ingest._decision_fallback_endpoints(models)
+    for spec in _DECISION_SPECS:
+        # The vendor's own route is built only for a known prepaid provider.
+        assert spec["id"] in models, spec["id"]
+        assert spec["provider"] in PROVIDERS and spec["provider"] in GATEWAY_PREPAID_PROVIDER_SLUGS
+        assert spec["fallback_routes"], f"{spec['id']} has no failover host"
+        served = {(e.provider, e.upstream_id) for e in built.values() if e.model_id == spec["id"]}
+        for route in spec["fallback_routes"]:
+            assert (route["provider"], route["upstream_id"]) in served, route
+
+
+@pytest.mark.provider_health
+def test_every_decision_spec_route_is_still_served() -> None:
+    """Each host still serves its hosted decision model today. A host whose
+    manifest goes dark drops its route, and a vendor left without its relay has
+    nowhere to fail over. Alerts without holding up the hourly price refresh."""
     from trusted_router.catalog_data import _DECISION_SPECS
 
     for spec in _DECISION_SPECS:
         served = {(e.provider, e.upstream_id) for e in endpoints_for_model(spec["id"])}
-        assert (spec["provider"], spec["upstream_id"]) in served
-        assert spec["fallback_routes"], f"{spec['id']} has no failover host"
+        assert (spec["provider"], spec["upstream_id"]) in served, spec["id"]
         for route in spec["fallback_routes"]:
             assert (route["provider"], route["upstream_id"]) in served, route
 
@@ -205,7 +268,7 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
         "trustedrouter/zev-1.0": ("fireworks", "baseten"),
         "trustedrouter/lev-1.0": ("sambanova", "parasail", "together"),
         "trustedrouter/dev-1.0": ("wafer", "deepinfra", "wandb"),
-        "trustedrouter/gemmev-1.0": ("wandb", "nextbit", "io-net"),
+        "trustedrouter/gemmev-1.0": ("nextbit", "wandb", "io-net"),
     }
     trev_chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
     assert trev_chain[0] == "cerebras"
@@ -251,7 +314,8 @@ def test_a_named_decision_model_is_priced_from_its_host_chain(model_id: str) -> 
         assert hidden not in public, f"{hidden!r} leaked into the public entry for {model_id}"
 
 
-def test_decide_resolver_accepts_only_decision_models() -> None:
+def test_decide_resolver_accepts_only_decision_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_jev_as_built(monkeypatch)
     candidates = decide_route_endpoint_candidates({"model": JEV}, Settings(environment="test"))
     # Vendor first by default, relay second: the order IS the failover plan.
     assert [(m.id, e.provider) for m, e in candidates] == [
@@ -268,12 +332,17 @@ def test_decide_resolver_accepts_only_decision_models() -> None:
 @pytest.mark.parametrize("hosted", [False, True])
 @pytest.mark.parametrize("defer_selection", [False, True])
 def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
-    hosted: bool, defer_selection: bool,
+    hosted: bool, defer_selection: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
 
     from trusted_router.routing import chat_route_endpoint_candidates, normalize_routing_inputs
 
+    if hosted:
+        _serve_jev_as_built(monkeypatch)
+    else:
+        # A chat route on a host that stores content, so `deny` alone empties it.
+        _serve_on_fixture_routes(monkeypatch, MEV_1_0_MODEL_ID)
     inputs = normalize_routing_inputs({
         "model": JEV if hosted else PRIVATE_PROXY_MODEL_TARGETS[MEV_1_0_MODEL_ID],
         "provider": {
@@ -282,14 +351,14 @@ def test_resolvers_expose_relaxed_policy_without_changing_normalized_inputs(
             "allow_fallbacks": False,
         },
     }, Settings(environment="test"))
-    original_hash = inputs.routing_policy_hash
+    original = replace(inputs)
     resolver = decide_route_endpoint_candidates if hosted else chat_route_endpoint_candidates
     candidates = resolver(inputs, defer_no_fallback_selection=defer_selection)
     assert isinstance(candidates, list)
     assert len(candidates) == 1
     assert candidates.effective_preferences == replace(inputs.preferences, data_collection=None)
     assert inputs.preferences.data_collection == "deny"
-    assert inputs.routing_policy_hash == original_hash
+    assert inputs == original
 
 
 def _assert_no_financial_side_effects() -> None:
@@ -320,7 +389,10 @@ async def _authorize(body: dict[str, Any]) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_gateway_authorizes_the_hosted_decision_model() -> None:
+async def test_gateway_authorizes_the_hosted_decision_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_jev_as_built(monkeypatch)
     response = await _authorize(
         {
             "model": JEV,
@@ -356,8 +428,9 @@ async def test_gateway_authorizes_the_hosted_decision_model() -> None:
     ],
 )
 async def test_jev_host_order_follows_the_default_then_the_caller(
-    provider: dict[str, Any] | None, expected: list[str]
+    provider: dict[str, Any] | None, expected: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _serve_jev_as_built(monkeypatch)
     body: dict[str, Any] = {
         "model": JEV,
         "route_type": "decide",
@@ -374,7 +447,10 @@ async def test_jev_host_order_follows_the_default_then_the_caller(
 
 
 @pytest.mark.asyncio
-async def test_native_decision_request_authorizes_as_chat_on_the_pinned_provider() -> None:
+async def test_native_decision_request_authorizes_as_chat_on_the_pinned_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     response = await _authorize(
         {
             "model": "openai/gpt-oss-20b",
@@ -433,6 +509,109 @@ async def _named_candidates(model_id: str, provider: dict[str, Any] | None) -> l
     return ordered
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_id", "host"),
+    [
+        (TREV_1_0_MODEL_ID, "cerebras"),
+        (ZEV_1_0_MODEL_ID, "baseten"),
+        ("trustedrouter/lev-1.0", "parasail"),
+    ],
+)
+@pytest.mark.parametrize("zdr_available", [True, False])
+async def test_blog_zdr_decision_examples_never_widen_to_an_ineligible_host(
+    model_id: str, host: str, zdr_available: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    _serve_on_fixture_routes(monkeypatch, model_id)
+    assert PROVIDERS[host].provider_zero_data_retention is True
+    if not zdr_available:
+        monkeypatch.setitem(PROVIDERS, host, replace(
+            PROVIDERS[host], provider_zero_data_retention=False,
+            prepaid_zero_data_retention=False,
+        ))
+    response = await _authorize({
+        "model": model_id,
+        "route_type": "decide",
+        "provider": {"only": [host], "min_privacy": "zdr"},
+        "estimated_input_tokens": 480,
+        "max_output_tokens": 700,
+    })
+    if zdr_available:
+        assert response.status_code == 200, response.text
+        payload = response.json().get("data", response.json())
+        assert payload["provider"] == host
+        assert payload["response_model"] == model_id
+        assert {route["provider"] for route in payload["route_candidates"]} == {host}
+    else:
+        assert response.status_code == 400, response.text
+        _assert_no_financial_side_effects()
+
+
+def _serve_on_fixture_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+    hosts: tuple[str, ...] | None = None,
+    upstream_ids: dict[str, str] | None = None,
+) -> str:
+    """Serve a name, and the chat model behind it, on fixture routes only: one
+    Credits route per host, by default the name's chain. Returns the backing id.
+
+    Routing rules hold for any catalog. The live one is rebuilt hourly from
+    provider feeds, and a host can delist a backing model at any time (DeepInfra
+    dropped gemmev's only one on 2026-09-28), so a rule test does not borrow
+    today's routes. Retirements in provider_lifecycle still apply to these;
+    pass the upstream id a retirement names in `upstream_ids`."""
+    from dataclasses import replace
+
+    from trusted_router import catalog
+    from trusted_router.catalog_registry import named_decision_model
+
+    named = next(named for named in NAMED_DECISION_MODELS if named.id == model_id)
+    backing = catalog.MODELS.get(named.backing_model_id) or replace(
+        next(model for model in catalog.MODELS.values() if model.supports_chat),
+        id=named.backing_model_id,
+        name=named.backing_model_id,
+    )
+    monkeypatch.setitem(catalog.MODELS, backing.id, backing)
+    if model_id not in catalog.MODELS:
+        monkeypatch.setitem(catalog.MODELS, model_id, named_decision_model(named, backing))
+    for endpoint_id, endpoint in list(catalog.MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == backing.id:
+            monkeypatch.delitem(catalog.MODEL_ENDPOINTS, endpoint_id)
+    for host in hosts or named.chain:
+        route = ModelEndpoint(
+            id=f"{backing.id}@{host}/prepaid",
+            model_id=backing.id,
+            provider=host,
+            usage_type="Credits",
+            upstream_id=(upstream_ids or {}).get(host, f"fixture-{host}"),
+            prompt_price_microdollars_per_million_tokens=1_000_000,
+            completion_price_microdollars_per_million_tokens=3_000_000,
+            published_prompt_price_microdollars_per_million_tokens=1_000_000,
+            published_completion_price_microdollars_per_million_tokens=3_000_000,
+        )
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, route.id, route)
+    return backing.id
+
+
+def _an_outsider(model_id: str, satisfies: Callable[[ModelEndpoint], bool]) -> str:
+    """A prepaid chat host outside the name's chain whose route for its backing
+    model satisfies a privacy rule, judged by the catalog's own rules."""
+    backing = PRIVATE_PROXY_MODEL_TARGETS[model_id]
+    chain = NAMED_DECISION_MODEL_PROVIDERS[model_id]
+    for slug, provider in sorted(PROVIDERS.items()):
+        if slug in chain or not (provider.supports_prepaid and provider.supports_chat):
+            continue
+        probe = ModelEndpoint(
+            id=f"{backing}@{slug}/prepaid", model_id=backing, provider=slug, usage_type="Credits"
+        )
+        if satisfies(probe):
+            return slug
+    raise AssertionError(f"no prepaid chat host outside {chain} satisfies {satisfies}")
+
+
 def _a_host_outside(chain: tuple[str, ...]) -> str:
     return next(host for host in ("deepinfra", "together", "cerebras") if host not in chain)
 
@@ -454,10 +633,15 @@ def _a_served_outsider(model_id: str, monkeypatch: pytest.MonkeyPatch) -> str:
     outsiders = sorted({e.provider for e in serving if e.provider not in chain})
     if outsiders:
         return outsiders[0]
-    host = _a_host_outside(chain)
+    host = _an_outsider(
+        model_id,
+        lambda route: not provider_model_retired(route.provider, route.model_id, route.upstream_id),
+    )
     template = next(e for e in serving if e.provider in chain)
     added = replace(template, id=f"{backing}@{host}/prepaid", provider=host)
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {**catalog.MODEL_ENDPOINTS, added.id: added})
+    # In place: routing_candidates iterates the registry's dict itself, so a
+    # replacement assigned to catalog.MODEL_ENDPOINTS would never reach it.
+    monkeypatch.setitem(catalog.MODEL_ENDPOINTS, added.id, added)
     return host
 
 
@@ -478,8 +662,11 @@ async def _assert_the_outsider_is_routable(model_id: str, outsider: str) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
-async def test_a_named_model_authorizes_on_its_chain_in_order(model_id: str) -> None:
+@pytest.mark.parametrize("model_id", NAMED_IDS)
+async def test_a_named_model_authorizes_on_its_chain_in_order(
+    model_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _serve_on_fixture_routes(monkeypatch, model_id)
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
     expected = list(_serving_chain(model_id))
     assert await _named_candidates(model_id, None) == expected
@@ -497,20 +684,16 @@ async def test_a_named_model_authorizes_on_its_chain_in_order(model_id: str) -> 
 async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
     model_id: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dataclasses import replace
     from datetime import timedelta
 
-    from trusted_router import catalog, provider_lifecycle
+    from trusted_router import provider_lifecycle
 
-    backing = "z-ai/glm-5.2-fast"
-    baseten = next(e for e in endpoints_for_model(backing) if e.provider == "baseten" and not e.is_byok)
-    fireworks = replace(
-        baseten, id=f"{backing}@fireworks/prepaid", provider="fireworks",
-        upstream_id="accounts/fireworks/routers/glm-5p2-fast",
+    # The retirement names Fireworks' upstream id, so the fixture route uses it.
+    backing = _serve_on_fixture_routes(
+        monkeypatch,
+        ZEV_1_0_MODEL_ID,
+        upstream_ids={"fireworks": "accounts/fireworks/routers/glm-5p2-fast"},
     )
-    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {
-        **catalog.MODEL_ENDPOINTS, fireworks.id: fireworks,
-    })
     cutoff = FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT
     for at, expected in [
         (cutoff - timedelta(microseconds=1), ["fireworks", "baseten"]),
@@ -531,13 +714,14 @@ async def test_zev_and_bare_model_advance_to_existing_host_at_fireworks_cutoff(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 @pytest.mark.parametrize("preference", ["none", "price", "outsider first"])
 async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
     model_id: str, preference: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The chain is enforced at authorize, not merely requested by the gateway:
     no preference may add a host or promote one over the head of the chain."""
+    _serve_on_fixture_routes(monkeypatch, model_id)
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
     outsider = _a_served_outsider(model_id, monkeypatch)
     await _assert_the_outsider_is_routable(model_id, outsider)
@@ -553,7 +737,7 @@ async def test_a_named_chain_cannot_be_widened_or_reordered_by_the_request(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     model_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -561,6 +745,7 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
     right; serving from outside the chain is not. Asserted on the response
     itself: this used to be an `except AssertionError` around the helper, which
     would also have swallowed a 200 that leaked the backing model."""
+    _serve_on_fixture_routes(monkeypatch, model_id)
     outsider = _a_served_outsider(model_id, monkeypatch)
     await _assert_the_outsider_is_routable(model_id, outsider)
     response = await _authorize(
@@ -581,11 +766,12 @@ async def test_a_named_model_refuses_a_request_pinned_outside_its_chain(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 @pytest.mark.parametrize("filter_kind", ["ignore_all", "only_then_ignore"])
 async def test_excluding_every_named_host_is_not_a_retryable_outage(
-    model_id: str, filter_kind: str
+    model_id: str, filter_kind: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _serve_on_fixture_routes(monkeypatch, model_id)
     chain = list(NAMED_DECISION_MODEL_PROVIDERS[model_id])
     preferences: dict[str, Any] = {"ignore": chain}
     if filter_kind == "only_then_ignore":
@@ -659,6 +845,17 @@ async def test_a_request_filter_that_strips_every_pinned_host_is_a_client_error(
     # 503 and opened "TR Gateway: billing path 5xx".
     from trusted_router.routes.internal import gateway
 
+    # Routes outside the chain that DO match each filter keep the chat model
+    # behind the name routable, so the refusal is the chain's: a zero-retention
+    # Credits host, and a customer-key route (this workspace has no key).
+    chain = NAMED_DECISION_MODEL_PROVIDERS[OEV_1_0_MODEL_ID]
+    zdr_outsider = _an_outsider(
+        OEV_1_0_MODEL_ID,
+        lambda route: endpoint_zero_data_retention(route) is True
+        and not endpoint_stores_content(route),
+    )
+    backing = _serve_on_fixture_routes(monkeypatch, OEV_1_0_MODEL_ID, hosts=(*chain, zdr_outsider))
+    serve_on_fixture_route(monkeypatch, backing, chain[0], author="openai", usage_type="BYOK")
     monkeypatch.setattr(
         gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
@@ -702,8 +899,16 @@ async def test_an_unavailable_compatible_named_host_stays_retryable(
     from trusted_router import catalog
     from trusted_router.routes.internal import gateway
 
-    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    # Two outsiders keep the backing model routable when SambaNova's manifest
+    # expires, so the chain check is reached: DeepInfra for the "only" case,
+    # and a zero-retention host for the "zdr" case.
+    zdr_outsider = _an_outsider(
+        TREV_1_0_MODEL_ID, lambda route: endpoint_zero_data_retention(route) is True
+    )
+    backing = _serve_on_fixture_routes(
+        monkeypatch, TREV_1_0_MODEL_ID, hosts=(*chain, "deepinfra", zdr_outsider)
+    )
     # SambaNova is compatible but unavailable; every other pinned host is
     # excluded, including hosts added to the chain after this test was written.
     preferences: dict[str, Any] = {"usage": "credits"}
@@ -777,17 +982,14 @@ async def test_relaxed_deny_named_chain_recovers_from_a_retryable_outage(
 ) -> None:
     from trusted_router.routes.internal import gateway
 
+    # Only the chain serves the backing model here, and its hosts store
+    # content, so deny empties every route and the resolver relaxes it.
+    _serve_on_fixture_routes(monkeypatch, model_id)
     body = {
         "model": model_id,
         "route_type": "decide",
         "region": "europe-west4",
-        "provider": {
-            "data_collection": "deny",
-            # Gev's backing model also has non-pinned ZDR hosts, so deny
-            # alone stays strict there. Limit backing scope to trigger the
-            # resolver's existing relaxation, rather than widening it here.
-            **({"only": ["google-ai-studio"]} if model_id == GEV_1_0_MODEL_ID else {}),
-        },
+        "provider": {"data_collection": "deny"},
         "estimated_input_tokens": 480,
         "max_output_tokens": 700,
     }
@@ -823,8 +1025,11 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 ) -> None:
     from trusted_router.routes.internal import gateway
 
-    # Gev's backing resolver can satisfy deny on non-pinned hosts. Its pinned
+    # Gev's backing resolver can satisfy deny on a non-pinned host. Its pinned
     # host cannot; a diagnostic must not independently soften that policy.
+    chain = NAMED_DECISION_MODEL_PROVIDERS[GEV_1_0_MODEL_ID]
+    outsider = _an_outsider(GEV_1_0_MODEL_ID, lambda route: not endpoint_stores_content(route))
+    _serve_on_fixture_routes(monkeypatch, GEV_1_0_MODEL_ID, hosts=(*chain, outsider))
     monkeypatch.setattr(
         gateway, "provider_model_available_from_gateway_region", lambda *_: region_available
     )
@@ -846,12 +1051,13 @@ async def test_deny_satisfied_outside_named_chain_is_not_relaxed_again(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", OFFERED_NAMED_IDS)
+@pytest.mark.parametrize("model_id", NAMED_IDS)
 async def test_a_genuine_named_host_outage_stays_retryable_and_attributable(
     model_id: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from trusted_router.routes.internal import gateway
 
+    _serve_on_fixture_routes(monkeypatch, model_id)
     monkeypatch.setattr(gateway, "provider_model_available_from_gateway_region", lambda *_: False)
     response = await _authorize(
         {
@@ -965,8 +1171,11 @@ async def test_a_routing_variant_in_a_fallback_array_is_still_a_private_proxy() 
 
 
 @pytest.mark.asyncio
-async def test_ordinary_models_keep_their_variants_and_dated_spellings() -> None:
+async def test_ordinary_models_keep_their_variants_and_dated_spellings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The refusal is for pinned models only. Everyone else's `:nitro` still works.
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     response = await _authorize(
         {
             "model": "openai/gpt-oss-20b:nitro",
@@ -984,10 +1193,22 @@ def test_a_host_delisting_the_backing_model_never_stops_the_control_plane(
     """Chain pricing runs at import. It used to raise when the preferred host
     stopped serving the backing model, so one provider's hourly manifest refresh
     could keep the whole control plane from starting."""
-    from trusted_router import catalog_registry
+    from dataclasses import replace
 
-    backing = PRIVATE_PROXY_MODEL_TARGETS[TREV_1_0_MODEL_ID]
+    from trusted_router import catalog, catalog_registry
+
+    # Trev and the model behind it on fixture routes, one per chain host, each
+    # host at its own price and the preferred one dearest, whoever serves the
+    # model today.
+    backing = _serve_on_fixture_routes(monkeypatch, TREV_1_0_MODEL_ID)
     chain = NAMED_DECISION_MODEL_PROVIDERS[TREV_1_0_MODEL_ID]
+    prices = (4_000_000, 2_000_000, 3_000_000, 1_000_000)
+    for host, price in zip(chain, prices, strict=True):
+        route = catalog.MODEL_ENDPOINTS[f"{backing}@{host}/prepaid"]
+        monkeypatch.setitem(
+            catalog.MODEL_ENDPOINTS, route.id,
+            replace(route, prompt_price_microdollars_per_million_tokens=price),
+        )
     live = dict(catalog_registry.MODEL_ENDPOINTS)
 
     def without(*providers: str) -> dict[str, Any]:
@@ -1145,10 +1366,13 @@ def test_the_control_plane_starts_without_a_named_models_backing_model(model_id:
     assert "STARTED" in result.stdout
 
 
-def test_a_named_model_is_offered_only_where_it_can_be_used(client: Any) -> None:
+def test_a_named_model_is_offered_only_where_it_can_be_used(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The chat picker and the custom-model base list read the public shape. A
     name kept `supports_chat` there (it needs it internally, so authorize can
     route its chat model) and was offered in both, which then refused it."""
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     picker = {row["id"]: row for row in client.get("/v1/models/picker").json()["data"]}
     for model_id in PRESENT_NAMED_IDS:
         assert picker[model_id]["trustedrouter"]["supports_chat"] is False, model_id
@@ -1158,11 +1382,12 @@ def test_a_named_model_is_offered_only_where_it_can_be_used(client: Any) -> None
     assert picker["openai/gpt-oss-20b"]["trustedrouter"]["supports_chat"] is True
 
 
-def test_a_named_model_is_never_drawn_as_a_chat_candidate() -> None:
+def test_a_named_model_is_never_drawn_as_a_chat_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     """The meta-routers (auto, cheap, monitor...) draw from pools of regular chat
     models. A name is a chat model INTERNALLY, and the cheapest one (mev) took its
     provider's slot in the cheap pool -- out of sight only while the pool was cut
     at eight. Drawn, it would have been authorized on a chat route and refused."""
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     from trusted_router import routing_candidates
 
     everything = len(MODELS)
@@ -1189,9 +1414,12 @@ def test_a_named_model_reads_as_a_decision_model_everywhere_it_is_shown(
 
 
 @pytest.mark.parametrize("model_id", [*PRESENT_NAMED_IDS, "typesafe-ai/jev"])
-def test_a_decision_models_api_page_shows_the_decide_call(model_id: str, client: Any) -> None:
+def test_a_decision_models_api_page_shows_the_decide_call(
+    model_id: str, client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """/models/<id>/api ended in `client.chat.completions.create(model=<id>)` for
     every model in the catalog, decision models included."""
+    serve_on_fixture_route(monkeypatch, "openai/gpt-oss-20b", "deepinfra", author="openai")
     page = client.get(f"/models/{model_id}/api")
     assert page.status_code == 200, page.text[:200]
     assert "chat.completions.create" not in page.text
@@ -1203,9 +1431,21 @@ def test_a_decision_models_api_page_shows_the_decide_call(model_id: str, client:
     assert "chat.completions.create" in chat.text
 
 
-def test_a_comparison_page_shows_a_call_the_model_accepts(client: Any) -> None:
+def _serve_the_compared_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mev, trev and oev with their chat models (Mercury 2, gpt-oss-120b and
+    gpt-oss-20b), on fixture routes: a comparison page needs both models in the
+    catalog, and a provider delisting the one host behind a name drops the name."""
+    bypass_catalog_caches(monkeypatch)
+    for model_id in (MEV_1_0_MODEL_ID, TREV_1_0_MODEL_ID, OEV_1_0_MODEL_ID):
+        _serve_on_fixture_routes(monkeypatch, model_id)
+
+
+def test_a_comparison_page_shows_a_call_the_model_accepts(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The comparison page ended with `client.chat.completions.create(model=<left>)`
     whatever the left model was: for a decision model, a call that is refused."""
+    _serve_the_compared_names(monkeypatch)
     page = client.get("/compare/models/trustedrouter/mev-1.0/vs/trustedrouter/trev-1.0")
     assert page.status_code == 200, page.text[:200]
     assert "chat.completions.create" not in page.text
@@ -1220,12 +1460,29 @@ def test_a_comparison_page_shows_a_call_the_model_accepts(client: Any) -> None:
     assert '<span class="pill">decide</span>' in chat.text
 
 
-def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
+def test_a_comparison_faq_names_a_call_both_models_accept(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Its last answer was "change only the model id" for EVERY pair, which is a
     400 when one is a decision model and the call is chat. Two fixes then denied a
     call some pair DOES share. It now claims only what the flags prove (both chat;
     both take decisions -- authorize drives any chat model on /v1/decide) and
     otherwise promises nothing either way."""
+    _serve_the_compared_names(monkeypatch)
+    # The catalog's only chat model that also makes images is Google's, so the
+    # pair gets fixture models of each kind.
+    chat_and_image = serve_on_fixture_route(
+        monkeypatch, "fixture/chat-and-image", "google-ai-studio", author="google-ai-studio",
+        model=Model(id="fixture/chat-and-image", name="Fixture Chat And Image",
+                    provider="google-ai-studio",
+                    context_length=131_072, input_modalities=("text", "image"),
+                    output_modalities=("text", "image")),
+    ).model_id
+    image_only = serve_on_fixture_route(
+        monkeypatch, "fixture/image-only", "recraft", author="recraft",
+        model=Model(id="fixture/image-only", name="Fixture Image Only", provider="recraft",
+                    context_length=4_096, supports_chat=False, output_modalities=("image",)),
+    ).model_id
     mixed = client.get("/compare/models/openai/gpt-oss-20b/vs/trustedrouter/oev-1.0").text
     assert f"Both take the same request on POST {DECIDE_PATH}" in mixed
     assert "TrustedRouter Oev 1.0 does not take chat requests." in mixed
@@ -1241,7 +1498,7 @@ def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
     embedding = next(m.id for m in MODELS.values() if m.supports_embeddings and not m.supports_chat)
     for path in (
         f"/compare/models/{embedding}/vs/trustedrouter/trev-1.0",
-        "/compare/models/google/gemini-3.1-flash-image-preview/vs/recraft/recraftv3",
+        f"/compare/models/{chat_and_image}/vs/{image_only}",
     ):
         page = client.get(path)
         assert page.status_code == 200, (path, page.text[:200])
@@ -1251,7 +1508,15 @@ def test_a_comparison_faq_names_a_call_both_models_accept(client: Any) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", ["openai/gpt-oss-20b", "trustedrouter/archimedes-1.0"])
+@pytest.mark.parametrize(
+    "model_id",
+    # A vehicle chat model is always cataloged (tests/catalog_vehicles.py); the
+    # private proxy only while Mistral Large, its backing model, is.
+    [
+        "anthropic/claude-haiku-4.5",
+        *(["trustedrouter/archimedes-1.0"] if "trustedrouter/archimedes-1.0" in MODELS else []),
+    ],
+)
 async def test_any_chat_model_is_accepted_on_the_decide_route(model_id: str) -> None:
     # What the comparison FAQ's "both take /v1/decide" rests on.
     response = await _authorize(

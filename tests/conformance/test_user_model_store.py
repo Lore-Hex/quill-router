@@ -16,7 +16,7 @@ def _memory_store() -> Store:
 
 
 def _spanner_store() -> Store:
-    store, _database, _bigtable = make_fake_store()
+    store, _database = make_fake_store()
     return store
 
 

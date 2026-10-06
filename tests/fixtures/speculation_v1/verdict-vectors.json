@@ -1,0 +1,463 @@
+{
+  "fixture_version": 1,
+  "note": "R8 must map actual router errors to these reasons using resolved identity; authenticated state reasons take precedence over generic 5xx. Provider errors never enter this taxonomy.",
+  "reason_namespace": "normalized_authenticated_authorize_reason_v1",
+  "vectors": [
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "credit_exhausted",
+        "source": "authenticated_router",
+        "status": 402,
+        "workspace_id": "w1"
+      },
+      "name": "credit"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "billing_denied",
+        "source": "authenticated_router",
+        "status": 402,
+        "workspace_id": "w1"
+      },
+      "name": "ambiguous_billing"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "trust_ineligible",
+        "source": "authenticated_router",
+        "status": 403,
+        "workspace_id": "w1"
+      },
+      "name": "trust"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "abuse_latched",
+        "source": "authenticated_router",
+        "status": 403,
+        "workspace_id": "w1"
+      },
+      "name": "abuse"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "payment_failed",
+        "source": "authenticated_router",
+        "status": 402,
+        "workspace_id": "w1"
+      },
+      "name": "payment"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "trust_reconciliation_stale",
+        "source": "authenticated_router",
+        "status": 503,
+        "workspace_id": "w1"
+      },
+      "name": "trust_stale"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "workspace_paused",
+        "source": "authenticated_router",
+        "status": 503,
+        "workspace_id": "w1"
+      },
+      "name": "paused"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_revoked",
+        "source": "authenticated_router",
+        "status": 401,
+        "workspace_id": "w1"
+      },
+      "name": "revoked"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_disabled",
+        "source": "authenticated_router",
+        "status": 401,
+        "workspace_id": "w1"
+      },
+      "name": "disabled"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_expired",
+        "source": "authenticated_router",
+        "status": 401,
+        "workspace_id": "w1"
+      },
+      "name": "expired"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_invalid",
+        "source": "authenticated_router",
+        "status": 403,
+        "workspace_id": "w1"
+      },
+      "name": "invalid_resolved"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_limit_exceeded",
+        "source": "authenticated_router",
+        "status": 402,
+        "workspace_id": "w1"
+      },
+      "name": "lifetime_limit"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_window_limit_exceeded",
+        "source": "authenticated_router",
+        "status": 402,
+        "workspace_id": "w1"
+      },
+      "name": "window_limit"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_strict_limit_exceeded",
+        "source": "authenticated_router",
+        "status": 402,
+        "workspace_id": "w1"
+      },
+      "name": "strict_limit"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "key_spend_limit_imposed",
+        "source": "authenticated_router",
+        "status": 403,
+        "workspace_id": "w1"
+      },
+      "name": "new_limit"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": false,
+        "discard_this_execution": true,
+        "durable_scope": "none",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 401
+      },
+      "input": {
+        "key_id": null,
+        "rate_scope": null,
+        "reason": "invalid_api_key",
+        "source": "authenticated_router",
+        "status": 401,
+        "workspace_id": null
+      },
+      "name": "invalid_unresolved"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "key",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": "key",
+        "reason": "rate_limited",
+        "source": "authenticated_router",
+        "status": 429,
+        "workspace_id": "w1"
+      },
+      "name": "rate_key"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": "workspace",
+        "reason": "rate_limited",
+        "source": "authenticated_router",
+        "status": 429,
+        "workspace_id": "w1"
+      },
+      "name": "rate_workspace"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": true,
+        "discard_this_execution": true,
+        "durable_scope": "workspace",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "rate_limited",
+        "source": "authenticated_router",
+        "status": 429,
+        "workspace_id": "w1"
+      },
+      "name": "rate_unknown"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": false,
+        "discard_this_execution": true,
+        "durable_scope": "none",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 400
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "invalid_request",
+        "source": "authenticated_router",
+        "status": 400,
+        "workspace_id": "w1"
+      },
+      "name": "request_validation"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": false,
+        "discard_this_execution": true,
+        "durable_scope": "none",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 403
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "request_policy_rejected",
+        "source": "authenticated_router",
+        "status": 403,
+        "workspace_id": "w1"
+      },
+      "name": "request_policy"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": false,
+        "discard_this_execution": true,
+        "durable_scope": "none",
+        "local_infrastructure_breaker": "none",
+        "storage_failure_status_with_real_rights": 404
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "unsupported_route",
+        "source": "authenticated_router",
+        "status": 404,
+        "workspace_id": "w1"
+      },
+      "name": "request_route"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": false,
+        "discard_this_execution": true,
+        "durable_scope": "none",
+        "local_infrastructure_breaker": "key_boot",
+        "storage_failure_status_with_real_rights": 503
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "infrastructure_error",
+        "source": "authenticated_router",
+        "status": 503,
+        "workspace_id": "w1"
+      },
+      "name": "infrastructure"
+    },
+    {
+      "expected": {
+        "commit_required_shadow_only": false,
+        "commit_required_with_real_rights": false,
+        "discard_this_execution": true,
+        "durable_scope": "none",
+        "local_infrastructure_breaker": "key_boot",
+        "storage_failure_status_with_real_rights": 504
+      },
+      "input": {
+        "key_id": "k1",
+        "rate_scope": null,
+        "reason": "authorize_timeout",
+        "source": "authenticated_router",
+        "status": 504,
+        "workspace_id": "w1"
+      },
+      "name": "timeout"
+    }
+  ]
+}

@@ -25,7 +25,6 @@ from trusted_router.storage_operational_analytics import (
     ACTIVITY_EVENT_KIND,
     CLIENT_EVENTS_EVENT_KIND,
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
-    SPEND_LEASE_SHADOW_EVENT_KIND,
     SYNTHETIC_EVENT_KIND,
     activity_payload,
     analytics_surrogate,
@@ -38,7 +37,6 @@ __all__ = [
     "CLIENT_EVENTS_EVENT_KIND",
     "OPERATIONAL_ANALYTICS_OUTBOX_SHARDS",
     "SYNTHETIC_EVENT_KIND",
-    "SPEND_LEASE_SHADOW_EVENT_KIND",
     "SpannerOperationalAnalyticsOutbox",
     "activity_payload",
     "analytics_surrogate",
@@ -117,13 +115,6 @@ class SpannerOperationalAnalyticsOutbox:
             payload=payload,
         )
 
-    def enqueue_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
-        self._enqueue(
-            event_kind=SPEND_LEASE_SHADOW_EVENT_KIND,
-            event_id=event_id,
-            payload=payload,
-        )
-
     def oldest_enqueued_at(
         self,
         *,
@@ -138,7 +129,7 @@ class SpannerOperationalAnalyticsOutbox:
         days of deleted-row versions and cost 823-957 ms of Spanner CPU per
         execution in production (2026-09-05) when /status.json ran it from
         every instance every minute. /status.json now reads the VM poller's
-        heartbeat instead (``SpannerBigtableStore.operational_analytics_outbox_freshness``).
+        heartbeat instead (``SpannerStore.operational_analytics_outbox_freshness``).
 
         Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
         named for the contract it once fed (``analytics.oldest_enqueued_at`` in

@@ -193,6 +193,7 @@ from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for bac
     model_provider_policy_url,
     model_provider_privacy_tier,
     model_provider_zero_data_retention,
+    provider_confidential_inference,
     provider_privacy_tier,
 )
 from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-exported
@@ -234,6 +235,10 @@ from trusted_router.provider_lifecycle import (
 )
 from trusted_router.provider_locations import inference_location_metadata, provider_geography
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
+from trusted_router.request_capabilities import (
+    endpoint_capabilities,
+    model_capabilities,
+)
 from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for back-compat
     FAST_MODEL_ORDER,
     InvalidAutoModelOrder,
@@ -589,6 +594,18 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
+    capabilities = [endpoint_capabilities(model, endpoint) for endpoint in endpoints]
+    # Discovery fields are a union over the model's own routes. A private
+    # proxy (for example a named decision model) is served through another
+    # model's routes, so it keeps its own declarations instead.
+    input_modalities = (
+        model.input_modalities
+        if model.id in PRIVATE_PROXY_MODEL_TARGETS
+        else tuple(dict.fromkeys((
+            *model.input_modalities,
+            *(value for endpoint in endpoints for value in (endpoint.input_modalities or ())),
+        )))
+    )
     named_chain = NAMED_DECISION_MODEL_PROVIDERS.get(model.id)
     if named_chain is not None:
         # A named decision model has no endpoints of its own: authorize serves
@@ -829,11 +846,18 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                         provider_extension_parameters(endpoint.provider),
                     )
                 ),
+                "capabilities": capability,
                 "request_price_microdollars": endpoint.request_price_microdollars,
             }
-            for endpoint in endpoints
+            for endpoint, capability in zip(endpoints, capabilities, strict=True)
         ],
     }
+    # Orchestrators can select/subcall different models and have no stable
+    # endpoint contract. Do not manufacture capabilities from an empty pool.
+    if not is_meta and not model.hidden_public_metadata:
+        tr_block["capabilities"] = model_capabilities(
+            capabilities, supported_parameters, input_modalities,
+        )
     if documentation is not None:
         tr_block["documentation"] = documentation
     if model.id == GREEN_MODEL_ID:
@@ -890,9 +914,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 if model.supports_embeddings and not model.supports_chat
                 else "text->decision"
                 if model.supports_decide and not model.supports_chat
-                else (f"{'+'.join(model.input_modalities)}->{'+'.join(model.output_modalities)}")
+                else (f"{'+'.join(input_modalities)}->{'+'.join(model.output_modalities)}")
             ),
-            "input_modalities": list(model.input_modalities),
+            "input_modalities": list(input_modalities),
             "output_modalities": list(model.output_modalities),
             "tokenizer": "unknown",
             "instruct_type": None,
@@ -956,7 +980,7 @@ def providers_for_display() -> tuple[Provider, ...]:
     def display_key(provider: Provider) -> tuple[int, int, str, str]:
         if provider.slug == "trustedrouter":
             posture_rank = 0
-        elif provider.provider_confidential_compute is True and provider.provider_e2ee is True:
+        elif provider_confidential_inference(provider, prepaid=True):
             posture_rank = 1
         elif (
             provider.provider_zero_data_retention is True

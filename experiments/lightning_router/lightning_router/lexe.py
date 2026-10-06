@@ -2,7 +2,10 @@
 
 import hashlib
 import json
+import logging
 import re
+import secrets
+import string
 import threading
 import time
 from decimal import Decimal
@@ -11,7 +14,7 @@ from typing import Any
 import bolt11
 import httpx
 
-from .errors import FundingReviewRequired
+from .errors import FundingReviewRequired, InvoiceCreationPending
 from .lnd import Invoice
 from .money import msats
 
@@ -20,8 +23,72 @@ PERMISSIONS = {
     "node_info", "list_channels", "get_human_bitcoin_address", "get_payments_by_indexes",
     "get_new_payments", "get_updated_payments", "get_payment_by_id", "list_broadcasted_txs",
     "get_next_unused_address", "create_invoice", "create_offer", "resync", "cancel_payment",
+    "get_user_settings",  # Reviewed read_info expansion in Lexe node 0.10.5.
 }
 INDEX = r"[0-9]{19}-ln_[0-9a-f]{64}"
+logger = logging.getLogger("lightning_router")
+READ_OPERATIONS = {
+    "/v2/node/client_info": "client_info",
+    "/v2/node/node_info": "node_info",
+    "/v2/node/payment": "payment",
+    "/v2/node/updated_payments": "updated_payments",
+}
+HTTP_OPERATIONS = {
+    **{("GET", path): operation for path, operation in READ_OPERATIONS.items()},
+    ("POST", "/v2/node/create_invoice"): "create_invoice",
+    ("POST", "/v2/node/cancel_payment"): "cancel_payment",
+}
+TRANSIENT_READ_ERRORS = (
+    httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError,
+)
+TRANSIENT_READ_STATUSES = {500, 502, 503, 504}
+READ_RETRY_DELAYS = (.25, .5)
+
+
+class LexeHTTPError(RuntimeError):
+    def __init__(self, status: int, code: int | None) -> None:
+        super().__init__("Lexe request unavailable")
+        self.status = status
+        self.code = code
+
+
+def error_code(response: httpx.Response) -> int | None:
+    # Lexe ErrorResponse has a u16 code; msg/data can contain payment secrets.
+    # Do not decompress diagnostic bodies or retain arbitrary provider text.
+    if (response.headers.get("content-type", "").split(";")[0].strip() != "application/json"
+            or response.headers.get("content-encoding", "identity") != "identity"):
+        return None
+    body = bytearray()
+    deadline = time.monotonic() + 1
+    try:
+        for chunk in response.iter_bytes():
+            if len(body) + len(chunk) > 4096 or time.monotonic() > deadline:
+                return None
+            body.extend(chunk)
+        data = json.loads(body)
+    except (httpx.HTTPError, ValueError, RecursionError):
+        return None
+    code = data.get("code") if isinstance(data, dict) else None
+    return code if type(code) is int and 0 <= code <= 65535 else None
+
+
+class LexeReadinessError(ValueError):
+    """A wallet/authority failure, not evidence that an invoice is invalid."""
+
+    def __init__(self, reason: str) -> None:
+        messages = {
+            "authority_invalid": "Receive-only Lexe authority required",
+            "effective_permissions_invalid": "Receive-only Lexe authority required",
+            "required_permissions_missing": "Receive-only Lexe authority required",
+            "unreviewed_permissions": "Receive-only Lexe authority required",
+            "credential_expiry_invalid": "Invalid payment timestamp",
+            "credential_expiring": "Lexe credential expired or expiring",
+            "wallet_mismatch": "Wrong Lexe wallet",
+        }
+        if reason not in messages:
+            raise ValueError("Unknown Lexe readiness reason")
+        self.reason = reason
+        super().__init__(messages[reason])
 
 
 def satoshis(value: Any) -> int:
@@ -46,12 +113,49 @@ class Lexe:
         self._lock = threading.Lock()
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        # Only replay authenticated reads. An ambiguous create/cancel must keep
+        # its existing durable recovery path, never become a second mutation.
+        safe_read = method == "GET" and path in READ_OPERATIONS
+        operation = HTTP_OPERATIONS.get((method, path), "unknown")
+        trace_id = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+        headers = httpx.Headers(kwargs.get("headers"))
+        headers["lexe-trace-id"] = trace_id
+        kwargs = {**kwargs, "headers": headers}
+        context = (f"operation={operation} method={method if operation != 'unknown' else 'unknown'} "
+                   f"path={path if operation != 'unknown' else 'unknown'} trace_id={trace_id}")
+        attempt = 1
+        while True:
+            try:
+                result = self._request_once(method, path, **kwargs)
+            except (LexeHTTPError, *TRANSIENT_READ_ERRORS) as exc:
+                is_http = isinstance(exc, LexeHTTPError)
+                status = exc.status if isinstance(exc, LexeHTTPError) else 0
+                code = exc.code if isinstance(exc, LexeHTTPError) and exc.code is not None else "unknown"
+                retryable = safe_read and (not is_http or status in TRANSIENT_READ_STATUSES)
+                detail = f"{context} error_type={type(exc).__name__} http_status={status} lexe_code={code}"
+                if retryable and attempt <= len(READ_RETRY_DELAYS):
+                    cap = READ_RETRY_DELAYS[attempt - 1]
+                    delay = secrets.SystemRandom().uniform(cap / 2, cap)
+                    logger.warning("lightning.lexe_read_retry %s attempt=%d delay_ms=%d", detail, attempt, int(delay * 1000))
+                    time.sleep(delay)
+                    kwargs = {**kwargs, "timeout": httpx.Timeout(5, connect=1, pool=1)}
+                    attempt += 1
+                    continue
+                if is_http:
+                    logger.error("lightning.lexe_http_failed %s attempts=%d", detail, attempt)
+                    if status == 404 and method == "GET" and path == "/v2/node/payment":
+                        raise FundingReviewRequired("invoice_missing") from exc
+                elif safe_read:
+                    logger.error("lightning.lexe_read_failed %s attempts=%d", detail, attempt)
+                raise
+            if attempt > 1:
+                logger.warning("lightning.lexe_read_recovered %s attempts=%d", context, attempt)
+            return result
+
+    def _request_once(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         with self.client.stream(method, path, follow_redirects=False, **kwargs) as response:
-            # Do not propagate bodies, invoice secrets or diagnostic text to logs.
-            if response.status_code == 404 and path == "/v2/node/payment":
-                raise FundingReviewRequired("invoice_missing")
             if response.status_code != 200:
-                raise RuntimeError("Lexe request unavailable")
+                raise LexeHTTPError(response.status_code, error_code(response))
             body = bytearray()
             for chunk in response.iter_bytes():
                 body.extend(chunk)
@@ -66,21 +170,34 @@ class Lexe:
         with self._lock:
             if self._checked and time.monotonic() - self._checked < 60:
                 return
-            info = self.request("GET", "/v2/node/client_info")
-            scopes, permissions, effective = info.get("scopes"), info.get("permissions", []), info.get("effective_permissions")
-            if (info.get("kind") != "client_credentials" or not isinstance(scopes, list)
-                    or not all(isinstance(s, str) for s in scopes) or set(scopes) != SCOPES
-                    or permissions != [] or not isinstance(effective, list)
-                    or not all(isinstance(p, str) for p in effective)
-                    or not {"node_info", "get_payment_by_id", "get_updated_payments", "create_invoice", "cancel_payment"} <= set(effective) <= PERMISSIONS):
-                raise ValueError("Receive-only Lexe authority required")
-            expires = timestamp(info.get("expires_at"))
-            if expires <= int(time.time() * 1000) + 3_600_000:
-                raise ValueError("Lexe credential expired or expiring")
-            node = self.request("GET", "/v2/node/node_info")
-            if node.get("user_pk") != self.wallet_id:
-                raise ValueError("Wrong Lexe wallet")
+            try:
+                self._verify_ready()
+            except LexeReadinessError as exc:
+                logger.error("lightning.lexe_readiness_failed reason=%s", exc.reason)
+                raise
             self._checked = time.monotonic()
+
+    def _verify_ready(self) -> None:
+        info = self.request("GET", "/v2/node/client_info")
+        scopes, permissions, effective = info.get("scopes"), info.get("permissions", []), info.get("effective_permissions")
+        if (info.get("kind") != "client_credentials" or not isinstance(scopes, list)
+                or not all(isinstance(s, str) for s in scopes) or set(scopes) != SCOPES or permissions != []):
+            raise LexeReadinessError("authority_invalid")
+        if not isinstance(effective, list) or not all(isinstance(p, str) for p in effective):
+            raise LexeReadinessError("effective_permissions_invalid")
+        if not {"node_info", "get_payment_by_id", "get_updated_payments", "create_invoice", "cancel_payment"} <= set(effective):
+            raise LexeReadinessError("required_permissions_missing")
+        if not set(effective) <= PERMISSIONS:
+            raise LexeReadinessError("unreviewed_permissions")
+        try:
+            expires = timestamp(info.get("expires_at"))
+        except ValueError as exc:
+            raise LexeReadinessError("credential_expiry_invalid") from exc
+        if expires <= int(time.time() * 1000) + 3_600_000:
+            raise LexeReadinessError("credential_expiring")
+        node = self.request("GET", "/v2/node/node_info")
+        if node.get("user_pk") != self.wallet_id:
+            raise LexeReadinessError("wallet_mismatch")
 
     @staticmethod
     def note(row: dict[str, Any]) -> str:
@@ -177,7 +294,7 @@ class Lexe:
                     matches[parsed.provider_index] = item
             if len(payments) < 100:
                 if not matches and time.time() - row["create_started_at"] < 60:
-                    raise RuntimeError("Invoice creation in progress")
+                    raise InvoiceCreationPending()
                 if not matches:
                     return None  # Only a completed authoritative scan proves absence.
                 if len(matches) != 1:

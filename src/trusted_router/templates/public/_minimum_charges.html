@@ -1,0 +1,21 @@
+<section id="minimum-charges" class="routing-feature-section" style="margin-top:40px">
+  <h2>Minimum charges and per-request rounding</h2>
+  <p>Eligible standard routes use the prices in effect when the request was authorized, with the rounding and minimum below. Streamed usage for these routes includes <code>cost_microdollars</code>.</p>
+  <p>Standard prepaid text and embedding usage is billed in whole microdollars: <strong>1 microdollar = $0.000001</strong>. Here is how the charge is calculated:</p>
+  <ol>
+    <li>Start with the selected route's retail token rates and applicable context-length tier. Standard retail rates are provider cost plus <strong>5.5%</strong>, rounded up to a whole microdollar per million tokens, with a <strong>$0.01 per million token price floor</strong>. The published retail rates already include this markup and price floor; do not add 5.5% again.</li>
+    <li>Multiply each component's token count by its rate per million tokens, then divide by 1,000,000. Round <strong>input, output, cache read, and cache write separately</strong> to whole microdollars, <strong>half up</strong> (0.5 rounds to 1; 1.5 rounds to 2). Cached tokens use their applicable cache rates, without counting them again as ordinary input.</li>
+    <li>Add the rounded components and any fixed per-request fee. Apply a <strong>1 microdollar minimum per billed request</strong> whenever there is positive usage at a positive rate or a positive request fee, even if all token components round to zero. With no chargeable usage and no fee, the charge is zero.</li>
+  </ol>
+  <p>Route-specific fees and minimums can increase the total: Perplexity routes include a per-request fee, and Parasail Liberty 2.0 has a <strong>$0.001 minimum</strong> per top-level request. Check the selected route's pricing on the <a href="/models">models page</a>. Video jobs use their separate quoted billing described in the <a href="/docs/video">video guide</a>.</p>
+  <h3>Worked examples: tiny calls</h3>
+  <p>These examples use illustrative retail rates, in the same form as the published per-million prices, with no cached tokens or request fees. The raw token cost is the listed rate times tokens, before per-component rounding and the request minimum.</p>
+  <div class="model-table-wrap"><table id="billing-examples">
+    <thead><tr><th>Usage</th><th>Retail rates per million</th><th>Raw token cost</th><th>Rounded components</th><th>Billed</th><th>Multiple of raw cost</th></tr></thead>
+    <tbody>
+      <tr><td>10 input + 5 output tokens</td><td>$0.01 input / $0.02 output</td><td>0.2 microdollars</td><td>0 input + 0 output; request minimum applies</td><td>1 microdollar ($0.000001)</td><td>5×</td></tr>
+      <tr><td>30 input + 10 output tokens</td><td>$0.05 input / $0.05 output</td><td>2 microdollars</td><td>2 input + 1 output (1.5 and 0.5 each round up)</td><td>3 microdollars ($0.000003)</td><td>1.5×</td></tr>
+    </tbody>
+  </table></div>
+  <p>On very small calls to cheap models, rounding and the request minimum can make the bill several times the raw token cost. The multiple depends on the token counts and route; the 5.5% markup alone does not explain it.</p>
+</section>

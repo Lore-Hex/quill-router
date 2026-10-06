@@ -35,7 +35,7 @@ from trusted_router.storage_models import CreditAccount, Reservation, Workspace
 
 
 def _seed(*, key_shards: int = 4) -> tuple[Any, Any, Any]:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-key-shards"
     store._write_entity(
         "workspace",
@@ -192,7 +192,7 @@ def test_key_usage_shards_default_and_accept_escrowed_lifetime_caps() -> None:
 
 
 def test_new_uncapped_key_inherits_workspace_credit_shards() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-new-key-shards"
     store._write_entity(
         "credit",
@@ -215,7 +215,7 @@ def test_new_uncapped_key_inherits_workspace_credit_shards() -> None:
 
 
 def test_new_lifetime_capped_key_inherits_workspace_shards_with_exact_escrow() -> None:
-    store, database, _ = make_fake_store()
+    store, database = make_fake_store()
     workspace_id = "ws-new-capped-key"
     store._write_entity(
         "credit",

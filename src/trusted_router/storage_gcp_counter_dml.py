@@ -22,7 +22,7 @@ transaction (docs §5) — the authorize/settle transactions are DML-only.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.storage_gcp_batch_dml import DmlStatement
@@ -89,58 +89,52 @@ def reserve_credit(
     return count == 1
 
 
-def reserve_credit_for_spend_lease(
-    transaction: Any,
-    param_types: Any,
-    workspace_id: str,
-    amount: int,
-    *,
-    shard: int,
-    trust_eligibility_enabled: bool,
-    expected_trust_tier: int | None,
-    trust_max_age_seconds: int = 3600,
-    now: datetime | None = None,
-) -> bool:
-    """Apply the selected-shard trust guard only after the arm flag flips."""
+def reserve_credit_statement(
+    param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+    check_pause: bool = False,
+) -> DmlStatement:
+    """First-candidate credit hold for the authorize hold-time batch.
 
-    if not trust_eligibility_enabled:
-        return reserve_credit(
-            transaction, param_types, workspace_id, amount, shard=shard
-        )
-    if expected_trust_tier is None:
-        raise ValueError("expected_trust_tier is required while trust eligibility is armed")
-    now = now or datetime.now(UTC)
-    sql = (
+    billing_pause_causes is ARRAY<STRING(32)> (migrate_typed_counters.sh).
+    NULL/empty arrays are unpaused; every nonempty array is paused, including
+    arrays containing empty strings or NULL. This matches billing_paused_row.
+    Keep reserve_credit and returning DML unchanged as the fallback oracle.
+    """
+    pause_predicate = (
+        " AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if check_pause else ""
+    )
+    return (
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
+        "WHERE workspace_id=@ws AND shard=@shard "
+        "AND (total_credits - total_usage - reserved) >= @est" + pause_predicate,
+        {"est": int(amount), "ws": workspace_id, "shard": shard},
+        {"est": param_types.INT64, "ws": param_types.STRING, "shard": param_types.INT64},
+    )
+
+
+def reserve_credit_with_pause(
+    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
+) -> tuple[bool, bool]:
+    """Return (reserved, paused) from the affected credit row in one RPC.
+
+    An empty result is insufficient credit, not pause evidence. The caller must
+    finish its bounded shard search before applying the funded shard's verdict.
+    """
+    from trusted_router.trust_eligibility import billing_paused_row
+
+    rows = list(transaction.execute_sql(
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
-        "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 "
-        "AND trust_latched_at IS NULL "
-        "AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0 "
-        "AND trust_reconciled_through >= @trust_fresh_after "
-        "AND trust_reconciled_through <= @trust_now"
-    )
-    count = transaction.execute_update(
-        sql,
-        params={
-            "est": int(amount),
-            "ws": workspace_id,
-            "shard": shard,
-            "expected_trust_tier": int(expected_trust_tier),
-            "trust_fresh_after": now - timedelta(seconds=trust_max_age_seconds),
-            "trust_now": now,
-        },
+        "THEN RETURN billing_pause_causes, pause_epoch",
+        params={"est": int(amount), "ws": workspace_id, "shard": shard},
         param_types={
             "est": param_types.INT64,
             "ws": param_types.STRING,
             "shard": param_types.INT64,
-            "expected_trust_tier": param_types.INT64,
-            "trust_fresh_after": param_types.TIMESTAMP,
-            "trust_now": param_types.TIMESTAMP,
         },
-    )
-    return count == 1
-
+    ))
+    return (True, billing_paused_row(rows[0])) if rows else (False, False)
 
 def debit_workspace_credit(
     transaction: Any,
@@ -373,6 +367,27 @@ def release_credit(
     return count
 
 
+def release_credit_no_debt_statement(
+    param_types: Any, workspace_id: str, hold: int, actual: int, *, shard: int,
+) -> DmlStatement:
+    """Speculative release: exact hold and transactional absence of recovery debt.
+
+    A zero requires rollback of the entire batch before sequential classification.
+    Match absorb_unrecovered_recovery_tx's workspace/payment debt predicate.
+    """
+    return (
+        "UPDATE tr_credit_balance "
+        "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
+        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+        "AND (@hold <= @actual OR NOT EXISTS ("
+        "SELECT 1 FROM tr_trust_event "
+        "WHERE workspace_id=@ws AND kind='payment' AND unrecovered_micro>0))",
+        {"hold": int(hold), "actual": int(actual), "ws": workspace_id, "shard": shard},
+        {"hold": param_types.INT64, "actual": param_types.INT64,
+         "ws": param_types.STRING, "shard": param_types.INT64},
+    )
+
+
 def _credit_shard_count_from_rows(
     transaction: Any, param_types: Any, workspace_id: str
 ) -> int:
@@ -490,8 +505,7 @@ _CURRENT_WINDOW_PREDICATE_SQL = (
 )
 
 
-def release_key(
-    transaction: Any,
+def release_key_statement(
     param_types: Any,
     key_hash: str,
     hold: int,
@@ -499,21 +513,16 @@ def release_key(
     *,
     book_to_byok: bool,
     window_floors: dict[str, Any],
-    window_amounts: dict[str, int] | None = None,
     shard: int = UNSHARDED,
-) -> int:
-    """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
-    and bump the lazy per-window counters in the same statement.
+    windows: str = "current",
+) -> DmlStatement:
+    """Exact key release SQL for the key's spend windows.
 
-    `hold` is the exact amount taken at reserve (0 if no hold was taken — uncapped
-    or BYOK-excluded); `book_to_byok` selects the usage column by the SETTLED
-    usage type. Refund = actual 0 (window bump is then +0 — a no-op that still
-    lazily rolls the window forward, which is harmless). `window_floors` is
-    spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
-    stale/double release a 0-row no-op rather than driving reserved negative.
-    Regional imports may supply separate daily/weekly/monthly `window_amounts`;
-    omitted amounts preserve inline settlement semantics exactly.
-    Returns the modified-row count (caller asserts == 1).
+    ``"current"`` matches only a key whose three windows are all current, and
+    leaves their boundary columns out of the SET list; ``"stale"`` matches only
+    a key with at least one window to roll forward; ``"any"`` rolls whatever
+    needs it. The first two are complementary: on a key whose hold is covered,
+    exactly one of them matches.
     """
     usage_col = "byok_usage" if book_to_byok else "usage"
     # BYOK settles count toward the caps (incl. windows) only when the key's own
@@ -541,15 +550,9 @@ def release_key(
     }
     current_window_sql = _CURRENT_WINDOW_BUMP_SQL
     rolled_window_sql = _WINDOW_BUMP_SQL
-    for window, period in (("day", "daily"), ("week", "weekly"), ("month", "monthly")):
-        expression = wamt
-        if window_amounts is not None:
-            name = f"{window}_amount"
-            params[name] = int(window_amounts[period])
-            bound_param_types[name] = param_types.INT64
-            expression = f"IF(include_byok, @{name}, 0)" if book_to_byok else f"@{name}"
-        current_window_sql = current_window_sql.replace(f"@{window}_wamt", expression)
-        rolled_window_sql = rolled_window_sql.replace(f"@{window}_wamt", expression)
+    for window in ("day", "week", "month"):
+        current_window_sql = current_window_sql.replace(f"@{window}_wamt", wamt)
+        rolled_window_sql = rolled_window_sql.replace(f"@{window}_wamt", wamt)
     fast_sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
@@ -557,26 +560,54 @@ def release_key(
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
         + _CURRENT_WINDOW_PREDICATE_SQL
     )
-    fast_count = transaction.execute_update(
-        fast_sql,
-        params=params,
-        param_types=bound_param_types,
-    )
-    if fast_count == 1:
-        return 1
-
-    # Keep this fallback statement identical to the original release UPDATE.
+    if windows == "current":
+        return fast_sql, params, bound_param_types
+    if windows not in {"stale", "any"}:
+        raise ValueError(f"unknown key window mode: {windows!r}")
     sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
         + rolled_window_sql
         + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
     )
-    return transaction.execute_update(
-        sql,
-        params=params,
-        param_types=bound_param_types,
-    )
+    if windows == "stale":
+        # The IS NOT NULL guards keep the predicate TRUE or FALSE, never NULL,
+        # so NOT is its exact complement.
+        sql += " AND NOT (" + _CURRENT_WINDOW_PREDICATE_SQL.removeprefix(" AND ") + ")"
+    return sql, params, bound_param_types
+
+
+def release_key(
+    transaction: Any,
+    param_types: Any,
+    key_hash: str,
+    hold: int,
+    actual: int,
+    *,
+    book_to_byok: bool,
+    window_floors: dict[str, Any],
+    shard: int = UNSHARDED,
+) -> int:
+    """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
+    and bump the lazy per-window counters in the same statement.
+
+    `hold` is the exact amount taken at reserve (0 if no hold was taken — uncapped
+    or BYOK-excluded); `book_to_byok` selects the usage column by the SETTLED
+    usage type. Refund = actual 0 (window bump is then +0 — a no-op that still
+    lazily rolls the window forward, which is harmless). `window_floors` is
+    spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
+    stale/double release a 0-row no-op rather than driving reserved negative.
+    Returns the modified-row count (caller asserts == 1).
+    """
+    for windows in ("current", "any"):
+        sql, params, types = release_key_statement(
+            param_types, key_hash, hold, actual, book_to_byok=book_to_byok,
+            window_floors=window_floors, shard=shard, windows=windows,
+        )
+        count = transaction.execute_update(sql, params=params, param_types=types)
+        if count == 1:
+            return 1
+    return count
 
 
 def key_limit_exists(
@@ -739,11 +770,21 @@ def claim_reservation_statement(
     defer_retention: bool = False, outbox_available: bool = True,
     expires_before: Any | None = None,
 ) -> DmlStatement:
-    """Build the same conditional claim for standalone or batch execution."""
+    """Build the same conditional claim for standalone or batch execution.
+
+    A deferred claim writes ``terminal_at=NULL`` whatever the outbox holds: the
+    guarded form would compute ``IF(EXISTS(...), NULL, NULL)``. So only a claim
+    that arms retention pays for the correlated outbox subquery. Measured
+    2026-10-01 (SPANNER_SYS, one hour) before this: the guarded claim was the
+    costliest statement, ~6.5 ms CPU per execution and 36% of all query CPU, at
+    ~39k executions/hour, one per finalize. Finalize (and reaper) claims all
+    defer retention, so that subquery never changed what they wrote.
+    """
     resolved_terminal_at = (
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
-    sql = _CLAIM_RESERVATION_GUARDED_SQL if outbox_available else _CLAIM_RESERVATION_SQL
+    guarded = outbox_available and resolved_terminal_at is not None
+    sql = _CLAIM_RESERVATION_GUARDED_SQL if guarded else _CLAIM_RESERVATION_SQL
     params = {
             "rid": reservation_id,
             "actual": int(actual_micro),

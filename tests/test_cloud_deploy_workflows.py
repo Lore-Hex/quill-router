@@ -15,9 +15,26 @@ def test_aws_control_plane_installs_uv_before_running_completeness_gate() -> Non
     workflow = (ROOT / ".github/workflows/deploy-aws-control-plane.yml").read_text()
 
     setup_uv = workflow.index("uses: astral-sh/setup-uv@v7")
-    deploy = workflow.index("run: bash scripts/deploy/aws_ecs_control_plane.sh")
+    deploy = workflow.index("run: bash ../ops/scripts/deploy/aws_ecs_control_plane.sh")
 
     assert setup_uv < deploy
+
+
+def test_coordinator_operations_reuse_existing_wif_without_running_terraform() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/infra-apply.yml").read_text())
+    jobs = workflow["jobs"]
+    assert "inputs.operation == 'terraform'" in jobs["apply"]["if"]
+    coordinator = jobs["release-coordinator"]
+    assert "inputs.operation != 'terraform'" in coordinator["if"]
+    assert "github.ref == 'refs/heads/main'" in coordinator["if"]
+    steps = coordinator["steps"]
+    assert not any("terraform" in step.get("run", "").lower() for step in steps)
+    run = steps[-1]["run"]
+    assert '[ "$CONFIRMATION" = APPLY ] || exit 1' in run
+    assert "--clear-lifecycle" in run
+    assert "gs://tr-deploy-mutex-quill-cloud-proxy" in run
+    assert "--operation \"$OPERATION_ID\"" in run
+    assert "storage rm" not in run
 
 
 def test_aws_baked_release_selection_keeps_main_oidc_and_safety_gates() -> None:

@@ -64,6 +64,9 @@ REVIEWED_DDL_STATEMENTS = {
         "ALTER TABLE $1 ADD COLUMN $2 TIMESTAMP": "expanded ensure_column helper",
         "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))": "expanded ensure_policy helper",
     },
+    "migrate_speculation_shadow.sh": {
+        "ALTER TABLE $table ADD ROW DELETION POLICY (OLDER_THAN(updated_at, INTERVAL 7 DAY))": "expanded ensure_policy helper",
+    },
     "migrate_trust_reconciliation.sh": {
         "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },
@@ -166,6 +169,12 @@ def shell_tokens(source: str, comments: list[tuple[int, int]] | None = None) -> 
 REVIEWED_SOURCES = {
     name: {"${SCRIPT_DIR}/_lib.sh": "scripts/deploy/_lib.sh"}
     for name in ("infra.sh", "migrate_generation_records.sh", "migrate_request_retention.sh")
+}
+# _lib.sh keeps its Cloud Run active-revision helpers in a sibling file with no
+# top-level cloud calls so tests/shell/test_active_revision.sh can source them
+# alone; the library sources that file back in.
+REVIEWED_SOURCES["_lib.sh"] = {
+    "${_TR_LIB_DIR}/_active_revision.sh": "scripts/deploy/_active_revision.sh",
 }
 REVIEWED_GC_WRAPPER = 'gc() { gcloud --project "$PROJECT_ID" "$@"; }'
 # The unchanged infra script also supplies DDL when bootstrapping the database.
@@ -315,6 +324,10 @@ def ddl_dispatch_arguments(source: str, path: Path, physical_lines: list[int], r
                 fail(i, "unsupported dispatcher DDL parameter assignment")
         dispatchers.add(name.lower())
 
+    # A dispatcher definition is consumed only after its body has been proved
+    # to forward exactly one understood DDL parameter to a recognized sink.
+    # Calls still require separately consumed literal schema below.
+    dispatch_spans.extend(tokens[i].span() for i in definitions if words[i].lower() in dispatchers)
     for i, token in enumerate(tokens):
         if words[i].lower() not in dispatchers or i in definitions:
             continue

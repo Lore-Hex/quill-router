@@ -9,8 +9,11 @@ country is a documented decision rather than an oversight.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
+
+import pytest
 
 from trusted_router.catalog import MODELS, PROVIDERS
 from trusted_router.catalog_data import (
@@ -23,12 +26,24 @@ from trusted_router.catalog_data import (
     US_PROVIDER_ONLY_MODEL_IDS,
     model_origin_for_model_id,
 )
+from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 
 _ISO_ALPHA2 = re.compile(r"^[A-Z]{2}$")
 
 
 def _vendor_prefix_counts() -> Counter[str]:
     return Counter(model_id.split("/")[0] for model_id in MODELS if "/" in model_id)
+
+
+def _manifest_vendor_prefixes() -> set[str]:
+    """Vendor prefixes of every committed manifest row, routable or not: the
+    hourly refresh marks a delisted row dark and keeps it."""
+    return {
+        row["id"].split("/")[0]
+        for path in _PROVIDER_MODELS_DIR.glob("*.json")
+        for row in json.loads(path.read_text(encoding="utf-8")).get("models", [])
+        if isinstance(row, dict) and "/" in str(row.get("id"))
+    }
 
 
 def test_every_provider_has_a_country_or_a_documented_reason_it_has_none() -> None:
@@ -155,10 +170,21 @@ def test_model_origin_rows_are_sourced_or_explain_their_absent_country() -> None
 
 
 def test_model_origins_only_describe_prefixes_the_catalog_uses() -> None:
+    # A vendor whose models a provider delisted is still one the catalog lists.
+    used = set(_vendor_prefix_counts()) | _manifest_vendor_prefixes()
+    unused = sorted(prefix for prefix in MODEL_ORIGINS if prefix not in used)
+
+    assert unused == [], (
+        f"MODEL_ORIGINS rows for prefixes no catalog model or manifest row uses: {unused}"
+    )
+
+
+@pytest.mark.provider_health
+def test_model_origins_describe_vendors_the_catalog_serves_today() -> None:
     counts = _vendor_prefix_counts()
     unused = sorted(prefix for prefix in MODEL_ORIGINS if prefix not in counts)
 
-    assert unused == [], f"MODEL_ORIGINS rows for prefixes no catalog model uses: {unused}"
+    assert unused == [], f"MODEL_ORIGINS rows for vendors with no model served today: {unused}"
 
 
 def test_model_origin_lookup_reads_the_vendor_prefix() -> None:

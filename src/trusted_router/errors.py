@@ -80,8 +80,12 @@ def error_response(
     type_: str,
     *,
     source: str | None = None,
+    data: dict[str, Any] | None = None,
 ) -> JSONResponse:
-    return JSONResponse(error_body(code, message, type_, source=source), status_code=code)
+    body = error_body(code, message, type_, source=source)
+    if data is not None:
+        body["data"] = data
+    return JSONResponse(body, status_code=code)
 
 
 def not_supported() -> JSONResponse:

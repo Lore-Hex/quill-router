@@ -1,4 +1,4 @@
-"""Disposable native GoogleSQL + Bigtable resources, exclusively on loopback emulators."""
+"""Disposable native GoogleSQL resources, exclusively on a loopback emulator."""
 from __future__ import annotations
 
 import os
@@ -157,9 +157,9 @@ def emulator_sdk_shim() -> Iterator[None]:
 
 def require_emulators() -> None:
     enabled = os.environ.get("TR_CONFORMANCE_EMULATOR_SCHEMA") == "1"
-    names = ("SPANNER_EMULATOR_HOST", "BIGTABLE_EMULATOR_HOST")
+    names = ("SPANNER_EMULATOR_HOST",)
     if not enabled:
-        pytest.skip("native GoogleSQL acceptance requires TR_CONFORMANCE_EMULATOR_SCHEMA=1 and Spanner/Bigtable emulators; no SQL was validated")
+        pytest.skip("native GoogleSQL acceptance requires TR_CONFORMANCE_EMULATOR_SCHEMA=1 and the Spanner emulator; no SQL was validated")
     for name in names:
         host = os.environ.get(name, "")
         assert host, f"{name} is required when native emulator coverage is enabled"
@@ -172,10 +172,10 @@ def require_emulators() -> None:
 
 
 @contextmanager
-def emulator_resources() -> Iterator[tuple[Any, Any, str]]:
+def emulator_resources() -> Iterator[tuple[Any, str]]:
     require_emulators()
     from google.auth.credentials import AnonymousCredentials
-    from google.cloud import bigtable, spanner
+    from google.cloud import spanner
     from google.cloud.spanner_v1.database_sessions_manager import DatabaseSessionsManager
 
     # The SDK sleeps once per polling interval; close() joins that thread.
@@ -190,8 +190,6 @@ def emulator_resources() -> Iterator[tuple[Any, Any, str]]:
         client = spanner.Client(project=project, credentials=AnonymousCredentials(), disable_builtin_metrics=True)
         instance = client.instance(instance_id, configuration_name=f"projects/{project}/instanceConfigs/emulator-config")
         instance.create().result(timeout=60)
-        table = bigtable.Client(project=project, credentials=AnonymousCredentials(), admin=True).instance(instance_id).table("generations")
-        table_created = False
         database = None
         try:
             database = instance.database("conformance", ddl_statements=DDL[:20])
@@ -200,29 +198,37 @@ def emulator_resources() -> Iterator[tuple[Any, Any, str]]:
             # Bound schema RPC sizes; retain production order and wait for indexes.
             for offset in range(20, len(DDL), 20):
                 database.update_ddl(DDL[offset:offset + 20]).result(timeout=120)
-            table.create(column_families={name: None for name in ("m", "activity", "benchmark", "synthetic", "rollup")})
-            table_created = True
-            yield database, table, instance_id
+            yield database, instance_id
         finally:
             try:
                 if database is not None:
                     database.close()
             finally:
-                try:
-                    if table_created:
-                        table.delete()
-                finally:
-                    instance.delete()
+                instance.delete()
 
 
 @contextmanager
 def emulator_store(instance_id: str) -> Iterator[Any]:
-    from trusted_router.storage_gcp import SpannerBigtableStore
+    from google.cloud.spanner_v1 import KeySet
 
-    store = SpannerBigtableStore(
+    from tests.fakes.analytics_pipeline import OutboxAnalyticsReader
+    from trusted_router.storage_gcp import SpannerStore
+
+    store = SpannerStore(
         project_id="tr-conformance", spanner_instance_id=instance_id,
-        spanner_database_id="conformance", bigtable_instance_id=instance_id,
-        generation_table="generations",
+        spanner_database_id="conformance",
+        operational_analytics_outbox_enabled=True, analytics_outbox_enabled=True,
+    )
+
+    def rows(table: str, columns: tuple[str, ...]) -> list[tuple[Any, ...]]:
+        with store._database.snapshot() as snapshot:
+            return [tuple(row) for row in snapshot.read(table=table, columns=columns, keyset=KeySet(all_=True))]
+
+    # The reader stands in for ClickHouse: it replays the rows the real
+    # outboxes committed to the emulator through the reference semantics.
+    store._operational_analytics = OutboxAnalyticsReader(
+        operational_rows=lambda: rows("tr_operational_analytics_outbox", ("event_kind", "event_id", "payload")),
+        benchmark_rows=lambda: rows("tr_analytics_outbox", ("event_id", "payload")),
     )
     try:
         yield store

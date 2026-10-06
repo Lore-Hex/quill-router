@@ -50,11 +50,11 @@
     },
     2: {
       title: "Zero-retention routes only",
-      body: "Every displayed endpoint is marked zero retention or confidential by its provider-specific catalog policy.",
+      body: "Every displayed endpoint has an explicit zero-retention commitment in its provider-specific catalog policy.",
     },
     3: {
       title: "Confidential provider compute only",
-      body: "Every displayed endpoint adds provider-side confidential compute and end-to-end encryption after the attested gateway.",
+      body: "Every displayed endpoint requires verified provider confidential compute, end-to-end encryption and explicit zero data retention.",
     },
   };
 
@@ -157,7 +157,7 @@
       if (state.privacy === 1) return endpoint.stores_content === false;
       if (state.privacy === 2) return endpoint.zero_data_retention === true;
       if (state.privacy === 3) {
-        return endpoint.confidential_compute === true && endpoint.e2ee === true;
+        return endpoint.confidential_compute === true && endpoint.e2ee === true && endpoint.zero_data_retention === true;
       }
       return true;
     });
@@ -496,7 +496,7 @@
       "div",
       "route-guard",
       state.privacy >= 3
-        ? "Filtered to confidential + E2EE provider routes."
+        ? "Filtered to verified confidential compute + E2EE + ZDR provider routes."
         : state.privacy >= 2
           ? "Filtered to provider routes with an explicit zero-retention guarantee."
           : "No upstream retention floor. Check each provider route above.",
