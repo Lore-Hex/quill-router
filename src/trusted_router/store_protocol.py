@@ -10,6 +10,7 @@ instead of a 4-AM AttributeError.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.gateway_boot import GatewayBoot
@@ -976,6 +977,7 @@ class Store(Protocol):
         deferred_cap_microdollars: int | None = ...,
         invocation_nonce: str | None = ...,
         expected_pause_epoch: int | None = ...,
+        created_at: str | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
     def get_gateway_authorization_by_gateway_request_id(
@@ -1190,6 +1192,7 @@ class TypedBillingStore(Protocol):
         stage_d_max_output_tokens: int | None = ...,
         stage_d_boot_kid: str | None = ...,
         invocation_nonce: str | None = ...,
+        created_at: datetime | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

@@ -1,0 +1,405 @@
+# Every guard of every action, and what breaks when it alone is removed.
+# Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
+
+inputs_sha256 = "ed6bbb023696afafe13006b6cf01129716044bd3263dc9e31dcccd942c8a99e1"
+
+[[guard]]
+action = "OwnerHeartbeat"
+text = '''/\ OwnerActive'''
+breaks = "NoStreamClosedOver"
+
+[[guard]]
+action = "OwnerHeartbeat"
+text = '''/\ a \in Streams'''
+breaks = "TypeOK"
+why = '''
+A fact about requests: only a stream sends heartbeats. A heartbeat record
+for a request that does not stream breaks no claim. It only takes the
+owner's records past the count TypeOK allows them.
+'''
+
+[[guard]]
+action = "OwnerHeartbeat"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "DurableHeartbeatNeverReleased"
+
+[[guard]]
+action = "OwnerHeartbeat"
+text = '''/\ ~HbIssued(a)'''
+breaks = "TypeOK"
+why = '''
+The model follows a stream's first heartbeat only, which is the one the
+release and the close depend on. A second would be one more record of the
+same kind, and only TypeOK's bound on the owner's records notices it.
+'''
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ OwnerActive'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ Settles(a)'''
+breaks = "nothing"
+why = '''
+A4 is an assumption about the enclave, and it carries its weight in
+FrontDoorAppend, where removing it breaks ReleasedHoldOwesNothing. For the
+owner it changes nothing: the owner decides one terminal per hold, so a
+settle it takes and a release exclude each other whatever the enclave did.
+'''
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerReap"
+text = '''/\ OwnerActive'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "OwnerReap"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerRelease"
+text = '''/\ OwnerActive'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "OwnerRelease"
+text = '''/\ a \in Declared'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
+action = "OwnerRelease"
+text = '''/\ allowance[a]'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
+action = "OwnerRelease"
+text = '''/\ ~HbIssued(a)'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
+action = "OwnerRelease"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ OwnerActive'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ DrainRows(a) # {}'''
+breaks = "evaluation"
+why = '''
+It keeps Min(DrainRows(a)) defined: with no row there is nothing to adopt.
+'''
+
+[[guard]]
+action = "OwnerCrash"
+text = '''/\ ownerUp'''
+breaks = "nothing"
+why = '''
+A crash of an owner that is already down changes no variable.
+'''
+
+[[guard]]
+action = "Deliver"
+text = '''/\ delivered < Len(outbox)'''
+breaks = "CountsInOrder"
+
+[[guard]]
+action = "Ack"
+text = '''/\ acked < delivered'''
+breaks = "evaluation"
+why = '''
+It keeps outbox[acked + 1] defined, and that is the least of what it does:
+the owner answers only once its publish is stored. Widened to every record
+issued, so that the index stays defined, it lets an answer go out for a
+record the boundary then leaves out (mutant
+answer-before-the-publish-is-stored).
+'''
+
+[[guard]]
+action = "Ack"
+text = '''/\ ownerUp'''
+breaks = "nothing"
+why = '''
+It orders two steps that commute. An owner that crashes and is then
+acknowledged ends in the state of one acknowledged and then crashed, so
+removing the guard reaches no state that was not reached before.
+'''
+
+[[guard]]
+action = "Ack"
+text = '''/\ ~(deadlinePassed /\ IssuedBeforeCutoff(acked + 1))'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "CutoffPass"
+text = '''/\ ~ownerCutoff'''
+breaks = "nothing"
+why = '''
+The cutoff passes once. After it the owner issues nothing, so passing it
+again would change no variable.
+'''
+
+[[guard]]
+action = "DeadlinePass"
+text = '''/\ ownerCutoff'''
+breaks = "nothing"
+why = '''
+An order in time, not a rule: the fence deadline is the cutoff plus the
+publish deadline, so it cannot pass first. If it did, the owner would get
+no acknowledgement after it (Ack reads the deadline), and so would promise
+nothing that the tick could cut off.
+'''
+
+[[guard]]
+action = "DeadlinePass"
+text = '''/\ ~deadlinePassed'''
+breaks = "nothing"
+why = '''
+The deadline passes once; passing it again changes no variable.
+'''
+
+[[guard]]
+action = "AllowanceElapse"
+text = '''/\ ~allowance[a]'''
+breaks = "nothing"
+why = '''
+The allowance elapses once; elapsing again changes no variable.
+'''
+
+[[guard]]
+action = "AllowanceElapse"
+text = '''/\ a \in Declared => (enc[a] # "open" \/ HbIssued(a))'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
+action = "EnclaveDeliver"
+text = '''/\ a \notin Streams'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
+action = "EnclaveDeliver"
+text = '''/\ enc[a] = "open"'''
+breaks = "nothing"
+why = '''
+A fact about the enclave: it delivers once, and not after it has given up.
+Without the guard an enclave that gave up could deliver after all. That
+matters only for a hold that can be released, and a request that does not
+stream never is: OwnerRelease asks for a declared stream.
+'''
+
+[[guard]]
+action = "EnclaveGiveUp"
+text = '''/\ enc[a] = "open"'''
+breaks = "nothing"
+why = '''
+A fact about the enclave: one that has delivered does not go back to having
+delivered nothing. No claim reads the enclave's state for a stream that was
+answered: NoStreamClosedOver reads the owner's acknowledgement, which
+stays.
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ lease # "closed"'''
+breaks = "NoAckedDrainRowLost"
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ Settles(a)'''
+breaks = "ReleasedHoldOwesNothing"
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ appends < MaxAppends'''
+breaks = "TypeOK"
+why = '''
+The model's bound on front-door appends, which TypeOK states.
+'''
+
+[[guard]]
+action = "MarkDraining"
+text = '''/\ lease = "open"'''
+breaks = "EventuallyClosed"
+
+[[guard]]
+action = "AuditorApplyOwner"
+text = '''/\ S = NoS'''
+breaks = "WinnerIsFirstInOrder"
+
+[[guard]]
+action = "AuditorApplyOwner"
+text = '''/\ ownerApplied < delivered'''
+breaks = "evaluation"
+why = '''
+It keeps outbox[ownerApplied + 1] defined, and that is the least of what it
+does: the auditor books only what the log has received. Widened to every
+record issued, it books a record the log never held (mutant
+book-a-record-the-log-has-not-received).
+'''
+
+[[guard]]
+action = "AuditorApplyOwner"
+text = '''/\ ownerApplied < tickAt'''
+breaks = "WinnerIsFirstInOrder"
+
+[[guard]]
+action = "PublishTick"
+text = '''/\ lease = "draining"'''
+breaks = "nothing"
+why = '''
+The design publishes ticks once the lease drains. No claim here rests on
+the draining mark. They rest on what a tick also waits for, the fence
+deadline (`deadlinePassed`, whose removal breaks a claim). What draining is
+for is LeaseLifecycle's.
+'''
+
+[[guard]]
+action = "PublishTick"
+text = '''/\ deadlinePassed'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "StoreS"
+text = '''/\ tickAt # NoTick'''
+breaks = "nothing"
+why = '''
+Redundant with `ownerApplied = tickAt`: NoTick is above any count of
+applied records.
+'''
+
+[[guard]]
+action = "StoreS"
+text = '''/\ S = NoS'''
+breaks = "nothing"
+why = '''
+S is stored once. After that the auditor applies no more owner records
+(AuditorApplyOwner's `S = NoS`, whose removal breaks a claim), so
+`ownerApplied = tickAt` can hold again only for the tick S was stored at,
+and StoreS would store the same value. RebuildStoreS's own `S = NoS` is
+the one that keeps S from moving.
+'''
+
+[[guard]]
+action = "StoreS"
+text = '''/\ ownerApplied = tickAt'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "RebuildStoreS"
+text = '''/\ tickAt # NoTick'''
+breaks = "nothing"
+why = '''
+Redundant: without a tick the range tickAt..delivered is empty, so no S can
+be chosen.
+'''
+
+[[guard]]
+action = "RebuildStoreS"
+text = '''/\ S = NoS'''
+breaks = "WinnerIsFirstInOrder"
+
+[[guard]]
+action = "ApplyDrain"
+text = '''/\ S # NoS'''
+breaks = "WinnerIsFirstInOrder"
+
+[[guard]]
+action = "ApplyDrain"
+text = '''/\ drainApplied < Len(drain)'''
+breaks = "evaluation"
+why = '''
+It keeps drain[drainApplied + 1] defined: there is no next row to apply.
+'''
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ lease = "draining"'''
+breaks = "nothing"
+why = '''
+No claim here rests on the draining mark (see PublishTick's row). A reap
+needs a durable heartbeat, which needs S, which needs a tick.
+'''
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ S # NoS'''
+breaks = "nothing"
+why = '''
+No claim rests on "no reap before S". HbDurable(a) is false until S is
+stored, and even without both a reap row appended early only waits in the
+drain log: ApplyDrain reads the log once S is stored, and the first
+terminal in order still decides.
+'''
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ drainApplied = Len(drain)'''
+breaks = "TypeOK"
+why = '''
+It models the reap transaction reading the hold's rows first. With no
+guard at all in its place the auditor could insert reap rows without end,
+which only TypeOK's bound on the drain log notices. That a reap row behind
+an unread settle row merely loses is the survivor reap-without-reading-rows.
+'''
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ HbDurable(a)'''
+breaks = "nothing"
+why = '''
+What the auditor can see, not a rule it chooses to follow: it learns of a
+hold from the log. A reap of a hold it never saw is only another terminal
+in the drain log, and first-in-order still decides.
+'''
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ winner[a] = NoWinner'''
+breaks = "TypeOK"
+why = '''
+One reap row per hold. Without it the auditor could append reap rows for a
+decided hold without end. Each would lose to the hold's winner, since
+ApplyDrain keeps the first, so only TypeOK's bound on the drain log
+notices.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ lease = "draining"'''
+breaks = "nothing"
+why = '''
+No claim here rests on the draining mark (see PublishTick's row). Close
+waits for S, and closing a closed lease changes no variable.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ S # NoS'''
+breaks = "NoStreamClosedOver"
+
+[[guard]]
+action = "Close"
+text = '''/\ drainApplied = Len(drain)'''
+breaks = "NoAckedDrainRowLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner'''
+breaks = "DurableHeartbeatNeverReleased"

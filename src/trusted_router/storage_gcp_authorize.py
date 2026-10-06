@@ -480,6 +480,7 @@ def authorize_atomic(
     enforce_strict_windows: bool = True,
     authorization_id: str | None = None,
     trust_settings: Any = None,
+    created_at: datetime | None = None,
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -547,7 +548,10 @@ def authorize_atomic(
     # Stable ids across ABORTED retries (only the committed attempt persists).
     reservation_id = str(uuid.uuid4())
     authorization_id = authorization_id or f"gwa-{uuid.uuid4().hex}"
-    created_at = utcnow()
+    # The caller's instant, which priced the request: settlement prices at
+    # created_at, so a tariff change between two readings would hold at one
+    # price and bill at another.
+    created_at = created_at if created_at is not None else utcnow()
     authorization = (
         build_authorization(authorization_id, reservation_id)
         if build_authorization is not None
