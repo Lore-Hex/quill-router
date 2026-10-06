@@ -38,9 +38,11 @@
 # To move to another build:
 #   1. Try it: `TLA_TOOLS_JAR=/path/to/new/tla2tools.jar ./proofs/check.sh`
 #      runs every spec with it, without the digest check. It must pass.
-#   2. Copy it over proofs/tla2tools.jar, write its digest into
-#      tla2tools.jar.sha256 (`shasum -a 256 tla2tools.jar`), and its version
-#      (`java -cp tla2tools.jar tlc2.TLC` prints it on its first line) above.
+#   2. Replace the jar and its pin, from the repository root:
+#        cp /path/to/new/tla2tools.jar proofs/tla2tools.jar
+#        (cd proofs && shasum -a 256 tla2tools.jar > tla2tools.jar.sha256)
+#      and write its version above: `java -cp proofs/tla2tools.jar tlc2.TLC`
+#      prints it on its first line.
 #   3. Run `./proofs/check.sh` again, now with the check. CI runs it on the
 #      pull request that changes the jar, as it does on every pull request.
 set -euo pipefail
