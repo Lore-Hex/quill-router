@@ -33,7 +33,8 @@ Python and the enclave.
 
 v44 states two rules that writing `AuditorCommit` showed §4.8 needs: a
 reap is conditional on the commit version, and a statement that matched no
-row is that lease's failed commit.
+row is that lease's failed commit. It also says what a member drops when
+the commit version refuses its commit, reap or close.
 
 All five specs, `TerminalOrder`, `LeaseLifecycle`, `CreditDebt`,
 `AuditorCommit` and `KeyCapFence`, and the tools that check every spec's
@@ -1044,6 +1045,13 @@ synchronous holds, through `settle_atomic`.
   work, since its commit fails and it re-reads. Within that, a member
   recognizes a duplicate terminal from the winners it has loaded.
 - Only then does it acknowledge the records.
+- To re-read, after any transaction of the lease's that the commit version
+  refused (a commit, a reap or a close), a member drops everything it
+  applied and has not committed, with its place in the lease's records and
+  in the drain log. It loads the lease as a member taking over does, and
+  applies again from there: the records Pub/Sub redelivers, and a draining
+  lease's drain log from its start. Keeping its place would skip what it
+  had applied and lost, and its close would then leave that unbooked.
 - **Taking over a lease.** A member loads the progress and the open holds
   first, extending the records' acknowledgement deadlines while it loads.
   - It skips a redelivered owner record at or below the stored sequence
@@ -1165,8 +1173,8 @@ by the first-terminal rule.
     commit is. Pub/Sub can give a lease back to a member that lost it, after
     another member committed and acknowledged a newer heartbeat. Nothing is
     then redelivered to bring the first member's memory up to date, and a
-    reap from it would charge the older snapshot. A refused reap re-reads, as
-    a refused commit does.
+    reap from it would charge the older snapshot. A member whose reap is
+    refused re-reads, as for a refused commit.
 - It books a draining lease's winners in that order: owner records, then the
   drain log.
 
@@ -3472,6 +3480,12 @@ record.
   - with many leases in one transaction, a statement that matched no row is
     that lease's failed commit, and the member acknowledges none of its
     records.
+
+  It also says what re-reading is, after the commit version refuses a
+  commit, a reap or a close: the member drops what it applied and has not
+  committed, with its place in the records and the drain log, and applies
+  again from a fresh load. Keeping its place would let it close with a
+  drain-log row unbooked, as Codex's review of v44 showed.
 
   §5.1 says what `AuditorCommit` and `KeyCapFence` show, the claims Codex's
   reviews added to `CreditDebt`, and the two assumptions the new specs add.
