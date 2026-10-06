@@ -155,8 +155,11 @@ acknowledgment. For keyed `route_type: videos` requests carrying the enclave's
 `request_fingerprint`, the compatibility guarantee is:
 
 1. An identical retry replays at every supported writer version, including
-   main-era authorizations. The unmodified incoming fingerprint body is always
-   compared with main's hash, after the same request metadata normalization
+   main-era user-provided and custom-model authorizations, through both authorize
+   and replay-lookup. Disabled, inactive, off-the-clock models and disabled user
+   dispatch do not block recovery of an existing authorization. The unmodified
+   incoming fingerprint body is always compared with main's hash, after the
+   same request metadata normalization
    used by authorization (including attribution and tags).
 2. A retry differing only in enclave-derived execution fields replays for
    authorizations made by this version. Those fields are `video_resolution`;
@@ -173,6 +176,16 @@ acknowledgment. For keyed `route_type: videos` requests carrying the enclave's
    a snapshot uses the historical fixed-quote token sentinel `1`. These forms
    also cover the earlier resolution-only exclusion. Every reconstructed body
    must match the stored hash exactly; no stored hashes are rewritten.
+   One additional legacy form restores main's model preparation: inject the
+   authorization's frozen `user_provided_model_id` (or `custom_model_id`) and
+   revision as `custom_model_id` and `custom_model_revision`, remove `models`,
+   restore the frozen routed model for a custom wrapper, and apply main's
+   deterministic forced-Credits provider transformation. This form participates
+   in the same region/token/resolution comparisons. It uses no live model state
+   or routing. The requested model must match the frozen requested model;
+   explicitly different model IDs or revisions conflict. Provider policy is
+   compared after main's forced-Credits transformation (which rejected BYOK);
+   all other caller policy fields remain bound.
 3. Any other difference within the same workspace, API key and idempotency-key
    scope returns HTTP 409 and moves no money. The enclave fingerprint binds
    content and options, including prompt, seed, duration and caller resolution.

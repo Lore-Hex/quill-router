@@ -869,7 +869,6 @@ def _authorize_gateway_sync_impl(
     )
     if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
-    body_dict, attribution = _gateway_authorize_body(body)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)
@@ -880,22 +879,15 @@ def _authorize_gateway_sync_impl(
         # requests intentionally expose a smaller public schema than chat and
         # cannot carry metadata.trustedrouter_synthetic themselves.
         effective_tags = {**effective_tags, "purpose": "synthetic_monitoring"}
+    body_dict, attribution = _gateway_authorize_body(body)
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
     custom_model = None
     user_model = None
     route_model_id = str(body_dict.get("model") or body.model)
     native_retention_allowed = False
-    presented_idempotency_key = _gateway_idempotency_key(request, body)
-    request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
-    _require_native_batch_route_binding(body.route_type, request_idempotency_key)
-    partner_mode = _partner_billing_mode_or_error(
-        requested_model_id=requested_model_id,
-        route_type=body.route_type,
-        idempotency_key=request_idempotency_key,
-    )
-    def prepare_live_routing() -> None:
-        nonlocal custom_model, user_model, route_model_id, native_retention_allowed
+    def prepare_model() -> None:
+        nonlocal custom_model, user_model
         # Every guard below keys on the model id as a STRING, and routing rewrites
         # that string before it resolves a model (variant suffix, alias, dated
         # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
@@ -989,6 +981,23 @@ def _authorize_gateway_sync_impl(
                 body_dict,
                 error_message="User-provided models do not support BYOK routes",
             )
+
+    # Main validates models before idempotency/Batch markers on every non-video route.
+    if body.route_type != "videos":
+        prepare_model()
+    presented_idempotency_key = _gateway_idempotency_key(request, body)
+    request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
+    _require_native_batch_route_binding(body.route_type, request_idempotency_key)
+    partner_mode = _partner_billing_mode_or_error(
+        requested_model_id=requested_model_id,
+        route_type=body.route_type,
+        idempotency_key=request_idempotency_key,
+    )
+
+    def prepare_live_routing() -> None:
+        nonlocal route_model_id, native_retention_allowed
+        if body.route_type == "videos":
+            prepare_model()
         if partner_mode is not None:
             _force_partner_credit_routes(body_dict)
         native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
@@ -1124,13 +1133,13 @@ def _authorize_gateway_sync_impl(
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
 
         if existing_authorization is not None:
-            if (
-                existing_authorization.idempotency_fingerprint != request_fingerprint
-                and not _video_cross_region_replay_matches(
+            replay_matches = existing_authorization.idempotency_fingerprint == request_fingerprint
+            if is_video_request and body.request_fingerprint:
+                replay_matches = _video_cross_region_replay_matches(
                     existing_authorization, workspace.id, api_key.hash,
                     fingerprint_body, request_idempotency_key,
                 )
-            ):
+            if not replay_matches:
                 raise api_error(
                     409,
                     "Idempotency key was already used for a different gateway request",
@@ -2447,6 +2456,13 @@ def _gateway_authorize_body(body: GatewayAuthorizeRequest) -> tuple[dict[str, An
         # Keep pre-receipt idempotency fingerprints stable for ordinary calls.
         body_dict.pop("inference_receipt", None)
     try:
+        if body.tags is not None:
+            body_dict["tags"] = validate_tags(body.tags)
+        else:
+            body_dict.pop("tags", None)
+    except InvalidTags as exc:
+        raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+    try:
         attribution = validate_request_attribution(
             user=body.user,
             session_id=body.session_id,
@@ -2460,13 +2476,6 @@ def _gateway_authorize_body(body: GatewayAuthorizeRequest) -> tuple[dict[str, An
     for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
         body_dict.pop(key, None)
     body_dict.update(attribution.body_fields())
-    try:
-        if body.tags is not None:
-            body_dict["tags"] = validate_tags(body.tags)
-        else:
-            body_dict.pop("tags", None)
-    except InvalidTags as exc:
-        raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
     return body_dict, attribution
 
 
@@ -2545,10 +2554,46 @@ def _video_cross_region_replay_matches(
             body=candidate, idempotency_key=idempotency_key, legacy_video=legacy,
         )
 
-    original = {**body, "region": authorization.region}
-    omitted_region = dict(body)
-    omitted_region.pop("region", None)
-    originals = (body, original, omitted_region)
+    bodies = [body]
+    frozen_user_model_id = getattr(authorization, "user_provided_model_id", None)
+    frozen_custom_model_id = getattr(authorization, "custom_model_id", None)
+    frozen_model_id = frozen_user_model_id or frozen_custom_model_id
+    if frozen_model_id:
+        frozen_revision = getattr(
+            authorization,
+            "user_provided_model_revision" if frozen_user_model_id else "custom_model_revision",
+            None,
+        )
+        # Main hashed after model preparation. Recover only frozen material:
+        # reading today's model would make disabled/offline models unreplayable.
+        # Never overwrite an explicitly different identity supplied on retry.
+        if (
+            body.get("model") != authorization.requested_model_id
+            or body.get("custom_model_id", frozen_model_id) != frozen_model_id
+            or body.get("custom_model_revision", frozen_revision) != frozen_revision
+        ):
+            return False
+        prepared = dict(body)
+        prepared.pop("models", None)
+        prepared["custom_model_id"] = frozen_model_id
+        prepared["custom_model_revision"] = frozen_revision
+        if frozen_custom_model_id:
+            prepared["model"] = authorization.model_id
+        # Reproduce only _force_custom_model_credit_routes' deterministic
+        # transformation. Its live validator also checks today's provider
+        # catalog, which must not block replay after a provider is removed.
+        provider = prepared.get("provider") or {}
+        usage = provider.get("usage") or provider.get("usage_type") or provider.get("billing")
+        if usage is not None and str(usage).strip().lower() not in {"credits", "credit", "prepaid"}:
+            return False
+        prepared["provider"] = {**provider, "usage": "credits"}
+        bodies.append(prepared)
+
+    originals: list[dict[str, Any]] = []
+    for candidate in bodies:
+        omitted_region = dict(candidate)
+        omitted_region.pop("region", None)
+        originals.extend((candidate, {**candidate, "region": authorization.region}, omitted_region))
     if any(matches(candidate) or matches(candidate, legacy=True) for candidate in originals):
         return True
 
@@ -2594,7 +2639,7 @@ def _authorization_endpoint_candidates(
     privacy_requirements: frozenset[int] = frozenset(),
     video_replay: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    user_model_pair = _authorized_user_model_pair(authorization)
+    user_model_pair = _authorized_user_model_pair(authorization, frozen_only=video_replay)
     if user_model_pair is not None:
         return [user_model_pair]
     candidates: list[tuple[Model, ModelEndpoint]] = []
@@ -4785,6 +4830,8 @@ def _user_model_gateway_candidate(
 
 def _authorized_user_model_pair(
     authorization: Any,
+    *,
+    frozen_only: bool = False,
 ) -> tuple[Model, ModelEndpoint] | None:
     """Rebuild a user-model sentinel only from authorization-frozen money facts.
 
@@ -4797,7 +4844,7 @@ def _authorized_user_model_pair(
         return None
     name = model_id
     try:
-        live_model = STORE.get_user_model(model_id)
+        live_model = None if frozen_only else STORE.get_user_model(model_id)
     except Exception:
         live_model = None
     if live_model is not None:
