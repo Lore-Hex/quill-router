@@ -35,11 +35,14 @@
 # asset is rebuilt upstream, so its URL returns different bytes on different
 # days, and CI used to run whichever build it had cached first.
 #
-# To move to another build: put it at proofs/tla2tools.jar, run this script
-# and `python3 proofs/guard_sweep.py --verify` (both must pass), then write its
-# digest into tla2tools.jar.sha256 (`shasum -a 256 tla2tools.jar`) and its
-# version (`java -cp tla2tools.jar tlc2.TLC` prints it on its first line)
-# above. TLA_TOOLS_JAR runs another jar without the check, for trying one.
+# To move to another build:
+#   1. Try it: `TLA_TOOLS_JAR=/path/to/new/tla2tools.jar ./proofs/check.sh`
+#      runs every spec with it, without the digest check. It must pass.
+#   2. Copy it over proofs/tla2tools.jar, write its digest into
+#      tla2tools.jar.sha256 (`shasum -a 256 tla2tools.jar`), and its version
+#      (`java -cp tla2tools.jar tlc2.TLC` prints it on its first line) above.
+#   3. Run `./proofs/check.sh` again, now with the check. CI runs it on the
+#      pull request that changes the jar, as it does on every pull request.
 set -euo pipefail
 
 cd "$(dirname "$0")"
