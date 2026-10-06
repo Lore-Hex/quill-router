@@ -1426,6 +1426,31 @@ new = '                        h[t] < 0 /\ \A v \in Shards : h[v] < 0 => t >= v'
 # A landing stores a total that something carried, not one more.
 [[CreditDebt.mutants]]
 name = "a-write-lands-more-than-it-carried"
-violates_property = "StoredShortfallIsACarriedTotal"
+violates_property = "StoredShortfallIsTheLarger"
 old = '    /\ LET rise == Pos(write[l] - sfStored[l])'
 new = '    /\ LET rise == Pos(write[l] + 1 - sfStored[l])'
+
+# Codex's third review: the larger-of write per step, and usage.
+
+# A landing by a reachable owner stores the larger of the two totals, even
+# when the owner's own total has moved on since the write left.
+[[CreditDebt.mutants]]
+name = "a-stale-write-stores-nothing"
+violates_property = "StoredShortfallIsTheLarger"
+old = '    /\ LET rise == Pos(write[l] - sfStored[l])'
+new = '    /\ LET rise == IF oSf[l] > write[l] THEN 0 ELSE Pos(write[l] - sfStored[l])'
+
+# The auditor raises to the total the record it applies carried, not a
+# later one.
+[[CreditDebt.mutants]]
+name = "apply-raises-to-a-later-total"
+violates_property = "StoredShortfallIsTheLarger"
+old = '       THEN /\ Book(l, rec.a, Pos(rec.sf - sfStored[l]))'
+new = '       THEN /\ Book(l, rec.a, Pos(LastSf(log[l], sfStored[l]) - sfStored[l]))'
+
+# A booking adds to usage exactly the charge it books.
+[[CreditDebt.mutants]]
+name = "usage-above-the-booking"
+violates = "UsageIsBooked"
+old = '           u2 == [usage EXCEPT ![d] = @ + a]'
+new = '           u2 == [usage EXCEPT ![d] = @ + a + 1]'

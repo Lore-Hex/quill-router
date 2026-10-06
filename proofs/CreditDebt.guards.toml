@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "bc97dff60eb097f4be79cbf2708e12017378b896a773a08cbc80fb7ba070412d"
+inputs_sha256 = "e7e3ff236a3036f30e6b43fd88a9a4e21c2aef1b4dbfb9bd2a7527a86cfa9292"
 
 [[guard]]
 action = "Grant"
@@ -239,7 +239,7 @@ action = "OwnerWriteEnds"
 text = '''/\ write[l] # NoWrite'''
 breaks = "nothing"
 why = '''
-With no write in flight it changes nothing.
+With no write in flight, ending one changes only `due`, the history variable, to 0, and only for an owner cut off or dead or a closed lease, where ShortfallLandsWithinTwoWrites asks nothing. The states it reaches are reached anyway: no new state.
 '''
 
 [[guard]]
@@ -274,10 +274,7 @@ MaxCuts is a bound of the model.
 [[guard]]
 action = "OwnerReconnect"
 text = '''/\ oUp[l] = "cut"'''
-breaks = "nothing"
-why = '''
-An owner that comes back from the dead is an owner that was cut off: it reads its row again and writes its total, which Spanner takes as the larger.
-'''
+breaks = "StoredShortfallIsTheLarger"
 
 [[guard]]
 action = "OwnerDie"
