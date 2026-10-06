@@ -1454,3 +1454,41 @@ name = "usage-above-the-booking"
 violates = "UsageIsBooked"
 old = '           u2 == [usage EXCEPT ![d] = @ + a]'
 new = '           u2 == [usage EXCEPT ![d] = @ + a + 1]'
+
+# Codex's fourth review: the larger-of write whoever is reachable, and only
+# terminals.
+
+# A write that lands after its owner was cut off stores the larger of the
+# two totals too, not one more.
+[[CreditDebt.mutants]]
+name = "an-offline-landing-stores-more"
+violates_property = "StoredShortfallIsTheLarger"
+old = '    /\ LET rise == Pos(write[l] - sfStored[l])'
+new = '    /\ LET rise == Pos((IF oUp[l] # "up" /\ write[l] < oSf[l] THEN write[l] + 1 ELSE write[l]) - sfStored[l])'
+
+# Applying a return changes no shortfall total.
+[[CreditDebt.mutants]]
+name = "a-return-raises-the-total"
+violates_property = "StoredShortfallIsTheLarger"
+old = '''
+       ELSE LET r2 == [reserved EXCEPT ![donor[l]] = @ - rec.a]
+                sq == Inflow(credits, usage, r2, donor[l], rec.a)
+            IN /\ alloc' = [alloc EXCEPT ![l] = @ - rec.a]
+               /\ reserved' = r2
+               /\ credits' = sq.c
+               /\ mark' = sq.m
+               /\ returned' = [returned EXCEPT ![l] = @ + rec.a]
+               /\ UNCHANGED << usage, booked, sfStored, hold >>
+'''
+new = '''
+       ELSE LET rise == LastSf(log[l], sfStored[l]) - sfStored[l]
+                r2 == [reserved EXCEPT ![donor[l]] = @ + rise - rec.a]
+                sq == Inflow(credits, usage, r2, donor[l], rec.a)
+            IN /\ alloc' = [alloc EXCEPT ![l] = @ + rise - rec.a]
+               /\ reserved' = r2
+               /\ credits' = sq.c
+               /\ mark' = sq.m
+               /\ returned' = [returned EXCEPT ![l] = @ + rec.a]
+               /\ sfStored' = [sfStored EXCEPT ![l] = @ + rise]
+               /\ UNCHANGED << usage, booked, hold >>
+'''

@@ -103,10 +103,13 @@
 (*   StoredShortfallIsTheLarger. The owner's write is the larger of the     *)
 (*   stored total and its own: so a write that lands after the auditor      *)
 (*   stored a later total changes nothing, the stored total is never more   *)
-(*   than the owner's, and a landing, or the auditor's applying a terminal, *)
-(*   stores exactly the larger of the stored total and the one it carries.  *)
-(*   A write that lowered it would not show in StoredCoversOwner, which     *)
-(*   counts the owner's own total as not yet landed.                        *)
+(*   than the owner's, and a landing, whether or not its owner is still     *)
+(*   reachable, or the auditor's applying a terminal, stores exactly the    *)
+(*   larger of the stored total and the one it carries. A write is given    *)
+(*   up, storing nothing, only once its owner is cut off or dead or the     *)
+(*   lease has closed. A write that lowered the total would not show in     *)
+(*   StoredCoversOwner, which counts the owner's own total as not yet       *)
+(*   landed.                                                                *)
 (*                                                                          *)
 (*   AllocationAccounted. A lease's allocation is its grant, plus the       *)
 (*   shortfall total stored and the front doors' raises, less the returns   *)
@@ -728,21 +731,21 @@ StoredShortfallNeverFalls ==
 StoredShortfallWithinOwners ==
     \A l \in Leases : sfStored[l] <= oSf[l]
 
-\* Exactly. When a reachable owner's write lands, the stored total becomes
-\* the larger of it and the total the write carried; when the auditor
-\* applies a terminal, the larger of it and the total the record carried;
-\* and it changes at no other step. (While the lease is live and its owner
-\* is up, the write in flight is consumed only by its landing; a write given
-\* up, by an owner cut off or on a closed lease, stores nothing.)
+\* Exactly. When the owner's write in flight ends, it lands, and the stored
+\* total becomes the larger of it and the total the write carried, whether
+\* or not the owner is still reachable; or, only once the owner is cut off
+\* or dead or the lease has closed, it is given up and stores nothing. When
+\* the auditor applies a terminal, the stored total becomes the larger of it
+\* and the total the record carried. It changes at no other step.
 StoredShortfallIsTheLarger ==
     [][\A l \in Leases :
-          /\ (write[l] # NoWrite /\ write'[l] # write[l] /\ oUp[l] = "up" /\ Live(l))
-                 => sfStored'[l] = Max(sfStored[l], write[l])
-          /\ (log[l] # << >> /\ log'[l] = Tail(log[l]) /\ Head(log[l]).k = "term")
-                 => sfStored'[l] = Max(sfStored[l], Head(log[l]).sf)
-          /\ sfStored'[l] # sfStored[l] =>
-                 \/ write[l] # NoWrite /\ write'[l] # write[l]
-                 \/ log[l] # << >> /\ log'[l] = Tail(log[l])]_vars
+          LET ended   == write[l] # NoWrite /\ write'[l] # write[l]
+              applied == log[l] # << >> /\ log'[l] = Tail(log[l]) /\ Head(log[l]).k = "term"
+          IN /\ ended =>
+                    \/ sfStored'[l] = Max(sfStored[l], write[l])
+                    \/ sfStored'[l] = sfStored[l] /\ (oUp[l] # "up" \/ ~Live(l))
+             /\ applied => sfStored'[l] = Max(sfStored[l], Head(log[l]).sf)
+             /\ sfStored'[l] # sfStored[l] => ended \/ applied]_vars
 
 \* A lease's allocation is its grant, plus the shortfall total stored and
 \* the front doors' raises, less the returns applied: every raise of the
