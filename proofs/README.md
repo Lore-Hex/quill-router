@@ -266,7 +266,9 @@ And from the fast-admission specs:
   each fix was another rule about how a spec may be written. SANY's parse
   needed none of them, and on its first run found two guards under a
   quantifier that the text reader had no row for.
-- **A jar that changes under you.** `v1.8.0` is rebuilt upstream, so the same
-  URL gives different bytes on different days, and CI keeps whichever it
-  cached first. Both tools print the jar's sha256; compare it before
-  concluding that two machines disagree about a spec.
+- **A jar that changed under us.** `v1.8.0` is rebuilt upstream, so the same
+  URL gave different bytes on different days, and CI ran whichever build it
+  had cached first. The jar is now in the repository, pinned by its sha256,
+  which `check.sh` and the guard-table workflow check before anything runs
+  (#1541). Both tools print the digest; compare it before concluding that
+  two machines disagree about a spec.
