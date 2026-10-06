@@ -32,11 +32,18 @@ ENUMS = {
     "response_format.type": "text json_object json_schema",
     "text.format.type": "text json_object json_schema",
 }
+# Diagnostic values, not a declaration that the API supports these options.
+ARRAY_ENUMS = {
+    "include": """code_interpreter_call.outputs computer_call_output.output.image_url
+        file_search_call.results message.input_image.image_url message.output_text.logprobs
+        reasoning.encrypted_content web_search_call.action.sources web_search_call.results""",
+    "modalities": "text audio image video",
+}
 MARKERS = frozenset(f"[redacted:{kind}]" for kind in ("string", "number", "boolean", "object", "array"))
 
 
 def _safe_value(path: str, value: Any) -> Any:
-    allowed = path in OPTIONS or path in ENUMS
+    allowed = path in OPTIONS or path in ENUMS or path in ARRAY_ENUMS
     if value is None:
         return None
     if isinstance(value, bool):
@@ -44,7 +51,8 @@ def _safe_value(path: str, value: Any) -> Any:
     if isinstance(value, (int, float)):
         return value if allowed and math.isfinite(value) and abs(value) <= 1e12 else "[redacted:number]"
     if isinstance(value, str):
-        enums = ENUMS.get(path, "true false yes no on off enabled disabled auto none" if path in OPTIONS else "").split()
+        scalar_options = "true false yes no on off enabled disabled auto none" if path in OPTIONS else ""
+        enums = ENUMS.get(path, ARRAY_ENUMS.get(path, scalar_options)).split()
         return value if value in MARKERS or value in enums else "[redacted:string]"
     if isinstance(value, dict):
         prefix = path + "."
@@ -55,6 +63,12 @@ def _safe_value(path: str, value: Any) -> Any:
         if len(out) < len(value):
             out["_redacted"] = True
         return out
+    if isinstance(value, list) and path in ARRAY_ENUMS:
+        # Nested arrays are payloads, not configuration option names.
+        return [
+            "[redacted:array]" if isinstance(item, list) else _safe_value(path, item)
+            for item in value[:101]
+        ]
     return "[redacted:array]"
 
 
@@ -74,6 +88,10 @@ def safe_value_preview(path: str, preview: str | None) -> tuple[str | None, bool
         encoded = json.dumps(value, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
         if len(encoded) <= 100:
             return encoded, truncated
+        if isinstance(value, list) and value:
+            value.pop()
+            truncated = True
+            continue
         if not isinstance(value, dict) or not value:
             return None, False
         del value[sorted(value)[-1]]
