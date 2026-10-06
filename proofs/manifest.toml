@@ -1111,3 +1111,229 @@ new = '''
     /\ HbDurable(a)
 '''
 
+[CreditDebt]
+# docs/design/fast-admission-and-batched-settlement.md, sections 4.2 and
+# 4.7. Its shadow is a pure module of the debt rules, which the existing
+# primitives call (section 5.1).
+state = "planned"
+code = ["src/trusted_router/credit_debt.py"]
+
+# Section 4.2's first claim, and what keeps it.
+
+# The auditor's raise: with no owner write, it alone keeps the first claim.
+[[CreditDebt.mutants]]
+name = "auditor-books-without-the-raise"
+cfg = "silent"
+violates = "HoldsCoveredInSpanner"
+old = 'THEN /\ Book(l, rec.a, Pos(rec.sf - sfStored[l]))'
+new = 'THEN /\ Book(l, rec.a, 0)'
+
+[[CreditDebt.mutants]]
+name = "front-door-appends-without-the-raise"
+violates = "HoldsCoveredInSpanner"
+old = '''
+    /\ LET over == Pos(a - 1)
+           r2   == [reserved EXCEPT ![donor[l]] = @ + over]'''
+new = '''
+    /\ LET over == 0
+           r2   == [reserved EXCEPT ![donor[l]] = @ + over]'''
+
+# Room a terminal freed comes back only once its record is stored.
+[[CreditDebt.mutants]]
+name = "admit-against-unacknowledged-room"
+cfg = "refund"
+violates = "HoldsCoveredInSpanner"
+old = '''
+    /\ ~oStop[l]
+    /\ Free(l) >= 1'''
+new = '''
+    /\ ~oStop[l]
+    /\ Remain(l) >= 1'''
+
+# Assumption A1.
+[[CreditDebt.mutants]]
+name = "store-out-of-order"
+violates = "HoldsCoveredInSpanner"
+old = '''
+NextToStore(q) == Head(q)
+AfterStoring(q) == Tail(q)'''
+new = '''
+NextToStore(q) == q[Len(q)]
+AfterStoring(q) == SubSeq(q, 1, Len(q) - 1)'''
+
+# Two checks of Admit that are each idle alone (see their rows in the guard
+# table): that the lease is open and that its owner is reachable. Without
+# both, a process that has died admits a hold after the boundary.
+[[CreditDebt.mutants]]
+name = "a-dead-owner-admits-after-the-boundary"
+cfg = "refund"
+violates = "HoldsCoveredInSpanner"
+old = '''
+Admit(l) ==
+    /\ st[l] = "open"
+    /\ oUp[l] = "up"
+'''
+new = '''
+Admit(l) ==
+'''
+
+# Assumption A2.
+[[CreditDebt.mutants]]
+name = "reap-above-the-hold"
+violates = "HoldsCoveredInSpanner"
+old = '''
+    /\ hold[h].row = "none"
+    /\ Book(l, a, 0)
+    /\ hold' = [hold EXCEPT ![h].reaped = TRUE, ![h].b = a]'''
+new = '''
+    /\ hold[h].row = "none"
+    /\ Book(l, a + 1, 0)
+    /\ hold' = [hold EXCEPT ![h].reaped = TRUE, ![h].b = a + 1]'''
+
+# Section 4.2's second claim: the owner's write.
+
+[[CreditDebt.mutants]]
+name = "owner-skips-its-write"
+violates = "ShortfallIsBeingWritten"
+old = 'IF OwnerWrites /\ short > 0 /\ @ = NoWrite THEN sf ELSE @]'
+new = 'IF FALSE /\ short > 0 /\ @ = NoWrite THEN sf ELSE @]'
+
+# A write is the larger of the stored total and the owner's.
+[[CreditDebt.mutants]]
+name = "a-stale-write-lowers-the-total"
+violates_property = "StoredShortfallNeverFalls"
+old = '''
+    /\ LET rise == Pos(write[l] - sfStored[l])
+           r2   == [reserved EXCEPT ![donor[l]] = @ + rise]
+           sq   == Squared(credits, usage, r2)
+       IN /\ sfStored''''
+new = '''
+    /\ LET rise == write[l] - sfStored[l]
+           r2   == [reserved EXCEPT ![donor[l]] = @ + rise]
+           sq   == Squared(credits, usage, r2)
+       IN /\ sfStored''''
+
+# The owner counts a shortfall it has raised its books by, until Spanner has it.
+[[CreditDebt.mutants]]
+name = "the-owner-forgets-a-shortfall"
+violates = "StoredCoversOwner"
+old = '''
+          /\ oSf' = [oSf EXCEPT ![l] = sf]
+'''
+new = '''
+          /\ oSf' = oSf
+'''
+
+[[CreditDebt.mutants]]
+name = "owner-does-not-raise-its-books"
+violates = "OwnerBooksBalance"
+old = '        short == Pos(cons + held - mine)'
+new = '        short == 0'
+
+# Section 4.7's identity, per shard, and what books once.
+
+[[CreditDebt.mutants]]
+name = "owner-raise-lands-after-close"
+violates = "ShardIdentity"
+old = '''
+    /\ write[l] # NoWrite
+    /\ Live(l)
+    /\ LET rise'''
+new = '''
+    /\ write[l] # NoWrite
+    /\ LET rise'''
+
+[[CreditDebt.mutants]]
+name = "close-keeps-the-remainder"
+violates = "ShardIdentity"
+old = '''
+    /\ LET r2 == [reserved EXCEPT ![donor[l]] = @ - Remaining(l)]
+           sq == Squared(credits, usage, r2)
+       IN /\ reserved' = r2'''
+new = '''
+    /\ LET r2 == reserved
+           sq == Squared(credits, usage, r2)
+       IN /\ reserved' = r2'''
+
+[[CreditDebt.mutants]]
+name = "booking-is-not-matched"
+violates = "ShardIdentity"
+old = '        r2 == [reserved EXCEPT ![d] = @ + rise - a]'
+new = '        r2 == [reserved EXCEPT ![d] = @ + rise]'
+
+[[CreditDebt.mutants]]
+name = "book-a-losing-row"
+violates = "BookedOnce"
+old = '''
+    /\ IF hold[h].own = "applied"
+       THEN /\ hold' = [hold EXCEPT ![h].row = "lost"]'''
+new = '''
+    /\ IF FALSE
+       THEN /\ hold' = [hold EXCEPT ![h].row = "lost"]'''
+
+# Invariant 9, the exposure half: the trust allowance.
+
+[[CreditDebt.mutants]]
+name = "grant-ignores-the-allowance"
+cfg = "two"
+violates = "ExposureWithinAllowance"
+old = '''
+    /\ Exposure + LeaseSize <= Allowance
+'''
+new = ""
+
+# Invariant 11, and the v11 hazard: repayment clears the mark.
+
+[[CreditDebt.mutants]]
+name = "debt-does-not-mark"
+violates = "DebtMarksEveryShard"
+old = '    THEN [c |-> c, m |-> [s \in Shards |-> TRUE]]'
+new = '    THEN [c |-> c, m |-> [s \in Shards |-> FALSE]]'
+
+[[CreditDebt.mutants]]
+name = "settle-leaves-a-shard-negative"
+cfg = "money"
+violates = "DebtMarksEveryShard"
+old = '''
+       IN /\ reserved' = r2
+          /\ usage' = u2
+          /\ credits' = sq.c
+          /\ mark' = sq.m
+    /\ sync' = [sync EXCEPT ![s] = @ - 1]'''
+new = '''
+       IN /\ reserved' = r2
+          /\ usage' = u2
+          /\ credits' = credits
+          /\ mark' = mark
+    /\ sync' = [sync EXCEPT ![s] = @ - 1]'''
+
+[[CreditDebt.mutants]]
+name = "a-payment-leaves-the-mark"
+cfg = "money"
+violates = "MarkMeansDebt"
+old = '''
+       IN /\ credits' = sq.c
+          /\ mark' = sq.m
+    /\ pays' = pays + 1'''
+new = '''
+       IN /\ credits' = sq.c
+          /\ mark' = mark
+    /\ pays' = pays + 1'''
+
+[[CreditDebt.mutants]]
+name = "covering-makes-credit"
+violates = "CreditConserved"
+old = '         [c |-> [s \in Shards |-> c[s] + h2[s] - h[s]],'
+new = '         [c |-> [s \in Shards |-> c[s] + Pos(h2[s] - h[s])],'
+
+# A bound of the model.
+
+[[CreditDebt.mutants]]
+name = "cut-off-without-bound"
+violates = "TypeOK"
+old = '''
+    /\ cuts < MaxCuts
+'''
+new = ""
+
+
