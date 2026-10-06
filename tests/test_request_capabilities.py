@@ -76,7 +76,10 @@ def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
     rows = {row["id"]: row for row in response.json()["data"]}
     expected = {
         "openai/gpt-5.5": dict(reasoning_effort=["none", "low", "medium", "high", "xhigh"], tools=True, seed=True, vision=True, confidential=False),
-        "mistralai/mistral-large": dict(reasoning_effort=[], tools=True, seed=False, vision=False, confidential=False),
+        # Native Mistral discovery declares vision for both generations;
+        # Large 4's reasoning support does not imply known effort values.
+        "mistralai/mistral-large": dict(reasoning_effort=[], tools=True, seed=False, vision=True, confidential=False),
+        "mistralai/mistral-large-4": dict(reasoning_effort=None, tools=True, seed=False, vision=True, confidential=False),
         # The reviewed native V4 Flash contract must survive the union. Its
         # separately cataloged 0731 variant has no reviewed effort contract.
         "deepseek/deepseek-v4-flash": dict(reasoning_effort=["high", "max"], tools=True, seed=True, vision=False, confidential=False),
