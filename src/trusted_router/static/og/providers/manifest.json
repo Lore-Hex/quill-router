@@ -190,10 +190,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 96,
+    "model_count": 95,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 184,
+    "route_count": 182,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
