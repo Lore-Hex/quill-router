@@ -37,6 +37,193 @@
 # orphaned spec's deleted path from one that never existed; `git log
 # --diff-filter=D -- <path>` can, and review runs it.
 
+[AuditorCommit]
+# docs/design/fast-admission-and-batched-settlement.md, section 4.8. Its
+# shadow is a package of its own in the Go service.
+state = "planned"
+code = ["fastpath/internal/auditorcommit"]
+
+# The commit version: a member another overtook cannot commit over its work.
+[[AuditorCommit.mutants]]
+name = "commit-without-the-version"
+violates = "BookedIsWinners"
+old = '''
+    /\ ver = mem[m].ver
+    /\ ver' = Advanced(mem[m].dirty)
+    /\ prog' = mem[m].prog'''
+new = '''
+    /\ ver' = Advanced(mem[m].dirty)
+    /\ prog' = mem[m].prog'''
+
+# A redelivered record, at or below the progress, is skipped.
+[[AuditorCommit.mutants]]
+name = "apply-a-redelivered-record"
+violates = "BookedIsWinners"
+old = '    /\ log[pos[m]].seq = mem[m].prog + 1'
+new = '    /\ log[pos[m]].seq <= mem[m].prog + 1'
+
+# Records are acknowledged only once a commit has made them durable.
+[[AuditorCommit.mutants]]
+name = "ack-before-commit"
+violates = "NoChargeLost"
+old = '''
+    /\ done[m] > acked
+    /\ acked' = done[m]'''
+new = '''
+    /\ pos[m] - 1 > acked
+    /\ acked' = pos[m] - 1'''
+
+# Assumption A1: Pub/Sub redelivers every record not acknowledged.
+[[AuditorCommit.mutants]]
+name = "redelivery-skips-a-record"
+violates = "NoChargeLost"
+old = '''
+    /\ holder' = m
+    /\ pos' = [pos EXCEPT ![m] = acked + 1]'''
+new = '''
+    /\ holder' = m
+    /\ pos' = [pos EXCEPT ![m] = acked + 2]'''
+
+# Assumption A2: the fence comes after every record the owner issued.
+[[AuditorCommit.mutants]]
+name = "fence-before-the-log-is-complete"
+violates = "NoChargeLost"
+old = 'Fenced == out = << >>'
+new = 'Fenced == TRUE'
+
+# A member taking over loads the open holds the last commit stored.
+[[AuditorCommit.mutants]]
+name = "holds-not-loaded"
+violates = "NoChargeLost"
+old = '                  holds |-> holds,'
+new = '                  holds |-> [a \in Auths |-> 0],'
+
+# The commit stores each open hold's latest snapshot.
+[[AuditorCommit.mutants]]
+name = "commit-keeps-the-old-snapshot"
+violates = "ReapAtLastSnapshot"
+old = "    /\\ holds' = mem[m].holds"
+new = "    /\\ holds' = [a \\in Auths |-> IF holds[a] # 0 /\\ mem[m].holds[a] # 0 THEN holds[a] ELSE mem[m].holds[a]]"
+
+# A reap is conditional on the commit version: the lease can come back to a
+# member whose memory another member's commit has overtaken.
+[[AuditorCommit.mutants]]
+name = "reap-without-the-version"
+cfg = "again"
+violates = "ReapAtLastSnapshot"
+old = '''
+    /\ mem[m].win[a] = NoWin
+    /\ ver = mem[m].ver
+    /\ \A i \in DOMAIN drain : drain[i].a # a'''
+new = '''
+    /\ mem[m].win[a] = NoWin
+    /\ \A i \in DOMAIN drain : drain[i].a # a'''
+
+# A statement that matched no row is a refused commit, whatever the rest of
+# the transaction did.
+[[AuditorCommit.mutants]]
+name = "a-refused-commit-read-as-done"
+cfg = "again"
+violates = "NoChargeLost"
+old = '''
+    /\ ver # mem[m].ver
+    /\ mem' = [mem EXCEPT ![m] = Blank]
+    /\ pos' = [pos EXCEPT ![m] = acked + 1]
+    /\ dpos' = [dpos EXCEPT ![m] = 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, done, crashes, ghosts >>'''
+new = '''
+    /\ ver # mem[m].ver
+    /\ mem' = [mem EXCEPT ![m] = Blank]
+    /\ pos' = [pos EXCEPT ![m] = acked + 1]
+    /\ dpos' = [dpos EXCEPT ![m] = 1]
+    /\ done' = [done EXCEPT ![m] = pos[m] - 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, crashes, ghosts >>'''
+
+# Once the lease drains, the drain log is booked against the stored winners.
+[[AuditorCommit.mutants]]
+name = "drain-rows-without-the-winners"
+violates = "WinnerIsFirst"
+old = '''
+ApplyRow(m) ==
+    /\ m = holder
+    /\ mem[m].loaded
+    /\ mem[m].wl'''
+new = '''
+ApplyRow(m) ==
+    /\ m = holder
+    /\ mem[m].loaded'''
+
+# A refund is a winner like any other, and is stored.
+[[AuditorCommit.mutants]]
+name = "refunds-not-stored"
+violates = "WinnerIsFirst"
+old = "    /\\ win' = [a \\in Auths |-> IF mem[m].win[a] # NoWin THEN mem[m].win[a] ELSE win[a]]"
+new = "    /\\ win' = [a \\in Auths |-> IF mem[m].win[a] # NoWin /\\ mem[m].win[a].c > 0 THEN mem[m].win[a] ELSE win[a]]"
+
+# The bookings are arithmetic on the row as the commit reads it.
+[[AuditorCommit.mutants]]
+name = "commit-loses-a-raise"
+cfg = "ahead"
+violates = "NoRaiseLost"
+old = "    /\\ alloc' = alloc - mem[m].dbooked"
+new = "    /\\ alloc' = mem[m].alloc - mem[m].dbooked"
+
+# A record stored ahead of an earlier one is a gap, not a record to apply.
+[[AuditorCommit.mutants]]
+name = "gap-ignored"
+cfg = "ahead"
+violates = "NoChargeLost"
+old = '    /\ log[pos[m]].seq = mem[m].prog + 1'
+new = '    /\ log[pos[m]].seq >= mem[m].prog + 1'
+
+# The checkpoint audit.
+[[AuditorCommit.mutants]]
+name = "audit-never-alerts"
+cfg = "lying"
+violates = "LieCaught"
+old = '''    /\ alert' = (alert \/ (log[pos[m]].k = "ckpt" /\ log[pos[m]].c # mem[m].osum))'''
+new = "    /\\ alert' = alert"
+
+[[AuditorCommit.mutants]]
+name = "audit-sum-not-stored"
+cfg = "lying"
+violates = "NoFalseAlert"
+old = "    /\\ osum' = mem[m].osum"
+new = "    /\\ osum' = osum"
+
+[[AuditorCommit.mutants]]
+name = "audit-counts-a-duplicate"
+cfg = "lying"
+violates = "NoFalseAlert"
+old = '''
+    /\ log[pos[m]].seq <= mem[m].prog
+    /\ pos' = [pos EXCEPT ![m] = @ + 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, mem, dpos, done, crashes, ghosts >>'''
+new = '''
+    /\ log[pos[m]].seq <= mem[m].prog
+    /\ pos' = [pos EXCEPT ![m] = @ + 1]
+    /\ mem' = [mem EXCEPT ![m].osum = IF OwnerTerminal(log[pos[m]]) THEN @ + log[pos[m]].c ELSE @]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, ghosts >>'''
+
+[[AuditorCommit.mutants]]
+name = "audit-keeps-only-the-last-terminal"
+cfg = "two"
+violates = "NoFalseAlert"
+old = '          !.osum = IF OwnerTerminal(r) THEN M.osum + r.c ELSE M.osum]'
+new = '          !.osum = IF OwnerTerminal(r) THEN r.c ELSE M.osum]'
+
+# The bounds: an owner that issues past MaxSeq leaves the model's types.
+[[AuditorCommit.mutants]]
+name = "owner-issues-without-bound"
+violates = "TypeOK"
+old = '''
+IssueCheckpoint ==
+    /\ st = "open"
+    /\ nextSeq <= MaxSeq'''
+new = '''
+IssueCheckpoint ==
+    /\ st = "open"'''
+
 [AutoRefillHandoff]
 state = "implemented"
 unswept = "written before the guard table; its mutants are its hand-run notes"

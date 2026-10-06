@@ -1,0 +1,624 @@
+# Every guard of every action, and what breaks when it alone is removed.
+# Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
+
+inputs_sha256 = "b822ea262bc62687ad3ed69ba9d9bf2cff7f71874f28f01eb11d3ff3564b3dd1"
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ st = "open"'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ a \notin ownerDone'''
+breaks = "nothing"
+why = '''
+The owner sends no heartbeat for a hold it has decided. One that did would be ignored by a member that knows the winner. A member that loaded the lease while it was open does not, and would show the hold open again; then the hold is neither reaped, since it has a winner, nor closed over, so the lease never closes. No claim here asks that a lease close, and the rule is the owner's code. Removed with Reap's check that the member has no winner for the hold, the hold shown open again is reaped at an older snapshot than its latest: once the member knows the winner it ignores the hold's later heartbeats (ReapAtLastSnapshot). One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ osnap[a] < MaxSnap'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the heartbeats per hold.
+'''
+
+[[guard]]
+action = "IssueTerminal"
+text = '''/\ st = "open"'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "IssueTerminal"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "IssueTerminal"
+text = '''/\ a \notin ownerDone'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "IssueCheckpoint"
+text = '''/\ st = "open"'''
+breaks = "nothing"
+why = '''
+A checkpoint is true whenever an honest owner issues it, so the audit passes it. When an owner may still publish is LeaseLifecycle's.
+'''
+
+[[guard]]
+action = "IssueCheckpoint"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "IssueWrongCheckpoint"
+text = '''/\ Lying'''
+breaks = "nothing"
+why = '''
+Without the flag every configuration's owner may lie, and the audit alerts exactly when it does, so NoFalseAlert holds. LieCaught is checked in `lying`, where the owner may lie by design and nothing changes.
+'''
+
+[[guard]]
+action = "IssueWrongCheckpoint"
+text = '''/\ st = "open"'''
+breaks = "LieCaught"
+cfg = "lying"
+
+[[guard]]
+action = "IssueWrongCheckpoint"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+cfg = "lying"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "Store"
+text = '''/\ out # << >>'''
+breaks = "evaluation"
+why = '''
+The log stores a record the owner issued: without one, Head of the empty sequence has no value.
+'''
+
+[[guard]]
+action = "StoreAhead"
+text = '''/\ aheads < MaxAhead'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the log stores ahead of an earlier one.
+'''
+
+[[guard]]
+action = "StoreAhead"
+text = '''/\ Len(out) >= 2'''
+breaks = "evaluation"
+cfg = "ahead"
+why = '''
+A record stored ahead needs one before it: without two issued records, out[2] has no value.
+'''
+
+[[guard]]
+action = "StoreAgain"
+text = '''/\ dups < MaxDup'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the log stores twice.
+'''
+
+[[guard]]
+action = "StoreAgain"
+text = '''/\ i <= Len(log)'''
+breaks = "evaluation"
+cfg = "lying"
+why = '''
+The log stores again a record it holds: without the guard, log[i] has no value.
+'''
+
+[[guard]]
+action = "Raise"
+text = '''/\ st # "closed"'''
+breaks = "nothing"
+why = '''
+A raise of a closed lease changes an allocation nothing is booked against any more, and NoRaiseLost counts it like any other. That a front door's append and an owner's write miss a closed lease is CreditDebt's.
+'''
+
+[[guard]]
+action = "Raise"
+text = '''/\ raised < MaxRaise'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the raises of the allocation.
+'''
+
+[[guard]]
+action = "MarkDraining"
+text = '''/\ st = "open"'''
+breaks = "TypeOK"
+why = '''
+A lease drains once. Without the guard a closed lease drains and closes again, and again, each close advancing the commit version past the bound TypeOK states; no other claim breaks first.
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ st = "draining"'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ appends < MaxAppend'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the terminals front doors append.
+'''
+
+[[guard]]
+action = "Assign"
+text = '''/\ assigns < MaxAssign'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the times Pub/Sub moves the lease.
+'''
+
+[[guard]]
+action = "Assign"
+text = '''/\ m # holder'''
+breaks = "nothing"
+why = '''
+Pub/Sub may redeliver to the member that holds the lease. What it applied and has not committed it meets again at or below its progress, and skips.
+'''
+
+[[guard]]
+action = "Load"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+A member the records do not go to can load the row, but applies no record and no row, and a member with nothing applied commits nothing.
+'''
+
+[[guard]]
+action = "Load"
+text = '''/\ ~mem[m].loaded'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "LoadWinners"
+text = '''/\ st # "open"'''
+breaks = "nothing"
+why = '''
+Loading the stored winners while the lease is open loads the winners of records at or below the stored progress, which a member skips anyway. Removed with Reap's check that the lease is draining, a member loads its winners while the lease is open and reaps then, below the snapshot of a heartbeat its owner issues after (ReapAtLastSnapshot). One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "LoadWinners"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member that has not loaded keeps none of the winners it loads now: Load replaces its whole memory, and every step that reads the winners asks that it has loaded.
+'''
+
+[[guard]]
+action = "LoadWinners"
+text = '''/\ ~mem[m].wl'''
+breaks = "nothing"
+why = '''
+Loading the winners again adds those stored since, which only a member another member overtook can lack, and its next commit is refused by the version.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+A member the lease moved from may go on working: that is what the commit version is for. Its commit is refused unless no member committed since it read the row, and then its work is as good as the holder's.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ mem[m].loaded'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+Every step this guard would let a member take after a gap can be taken before it: Gap changes only the flag, and nothing a member applies, skips or commits stops another member from meeting the same gap after. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member applies a record the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ st = "open" \/ mem[m].wl'''
+breaks = "nothing"
+why = '''
+While a lease drains, the stored winners decide drain-log rows. An owner record above the stored progress has no stored winner: the owner issues one terminal per authorization, and reaps and drain rows are applied only past the fence, after every owner record. So applying it without the winners decides what applying it with them would.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ log[pos[m]].seq = mem[m].prog + 1'''
+breaks = "BookedIsWinners"
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+A member the lease moved from has its position and memory as they were, and skipping a record does not depend on holding the lease: the skip and the move can be taken in either order. No new state is reached.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member that has not loaded has progress 0, and no record's sequence number is at or below 0, so SkipRecord's own check refuses. No new state is reached.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+Every step this guard would let a member take after a gap can be taken before it: Gap changes only the flag, and nothing a member applies, skips or commits stops another member from meeting the same gap after. No new state is reached.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member skips a record the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ log[pos[m]].seq <= mem[m].prog'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Gap"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+Meeting a gap does not depend on holding the lease, and the move changes nothing Gap reads: a member the lease moved from meets the gap in a state the same member meets it in before the move. No new state is reached.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member that has not loaded has progress 0, so every record but the first looks like a gap to it, and it stops the lease for nothing. Stopping is safe: every claim holds of a lease that never closes. What it costs is the close, which no claim here asks for.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+Setting the flag again changes nothing. No new state is reached.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member reads a record the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ log[pos[m]].seq > mem[m].prog + 1'''
+breaks = "nothing"
+why = '''
+A gap declared where there is none stops the lease, which is safe: every claim holds of a lease that never closes. What it costs is the close, which no claim here asks for.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+A member the lease moved from may go on working: that is what the commit version is for. Its commit is refused unless no member committed since it read the row, and then its work is as good as the holder's.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member's winners are loaded only by Load and LoadWinners, each of a member that has loaded the row, and this action also asks for them. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ mem[m].wl'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+A gap stops a member at the record beyond it: no member can apply or skip that record, so no member's position reaches the end of the log, which this action also asks for. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+why = '''
+Drain-log rows are appended only while the lease drains. A row applied again after the close has a winner and charges nothing, and the member that applies it moves only its position.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ Fenced'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ pos[m] = Len(log) + 1'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ dpos[m] <= Len(drain)'''
+breaks = "evaluation"
+why = '''
+The member applies a row the drain log holds: without the guard, drain[dpos[m]] has no value.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+A reap is conditional on the commit version, so the member that reaps holds what is committed and has applied every record: which member it is does not matter.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member's winners are loaded only by Load and LoadWinners, each of a member that has loaded the row, and this action also asks for them. No new state is reached.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].wl'''
+breaks = "nothing"
+why = '''
+A hold the member shows open has no stored winner: the terminal that decided it also took it out of the holds the commit stored. And the reap's transaction reads the hold's drain-log rows. So a reap without the winners loaded reaps the holds it would reap with them; applying its row asks for the winners. Removed with Reap's check that the lease is draining, a member reaps while the lease is open, and a heartbeat its owner issues after leaves the reap below the hold's latest snapshot (ReapAtLastSnapshot). Removed with the check that the member shows the hold open, a member that loaded while the lease was open reaps a hold already decided, at 0 (ReapAtLastSnapshot). One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+A gap stops a member at the record beyond it: no member can apply or skip that record, so no member's position reaches the end of the log, which this action also asks for. No new state is reached.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+why = '''
+Reap also asks for the winners, which are loaded only once the lease drains, and after the close the stored holds are all ended. No new state is reached. Removed with Reap's check of the winners, or with LoadWinners' check that the lease is not open, a member reaps while the lease is open, below the snapshot of a heartbeat its owner issues after (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ Fenced'''
+breaks = "ReapAtLastSnapshot"
+
+[[guard]]
+action = "Reap"
+text = '''/\ pos[m] = Len(log) + 1'''
+breaks = "ReapAtLastSnapshot"
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].holds[a] # 0'''
+breaks = "nothing"
+why = '''
+A reap of a hold the member does not show open charges a snapshot of 0. Its authorization has no terminal in memory, and past the fence no owner record is still to come, so the reap row wins at 0, which every claim allows. Removed with Reap's check that the member has no winner for the hold, a member reaps a hold it has decided, at the 0 its decided holds show, below the hold's latest snapshot (ReapAtLastSnapshot). Removed with Reap's check of the winners, a member that loaded the lease while it was open does not know a decided hold's winner, and reaps it at 0 (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].win[a] = NoWin'''
+breaks = "nothing"
+why = '''
+A hold with a winner in the member's memory is not open in it: deciding a terminal takes the hold out of its holds, so the check that the hold is open refuses already. No new state is reached. Removed with that check, a member reaps a hold it has decided, at the 0 its decided holds show, below the hold's latest snapshot (ReapAtLastSnapshot). Removed with IssueHeartbeat's check that the hold has no terminal, a member that loaded the lease while it was open shows a decided hold open again from a later heartbeat, and reaps it at an older snapshot than its latest (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ ver = mem[m].ver'''
+breaks = "ReapAtLastSnapshot"
+cfg = "again"
+
+[[guard]]
+action = "Reap"
+text = '''/\ \A i \in DOMAIN drain : drain[i].a # a'''
+breaks = "TypeOK"
+why = '''
+The reap's transaction first reads the hold's drain-log rows, and a row already there wins. Without that read a member appends reap after reap for one hold, past the drain log's bound in TypeOK. Each later row loses to the first when applied, since an authorization with a winner charges nothing more, so no other claim breaks.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+Only applying a record or a row makes a member dirty, and each asks that it has loaded the row; this action also asks that it is dirty. No new state is reached.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ mem[m].dirty'''
+breaks = "nothing"
+why = '''
+A commit with nothing applied since the last writes nothing, so in the model it leaves the version as well. What it does is let the member acknowledge records it skipped, which a commit had already made durable.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+Every step this guard would let a member take after a gap can be taken before it: Gap changes only the flag, and nothing a member applies, skips or commits stops another member from meeting the same gap after. No new state is reached.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ ver = mem[m].ver'''
+breaks = "BookedIsWinners"
+
+[[guard]]
+action = "CommitRefused"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+Only applying a record or a row makes a member dirty, and each asks that it has loaded the row; this action also asks that it is dirty. No new state is reached.
+'''
+
+[[guard]]
+action = "CommitRefused"
+text = '''/\ mem[m].dirty'''
+breaks = "nothing"
+why = '''
+A member with nothing applied whose version is stale drops a memory it would have had to read again anyway.
+'''
+
+[[guard]]
+action = "CommitRefused"
+text = '''/\ ver # mem[m].ver'''
+breaks = "nothing"
+why = '''
+A member that drops what it applied and reads the row again loses nothing: what it had not committed is not acknowledged, and Pub/Sub gives it again. One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
+'''
+
+[[guard]]
+action = "Ack"
+text = '''/\ done[m] > acked'''
+breaks = "nothing"
+why = '''
+Acknowledging less than is already acknowledged only means more records are given again, and a record at or below a member's progress is skipped.
+'''
+
+[[guard]]
+action = "Crash"
+text = '''/\ crashes < MaxCrash'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the crashes.
+'''
+
+[[guard]]
+action = "Crash"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member that has not loaded has nothing to lose, and in these bounds its positions in the log and the drain log are already where a crash puts them. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+The close is conditional on the commit version, so the member that closes has applied and committed everything committed: which member it is does not matter.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+why = '''
+Close also asks for the winners, which are loaded only once the lease drains; and closing a closed lease writes nothing, so it leaves the version too. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+why = '''
+A member's winners are loaded only by Load and LoadWinners, each of a member that has loaded the row, and this action also asks for them. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ mem[m].wl'''
+breaks = "nothing"
+why = '''
+The winners decide drain-log rows, and Close asks that every row is applied, which asks for the winners. A member that closes without them has had no row to apply.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+A gap stops a member at the record beyond it: no member can apply or skip that record, so no member's position reaches the end of the log, which this action also asks for. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ Fenced'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ pos[m] = Len(log) + 1'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ dpos[m] = Len(drain) + 1'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ ~mem[m].dirty'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ \A a \in Auths : mem[m].holds[a] = 0'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ ver = mem[m].ver'''
+breaks = "NoChargeLost"
+cfg = "again"
