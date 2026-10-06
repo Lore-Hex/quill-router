@@ -417,6 +417,49 @@
       "tools": true,
       "seed": false,
       "vision": false
+    },
+    {
+      "providers": [
+        "kimi"
+      ],
+      "models": [
+        "moonshotai/kimi-k3"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "Paid probe 2026-10-06 through api.trustedrouter.com, pinned to this route with no fallbacks; the gateway forwards effort raw (enclave-go internal/llm/reasoning_control.go#applyChatReasoningEffort). low, medium and high returned 200; low cut reasoning tokens 27 -> 3 versus no effort."
+    },
+    {
+      "providers": [
+        "zai"
+      ],
+      "models": [
+        "z-ai/glm-5.3"
+      ],
+      "reasoning_effort": [
+        "low",
+        "high",
+        "max"
+      ],
+      "source": "Paid probe 2026-10-06 through api.trustedrouter.com, pinned to this route with no fallbacks; the gateway forwards effort raw (enclave-go internal/llm/reasoning_control.go#applyChatReasoningEffort). low, high and max returned 200 and max reasoned most; medium returned 400 (code 1210: 'please use low, high, or max')."
+    },
+    {
+      "providers": [
+        "zai"
+      ],
+      "models": [
+        "z-ai/glm-5.2"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "source": "Paid probe 2026-10-06 through api.trustedrouter.com, pinned to this route with no fallbacks; the gateway forwards effort raw (enclave-go internal/llm/reasoning_control.go#applyChatReasoningEffort). low, medium, high and max returned 200; on a multi-step prompt max reasoned 182 tokens versus 92 at low."
     }
   ]
 }
