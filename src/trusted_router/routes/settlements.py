@@ -1,4 +1,8 @@
-"""Async dispatch runs before FastAPI's deliberately lenient legacy body model."""
+"""Protection gates strict recovery dispatch before the legacy body model.
+
+Snapshot-sync recovery survives admission rollback; the handler separately
+gates fresh async-v1 acceptance on admission.
+"""
 from __future__ import annotations
 
 import time
@@ -28,7 +32,7 @@ class AsyncSettlementRoute(APIRoute):
             settings = request.app.state.settings
             modes = request.headers.getlist("X-TR-Settlement-Mode")
             # Exact opt-in. Ordinary callers keep the old validation/auth order.
-            if not settings.async_settle_admission_enabled or modes not in (["async-v1"], ["sync"]):
+            if not settings.async_settle_protection or modes not in (["async-v1"], ["sync"]):
                 return await legacy(request)
             started = time.monotonic()
             try:

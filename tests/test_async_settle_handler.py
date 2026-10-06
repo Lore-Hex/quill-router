@@ -247,18 +247,66 @@ def test_drain_and_status_ownership(env, kind):
     assert row.payload_hash and row.snapshot_hash and row.settle_body is None
 
 
-@pytest.mark.parametrize('header', [None, 'async-v1'])
+@pytest.mark.parametrize('header', [None, 'async-v1', 'sync'])
 @pytest.mark.parametrize('enabled', [False, True])
 def test_dispatch_before_legacy_parser(env, header, enabled):
     body, _, _ = prepare(env)
     cfg = settings(settle_outbox_enabled=True)
     env[0].trust_settings = cfg
     cfg.async_settle_enabled = enabled
+    cfg.async_settle_protection = enabled
     client = _client(cfg)
     client.app.state.async_settle = env[2]
     result = client.post('/v1/internal/gateway/settle', content=json.dumps(body),
                          headers={'X-TR-Settlement-Mode': header} if header else {})
-    assert result.status_code == (202 if header and enabled else 400), result.text
+    expected = (202 if header == 'async-v1' else 200) if header and enabled else 400
+    assert result.status_code == expected, result.text
+
+
+@pytest.mark.parametrize('admission', [False, True], ids=['rollback', 'both-on'])
+@pytest.mark.parametrize('mode,accepted', [('sync', True), ('sync', False), ('async-v1', False)],
+                         ids=['sync-accepted', 'sync-fresh', 'async-fresh'])
+def test_snapshot_dispatch_after_admission_rollback(env, monkeypatch, admission, mode, accepted):
+    from trusted_router.services import settle_outbox_apply
+
+    body, auth, key = prepare(env)  # Issue the ticket while both flags are on.
+    store, db, rt, cfg = env
+    client = _client(cfg)
+    client.app.state.async_settle = rt
+    if accepted:
+        result = client.post('/v1/internal/gateway/settle', json=body,
+                             headers={'X-TR-Settlement-Mode': 'async-v1'})
+        assert result.status_code == 202, result.text
+    cfg.async_settle_enabled = admission
+    assert cfg.async_settle_protection
+    # Recovery must retain the signed price even after catalog removal.
+    monkeypatch.setattr(settle_outbox_apply, 'endpoint_for_id', lambda _: None)
+    before = copy.deepcopy((db.typed, db.gateway_authorizations, db.reservations, db.settle_outbox))
+    result = client.post('/v1/internal/gateway/settle', json=body,
+                         headers={'X-TR-Settlement-Mode': mode})
+    if mode == 'async-v1':
+        if admission:
+            assert result.status_code == 202, result.text
+            assert result.json()['data']['acceptance']['status'] == 'accepted'
+            assert db.settle_outbox[(auth.id, 'settle')]['actual_cost_micro'] == 2
+            assert (db.typed, db.gateway_authorizations, db.reservations) == before[:3]
+        else:
+            assert result.status_code == 200, result.text
+            assert result.json() == json.loads((ROOT/'sync_required_v1.json').read_text())['disabled']
+            assert (db.typed, db.gateway_authorizations, db.reservations, db.settle_outbox) == before
+        return
+    assert result.status_code == 200, result.text
+    view = result.json()['data']['trusted_router_settlement']
+    assert view['settlement_status'] == 'settled' and view['cost_microdollars'] == 2
+    assert _typed_credit(db, 'ws-v1')['total_usage'] == 2
+    assert _typed_key(db, key.hash)['usage'] == 2
+    assert db.reservations[auth.credit_reservation_id]['actual_micro'] == 2
+    settled = store.get_gateway_authorization(auth.id)
+    assert store.get_generation(settled.finalized_generation_id).total_cost_microdollars == 2
+    if accepted:
+        assert db.settle_outbox[(auth.id, 'settle')]['status'] == 'done'
+    else:
+        assert not db.settle_outbox
 
 
 SUPPORTED = [c for c in CASES if c['expected_exclusion'] is None]
@@ -636,11 +684,13 @@ def test_full_handler_matrix(env, matrix_client, header, flag, ticket, hash_ok, 
         env[1].reservations[auth.credit_reservation_id]['settled'] = True
     if reservation == 'missing':
         del env[1].reservations[auth.credit_reservation_id]
-    expected = (400 if not (header and flag) else 401 if not ticket else 400 if not hash_ok
-                else 200 if not (cohort and healthy and reservation == 'open') else 202)
+    expected = (400 if not header else 401 if not ticket else 400 if not hash_ok
+                else 200 if not (flag and cohort and healthy and reservation == 'open') else 202)
     result = matrix_client.post('/v1/internal/gateway/settle', json=body,
                                 headers={'X-TR-Settlement-Mode': 'async-v1'} if header else {})
     assert result.status_code == expected, result.text
+    if header and ticket and hash_ok and cohort and not flag:
+        assert result.json() == json.loads((ROOT/'sync_required_v1.json').read_text())['disabled']
     assert bool(env[1].settle_outbox) == (expected == 202)
 
 
@@ -821,7 +871,9 @@ def test_runtime_admission_fails_closed(env, admission, protection):
     client.app.state.async_settle = env[2]
     response = client.post('/v1/internal/gateway/settle', json=body,
                            headers={'X-TR-Settlement-Mode': 'async-v1'})
-    assert response.status_code == 400
+    assert response.status_code == (200 if protection else 400)
+    if protection:
+        assert response.json() == json.loads((ROOT/'sync_required_v1.json').read_text())['disabled']
     assert not env[1].settle_outbox
 
 

@@ -916,7 +916,10 @@ and rollout pins `TR_ASYNC_SETTLE_ENABLED=false` and
 Settings rejects admission on with protection off. Runtime admission checks
 also require both flags, even if settings were mutated without validation.
 Disabling admission stops ticket issuance and async-v1 acceptance; detached
-snapshot metadata remains available. Accepted rows still drain.
+snapshot metadata remains available. Accepted rows still drain. With protection
+on, snapshot-bearing sync retries still reconcile accepted intents or apply the
+signed frozen price when no intent exists. Fresh async-v1 requests return the
+§3.3 `sync_required` literal with reason `disabled`, without inserting an intent.
 
 With **both false**, the frozen PR B claim/refresh/INSERT SQL, parameters,
 types and RPC counts remain identical, including deferred-retention claims and
@@ -929,8 +932,8 @@ operator-approved release. Additive INSERT construction is unchanged.
 | Gated site | Classification | Reason |
 |---|---|---|
 | `services/async_settle.snapshot_projection` | Admission (both flags) | Issue tickets and read eligibility only when new work may be accepted. |
-| `routes/settlements.AsyncSettlementRoute` | Admission (both flags) | Opt-in async-v1/snapshot-sync dispatch; ordinary legacy parsing remains unchanged. |
-| `services/async_settle_handler._handle` | Admission (both flags) | New async INSERT acceptance; direct disabled retries may resolve existing rows. |
+| `routes/settlements.AsyncSettlementRoute` | Protection | Strict async-v1/snapshot-sync recovery dispatch survives admission rollback; ordinary legacy parsing remains unchanged. |
+| `services/async_settle_handler._handle` | Admission (both flags) | Fresh async INSERT acceptance; disabled retries may resolve existing rows, and snapshot-sync recovery retains the frozen price. |
 | `storage_gcp.SpannerStore.__init__` outbox construction | Protection | Supplies the immutable refresh predicate in `SpannerSettleOutbox.enqueue`. |
 | `services/settle_outbox_drain.spanner_settle_outbox` | Protection | The same immutable predicate for gateway and drain outbox instances. |
 | `storage_gcp.typed_finalize_gateway` | Protection | Claim fence in the generic typed finalizer. |

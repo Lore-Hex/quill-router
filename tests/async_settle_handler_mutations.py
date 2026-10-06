@@ -15,6 +15,10 @@ HANDLER = 'src/trusted_router/services/async_settle_handler.py'
 STORAGE = 'src/trusted_router/storage_gcp_async_settle.py'
 TEST = 'tests/test_async_settle_handler.py::'
 MUTATIONS = [
+    ('gate-recovery-dispatch-on-admission', [('src/trusted_router/routes/settlements.py', [
+        ('if not settings.async_settle_protection or modes not in',
+         'if not settings.async_settle_admission_enabled or modes not in'),
+    ])], 'test_snapshot_dispatch_after_admission_rollback[sync-fresh-rollback]'),
     ('remove-atomic-check', [(STORAGE, [
         ('    statements.append(async_reservation_admission_statement(pt, row))', ''),
         ('[*intent_insert_counts(statements), (1,)]', 'intent_insert_counts(statements)'),
