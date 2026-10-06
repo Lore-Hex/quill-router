@@ -52,6 +52,9 @@ DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
 DEEPINFRA_KIMI_K25_RETIREMENT_AT = datetime(2026, 9, 7, 0, 0, tzinfo=UTC)
 DEEPINFRA_SEPTEMBER_10_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 DEEPINFRA_MIMO_V25_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
+DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
+GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
+GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2027, 1, 28, 0, 0, tzinfo=UTC)
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
@@ -631,6 +634,35 @@ _RETIREMENTS = (
         model_ids=frozenset({"xiaomi/mimo-v2.5", "xiaomimimo/mimo-v2.5"}),
         upstream_ids=frozenset({"XiaomiMiMo/MiMo-V2.5"}),
         effective_at=DEEPINFRA_MIMO_V25_RETIREMENT_AT,
+    ),
+    # DeepInfra's October 6 notice deprecates Ling 3.0 Flash Fin on 2026-10-09
+    # and redirects later requests to the different Ling 3.0 Flash VL weights.
+    # Use 00:00 UTC conservatively; no time or time zone was announced. Retire
+    # only DeepInfra's route; GMI's Fin route and the VL model stay routable.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"inclusionai/ling-3.0-flash-fin"}),
+        upstream_ids=frozenset({"inclusionAI/Ling-3.0-flash-Fin"}),
+        effective_at=DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT,
+        replacement_model_ids=("inclusionai/ling-3.0-flash-vl",),
+    ),
+    # Google Cloud's October 5 notice: Vertex (Gemini Enterprise) requests to
+    # Gemini 3.6 Flash fail with 404 from November 19, 2026 and to Gemini 3.7
+    # Flash from January 28, 2027. Dates only, so cut over at 00:00 UTC.
+    # AI Studio has separate dates; AI Studio, GMI and DeepInfra routes stay.
+    _Retirement(
+        provider="google-vertex",
+        model_ids=frozenset({"google/gemini-3.6-flash"}),
+        upstream_ids=frozenset({"gemini-3.6-flash"}),
+        effective_at=GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.8-flash", "google/gemini-3.5-flash"),
+    ),
+    _Retirement(
+        provider="google-vertex",
+        model_ids=frozenset({"google/gemini-3.7-flash"}),
+        upstream_ids=frozenset({"gemini-3.7-flash"}),
+        effective_at=GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.8-flash", "google/gemini-3.5-flash"),
     ),
     # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
     # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3
