@@ -154,8 +154,7 @@
       "id": "mistralai/devstral-small-2505",
       "upstream_id": "mistralai/Devstral-Small-2505",
       "context_length": 128000,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 300000
     },
@@ -501,7 +500,7 @@
   ],
   "source": "https://inference.api.nscale.com/v1/models",
   "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
-  "generated_at": "2026-10-05T23:22:50Z",
+  "generated_at": "2026-10-06T03:20:16Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23
 }
