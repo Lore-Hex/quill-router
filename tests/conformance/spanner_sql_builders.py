@@ -76,6 +76,8 @@ class Capture:
 
 def builder_cases() -> list[SQLCase]:
     cases = []
+    from trusted_router.storage_gcp_async_admission import admission_statement
+    cases.append(SQLCase("async_admission", [admission_statement("admission-ws")]))
     # The DDL column is ARRAY<STRING(32)>, not serialized JSON. Edge strings
     # below are individual causes, so even ['[]'] and [''] are paused.
     from trusted_router.trust_eligibility import billing_paused_row

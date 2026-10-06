@@ -887,6 +887,20 @@ class Settings(BaseSettings):
     # Independently provisioned mounted file. Never a receipt/real issuer key.
     speculation_shadow_private_key_file: str = ""
 
+    # Dormant async v1 authorize metadata; activation requires later PR gates.
+    async_settle_enabled: bool = False
+    async_settle_ticket_kid: str = ""
+    async_settle_ticket_issuer: str = ""
+    async_settle_ticket_audience: str = ""
+    # Independently mounted purpose key. Empty by default; rollout.sh NEVER
+    # inherits this path from a previous revision (like the image break-glass).
+    async_settle_ticket_private_key_file: str = ""
+    async_settle_pilot_cap_micro: int = Field(default=0, ge=0)
+    async_settle_ticket_ttl_seconds: int = Field(default=300, ge=1, le=300)
+    # Operator-owned local settlement epoch, NOT the billing pause epoch or
+    # shadow grant generation. Zero means authority has not been provisioned.
+    async_settle_authority_epoch: int = Field(default=0, ge=0)
+
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""

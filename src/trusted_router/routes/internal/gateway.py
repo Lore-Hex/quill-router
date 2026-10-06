@@ -1165,6 +1165,10 @@ def _authorize_gateway_sync_impl(
             idempotent_replay=True,
             custom_model=custom_model,
             stage_d_reason_override="replayed",
+            async_request=request, async_body=body,
+            async_federated=bool(workspace.federated_home or api_key.federated_home),
+            # Replays never re-freeze prices; pricing_effective_at is assigned later.
+            async_effective_at=None,
         )
 
     _typed_store = typed_billing_store(STORE)
@@ -2003,6 +2007,9 @@ def _authorize_gateway_sync_impl(
         idempotent_replay=idempotent_replay,
         custom_model=custom_model,
         stage_d_reason_override=stage_d_reason,
+        async_request=request, async_body=body,
+        async_federated=bool(workspace.federated_home or api_key.federated_home),
+        async_effective_at=pricing_effective_at,
     )
 
 
@@ -2576,6 +2583,10 @@ def _gateway_authorize_response(
     idempotent_replay: bool,
     custom_model: Any | None,
     stage_d_reason_override: str | None = None,
+    async_request: Request | None = None,
+    async_body: GatewayAuthorizeRequest | None = None,
+    async_federated: bool = False,
+    async_effective_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
     """Compose the authorization response with a prospective generation identity.
 
@@ -2603,6 +2614,16 @@ def _gateway_authorize_response(
         parse_pricing_snapshot(authorization.video_pricing_snapshot).get("video_tariff_resolution")
         if authorization.video_pricing_snapshot else None
     )
+    async_additions: dict[str, Any] = {}
+    if async_request is not None and async_request.headers.getlist("X-TR-Settlement-Mode") == ["async-v1"]:
+        from trusted_router.services.async_settle import authorize_additions
+        async_store = typed_billing_store(STORE)
+        async_additions = authorize_additions(
+            request=async_request, body=async_body, authorization=authorization,
+            endpoints=[e for _, e in endpoint_candidates], settings=settings,
+            typed=async_store is not None and getattr(async_store, "request_record_write_mode", "legacy") == "typed",
+            federated=async_federated, replay=idempotent_replay, effective_at=async_effective_at,
+        )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -2646,6 +2667,7 @@ def _gateway_authorize_response(
             **({"video_token_billing": True} if authorization.video_pricing_snapshot else {}),
             **({"video_tariff_resolution": video_resolution} if video_resolution is not None else {}),
             **stage_d,
+            **async_additions,
             "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None
