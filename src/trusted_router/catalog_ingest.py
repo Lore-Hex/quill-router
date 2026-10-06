@@ -249,6 +249,7 @@ def _apply_provider_manifest_expiry(
 # hand-maintained Python allowlist.
 _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
+        "meta",
         "cerebras",
         "cloudflare-workers-ai",
         "crusoe",
@@ -692,12 +693,6 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure.
-    "meta": frozenset(
-        {
-            "meta/muse-spark-1.1",
-        }
-    ),
-    # route-health first sweep 2026-07-18, 100% failure.
     "deepseek": frozenset(
         {
             "deepseek/deepseek-v3.1-terminus",
@@ -1021,8 +1016,7 @@ def _supplemental_provider_models_and_endpoints(
     lists more routes than OpenRouter's endpoint feed. These manifests
     preserve exact upstream model IDs and authoritative downstream prices, so
     the control plane can authorize routes the attested gateway can actually
-    call and bill. Most are provider-direct; Meta Muse is explicitly labelled
-    as Meta via OpenRouter.
+    call and bill. Meta Muse uses Meta's direct Standard-tier API.
 
     Novita, Nebius, MiniMax, Crusoe, Cerebras, Google, Fireworks, DeepInfra,
     Moonshot/Kimi, and Z.AI currently use this path because their
