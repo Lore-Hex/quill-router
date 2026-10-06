@@ -101,9 +101,11 @@
 (*                                                                          *)
 (*   OwnerBooksBalance and ShortfallIsTheDeficit. A settle the owner's      *)
 (*   allocation has no room for raises the allocation by the shortfall it   *)
-(*   leaves, and by exactly that: the owner's books are left with no room.  *)
-(*   The shortfall is the lease's deficit, not a settle's overrun of its    *)
-(*   own hold.                                                              *)
+(*   leaves, and by exactly that: when the owner decides a terminal, its    *)
+(*   shortfall total rises by what its allocation, with the raise an        *)
+(*   adopted row brings, lacks for its consumption and open holds, and at   *)
+(*   no other step. The shortfall is the lease's deficit, not a settle's    *)
+(*   overrun of its own hold.                                               *)
 (*                                                                          *)
 (*   StoredShortfallNeverFalls, StoredShortfallWithinOwners and             *)
 (*   StoredShortfallIsTheLarger. The owner's write is the larger of the     *)
@@ -694,11 +696,22 @@ Unlanded(l) == Pos(oSf[l] - sfStored[l])
 OwnerBooksBalance ==
     \A l \in Leases : oUp[l] # "dead" => Remain(l) >= 0
 
-\* By exactly what it lacks: when the owner's shortfall total rises, its
-\* books are left with no room. The shortfall is the lease's deficit, not a
+\* By exactly what it lacks. When the owner decides a hold's terminal, its
+\* shortfall total rises by what its allocation, with the raise an adopted
+\* row brings, lacks for its consumption and open holds after the terminal,
+\* and its allocation rises by that raise and that shortfall. The total
+\* changes at no other step. The shortfall is the lease's deficit, not a
 \* settle's overrun of its own hold.
+Decided(l, h) == h \in Mine(l) /\ hold[h].own = "none" /\ hold'[h].own = "out"
 ShortfallIsTheDeficit ==
-    [][\A l \in Leases : oSf'[l] > oSf[l] => Remain(l)' = 0]_vars
+    [][\A l \in Leases :
+          /\ \A h \in Holds :
+                Decided(l, h) =>
+                    LET raise == IF hold[h].row = "row" THEN Pos(hold[h].ra - 1) ELSE 0
+                        need  == Pos(OCons(l)' + OHeld(l)' - (oAlloc[l] + raise))
+                    IN /\ oSf'[l] = oSf[l] + need
+                       /\ oAlloc'[l] = oAlloc[l] + raise + need
+          /\ oSf'[l] # oSf[l] => \E h \in Holds : Decided(l, h)]_vars
 
 \* Section 4.2's first claim. A lease's remaining allocation in Spanner is
 \* never less than its open holds, in the log's sense, once everything the

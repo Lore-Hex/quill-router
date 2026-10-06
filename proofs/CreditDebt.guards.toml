@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "6edea53d35a451f90598462ce79c578b9358e7cf776518ab44114416550348c0"
+inputs_sha256 = "73e71cf0e6f3d43b7da7ae49ea971748ba1e83d2d166988c26e4eff576abb182"
 
 [[guard]]
 action = "Grant"
@@ -105,10 +105,7 @@ Which terminal wins, and when an owner may still decide, publish or be routed to
 [[guard]]
 action = "OwnerSettle"
 text = '''/\ \A g \in Mine(l) : ~(hold[g].row = "row" /\ hold[g].own = "none")'''
-breaks = "nothing"
-why = '''
-A hold with a drain row that its owner settles itself has two terminals. The owner's stored record wins and the row loses (BookedOnce); the row's raise stays reserved until close releases it, which errs toward holding more.
-'''
+breaks = "ShortfallIsTheDeficit"
 
 [[guard]]
 action = "OwnerSettle"
@@ -125,7 +122,7 @@ action = "OwnerAdopt"
 text = '''/\ st[l] = "open"'''
 breaks = "nothing"
 why = '''
-Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. An adoption on a draining lease is a terminal with its row's raise already reserved. Removed with Store's check that the lease is not sealed, a terminal adopted after the boundary is stored past it (HoldsCoveredInSpanner).
+Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. An adoption on a draining lease is a terminal with its row's raise already reserved. Removed with Store's check that the lease is not sealed, a terminal adopted after the boundary is stored past it (HoldsCoveredInSpanner). Removed with OwnerAdopt's check that the hold has a row, an owner on a sealed lease adopts a row the auditor has already booked or set aside, with its raise, which the shortfall rule gives only a row still waiting (ShortfallIsTheDeficit).
 '''
 
 [[guard]]
@@ -152,7 +149,7 @@ action = "OwnerAdopt"
 text = '''/\ hold[h].row = "row"'''
 breaks = "nothing"
 why = '''
-Without a row the charge it adopts is 0, and adopting is the owner settling the hold at 0, which OwnerSettle does.
+Without a row the charge it adopts is 0, and adopting is the owner settling the hold at 0, which OwnerSettle does. Removed with OwnerAdopt's check that the lease is open, an owner on a sealed lease adopts a row the auditor has already booked or set aside, with its raise, which the shortfall rule gives only a row still waiting (ShortfallIsTheDeficit).
 '''
 
 [[guard]]

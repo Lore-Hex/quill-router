@@ -1499,3 +1499,10 @@ name = "a-shortfall-per-hold"
 violates_property = "ShortfallIsTheDeficit"
 old = '           short == Pos(cons + held - mine)'
 new = '           short == Pos(a - 1 - raise)'
+
+# Codex's sixth review: the shortfall total rises by exactly the deficit.
+[[CreditDebt.mutants]]
+name = "a-shortfall-total-counted-twice"
+violates_property = "ShortfallIsTheDeficit"
+old = '           sf    == oSf[l] + short'
+new = '           sf    == oSf[l] + 2 * short'
