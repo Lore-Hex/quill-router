@@ -172,7 +172,7 @@ def test_handler_matrix(env, change, code, reason):
     if change in {'expired', 'ineligible'}:
         claims = verify_lookup_ticket(body['settlement_ticket'], [env[2].signer.trusted], NOW).model_dump()
         if change == 'expired':
-            claims.update(iat=NOW-400, exp=NOW-1)
+            claims.update(iat=NOW-400, exp=NOW-100)  # 300 s lifetime, expired 100 s before NOW
         else:
             claims['async_eligible'] = False
         body['settlement_ticket'] = env[2].signer.sign(claims, claims['iat'])
@@ -204,7 +204,7 @@ def test_duplicate_conflict_expired_and_immutable(env):
         call(env, changed)
     assert exc.value.status_code == 409 and env[1].settle_outbox == original
     claims = verify_lookup_ticket(body['settlement_ticket'], [env[2].signer.trusted], NOW).model_dump()
-    claims.update(iat=NOW-400, exp=NOW-1)
+    claims.update(iat=NOW-400, exp=NOW-100)  # 300 s lifetime, expired 100 s before NOW
     body['settlement_ticket'] = env[2].signer.sign(claims, claims['iat'])
     with pytest.raises(ValueError):
         verify_ticket(body['settlement_ticket'], [env[2].signer.trusted], claims, NOW)
@@ -398,7 +398,7 @@ def test_unknown_commit_retry_same_identity(env, monkeypatch):
 def test_expired_snapshot_sync_fallback_without_pending_acceptance(env):
     body, auth, _ = prepare(env)
     claims = verify_lookup_ticket(body['settlement_ticket'], [env[2].signer.trusted], NOW).model_dump()
-    claims.update(iat=NOW-400, exp=NOW-1)
+    claims.update(iat=NOW-400, exp=NOW-100)  # 300 s lifetime, expired 100 s before NOW
     body['settlement_ticket'] = env[2].signer.sign(claims, claims['iat'])
     assert call(env, body, synchronous=True).status_code == 200
     assert not env[1].settle_outbox

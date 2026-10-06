@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import copy
-import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +12,7 @@ import pytest
 
 from tests.fakes.spanner_order import record_statements
 from tests.test_async_settle_handler import env, prepare, row_for  # noqa: F401
+from tests.test_authorize_hold_time import _ast_sha256
 from tests.test_billing_snapshot import endpoint_from_candidate
 from trusted_router import storage_gcp_settle_outbox as outbox
 from trusted_router.catalog_data import Model
@@ -21,18 +21,15 @@ from trusted_router.schemas import GatewaySettleRequest
 
 FROZEN = Path(__file__).parent/'fakes'
 PINS = {
-    'async_settle_main.txt': '0a9081d034d6bddaf0ccc56ba4965f3f3211ece108138de35eb425e25108f728',
-    'async_settle_enqueue_main.txt': '28f92f8f19a59de24cc668399d494e004136146e419b60bb5cbc063e5724869c',
+    'async_settle_main.txt': '6655bf2c51630ea7cc24063777adafad1ecafe29249dd03a6e7262978ed8bda3',
+    'async_settle_enqueue_main.txt': 'd1d895e4927690e5353674f6b7bc9407539949bddcc74613f1458829177f3c12',
 }
 
 
 def test_frozen_source_pins():
+    # Interpreter-stable canonical AST digest (ast.dump output differs across Python versions).
     for filename, digest in PINS.items():
-        tree = ast.parse((FROZEN/filename).read_text())
-        for node in ast.walk(tree):
-            if hasattr(node, 'type_params') and node.type_params == []:
-                del node.type_params
-        assert hashlib.sha256(ast.dump(tree, include_attributes=False).encode()).hexdigest() == digest
+        assert _ast_sha256(ast.parse((FROZEN/filename).read_text())) == digest
 
 
 @pytest.mark.parametrize('enabled', [False, True])
