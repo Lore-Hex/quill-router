@@ -176,14 +176,13 @@ every hold has a booked terminal and `AuditorApplyRow` that the lease is
 live: without both, a lease closes with a row left and the auditor then
 books it (`ShardIdentity`). Leaving out nine of the groups' members, at
 least one of each group, the other 28 removed all together break nothing.
-`AuditorCommit`'s 43 broke a claim too, and six groups explained it, five
-pairs and one of four, each a reap below the hold's latest snapshot
-(`ReapAtLastSnapshot`). For example, `Reap` asks that the lease is draining
-and that the member has loaded its winners, which it loads only once the
-lease drains: without both, a member reaps while the lease is open, and a
-heartbeat its owner issues after leaves the reap below the hold's latest
-snapshot. Leaving out four of `Reap`'s checks, which every group needs one
-of, the other 39 removed all together break nothing.
+`AuditorCommit`'s 53 broke `DrainingLeaseCloses`, and one pair explained it:
+`LoadWinners` and `Reread` each ask that the member has loaded the lease.
+Without both, a member that has not loaded can load the winners and re-read,
+again and again, and never load the lease. Leaving out one of them, the
+other 52 removed all together break nothing. That covers every claim in
+`two`, `lying` and `ahead`; in `again` and the main configuration, at 102
+and 153 million states, the liveness claim was not checked.
 
 ## Ways a check proves nothing
 

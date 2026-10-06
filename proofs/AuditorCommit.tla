@@ -10,61 +10,67 @@
 (*                                                                          *)
 (* ACTORS                                                                   *)
 (*                                                                          *)
-(*   The owner. While the lease is open it issues records with consecutive  *)
-(*   sequence numbers: heartbeats, each carrying its hold's running charge  *)
-(*   as the snapshot; one terminal per authorization, a settle or a refund; *)
-(*   and checkpoints, each carrying its cumulative `consumed`.              *)
+(*   The owner. While the lease is open it issues records with              *)
+(*   consecutive sequence numbers: heartbeats, each carrying its hold's     *)
+(*   running charge as the snapshot, from 0; one terminal per               *)
+(*   authorization, a settle or a refund; and checkpoints, each carrying    *)
+(*   its cumulative `consumed`.                                             *)
 (*                                                                          *)
 (*   The log. It stores what the owner issued, usually in order. It may     *)
 (*   store a record before the one issued just before it, and may store a   *)
-(*   record twice: a republish of a publish that timed out and landed.      *)
+(*   record twice: a republish of a publish that timed out and landed. A    *)
+(*   record may also land after the fence tick, or never.                   *)
 (*                                                                          *)
-(*   Pub/Sub. It gives the lease's records to one member at a time, in the  *)
-(*   order stored, and gives a member it moves the lease to every record    *)
-(*   not acknowledged. The member it moved them from is not told, and may   *)
-(*   still commit what it applied.                                          *)
+(*   Pub/Sub. It gives the lease's records to one member at a time, in      *)
+(*   the order stored, and gives a member it moves the lease to every       *)
+(*   record not acknowledged. The member it moved them from is not told,    *)
+(*   and may still commit what it applied.                                  *)
 (*                                                                          *)
-(*   Members of the auditor's consumer group. A member loads the lease row, *)
-(*   applies records in memory and commits them in one transaction,        *)
+(*   Members of the auditor's consumer group. A member loads the lease      *)
+(*   row, applies records in memory and commits them in one transaction,    *)
 (*   conditional on the commit version it read. Only then does it           *)
-(*   acknowledge them. It may crash and lose its memory.                    *)
+(*   acknowledge them. It may crash and lose its memory. When the commit    *)
+(*   version refuses its commit, reap or close, it re-reads: it drops       *)
+(*   what it applied and its places, and loads again.                       *)
 (*                                                                          *)
 (*   Owners and front doors, as writers of the lease row: each raises the   *)
 (*   allocation, at any moment, between a member's load and its commit.     *)
 (*                                                                          *)
-(*   Once the lease is draining, front doors append terminals to its drain  *)
-(*   log, and the auditor reaps the open holds there at their latest        *)
-(*   snapshots, books the drain log after the owner's records, and closes   *)
-(*   the lease.                                                             *)
+(*   Once the lease is draining, front doors append terminals to its        *)
+(*   drain log, and the auditor publishes the fence tick into the lease's   *)
+(*   records. The member that applies the tick takes S, the highest owner   *)
+(*   sequence number it has applied, and stores it with its next commit.    *)
+(*   Past S it reaps the open holds at their latest snapshots, books the    *)
+(*   drain log after the owner's records, and closes the lease. An owner    *)
+(*   record that arrives after the tick is above S, or a duplicate of one   *)
+(*   at or below it, and is ignored.                                        *)
 (*                                                                          *)
 (* WHAT IS ABSTRACTED                                                       *)
 (*                                                                          *)
 (*   - A Spanner transaction is one atomic action.                          *)
-(*   - Amounts are small numbers: an owner's settle charges 2, a refund 0,  *)
-(*     a front door's settle 1, and a reap its hold's latest snapshot.      *)
-(*   - The boundary S and the fence tick are TerminalOrder's. Here the      *)
-(*     owner issues nothing once the lease drains, and the auditor reaps,   *)
-(*     books the drain log and closes only once the log has stored every    *)
-(*     record the owner issued (A2).                                        *)
-(*   - Drain-log progress is not stored. A member reads the drain log from  *)
-(*     its start, and a row for an authorization that already has a winner  *)
-(*     charges nothing. That is the design's rule, and the reason the       *)
-(*     stored winners are loaded once the lease drains.                     *)
+(*   - Amounts are small numbers: an owner's settle charges 2, a refund     *)
+(*     0, a front door's settle 1, and a reap its hold's latest snapshot,   *)
+(*     0 included. An open hold is told from no hold by NoHold, not by      *)
+(*     its snapshot.                                                        *)
+(*   - The fence tick may come at any time once the lease drains. When it   *)
+(*     comes is TerminalOrder's: after the publish deadline of everything   *)
+(*     the owner issued before its cutoff. Here a record still unstored     *)
+(*     then may land later (MaxLate bounds how many), or never.             *)
+(*   - Drain-log progress is not stored. A member reads the drain log       *)
+(*     from its start, and a row for an authorization that already has a    *)
+(*     winner charges nothing. That is the design's rule, and the reason    *)
+(*     the stored winners are loaded once the lease drains.                 *)
 (*   - Raises are counted, not priced. What a raise is for, and when the    *)
 (*     auditor raises the allocation itself, is CreditDebt's.               *)
 (*   - Several leases in one transaction. Each lease's statement is         *)
-(*     conditional on its own commit version, so CommitRefused is one       *)
-(*     lease's statement matching no row, whatever the others did.          *)
+(*     conditional on its own commit version, so Reread is one lease's      *)
+(*     statement matching no row, whatever the others did.                  *)
 (*                                                                          *)
-(* ASSUMPTIONS, each with a mutant that widens it (proofs/manifest.toml)    *)
+(* ASSUMPTION, with a mutant that widens it (proofs/manifest.toml)          *)
 (*                                                                          *)
 (*   A1. Pub/Sub gives a member it moves the lease to, or a member that     *)
 (*       comes back, every record not acknowledged, in the order stored.    *)
 (*       Mutant redelivery-skips-a-record.                                  *)
-(*   A2. The auditor reaps, books the drain log and closes only once every  *)
-(*       record the owner issued is stored. TerminalOrder shows what makes  *)
-(*       that so: the fence tick and the boundary S. Mutant                 *)
-(*       fence-before-the-log-is-complete.                                  *)
 (*                                                                          *)
 (*   The log's order is not assumed. A record stored ahead of an earlier    *)
 (*   one shows as a gap in the sequence numbers, and the gap stops the      *)
@@ -72,37 +78,56 @@
 (*                                                                          *)
 (* THE CLAIMS                                                               *)
 (*                                                                          *)
-(*   WinnerIsFirst. An authorization's stored winner is the first terminal  *)
-(*   in the lease's order: the owner's, else the drain log's first row.     *)
-(*   A refund counts: a front door's settle for a refunded request loses.   *)
+(*   The records they are about are the owner's at or below S, as the       *)
+(*   order the log received them in defines it, and the drain log's.        *)
+(*                                                                          *)
+(*   BoundaryIsS. The stored S is that boundary: the highest sequence       *)
+(*   number up to which every owner record was received before the fence    *)
+(*   tick.                                                                  *)
+(*                                                                          *)
+(*   WinnerIsFirst. An authorization's stored winner is the first           *)
+(*   terminal in the lease's order: the owner's, else the drain log's       *)
+(*   first row. A refund counts: a front door's settle for a refunded       *)
+(*   request loses.                                                         *)
 (*                                                                          *)
 (*   BookedIsWinners. The booked consumption is the sum of the winners'     *)
 (*   charges: no record booked twice, across redelivery and takeover.       *)
 (*                                                                          *)
-(*   NoRaiseLost. The allocation is the grant, plus every raise, less what  *)
-(*   is booked: a raise between a member's load and its commit is kept.     *)
+(*   NoRaiseLost. The allocation is the grant, plus every raise, less       *)
+(*   what is booked: a raise between a member's load and its commit is      *)
+(*   kept.                                                                  *)
 (*                                                                          *)
 (*   ReapAtLastSnapshot. A reap charges its hold's latest snapshot in the   *)
 (*   log (Invariant 5's reap half).                                         *)
 (*                                                                          *)
-(*   NoChargeLost. A closed lease has a winner for every authorization the  *)
-(*   log or the drain log showed (Invariant 4, across takeover).            *)
+(*   NoChargeLost. A closed lease has a winner for every authorization      *)
+(*   the log or the drain log showed (Invariant 4, across takeover).        *)
 (*                                                                          *)
-(*   NoFalseAlert and LieCaught. The checkpoint audit alerts exactly when a *)
-(*   checkpoint's `consumed` differs from the sum of the owner's terminals  *)
-(*   with lower sequence numbers, a republished one counted once            *)
-(*   (Invariant 2). The configuration `lying` has an owner that may lie.    *)
+(*   AuditsEachCheckpoint. A member that applies a checkpoint audits it     *)
+(*   then: the alert is raised when the checkpoint's `consumed` differs     *)
+(*   from the sum of the owner's terminals with lower sequence numbers, a   *)
+(*   republished one counted once (Invariant 2), and nothing else raises    *)
+(*   it. The configuration `lying` has an owner that may lie. A property    *)
+(*   of steps.                                                              *)
+(*                                                                          *)
+(*   DrainingLeaseCloses. A draining lease closes, unless a gap stopped     *)
+(*   it for an operator, as long as the members keep working. It is what    *)
+(*   a member left with nothing it may do would break.                      *)
 (*                                                                          *)
 (* WHAT WRITING THIS FOUND                                                  *)
 (*                                                                          *)
 (*   Section 4.8 makes the commit, and so the close, conditional on the     *)
 (*   commit version, and says only that a reap's transaction first reads    *)
 (*   the hold's drain-log rows. But Pub/Sub can give the lease back to a    *)
-(*   member that lost it after another member committed and acknowledged a  *)
-(*   newer heartbeat. Nothing is redelivered to bring that member's memory  *)
-(*   up to date, and a reap from it charges the older snapshot. So Reap is  *)
-(*   conditional on the commit version too (mutant reap-without-the-        *)
-(*   version, in the configuration `again`).                                *)
+(*   member that lost it after another member committed and acknowledged    *)
+(*   a newer heartbeat. Nothing is redelivered to bring that member's       *)
+(*   memory up to date, and a reap from it charges the older snapshot. So   *)
+(*   Reap is conditional on the commit version too (mutant                  *)
+(*   reap-without-the-version, in the configuration `again`).               *)
+(*                                                                          *)
+(*   And a member refused that way re-reads even with nothing applied to    *)
+(*   commit, or it is left with nothing it may do (mutant                   *)
+(*   no-reread-when-clean, in `again`). Design v44 states both.             *)
 (*                                                                          *)
 (* EVERY GUARD IS ACCOUNTED FOR in AuditorCommit.guards.toml: what breaks   *)
 (* when it alone is removed, or why nothing does.                           *)
@@ -117,6 +142,7 @@ CONSTANTS
     MaxSnap,       \* heartbeats per hold
     MaxDup,        \* records the log stores twice
     MaxAhead,      \* records the log stores ahead of the one issued before
+    MaxLate,       \* records the log stores after the fence tick
     MaxRaise,      \* raises of the allocation by owners and front doors
     MaxAssign,     \* times Pub/Sub moves the lease to another member
     MaxCrash,      \* times a member loses its memory
@@ -125,7 +151,7 @@ CONSTANTS
     Grant          \* the lease's allocation when granted
 
 ASSUME
-    /\ MaxSeq \in Nat /\ MaxSnap \in Nat /\ MaxDup \in Nat /\ MaxAhead \in Nat
+    /\ MaxSeq \in Nat /\ MaxSnap \in Nat /\ MaxDup \in Nat /\ MaxAhead \in Nat /\ MaxLate \in Nat
     /\ MaxRaise \in Nat /\ MaxAssign \in Nat /\ MaxCrash \in Nat
     /\ MaxAppend \in Nat /\ Lying \in BOOLEAN /\ Grant \in Nat
     /\ Members # {}
@@ -136,12 +162,15 @@ NoAuth == "none"
 
 Rec(k, a, c, seq, idx) == [k |-> k, a |-> a, c |-> c, seq |-> seq, idx |-> idx]
 NoWin == Rec("none", NoAuth, 0, 0, 0)
+Tick == Rec("tick", NoAuth, 0, 0, 0)
+NoHold == -1
+NoS == -1
 OwnerTerminal(r) == r.k \in {"settle", "refund"}
 
 \* A member's memory. `loaded` is false until it reads the lease row.
 Blank == [loaded |-> FALSE, ver |-> 0, prog |-> 0, alloc |-> 0,
-          holds |-> [a \in Auths |-> 0], win |-> [a \in Auths |-> NoWin],
-          wl |-> FALSE, osum |-> 0, dbooked |-> 0, dirty |-> FALSE]
+          holds |-> [a \in Auths |-> NoHold], win |-> [a \in Auths |-> NoWin],
+          wl |-> FALSE, osum |-> 0, dbooked |-> 0, dirty |-> FALSE, S |-> NoS]
 
 VARIABLES
     \* The owner
@@ -154,16 +183,19 @@ VARIABLES
     log,        \* what the log stored, in the order it stored it
     dups,       \* records stored twice
     aheads,     \* records stored ahead of an earlier one
+    ticked,     \* whether the auditor has published the fence tick
+    lates,      \* records stored after it
     \* The lease row in Spanner
     st,         \* "open", "draining" or "closed"
     ver,        \* the commit version
     prog,       \* the highest owner sequence number applied
     booked,     \* the consumption booked
     alloc,      \* the remaining allocation
-    holds,      \* per authorization, the open hold's latest snapshot, or 0
+    holds,      \* per authorization, the open hold's latest snapshot, or NoHold
     win,        \* per authorization, the winning terminal, or NoWin
     osum,       \* the charges of the owner's terminals applied, for the audit
     raised,     \* raises written by owners and front doors
+    S,          \* the owner boundary, once stored, else NoS
     \* The drain log
     drain,      \* rows in commit order
     appends,    \* front doors' appends
@@ -182,8 +214,8 @@ VARIABLES
     gap
 
 ownerv == << out, nextSeq, osnap, ownerSum, ownerDone >>
-logv == << log, dups, aheads >>
-row == << st, ver, prog, booked, alloc, holds, win, osum, raised >>
+logv == << log, dups, aheads, ticked, lates >>
+row == << st, ver, prog, booked, alloc, holds, win, osum, raised, S >>
 drainv == << drain, appends >>
 pubsub == << holder, acked, assigns >>
 members == << mem, pos, dpos, done, crashes >>
@@ -211,7 +243,7 @@ AppliedTo(M, r) ==
           !.dirty = TRUE,
           !.holds = IF r.k = "hb" /\ M.win[r.a] = NoWin
                       THEN [M.holds EXCEPT ![r.a] = r.c]
-                    ELSE IF decides THEN [M.holds EXCEPT ![r.a] = 0]
+                    ELSE IF decides THEN [M.holds EXCEPT ![r.a] = NoHold]
                     ELSE M.holds,
           !.win = IF decides THEN [M.win EXCEPT ![r.a] = r] ELSE M.win,
           !.dbooked = IF decides THEN M.dbooked + r.c ELSE M.dbooked,
@@ -221,7 +253,7 @@ AppliedTo(M, r) ==
 RowAppliedTo(M, r) ==
     IF M.win[r.a] = NoWin
     THEN [M EXCEPT !.win = [M.win EXCEPT ![r.a] = r],
-                   !.holds = [M.holds EXCEPT ![r.a] = 0],
+                   !.holds = [M.holds EXCEPT ![r.a] = NoHold],
                    !.dbooked = M.dbooked + r.c,
                    !.dirty = TRUE]
     ELSE M
@@ -229,10 +261,6 @@ RowAppliedTo(M, r) ==
 \* The commit version after a commit: it advances when the commit writes the
 \* row.
 Advanced(writes) == IF writes THEN ver + 1 ELSE ver
-
-\* The fence (A2): the log has stored every record the owner issued. The
-\* auditor reaps, books the drain log and closes only past it.
-Fenced == out = << >>
 
 ----------------------------------------------------------------------------
 \* The owner
@@ -242,7 +270,7 @@ IssueHeartbeat(a) ==
     /\ nextSeq <= MaxSeq
     /\ a \notin ownerDone
     /\ osnap[a] < MaxSnap
-    /\ out' = Append(out, Rec("hb", a, osnap[a] + 1, nextSeq, 0))
+    /\ out' = Append(out, Rec("hb", a, osnap[a], nextSeq, 0))
     /\ osnap' = [osnap EXCEPT ![a] = @ + 1]
     /\ nextSeq' = nextSeq + 1
     /\ UNCHANGED << ownerSum, ownerDone, logv, row, drainv, pubsub, members, ghosts >>
@@ -279,18 +307,31 @@ IssueWrongCheckpoint ==
 
 Store ==
     /\ out # << >>
+    /\ ~ticked
     /\ log' = Append(log, Head(out))
     /\ out' = Tail(out)
-    /\ UNCHANGED << nextSeq, osnap, ownerSum, ownerDone, dups, aheads, row, drainv, pubsub, members, ghosts >>
+    /\ UNCHANGED << nextSeq, osnap, ownerSum, ownerDone, dups, aheads, ticked, lates, row, drainv, pubsub, members, ghosts >>
+
+\* A publish that timed out lands after the fence tick: above S, whenever it
+\* arrives. A record still issued and not stored may never be.
+StoreLate ==
+    /\ out # << >>
+    /\ ticked
+    /\ lates < MaxLate
+    /\ log' = Append(log, Head(out))
+    /\ out' = Tail(out)
+    /\ lates' = lates + 1
+    /\ UNCHANGED << nextSeq, osnap, ownerSum, ownerDone, dups, aheads, ticked, row, drainv, pubsub, members, ghosts >>
 
 \* The record issued second is stored before the first.
 StoreAhead ==
     /\ aheads < MaxAhead
+    /\ ~ticked
     /\ Len(out) >= 2
     /\ log' = Append(log, out[2])
     /\ out' = << out[1] >> \o SubSeq(out, 3, Len(out))
     /\ aheads' = aheads + 1
-    /\ UNCHANGED << nextSeq, osnap, ownerSum, ownerDone, dups, row, drainv, pubsub, members, ghosts >>
+    /\ UNCHANGED << nextSeq, osnap, ownerSum, ownerDone, dups, ticked, lates, row, drainv, pubsub, members, ghosts >>
 
 \* A record the log holds is stored again.
 StoreAgain(i) ==
@@ -298,7 +339,7 @@ StoreAgain(i) ==
     /\ i <= Len(log)
     /\ log' = Append(log, log[i])
     /\ dups' = dups + 1
-    /\ UNCHANGED << ownerv, aheads, row, drainv, pubsub, members, ghosts >>
+    /\ UNCHANGED << ownerv, aheads, ticked, lates, row, drainv, pubsub, members, ghosts >>
 
 ----------------------------------------------------------------------------
 \* Other writers of the lease row, and draining
@@ -310,14 +351,14 @@ Raise ==
     /\ raised < MaxRaise
     /\ alloc' = alloc + 1
     /\ raised' = raised + 1
-    /\ UNCHANGED << ownerv, logv, st, ver, prog, booked, holds, win, osum, drainv, pubsub, members, ghosts >>
+    /\ UNCHANGED << ownerv, logv, st, ver, prog, booked, holds, win, osum, S, drainv, pubsub, members, ghosts >>
 
 \* The lease expires, or its owner stops: either way it drains, and its
 \* owner issues nothing more.
 MarkDraining ==
     /\ st = "open"
     /\ st' = "draining"
-    /\ UNCHANGED << ownerv, logv, ver, prog, booked, alloc, holds, win, osum, raised, drainv, pubsub, members, ghosts >>
+    /\ UNCHANGED << ownerv, logv, ver, prog, booked, alloc, holds, win, osum, raised, S, drainv, pubsub, members, ghosts >>
 
 \* A front door appends a terminal it could not give the owner, after
 \* checking, in its transaction, that the lease is not closed.
@@ -327,6 +368,16 @@ FrontDoorAppend(a) ==
     /\ drain' = Append(drain, Rec("settle", a, DoorCharge, 0, Len(drain) + 1))
     /\ appends' = appends + 1
     /\ UNCHANGED << ownerv, logv, row, pubsub, members, ghosts >>
+
+\* Once the lease drains, the auditor publishes the fence tick into the
+\* lease's records. A record the owner issued that the log stores after it
+\* is above S, or a duplicate of one at or below S.
+FenceTick ==
+    /\ st = "draining"
+    /\ ~ticked
+    /\ log' = Append(log, Tick)
+    /\ ticked' = TRUE
+    /\ UNCHANGED << ownerv, dups, aheads, lates, row, drainv, pubsub, members, ghosts >>
 
 ----------------------------------------------------------------------------
 \* Pub/Sub and the members
@@ -350,7 +401,8 @@ Load(m) ==
                  [loaded |-> TRUE, ver |-> ver, prog |-> prog, alloc |-> alloc,
                   holds |-> holds,
                   win |-> IF st = "open" THEN [a \in Auths |-> NoWin] ELSE win,
-                  wl |-> st # "open", osum |-> osum, dbooked |-> 0, dirty |-> FALSE]]
+                  wl |-> st # "open", osum |-> osum, dbooked |-> 0, dirty |-> FALSE,
+                  S |-> S]]
     /\ dpos' = [dpos EXCEPT ![m] = 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, pos, done, crashes, ghosts >>
 
@@ -372,19 +424,23 @@ ApplyRecord(m) ==
     /\ ~gap
     /\ pos[m] <= Len(log)
     /\ st = "open" \/ mem[m].wl
+    /\ mem[m].S = NoS
     /\ log[pos[m]].seq = mem[m].prog + 1
     /\ mem' = [mem EXCEPT ![m] = AppliedTo(mem[m], log[pos[m]])]
     /\ pos' = [pos EXCEPT ![m] = @ + 1]
     /\ alert' = (alert \/ (log[pos[m]].k = "ckpt" /\ log[pos[m]].c # mem[m].osum))
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, gap >>
 
-\* A record at or below its progress is a redelivery or a duplicate.
+\* A record at or below its progress is a redelivery or a duplicate. Once
+\* the member knows S, every owner record is one of those or above S, and
+\* ignored.
 SkipRecord(m) ==
     /\ m = holder
     /\ mem[m].loaded
     /\ ~gap
     /\ pos[m] <= Len(log)
-    /\ log[pos[m]].seq <= mem[m].prog
+    /\ log[pos[m]].k # "tick"
+    /\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS
     /\ pos' = [pos EXCEPT ![m] = @ + 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, mem, dpos, done, crashes, ghosts >>
 
@@ -395,25 +451,39 @@ Gap(m) ==
     /\ mem[m].loaded
     /\ ~gap
     /\ pos[m] <= Len(log)
+    /\ mem[m].S = NoS
     /\ log[pos[m]].seq > mem[m].prog + 1
     /\ gap' = TRUE
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, members, alert >>
 
-\* After the fence, the member books the drain log in order.
+\* The fence tick. S is the highest owner sequence number applied before
+\* it, unless the member loaded a stored S. It stores S with its next commit.
+ApplyTick(m) ==
+    /\ m = holder
+    /\ mem[m].loaded
+    /\ ~gap
+    /\ pos[m] <= Len(log)
+    /\ log[pos[m]].k = "tick"
+    /\ mem' = [mem EXCEPT ![m].S = IF @ = NoS THEN mem[m].prog ELSE @,
+                          ![m].dirty = @ \/ mem[m].S = NoS]
+    /\ pos' = [pos EXCEPT ![m] = @ + 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, ghosts >>
+
+\* Past the fence, the member books the drain log in order.
 ApplyRow(m) ==
     /\ m = holder
     /\ mem[m].loaded
     /\ mem[m].wl
     /\ ~gap
     /\ st = "draining"
-    /\ Fenced
+    /\ mem[m].S # NoS
     /\ pos[m] = Len(log) + 1
     /\ dpos[m] <= Len(drain)
     /\ mem' = [mem EXCEPT ![m] = RowAppliedTo(mem[m], drain[dpos[m]])]
     /\ dpos' = [dpos EXCEPT ![m] = @ + 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, pos, done, crashes, ghosts >>
 
-\* After the fence, the member reaps an open hold at its latest snapshot, by
+\* Past the fence, the member reaps an open hold at its latest snapshot, by
 \* appending a reap row in a transaction that first reads the hold's rows.
 \* The transaction is conditional on the commit version, as a commit is: a
 \* member another overtook may hold an older snapshot than the one stored.
@@ -423,9 +493,9 @@ Reap(m, a) ==
     /\ mem[m].wl
     /\ ~gap
     /\ st = "draining"
-    /\ Fenced
+    /\ mem[m].S # NoS
     /\ pos[m] = Len(log) + 1
-    /\ mem[m].holds[a] # 0
+    /\ mem[m].holds[a] # NoHold
     /\ mem[m].win[a] = NoWin
     /\ ver = mem[m].ver
     /\ \A i \in DOMAIN drain : drain[i].a # a
@@ -448,16 +518,18 @@ Commit(m) ==
     /\ holds' = mem[m].holds
     /\ win' = [a \in Auths |-> IF mem[m].win[a] # NoWin THEN mem[m].win[a] ELSE win[a]]
     /\ osum' = mem[m].osum
+    /\ S' = mem[m].S
     /\ mem' = [mem EXCEPT ![m].ver = Advanced(mem[m].dirty), ![m].dbooked = 0, ![m].dirty = FALSE]
     /\ done' = [done EXCEPT ![m] = pos[m] - 1]
     /\ UNCHANGED << ownerv, logv, st, raised, drainv, pubsub, pos, dpos, crashes, ghosts >>
 
-\* Another member committed since this one read the row: its statement
-\* matches no row. It drops what it applied, its place in the log and in the
-\* drain log among it, and re-reads.
-CommitRefused(m) ==
+\* Another member committed since this one read the row, so whatever this
+\* one does next with the lease, a commit, a reap or a close, is refused:
+\* with many leases in one transaction, its statement matches no row. It
+\* drops what it applied, its place in the log and in the drain log among
+\* it, and re-reads.
+Reread(m) ==
     /\ mem[m].loaded
-    /\ mem[m].dirty
     /\ ver # mem[m].ver
     /\ mem' = [mem EXCEPT ![m] = Blank]
     /\ pos' = [pos EXCEPT ![m] = acked + 1]
@@ -488,16 +560,16 @@ Close(m) ==
     /\ mem[m].loaded
     /\ mem[m].wl
     /\ ~gap
-    /\ Fenced
+    /\ mem[m].S # NoS
     /\ pos[m] = Len(log) + 1
     /\ dpos[m] = Len(drain) + 1
     /\ ~mem[m].dirty
-    /\ \A a \in Auths : mem[m].holds[a] = 0
+    /\ \A a \in Auths : mem[m].holds[a] = NoHold
     /\ ver = mem[m].ver
     /\ st' = "closed"
     /\ ver' = Advanced(st # "closed")
     /\ mem' = [mem EXCEPT ![m].ver = Advanced(st # "closed")]
-    /\ UNCHANGED << ownerv, logv, prog, booked, alloc, holds, win, osum, raised, drainv, pubsub, pos, dpos, done, crashes, ghosts >>
+    /\ UNCHANGED << ownerv, logv, prog, booked, alloc, holds, win, osum, raised, S, drainv, pubsub, pos, dpos, done, crashes, ghosts >>
 
 ----------------------------------------------------------------------------
 
@@ -510,15 +582,18 @@ Init ==
     /\ log = << >>
     /\ dups = 0
     /\ aheads = 0
+    /\ ticked = FALSE
+    /\ lates = 0
     /\ st = "open"
     /\ ver = 0
     /\ prog = 0
     /\ booked = 0
     /\ alloc = Grant
-    /\ holds = [a \in Auths |-> 0]
+    /\ holds = [a \in Auths |-> NoHold]
     /\ win = [a \in Auths |-> NoWin]
     /\ osum = 0
     /\ raised = 0
+    /\ S = NoS
     /\ drain = << >>
     /\ appends = 0
     /\ holder = CHOOSE m \in Members : TRUE
@@ -538,11 +613,13 @@ Next ==
     \/ IssueCheckpoint
     \/ IssueWrongCheckpoint
     \/ Store
+    \/ StoreLate
     \/ StoreAhead
-    \/ \E i \in 1..(MaxSeq + MaxDup) : StoreAgain(i)
+    \/ \E i \in 1..(MaxSeq + MaxDup + 1) : StoreAgain(i)
     \/ Raise
     \/ MarkDraining
     \/ \E a \in Auths : FrontDoorAppend(a)
+    \/ FenceTick
     \/ \E m \in Members :
           \/ Assign(m)
           \/ Load(m)
@@ -550,50 +627,89 @@ Next ==
           \/ ApplyRecord(m)
           \/ SkipRecord(m)
           \/ Gap(m)
+          \/ ApplyTick(m)
           \/ ApplyRow(m)
           \/ \E a \in Auths : Reap(m, a)
           \/ Commit(m)
-          \/ CommitRefused(m)
+          \/ Reread(m)
           \/ Ack(m)
           \/ Crash(m)
           \/ Close(m)
 
-Spec == Init /\ [][Next]_vars
+\* What a member does with a lease's records and row.
+Works(m) ==
+    \/ Load(m)
+    \/ LoadWinners(m)
+    \/ ApplyRecord(m)
+    \/ SkipRecord(m)
+    \/ Gap(m)
+    \/ ApplyTick(m)
+    \/ ApplyRow(m)
+    \/ \E a \in Auths : Reap(m, a)
+    \/ Commit(m)
+    \/ Reread(m)
+    \/ Close(m)
+
+\* The auditor keeps working. Nothing promises that the owner, the log or a
+\* front door makes progress.
+Spec ==
+    /\ Init
+    /\ [][Next]_vars
+    /\ WF_vars(FenceTick)
+    /\ \A m \in Members : WF_vars(Works(m))
 
 ----------------------------------------------------------------------------
 \* Claims
 
 MaxC == SettleCharge * Cardinality(Auths) + MaxSnap + 1
-Recs == [k : {"hb", "settle", "refund", "ckpt", "reap", "none"},
+Recs == [k : {"hb", "settle", "refund", "ckpt", "reap", "tick", "none"},
          a : Auths \cup {NoAuth}, c : 0..MaxC,
          seq : 0..MaxSeq, idx : 0..(MaxAppend + Cardinality(Auths))]
 
 \* The model's bounds. Each record a member applies, in each of the
 \* memories it can have, commits at most once, and the close once more.
-MaxVer == (MaxSeq + MaxDup + MaxAppend + Cardinality(Auths)) * (2 + 2 * MaxAssign + MaxCrash) + 1
+MaxVer == (MaxSeq + MaxDup + 1 + MaxAppend + Cardinality(Auths)) * (2 + 2 * MaxAssign + MaxCrash) + 1
 
 TypeOK ==
     /\ out \in Seq(Recs) /\ log \in Seq(Recs) /\ drain \in Seq(Recs)
     /\ Len(out) <= MaxSeq
-    /\ Len(log) <= MaxSeq + MaxDup
+    /\ Len(log) <= MaxSeq + MaxDup + 1
+    /\ lates \in 0..MaxLate
     /\ Len(drain) <= MaxAppend + Cardinality(Auths)
     /\ nextSeq \in 1..(MaxSeq + 1)
     /\ osnap \in [Auths -> 0..MaxSnap]
     /\ ownerDone \subseteq Auths
-    /\ dups \in 0..MaxDup /\ aheads \in 0..MaxAhead /\ raised \in 0..MaxRaise
+    /\ dups \in 0..MaxDup /\ aheads \in 0..MaxAhead /\ ticked \in BOOLEAN /\ raised \in 0..MaxRaise
     /\ appends \in 0..MaxAppend /\ assigns \in 0..MaxAssign /\ crashes \in 0..MaxCrash
     /\ st \in {"open", "draining", "closed"}
     /\ ver \in 0..MaxVer /\ prog \in 0..MaxSeq /\ booked \in Nat /\ alloc \in Int
-    /\ holds \in [Auths -> 0..MaxSnap]
+    /\ holds \in [Auths -> {NoHold} \cup 0..MaxSnap]
+    /\ S \in {NoS} \cup 0..MaxSeq
     /\ win \in [Auths -> Recs]
     /\ holder \in Members
     /\ acked \in 0..Len(log)
     /\ \A m \in Members : pos[m] \in 1..(Len(log) + 1) /\ dpos[m] \in 1..(Len(drain) + 1)
     /\ alert \in BOOLEAN /\ gap \in BOOLEAN
 
-OwnerTerms(a) == { r \in Range(log) : OwnerTerminal(r) /\ r.a = a }
+\* The boundary S as section 4.8 defines it: the highest owner sequence
+\* number up to which every record was received before the fence tick.
+\* Before the tick, every record the log stores is at or below it.
+TickAt == IF ticked THEN Min({ i \in DOMAIN log : log[i].k = "tick" }) ELSE 0
+SeqsBefore == { log[i].seq : i \in { j \in 1..(TickAt - 1) : log[j].k # "tick" } }
+Bound ==
+    IF ~ticked THEN MaxSeq
+    ELSE CHOOSE k \in 0..MaxSeq : 1..k \subseteq SeqsBefore /\ k + 1 \notin SeqsBefore
+
+\* The owner's records the claims are about: those at or below S. One above
+\* S is ignored whenever it arrives.
+Accepted(r) == r.seq <= Bound
+
+OwnerTerms(a) == { r \in Range(log) : OwnerTerminal(r) /\ r.a = a /\ Accepted(r) }
 RowsFor(a) == { i \in DOMAIN drain : drain[i].a = a }
-Heartbeats(a) == { r \in Range(log) : r.k = "hb" /\ r.a = a }
+Heartbeats(a) == { r \in Range(log) : r.k = "hb" /\ r.a = a /\ Accepted(r) }
+
+\* The stored S is the boundary the order of receipt defines.
+BoundaryIsS == S # NoS => S = Bound
 
 \* The lease's order: the owner's records, then the drain log. The owner
 \* issues one terminal per authorization, and a record stored twice is the
@@ -627,8 +743,25 @@ TermsBelow(n) == { r \in Range(log) : OwnerTerminal(r) /\ r.seq < n }
 BadCheckpoint(r) ==
     r.k = "ckpt" /\ r.c # SumOver([q \in TermsBelow(r.seq) |-> q.c], TermsBelow(r.seq))
 
-NoFalseAlert == alert => \E r \in Range(log) : BadCheckpoint(r)
+\* Member m applies the checkpoint it is at: it moves past it and its
+\* progress becomes the checkpoint's. Skipping a duplicate moves past it
+\* without that.
+AppliesCheckpoint(m) ==
+    /\ pos[m] <= Len(log)
+    /\ log[pos[m]].k = "ckpt"
+    /\ pos'[m] = pos[m] + 1
+    /\ mem'[m].prog = log[pos[m]].seq
+    /\ mem[m].prog # log[pos[m]].seq
 
-LieCaught == (st = "closed" /\ \E r \in Range(log) : BadCheckpoint(r)) => alert
+\* The audit at each checkpoint: applying a wrong one raises the alert, and
+\* nothing else changes it.
+AuditsEachCheckpoint ==
+    [][/\ \A m \in Members :
+            AppliesCheckpoint(m) => (alert' = (alert \/ BadCheckpoint(log[pos[m]])))
+       /\ alert' # alert => \E m \in Members : AppliesCheckpoint(m)]_vars
+
+\* A draining lease closes, unless a gap stopped it for an operator: no
+\* member is left with nothing it can do.
+DrainingLeaseCloses == st = "draining" ~> (st = "closed" \/ gap)
 
 =============================================================================

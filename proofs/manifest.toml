@@ -84,26 +84,40 @@ new = '''
     /\ holder' = m
     /\ pos' = [pos EXCEPT ![m] = acked + 2]'''
 
-# Assumption A2: the fence comes after every record the owner issued.
+# Once the member knows S, it applies no owner record: those at or below S
+# are applied already, and one above S is ignored whenever it arrives.
 [[AuditorCommit.mutants]]
-name = "fence-before-the-log-is-complete"
-violates = "NoChargeLost"
-old = 'Fenced == out = << >>'
-new = 'Fenced == TRUE'
+name = "a-record-above-the-boundary-applied"
+violates = "WinnerIsFirst"
+old = '''
+    /\ st = "open" \/ mem[m].wl
+    /\ mem[m].S = NoS
+    /\ log[pos[m]].seq = mem[m].prog + 1'''
+new = '''
+    /\ st = "open" \/ mem[m].wl
+    /\ log[pos[m]].seq = mem[m].prog + 1'''
+
+# S is what the member applied before the fence tick, not what the owner
+# issued.
+[[AuditorCommit.mutants]]
+name = "the-boundary-from-the-owner"
+violates = "BoundaryIsS"
+old = "    /\\ mem' = [mem EXCEPT ![m].S = IF @ = NoS THEN mem[m].prog ELSE @,"
+new = "    /\\ mem' = [mem EXCEPT ![m].S = IF @ = NoS THEN nextSeq - 1 ELSE @,"
 
 # A member taking over loads the open holds the last commit stored.
 [[AuditorCommit.mutants]]
 name = "holds-not-loaded"
 violates = "NoChargeLost"
 old = '                  holds |-> holds,'
-new = '                  holds |-> [a \in Auths |-> 0],'
+new = '                  holds |-> [a \in Auths |-> NoHold],'
 
 # The commit stores each open hold's latest snapshot.
 [[AuditorCommit.mutants]]
 name = "commit-keeps-the-old-snapshot"
 violates = "ReapAtLastSnapshot"
 old = "    /\\ holds' = mem[m].holds"
-new = "    /\\ holds' = [a \\in Auths |-> IF holds[a] # 0 /\\ mem[m].holds[a] # 0 THEN holds[a] ELSE mem[m].holds[a]]"
+new = "    /\\ holds' = [a \\in Auths |-> IF holds[a] # NoHold /\\ mem[m].holds[a] # NoHold THEN holds[a] ELSE mem[m].holds[a]]"
 
 # A reap is conditional on the commit version: the lease can come back to a
 # member whose memory another member's commit has overtaken.
@@ -138,6 +152,27 @@ new = '''
     /\ dpos' = [dpos EXCEPT ![m] = 1]
     /\ done' = [done EXCEPT ![m] = pos[m] - 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, crashes, ghosts >>'''
+
+# A member whose memory another's commit overtook re-reads even with nothing
+# to commit: the lease can come back to it, and its reap or close is refused.
+[[AuditorCommit.mutants]]
+name = "no-reread-when-clean"
+cfg = "again"
+violates_property = "DrainingLeaseCloses"
+old = '''
+Reread(m) ==
+    /\ mem[m].loaded'''
+new = '''
+Reread(m) ==
+    /\ mem[m].loaded
+    /\ mem[m].dirty'''
+
+# A heartbeat at 0 is an open hold like any other: no positive minimum.
+[[AuditorCommit.mutants]]
+name = "a-zero-snapshot-shows-no-hold"
+violates = "NoChargeLost"
+old = '                      THEN [M.holds EXCEPT ![r.a] = r.c]'
+new = '                      THEN [M.holds EXCEPT ![r.a] = IF r.c = 0 THEN NoHold ELSE r.c]'
 
 # Once the lease drains, the drain log is booked against the stored winners.
 [[AuditorCommit.mutants]]
@@ -180,27 +215,27 @@ new = '    /\ log[pos[m]].seq >= mem[m].prog + 1'
 [[AuditorCommit.mutants]]
 name = "audit-never-alerts"
 cfg = "lying"
-violates = "LieCaught"
+violates_property = "AuditsEachCheckpoint"
 old = '''    /\ alert' = (alert \/ (log[pos[m]].k = "ckpt" /\ log[pos[m]].c # mem[m].osum))'''
 new = "    /\\ alert' = alert"
 
 [[AuditorCommit.mutants]]
 name = "audit-sum-not-stored"
 cfg = "lying"
-violates = "NoFalseAlert"
+violates_property = "AuditsEachCheckpoint"
 old = "    /\\ osum' = mem[m].osum"
 new = "    /\\ osum' = osum"
 
 [[AuditorCommit.mutants]]
 name = "audit-counts-a-duplicate"
 cfg = "lying"
-violates = "NoFalseAlert"
+violates_property = "AuditsEachCheckpoint"
 old = '''
-    /\ log[pos[m]].seq <= mem[m].prog
+    /\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS
     /\ pos' = [pos EXCEPT ![m] = @ + 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, mem, dpos, done, crashes, ghosts >>'''
 new = '''
-    /\ log[pos[m]].seq <= mem[m].prog
+    /\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS
     /\ pos' = [pos EXCEPT ![m] = @ + 1]
     /\ mem' = [mem EXCEPT ![m].osum = IF OwnerTerminal(log[pos[m]]) THEN @ + log[pos[m]].c ELSE @]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, ghosts >>'''
@@ -208,7 +243,7 @@ new = '''
 [[AuditorCommit.mutants]]
 name = "audit-keeps-only-the-last-terminal"
 cfg = "two"
-violates = "NoFalseAlert"
+violates_property = "AuditsEachCheckpoint"
 old = '          !.osum = IF OwnerTerminal(r) THEN M.osum + r.c ELSE M.osum]'
 new = '          !.osum = IF OwnerTerminal(r) THEN r.c ELSE M.osum]'
 

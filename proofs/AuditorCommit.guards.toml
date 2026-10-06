@@ -1,12 +1,15 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "b822ea262bc62687ad3ed69ba9d9bf2cff7f71874f28f01eb11d3ff3564b3dd1"
+inputs_sha256 = "fcad3e636fd5f2a9a86b3013c3e9a8e1b4960e60c81d8278719dbce80a943d75"
 
 [[guard]]
 action = "IssueHeartbeat"
 text = '''/\ st = "open"'''
-breaks = "NoChargeLost"
+breaks = "nothing"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a heartbeat issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
 
 [[guard]]
 action = "IssueHeartbeat"
@@ -19,15 +22,13 @@ A bound of the model: the records the owner issues.
 [[guard]]
 action = "IssueHeartbeat"
 text = '''/\ a \notin ownerDone'''
-breaks = "nothing"
-why = '''
-The owner sends no heartbeat for a hold it has decided. One that did would be ignored by a member that knows the winner. A member that loaded the lease while it was open does not, and would show the hold open again; then the hold is neither reaped, since it has a winner, nor closed over, so the lease never closes. No claim here asks that a lease close, and the rule is the owner's code. Removed with Reap's check that the member has no winner for the hold, the hold shown open again is reaped at an older snapshot than its latest: once the member knows the winner it ignores the hold's later heartbeats (ReapAtLastSnapshot). One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
-'''
+breaks = "DrainingLeaseCloses"
 
 [[guard]]
 action = "IssueHeartbeat"
 text = '''/\ osnap[a] < MaxSnap'''
 breaks = "TypeOK"
+cfg = "ahead"
 why = '''
 A bound of the model: the heartbeats per hold.
 '''
@@ -35,7 +36,10 @@ A bound of the model: the heartbeats per hold.
 [[guard]]
 action = "IssueTerminal"
 text = '''/\ st = "open"'''
-breaks = "NoChargeLost"
+breaks = "nothing"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a terminal issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
 
 [[guard]]
 action = "IssueTerminal"
@@ -55,7 +59,7 @@ action = "IssueCheckpoint"
 text = '''/\ st = "open"'''
 breaks = "nothing"
 why = '''
-A checkpoint is true whenever an honest owner issues it, so the audit passes it. When an owner may still publish is LeaseLifecycle's.
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a checkpoint issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
 '''
 
 [[guard]]
@@ -71,14 +75,16 @@ action = "IssueWrongCheckpoint"
 text = '''/\ Lying'''
 breaks = "nothing"
 why = '''
-Without the flag every configuration's owner may lie, and the audit alerts exactly when it does, so NoFalseAlert holds. LieCaught is checked in `lying`, where the owner may lie by design and nothing changes.
+Without the flag every configuration's owner may lie, and the audit alerts exactly when a member applies a wrong checkpoint (AuditsEachCheckpoint), so nothing breaks. `lying` has an owner that may lie by design, and there nothing changes.
 '''
 
 [[guard]]
 action = "IssueWrongCheckpoint"
 text = '''/\ st = "open"'''
-breaks = "LieCaught"
-cfg = "lying"
+breaks = "nothing"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a wrong checkpoint issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
 
 [[guard]]
 action = "IssueWrongCheckpoint"
@@ -98,11 +104,51 @@ The log stores a record the owner issued: without one, Head of the empty sequenc
 '''
 
 [[guard]]
+action = "Store"
+text = '''/\ ~ticked'''
+breaks = "nothing"
+why = '''
+After the fence tick, Store stores what StoreLate would, past MaxLate's bound: more records above S, each skipped. New states, which no claim rests on.
+'''
+
+[[guard]]
+action = "StoreLate"
+text = '''/\ out # << >>'''
+breaks = "evaluation"
+why = '''
+The log stores a record the owner issued: without one, Head of the empty sequence has no value.
+'''
+
+[[guard]]
+action = "StoreLate"
+text = '''/\ ticked'''
+breaks = "nothing"
+why = '''
+Before the fence tick, StoreLate stores what Store would, only counted against MaxLate: new states that differ from Store's in the count.
+'''
+
+[[guard]]
+action = "StoreLate"
+text = '''/\ lates < MaxLate'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the log stores after the fence tick.
+'''
+
+[[guard]]
 action = "StoreAhead"
 text = '''/\ aheads < MaxAhead'''
 breaks = "TypeOK"
 why = '''
 A bound of the model: the records the log stores ahead of an earlier one.
+'''
+
+[[guard]]
+action = "StoreAhead"
+text = '''/\ ~ticked'''
+breaks = "nothing"
+why = '''
+A record stored after the fence tick is above S, as the one issued before it is, and every owner record there is skipped in whatever order it lands. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -169,6 +215,22 @@ A bound of the model: the terminals front doors append.
 '''
 
 [[guard]]
+action = "FenceTick"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+why = '''
+A tick while the lease is open takes S early: the records the owner issues after it land above S and are skipped, which the claims allow, since they are about the records at or below S as the tick's place in the log defines it. Reaps, the drain log and the close still wait for the lease to drain. When the tick comes is TerminalOrder's.
+'''
+
+[[guard]]
+action = "FenceTick"
+text = '''/\ ~ticked'''
+breaks = "TypeOK"
+why = '''
+The auditor publishes one fence tick per lease. Without the check it publishes another and another, and the log outgrows its bound in TypeOK; no other claim breaks first.
+'''
+
+[[guard]]
 action = "Assign"
 text = '''/\ assigns < MaxAssign'''
 breaks = "TypeOK"
@@ -189,20 +251,20 @@ action = "Load"
 text = '''/\ m = holder'''
 breaks = "nothing"
 why = '''
-A member the records do not go to can load the row, but applies no record and no row, and a member with nothing applied commits nothing.
+A member the records do not go to can load the row, but applies no record, tick or row, and a member with nothing applied commits nothing.
 '''
 
 [[guard]]
 action = "Load"
 text = '''/\ ~mem[m].loaded'''
-breaks = "NoChargeLost"
+breaks = "BoundaryIsS"
 
 [[guard]]
 action = "LoadWinners"
 text = '''/\ st # "open"'''
 breaks = "nothing"
 why = '''
-Loading the stored winners while the lease is open loads the winners of records at or below the stored progress, which a member skips anyway. Removed with Reap's check that the lease is draining, a member loads its winners while the lease is open and reaps then, below the snapshot of a heartbeat its owner issues after (ReapAtLastSnapshot). One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
+Loading the stored winners while the lease is open loads the winners of records at or below the stored progress, which a member skips anyway.
 '''
 
 [[guard]]
@@ -210,7 +272,7 @@ action = "LoadWinners"
 text = '''/\ mem[m].loaded'''
 breaks = "nothing"
 why = '''
-A member that has not loaded keeps none of the winners it loads now: Load replaces its whole memory, and every step that reads the winners asks that it has loaded.
+A member that has not loaded keeps none of the winners it loads now: Load replaces its whole memory, and every step that reads the winners asks that it has loaded. Removed with Reread's check that the member has loaded, a member that has not loaded can load the winners and re-read, again and again, and never load the lease: its work goes on without end and the lease never closes (DrainingLeaseCloses).
 '''
 
 [[guard]]
@@ -232,14 +294,14 @@ A member the lease moved from may go on working: that is what the commit version
 [[guard]]
 action = "ApplyRecord"
 text = '''/\ mem[m].loaded'''
-breaks = "NoChargeLost"
+breaks = "BoundaryIsS"
 
 [[guard]]
 action = "ApplyRecord"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-Every step this guard would let a member take after a gap can be taken before it: Gap changes only the flag, and nothing a member applies, skips or commits stops another member from meeting the same gap after. No new state is reached.
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it applies the next record in sequence. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -255,20 +317,25 @@ action = "ApplyRecord"
 text = '''/\ st = "open" \/ mem[m].wl'''
 breaks = "nothing"
 why = '''
-While a lease drains, the stored winners decide drain-log rows. An owner record above the stored progress has no stored winner: the owner issues one terminal per authorization, and reaps and drain rows are applied only past the fence, after every owner record. So applying it without the winners decides what applying it with them would.
+While a lease drains, the stored winners decide drain-log rows. An owner record above the stored progress has no stored winner: the owner issues one terminal per authorization, and reaps and drain rows are applied only once S is known, after every owner record at or below it. So applying it without the winners decides what applying it with them would.
 '''
 
 [[guard]]
 action = "ApplyRecord"
+text = '''/\ mem[m].S = NoS'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyRecord"
 text = '''/\ log[pos[m]].seq = mem[m].prog + 1'''
-breaks = "BookedIsWinners"
+breaks = "WinnerIsFirst"
 
 [[guard]]
 action = "SkipRecord"
 text = '''/\ m = holder'''
 breaks = "nothing"
 why = '''
-A member the lease moved from has its position and memory as they were, and skipping a record does not depend on holding the lease: the skip and the move can be taken in either order. No new state is reached.
+A member the lease moved from may skip what it meets: skipping moves only its own position, which Pub/Sub sets again when the lease comes back. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -276,7 +343,7 @@ action = "SkipRecord"
 text = '''/\ mem[m].loaded'''
 breaks = "nothing"
 why = '''
-A member that has not loaded has progress 0, and no record's sequence number is at or below 0, so SkipRecord's own check refuses. No new state is reached.
+A member that has not loaded has progress 0 and no S, and every owner record's sequence number is above 0, so SkipRecord's own checks refuse. No new state is reached.
 '''
 
 [[guard]]
@@ -284,7 +351,7 @@ action = "SkipRecord"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-Every step this guard would let a member take after a gap can be taken before it: Gap changes only the flag, and nothing a member applies, skips or commits stops another member from meeting the same gap after. No new state is reached.
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it skips a duplicate, which moves only its position. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -297,8 +364,13 @@ The member skips a record the log holds: without the guard, log[pos[m]] has no v
 
 [[guard]]
 action = "SkipRecord"
-text = '''/\ log[pos[m]].seq <= mem[m].prog'''
-breaks = "NoChargeLost"
+text = '''/\ log[pos[m]].k # "tick"'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS'''
+breaks = "BoundaryIsS"
 
 [[guard]]
 action = "Gap"
@@ -313,7 +385,7 @@ action = "Gap"
 text = '''/\ mem[m].loaded'''
 breaks = "nothing"
 why = '''
-A member that has not loaded has progress 0, so every record but the first looks like a gap to it, and it stops the lease for nothing. Stopping is safe: every claim holds of a lease that never closes. What it costs is the close, which no claim here asks for.
+A member that has not loaded has progress 0, so every record but the first looks like a gap to it, and it stops the lease for nothing. Stopping is safe: every claim holds of a lease a gap stopped, DrainingLeaseCloses included.
 '''
 
 [[guard]]
@@ -334,11 +406,53 @@ The member reads a record the log holds: without the guard, log[pos[m]] has no v
 
 [[guard]]
 action = "Gap"
+text = '''/\ mem[m].S = NoS'''
+breaks = "nothing"
+why = '''
+A member that knows S has applied every owner record up to it, and records the log stores after the fence tick come in the order issued, S + 1 first. In these bounds at most one lands after the tick (MaxLate is at most 1), so none is past the member's progress by more than one, and no new state is reached. With more, the member would take the second for a gap and stop the lease, which every claim allows.
+'''
+
+[[guard]]
+action = "Gap"
 text = '''/\ log[pos[m]].seq > mem[m].prog + 1'''
 breaks = "nothing"
 why = '''
-A gap declared where there is none stops the lease, which is safe: every claim holds of a lease that never closes. What it costs is the close, which no claim here asks for.
+A gap declared where there is none stops the lease, which is safe: every claim holds of a lease a gap stopped, DrainingLeaseCloses included.
 '''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ m = holder'''
+breaks = "nothing"
+why = '''
+A member the lease moved from may apply the tick: it takes S from the records it applied before it, in the log's order, as the holder does, and its commit of S is refused unless no member committed since it read the row. New states, which no claim rests on.
+'''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ mem[m].loaded'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ ~gap'''
+breaks = "nothing"
+why = '''
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it applies the fence tick, which takes S from the records it applied. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+'''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member applies the tick the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ log[pos[m]].k = "tick"'''
+breaks = "BoundaryIsS"
 
 [[guard]]
 action = "ApplyRow"
@@ -366,7 +480,7 @@ action = "ApplyRow"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-A gap stops a member at the record beyond it: no member can apply or skip that record, so no member's position reaches the end of the log, which this action also asks for. No new state is reached.
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it books a drain-log row, which a member does only once it knows S. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -379,13 +493,16 @@ Drain-log rows are appended only while the lease drains. A row applied again aft
 
 [[guard]]
 action = "ApplyRow"
-text = '''/\ Fenced'''
+text = '''/\ mem[m].S # NoS'''
 breaks = "WinnerIsFirst"
 
 [[guard]]
 action = "ApplyRow"
 text = '''/\ pos[m] = Len(log) + 1'''
-breaks = "WinnerIsFirst"
+breaks = "nothing"
+why = '''
+A member that knows S has applied every owner record up to it, so what is left in the log is above S, or a duplicate of one at or below it, and is skipped whenever the member gets to it. Booking a drain-log row before skipping them reaches new states, and decides what booking it after would.
+'''
 
 [[guard]]
 action = "ApplyRow"
@@ -400,7 +517,7 @@ action = "Reap"
 text = '''/\ m = holder'''
 breaks = "nothing"
 why = '''
-A reap is conditional on the commit version, so the member that reaps holds what is committed and has applied every record: which member it is does not matter.
+Reap changes only the drain log. A member the lease moved from reaps only with the commit version it read and every stored record applied: the member holding the lease, once it has loaded and applied the same records, shows the same snapshot and appends the same row. No new state is reached.
 '''
 
 [[guard]]
@@ -416,7 +533,7 @@ action = "Reap"
 text = '''/\ mem[m].wl'''
 breaks = "nothing"
 why = '''
-A hold the member shows open has no stored winner: the terminal that decided it also took it out of the holds the commit stored. And the reap's transaction reads the hold's drain-log rows. So a reap without the winners loaded reaps the holds it would reap with them; applying its row asks for the winners. Removed with Reap's check that the lease is draining, a member reaps while the lease is open, and a heartbeat its owner issues after leaves the reap below the hold's latest snapshot (ReapAtLastSnapshot). Removed with the check that the member shows the hold open, a member that loaded while the lease was open reaps a hold already decided, at 0 (ReapAtLastSnapshot). One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
+A hold the member shows open has no stored winner: the terminal that decided it also took it out of the holds the commit stored. And the reap's transaction reads the hold's drain-log rows. So a reap without the winners loaded reaps the holds it would reap with them; applying its row asks for the winners.
 '''
 
 [[guard]]
@@ -424,7 +541,7 @@ action = "Reap"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-A gap stops a member at the record beyond it: no member can apply or skip that record, so no member's position reaches the end of the log, which this action also asks for. No new state is reached.
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it reaps, which a member does only once it knows S. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -432,33 +549,33 @@ action = "Reap"
 text = '''/\ st = "draining"'''
 breaks = "nothing"
 why = '''
-Reap also asks for the winners, which are loaded only once the lease drains, and after the close the stored holds are all ended. No new state is reached. Removed with Reap's check of the winners, or with LoadWinners' check that the lease is not open, a member reaps while the lease is open, below the snapshot of a heartbeat its owner issues after (ReapAtLastSnapshot).
+Reap also asks for the winners, which are loaded only once the lease drains, and after the close the stored holds are all ended. No new state is reached.
 '''
 
 [[guard]]
 action = "Reap"
-text = '''/\ Fenced'''
+text = '''/\ mem[m].S # NoS'''
 breaks = "ReapAtLastSnapshot"
 
 [[guard]]
 action = "Reap"
 text = '''/\ pos[m] = Len(log) + 1'''
-breaks = "ReapAtLastSnapshot"
+breaks = "nothing"
+why = '''
+A member that knows S has applied every owner record up to it, so what is left in the log is above S, or a duplicate of one at or below it, and is skipped whenever the member gets to it. A reap before it skips them charges the snapshot it would charge after.
+'''
 
 [[guard]]
 action = "Reap"
-text = '''/\ mem[m].holds[a] # 0'''
-breaks = "nothing"
-why = '''
-A reap of a hold the member does not show open charges a snapshot of 0. Its authorization has no terminal in memory, and past the fence no owner record is still to come, so the reap row wins at 0, which every claim allows. Removed with Reap's check that the member has no winner for the hold, a member reaps a hold it has decided, at the 0 its decided holds show, below the hold's latest snapshot (ReapAtLastSnapshot). Removed with Reap's check of the winners, a member that loaded the lease while it was open does not know a decided hold's winner, and reaps it at 0 (ReapAtLastSnapshot).
-'''
+text = '''/\ mem[m].holds[a] # NoHold'''
+breaks = "ReapAtLastSnapshot"
 
 [[guard]]
 action = "Reap"
 text = '''/\ mem[m].win[a] = NoWin'''
 breaks = "nothing"
 why = '''
-A hold with a winner in the member's memory is not open in it: deciding a terminal takes the hold out of its holds, so the check that the hold is open refuses already. No new state is reached. Removed with that check, a member reaps a hold it has decided, at the 0 its decided holds show, below the hold's latest snapshot (ReapAtLastSnapshot). Removed with IssueHeartbeat's check that the hold has no terminal, a member that loaded the lease while it was open shows a decided hold open again from a later heartbeat, and reaps it at an older snapshot than its latest (ReapAtLastSnapshot).
+A hold with a winner in the member's memory is not open in it: deciding a terminal takes the hold out of its holds, so the check that the hold is open refuses already. No new state is reached.
 '''
 
 [[guard]]
@@ -480,7 +597,7 @@ action = "Commit"
 text = '''/\ mem[m].loaded'''
 breaks = "nothing"
 why = '''
-Only applying a record or a row makes a member dirty, and each asks that it has loaded the row; this action also asks that it is dirty. No new state is reached.
+Only applying a record, the fence tick or a row makes a member dirty, and each asks that it has loaded the row; this action also asks that it is dirty. No new state is reached.
 '''
 
 [[guard]]
@@ -496,7 +613,7 @@ action = "Commit"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-Every step this guard would let a member take after a gap can be taken before it: Gap changes only the flag, and nothing a member applies, skips or commits stops another member from meeting the same gap after. No new state is reached.
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it commits what it applied before the gap. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -505,28 +622,17 @@ text = '''/\ ver = mem[m].ver'''
 breaks = "BookedIsWinners"
 
 [[guard]]
-action = "CommitRefused"
+action = "Reread"
 text = '''/\ mem[m].loaded'''
 breaks = "nothing"
 why = '''
-Only applying a record or a row makes a member dirty, and each asks that it has loaded the row; this action also asks that it is dirty. No new state is reached.
+A member that has not loaded has a blank memory with version 0, and re-reading leaves it blank, with its positions at the start of what is not acknowledged and of the drain log. New states, which no claim rests on. Removed with LoadWinners' check that the member has loaded, a member that has not loaded can load the winners and re-read, again and again, and never load the lease (DrainingLeaseCloses).
 '''
 
 [[guard]]
-action = "CommitRefused"
-text = '''/\ mem[m].dirty'''
-breaks = "nothing"
-why = '''
-A member with nothing applied whose version is stale drops a memory it would have had to read again anyway.
-'''
-
-[[guard]]
-action = "CommitRefused"
+action = "Reread"
 text = '''/\ ver # mem[m].ver'''
-breaks = "nothing"
-why = '''
-A member that drops what it applied and reads the row again loses nothing: what it had not committed is not acknowledged, and Pub/Sub gives it again. One of four that a reap at a stale snapshot needs all removed: IssueHeartbeat's check that the hold has no terminal, LoadWinners' check that the lease is not open, Reap's check of the winners and CommitRefused's check of the version. Then a member applies a heartbeat sent after the terminal without knowing the winner, loads the winners while the lease is open and ignores the next heartbeat, and after a commit refused for nothing, a member that loaded while the lease was open reaps at the older snapshot stored (ReapAtLastSnapshot).
-'''
+breaks = "DrainingLeaseCloses"
 
 [[guard]]
 action = "Ack"
@@ -589,18 +695,21 @@ action = "Close"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-A gap stops a member at the record beyond it: no member can apply or skip that record, so no member's position reaches the end of the log, which this action also asks for. No new state is reached.
+The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it closes, which a member does only once it knows S. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
 '''
 
 [[guard]]
 action = "Close"
-text = '''/\ Fenced'''
+text = '''/\ mem[m].S # NoS'''
 breaks = "NoChargeLost"
 
 [[guard]]
 action = "Close"
 text = '''/\ pos[m] = Len(log) + 1'''
-breaks = "NoChargeLost"
+breaks = "nothing"
+why = '''
+A member that knows S has applied every owner record up to it, so what is left in the log is above S, or a duplicate of one at or below it, and is skipped whenever the member gets to it. Closing before skipping them leaves out nothing the close books.
+'''
 
 [[guard]]
 action = "Close"
@@ -614,11 +723,13 @@ breaks = "NoChargeLost"
 
 [[guard]]
 action = "Close"
-text = '''/\ \A a \in Auths : mem[m].holds[a] = 0'''
+text = '''/\ \A a \in Auths : mem[m].holds[a] = NoHold'''
 breaks = "NoChargeLost"
 
 [[guard]]
 action = "Close"
 text = '''/\ ver = mem[m].ver'''
-breaks = "NoChargeLost"
-cfg = "again"
+breaks = "nothing"
+why = '''
+Close asks that the member has nothing to commit. Its version is stale only if another member that read the same version committed since, and what that member committed it had applied after reading: records, the tick and rows, which this member also applies, from the same start, before it reaches the log's and the drain log's end, as Close asks. They change this member's memory as they changed the other's, so it has something to commit, and no member closes with a stale version. No new state is reached.
+'''
