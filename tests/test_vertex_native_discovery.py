@@ -12,6 +12,7 @@ from scripts.pricing import refresh, vertex_prices
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import google_vertex as vertex
 from tests import catalog_vehicles
+from trusted_router import provider_lifecycle
 
 MODEL = "google/gemini-3.8-flash"
 
@@ -268,7 +269,10 @@ def test_vertex_current_chat_manifest_routes_are_published() -> None:
     built = catalog_vehicles.registry_endpoints()
     for model_id, row in manifest.items():
         endpoint = built.get(f"{model_id}@google-vertex/prepaid")
-        if row.get("routable") is False:
+        retired = provider_lifecycle.provider_model_retired(
+            "google-vertex", model_id, row["upstream_id"]
+        )
+        if row.get("routable") is False or retired:
             assert endpoint is None, model_id
         else:
             assert endpoint is not None, model_id
