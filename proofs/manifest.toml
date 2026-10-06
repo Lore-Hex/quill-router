@@ -1,0 +1,666 @@
+# What each spec in proofs/ is held to. proofs/check_mutants.py reads this
+# file, and proofs/check.sh runs it after model-checking every spec.
+#
+# state     planned      the code is not written; no `code` path may exist
+#           implemented  every `code` and `tests` path must exist
+#           orphaned     the code was deleted; `retire_with` names the spec
+#                        that replaces this one, and the check fails once
+#                        that spec is here
+#
+# mutants   One replacement of `old` by `new` in the spec's text, and the one
+#           invariant (`violates`) or temporal property (`violates_property`)
+#           it must break. The mutated spec is checked against that claim
+#           alone. Every invariant and property in a spec's .cfg needs at
+#           least one mutant that breaks it: a claim nothing can break is not
+#           yet shown to say anything.
+#
+# survivors A replacement the spec says breaks nothing. It is checked against
+#           the spec's whole .cfg and must find no error.
+#
+# variants  <Spec>.<variant>.cfg is another instance of the same model, for a
+#           hazard the main instance cannot reach. A mutant or survivor runs
+#           against it with `cfg = "<variant>"`. A variant must check
+#           something, needs a mutant of its own, and may check only claims
+#           the main configuration checks or one of its own mutants breaks.
+#
+# guards    <Spec>.guards.toml lists every guard of every action and what
+#           breaks when it alone is removed, with a reason for each that
+#           breaks no claim. proofs/guard_sweep.py writes it, and
+#           `guard_sweep.py --verify` runs every row again (CI does, when
+#           proofs/ changes). An entry with no table says why:
+#           `unswept = "..."`.
+#
+# `old` must occur exactly once in the spec. Strings are TOML literals, so a
+# backslash is a backslash.
+#
+# The check of `code` and `tests` is existence only. It cannot tell an
+# orphaned spec's deleted path from one that never existed; `git log
+# --diff-filter=D -- <path>` can, and review runs it.
+
+[AutoRefillHandoff]
+state = "implemented"
+unswept = "written before the guard table; its mutants are its hand-run notes"
+code = [
+    "src/trusted_router/services/auto_refill.py",
+    "src/trusted_router/services/auto_refill_outbox_drain.py",
+    "src/trusted_router/storage_gcp_settle_outbox.py",
+]
+tests = ["tests/test_auto_refill.py"]
+
+[[AutoRefillHandoff.mutants]]
+name = "stripe-forgets-the-key"
+violates = "NoDoubleCharge"
+old = '''
+    /\ requestKey[e] \notin AssignedKeys(e)
+'''
+new = '''
+'''
+
+[[AutoRefillHandoff.mutants]]
+name = "a-key-per-path"
+violates = "NoDoubleCharge"
+old = '''
+InlineKey(e) == SettlementKey(e)
+'''
+new = '''
+InlineKey(e) == BucketKey(e, bucket[e])
+'''
+
+[[AutoRefillHandoff.mutants]]
+name = "finalize-without-attachment"
+violates = "NoSilentDrop"
+old = '''
+    /\ (site = "combined" \/ ~finalizeFailed[e])
+    /\ attachmentConfirmed[e]
+'''
+new = '''
+    /\ (site = "combined" \/ ~finalizeFailed[e])
+'''
+
+[[AutoRefillHandoff.mutants]]
+name = "no-exception-read-as-attached"
+violates = "NoSilentDrop"
+old = '''
+    /\ ~attachmentConfirmed[e]
+    /\ deliverySurface' = [deliverySurface EXCEPT ![e] = "none"]
+    /\ UNCHANGED <<
+        thresholdCrossed, finalized, deliveryCount, rowOrigin, rowState,
+        refillStatus, attachmentConfirmed, finalizeFailed, bucket,
+'''
+new = '''
+    /\ ~attachmentConfirmed[e]
+    /\ attachmentConfirmed' = [attachmentConfirmed EXCEPT ![e] = TRUE]
+    /\ UNCHANGED <<
+        thresholdCrossed, finalized, deliveryCount, rowOrigin, rowState,
+        refillStatus, deliverySurface, finalizeFailed, bucket,
+'''
+
+[[AutoRefillHandoff.mutants]]
+name = "charge-from-the-internal-surface"
+violates = "ChargeOnlyWhereCredentialed"
+old = '''
+    /\ site \in CredentialedSurfaces
+'''
+new = '''
+'''
+
+[[AutoRefillHandoff.mutants]]
+name = "suppression-never-expires"
+violates_property = "EventuallyCharged"
+old = '''
+    /\ suppression[e] = "fresh"
+    /\ ~refillDue[e]
+'''
+new = '''
+    /\ FALSE
+    /\ suppression[e] = "fresh"
+    /\ ~refillDue[e]
+'''
+
+[RegionalQuotaLease]
+# The pilot this modeled was deleted in #1418, with the test the spec's
+# header calls its shadow. LeaseLifecycle models the design that replaced it.
+state = "orphaned"
+retire_with = "LeaseLifecycle"
+code = [
+    "src/trusted_router/services/regional_quota_leases.py",
+    "tests/test_regional_quota_leases.py",
+]
+
+[SurfaceCutover]
+state = "implemented"
+unswept = "written before the guard table; its mutants are its hand-run notes"
+code = [
+    "scripts/deploy/public_surface.sh",
+    "scripts/deploy/internal_surface.sh",
+]
+tests = [
+    "tests/test_public_surface_deploy.py",
+    "tests/test_internal_surface_deploy.py",
+]
+
+[[SurfaceCutover.mutants]]
+name = "restore-only-the-failing-region"
+violates = "NoSplitFleet"
+old = '''
+    /\ phase = "recover"
+    /\ AllOld
+'''
+new = '''
+    /\ phase = "recover"
+    /\ (current \in Regions => serving[current] = "Old")
+'''
+
+[[SurfaceCutover.mutants]]
+name = "forget-a-recovery-still-needed"
+violates = "AlwaysRecoverable"
+old = '''
+    /\ previous[r] # NoRevision
+    /\ serving[r] = "Old"
+'''
+new = '''
+    /\ previous[r] # NoRevision
+'''
+
+[[SurfaceCutover.mutants]]
+name = "promote-without-smoke"
+violates = "NoTrafficWithoutSmoke"
+old = '''
+    /\ phase = "smoke"
+    /\ smoked[current]
+'''
+new = '''
+    /\ phase = "smoke"
+'''
+
+[[SurfaceCutover.mutants]]
+name = "clear-the-marker-with-ingress-open"
+violates = "IngressNeverStrandedOpen"
+old = '''
+    /\ phase = "post-promotion"
+    /\ ~ingressOpen[current]
+'''
+new = '''
+    /\ phase = "post-promotion"
+'''
+
+[[SurfaceCutover.mutants]]
+name = "recovery-cannot-restrict-ingress"
+violates_property = "EventuallyConsistent"
+old = '''
+    /\ ingressOpen[r]
+    /\ ingressOpen' = [ingressOpen EXCEPT ![r] = FALSE]
+'''
+new = '''
+    /\ FALSE
+    /\ ingressOpen[r]
+    /\ ingressOpen' = [ingressOpen EXCEPT ![r] = FALSE]
+'''
+
+[TerminalOrder]
+# docs/design/fast-admission-and-batched-settlement.md, sections 4.5 and 4.8.
+# Its shadow is a package of its own in the Go service, written in the spike
+# (section 8). Each planned spec names its own package, so they can become
+# implemented one at a time.
+state = "planned"
+code = ["fastpath/internal/terminalorder"]
+
+# Assumption A1 and the owner's cutoff: no acknowledged owner record falls
+# beyond the boundary.
+
+[[TerminalOrder.mutants]]
+name = "tick-before-deadline"
+violates = "AckedOwnerRecordWithinBoundary"
+old = '''
+    /\ lease = "draining"
+    /\ deadlinePassed
+    /\ tickAt' = delivered
+'''
+new = '''
+    /\ lease = "draining"
+    /\ tickAt' = delivered
+'''
+
+[[TerminalOrder.mutants]]
+name = "tick-before-deadline-loses-a-stream"
+violates = "NoStreamClosedOver"
+old = '''
+    /\ lease = "draining"
+    /\ deadlinePassed
+    /\ tickAt' = delivered
+'''
+new = '''
+    /\ lease = "draining"
+    /\ tickAt' = delivered
+'''
+
+[[TerminalOrder.mutants]]
+name = "ack-after-deadline"
+violates = "AckedOwnerRecordWithinBoundary"
+old = '''
+    /\ ownerUp
+    /\ ~(deadlinePassed /\ IssuedBeforeCutoff(acked + 1))
+'''
+new = '''
+    /\ ownerUp
+'''
+
+[[TerminalOrder.mutants]]
+name = "owner-issues-after-cutoff"
+violates = "AckedOwnerRecordWithinBoundary"
+old = '''
+OwnerActive == ownerUp /\ ~ownerCutoff
+'''
+new = '''
+OwnerActive == ownerUp
+'''
+
+# Assumption A2: the archive a rebuild reads is complete up to the tick.
+
+[[TerminalOrder.mutants]]
+name = "incomplete-archive"
+violates = "AckedOwnerRecordWithinBoundary"
+old = '''
+    /\ S' \in tickAt..delivered
+'''
+new = '''
+    /\ S' \in 0..delivered
+'''
+
+# The other half of A2: an archive is a copy of the log, so a rebuild books
+# nothing the log has not received. The boundary's bound is primed, so no
+# row of the guard table removes it, and only the order of the counts
+# notices.
+[[TerminalOrder.mutants]]
+name = "an-archive-ahead-of-the-log"
+violates = "CountsInOrder"
+old = '''
+    /\ S' \in tickAt..delivered
+'''
+new = '''
+    /\ S' \in tickAt..Len(outbox)
+'''
+
+# The boundary S: stored once, after every record up to it is booked, and
+# the drain log is read only after it.
+
+[[TerminalOrder.mutants]]
+name = "no-boundary"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ ownerApplied < delivered
+    /\ ownerApplied < tickAt
+'''
+new = '''
+    /\ ownerApplied < delivered
+'''
+
+# Section 4.8: once S is stored, an owner record above it is ignored. The
+# auditor goes on publishing ticks, so without the rule a later tick would
+# let it apply a record beyond the boundary it stored.
+[[TerminalOrder.mutants]]
+name = "apply-a-record-above-the-boundary"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ S = NoS
+    /\ ownerApplied < delivered
+'''
+new = '''
+    /\ ownerApplied < delivered
+'''
+
+# The auditor books only what the log has received. Removing the guard
+# outright only leaves outbox[i] undefined, which hides what it holds up, so
+# this keeps the index defined and widens the guard to every record issued.
+[[TerminalOrder.mutants]]
+name = "book-a-record-the-log-has-not-received"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ S = NoS
+    /\ ownerApplied < delivered
+'''
+new = '''
+    /\ S = NoS
+    /\ ownerApplied < Len(outbox)
+'''
+
+# The owner answers only once its publish is stored. The same widening, for
+# Ack: it breaks the order of the counts at once, and the boundary claim a
+# few steps later.
+[[TerminalOrder.mutants]]
+name = "ack-ahead-of-the-log"
+violates = "CountsInOrder"
+old = '''
+    /\ acked < delivered
+    /\ ownerUp
+'''
+new = '''
+    /\ acked < Len(outbox)
+    /\ ownerUp
+'''
+
+[[TerminalOrder.mutants]]
+name = "answer-before-the-publish-is-stored"
+violates = "AckedOwnerRecordWithinBoundary"
+old = '''
+    /\ acked < delivered
+    /\ ownerUp
+'''
+new = '''
+    /\ acked < Len(outbox)
+    /\ ownerUp
+'''
+
+[[TerminalOrder.mutants]]
+name = "boundary-before-booking"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ S = NoS
+    /\ ownerApplied = tickAt
+    /\ S' = tickAt
+'''
+new = '''
+    /\ S = NoS
+    /\ S' = tickAt
+'''
+
+[[TerminalOrder.mutants]]
+name = "boundary-moved"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ tickAt # NoTick
+    /\ S = NoS
+    /\ S' \in tickAt..delivered
+'''
+new = '''
+    /\ tickAt # NoTick
+    /\ S' \in tickAt..delivered
+'''
+
+[[TerminalOrder.mutants]]
+name = "drain-before-boundary"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ S # NoS
+    /\ drainApplied < Len(drain)
+'''
+new = '''
+    /\ drainApplied < Len(drain)
+'''
+
+[[TerminalOrder.mutants]]
+name = "drain-row-overwrites-a-winner"
+violates = "WinnerIsFirstInOrder"
+old = '''
+               IF winner[a] = NoWinner
+                   THEN [winner EXCEPT ![a] = [src |-> "drain", idx |-> j]]
+'''
+new = '''
+               IF TRUE
+                   THEN [winner EXCEPT ![a] = [src |-> "drain", idx |-> j]]
+'''
+
+# Adoption takes the drain log's first row for its authorization.
+
+[[TerminalOrder.mutants]]
+name = "adopt-a-later-row"
+violates = "AdoptionKeepsTheWinner"
+old = '''
+    /\ LET j == Min(DrainRows(a))
+       IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
+'''
+new = '''
+    /\ LET j == CHOOSE x \in DrainRows(a) : \A y \in DrainRows(a) : x >= y
+       IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
+'''
+
+# Close against appends.
+
+[[TerminalOrder.mutants]]
+name = "close-without-reading-drain"
+violates = "NoAckedDrainRowLost"
+old = '''
+    /\ S # NoS
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+'''
+new = '''
+    /\ S # NoS
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+'''
+
+[[TerminalOrder.mutants]]
+name = "append-after-close"
+violates = "NoAckedDrainRowLost"
+old = '''
+    /\ lease # "closed"
+    /\ Settles(a)
+'''
+new = '''
+    /\ Settles(a)
+'''
+
+[[TerminalOrder.mutants]]
+name = "append-after-close-leaves-a-row"
+violates = "ClosedLeaseHasNoUnappliedRow"
+old = '''
+    /\ lease # "closed"
+    /\ Settles(a)
+'''
+new = '''
+    /\ Settles(a)
+'''
+
+[[TerminalOrder.mutants]]
+name = "close-before-the-boundary"
+violates = "NoStreamClosedOver"
+old = '''
+    /\ lease = "draining"
+    /\ S # NoS
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+'''
+new = '''
+    /\ lease = "draining"
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+'''
+
+[[TerminalOrder.mutants]]
+name = "close-over-a-stream"
+violates = "NoStreamClosedOver"
+old = '''
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
+new = '''
+    /\ drainApplied = Len(drain)
+    /\ lease' = "closed"
+'''
+
+# The release of a stream's hold before its first heartbeat (section 4.5).
+
+[[TerminalOrder.mutants]]
+name = "release-without-durable-check"
+violates = "DurableHeartbeatNeverReleased"
+old = '''
+    /\ allowance[a]
+    /\ ~HbIssued(a)
+'''
+new = '''
+    /\ allowance[a]
+    /\ ~HbAcked(a)
+'''
+
+[[TerminalOrder.mutants]]
+name = "release-on-an-undelivered-heartbeat"
+violates = "DurableHeartbeatNeverReleased"
+old = '''
+    /\ allowance[a]
+    /\ ~HbIssued(a)
+'''
+new = '''
+    /\ allowance[a]
+    /\ ~\E i \in 1..delivered : outbox[i].auth = a /\ outbox[i].kind = "hb"
+'''
+
+[[TerminalOrder.mutants]]
+name = "heartbeat-for-a-decided-hold"
+violates = "DurableHeartbeatNeverReleased"
+old = '''
+    /\ a \in Streams
+    /\ ownerWinner[a] = 0
+    /\ ~HbIssued(a)
+'''
+new = '''
+    /\ a \in Streams
+    /\ ~HbIssued(a)
+'''
+
+[[TerminalOrder.mutants]]
+name = "release-without-the-allowance"
+violates = "NoLiveRequestReleased"
+old = '''
+    /\ a \in Declared
+    /\ allowance[a]
+    /\ ~HbIssued(a)
+'''
+new = '''
+    /\ a \in Declared
+    /\ ~HbIssued(a)
+'''
+
+# The main configuration has no stream whose boot did not declare the
+# stream-open heartbeat. The variant has only that one, so this mutant is
+# killed by the stream the declaration exists to protect, not by a request
+# that does not stream.
+[[TerminalOrder.mutants]]
+name = "release-an-undeclared-stream"
+cfg = "undeclared"
+violates = "NoLiveRequestReleased"
+old = '''
+    /\ OwnerActive
+    /\ a \in Declared
+    /\ allowance[a]
+'''
+new = '''
+    /\ OwnerActive
+    /\ a \in Streams
+    /\ allowance[a]
+'''
+
+[[TerminalOrder.mutants]]
+name = "release-any-hold"
+violates = "NoLiveRequestReleased"
+old = '''
+    /\ OwnerActive
+    /\ a \in Declared
+    /\ allowance[a]
+'''
+new = '''
+    /\ OwnerActive
+    /\ allowance[a]
+'''
+
+# Assumption A3: a declared boot's stream-open heartbeat has resolved by the
+# time the allowance elapses.
+
+[[TerminalOrder.mutants]]
+name = "allowance-before-heartbeat-resolves"
+violates = "NoLiveRequestReleased"
+old = '''
+    /\ ~allowance[a]
+    /\ a \in Declared => (enc[a] # "open" \/ HbIssued(a))
+'''
+new = '''
+    /\ ~allowance[a]
+'''
+
+# The owner publishes only the terminal that wins, so a settle it
+# acknowledged is the one that is booked.
+
+[[TerminalOrder.mutants]]
+name = "owner-publishes-a-loser"
+violates = "AckedOwnerTerminalWins"
+old = '''
+    /\ Settles(a)
+    /\ ownerWinner[a] = 0
+    /\ outbox' = Append(outbox, Rec(a, "settle", 0))
+'''
+new = '''
+    /\ Settles(a)
+    /\ outbox' = Append(outbox, Rec(a, "settle", 0))
+'''
+
+# The same deletion also passes TypeOK's bound on the owner's records, which
+# is all TypeOK says about it.
+[[TerminalOrder.mutants]]
+name = "owner-publishes-a-loser-past-the-bound"
+violates = "TypeOK"
+old = '''
+    /\ Settles(a)
+    /\ ownerWinner[a] = 0
+    /\ outbox' = Append(outbox, Rec(a, "settle", 0))
+'''
+new = '''
+    /\ Settles(a)
+    /\ outbox' = Append(outbox, Rec(a, "settle", 0))
+'''
+
+[[TerminalOrder.mutants]]
+name = "boundary-before-booking-loses-an-acked-settle"
+violates = "AckedOwnerTerminalWins"
+old = '''
+    /\ S = NoS
+    /\ ownerApplied = tickAt
+    /\ S' = tickAt
+'''
+new = '''
+    /\ S = NoS
+    /\ S' = tickAt
+'''
+
+# Assumption A4: an enclave that delivered nothing sends no settle.
+
+[[TerminalOrder.mutants]]
+name = "a-settle-for-nothing-delivered"
+violates = "ReleasedHoldOwesNothing"
+old = '''
+Settles(a) == enc[a] = "delivered"
+'''
+new = '''
+Settles(a) == TRUE
+'''
+
+# Liveness: a lease whose stream never settles closes only because the
+# auditor reaps it.
+
+[[TerminalOrder.mutants]]
+name = "auditor-never-reaps"
+violates_property = "EventuallyClosed"
+old = '''
+    /\ HbDurable(a)
+    /\ winner[a] = NoWinner
+    /\ drain' = Append(drain, [auth |-> a, kind |-> "reap"])
+'''
+new = '''
+    /\ FALSE
+    /\ HbDurable(a)
+    /\ winner[a] = NoWinner
+    /\ drain' = Append(drain, [auth |-> a, kind |-> "reap"])
+'''
+
+[[TerminalOrder.survivors]]
+name = "reap-without-reading-rows"
+old = '''
+    /\ S # NoS
+    /\ drainApplied = Len(drain)
+    /\ HbDurable(a)
+'''
+new = '''
+    /\ S # NoS
+    /\ ~\E j \in 1..Len(drain) : drain[j].auth = a /\ drain[j].kind = "reap"
+    /\ HbDurable(a)
+'''
+

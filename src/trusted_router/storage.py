@@ -3242,6 +3242,7 @@ class InMemoryStore:
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
+        created_at: str | None = None,
     ) -> GatewayAuthorization:
         from trusted_router.storage_legacy_trust import BillingPausedError
         with self._lock:
@@ -3311,6 +3312,7 @@ class InMemoryStore:
                 expires_at=expires_at,
                 deferred_cap_microdollars=deferred_cap_microdollars,
                 invocation_nonce=invocation_nonce,
+                created_at=created_at,
             )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:

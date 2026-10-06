@@ -1224,6 +1224,11 @@ def _authorize_gateway_sync_impl(
             )
     effective_route_preferences = route_preferences
 
+    # The authorization's one clock reading. The estimate, the pricing
+    # snapshot and the stored created_at all use it, and settlement prices a
+    # request without a snapshot at created_at. Two readings would hold a
+    # request at one tariff and bill it at another whenever a scheduled price
+    # change fell between them.
     pricing_effective_at = dt.datetime.now(dt.UTC)
     if user_model is not None:
         if is_image_request:
@@ -1668,6 +1673,7 @@ def _authorize_gateway_sync_impl(
                         else None
                     ),
                     invocation_nonce=body.invocation_nonce,
+                    created_at=pricing_effective_at,
                 )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
@@ -1934,6 +1940,7 @@ def _authorize_gateway_sync_impl(
             ),
             invocation_nonce=body.invocation_nonce,
             expected_pause_epoch=expected_pause_epoch,
+            created_at=pricing_effective_at.isoformat().replace("+00:00", "Z"),
         )
         try:
             with gateway_phase("store_ms", after="post_commit_ms"):

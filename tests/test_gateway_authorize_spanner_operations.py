@@ -954,8 +954,14 @@ def test_folded_pause_gateway_error_bytes_and_rollback(
 
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 100.0)
     folded = storage_gcp_authorize.authorize_atomic
+
+    def parent_with_its_own_clock(*args: Any, created_at: Any = None, **kwargs: Any) -> Any:
+        # The frozen parent predates the caller's instant: it stamps its own
+        # reading, which no error byte or rollback below depends on.
+        return parent(*args, **kwargs)
+
     errors = []
-    for implementation in (parent, folded):
+    for implementation in (parent_with_its_own_clock, folded):
         store, database, key = _seed_typed_gateway_store()
         store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
         row = database.typed[CREDIT_BALANCE_TABLE][(key.workspace_id, 0)]

@@ -6589,6 +6589,7 @@ class PostgresStore:
         deferred_cap_microdollars: int | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
+        created_at: str | None = None,
     ) -> GatewayAuthorization:
         """Record an authorization, deduplicating on the idempotency key.
 
@@ -6650,6 +6651,10 @@ class PostgresStore:
             expires_at=expires_at,
             invocation_nonce=invocation_nonce,
         )
+        if created_at is not None:
+            # The caller's instant, which priced the request; settlement
+            # prices at it.
+            authorization.created_at = created_at
 
         from trusted_router.storage_legacy_trust import (
             BillingPausedError,
