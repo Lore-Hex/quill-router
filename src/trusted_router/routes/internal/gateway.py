@@ -793,7 +793,7 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
-    video_allowed_providers = _video_allowed_providers_header(request, body.route_type)
+    video_allowed_providers = _video_allowed_providers_header(request, body.route_type, validate_catalog=False)
     if body.video_resolution is not None and (
         body.route_type != "videos" or body.video_resolution not in {"480p", "720p", "1080p"}
     ):
@@ -869,18 +869,7 @@ def _authorize_gateway_sync_impl(
     )
     if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
-    body_dict = body.model_dump(exclude_none=True)
-    # The invocation nonce distinguishes enclave invocations, not logical
-    # idempotency. A fresh invocation with the same public idempotency key must
-    # replay the original nonce rather than mismatch the stored fingerprint.
-    body_dict.pop("invocation_nonce", None)
-    # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
-    # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
-    if not body.additional_cost_reservation_microdollars:
-        body_dict.pop("additional_cost_reservation_microdollars", None)
-    if not body.inference_receipt:
-        # Keep pre-receipt idempotency fingerprints stable for ordinary calls.
-        body_dict.pop("inference_receipt", None)
+    body_dict, attribution = _gateway_authorize_body(body)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)
@@ -891,115 +880,12 @@ def _authorize_gateway_sync_impl(
         # requests intentionally expose a smaller public schema than chat and
         # cannot carry metadata.trustedrouter_synthetic themselves.
         effective_tags = {**effective_tags, "purpose": "synthetic_monitoring"}
-    try:
-        attribution = validate_request_attribution(
-            user=body.user,
-            session_id=body.session_id,
-            trace=body.trace,
-            app=body.app,
-            http_referer=body.http_referer,
-            app_categories=body.app_categories,
-        )
-    except InvalidAttribution as exc:
-        raise api_error(400, str(exc), ErrorType.INVALID_REQUEST_METADATA) from exc
-    for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
-        body_dict.pop(key, None)
-    body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
-    # Every guard below keys on the model id as a STRING, and routing rewrites
-    # that string before it resolves a model (variant suffix, alias, dated
-    # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
-    # guard and routed as the model anyway: no decide-only rule, no host chain,
-    # and a response naming the backing model. A pinned model is accepted under
-    # its exact id only. Stated as "routing resolved it from something else",
-    # not as a list of spellings: the first version of this guard listed the
-    # variant suffixes and missed the dated one.
-    for raw_model_id in (requested_model_id, *(body.models or [])):
-        catalog_id = canonical_model_id(raw_model_id)
-        if catalog_id == raw_model_id:
-            continue
-        catalog_model = MODELS.get(catalog_id)
-        if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or catalog_id == POLYPHEMUS_MODEL_ID or (
-            catalog_model is not None and catalog_model.supports_decide
-        ):
-            raise api_error(
-                400,
-                f"{catalog_id} must be requested by its exact id, "
-                "without a routing variant or dated suffix",
-                ErrorType.BAD_REQUEST,
-            )
-    if body.models and any(
-        canonical_model_id(model_id) == POLYPHEMUS_MODEL_ID
-        for model_id in (requested_model_id, *body.models)
-    ):
-        raise api_error(400, "Polyphemus cannot be used with models fallback arrays", ErrorType.BAD_REQUEST)
-    private_proxy_ids = {
-        model_id
-        for model_id in (requested_model_id, *(body.models or []))
-        if model_id in PRIVATE_PROXY_MODEL_TARGETS
-    }
-    if private_proxy_ids and body.models:
-        raise api_error(
-            400,
-            "Private proxy models cannot be combined with models fallback arrays",
-            ErrorType.BAD_REQUEST,
-        )
-    if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
-        raise api_error(
-            400,
-            "Custom models cannot be used with models fallback arrays in v1",
-            ErrorType.BAD_REQUEST,
-        )
     custom_model = None
     user_model = None
-    if is_custom_model_id(requested_model_id):
-        normalized = normalize_custom_model_id(requested_model_id)
-        custom_model = STORE.get_custom_model(normalized)
-        if custom_model is None or not custom_model.enabled:
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        body_dict["model"] = custom_model.base_model_id
-        body_dict.pop("models", None)
-        body_dict["custom_model_id"] = custom_model.id
-        body_dict["custom_model_revision"] = custom_model.revision
-        _force_custom_model_credit_routes(body_dict)
-    elif is_user_provided_model_id(requested_model_id):
-        normalized = normalize_user_provided_model_id(requested_model_id)
-        user_model = STORE.get_user_model(normalized)
-        if (
-            user_model is None
-            or not user_model.enabled
-            or user_model.status != "active"
-            # Serving is gated until settle/refund exist for these
-            # authorizations; an unreleasable hold is worse than a 404.
-            or not settings.user_models_dispatch_enabled
-        ):
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
-            # The billing-path 5xx alert counts this 503; without a line the
-            # request log alone cannot tell it from storage contention.
-            logger.warning(
-                "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
-                "user_model_id=%s kind=%s",
-                workspace.id,
-                getattr(request.state, "request_id", None),
-                _log_value(user_model.id),
-                _log_value(user_model.kind),
-            )
-            raise api_error(
-                503,
-                f"User-provided {user_model.kind} model {user_model.id} is off the clock",
-                ErrorType.MODEL_OFF_THE_CLOCK,
-            )
-        # Same fingerprint discipline as prompt wrappers: a same-key retry
-        # after a material edit must 409, not replay stale frozen prices.
-        body_dict.pop("models", None)
-        body_dict["custom_model_id"] = user_model.id
-        body_dict["custom_model_revision"] = user_model.revision
-        _force_custom_model_credit_routes(
-            body_dict,
-            error_message="User-provided models do not support BYOK routes",
-        )
+    route_model_id = str(body_dict.get("model") or body.model)
+    native_retention_allowed = False
     presented_idempotency_key = _gateway_idempotency_key(request, body)
     request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
@@ -1008,33 +894,131 @@ def _authorize_gateway_sync_impl(
         route_type=body.route_type,
         idempotency_key=request_idempotency_key,
     )
-    if partner_mode is not None:
-        _force_partner_credit_routes(body_dict)
-    native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
-    # Embedding-only models can't go through the chat resolver (it
-    # rejects supports_chat=False). Route them to the embeddings
-    # resolver so the attested enclave can authorize + bill an
-    # embeddings call exactly like a chat one.
-    route_model_id = str(body_dict.get("model") or body.model)
-    if route_model_id == POLYPHEMUS_MODEL_ID:
-        if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE or custom_model is not None:
+    def prepare_live_routing() -> None:
+        nonlocal custom_model, user_model, route_model_id, native_retention_allowed
+        # Every guard below keys on the model id as a STRING, and routing rewrites
+        # that string before it resolves a model (variant suffix, alias, dated
+        # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
+        # guard and routed as the model anyway: no decide-only rule, no host chain,
+        # and a response naming the backing model. A pinned model is accepted under
+        # its exact id only. Stated as "routing resolved it from something else",
+        # not as a list of spellings: the first version of this guard listed the
+        # variant suffixes and missed the dated one.
+        for raw_model_id in (requested_model_id, *(body.models or [])):
+            catalog_id = canonical_model_id(raw_model_id)
+            if catalog_id == raw_model_id:
+                continue
+            catalog_model = MODELS.get(catalog_id)
+            if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or catalog_id == POLYPHEMUS_MODEL_ID or (
+                catalog_model is not None and catalog_model.supports_decide
+            ):
+                raise api_error(
+                    400,
+                    f"{catalog_id} must be requested by its exact id, "
+                    "without a routing variant or dated suffix",
+                    ErrorType.BAD_REQUEST,
+                )
+        if body.models and any(
+            canonical_model_id(model_id) == POLYPHEMUS_MODEL_ID
+            for model_id in (requested_model_id, *body.models)
+        ):
+            raise api_error(400, "Polyphemus cannot be used with models fallback arrays", ErrorType.BAD_REQUEST)
+        private_proxy_ids = {
+            model_id
+            for model_id in (requested_model_id, *(body.models or []))
+            if model_id in PRIVATE_PROXY_MODEL_TARGETS
+        }
+        if private_proxy_ids and body.models:
             raise api_error(
-                400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
+                400,
+                "Private proxy models cannot be combined with models fallback arrays",
+                ErrorType.BAD_REQUEST,
             )
-        provider_options = body_dict.get("provider") or {}
-        if isinstance(provider_options, dict) and provider_options.get("data_collection") == "deny":
-            raise api_error(400, "Polyphemus does not support no-retention requests", ErrorType.BAD_REQUEST)
-    elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
-        raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
-    if body.additional_cost_reservation_microdollars and (
-        _is_web_search_restricted_model(route_model_id)
-        or _is_web_search_restricted_provider(body_dict.get("provider"))
-    ):
-        raise api_error(
-            400,
-            "web_search is not available for this privacy tier",
-            ErrorType.BAD_REQUEST,
-        )
+        if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
+            raise api_error(
+                400,
+                "Custom models cannot be used with models fallback arrays in v1",
+                ErrorType.BAD_REQUEST,
+            )
+        custom_model = None
+        user_model = None
+        if is_custom_model_id(requested_model_id):
+            normalized = normalize_custom_model_id(requested_model_id)
+            custom_model = STORE.get_custom_model(normalized)
+            if custom_model is None or not custom_model.enabled:
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            body_dict["model"] = custom_model.base_model_id
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = custom_model.id
+            body_dict["custom_model_revision"] = custom_model.revision
+            _force_custom_model_credit_routes(body_dict)
+        elif is_user_provided_model_id(requested_model_id):
+            normalized = normalize_user_provided_model_id(requested_model_id)
+            user_model = STORE.get_user_model(normalized)
+            if (
+                user_model is None
+                or not user_model.enabled
+                or user_model.status != "active"
+                # Serving is gated until settle/refund exist for these
+                # authorizations; an unreleasable hold is worse than a 404.
+                or not settings.user_models_dispatch_enabled
+            ):
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
+                # The billing-path 5xx alert counts this 503; without a line the
+                # request log alone cannot tell it from storage contention.
+                logger.warning(
+                    "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
+                    "user_model_id=%s kind=%s",
+                    workspace.id,
+                    getattr(request.state, "request_id", None),
+                    _log_value(user_model.id),
+                    _log_value(user_model.kind),
+                )
+                raise api_error(
+                    503,
+                    f"User-provided {user_model.kind} model {user_model.id} is off the clock",
+                    ErrorType.MODEL_OFF_THE_CLOCK,
+                )
+            # Same fingerprint discipline as prompt wrappers: a same-key retry
+            # after a material edit must 409, not replay stale frozen prices.
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = user_model.id
+            body_dict["custom_model_revision"] = user_model.revision
+            _force_custom_model_credit_routes(
+                body_dict,
+                error_message="User-provided models do not support BYOK routes",
+            )
+        if partner_mode is not None:
+            _force_partner_credit_routes(body_dict)
+        native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
+        # Embedding-only models can't go through the chat resolver (it
+        # rejects supports_chat=False). Route them to the embeddings
+        # resolver so the attested enclave can authorize + bill an
+        # embeddings call exactly like a chat one.
+        route_model_id = str(body_dict.get("model") or body.model)
+        if route_model_id == POLYPHEMUS_MODEL_ID:
+            if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE or custom_model is not None:
+                raise api_error(
+                    400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
+                )
+            provider_options = body_dict.get("provider") or {}
+            if isinstance(provider_options, dict) and provider_options.get("data_collection") == "deny":
+                raise api_error(400, "Polyphemus does not support no-retention requests", ErrorType.BAD_REQUEST)
+        elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
+            raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
+        if body.additional_cost_reservation_microdollars and (
+            _is_web_search_restricted_model(route_model_id)
+            or _is_web_search_restricted_provider(body_dict.get("provider"))
+        ):
+            raise api_error(
+                400,
+                "web_search is not available for this privacy tier",
+                ErrorType.BAD_REQUEST,
+            )
+
+    if body.route_type != "videos":
+        prepare_live_routing()
     region = choose_region(settings, body.region or None)
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
@@ -1165,6 +1149,10 @@ def _authorize_gateway_sync_impl(
         replay = _lookup_replay()
         if replay is not None:
             return replay
+
+    video_allowed_providers = _video_allowed_providers_header(request, body.route_type)
+    if is_video_request:
+        prepare_live_routing()
 
     normalized_routing = normalize_routing_inputs(
         body_dict,
@@ -1491,7 +1479,7 @@ def _authorize_gateway_sync_impl(
         requested_model_id=requested_model_id,
         endpoint=endpoint,
     )
-    if _typed_store is None and not early_video_replay:
+    if _typed_store is None:
         replay = _lookup_replay(endpoint_candidates)
         if replay is not None:
             return replay
@@ -2424,7 +2412,9 @@ def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) ->
     return key
 
 
-def _video_allowed_providers_header(request: Request, route_type: str | None) -> frozenset[str] | None:
+def _video_allowed_providers_header(
+    request: Request, route_type: str | None, *, validate_catalog: bool = True,
+) -> frozenset[str] | None:
     """Parse enclave-derived execution constraints without changing request identity."""
     values = request.headers.getlist("X-Quill-Video-Allowed-Providers")
     if not values:
@@ -2436,10 +2426,48 @@ def _video_allowed_providers_header(request: Request, route_type: str | None) ->
         not 1 <= len(providers) <= 64
         or len(set(providers)) != len(providers)
         or any(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", provider) is None
-               or provider not in PROVIDERS for provider in providers)
+               or (validate_catalog and provider not in PROVIDERS) for provider in providers)
     ):
         raise api_error(400, "Invalid X-Quill-Video-Allowed-Providers header", ErrorType.BAD_REQUEST)
     return frozenset(providers)
+
+
+def _gateway_authorize_body(body: GatewayAuthorizeRequest) -> tuple[dict[str, Any], Any]:
+    """Canonical request metadata shared by authorization and replay lookup."""
+    body_dict = body.model_dump(exclude_none=True)
+    # The invocation nonce distinguishes enclave invocations, not logical
+    # idempotency. A fresh invocation with the same public idempotency key must
+    # replay the original nonce rather than mismatch the stored fingerprint.
+    body_dict.pop("invocation_nonce", None)
+    # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
+    # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
+    if not body.additional_cost_reservation_microdollars:
+        body_dict.pop("additional_cost_reservation_microdollars", None)
+    if not body.inference_receipt:
+        # Keep pre-receipt idempotency fingerprints stable for ordinary calls.
+        body_dict.pop("inference_receipt", None)
+    try:
+        attribution = validate_request_attribution(
+            user=body.user,
+            session_id=body.session_id,
+            trace=body.trace,
+            app=body.app,
+            http_referer=body.http_referer,
+            app_categories=body.app_categories,
+        )
+    except InvalidAttribution as exc:
+        raise api_error(400, str(exc), ErrorType.INVALID_REQUEST_METADATA) from exc
+    for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
+        body_dict.pop(key, None)
+    body_dict.update(attribution.body_fields())
+    try:
+        if body.tags is not None:
+            body_dict["tags"] = validate_tags(body.tags)
+        else:
+            body_dict.pop("tags", None)
+    except InvalidTags as exc:
+        raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+    return body_dict, attribution
 
 
 def _gateway_authorize_fingerprint(
@@ -2470,7 +2498,7 @@ def _gateway_authorize_fingerprint(
         # execution and can change when eligible providers change on rollout.
         for dynamic_key in (
             "video_resolution", "max_tokens", "max_output_tokens", "max_completion_tokens",
-            "additional_cost_reservation_microdollars",
+            "additional_cost_reservation_microdollars", "region",
         ):
             material.pop(dynamic_key, None)
     if _is_native_batch_idempotency_key(idempotency_key):
@@ -2520,7 +2548,7 @@ def _video_cross_region_replay_matches(
     original = {**body, "region": authorization.region}
     omitted_region = dict(body)
     omitted_region.pop("region", None)
-    originals = (original, omitted_region)
+    originals = (body, original, omitted_region)
     if any(matches(candidate) or matches(candidate, legacy=True) for candidate in originals):
         return True
 
@@ -2706,7 +2734,7 @@ def _gateway_authorize_response(
             "upstream_model": upstream_model,
             "endpoint_id": endpoint.id,
             "provider": endpoint.provider,
-            "provider_name": PROVIDERS[endpoint.provider].name,
+            "provider_name": (PROVIDERS[endpoint.provider].name if endpoint.provider in PROVIDERS else endpoint.provider),
             "inference_location": inference_location_metadata(endpoint.provider, model.id),
             **provider_payload,
             "requested_model": requested_model_id,
@@ -4693,7 +4721,7 @@ def _gateway_candidate_payload(
         "model": model.id,
         "upstream_model": endpoint.upstream_id or model.id,
         "provider": endpoint.provider,
-        "provider_name": PROVIDERS[endpoint.provider].name,
+        "provider_name": (PROVIDERS[endpoint.provider].name if endpoint.provider in PROVIDERS else endpoint.provider),
         "inference_location": inference_location_metadata(endpoint.provider, model.id),
         **_gateway_provider_route_payload(endpoint),
         "usage_type": usage_type.value,

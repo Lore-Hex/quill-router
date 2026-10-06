@@ -145,6 +145,7 @@ def _replay_lookup(
     from trusted_router.routes.internal.gateway import (
         _api_key_for_gateway_lookup,
         _assert_gateway_key_scope,
+        _gateway_authorize_body,
         _video_cross_region_replay_matches,
     )
     from trusted_router.storage import typed_billing_store
@@ -170,15 +171,8 @@ def _replay_lookup(
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
-    # Same normalization as authorize before its logical fingerprint. Dynamic
-    # quotes and invocation identity have never been part of video identity.
-    original = body.model_dump(exclude_none=True)
+    original, _ = _gateway_authorize_body(body)
     original.pop("additional_cost_reservation_microdollars", None)
-    original.pop("invocation_nonce", None)
-    if not body.inference_receipt:
-        original.pop("inference_receipt", None)
-    if body.tags is None:
-        original.pop("tags", None)
     typed_store = typed_billing_store(STORE)
     try:
         authorization = (

@@ -125,7 +125,7 @@ def test_resolver_filters_before_first_choice():
 
 
 @pytest.mark.parametrize("first_header", [None, "byteplus"])
-@pytest.mark.parametrize("drift", ["capability", "removed"])
+@pytest.mark.parametrize("drift", ["capability", "removed", "provider_removed"])
 def test_header_rollout_replay_before_live_filters(client, inference_key, monkeypatch, first_header, drift):
     body = payload(inference_key, provider={"only": ["byteplus"]})
     first = client.post(URL, json=body, headers={} if first_header is None else {HEADER: first_header})
@@ -140,6 +140,8 @@ def test_header_rollout_replay_before_live_filters(client, inference_key, monkey
             if endpoint.model_id == MODEL:
                 monkeypatch.delitem(MODEL_ENDPOINTS, endpoint_id)
         monkeypatch.delitem(MODELS, MODEL)
+        if drift == "provider_removed":
+            monkeypatch.delitem(PROVIDERS, "byteplus")
     no_reservation(monkeypatch)
     for headers in ({HEADER: "venice"}, {HEADER: "fal,byteplus"}, {}):
         replay = client.post(URL, json={**body, "region": "europe-west4"}, headers=headers)
@@ -176,13 +178,15 @@ def test_legacy_hash_is_unchanged_and_resolution_is_video_only():
     assert fingerprint({"route_type": "images"}) != fingerprint({"route_type": "images", "video_resolution": "720p"})
 
 
+@pytest.mark.parametrize("record_mode", ["typed", "legacy"])
 @pytest.mark.parametrize("changed_identity", [False, True])
-def test_concurrent_first_requests_keep_one_frozen_hold(monkeypatch, changed_identity):
+def test_concurrent_first_requests_keep_one_frozen_hold(monkeypatch, changed_identity, record_mode):
     store, database, key = _seed_typed_gateway_store()
     body = GatewayAuthorizeRequest(
         api_key_hash=key.hash, model=MODEL, route_type="videos", max_output_tokens=300_000,
         estimated_input_tokens=0, idempotency_key="race", request_fingerprint="a" * 64,
     )
+    store.request_record_write_mode = record_mode
     settings = Settings(environment="test")
     barrier = Barrier(2)
     transaction_lock = Lock()

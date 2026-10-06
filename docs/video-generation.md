@@ -151,29 +151,69 @@ requested resolution. The enclave must require this acknowledgment before
 dispatching 1080p to BytePlus. The router change can deploy first: requests
 without `video_resolution` retain their existing pricing, snapshots, and response
 shape, and receive no acknowledgment. Idempotent retries return the frozen
-acknowledgment. For `route_type: videos`, the authorization fingerprint excludes
-all derived execution fields: `video_resolution`, `max_tokens`,
-`max_output_tokens`, `max_completion_tokens` (the accepted output-limit alias),
-and `additional_cost_reservation_microdollars`. The enclave's
-`request_fingerprint` binds the logical request, including resolution and
-duration; the router continues binding the model and original caller provider
-policy within the workspace, API-key, and idempotency-key scope. A changed
-logical fingerprint, model, or caller policy conflicts with HTTP 409 in that
-scope. Cross-region retries retain the existing region compatibility rule;
-caller region restrictions inside provider policy remain bound. Other route
-types retain their existing fingerprint rules.
+acknowledgment. For keyed `route_type: videos` requests carrying the enclave's
+`request_fingerprint`, the compatibility guarantee is:
 
-Existing stored hashes are not rewritten. Replay also compares legacy hashes
-using the frozen snapshot's original token limit and resolution, with the
-historical alias-presence combinations and omitted-resolution form (including
-the earlier resolution-only exclusion). Pre-snapshot fixed-quote jobs use the
-historical token-limit sentinel of 1. Every comparison still requires an exact
-hash match with the retry's logical identity and original caller policy. Thus
-a fixed-quote Venice authorization with token limits of 1 can replay after an
-enclave rollout sends 400000 and `video_resolution: "1080p"` because BytePlus
-became eligible. Replay returns the original authorization, snapshot, and hold,
-without a new reservation or invented tariff acknowledgment. Settlement uses
-only the authorization's frozen tariff, even after a catalog price refresh.
+1. An identical retry replays at every supported writer version, including
+   main-era authorizations. The unmodified incoming fingerprint body is always
+   compared with main's hash, after the same request metadata normalization
+   used by authorization (including attribution and tags).
+2. A retry differing only in enclave-derived execution fields replays for
+   authorizations made by this version. Those fields are `video_resolution`;
+   `max_tokens`, `max_output_tokens`, and `max_completion_tokens`;
+   `additional_cost_reservation_microdollars`; and supplied versus chosen
+   execution `region`. This version excludes these fields from the video hash.
+   For main-era authorizations, compatibility is limited to these exact
+   reconstruction forms: region exactly as supplied on the retry (including
+   explicit `""` or an unconfigured value), the stored execution region, or
+   omission; each token alias independently absent, equal to the frozen
+   snapshot's `output_token_limit`, or equal to the incoming alias value;
+   resolution absent or equal to the frozen `video_tariff_resolution`; and
+   the quote omitted, as main already did for video fingerprints. A job without
+   a snapshot uses the historical fixed-quote token sentinel `1`. These forms
+   also cover the earlier resolution-only exclusion. Every reconstructed body
+   must match the stored hash exactly; no stored hashes are rewritten.
+3. Any other difference within the same workspace, API key and idempotency-key
+   scope returns HTTP 409 and moves no money. The enclave fingerprint binds
+   content and options, including prompt, seed, duration and caller resolution.
+   The router additionally binds model, original caller provider policy and all
+   other normalized identity fields. Caller region restrictions inside provider
+   policy remain bound. Different caller scopes never recover each other's
+   authorizations; they have separate idempotency namespaces.
+
+Non-goals: this is not arbitrary historical-body recovery or policy equivalence.
+For example, a main-era hash containing a previously supplied unconfigured
+region cannot be recovered after changing that region if the original value is
+neither supplied on retry nor the stored execution region. Historical redundant
+alias values not recoverable from the incoming values or frozen limit, and a
+historical resolution missing from both the incoming identical body and frozen
+snapshot, are not guessed. Changing `provider.only`, provider ordering,
+`estimated_input_tokens`, tags or attribution is not an execution-only change;
+changing the enclave fingerprint also conflicts. Other route types retain their
+existing fingerprint rules. Replay neither creates a missing video job nor
+provides fresh dispatch authority.
+
+Concurrency non-goal: on legacy stores, the window between the later replay
+lookup and `create_gateway_authorization` remains non-atomic. Main already has
+this window for every route type; closing it is outside this change. The replay
+and no-additional-hold guarantees above apply when the winner commits before
+that later lookup, including during the loser's routing. Typed (Spanner) storage
+arbitrates concurrent admission atomically. Legacy admission retains main's
+key-limit hold, credit hold, and authorization creation with its existing error
+handling and separate store transactions.
+
+For example, a fixed-quote Venice authorization with token limits of `1` can
+replay after the enclave sends `400000` and `video_resolution: "1080p"` because
+BytePlus became eligible. Replay returns the winner's original authorization,
+snapshot, route and hold without additional escrow or an invented tariff
+acknowledgment when the winner is visible to either replay lookup. Settlement
+uses only the frozen tariff, even after catalog changes or removal of the frozen
+provider.
+
+Operational precondition: the enclave changes introducing derived values,
+Lore-Hex/quill-cloud-proxy#465 and #468, deploy **only after this router version
+is live**. This bounded reconstruction is not a substitute for that rollout
+order.
 
 The authenticated enclave may send `X-Quill-Video-Allowed-Providers` on this
 endpoint for video requests only. It supplies derived capability constraints
@@ -181,10 +221,12 @@ endpoint for video requests only. It supplies derived capability constraints
 The router accepts one header value of at most 4096 characters, containing
 1–64 distinct, comma-separated, known canonical provider IDs matching
 `[a-z0-9]+(?:-[a-z0-9]+)*`. Spaces and tabs around IDs are allowed; empty
-members, duplicates, aliases, unknown IDs, repeated header fields, and use on
-another route type return HTTP 400 (`bad_request`). Absence preserves existing
-routing. The header stays outside the authorization body and persisted logical
-identity; the original caller `provider` policy remains fingerprinted.
+members, duplicates, repeated header fields, and use on another route type
+return HTTP 400 (`bad_request`). Catalog membership (including rejection of
+aliases and unknown IDs) is checked only after a replay miss: removing a
+provider must not prevent recovery of a frozen authorization. Absence preserves
+existing routing. The header stays outside the authorization body and persisted
+logical identity; the original caller `provider` policy remains fingerprinted.
 
 Every keyed video request carrying `request_fingerprint` looks up and validates
 the existing authorization before live capability, tariff, or provider filtering.
@@ -194,8 +236,9 @@ grants no fresh dispatch authority and cannot recreate a missing job. On a miss,
 the header intersects the effective caller policy (`only`, `ignore`, and nonempty
 `order` when fallbacks are disabled) before route selection. All selected,
 fallback, and frozen routes obey that intersection; no eligible route returns a
-4xx before any funds are reserved. Transactional duplicate checks still arbitrate
-concurrent first requests.
+4xx before any funds are reserved. After an early miss, every legacy-store
+request still performs the later replay lookup before either hold. Typed
+(Spanner) storage retains its atomic duplicate arbitration.
 
 An invalid resolution or its use on any other route returns HTTP 400
 (`bad_request`). If resolution filtering removes every candidate, authorization
