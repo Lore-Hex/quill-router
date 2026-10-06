@@ -1,0 +1,3959 @@
+[
+  {
+    "name": "duplicate_json_keys",
+    "rule": "Parser rejects duplicate keys at every object depth",
+    "cases": [
+      "duplicate_json_root",
+      "duplicate_json_candidate",
+      "duplicate_json_rate",
+      "duplicate_json_tier"
+    ],
+    "old": "if key in result:",
+    "new": "if False:",
+    "positive_cases": [
+      "raw_json_valid"
+    ],
+    "wire_boundary": {
+      "enforcement": "Runtime Frozen JSON wrap validator requires the identity-checked capability in a private per-invocation Pydantic context copied from the caller dict. Nested DTOs share it; copied execution contexts, child tasks and unrelated adapters do not. The capability is revoked in finally.",
+      "regressions": "tests/test_billing_snapshot_boundary.py",
+      "mutations": [
+        {
+          "name": "wire_check_disabled",
+          "old": "if info.mode == \"json\" and not _authorized_wire(info.context):",
+          "new": "if False:"
+        },
+        {
+          "name": "wire_mode_check_removed",
+          "old": "if info.mode == \"json\" and not _authorized_wire(info.context):",
+          "new": "if not _authorized_wire(info.context):"
+        },
+        {
+          "name": "wire_context_never_set",
+          "old": "self[_WIRE_KEY] = self.capability",
+          "new": "self[_WIRE_KEY] = object()"
+        },
+        {
+          "name": "wire_context_leaked",
+          "old": "wire_context.capability.active = False",
+          "new": "pass"
+        },
+        {
+          "name": "wire_capability_ambient",
+          "old": "_authorized_wire(info.context)",
+          "new": "_AMBIENT_WIRE.get()",
+          "replacements": [
+            {
+              "old": "_WIRE_KEY = object()",
+              "new": "from contextvars import ContextVar\n\n_WIRE_KEY = object()\n_AMBIENT_WIRE = ContextVar(\"_AMBIENT_WIRE\", default=False)"
+            },
+            {
+              "old": "wire_context = _WireContext(context)",
+              "new": "wire_context = _WireContext(context)\n        ambient_token = _AMBIENT_WIRE.set(True)"
+            },
+            {
+              "old": "wire_context.capability.active = False",
+              "new": "_AMBIENT_WIRE.reset(ambient_token)"
+            }
+          ]
+        },
+        {
+          "name": "strict_false_forwarded",
+          "old": "if strict is False:",
+          "new": "if False:"
+        },
+        {
+          "name": "extra_forwarded",
+          "old": "if extra is not None:",
+          "new": "if False:"
+        }
+      ],
+      "options": "model_validate_json and model_validate reject strict=False and every non-None extra override with unsupported_option. Strict None/True retain field constraints and JSON semantics. Alias/name switches cannot bypass constraints on these alias-free DTOs. JSON context must be dict/None and is shallow-copied, never mutated; arbitrary Python context is passed through."
+    }
+  },
+  {
+    "name": "extra_frozen",
+    "rule": "Frozen: extra=\"forbid\"",
+    "cases": [
+      "extra_frozen"
+    ],
+    "old": "extra=\"forbid\"",
+    "new": "extra=\"ignore\"",
+    "scope": "Frozen"
+  },
+  {
+    "name": "extra_eligibility",
+    "rule": "Eligibility: extra=\"forbid\"",
+    "cases": [
+      "extra_eligibility"
+    ],
+    "old": "class Eligibility(Frozen):",
+    "new": "class Eligibility(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_rates",
+    "rule": "Rates: extra=\"forbid\"",
+    "cases": [
+      "extra_rates"
+    ],
+    "old": "class Rates(Frozen):",
+    "new": "class Rates(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_tier",
+    "rule": "Tier: extra=\"forbid\"",
+    "cases": [
+      "extra_tier"
+    ],
+    "old": "class Tier(Frozen):",
+    "new": "class Tier(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_candidate",
+    "rule": "Candidate: extra=\"forbid\"",
+    "cases": [
+      "extra_candidate"
+    ],
+    "old": "class Candidate(Frozen):",
+    "new": "class Candidate(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_billingsnapshot",
+    "rule": "BillingSnapshot: extra=\"forbid\"",
+    "cases": [
+      "extra_billingsnapshot"
+    ],
+    "old": "class BillingSnapshot(Frozen):",
+    "new": "class BillingSnapshot(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_rawusage",
+    "rule": "RawUsage: extra=\"forbid\"",
+    "cases": [
+      "extra_rawusage"
+    ],
+    "old": "class RawUsage(Frozen):",
+    "new": "class RawUsage(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_normalizedusage",
+    "rule": "NormalizedUsage: extra=\"forbid\"",
+    "cases": [
+      "extra_normalizedusage"
+    ],
+    "old": "class NormalizedUsage(Frozen):",
+    "new": "class NormalizedUsage(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_evaluation",
+    "rule": "Evaluation: extra=\"forbid\"",
+    "cases": [
+      "extra_evaluation"
+    ],
+    "old": "class Evaluation(Frozen):",
+    "new": "class Evaluation(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_terminalenvelope",
+    "rule": "TerminalEnvelope: extra=\"forbid\"",
+    "cases": [
+      "extra_terminalenvelope"
+    ],
+    "old": "class TerminalEnvelope(Frozen):",
+    "new": "class TerminalEnvelope(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "extra_acceptanceoutcome",
+    "rule": "AcceptanceOutcome: extra=\"forbid\"",
+    "cases": [
+      "extra_acceptanceoutcome"
+    ],
+    "old": "class AcceptanceOutcome(Frozen):",
+    "new": "class AcceptanceOutcome(Frozen):\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "uint_negative",
+    "rule": "UInt: lower bound 0",
+    "cases": [
+      "uint_negative_negative"
+    ],
+    "old": "UInt = Annotated[int, Field(strict=True, ge=0, le=MAX_INT)]",
+    "new": "UInt = Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "positive_cases": [
+      "uint_negative_valid_0",
+      "uint_negative_valid_1"
+    ]
+  },
+  {
+    "name": "uint_overflow",
+    "rule": "UInt: upper bound signed int64",
+    "cases": [
+      "uint_overflow_overflow"
+    ],
+    "old": "UInt = Annotated[int, Field(strict=True, ge=0, le=MAX_INT)]",
+    "new": "UInt = Annotated[int, Field(strict=True, ge=0)]",
+    "positive_cases": [
+      "uint_overflow_valid_0",
+      "uint_overflow_valid_1"
+    ]
+  },
+  {
+    "name": "uint_float",
+    "rule": "UInt: strict integer",
+    "cases": [
+      "uint_float_float",
+      "uint_float_string",
+      "uint_float_bool"
+    ],
+    "old": "UInt = Annotated[int, Field(strict=True, ge=0, le=MAX_INT)]",
+    "new": "UInt = Annotated[int, Field(strict=False, ge=0, le=MAX_INT)]",
+    "positive_cases": [
+      "uint_float_valid_0",
+      "uint_float_valid_1"
+    ]
+  },
+  {
+    "name": "identity_empty",
+    "rule": "Identity: minimum length 1",
+    "cases": [
+      "identity_empty_empty"
+    ],
+    "old": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "new": "Identity = Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "positive_cases": [
+      "identity_empty_valid_0",
+      "identity_empty_valid_1"
+    ]
+  },
+  {
+    "name": "identity_long",
+    "rule": "Identity: maximum length 512",
+    "cases": [
+      "identity_long_long"
+    ],
+    "old": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "new": "Identity = Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "positive_cases": [
+      "identity_long_valid_0",
+      "identity_long_valid_1"
+    ]
+  },
+  {
+    "name": "identity_unicode",
+    "rule": "Identity: ASCII alphabet",
+    "cases": [
+      "identity_unicode_unicode",
+      "identity_unicode_space",
+      "identity_unicode_newline",
+      "identity_disallowed_punctuation",
+      "identity_disallowed_quote",
+      "identity_disallowed_angle"
+    ],
+    "old": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "new": "Identity = Annotated[str, Field(min_length=1, max_length=512)]",
+    "positive_cases": [
+      "identity_unicode_valid_0",
+      "identity_unicode_valid_1",
+      "identity_unicode_valid_2"
+    ]
+  },
+  {
+    "name": "digest_short",
+    "rule": "Digest: 64 lowercase hex digits",
+    "cases": [
+      "digest_short_short",
+      "digest_short_long",
+      "digest_short_uppercase",
+      "digest_short_nonhex",
+      "digest_short_newline"
+    ],
+    "old": "Digest = Annotated[str, Field(pattern=r\"^[0-9a-f]{64}$\")]",
+    "new": "Digest = str",
+    "positive_cases": [
+      "digest_short_valid_0"
+    ]
+  },
+  {
+    "name": "type_uint",
+    "rule": "UInt: base type / allowed values",
+    "cases": [
+      "type_uint"
+    ],
+    "old": "UInt = Annotated[int, Field(strict=True, ge=0, le=MAX_INT)]",
+    "new": "UInt = Annotated[int, Field(strict=True, ge=0, le=MAX_INT)] | None"
+  },
+  {
+    "name": "type_identity",
+    "rule": "Identity: base type / allowed values",
+    "cases": [
+      "type_identity"
+    ],
+    "old": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "new": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")] | int"
+  },
+  {
+    "name": "type_digest",
+    "rule": "Digest: base type / allowed values",
+    "cases": [
+      "type_digest"
+    ],
+    "old": "Digest = Annotated[str, Field(pattern=r\"^[0-9a-f]{64}$\")]",
+    "new": "Digest = Annotated[str, Field(pattern=r\"^[0-9a-f]{64}$\")] | int"
+  },
+  {
+    "name": "type_settlementmode",
+    "rule": "SettlementMode: base type / allowed values",
+    "cases": [
+      "type_settlementmode"
+    ],
+    "old": "SettlementMode = Literal[\"sync\", \"async\"]",
+    "new": "SettlementMode = str"
+  },
+  {
+    "name": "eligibility_typed_strict_bool",
+    "rule": "Eligibility.typed: strict boolean",
+    "cases": [
+      "eligibility_typed_int",
+      "eligibility_typed_string"
+    ],
+    "old": "    typed: Annotated[bool, Field(strict=True)] = True",
+    "new": "    typed: Annotated[bool, Field(strict=False)] = True",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_streamed_strict_bool",
+    "rule": "Eligibility.streamed: strict boolean",
+    "cases": [
+      "eligibility_streamed_int",
+      "eligibility_streamed_string"
+    ],
+    "old": "    streamed: Annotated[bool, Field(strict=True)] = False",
+    "new": "    streamed: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_app_markup_strict",
+    "rule": "Eligibility.app_markup: binds strict UInt",
+    "cases": [
+      "eligibility_app_markup_float",
+      "eligibility_app_markup_string",
+      "eligibility_app_markup_bool"
+    ],
+    "old": "    app_markup: UInt = 0",
+    "new": "    app_markup: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_custom_markup_strict",
+    "rule": "Eligibility.custom_markup: binds strict UInt",
+    "cases": [
+      "eligibility_custom_markup_float",
+      "eligibility_custom_markup_string",
+      "eligibility_custom_markup_bool"
+    ],
+    "old": "    custom_markup: UInt = 0",
+    "new": "    custom_markup: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_receipt_fee_strict",
+    "rule": "Eligibility.receipt_fee: binds strict UInt",
+    "cases": [
+      "eligibility_receipt_fee_float",
+      "eligibility_receipt_fee_string",
+      "eligibility_receipt_fee_bool"
+    ],
+    "old": "    receipt_fee: UInt = 0",
+    "new": "    receipt_fee: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_request_fee_strict",
+    "rule": "Eligibility.request_fee: binds strict UInt",
+    "cases": [
+      "eligibility_request_fee_float",
+      "eligibility_request_fee_string",
+      "eligibility_request_fee_bool"
+    ],
+    "old": "    request_fee: UInt = 0",
+    "new": "    request_fee: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_custom_model_strict_bool",
+    "rule": "Eligibility.custom_model: strict boolean",
+    "cases": [
+      "eligibility_custom_model_int",
+      "eligibility_custom_model_string"
+    ],
+    "old": "    custom_model: Annotated[bool, Field(strict=True)] = False",
+    "new": "    custom_model: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_user_model_strict_bool",
+    "rule": "Eligibility.user_model: strict boolean",
+    "cases": [
+      "eligibility_user_model_int",
+      "eligibility_user_model_string"
+    ],
+    "old": "    user_model: Annotated[bool, Field(strict=True)] = False",
+    "new": "    user_model: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_tool_cost_strict_bool",
+    "rule": "Eligibility.tool_cost: strict boolean",
+    "cases": [
+      "eligibility_tool_cost_int",
+      "eligibility_tool_cost_string"
+    ],
+    "old": "    tool_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    tool_cost: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_search_cost_strict_bool",
+    "rule": "Eligibility.search_cost: strict boolean",
+    "cases": [
+      "eligibility_search_cost_int",
+      "eligibility_search_cost_string"
+    ],
+    "old": "    search_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    search_cost: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_image_cost_strict_bool",
+    "rule": "Eligibility.image_cost: strict boolean",
+    "cases": [
+      "eligibility_image_cost_int",
+      "eligibility_image_cost_string"
+    ],
+    "old": "    image_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    image_cost: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_video_cost_strict_bool",
+    "rule": "Eligibility.video_cost: strict boolean",
+    "cases": [
+      "eligibility_video_cost_int",
+      "eligibility_video_cost_string"
+    ],
+    "old": "    video_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    video_cost: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_partner_strict_bool",
+    "rule": "Eligibility.partner: strict boolean",
+    "cases": [
+      "eligibility_partner_int",
+      "eligibility_partner_string"
+    ],
+    "old": "    partner: Annotated[bool, Field(strict=True)] = False",
+    "new": "    partner: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_liberty_strict_bool",
+    "rule": "Eligibility.liberty: strict boolean",
+    "cases": [
+      "eligibility_liberty_int",
+      "eligibility_liberty_string"
+    ],
+    "old": "    liberty: Annotated[bool, Field(strict=True)] = False",
+    "new": "    liberty: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_native_batch_strict_bool",
+    "rule": "Eligibility.native_batch: strict boolean",
+    "cases": [
+      "eligibility_native_batch_int",
+      "eligibility_native_batch_string"
+    ],
+    "old": "    native_batch: Annotated[bool, Field(strict=True)] = False",
+    "new": "    native_batch: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_fusion_strict_bool",
+    "rule": "Eligibility.fusion: strict boolean",
+    "cases": [
+      "eligibility_fusion_int",
+      "eligibility_fusion_string"
+    ],
+    "old": "    fusion: Annotated[bool, Field(strict=True)] = False",
+    "new": "    fusion: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_polyphemus_strict_bool",
+    "rule": "Eligibility.polyphemus: strict boolean",
+    "cases": [
+      "eligibility_polyphemus_int",
+      "eligibility_polyphemus_string"
+    ],
+    "old": "    polyphemus: Annotated[bool, Field(strict=True)] = False",
+    "new": "    polyphemus: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_private_tier_basis_strict_bool",
+    "rule": "Eligibility.private_tier_basis: strict boolean",
+    "cases": [
+      "eligibility_private_tier_basis_int",
+      "eligibility_private_tier_basis_string"
+    ],
+    "old": "    private_tier_basis: Annotated[bool, Field(strict=True)] = False",
+    "new": "    private_tier_basis: Annotated[bool, Field(strict=False)] = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "rates_input_micro_per_million_strict",
+    "rule": "Rates.input_micro_per_million: binds strict UInt",
+    "cases": [
+      "rates_input_micro_per_million_float",
+      "rates_input_micro_per_million_string",
+      "rates_input_micro_per_million_bool"
+    ],
+    "old": "    input_micro_per_million: UInt",
+    "new": "    input_micro_per_million: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cached_input_micro_per_million_strict",
+    "rule": "Rates.cached_input_micro_per_million: binds strict UInt",
+    "cases": [
+      "rates_cached_input_micro_per_million_float",
+      "rates_cached_input_micro_per_million_string",
+      "rates_cached_input_micro_per_million_bool"
+    ],
+    "old": "    cached_input_micro_per_million: UInt",
+    "new": "    cached_input_micro_per_million: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cache_creation_micro_per_million_strict",
+    "rule": "Rates.cache_creation_micro_per_million: binds strict UInt",
+    "cases": [
+      "rates_cache_creation_micro_per_million_float",
+      "rates_cache_creation_micro_per_million_string",
+      "rates_cache_creation_micro_per_million_bool"
+    ],
+    "old": "    cache_creation_micro_per_million: UInt",
+    "new": "    cache_creation_micro_per_million: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_output_micro_per_million_strict",
+    "rule": "Rates.output_micro_per_million: binds strict UInt",
+    "cases": [
+      "rates_output_micro_per_million_float",
+      "rates_output_micro_per_million_string",
+      "rates_output_micro_per_million_bool"
+    ],
+    "old": "    output_micro_per_million: UInt",
+    "new": "    output_micro_per_million: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "tier_max_prompt_tokens_strict",
+    "rule": "Tier.max_prompt_tokens: binds strict UInt",
+    "cases": [
+      "tier_max_prompt_tokens_float",
+      "tier_max_prompt_tokens_string",
+      "tier_max_prompt_tokens_bool"
+    ],
+    "old": "    max_prompt_tokens: UInt | None",
+    "new": "    max_prompt_tokens: Annotated[int, Field(ge=0, le=MAX_INT)] | None",
+    "scope": "Tier"
+  },
+  {
+    "name": "candidate_endpoint_id_identity",
+    "rule": "Candidate.endpoint_id: binds Identity",
+    "cases": [
+      "candidate_endpoint_id_ascii",
+      "candidate_endpoint_id_identity_punctuation"
+    ],
+    "old": "    endpoint_id: Identity",
+    "new": "    endpoint_id: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_provider_literal",
+    "rule": "Candidate.provider: Literal[\"openai\", \"anthropic\"]",
+    "cases": [
+      "candidate_provider_literal"
+    ],
+    "old": "    provider: Literal[\"openai\", \"anthropic\"]",
+    "new": "    provider: str",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_model_id_identity",
+    "rule": "Candidate.model_id: binds Identity",
+    "cases": [
+      "candidate_model_id_ascii",
+      "candidate_model_id_identity_punctuation"
+    ],
+    "old": "    model_id: Identity",
+    "new": "    model_id: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_usage_type_literal",
+    "rule": "Candidate.usage_type: Literal[\"Credits\"]",
+    "cases": [
+      "candidate_usage_type_literal"
+    ],
+    "old": "    usage_type: Literal[\"Credits\"]",
+    "new": "    usage_type: str",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_price_history_version_literal",
+    "rule": "Candidate.price_history_version: Literal[1]",
+    "cases": [
+      "candidate_price_history_version_literal"
+    ],
+    "old": "    price_history_version: Literal[1]",
+    "new": "    price_history_version: int",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_request_fee_micro_strict",
+    "rule": "Candidate.request_fee_micro: binds strict UInt",
+    "cases": [
+      "candidate_request_fee_micro_float",
+      "candidate_request_fee_micro_string",
+      "candidate_request_fee_micro_bool"
+    ],
+    "old": "    request_fee_micro: UInt",
+    "new": "    request_fee_micro: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_rounding_literal",
+    "rule": "Candidate.rounding: Literal[\"half_up_per_million\"]",
+    "cases": [
+      "candidate_rounding_literal"
+    ],
+    "old": "    rounding: Literal[\"half_up_per_million\"]",
+    "new": "    rounding: str",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_output_convention_literal",
+    "rule": "Candidate.output_convention: Literal[\"includes_reasoning\"]",
+    "cases": [
+      "candidate_output_convention_literal"
+    ],
+    "old": "    output_convention: Literal[\"includes_reasoning\"]",
+    "new": "    output_convention: str",
+    "scope": "Candidate"
+  },
+  {
+    "name": "billingsnapshot_v_literal",
+    "rule": "BillingSnapshot.v: Literal[1]",
+    "cases": [
+      "billingsnapshot_v_literal"
+    ],
+    "old": "    v: Literal[1]",
+    "new": "    v: int",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_kind_literal",
+    "rule": "BillingSnapshot.kind: Literal[\"credits_endpoint\"]",
+    "cases": [
+      "billingsnapshot_kind_literal"
+    ],
+    "old": "    kind: Literal[\"credits_endpoint\"]",
+    "new": "    kind: str",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_minimum_charge_literal",
+    "rule": "BillingSnapshot.minimum_charge: Literal[\"one_micro_if_positive\"]",
+    "cases": [
+      "billingsnapshot_minimum_charge_literal"
+    ],
+    "old": "    minimum_charge: Literal[\"one_micro_if_positive\"]",
+    "new": "    minimum_charge: str",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_charge_cap_literal",
+    "rule": "BillingSnapshot.charge_cap: None",
+    "cases": [
+      "billingsnapshot_charge_cap_literal"
+    ],
+    "old": "    charge_cap: None",
+    "new": "    charge_cap: int | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_basis_literal",
+    "rule": "BillingSnapshot.tier_basis: Literal[\"total_prompt\"]",
+    "cases": [
+      "billingsnapshot_tier_basis_literal"
+    ],
+    "old": "    tier_basis: Literal[\"total_prompt\"]",
+    "new": "    tier_basis: str",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_boundary_literal",
+    "rule": "BillingSnapshot.tier_boundary: Literal[\"inclusive\"]",
+    "cases": [
+      "billingsnapshot_tier_boundary_literal"
+    ],
+    "old": "    tier_boundary: Literal[\"inclusive\"]",
+    "new": "    tier_boundary: str",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_fallback_literal",
+    "rule": "BillingSnapshot.tier_fallback: Literal[\"last_tier\"]",
+    "cases": [
+      "billingsnapshot_tier_fallback_literal"
+    ],
+    "old": "    tier_fallback: Literal[\"last_tier\"]",
+    "new": "    tier_fallback: str",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "rawusage_input_tokens_strict",
+    "rule": "RawUsage.input_tokens: binds strict UInt",
+    "cases": [
+      "rawusage_input_tokens_float",
+      "rawusage_input_tokens_string",
+      "rawusage_input_tokens_bool"
+    ],
+    "old": "    input_tokens: UInt",
+    "new": "    input_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_output_tokens_strict",
+    "rule": "RawUsage.output_tokens: binds strict UInt",
+    "cases": [
+      "rawusage_output_tokens_float",
+      "rawusage_output_tokens_string",
+      "rawusage_output_tokens_bool"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_read_tokens_strict",
+    "rule": "RawUsage.cache_read_tokens: binds strict UInt",
+    "cases": [
+      "rawusage_cache_read_tokens_float",
+      "rawusage_cache_read_tokens_string",
+      "rawusage_cache_read_tokens_bool"
+    ],
+    "old": "    cache_read_tokens: UInt = 0",
+    "new": "    cache_read_tokens: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_creation_tokens_strict",
+    "rule": "RawUsage.cache_creation_tokens: binds strict UInt",
+    "cases": [
+      "rawusage_cache_creation_tokens_float",
+      "rawusage_cache_creation_tokens_string",
+      "rawusage_cache_creation_tokens_bool"
+    ],
+    "old": "    cache_creation_tokens: UInt = 0",
+    "new": "    cache_creation_tokens: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_reasoning_tokens_strict",
+    "rule": "RawUsage.reasoning_tokens: binds strict UInt",
+    "cases": [
+      "rawusage_reasoning_tokens_float",
+      "rawusage_reasoning_tokens_string",
+      "rawusage_reasoning_tokens_bool"
+    ],
+    "old": "    reasoning_tokens: UInt = 0",
+    "new": "    reasoning_tokens: Annotated[int, Field(ge=0, le=MAX_INT)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "normalizedusage_uncached_input_tokens_strict",
+    "rule": "NormalizedUsage.uncached_input_tokens: binds strict UInt",
+    "cases": [
+      "normalizedusage_uncached_input_tokens_float",
+      "normalizedusage_uncached_input_tokens_string",
+      "normalizedusage_uncached_input_tokens_bool"
+    ],
+    "old": "    uncached_input_tokens: UInt",
+    "new": "    uncached_input_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_total_prompt_tokens_strict",
+    "rule": "NormalizedUsage.total_prompt_tokens: binds strict UInt",
+    "cases": [
+      "normalizedusage_total_prompt_tokens_float",
+      "normalizedusage_total_prompt_tokens_string",
+      "normalizedusage_total_prompt_tokens_bool"
+    ],
+    "old": "    total_prompt_tokens: UInt",
+    "new": "    total_prompt_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_output_tokens_strict",
+    "rule": "NormalizedUsage.output_tokens: binds strict UInt",
+    "cases": [
+      "normalizedusage_output_tokens_float",
+      "normalizedusage_output_tokens_string",
+      "normalizedusage_output_tokens_bool"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_read_tokens_strict",
+    "rule": "NormalizedUsage.cache_read_tokens: binds strict UInt",
+    "cases": [
+      "normalizedusage_cache_read_tokens_float",
+      "normalizedusage_cache_read_tokens_string",
+      "normalizedusage_cache_read_tokens_bool"
+    ],
+    "old": "    cache_read_tokens: UInt",
+    "new": "    cache_read_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_creation_tokens_strict",
+    "rule": "NormalizedUsage.cache_creation_tokens: binds strict UInt",
+    "cases": [
+      "normalizedusage_cache_creation_tokens_float",
+      "normalizedusage_cache_creation_tokens_string",
+      "normalizedusage_cache_creation_tokens_bool"
+    ],
+    "old": "    cache_creation_tokens: UInt",
+    "new": "    cache_creation_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_reasoning_tokens_strict",
+    "rule": "NormalizedUsage.reasoning_tokens: binds strict UInt",
+    "cases": [
+      "normalizedusage_reasoning_tokens_float",
+      "normalizedusage_reasoning_tokens_string",
+      "normalizedusage_reasoning_tokens_bool"
+    ],
+    "old": "    reasoning_tokens: UInt",
+    "new": "    reasoning_tokens: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "evaluation_charge_micro_strict",
+    "rule": "Evaluation.charge_micro: binds strict UInt",
+    "cases": [
+      "evaluation_charge_micro_float",
+      "evaluation_charge_micro_string",
+      "evaluation_charge_micro_bool"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "terminalenvelope_v_literal",
+    "rule": "TerminalEnvelope.v: Literal[1]",
+    "cases": [
+      "terminalenvelope_v_literal"
+    ],
+    "old": "    v: Literal[1]",
+    "new": "    v: int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_authorization_id_identity",
+    "rule": "TerminalEnvelope.authorization_id: binds Identity",
+    "cases": [
+      "terminalenvelope_authorization_id_ascii",
+      "terminalenvelope_authorization_id_identity_punctuation"
+    ],
+    "old": "    authorization_id: Identity",
+    "new": "    authorization_id: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_generation_id_identity",
+    "rule": "TerminalEnvelope.generation_id: binds Identity",
+    "cases": [
+      "terminalenvelope_generation_id_ascii",
+      "terminalenvelope_generation_id_identity_punctuation"
+    ],
+    "old": "    generation_id: Identity",
+    "new": "    generation_id: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_workspace_id_identity",
+    "rule": "TerminalEnvelope.workspace_id: binds Identity",
+    "cases": [
+      "terminalenvelope_workspace_id_ascii",
+      "terminalenvelope_workspace_id_identity_punctuation"
+    ],
+    "old": "    workspace_id: Identity",
+    "new": "    workspace_id: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_key_id_identity",
+    "rule": "TerminalEnvelope.key_id: binds Identity",
+    "cases": [
+      "terminalenvelope_key_id_ascii",
+      "terminalenvelope_key_id_identity_punctuation"
+    ],
+    "old": "    key_id: Identity",
+    "new": "    key_id: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_invocation_nonce_empty",
+    "rule": "TerminalEnvelope.invocation_nonce: empty",
+    "cases": [
+      "terminalenvelope_invocation_nonce_empty"
+    ],
+    "old": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "new": "    invocation_nonce: Annotated[str, Field(max_length=64, pattern=r\"^[A-Za-z0-9_-]*$\")]",
+    "scope": "TerminalEnvelope",
+    "positive_cases": [
+      "terminalenvelope_invocation_nonce_empty_valid"
+    ]
+  },
+  {
+    "name": "terminalenvelope_invocation_nonce_long",
+    "rule": "TerminalEnvelope.invocation_nonce: long",
+    "cases": [
+      "terminalenvelope_invocation_nonce_long"
+    ],
+    "old": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "new": "    invocation_nonce: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "scope": "TerminalEnvelope",
+    "positive_cases": [
+      "terminalenvelope_invocation_nonce_long_valid"
+    ]
+  },
+  {
+    "name": "terminalenvelope_invocation_nonce_ascii",
+    "rule": "TerminalEnvelope.invocation_nonce: allowed ASCII alphabet",
+    "cases": [
+      "terminalenvelope_invocation_nonce_ascii",
+      "nonce_disallowed_dot",
+      "nonce_disallowed_slash",
+      "nonce_disallowed_space",
+      "nonce_disallowed_newline"
+    ],
+    "old": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "new": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64)]",
+    "scope": "TerminalEnvelope",
+    "positive_cases": [
+      "terminalenvelope_invocation_nonce_ascii_valid",
+      "nonce_allowed_alphabet"
+    ]
+  },
+  {
+    "name": "terminalenvelope_billing_authority_literal",
+    "rule": "TerminalEnvelope.billing_authority: Literal[\"local\"]",
+    "cases": [
+      "terminalenvelope_billing_authority_literal"
+    ],
+    "old": "    billing_authority: Literal[\"local\"]",
+    "new": "    billing_authority: str",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_journal_region_identity",
+    "rule": "TerminalEnvelope.journal_region: binds Identity",
+    "cases": [
+      "terminalenvelope_journal_region_ascii",
+      "terminalenvelope_journal_region_identity_punctuation"
+    ],
+    "old": "    journal_region: Identity",
+    "new": "    journal_region: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_epoch_strict",
+    "rule": "TerminalEnvelope.epoch: binds strict UInt",
+    "cases": [
+      "terminalenvelope_epoch_float",
+      "terminalenvelope_epoch_string",
+      "terminalenvelope_epoch_bool"
+    ],
+    "old": "    epoch: UInt",
+    "new": "    epoch: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_selected_endpoint_identity",
+    "rule": "TerminalEnvelope.selected_endpoint: binds Identity",
+    "cases": [
+      "terminalenvelope_selected_endpoint_ascii",
+      "terminalenvelope_selected_endpoint_identity_punctuation"
+    ],
+    "old": "    selected_endpoint: Identity",
+    "new": "    selected_endpoint: Annotated[str, Field(min_length=1, max_length=512)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_version_literal",
+    "rule": "TerminalEnvelope.snapshot_version: Literal[1]",
+    "cases": [
+      "terminalenvelope_snapshot_version_literal"
+    ],
+    "old": "    snapshot_version: Literal[1]",
+    "new": "    snapshot_version: int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_hash_digest",
+    "rule": "TerminalEnvelope.snapshot_hash: binds Digest",
+    "cases": [
+      "terminalenvelope_snapshot_hash_digest"
+    ],
+    "old": "    snapshot_hash: Digest",
+    "new": "    snapshot_hash: str",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_charge_micro_strict",
+    "rule": "TerminalEnvelope.charge_micro: binds strict UInt",
+    "cases": [
+      "terminalenvelope_charge_micro_float",
+      "terminalenvelope_charge_micro_string",
+      "terminalenvelope_charge_micro_bool"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: Annotated[int, Field(ge=0, le=MAX_INT)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_terminal_kind_literal",
+    "rule": "TerminalEnvelope.terminal_kind: Literal[\"settle\", \"refund\"]",
+    "cases": [
+      "terminalenvelope_terminal_kind_literal"
+    ],
+    "old": "    terminal_kind: Literal[\"settle\", \"refund\"]",
+    "new": "    terminal_kind: str",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_route_type_literal",
+    "rule": "TerminalEnvelope.route_type: Literal[\"chat.completions\", \"responses\"]",
+    "cases": [
+      "terminalenvelope_route_type_literal"
+    ],
+    "old": "    route_type: Literal[\"chat.completions\", \"responses\"]",
+    "new": "    route_type: str",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_streamed_strict_bool",
+    "rule": "TerminalEnvelope.streamed: strict boolean",
+    "cases": [
+      "terminalenvelope_streamed_int",
+      "terminalenvelope_streamed_string"
+    ],
+    "old": "    streamed: Annotated[bool, Field(strict=True)]",
+    "new": "    streamed: Annotated[bool, Field(strict=False)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "acceptanceoutcome_status_literal",
+    "rule": "AcceptanceOutcome.status: AcceptanceStatus",
+    "cases": [
+      "acceptanceoutcome_status_literal"
+    ],
+    "old": "    status: AcceptanceStatus",
+    "new": "    status: str",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "acceptanceoutcome_payload_hash_digest",
+    "rule": "AcceptanceOutcome.payload_hash: binds Digest",
+    "cases": [
+      "acceptanceoutcome_payload_hash_digest"
+    ],
+    "old": "    payload_hash: Digest | None = None",
+    "new": "    payload_hash: str | None = None",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "billingsnapshot_v_integer",
+    "rule": "BillingSnapshot.v: integer_versions rejects bool/float",
+    "cases": [
+      "billingsnapshot_v_typed_bool",
+      "billingsnapshot_v_typed_float"
+    ],
+    "old": "if name in value and type(value[name]) is not int:",
+    "new": "if name in value and name != \"v\" and type(value[name]) is not int:",
+    "scope": "Frozen"
+  },
+  {
+    "name": "candidate_price_history_version_integer",
+    "rule": "Candidate.price_history_version: integer_versions rejects bool/float",
+    "cases": [
+      "candidate_price_history_version_typed_bool",
+      "candidate_price_history_version_typed_float"
+    ],
+    "old": "if name in value and type(value[name]) is not int:",
+    "new": "if name in value and name != \"price_history_version\" and type(value[name]) is not int:",
+    "scope": "Frozen"
+  },
+  {
+    "name": "terminalenvelope_v_integer",
+    "rule": "TerminalEnvelope.v: integer_versions rejects bool/float",
+    "cases": [
+      "terminalenvelope_v_typed_bool",
+      "terminalenvelope_v_typed_float"
+    ],
+    "old": "if name in value and type(value[name]) is not int:",
+    "new": "if name in value and name != \"v\" and type(value[name]) is not int:",
+    "scope": "Frozen"
+  },
+  {
+    "name": "terminalenvelope_snapshot_version_integer",
+    "rule": "TerminalEnvelope.snapshot_version: integer_versions rejects bool/float",
+    "cases": [
+      "terminalenvelope_snapshot_version_typed_bool",
+      "terminalenvelope_snapshot_version_typed_float"
+    ],
+    "old": "if name in value and type(value[name]) is not int:",
+    "new": "if name in value and name != \"snapshot_version\" and type(value[name]) is not int:",
+    "scope": "Frozen"
+  },
+  {
+    "name": "candidates_max",
+    "rule": "candidates: at most 64",
+    "cases": [
+      "candidates_65"
+    ],
+    "old": "max_length=64",
+    "new": "max_length=65",
+    "scope": "BillingSnapshot",
+    "positive_cases": [
+      "candidates_64"
+    ]
+  },
+  {
+    "name": "tiers_max",
+    "rule": "tiers: at most 64",
+    "cases": [
+      "tiers_65"
+    ],
+    "old": "max_length=64",
+    "new": "max_length=65",
+    "scope": "Candidate",
+    "positive_cases": [
+      "tiers_64"
+    ]
+  },
+  {
+    "name": "candidates_min",
+    "rule": "Candidates: at least one",
+    "cases": [
+      "candidates_empty"
+    ],
+    "old": "min_length=1, ",
+    "new": "",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "candidate_order",
+    "rule": "Candidate endpoint IDs unique and sorted",
+    "cases": [
+      "candidates_duplicate",
+      "candidates_unsorted"
+    ],
+    "old": "if ids != sorted(set(ids)):",
+    "new": "if False:",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "provider_prompt_agreement",
+    "rule": "Provider determines prompt convention",
+    "cases": [
+      "provider_prompt_agreement",
+      "anthropic_prompt_agreement"
+    ],
+    "old": "if self.prompt_convention != (",
+    "new": "if False and self.prompt_convention != (",
+    "scope": "Candidate"
+  },
+  {
+    "name": "model_provider_prefix",
+    "rule": "Model identifier begins with provider/ prefix",
+    "cases": [
+      "model_provider_prefix"
+    ],
+    "old": "if not self.model_id.startswith(self.provider + \"/\"):",
+    "new": "if False:",
+    "scope": "Candidate"
+  },
+  {
+    "name": "tier_unbounded_last",
+    "rule": "Unbounded tier must be last",
+    "cases": [
+      "tier_nonfinal_unbounded"
+    ],
+    "old": "if index != len(self.tiers) - 1:",
+    "new": "if False:",
+    "scope": "Candidate"
+  },
+  {
+    "name": "tier_increasing",
+    "rule": "Finite tier boundaries strictly increase",
+    "cases": [
+      "tier_duplicate_boundary",
+      "tier_descending_boundaries"
+    ],
+    "old": "elif maximum <= previous:",
+    "new": "elif False:",
+    "scope": "Candidate"
+  },
+  {
+    "name": "envelope_wrong_hash",
+    "rule": "envelope wrong hash",
+    "cases": [
+      "envelope_wrong_hash"
+    ],
+    "old": "if envelope.snapshot_hash != canonical_hash(snapshot):",
+    "new": "if False:"
+  },
+  {
+    "name": "envelope_wrong_charge",
+    "rule": "envelope wrong charge",
+    "cases": [
+      "envelope_wrong_charge"
+    ],
+    "old": "if envelope.charge_micro != expected or envelope.usage != evaluated.usage:",
+    "new": "if envelope.usage != evaluated.usage:"
+  },
+  {
+    "name": "envelope_missing_endpoint",
+    "rule": "envelope missing endpoint",
+    "cases": [
+      "envelope_missing_endpoint"
+    ],
+    "old": "if candidate is None:\n        raise ValueError(\"unsupported_endpoint\")\n    usage = envelope.usage",
+    "new": "if candidate is None:\n        return\n    usage = envelope.usage"
+  },
+  {
+    "name": "envelope_refund_nonzero",
+    "rule": "envelope refund nonzero",
+    "cases": [
+      "envelope_refund_nonzero"
+    ],
+    "old": "if self.terminal_kind == \"refund\" and self.charge_micro != 0:",
+    "new": "if False:",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "normalized_total",
+    "rule": "Normalized prompt equals uncached + read + creation",
+    "cases": [
+      "normalized_total_mismatch"
+    ],
+    "old": "if self.total_prompt_tokens != checked(",
+    "new": "if -1 == checked(",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalized_reasoning",
+    "rule": "Normalized reasoning <= output",
+    "cases": [
+      "normalized_reasoning_subset"
+    ],
+    "old": "or self.reasoning_tokens > self.output_tokens:",
+    "new": "or False:",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "checked_negative",
+    "rule": "checked(): value < 0",
+    "cases": [
+      "checked_negative"
+    ],
+    "old": "value < 0",
+    "new": "False"
+  },
+  {
+    "name": "checked_overflow",
+    "rule": "checked(): value > MAX_INT",
+    "cases": [
+      "checked_overflow"
+    ],
+    "old": "value > MAX_INT",
+    "new": "False"
+  },
+  {
+    "name": "acceptance_durable",
+    "rule": "Accepted/duplicate requires both payload hash and pending status",
+    "cases": [
+      "acceptance_accepted_missing_both",
+      "acceptance_accepted_missing_hash",
+      "acceptance_accepted_missing_pending",
+      "acceptance_duplicate_missing_both",
+      "acceptance_duplicate_missing_hash",
+      "acceptance_duplicate_missing_pending"
+    ],
+    "old": "if durable != (self.payload_hash is not None and self.settlement_status == \"pending\"):",
+    "new": "if not durable and (self.payload_hash is not None and self.settlement_status == \"pending\"):",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "acceptance_rejection",
+    "rule": "Rejection cannot acknowledge either hash or pending",
+    "cases": [
+      "acceptance_sync_required_hash_only",
+      "acceptance_sync_required_pending_only",
+      "acceptance_conflict_hash_only",
+      "acceptance_conflict_pending_only",
+      "acceptance_invalid_hash_only",
+      "acceptance_invalid_pending_only"
+    ],
+    "old": "if not durable and (self.payload_hash is not None or self.settlement_status is not None):",
+    "new": "if False:",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "eligibility_untyped",
+    "rule": "Eligibility exclusion: untyped",
+    "cases": [
+      "eligibility_untyped_requested",
+      "eligibility_untyped_observed"
+    ],
+    "old": "if not context.typed:",
+    "new": "if False:"
+  },
+  {
+    "name": "eligibility_non_credits",
+    "rule": "Eligibility exclusion: non_credits",
+    "cases": [
+      "eligibility_non_credits_requested",
+      "eligibility_non_credits_observed"
+    ],
+    "old": "if context.usage_type != \"Credits\":",
+    "new": "if False:"
+  },
+  {
+    "name": "eligibility_settlement_authority",
+    "rule": "Eligibility exclusion: settlement_authority",
+    "cases": [
+      "eligibility_settlement_authority_requested",
+      "eligibility_settlement_authority_observed"
+    ],
+    "old": "if context.authority != \"local\":",
+    "new": "if False:"
+  },
+  {
+    "name": "eligibility_unsupported_route",
+    "rule": "Eligibility exclusion: unsupported_route",
+    "cases": [
+      "eligibility_unsupported_route_requested",
+      "eligibility_unsupported_route_observed"
+    ],
+    "old": "if context.route_type not in (\"chat.completions\", \"responses\"):",
+    "new": "if False:"
+  },
+  {
+    "name": "eligibility_service_tier",
+    "rule": "Eligibility exclusion: service_tier",
+    "cases": [
+      "eligibility_service_tier_requested",
+      "eligibility_service_tier_observed"
+    ],
+    "old": "if context.service_tier not in (None, \"default\"):",
+    "new": "if False:"
+  },
+  {
+    "name": "eligibility_app_markup",
+    "rule": "Eligibility exclusion: app_markup",
+    "cases": [
+      "eligibility_app_markup_requested",
+      "eligibility_app_markup_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"app_markup\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_custom_markup",
+    "rule": "Eligibility exclusion: custom_markup",
+    "cases": [
+      "eligibility_custom_markup_requested",
+      "eligibility_custom_markup_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"custom_markup\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_receipt_fee",
+    "rule": "Eligibility exclusion: receipt_fee",
+    "cases": [
+      "eligibility_receipt_fee_requested",
+      "eligibility_receipt_fee_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"receipt_fee\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_request_fee",
+    "rule": "Eligibility exclusion: request_fee",
+    "cases": [
+      "eligibility_request_fee_requested",
+      "eligibility_request_fee_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"request_fee\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_custom_model",
+    "rule": "Eligibility exclusion: custom_model",
+    "cases": [
+      "eligibility_custom_model_requested",
+      "eligibility_custom_model_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"custom_model\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_user_model",
+    "rule": "Eligibility exclusion: user_model",
+    "cases": [
+      "eligibility_user_model_requested",
+      "eligibility_user_model_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"user_model\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_tool_cost",
+    "rule": "Eligibility exclusion: tool_cost",
+    "cases": [
+      "eligibility_tool_cost_requested",
+      "eligibility_tool_cost_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"tool_cost\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_search_cost",
+    "rule": "Eligibility exclusion: search_cost",
+    "cases": [
+      "eligibility_search_cost_requested",
+      "eligibility_search_cost_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"search_cost\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_image_cost",
+    "rule": "Eligibility exclusion: image_cost",
+    "cases": [
+      "eligibility_image_cost_requested",
+      "eligibility_image_cost_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"image_cost\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_video_cost",
+    "rule": "Eligibility exclusion: video_cost",
+    "cases": [
+      "eligibility_video_cost_requested",
+      "eligibility_video_cost_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"video_cost\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_partner",
+    "rule": "Eligibility exclusion: partner",
+    "cases": [
+      "eligibility_partner_requested",
+      "eligibility_partner_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"partner\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_liberty",
+    "rule": "Eligibility exclusion: liberty",
+    "cases": [
+      "eligibility_liberty_requested",
+      "eligibility_liberty_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"liberty\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_native_batch",
+    "rule": "Eligibility exclusion: native_batch",
+    "cases": [
+      "eligibility_native_batch_requested",
+      "eligibility_native_batch_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"native_batch\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_fusion",
+    "rule": "Eligibility exclusion: fusion",
+    "cases": [
+      "eligibility_fusion_requested",
+      "eligibility_fusion_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"fusion\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_polyphemus",
+    "rule": "Eligibility exclusion: polyphemus",
+    "cases": [
+      "eligibility_polyphemus_requested",
+      "eligibility_polyphemus_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"polyphemus\" and getattr(context, name):"
+  },
+  {
+    "name": "eligibility_private_tier_basis",
+    "rule": "Eligibility exclusion: private_tier_basis",
+    "cases": [
+      "eligibility_private_tier_basis_requested",
+      "eligibility_private_tier_basis_observed"
+    ],
+    "old": "if getattr(context, name):",
+    "new": "if name != \"private_tier_basis\" and getattr(context, name):"
+  },
+  {
+    "name": "require_eligible",
+    "rule": "require_eligible raises exclusion reason",
+    "cases": [
+      "eligibility_untyped_requested",
+      "eligibility_untyped_observed"
+    ],
+    "old": "if reason is not None:",
+    "new": "if False:"
+  },
+  {
+    "name": "evaluate_selected",
+    "rule": "Evaluation rejects selected endpoint absent from snapshot",
+    "cases": [
+      "unknown_endpoint"
+    ],
+    "old": "if candidate is None:\n        raise ValueError(\"unsupported_endpoint\")\n    cached = checked",
+    "new": "if candidate is None:\n        return Evaluation(usage=NormalizedUsage(uncached_input_tokens=0,total_prompt_tokens=0,output_tokens=0,cache_read_tokens=0,cache_creation_tokens=0,reasoning_tokens=0),charge_micro=0)\n    cached = checked"
+  },
+  {
+    "name": "builder_prompt_price_microdollars_per_million_tokens",
+    "rule": "build_snapshot strict/bounded endpoint prompt_price_microdollars_per_million_tokens",
+    "cases": [
+      "builder_prompt_price_microdollars_per_million_tokens_float",
+      "builder_prompt_price_microdollars_per_million_tokens_string",
+      "builder_prompt_price_microdollars_per_million_tokens_bool"
+    ],
+    "old": "integer.validate_python(rate)",
+    "new": "if rate is not endpoint.prompt_price_microdollars_per_million_tokens:\n                integer.validate_python(rate)"
+  },
+  {
+    "name": "builder_completion_price_microdollars_per_million_tokens",
+    "rule": "build_snapshot strict/bounded endpoint completion_price_microdollars_per_million_tokens",
+    "cases": [
+      "builder_completion_price_microdollars_per_million_tokens_float",
+      "builder_completion_price_microdollars_per_million_tokens_string",
+      "builder_completion_price_microdollars_per_million_tokens_bool"
+    ],
+    "old": "integer.validate_python(rate)",
+    "new": "if rate is not endpoint.completion_price_microdollars_per_million_tokens:\n                integer.validate_python(rate)"
+  },
+  {
+    "name": "builder_request_price_microdollars",
+    "rule": "build_snapshot strict/bounded endpoint request_price_microdollars",
+    "cases": [
+      "builder_request_price_microdollars_float",
+      "builder_request_price_microdollars_string",
+      "builder_request_price_microdollars_bool"
+    ],
+    "old": "integer.validate_python(rate)",
+    "new": "if rate is not endpoint.request_price_microdollars:\n                integer.validate_python(rate)"
+  },
+  {
+    "name": "eligibility_usage_type_string_type",
+    "rule": "Eligibility.usage_type: string type",
+    "cases": [
+      "eligibility_usage_type_string_type"
+    ],
+    "old": "    usage_type: str = \"Credits\"",
+    "new": "    usage_type: str | int = \"Credits\"",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_authority_string_type",
+    "rule": "Eligibility.authority: string type",
+    "cases": [
+      "eligibility_authority_string_type"
+    ],
+    "old": "    authority: str = \"local\"",
+    "new": "    authority: str | int = \"local\"",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_route_type_string_type",
+    "rule": "Eligibility.route_type: string type",
+    "cases": [
+      "eligibility_route_type_string_type"
+    ],
+    "old": "    route_type: str = \"chat.completions\"",
+    "new": "    route_type: str | int = \"chat.completions\"",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_service_tier_string_type",
+    "rule": "Eligibility.service_tier: string type",
+    "cases": [
+      "eligibility_service_tier_string_type"
+    ],
+    "old": "    service_tier: str | None = None",
+    "new": "    service_tier: str | int | None = None",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_app_markup_lower",
+    "rule": "Eligibility.app_markup: UInt lower bound (field schema)",
+    "cases": [
+      "eligibility_app_markup_lower"
+    ],
+    "old": "    app_markup: UInt = 0",
+    "new": "    app_markup: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_app_markup_upper",
+    "rule": "Eligibility.app_markup: UInt upper bound (field schema)",
+    "cases": [
+      "eligibility_app_markup_upper"
+    ],
+    "old": "    app_markup: UInt = 0",
+    "new": "    app_markup: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_app_markup_nonnull",
+    "rule": "Eligibility.app_markup: UInt nonnull",
+    "cases": [
+      "eligibility_app_markup_null"
+    ],
+    "old": "    app_markup: UInt = 0",
+    "new": "    app_markup: UInt | None = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_custom_markup_lower",
+    "rule": "Eligibility.custom_markup: UInt lower bound (field schema)",
+    "cases": [
+      "eligibility_custom_markup_lower"
+    ],
+    "old": "    custom_markup: UInt = 0",
+    "new": "    custom_markup: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_custom_markup_upper",
+    "rule": "Eligibility.custom_markup: UInt upper bound (field schema)",
+    "cases": [
+      "eligibility_custom_markup_upper"
+    ],
+    "old": "    custom_markup: UInt = 0",
+    "new": "    custom_markup: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_custom_markup_nonnull",
+    "rule": "Eligibility.custom_markup: UInt nonnull",
+    "cases": [
+      "eligibility_custom_markup_null"
+    ],
+    "old": "    custom_markup: UInt = 0",
+    "new": "    custom_markup: UInt | None = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_receipt_fee_lower",
+    "rule": "Eligibility.receipt_fee: UInt lower bound (field schema)",
+    "cases": [
+      "eligibility_receipt_fee_lower"
+    ],
+    "old": "    receipt_fee: UInt = 0",
+    "new": "    receipt_fee: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_receipt_fee_upper",
+    "rule": "Eligibility.receipt_fee: UInt upper bound (field schema)",
+    "cases": [
+      "eligibility_receipt_fee_upper"
+    ],
+    "old": "    receipt_fee: UInt = 0",
+    "new": "    receipt_fee: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_receipt_fee_nonnull",
+    "rule": "Eligibility.receipt_fee: UInt nonnull",
+    "cases": [
+      "eligibility_receipt_fee_null"
+    ],
+    "old": "    receipt_fee: UInt = 0",
+    "new": "    receipt_fee: UInt | None = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_request_fee_lower",
+    "rule": "Eligibility.request_fee: UInt lower bound (field schema)",
+    "cases": [
+      "eligibility_request_fee_lower"
+    ],
+    "old": "    request_fee: UInt = 0",
+    "new": "    request_fee: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_request_fee_upper",
+    "rule": "Eligibility.request_fee: UInt upper bound (field schema)",
+    "cases": [
+      "eligibility_request_fee_upper"
+    ],
+    "old": "    request_fee: UInt = 0",
+    "new": "    request_fee: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_request_fee_nonnull",
+    "rule": "Eligibility.request_fee: UInt nonnull",
+    "cases": [
+      "eligibility_request_fee_null"
+    ],
+    "old": "    request_fee: UInt = 0",
+    "new": "    request_fee: UInt | None = 0",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "rates_input_micro_per_million_lower",
+    "rule": "Rates.input_micro_per_million: UInt lower bound (field schema)",
+    "cases": [
+      "rates_input_micro_per_million_lower",
+      "rates_input_micro_per_million_wire_negative"
+    ],
+    "old": "    input_micro_per_million: UInt",
+    "new": "    input_micro_per_million: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_input_micro_per_million_upper",
+    "rule": "Rates.input_micro_per_million: UInt upper bound (field schema)",
+    "cases": [
+      "rates_input_micro_per_million_upper",
+      "rates_input_micro_per_million_wire_too_large"
+    ],
+    "old": "    input_micro_per_million: UInt",
+    "new": "    input_micro_per_million: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_input_micro_per_million_nonnull",
+    "rule": "Rates.input_micro_per_million: UInt nonnull",
+    "cases": [
+      "rates_input_micro_per_million_null"
+    ],
+    "old": "    input_micro_per_million: UInt",
+    "new": "    input_micro_per_million: UInt | None",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cached_input_micro_per_million_lower",
+    "rule": "Rates.cached_input_micro_per_million: UInt lower bound (field schema)",
+    "cases": [
+      "rates_cached_input_micro_per_million_lower",
+      "rates_cached_input_micro_per_million_wire_negative"
+    ],
+    "old": "    cached_input_micro_per_million: UInt",
+    "new": "    cached_input_micro_per_million: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cached_input_micro_per_million_upper",
+    "rule": "Rates.cached_input_micro_per_million: UInt upper bound (field schema)",
+    "cases": [
+      "rates_cached_input_micro_per_million_upper",
+      "rates_cached_input_micro_per_million_wire_too_large"
+    ],
+    "old": "    cached_input_micro_per_million: UInt",
+    "new": "    cached_input_micro_per_million: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cached_input_micro_per_million_nonnull",
+    "rule": "Rates.cached_input_micro_per_million: UInt nonnull",
+    "cases": [
+      "rates_cached_input_micro_per_million_null"
+    ],
+    "old": "    cached_input_micro_per_million: UInt",
+    "new": "    cached_input_micro_per_million: UInt | None",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cache_creation_micro_per_million_lower",
+    "rule": "Rates.cache_creation_micro_per_million: UInt lower bound (field schema)",
+    "cases": [
+      "rates_cache_creation_micro_per_million_lower",
+      "rates_cache_creation_micro_per_million_wire_negative"
+    ],
+    "old": "    cache_creation_micro_per_million: UInt",
+    "new": "    cache_creation_micro_per_million: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cache_creation_micro_per_million_upper",
+    "rule": "Rates.cache_creation_micro_per_million: UInt upper bound (field schema)",
+    "cases": [
+      "rates_cache_creation_micro_per_million_upper",
+      "rates_cache_creation_micro_per_million_wire_too_large"
+    ],
+    "old": "    cache_creation_micro_per_million: UInt",
+    "new": "    cache_creation_micro_per_million: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cache_creation_micro_per_million_nonnull",
+    "rule": "Rates.cache_creation_micro_per_million: UInt nonnull",
+    "cases": [
+      "rates_cache_creation_micro_per_million_null"
+    ],
+    "old": "    cache_creation_micro_per_million: UInt",
+    "new": "    cache_creation_micro_per_million: UInt | None",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_output_micro_per_million_lower",
+    "rule": "Rates.output_micro_per_million: UInt lower bound (field schema)",
+    "cases": [
+      "rates_output_micro_per_million_lower",
+      "rates_output_micro_per_million_wire_negative"
+    ],
+    "old": "    output_micro_per_million: UInt",
+    "new": "    output_micro_per_million: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_output_micro_per_million_upper",
+    "rule": "Rates.output_micro_per_million: UInt upper bound (field schema)",
+    "cases": [
+      "rates_output_micro_per_million_upper",
+      "rates_output_micro_per_million_wire_too_large"
+    ],
+    "old": "    output_micro_per_million: UInt",
+    "new": "    output_micro_per_million: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_output_micro_per_million_nonnull",
+    "rule": "Rates.output_micro_per_million: UInt nonnull",
+    "cases": [
+      "rates_output_micro_per_million_null"
+    ],
+    "old": "    output_micro_per_million: UInt",
+    "new": "    output_micro_per_million: UInt | None",
+    "scope": "Rates"
+  },
+  {
+    "name": "tier_max_prompt_tokens_lower",
+    "rule": "Tier.max_prompt_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "tier_max_prompt_tokens_lower",
+      "tier_max_prompt_tokens_wire_negative"
+    ],
+    "old": "    max_prompt_tokens: UInt | None",
+    "new": "    max_prompt_tokens: Annotated[int, Field(strict=True, le=MAX_INT)] | None",
+    "scope": "Tier"
+  },
+  {
+    "name": "tier_max_prompt_tokens_upper",
+    "rule": "Tier.max_prompt_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "tier_max_prompt_tokens_upper",
+      "tier_max_prompt_tokens_wire_too_large"
+    ],
+    "old": "    max_prompt_tokens: UInt | None",
+    "new": "    max_prompt_tokens: Annotated[int, Field(strict=True, ge=0)] | None",
+    "scope": "Tier"
+  },
+  {
+    "name": "candidate_endpoint_id_min",
+    "rule": "Candidate.endpoint_id: Identity min length",
+    "cases": [
+      "candidate_endpoint_id_min"
+    ],
+    "old": "    endpoint_id: Identity",
+    "new": "    endpoint_id: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_endpoint_id_max",
+    "rule": "Candidate.endpoint_id: Identity max length",
+    "cases": [
+      "candidate_endpoint_id_max"
+    ],
+    "old": "    endpoint_id: Identity",
+    "new": "    endpoint_id: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_model_id_min",
+    "rule": "Candidate.model_id: Identity min length",
+    "cases": [
+      "candidate_model_id_min"
+    ],
+    "old": "    model_id: Identity",
+    "new": "    model_id: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_model_id_max",
+    "rule": "Candidate.model_id: Identity max length",
+    "cases": [
+      "candidate_model_id_max"
+    ],
+    "old": "    model_id: Identity",
+    "new": "    model_id: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_request_fee_micro_lower",
+    "rule": "Candidate.request_fee_micro: UInt lower bound (field schema)",
+    "cases": [
+      "candidate_request_fee_micro_lower"
+    ],
+    "old": "    request_fee_micro: UInt",
+    "new": "    request_fee_micro: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_request_fee_micro_upper",
+    "rule": "Candidate.request_fee_micro: UInt upper bound (field schema)",
+    "cases": [
+      "candidate_request_fee_micro_upper"
+    ],
+    "old": "    request_fee_micro: UInt",
+    "new": "    request_fee_micro: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_request_fee_micro_nonnull",
+    "rule": "Candidate.request_fee_micro: UInt nonnull",
+    "cases": [
+      "candidate_request_fee_micro_null"
+    ],
+    "old": "    request_fee_micro: UInt",
+    "new": "    request_fee_micro: UInt | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_prompt_convention_literal",
+    "rule": "Candidate.prompt_convention: literal enum (also implied by provider agreement)",
+    "cases": [
+      "candidate_prompt_convention_unknown"
+    ],
+    "old": "    prompt_convention: Literal[\"includes_cache\", \"excludes_cache\"]",
+    "new": "    prompt_convention: str",
+    "scope": "Candidate"
+  },
+  {
+    "name": "rawusage_input_tokens_lower",
+    "rule": "RawUsage.input_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "rawusage_input_tokens_lower",
+      "rawusage_input_tokens_wire_negative"
+    ],
+    "old": "    input_tokens: UInt",
+    "new": "    input_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_input_tokens_upper",
+    "rule": "RawUsage.input_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "rawusage_input_tokens_upper",
+      "rawusage_input_tokens_wire_too_large"
+    ],
+    "old": "    input_tokens: UInt",
+    "new": "    input_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_input_tokens_nonnull",
+    "rule": "RawUsage.input_tokens: UInt nonnull",
+    "cases": [
+      "rawusage_input_tokens_null"
+    ],
+    "old": "    input_tokens: UInt",
+    "new": "    input_tokens: UInt | None",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_output_tokens_lower",
+    "rule": "RawUsage.output_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "rawusage_output_tokens_lower"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_output_tokens_upper",
+    "rule": "RawUsage.output_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "rawusage_output_tokens_upper"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_output_tokens_nonnull",
+    "rule": "RawUsage.output_tokens: UInt nonnull",
+    "cases": [
+      "rawusage_output_tokens_null"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: UInt | None",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_read_tokens_lower",
+    "rule": "RawUsage.cache_read_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "rawusage_cache_read_tokens_lower"
+    ],
+    "old": "    cache_read_tokens: UInt = 0",
+    "new": "    cache_read_tokens: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_read_tokens_upper",
+    "rule": "RawUsage.cache_read_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "rawusage_cache_read_tokens_upper"
+    ],
+    "old": "    cache_read_tokens: UInt = 0",
+    "new": "    cache_read_tokens: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_read_tokens_nonnull",
+    "rule": "RawUsage.cache_read_tokens: UInt nonnull",
+    "cases": [
+      "rawusage_cache_read_tokens_null"
+    ],
+    "old": "    cache_read_tokens: UInt = 0",
+    "new": "    cache_read_tokens: UInt | None = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_creation_tokens_lower",
+    "rule": "RawUsage.cache_creation_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "rawusage_cache_creation_tokens_lower"
+    ],
+    "old": "    cache_creation_tokens: UInt = 0",
+    "new": "    cache_creation_tokens: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_creation_tokens_upper",
+    "rule": "RawUsage.cache_creation_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "rawusage_cache_creation_tokens_upper"
+    ],
+    "old": "    cache_creation_tokens: UInt = 0",
+    "new": "    cache_creation_tokens: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_cache_creation_tokens_nonnull",
+    "rule": "RawUsage.cache_creation_tokens: UInt nonnull",
+    "cases": [
+      "rawusage_cache_creation_tokens_null"
+    ],
+    "old": "    cache_creation_tokens: UInt = 0",
+    "new": "    cache_creation_tokens: UInt | None = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_reasoning_tokens_lower",
+    "rule": "RawUsage.reasoning_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "rawusage_reasoning_tokens_lower"
+    ],
+    "old": "    reasoning_tokens: UInt = 0",
+    "new": "    reasoning_tokens: Annotated[int, Field(strict=True, le=MAX_INT)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_reasoning_tokens_upper",
+    "rule": "RawUsage.reasoning_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "rawusage_reasoning_tokens_upper"
+    ],
+    "old": "    reasoning_tokens: UInt = 0",
+    "new": "    reasoning_tokens: Annotated[int, Field(strict=True, ge=0)] = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_reasoning_tokens_nonnull",
+    "rule": "RawUsage.reasoning_tokens: UInt nonnull",
+    "cases": [
+      "rawusage_reasoning_tokens_null"
+    ],
+    "old": "    reasoning_tokens: UInt = 0",
+    "new": "    reasoning_tokens: UInt | None = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "normalizedusage_uncached_input_tokens_lower",
+    "rule": "NormalizedUsage.uncached_input_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "normalizedusage_uncached_input_tokens_lower"
+    ],
+    "old": "    uncached_input_tokens: UInt",
+    "new": "    uncached_input_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_uncached_input_tokens_upper",
+    "rule": "NormalizedUsage.uncached_input_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "normalizedusage_uncached_input_tokens_upper"
+    ],
+    "old": "    uncached_input_tokens: UInt",
+    "new": "    uncached_input_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_uncached_input_tokens_nonnull",
+    "rule": "NormalizedUsage.uncached_input_tokens: UInt nonnull",
+    "cases": [
+      "normalizedusage_uncached_input_tokens_null"
+    ],
+    "old": "    uncached_input_tokens: UInt",
+    "new": "    uncached_input_tokens: UInt | None",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_total_prompt_tokens_lower",
+    "rule": "NormalizedUsage.total_prompt_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "normalizedusage_total_prompt_tokens_lower"
+    ],
+    "old": "    total_prompt_tokens: UInt",
+    "new": "    total_prompt_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_total_prompt_tokens_upper",
+    "rule": "NormalizedUsage.total_prompt_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "normalizedusage_total_prompt_tokens_upper"
+    ],
+    "old": "    total_prompt_tokens: UInt",
+    "new": "    total_prompt_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_total_prompt_tokens_nonnull",
+    "rule": "NormalizedUsage.total_prompt_tokens: UInt nonnull",
+    "cases": [
+      "normalizedusage_total_prompt_tokens_null"
+    ],
+    "old": "    total_prompt_tokens: UInt",
+    "new": "    total_prompt_tokens: UInt | None",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_output_tokens_lower",
+    "rule": "NormalizedUsage.output_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "normalizedusage_output_tokens_lower"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_output_tokens_upper",
+    "rule": "NormalizedUsage.output_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "normalizedusage_output_tokens_upper"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_output_tokens_nonnull",
+    "rule": "NormalizedUsage.output_tokens: UInt nonnull",
+    "cases": [
+      "normalizedusage_output_tokens_null"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: UInt | None",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_read_tokens_lower",
+    "rule": "NormalizedUsage.cache_read_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "normalizedusage_cache_read_tokens_lower"
+    ],
+    "old": "    cache_read_tokens: UInt",
+    "new": "    cache_read_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_read_tokens_upper",
+    "rule": "NormalizedUsage.cache_read_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "normalizedusage_cache_read_tokens_upper"
+    ],
+    "old": "    cache_read_tokens: UInt",
+    "new": "    cache_read_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_read_tokens_nonnull",
+    "rule": "NormalizedUsage.cache_read_tokens: UInt nonnull",
+    "cases": [
+      "normalizedusage_cache_read_tokens_null"
+    ],
+    "old": "    cache_read_tokens: UInt",
+    "new": "    cache_read_tokens: UInt | None",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_creation_tokens_lower",
+    "rule": "NormalizedUsage.cache_creation_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "normalizedusage_cache_creation_tokens_lower"
+    ],
+    "old": "    cache_creation_tokens: UInt",
+    "new": "    cache_creation_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_creation_tokens_upper",
+    "rule": "NormalizedUsage.cache_creation_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "normalizedusage_cache_creation_tokens_upper"
+    ],
+    "old": "    cache_creation_tokens: UInt",
+    "new": "    cache_creation_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_creation_tokens_nonnull",
+    "rule": "NormalizedUsage.cache_creation_tokens: UInt nonnull",
+    "cases": [
+      "normalizedusage_cache_creation_tokens_null"
+    ],
+    "old": "    cache_creation_tokens: UInt",
+    "new": "    cache_creation_tokens: UInt | None",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_reasoning_tokens_lower",
+    "rule": "NormalizedUsage.reasoning_tokens: UInt lower bound (field schema)",
+    "cases": [
+      "normalizedusage_reasoning_tokens_lower"
+    ],
+    "old": "    reasoning_tokens: UInt",
+    "new": "    reasoning_tokens: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_reasoning_tokens_upper",
+    "rule": "NormalizedUsage.reasoning_tokens: UInt upper bound (field schema)",
+    "cases": [
+      "normalizedusage_reasoning_tokens_upper"
+    ],
+    "old": "    reasoning_tokens: UInt",
+    "new": "    reasoning_tokens: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_reasoning_tokens_nonnull",
+    "rule": "NormalizedUsage.reasoning_tokens: UInt nonnull",
+    "cases": [
+      "normalizedusage_reasoning_tokens_null"
+    ],
+    "old": "    reasoning_tokens: UInt",
+    "new": "    reasoning_tokens: UInt | None",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "evaluation_charge_micro_lower",
+    "rule": "Evaluation.charge_micro: UInt lower bound (field schema)",
+    "cases": [
+      "evaluation_charge_micro_lower",
+      "evaluation_charge_micro_wire_negative"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "evaluation_charge_micro_upper",
+    "rule": "Evaluation.charge_micro: UInt upper bound (field schema)",
+    "cases": [
+      "evaluation_charge_micro_upper",
+      "evaluation_charge_micro_wire_too_large"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "evaluation_charge_micro_nonnull",
+    "rule": "Evaluation.charge_micro: UInt nonnull",
+    "cases": [
+      "evaluation_charge_micro_null"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: UInt | None",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "terminalenvelope_authorization_id_min",
+    "rule": "TerminalEnvelope.authorization_id: Identity min length",
+    "cases": [
+      "terminalenvelope_authorization_id_min"
+    ],
+    "old": "    authorization_id: Identity",
+    "new": "    authorization_id: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_authorization_id_max",
+    "rule": "TerminalEnvelope.authorization_id: Identity max length",
+    "cases": [
+      "terminalenvelope_authorization_id_max"
+    ],
+    "old": "    authorization_id: Identity",
+    "new": "    authorization_id: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_generation_id_min",
+    "rule": "TerminalEnvelope.generation_id: Identity min length",
+    "cases": [
+      "terminalenvelope_generation_id_min"
+    ],
+    "old": "    generation_id: Identity",
+    "new": "    generation_id: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_generation_id_max",
+    "rule": "TerminalEnvelope.generation_id: Identity max length",
+    "cases": [
+      "terminalenvelope_generation_id_max"
+    ],
+    "old": "    generation_id: Identity",
+    "new": "    generation_id: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_workspace_id_min",
+    "rule": "TerminalEnvelope.workspace_id: Identity min length",
+    "cases": [
+      "terminalenvelope_workspace_id_min"
+    ],
+    "old": "    workspace_id: Identity",
+    "new": "    workspace_id: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_workspace_id_max",
+    "rule": "TerminalEnvelope.workspace_id: Identity max length",
+    "cases": [
+      "terminalenvelope_workspace_id_max"
+    ],
+    "old": "    workspace_id: Identity",
+    "new": "    workspace_id: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_key_id_min",
+    "rule": "TerminalEnvelope.key_id: Identity min length",
+    "cases": [
+      "terminalenvelope_key_id_min"
+    ],
+    "old": "    key_id: Identity",
+    "new": "    key_id: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_key_id_max",
+    "rule": "TerminalEnvelope.key_id: Identity max length",
+    "cases": [
+      "terminalenvelope_key_id_max"
+    ],
+    "old": "    key_id: Identity",
+    "new": "    key_id: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_journal_region_min",
+    "rule": "TerminalEnvelope.journal_region: Identity min length",
+    "cases": [
+      "terminalenvelope_journal_region_min"
+    ],
+    "old": "    journal_region: Identity",
+    "new": "    journal_region: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_journal_region_max",
+    "rule": "TerminalEnvelope.journal_region: Identity max length",
+    "cases": [
+      "terminalenvelope_journal_region_max"
+    ],
+    "old": "    journal_region: Identity",
+    "new": "    journal_region: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_epoch_lower",
+    "rule": "TerminalEnvelope.epoch: UInt lower bound (field schema)",
+    "cases": [
+      "terminalenvelope_epoch_lower",
+      "terminalenvelope_epoch_wire_negative"
+    ],
+    "old": "    epoch: UInt",
+    "new": "    epoch: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_epoch_upper",
+    "rule": "TerminalEnvelope.epoch: UInt upper bound (field schema)",
+    "cases": [
+      "terminalenvelope_epoch_upper",
+      "terminalenvelope_epoch_wire_too_large"
+    ],
+    "old": "    epoch: UInt",
+    "new": "    epoch: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_epoch_nonnull",
+    "rule": "TerminalEnvelope.epoch: UInt nonnull",
+    "cases": [
+      "terminalenvelope_epoch_null"
+    ],
+    "old": "    epoch: UInt",
+    "new": "    epoch: UInt | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_selected_endpoint_min",
+    "rule": "TerminalEnvelope.selected_endpoint: Identity min length",
+    "cases": [
+      "terminalenvelope_selected_endpoint_min"
+    ],
+    "old": "    selected_endpoint: Identity",
+    "new": "    selected_endpoint: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_selected_endpoint_max",
+    "rule": "TerminalEnvelope.selected_endpoint: Identity max length",
+    "cases": [
+      "terminalenvelope_selected_endpoint_max"
+    ],
+    "old": "    selected_endpoint: Identity",
+    "new": "    selected_endpoint: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_charge_micro_lower",
+    "rule": "TerminalEnvelope.charge_micro: UInt lower bound (field schema)",
+    "cases": [
+      "terminalenvelope_charge_micro_lower"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: Annotated[int, Field(strict=True, le=MAX_INT)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_charge_micro_upper",
+    "rule": "TerminalEnvelope.charge_micro: UInt upper bound (field schema)",
+    "cases": [
+      "terminalenvelope_charge_micro_upper"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: Annotated[int, Field(strict=True, ge=0)]",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_charge_micro_nonnull",
+    "rule": "TerminalEnvelope.charge_micro: UInt nonnull",
+    "cases": [
+      "terminalenvelope_charge_micro_null"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: UInt | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "acceptanceoutcome_settlement_status_literal",
+    "rule": "AcceptanceOutcome.settlement_status: pending or null (also implied by durable validator)",
+    "cases": [
+      "acceptanceoutcome_settlement_status_unknown"
+    ],
+    "old": "    settlement_status: Literal[\"pending\"] | None = None",
+    "new": "    settlement_status: str | None = None",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "builder_tier_input_micro_per_million",
+    "rule": "build_snapshot validates tier input_micro_per_million",
+    "cases": [
+      "builder_tier_input_micro_per_million_float",
+      "builder_tier_input_micro_per_million_string",
+      "builder_tier_input_micro_per_million_bool"
+    ],
+    "old": "if value is not None:",
+    "new": "if value is not None and value is not tier.prompt_price_microdollars_per_million_tokens:"
+  },
+  {
+    "name": "builder_tier_output_micro_per_million",
+    "rule": "build_snapshot validates tier output_micro_per_million",
+    "cases": [
+      "builder_tier_output_micro_per_million_float",
+      "builder_tier_output_micro_per_million_string",
+      "builder_tier_output_micro_per_million_bool"
+    ],
+    "old": "if value is not None:",
+    "new": "if value is not None and value is not tier.completion_price_microdollars_per_million_tokens:"
+  },
+  {
+    "name": "builder_tier_cached_input_micro_per_million",
+    "rule": "build_snapshot validates tier cached_input_micro_per_million",
+    "cases": [
+      "builder_tier_cached_input_micro_per_million_float",
+      "builder_tier_cached_input_micro_per_million_string",
+      "builder_tier_cached_input_micro_per_million_bool"
+    ],
+    "old": "if value is not None:",
+    "new": "if value is not None and value is not tier.prompt_cached_price_microdollars_per_million_tokens:"
+  },
+  {
+    "name": "overflow_rounding",
+    "rule": "Checked addition of rounding offset",
+    "cases": [
+      "rounding_add_overflow"
+    ],
+    "old": "checked(product + 500_000)",
+    "new": "(product + 500_000)"
+  },
+  {
+    "name": "envelope_usage_match",
+    "rule": "Envelope usage must equal evaluator result (fault injection)",
+    "cases": [
+      "envelope_evaluated_usage_mismatch"
+    ],
+    "old": "if envelope.charge_micro != expected or envelope.usage != evaluated.usage:",
+    "new": "if envelope.charge_micro != expected:"
+  },
+  {
+    "name": "cache_subset",
+    "rule": "Inclusive cache subsets cannot exceed prompt; exact malformed_usage code",
+    "cases": [
+      "cache_exceeds_prompt"
+    ],
+    "old": "if cached > raw.input_tokens:",
+    "new": "if False:",
+    "failure": "error_code"
+  },
+  {
+    "name": "cached_sum_guard",
+    "rule": "Checked cache-read + cache-creation sum",
+    "cases": [
+      "cached_sum_overflow"
+    ],
+    "old": "cached = checked(raw.cache_read_tokens + raw.cache_creation_tokens)",
+    "new": "cached = raw.cache_read_tokens + raw.cache_creation_tokens",
+    "failure": "error_code"
+  },
+  {
+    "name": "prompt_sum_guard",
+    "rule": "Checked Anthropic uncached + cached sum",
+    "cases": [
+      "normalization_overflow"
+    ],
+    "old": "total = checked(uncached + cached)",
+    "new": "total = uncached + cached",
+    "failure": "error_code"
+  },
+  {
+    "name": "last_tier_fallback",
+    "rule": "Finite last-tier fallback rather than base rate",
+    "cases": [
+      "tier_last_fallback"
+    ],
+    "old": "rates = candidate.tiers[-1].rates",
+    "new": "rates = candidate.rates",
+    "failure": "value"
+  },
+  {
+    "name": "builder_optional_tier_inputs",
+    "rule": "Unbounded tier and missing cached rate are allowed",
+    "cases": [
+      "builder_nullable_tier_inputs"
+    ],
+    "old": "if value is not None:",
+    "new": "if True:",
+    "failure": "rejected_positive"
+  },
+  {
+    "name": "rates_input_micro_per_million_required",
+    "rule": "Rates.input_micro_per_million: required",
+    "cases": [
+      "rates_input_micro_per_million_required"
+    ],
+    "old": "    input_micro_per_million: UInt",
+    "new": "    input_micro_per_million: UInt = 0",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cached_input_micro_per_million_required",
+    "rule": "Rates.cached_input_micro_per_million: required",
+    "cases": [
+      "rates_cached_input_micro_per_million_required"
+    ],
+    "old": "    cached_input_micro_per_million: UInt",
+    "new": "    cached_input_micro_per_million: UInt = 0",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_cache_creation_micro_per_million_required",
+    "rule": "Rates.cache_creation_micro_per_million: required",
+    "cases": [
+      "rates_cache_creation_micro_per_million_required"
+    ],
+    "old": "    cache_creation_micro_per_million: UInt",
+    "new": "    cache_creation_micro_per_million: UInt = 0",
+    "scope": "Rates"
+  },
+  {
+    "name": "rates_output_micro_per_million_required",
+    "rule": "Rates.output_micro_per_million: required",
+    "cases": [
+      "rates_output_micro_per_million_required"
+    ],
+    "old": "    output_micro_per_million: UInt",
+    "new": "    output_micro_per_million: UInt = 0",
+    "scope": "Rates"
+  },
+  {
+    "name": "tier_max_prompt_tokens_required",
+    "rule": "Tier.max_prompt_tokens: required",
+    "cases": [
+      "tier_max_prompt_tokens_required"
+    ],
+    "old": "    max_prompt_tokens: UInt | None",
+    "new": "    max_prompt_tokens: UInt | None = 0",
+    "scope": "Tier"
+  },
+  {
+    "name": "tier_rates_required",
+    "rule": "Tier.rates: required",
+    "cases": [
+      "tier_rates_required"
+    ],
+    "old": "    rates: Rates",
+    "new": "    rates: Rates = {'input_micro_per_million': 1000000, 'output_micro_per_million': 2000000, 'cached_input_micro_per_million': 250000, 'cache_creation_micro_per_million': 1250000}",
+    "scope": "Tier"
+  },
+  {
+    "name": "tier_rates_object",
+    "rule": "Tier.rates: nested Rates record",
+    "cases": [
+      "tier_rates_object"
+    ],
+    "old": "    rates: Rates",
+    "new": "    rates: Rates | None",
+    "scope": "Tier"
+  },
+  {
+    "name": "candidate_endpoint_id_required",
+    "rule": "Candidate.endpoint_id: required",
+    "cases": [
+      "candidate_endpoint_id_required"
+    ],
+    "old": "    endpoint_id: Identity",
+    "new": "    endpoint_id: Identity = 'openai/billing-v1@openai/prepaid'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_provider_required",
+    "rule": "Candidate.provider: required",
+    "cases": [
+      "candidate_provider_required"
+    ],
+    "old": "    provider: Literal[\"openai\", \"anthropic\"]",
+    "new": "    provider: Literal[\"openai\", \"anthropic\"] = 'openai'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_model_id_required",
+    "rule": "Candidate.model_id: required",
+    "cases": [
+      "candidate_model_id_required"
+    ],
+    "old": "    model_id: Identity",
+    "new": "    model_id: Identity = 'openai/billing-v1'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_usage_type_required",
+    "rule": "Candidate.usage_type: required",
+    "cases": [
+      "candidate_usage_type_required"
+    ],
+    "old": "    usage_type: Literal[\"Credits\"]",
+    "new": "    usage_type: Literal[\"Credits\"] = 'Credits'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_price_history_version_required",
+    "rule": "Candidate.price_history_version: required",
+    "cases": [
+      "candidate_price_history_version_required"
+    ],
+    "old": "    price_history_version: Literal[1]",
+    "new": "    price_history_version: Literal[1] = 1",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_rates_required",
+    "rule": "Candidate.rates: required",
+    "cases": [
+      "candidate_rates_required"
+    ],
+    "old": "    rates: Rates",
+    "new": "    rates: Rates = {'input_micro_per_million': 1000000, 'output_micro_per_million': 2000000, 'cached_input_micro_per_million': 250000, 'cache_creation_micro_per_million': 1250000}",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_rates_object",
+    "rule": "Candidate.rates: nested Rates record",
+    "cases": [
+      "candidate_rates_object"
+    ],
+    "old": "    rates: Rates",
+    "new": "    rates: Rates | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_tiers_required",
+    "rule": "Candidate.tiers: required",
+    "cases": [
+      "candidate_tiers_required"
+    ],
+    "old": "    tiers: tuple[Tier, ...] = Field(max_length=64)",
+    "new": "    tiers: tuple[Tier, ...] = Field(default=[], max_length=64)",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_request_fee_micro_required",
+    "rule": "Candidate.request_fee_micro: required",
+    "cases": [
+      "candidate_request_fee_micro_required"
+    ],
+    "old": "    request_fee_micro: UInt",
+    "new": "    request_fee_micro: UInt = 0",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_rounding_required",
+    "rule": "Candidate.rounding: required",
+    "cases": [
+      "candidate_rounding_required"
+    ],
+    "old": "    rounding: Literal[\"half_up_per_million\"]",
+    "new": "    rounding: Literal[\"half_up_per_million\"] = 'half_up_per_million'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_prompt_convention_required",
+    "rule": "Candidate.prompt_convention: required",
+    "cases": [
+      "candidate_prompt_convention_required"
+    ],
+    "old": "    prompt_convention: Literal[\"includes_cache\", \"excludes_cache\"]",
+    "new": "    prompt_convention: Literal[\"includes_cache\", \"excludes_cache\"] = 'includes_cache'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_output_convention_required",
+    "rule": "Candidate.output_convention: required",
+    "cases": [
+      "candidate_output_convention_required"
+    ],
+    "old": "    output_convention: Literal[\"includes_reasoning\"]",
+    "new": "    output_convention: Literal[\"includes_reasoning\"] = 'includes_reasoning'",
+    "scope": "Candidate"
+  },
+  {
+    "name": "billingsnapshot_v_required",
+    "rule": "BillingSnapshot.v: required",
+    "cases": [
+      "billingsnapshot_v_required"
+    ],
+    "old": "    v: Literal[1]",
+    "new": "    v: Literal[1] = 1",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_kind_required",
+    "rule": "BillingSnapshot.kind: required",
+    "cases": [
+      "billingsnapshot_kind_required"
+    ],
+    "old": "    kind: Literal[\"credits_endpoint\"]",
+    "new": "    kind: Literal[\"credits_endpoint\"] = 'credits_endpoint'",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_candidates_required",
+    "rule": "BillingSnapshot.candidates: required",
+    "cases": [
+      "billingsnapshot_candidates_required"
+    ],
+    "old": "    candidates: tuple[Candidate, ...] = Field(min_length=1, max_length=64)",
+    "new": "    candidates: tuple[Candidate, ...] = Field(default=[{'endpoint_id': 'openai/billing-v1@openai/prepaid', 'model_id': 'openai/billing-v1', 'provider': 'openai', 'usage_type': 'Credits', 'price_history_version': 1, 'rates': {'input_micro_per_million': 1000000, 'output_micro_per_million': 2000000, 'cached_input_micro_per_million': 250000, 'cache_creation_micro_per_million': 1250000}, 'tiers': [], 'request_fee_micro': 0, 'rounding': 'half_up_per_million', 'prompt_convention': 'includes_cache', 'output_convention': 'includes_reasoning'}], min_length=1, max_length=64)",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_minimum_charge_required",
+    "rule": "BillingSnapshot.minimum_charge: required",
+    "cases": [
+      "billingsnapshot_minimum_charge_required"
+    ],
+    "old": "    minimum_charge: Literal[\"one_micro_if_positive\"]",
+    "new": "    minimum_charge: Literal[\"one_micro_if_positive\"] = 'one_micro_if_positive'",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_charge_cap_required",
+    "rule": "BillingSnapshot.charge_cap: required",
+    "cases": [
+      "billingsnapshot_charge_cap_required"
+    ],
+    "old": "    charge_cap: None",
+    "new": "    charge_cap: None = None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_basis_required",
+    "rule": "BillingSnapshot.tier_basis: required",
+    "cases": [
+      "billingsnapshot_tier_basis_required"
+    ],
+    "old": "    tier_basis: Literal[\"total_prompt\"]",
+    "new": "    tier_basis: Literal[\"total_prompt\"] = 'total_prompt'",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_boundary_required",
+    "rule": "BillingSnapshot.tier_boundary: required",
+    "cases": [
+      "billingsnapshot_tier_boundary_required"
+    ],
+    "old": "    tier_boundary: Literal[\"inclusive\"]",
+    "new": "    tier_boundary: Literal[\"inclusive\"] = 'inclusive'",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_fallback_required",
+    "rule": "BillingSnapshot.tier_fallback: required",
+    "cases": [
+      "billingsnapshot_tier_fallback_required"
+    ],
+    "old": "    tier_fallback: Literal[\"last_tier\"]",
+    "new": "    tier_fallback: Literal[\"last_tier\"] = 'last_tier'",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "rawusage_input_tokens_required",
+    "rule": "RawUsage.input_tokens: required",
+    "cases": [
+      "rawusage_input_tokens_required"
+    ],
+    "old": "    input_tokens: UInt",
+    "new": "    input_tokens: UInt = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "rawusage_output_tokens_required",
+    "rule": "RawUsage.output_tokens: required",
+    "cases": [
+      "rawusage_output_tokens_required"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: UInt = 0",
+    "scope": "RawUsage"
+  },
+  {
+    "name": "normalizedusage_uncached_input_tokens_required",
+    "rule": "NormalizedUsage.uncached_input_tokens: required",
+    "cases": [
+      "normalizedusage_uncached_input_tokens_required"
+    ],
+    "old": "    uncached_input_tokens: UInt",
+    "new": "    uncached_input_tokens: UInt = 0",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_total_prompt_tokens_required",
+    "rule": "NormalizedUsage.total_prompt_tokens: required",
+    "cases": [
+      "normalizedusage_total_prompt_tokens_required"
+    ],
+    "old": "    total_prompt_tokens: UInt",
+    "new": "    total_prompt_tokens: UInt = 0",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_output_tokens_required",
+    "rule": "NormalizedUsage.output_tokens: required",
+    "cases": [
+      "normalizedusage_output_tokens_required"
+    ],
+    "old": "    output_tokens: UInt",
+    "new": "    output_tokens: UInt = 0",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_read_tokens_required",
+    "rule": "NormalizedUsage.cache_read_tokens: required",
+    "cases": [
+      "normalizedusage_cache_read_tokens_required"
+    ],
+    "old": "    cache_read_tokens: UInt",
+    "new": "    cache_read_tokens: UInt = 0",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_cache_creation_tokens_required",
+    "rule": "NormalizedUsage.cache_creation_tokens: required",
+    "cases": [
+      "normalizedusage_cache_creation_tokens_required"
+    ],
+    "old": "    cache_creation_tokens: UInt",
+    "new": "    cache_creation_tokens: UInt = 0",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "normalizedusage_reasoning_tokens_required",
+    "rule": "NormalizedUsage.reasoning_tokens: required",
+    "cases": [
+      "normalizedusage_reasoning_tokens_required"
+    ],
+    "old": "    reasoning_tokens: UInt",
+    "new": "    reasoning_tokens: UInt = 0",
+    "scope": "NormalizedUsage"
+  },
+  {
+    "name": "evaluation_usage_required",
+    "rule": "Evaluation.usage: required",
+    "cases": [
+      "evaluation_usage_required"
+    ],
+    "old": "    usage: NormalizedUsage",
+    "new": "    usage: NormalizedUsage = {'uncached_input_tokens': 0, 'total_prompt_tokens': 0, 'output_tokens': 0, 'cache_read_tokens': 0, 'cache_creation_tokens': 0, 'reasoning_tokens': 0}",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "evaluation_usage_object",
+    "rule": "Evaluation.usage: nested NormalizedUsage record",
+    "cases": [
+      "evaluation_usage_object"
+    ],
+    "old": "    usage: NormalizedUsage",
+    "new": "    usage: NormalizedUsage | None",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "evaluation_charge_micro_required",
+    "rule": "Evaluation.charge_micro: required",
+    "cases": [
+      "evaluation_charge_micro_required"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: UInt = 0",
+    "scope": "Evaluation"
+  },
+  {
+    "name": "terminalenvelope_v_required",
+    "rule": "TerminalEnvelope.v: required",
+    "cases": [
+      "terminalenvelope_v_required"
+    ],
+    "old": "    v: Literal[1]",
+    "new": "    v: Literal[1] = 1",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_authorization_id_required",
+    "rule": "TerminalEnvelope.authorization_id: required",
+    "cases": [
+      "terminalenvelope_authorization_id_required"
+    ],
+    "old": "    authorization_id: Identity",
+    "new": "    authorization_id: Identity = 'auth-v1'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_generation_id_required",
+    "rule": "TerminalEnvelope.generation_id: required",
+    "cases": [
+      "terminalenvelope_generation_id_required"
+    ],
+    "old": "    generation_id: Identity",
+    "new": "    generation_id: Identity = 'gen-v1'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_workspace_id_required",
+    "rule": "TerminalEnvelope.workspace_id: required",
+    "cases": [
+      "terminalenvelope_workspace_id_required"
+    ],
+    "old": "    workspace_id: Identity",
+    "new": "    workspace_id: Identity = 'ws-v1'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_key_id_required",
+    "rule": "TerminalEnvelope.key_id: required",
+    "cases": [
+      "terminalenvelope_key_id_required"
+    ],
+    "old": "    key_id: Identity",
+    "new": "    key_id: Identity = 'key-v1'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_invocation_nonce_required",
+    "rule": "TerminalEnvelope.invocation_nonce: required",
+    "cases": [
+      "terminalenvelope_invocation_nonce_required"
+    ],
+    "old": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "new": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")] = 'nonce-v1'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_billing_authority_required",
+    "rule": "TerminalEnvelope.billing_authority: required",
+    "cases": [
+      "terminalenvelope_billing_authority_required"
+    ],
+    "old": "    billing_authority: Literal[\"local\"]",
+    "new": "    billing_authority: Literal[\"local\"] = 'local'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_journal_region_required",
+    "rule": "TerminalEnvelope.journal_region: required",
+    "cases": [
+      "terminalenvelope_journal_region_required"
+    ],
+    "old": "    journal_region: Identity",
+    "new": "    journal_region: Identity = 'us-central1'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_epoch_required",
+    "rule": "TerminalEnvelope.epoch: required",
+    "cases": [
+      "terminalenvelope_epoch_required"
+    ],
+    "old": "    epoch: UInt",
+    "new": "    epoch: UInt = 1",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_selected_endpoint_required",
+    "rule": "TerminalEnvelope.selected_endpoint: required",
+    "cases": [
+      "terminalenvelope_selected_endpoint_required"
+    ],
+    "old": "    selected_endpoint: Identity",
+    "new": "    selected_endpoint: Identity = 'openai/billing-v1@openai/prepaid'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_version_required",
+    "rule": "TerminalEnvelope.snapshot_version: required",
+    "cases": [
+      "terminalenvelope_snapshot_version_required"
+    ],
+    "old": "    snapshot_version: Literal[1]",
+    "new": "    snapshot_version: Literal[1] = 1",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_hash_required",
+    "rule": "TerminalEnvelope.snapshot_hash: required",
+    "cases": [
+      "terminalenvelope_snapshot_hash_required"
+    ],
+    "old": "    snapshot_hash: Digest",
+    "new": "    snapshot_hash: Digest = 'b7b63710776aa4ed0cbcfabff730aece13ba8064c97f9db18d5b1e3dcbfdc8d8'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_usage_required",
+    "rule": "TerminalEnvelope.usage: required",
+    "cases": [
+      "terminalenvelope_usage_required"
+    ],
+    "old": "    usage: NormalizedUsage",
+    "new": "    usage: NormalizedUsage = {'uncached_input_tokens': 0, 'total_prompt_tokens': 0, 'output_tokens': 0, 'cache_read_tokens': 0, 'cache_creation_tokens': 0, 'reasoning_tokens': 0}",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_usage_object",
+    "rule": "TerminalEnvelope.usage: nested NormalizedUsage record",
+    "cases": [
+      "terminalenvelope_usage_object"
+    ],
+    "old": "    usage: NormalizedUsage",
+    "new": "    usage: NormalizedUsage | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_charge_micro_required",
+    "rule": "TerminalEnvelope.charge_micro: required",
+    "cases": [
+      "terminalenvelope_charge_micro_required"
+    ],
+    "old": "    charge_micro: UInt",
+    "new": "    charge_micro: UInt = 0",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_terminal_kind_required",
+    "rule": "TerminalEnvelope.terminal_kind: required",
+    "cases": [
+      "terminalenvelope_terminal_kind_required"
+    ],
+    "old": "    terminal_kind: Literal[\"settle\", \"refund\"]",
+    "new": "    terminal_kind: Literal[\"settle\", \"refund\"] = 'settle'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_route_type_required",
+    "rule": "TerminalEnvelope.route_type: required",
+    "cases": [
+      "terminalenvelope_route_type_required"
+    ],
+    "old": "    route_type: Literal[\"chat.completions\", \"responses\"]",
+    "new": "    route_type: Literal[\"chat.completions\", \"responses\"] = 'chat.completions'",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_streamed_required",
+    "rule": "TerminalEnvelope.streamed: required",
+    "cases": [
+      "terminalenvelope_streamed_required"
+    ],
+    "old": "    streamed: Annotated[bool, Field(strict=True)]",
+    "new": "    streamed: Annotated[bool, Field(strict=True)] = False",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "acceptanceoutcome_status_required",
+    "rule": "AcceptanceOutcome.status: required",
+    "cases": [
+      "acceptanceoutcome_status_required"
+    ],
+    "old": "    status: AcceptanceStatus",
+    "new": "    status: AcceptanceStatus = 'invalid'",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "acceptance_rejection_both",
+    "rule": "Rejected outcomes cannot carry BOTH hash and pending (overlapping guards)",
+    "cases": [
+      "acceptance_sync_required_both",
+      "acceptance_conflict_both",
+      "acceptance_invalid_both"
+    ],
+    "old": "        if durable != (self.payload_hash is not None and self.settlement_status == \"pending\"):\n            raise ValueError(\"durable outcome requires hash and pending status\")\n        if not durable and (self.payload_hash is not None or self.settlement_status is not None):",
+    "new": "        if durable and not (self.payload_hash is not None and self.settlement_status == \"pending\"):\n            raise ValueError(\"durable outcome requires hash and pending status\")\n        if not durable and ((self.payload_hash is not None) != (self.settlement_status is not None)):",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "normalized_native_overflow",
+    "rule": "Normalized component sum rejects int64 wraparound to a valid total",
+    "cases": [
+      "normalized_sum_wraparound"
+    ],
+    "old": "    if value < 0 or value > MAX_INT:\n        raise ValueError(\"arithmetic_overflow\")\n    return value",
+    "new": "    if value < 0:\n        raise ValueError(\"arithmetic_overflow\")\n    return ((value + (1 << 63)) % (1 << 64)) - (1 << 63)"
+  },
+  {
+    "name": "multiplication_native_overflow",
+    "rule": "Token-rate multiplication must reject overflow before native int64 wrapping",
+    "cases": [
+      "multiply_wraparound"
+    ],
+    "old": "product = checked(tokens * rate)",
+    "new": "product = ((tokens * rate + (1 << 63)) % (1 << 64)) - (1 << 63)"
+  },
+  {
+    "name": "eligibility_typed_nonnull",
+    "rule": "Eligibility.typed: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_typed_nonnull_null"
+    ],
+    "old": "    typed: Annotated[bool, Field(strict=True)] = True",
+    "new": "    typed: (Annotated[bool, Field(strict=True)]) | None = True",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_usage_type_nonnull",
+    "rule": "Eligibility.usage_type: nonnull str",
+    "cases": [
+      "eligibility_usage_type_nonnull_null"
+    ],
+    "old": "    usage_type: str = \"Credits\"",
+    "new": "    usage_type: (str) | None = \"Credits\"",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_authority_nonnull",
+    "rule": "Eligibility.authority: nonnull str",
+    "cases": [
+      "eligibility_authority_nonnull_null"
+    ],
+    "old": "    authority: str = \"local\"",
+    "new": "    authority: (str) | None = \"local\"",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_route_type_nonnull",
+    "rule": "Eligibility.route_type: nonnull str",
+    "cases": [
+      "eligibility_route_type_nonnull_null"
+    ],
+    "old": "    route_type: str = \"chat.completions\"",
+    "new": "    route_type: (str) | None = \"chat.completions\"",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_streamed_nonnull",
+    "rule": "Eligibility.streamed: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_streamed_nonnull_null"
+    ],
+    "old": "    streamed: Annotated[bool, Field(strict=True)] = False",
+    "new": "    streamed: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_custom_model_nonnull",
+    "rule": "Eligibility.custom_model: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_custom_model_nonnull_null"
+    ],
+    "old": "    custom_model: Annotated[bool, Field(strict=True)] = False",
+    "new": "    custom_model: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_user_model_nonnull",
+    "rule": "Eligibility.user_model: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_user_model_nonnull_null"
+    ],
+    "old": "    user_model: Annotated[bool, Field(strict=True)] = False",
+    "new": "    user_model: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_tool_cost_nonnull",
+    "rule": "Eligibility.tool_cost: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_tool_cost_nonnull_null"
+    ],
+    "old": "    tool_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    tool_cost: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_search_cost_nonnull",
+    "rule": "Eligibility.search_cost: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_search_cost_nonnull_null"
+    ],
+    "old": "    search_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    search_cost: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_image_cost_nonnull",
+    "rule": "Eligibility.image_cost: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_image_cost_nonnull_null"
+    ],
+    "old": "    image_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    image_cost: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_video_cost_nonnull",
+    "rule": "Eligibility.video_cost: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_video_cost_nonnull_null"
+    ],
+    "old": "    video_cost: Annotated[bool, Field(strict=True)] = False",
+    "new": "    video_cost: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_partner_nonnull",
+    "rule": "Eligibility.partner: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_partner_nonnull_null"
+    ],
+    "old": "    partner: Annotated[bool, Field(strict=True)] = False",
+    "new": "    partner: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_liberty_nonnull",
+    "rule": "Eligibility.liberty: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_liberty_nonnull_null"
+    ],
+    "old": "    liberty: Annotated[bool, Field(strict=True)] = False",
+    "new": "    liberty: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_native_batch_nonnull",
+    "rule": "Eligibility.native_batch: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_native_batch_nonnull_null"
+    ],
+    "old": "    native_batch: Annotated[bool, Field(strict=True)] = False",
+    "new": "    native_batch: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_fusion_nonnull",
+    "rule": "Eligibility.fusion: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_fusion_nonnull_null"
+    ],
+    "old": "    fusion: Annotated[bool, Field(strict=True)] = False",
+    "new": "    fusion: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_polyphemus_nonnull",
+    "rule": "Eligibility.polyphemus: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_polyphemus_nonnull_null"
+    ],
+    "old": "    polyphemus: Annotated[bool, Field(strict=True)] = False",
+    "new": "    polyphemus: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "eligibility_private_tier_basis_nonnull",
+    "rule": "Eligibility.private_tier_basis: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "eligibility_private_tier_basis_nonnull_null"
+    ],
+    "old": "    private_tier_basis: Annotated[bool, Field(strict=True)] = False",
+    "new": "    private_tier_basis: (Annotated[bool, Field(strict=True)]) | None = False",
+    "scope": "Eligibility"
+  },
+  {
+    "name": "candidate_endpoint_id_nonnull",
+    "rule": "Candidate.endpoint_id: nonnull Identity",
+    "cases": [
+      "candidate_endpoint_id_nonnull_null"
+    ],
+    "old": "    endpoint_id: Identity",
+    "new": "    endpoint_id: (Identity) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_provider_nonnull",
+    "rule": "Candidate.provider: nonnull Literal[\"openai\", \"anthropic\"]",
+    "cases": [
+      "candidate_provider_nonnull_null"
+    ],
+    "old": "    provider: Literal[\"openai\", \"anthropic\"]",
+    "new": "    provider: (Literal[\"openai\", \"anthropic\"]) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_model_id_nonnull",
+    "rule": "Candidate.model_id: nonnull Identity",
+    "cases": [
+      "candidate_model_id_nonnull_null"
+    ],
+    "old": "    model_id: Identity",
+    "new": "    model_id: (Identity) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_usage_type_nonnull",
+    "rule": "Candidate.usage_type: nonnull Literal[\"Credits\"]",
+    "cases": [
+      "candidate_usage_type_nonnull_null"
+    ],
+    "old": "    usage_type: Literal[\"Credits\"]",
+    "new": "    usage_type: (Literal[\"Credits\"]) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_price_history_version_nonnull",
+    "rule": "Candidate.price_history_version: nonnull Literal[1]",
+    "cases": [
+      "candidate_price_history_version_nonnull_null"
+    ],
+    "old": "    price_history_version: Literal[1]",
+    "new": "    price_history_version: (Literal[1]) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_tiers_nonnull",
+    "rule": "Candidate.tiers: nonnull tuple[Tier, ...]",
+    "cases": [
+      "candidate_tiers_nonnull_null"
+    ],
+    "old": "    tiers: tuple[Tier, ...] = Field(max_length=64)",
+    "new": "    tiers: (tuple[Tier, ...]) | None = Field(max_length=64)",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_rounding_nonnull",
+    "rule": "Candidate.rounding: nonnull Literal[\"half_up_per_million\"]",
+    "cases": [
+      "candidate_rounding_nonnull_null"
+    ],
+    "old": "    rounding: Literal[\"half_up_per_million\"]",
+    "new": "    rounding: (Literal[\"half_up_per_million\"]) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_prompt_convention_nonnull",
+    "rule": "Candidate.prompt_convention: nonnull Literal[\"includes_cache\", \"excludes_cache\"]",
+    "cases": [
+      "candidate_prompt_convention_nonnull_null"
+    ],
+    "old": "    prompt_convention: Literal[\"includes_cache\", \"excludes_cache\"]",
+    "new": "    prompt_convention: (Literal[\"includes_cache\", \"excludes_cache\"]) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_output_convention_nonnull",
+    "rule": "Candidate.output_convention: nonnull Literal[\"includes_reasoning\"]",
+    "cases": [
+      "candidate_output_convention_nonnull_null"
+    ],
+    "old": "    output_convention: Literal[\"includes_reasoning\"]",
+    "new": "    output_convention: (Literal[\"includes_reasoning\"]) | None",
+    "scope": "Candidate"
+  },
+  {
+    "name": "billingsnapshot_v_nonnull",
+    "rule": "BillingSnapshot.v: nonnull Literal[1]",
+    "cases": [
+      "billingsnapshot_v_nonnull_null"
+    ],
+    "old": "    v: Literal[1]",
+    "new": "    v: (Literal[1]) | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_kind_nonnull",
+    "rule": "BillingSnapshot.kind: nonnull Literal[\"credits_endpoint\"]",
+    "cases": [
+      "billingsnapshot_kind_nonnull_null"
+    ],
+    "old": "    kind: Literal[\"credits_endpoint\"]",
+    "new": "    kind: (Literal[\"credits_endpoint\"]) | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_candidates_nonnull",
+    "rule": "BillingSnapshot.candidates: nonnull tuple[Candidate, ...]",
+    "cases": [
+      "billingsnapshot_candidates_nonnull_null"
+    ],
+    "old": "    candidates: tuple[Candidate, ...] = Field(min_length=1, max_length=64)",
+    "new": "    candidates: (tuple[Candidate, ...]) | None = Field(min_length=1, max_length=64)",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_minimum_charge_nonnull",
+    "rule": "BillingSnapshot.minimum_charge: nonnull Literal[\"one_micro_if_positive\"]",
+    "cases": [
+      "billingsnapshot_minimum_charge_nonnull_null"
+    ],
+    "old": "    minimum_charge: Literal[\"one_micro_if_positive\"]",
+    "new": "    minimum_charge: (Literal[\"one_micro_if_positive\"]) | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_basis_nonnull",
+    "rule": "BillingSnapshot.tier_basis: nonnull Literal[\"total_prompt\"]",
+    "cases": [
+      "billingsnapshot_tier_basis_nonnull_null"
+    ],
+    "old": "    tier_basis: Literal[\"total_prompt\"]",
+    "new": "    tier_basis: (Literal[\"total_prompt\"]) | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_boundary_nonnull",
+    "rule": "BillingSnapshot.tier_boundary: nonnull Literal[\"inclusive\"]",
+    "cases": [
+      "billingsnapshot_tier_boundary_nonnull_null"
+    ],
+    "old": "    tier_boundary: Literal[\"inclusive\"]",
+    "new": "    tier_boundary: (Literal[\"inclusive\"]) | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "billingsnapshot_tier_fallback_nonnull",
+    "rule": "BillingSnapshot.tier_fallback: nonnull Literal[\"last_tier\"]",
+    "cases": [
+      "billingsnapshot_tier_fallback_nonnull_null"
+    ],
+    "old": "    tier_fallback: Literal[\"last_tier\"]",
+    "new": "    tier_fallback: (Literal[\"last_tier\"]) | None",
+    "scope": "BillingSnapshot"
+  },
+  {
+    "name": "terminalenvelope_v_nonnull",
+    "rule": "TerminalEnvelope.v: nonnull Literal[1]",
+    "cases": [
+      "terminalenvelope_v_nonnull_null"
+    ],
+    "old": "    v: Literal[1]",
+    "new": "    v: (Literal[1]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_authorization_id_nonnull",
+    "rule": "TerminalEnvelope.authorization_id: nonnull Identity",
+    "cases": [
+      "terminalenvelope_authorization_id_nonnull_null"
+    ],
+    "old": "    authorization_id: Identity",
+    "new": "    authorization_id: (Identity) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_generation_id_nonnull",
+    "rule": "TerminalEnvelope.generation_id: nonnull Identity",
+    "cases": [
+      "terminalenvelope_generation_id_nonnull_null"
+    ],
+    "old": "    generation_id: Identity",
+    "new": "    generation_id: (Identity) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_workspace_id_nonnull",
+    "rule": "TerminalEnvelope.workspace_id: nonnull Identity",
+    "cases": [
+      "terminalenvelope_workspace_id_nonnull_null"
+    ],
+    "old": "    workspace_id: Identity",
+    "new": "    workspace_id: (Identity) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_key_id_nonnull",
+    "rule": "TerminalEnvelope.key_id: nonnull Identity",
+    "cases": [
+      "terminalenvelope_key_id_nonnull_null"
+    ],
+    "old": "    key_id: Identity",
+    "new": "    key_id: (Identity) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_invocation_nonce_nonnull",
+    "rule": "TerminalEnvelope.invocation_nonce: nonnull Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "cases": [
+      "terminalenvelope_invocation_nonce_nonnull_null"
+    ],
+    "old": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "new": "    invocation_nonce: (Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_billing_authority_nonnull",
+    "rule": "TerminalEnvelope.billing_authority: nonnull Literal[\"local\"]",
+    "cases": [
+      "terminalenvelope_billing_authority_nonnull_null"
+    ],
+    "old": "    billing_authority: Literal[\"local\"]",
+    "new": "    billing_authority: (Literal[\"local\"]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_journal_region_nonnull",
+    "rule": "TerminalEnvelope.journal_region: nonnull Identity",
+    "cases": [
+      "terminalenvelope_journal_region_nonnull_null"
+    ],
+    "old": "    journal_region: Identity",
+    "new": "    journal_region: (Identity) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_selected_endpoint_nonnull",
+    "rule": "TerminalEnvelope.selected_endpoint: nonnull Identity",
+    "cases": [
+      "terminalenvelope_selected_endpoint_nonnull_null"
+    ],
+    "old": "    selected_endpoint: Identity",
+    "new": "    selected_endpoint: (Identity) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_version_nonnull",
+    "rule": "TerminalEnvelope.snapshot_version: nonnull Literal[1]",
+    "cases": [
+      "terminalenvelope_snapshot_version_nonnull_null"
+    ],
+    "old": "    snapshot_version: Literal[1]",
+    "new": "    snapshot_version: (Literal[1]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_hash_nonnull",
+    "rule": "TerminalEnvelope.snapshot_hash: nonnull Digest",
+    "cases": [
+      "terminalenvelope_snapshot_hash_nonnull_null"
+    ],
+    "old": "    snapshot_hash: Digest",
+    "new": "    snapshot_hash: (Digest) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_terminal_kind_nonnull",
+    "rule": "TerminalEnvelope.terminal_kind: nonnull Literal[\"settle\", \"refund\"]",
+    "cases": [
+      "terminalenvelope_terminal_kind_nonnull_null"
+    ],
+    "old": "    terminal_kind: Literal[\"settle\", \"refund\"]",
+    "new": "    terminal_kind: (Literal[\"settle\", \"refund\"]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_route_type_nonnull",
+    "rule": "TerminalEnvelope.route_type: nonnull Literal[\"chat.completions\", \"responses\"]",
+    "cases": [
+      "terminalenvelope_route_type_nonnull_null"
+    ],
+    "old": "    route_type: Literal[\"chat.completions\", \"responses\"]",
+    "new": "    route_type: (Literal[\"chat.completions\", \"responses\"]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_streamed_nonnull",
+    "rule": "TerminalEnvelope.streamed: nonnull Annotated[bool, Field(strict=True)]",
+    "cases": [
+      "terminalenvelope_streamed_nonnull_null"
+    ],
+    "old": "    streamed: Annotated[bool, Field(strict=True)]",
+    "new": "    streamed: (Annotated[bool, Field(strict=True)]) | None",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "acceptanceoutcome_status_nonnull",
+    "rule": "AcceptanceOutcome.status: nonnull AcceptanceStatus",
+    "cases": [
+      "acceptanceoutcome_status_nonnull_null"
+    ],
+    "old": "    status: AcceptanceStatus",
+    "new": "    status: (AcceptanceStatus) | None",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "terminalenvelope_nonce_string_type",
+    "rule": "TerminalEnvelope.invocation_nonce: string input type",
+    "cases": [
+      "terminalenvelope_nonce_string_type"
+    ],
+    "old": "    invocation_nonce: Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]",
+    "new": "    invocation_nonce: (Annotated[str, Field(min_length=1, max_length=64, pattern=r\"^[A-Za-z0-9_-]+$\")]) | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "type_identity_nonnull",
+    "rule": "Identity: nonnull primitive",
+    "cases": [
+      "type_identity_nonnull"
+    ],
+    "old": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+    "new": "Identity = Annotated[str, Field(min_length=1, max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")] | None"
+  },
+  {
+    "name": "type_digest_nonnull",
+    "rule": "Digest: nonnull primitive",
+    "cases": [
+      "type_digest_nonnull"
+    ],
+    "old": "Digest = Annotated[str, Field(pattern=r\"^[0-9a-f]{64}$\")]",
+    "new": "Digest = Annotated[str, Field(pattern=r\"^[0-9a-f]{64}$\")] | None"
+  },
+  {
+    "name": "type_settlementmode_nonnull",
+    "rule": "SettlementMode: nonnull primitive",
+    "cases": [
+      "type_settlementmode_nonnull"
+    ],
+    "old": "SettlementMode = Literal[\"sync\", \"async\"]",
+    "new": "SettlementMode = Literal[\"sync\", \"async\"] | None"
+  },
+  {
+    "name": "model_root_nonnull",
+    "rule": "Frozen/Eligibility: null is not an empty object with valid defaults",
+    "cases": [
+      "frozen_null_object",
+      "eligibility_null_object"
+    ],
+    "old": "            obj, strict=strict, extra=extra, from_attributes=from_attributes,",
+    "new": "            {} if obj is None else obj, strict=strict, extra=extra, from_attributes=from_attributes,"
+  },
+  {
+    "name": "candidate_endpoint_id_string_type",
+    "rule": "Candidate.endpoint_id: string input type",
+    "cases": [
+      "candidate_endpoint_id_string_type"
+    ],
+    "old": "    endpoint_id: Identity",
+    "new": "    endpoint_id: Identity | int",
+    "scope": "Candidate"
+  },
+  {
+    "name": "candidate_model_id_string_type",
+    "rule": "Candidate.model_id: string input type",
+    "cases": [
+      "candidate_model_id_string_type"
+    ],
+    "old": "    model_id: Identity",
+    "new": "    model_id: Identity | int",
+    "scope": "Candidate"
+  },
+  {
+    "name": "terminalenvelope_authorization_id_string_type",
+    "rule": "TerminalEnvelope.authorization_id: string input type",
+    "cases": [
+      "terminalenvelope_authorization_id_string_type"
+    ],
+    "old": "    authorization_id: Identity",
+    "new": "    authorization_id: Identity | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_generation_id_string_type",
+    "rule": "TerminalEnvelope.generation_id: string input type",
+    "cases": [
+      "terminalenvelope_generation_id_string_type"
+    ],
+    "old": "    generation_id: Identity",
+    "new": "    generation_id: Identity | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_workspace_id_string_type",
+    "rule": "TerminalEnvelope.workspace_id: string input type",
+    "cases": [
+      "terminalenvelope_workspace_id_string_type"
+    ],
+    "old": "    workspace_id: Identity",
+    "new": "    workspace_id: Identity | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_key_id_string_type",
+    "rule": "TerminalEnvelope.key_id: string input type",
+    "cases": [
+      "terminalenvelope_key_id_string_type"
+    ],
+    "old": "    key_id: Identity",
+    "new": "    key_id: Identity | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_journal_region_string_type",
+    "rule": "TerminalEnvelope.journal_region: string input type",
+    "cases": [
+      "terminalenvelope_journal_region_string_type"
+    ],
+    "old": "    journal_region: Identity",
+    "new": "    journal_region: Identity | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_selected_endpoint_string_type",
+    "rule": "TerminalEnvelope.selected_endpoint: string input type",
+    "cases": [
+      "terminalenvelope_selected_endpoint_string_type"
+    ],
+    "old": "    selected_endpoint: Identity",
+    "new": "    selected_endpoint: Identity | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "terminalenvelope_snapshot_hash_string_type",
+    "rule": "TerminalEnvelope.snapshot_hash: string input type",
+    "cases": [
+      "terminalenvelope_snapshot_hash_string_type"
+    ],
+    "old": "    snapshot_hash: Digest",
+    "new": "    snapshot_hash: Digest | int",
+    "scope": "TerminalEnvelope"
+  },
+  {
+    "name": "acceptanceoutcome_payload_hash_string_type",
+    "rule": "AcceptanceOutcome.payload_hash: string input type",
+    "cases": [
+      "acceptanceoutcome_payload_hash_string_type"
+    ],
+    "old": "    payload_hash: Digest | None",
+    "new": "    payload_hash: Digest | int | None",
+    "scope": "AcceptanceOutcome"
+  },
+  {
+    "name": "json_bom_accepted",
+    "rule": "Wire JSON rejects a UTF-8 BOM with invalid_encoding",
+    "cases": [
+      "snapshot_utf8_bom",
+      "snapshot_str_bom"
+    ],
+    "old": "raise ValueError(\"invalid_encoding\")\n    data = json.loads",
+    "new": "raw = raw[1:]\n    data = json.loads",
+    "failure": "error_code"
+  },
+  {
+    "name": "json_utf16_accepted",
+    "rule": "Wire JSON rejects UTF-16/32 with or without BOM",
+    "cases": [
+      "snapshot_utf16le",
+      "snapshot_utf16le_bom",
+      "snapshot_utf16be",
+      "snapshot_utf16be_bom",
+      "snapshot_utf32le",
+      "snapshot_utf32le_bom",
+      "snapshot_utf32be",
+      "snapshot_utf32be_bom"
+    ],
+    "old": "if b\"\\x00\" in raw:",
+    "new": "if b\"\\x00\" in raw:\n            raw = raw.decode(json.detect_encoding(raw)).encode(\"utf-8\")\n        if False:",
+    "failure": "error_code"
+  },
+  {
+    "name": "json_invalid_utf8_accepted",
+    "rule": "Wire JSON rejects invalid UTF-8 with invalid_encoding",
+    "cases": [
+      "eligibility_utf8_encoded_surrogate"
+    ],
+    "old": "errors=\"strict\"",
+    "new": "errors=\"replace\"",
+    "failure": "error_code"
+  },
+  {
+    "name": "json_surrogate_accepted",
+    "rule": "Decoded string values reject lone high and low surrogates with invalid_string",
+    "cases": [
+      "eligibility_surrogate_high_value",
+      "eligibility_surrogate_low_value",
+      "eligibility_surrogate_literal_value"
+    ],
+    "old": "if any(0xD800 <= ord(char) <= 0xDFFF for char in value):",
+    "new": "if False:",
+    "failure": "error_code",
+    "positive_cases": [
+      "eligibility_canonical_surrogate_pair",
+      "eligibility_canonical_utf8_nonascii"
+    ]
+  },
+  {
+    "name": "json_surrogate_nested_accepted",
+    "rule": "Decoded string keys and values reject surrogates at every depth with invalid_string",
+    "cases": [
+      "eligibility_surrogate_key",
+      "eligibility_surrogate_nested_value",
+      "eligibility_surrogate_nested_key"
+    ],
+    "old": "if any(0xD800 <= ord(char) <= 0xDFFF for char in value):",
+    "new": "if False:",
+    "failure": "error_code"
+  },
+  {
+    "name": "canonical_del_unescaped",
+    "rule": "Canonical ASCII JSON escapes DEL as lowercase \\u007f",
+    "cases": [
+      "eligibility_canonical_del"
+    ],
+    "old": ").encode(\"ascii\")",
+    "new": ").replace(\"\\\\u007f\", \"\\x7f\").encode(\"ascii\")",
+    "failure": "value"
+  },
+  {
+    "name": "canonical_c0_unescaped",
+    "rule": "Canonical ASCII JSON escapes C0 controls as lowercase \\u0001",
+    "cases": [
+      "eligibility_canonical_c0"
+    ],
+    "old": ").encode(\"ascii\")",
+    "new": ").replace(\"\\\\u0001\", \"\\x01\").encode(\"ascii\")",
+    "failure": "value",
+    "positive_cases": [
+      "eligibility_canonical_escaped_nul"
+    ]
+  }
+]
