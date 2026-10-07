@@ -15,7 +15,16 @@ turn, runs TLC, and records in <Spec>.guards.toml what removing it breaks:
                          when a search of every state of the model's shape,
                          and the first outside it, finishes with no other
                          invariant broken.
-  breaks = "nothing"     every configuration of the spec still passes
+  breaks = "nothing"     every configuration of the spec still passes. Then
+                         `reaches` says whether the guard was doing anything:
+                         "no new state" if every configuration reaches as
+                         many distinct states as the table's [states] says
+                         it does with every guard in place, "new states" if
+                         one reaches more and no claim minds. Counting is
+                         enough because removing a guard only adds steps,
+                         where the relation uses each action only as a step
+                         and not under ENABLED, in an IF's condition or in
+                         a value; a spec that does is refused
   breaks = "evaluation"  the spec no longer evaluates, or its other
                          invariants do not on the first state outside
                          TypeOK: the guard kept some expression defined
@@ -28,8 +37,9 @@ claims do not rest on, each said plainly.
 check_mutants.py checks on every run that the table lists exactly the spec's
 guards, in order, and was swept against the spec and configurations as they
 are now. It does not repeat the sweep, which takes minutes. `--verify` does:
-it runs every row again and fails on any that no longer holds. CI runs that
-when proofs/ changes.
+it runs every row again and fails on any that no longer holds, and checks the
+[states] of each table once, in one of its parts. CI runs that when proofs/
+changes.
 
 Run: proofs/guard_sweep.py SPEC             sweep, and rewrite the table
      proofs/guard_sweep.py SPEC --action A  sweep one action's guards again
@@ -41,6 +51,7 @@ Run: proofs/guard_sweep.py SPEC             sweep, and rewrite the table
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import tempfile
 import tomllib
@@ -76,12 +87,35 @@ def run(spec_text: str, cfg_text: str, name: str, workers: str | None = None) ->
     return output
 
 
-def outcome(name: str, spec_text: str, configs: dict[str, str]) -> tuple[str, str]:
-    """(what the spec breaks, the variant that shows it) for a spec with a guard removed."""
+def distinct_states(output: str) -> int:
+    """How many distinct states a run that found no error reached."""
 
+    said = re.search(r"^\d+ states generated, (\d+) distinct states found, 0 states left on queue\.$", output, re.MULTILINE)
+    if said is None:
+        raise Inconclusive("a run that found no error did not say how many states it reached")
+    return int(said.group(1))
+
+
+def reached(states: dict[str, int], base: dict[str, int]) -> str:
+    """Whether a spec with a guard removed, which broke nothing, reaches a state the spec does not.
+
+    Removing a guard adds steps and takes none away, where the relation uses
+    each action only as a step (base_states checks that). Every state the
+    spec reaches is then still reached, and the same number of distinct
+    states in each configuration is the same states.
+    """
+
+    return cm.NO_NEW_STATE if states == base else cm.NEW_STATES
+
+
+def outcome(name: str, spec_text: str, configs: dict[str, str]) -> tuple[str, str, dict[str, int]]:
+    """(what the spec breaks, the variant that shows it, the states each configuration reaches if nothing breaks)."""
+
+    states = {}
     for variant in sorted(configs):
         output = run(spec_text, configs[variant], name)
         if cm.verdict(output, invariant=None, prop=None)[0] == cm.SURVIVED:
+            states[variant] = distinct_states(output)
             continue
         cfg_text = configs[variant]
         by_kind = cm.claims_in_order(cfg_text)
@@ -96,7 +130,7 @@ def outcome(name: str, spec_text: str, configs: dict[str, str]) -> tuple[str, st
             if claim is None and not cm.failed_to_evaluate(safety):
                 raise Inconclusive(f"{name}: two runs of one model disagreed")
             if claim is None:
-                return cm.BREAKS_EVALUATION, variant
+                return cm.BREAKS_EVALUATION, variant, {}
         if claim == cm.TYPE_INVARIANT:
             # The type invariant is the first to notice most things. Look past
             # it for another invariant the guard holds up: on states of the
@@ -109,13 +143,13 @@ def outcome(name: str, spec_text: str, configs: dict[str, str]) -> tuple[str, st
             past = run(spec_text, rest, name, workers=ONE)
             other = cm.violated_claim(past)
             if other is not None:
-                return other, variant
+                return other, variant, {}
             if cm.failed_to_evaluate(past):
                 # Nothing was learned about the other invariants, and a row
                 # that said TypeOK would say they hold.
-                return cm.BREAKS_EVALUATION, variant
+                return cm.BREAKS_EVALUATION, variant, {}
         if claim is not None:
-            return claim, variant
+            return claim, variant, {}
         # No invariant breaks and nothing fails to evaluate, so what is left
         # is a property. Each is checked alone, in the configuration's order:
         # checked together, TLC names every property that the one
@@ -125,11 +159,32 @@ def outcome(name: str, spec_text: str, configs: dict[str, str]) -> tuple[str, st
             alone = run(spec_text, only_claims(cfg_text, [], [each]), name)
             result = cm.verdict(alone, invariant=None, prop=each, spec_text=spec_text)[0]
             if result == cm.KILLED:
-                return each, variant
+                return each, variant, {}
             if result != cm.SURVIVED:
                 raise Inconclusive(f"{name}: checked alone, {each} gives an error that is not its violation")
         raise Inconclusive(f"{name}: its whole configuration fails, and no run of a part of it says why")
-    return cm.BREAKS_NOTHING, ""
+    return cm.BREAKS_NOTHING, "", states
+
+
+def swept(name: str, spec_text: str, configs: dict[str, str], base: dict[str, int]) -> tuple[str, str, str]:
+    """A table row for a spec with a guard removed: (breaks, cfg, reaches)."""
+
+    breaks, variant, states = outcome(name, spec_text, configs)
+    return breaks, variant, reached(states, base) if breaks == cm.BREAKS_NOTHING else ""
+
+
+def base_states(name: str, spec_text: str, configs: dict[str, str]) -> dict[str, int]:
+    """The states each configuration reaches with every guard in place, which a guard's removal is measured against."""
+
+    used = cm.action_used_otherwise(spec_text, cm.specification_of(configs))
+    if used is not None:
+        raise Inconclusive(f"{name}'s next-state relation uses {used} other than as a step: removing a guard "
+                           "could take a state away as well as add one, and a count of states would not say "
+                           "whether it reaches a new one")
+    breaks, _, states = outcome(name, spec_text, configs)
+    if breaks != cm.BREAKS_NOTHING:
+        raise Inconclusive(f"{name} does not pass as it stands")
+    return states
 
 
 def only_claims(cfg_text: str, invariants: list[str], properties: list[str]) -> str:
@@ -147,37 +202,51 @@ def only_claims(cfg_text: str, invariants: list[str], properties: list[str]) -> 
     return kept
 
 
-def holds(name: str, spec_text: str, configs: dict[str, str], row: dict) -> tuple[bool, str]:
+def holds(name: str, spec_text: str, configs: dict[str, str], row: dict, base: dict[str, int]) -> tuple[bool, str]:
     """Whether a table row is still true of the spec, and what was seen if not.
 
     A row is true when sweeping its guard again gives the same row: the same
-    claim, shown by the same configuration. Anything less would accept a row
-    that names TypeOK for a guard that also holds up a property, or one that
-    was never decided because TLC ran out of time.
+    claim, shown by the same configuration, and for a guard that breaks
+    nothing the same answer about the states it reaches. Anything less would
+    accept a row that names TypeOK for a guard that also holds up a property,
+    or one that was never decided because TLC ran out of time.
     """
 
     try:
-        seen = outcome(name, spec_text, configs)
+        seen = swept(name, spec_text, configs, base)
     except Inconclusive as undecided:
         return False, str(undecided)
-    wanted = (row["breaks"], row.get("cfg", ""))
+    wanted = (row["breaks"], row.get("cfg", ""), row.get("reaches", ""))
     if seen == wanted:
         return True, ""
-    return False, f"it breaks {seen[0]}" + (f" in {seen[1]}" if seen[1] else "")
+    return False, f"it breaks {seen[0]}" + (f" in {seen[1]}" if seen[1] else "") + (f" and reaches {seen[2]}" if seen[2] else "")
 
 
-def write_table(path: Path, digest: str, rows: list[dict]) -> None:
+def stored_states(name: str, configs: dict[str, str], table: dict) -> dict[str, int]:
+    """The states a table says each configuration reaches with every guard in place, by variant."""
+
+    return {variant: table["states"][cm.config_file(name, variant)] for variant in configs}
+
+
+def write_table(path: Path, digest: str, states: dict[str, int], rows: list[dict]) -> None:
+    name = path.name[: -len(".guards.toml")]
     lines = [
         "# Every guard of every action, and what breaks when it alone is removed.",
         "# Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.",
         "",
         f'inputs_sha256 = "{digest}"',
+        "",
+        "# The distinct states each configuration reaches with every guard in place.",
+        "[states]",
+        *(f'"{cm.config_file(name, variant)}" = {states[variant]}' for variant in sorted(states)),
     ]
     for row in rows:
         lines += ["", "[[guard]]", f'action = "{row["action"]}"', f"text = '''{row['text']}'''",
                   f'breaks = "{row["breaks"]}"']
         if row.get("cfg"):
             lines.append(f'cfg = "{row["cfg"]}"')
+        if row.get("reaches"):
+            lines.append(f'reaches = "{row["reaches"]}"')
         if row.get("why"):
             lines += ["why = '''", row["why"].strip("\n"), "'''"]
     path.write_text("\n".join(lines) + "\n")
@@ -190,9 +259,7 @@ def sweep(name: str, actions: list[str], root: Path = PROOFS) -> int:
         print(f"error: {name}: {problems[0]}", file=sys.stderr)
         return 1
     try:
-        if outcome(name, spec_text, configs)[0] != cm.BREAKS_NOTHING:
-            print(f"error: {name} does not pass as it stands", file=sys.stderr)
-            return 1
+        base = base_states(name, spec_text, configs)
     except Inconclusive as undecided:
         print(f"error: {undecided}", file=sys.stderr)
         return 1
@@ -203,7 +270,7 @@ def sweep(name: str, actions: list[str], root: Path = PROOFS) -> int:
         table = tomllib.loads(target.read_text())
         for row in table.get("guard", []):
             reasons[(row["action"], row["text"])] = row.get("why", "")
-            before[(row["action"], row["text"])] = (row["breaks"], row.get("cfg", ""))
+            before[(row["action"], row["text"])] = (row["breaks"], row.get("cfg", ""), row.get("reaches", ""))
         if actions and table.get("inputs_sha256") != digest:
             print(f"error: {name}: its table is of another spec, so every guard is swept again: "
                   "leave --action out", file=sys.stderr)
@@ -219,23 +286,23 @@ def sweep(name: str, actions: list[str], root: Path = PROOFS) -> int:
     for guard in found:
         if actions and guard.action not in actions:
             # Kept from a sweep of the same spec and configurations.
-            breaks, variant = before[(guard.action, guard.text)]
+            breaks, variant, reaches = before[(guard.action, guard.text)]
         else:
             try:
-                breaks, variant = outcome(name, cm.without_guard(spec_text, guard, formula), configs)
+                breaks, variant, reaches = swept(name, cm.without_guard(spec_text, guard, formula), configs, base)
             except Inconclusive as undecided:
                 print(f"error: {undecided}", file=sys.stderr)
                 return 1
         # A reason is for a guard that breaks no claim. One left on a guard
         # that now breaks a claim would explain something no longer true.
         explained = breaks in (cm.BREAKS_NOTHING, cm.BREAKS_EVALUATION, cm.TYPE_INVARIANT)
-        rows.append({"action": guard.action, "text": guard.text, "breaks": breaks, "cfg": variant,
+        rows.append({"action": guard.action, "text": guard.text, "breaks": breaks, "cfg": variant, "reaches": reaches,
                      "why": reasons.get((guard.action, guard.text), "") if explained else ""})
         where = f" ({variant})" if variant else ""
-        print(f"  {guard.action:22.22s} {guard.text:58.58s} {breaks}{where}", flush=True)
+        print(f"  {guard.action:22.22s} {guard.text:58.58s} {breaks}{where}{', ' + reaches if reaches else ''}", flush=True)
     # Written once, at the end: a sweep that is interrupted leaves the old
     # table, and the reasons in it, as they were.
-    write_table(target, digest, rows)
+    write_table(target, digest, base, rows)
     unexplained = [
         row for row in rows
         if row["breaks"] in (cm.BREAKS_NOTHING, cm.BREAKS_EVALUATION, cm.TYPE_INVARIANT) and not row["why"]
@@ -248,6 +315,7 @@ def sweep(name: str, actions: list[str], root: Path = PROOFS) -> int:
 
 def verify(names: list[str], shard: tuple[int, int], root: Path = PROOFS) -> int:
     manifest = tomllib.loads((root / "manifest.toml").read_text())
+    specs: list[tuple[str, str, dict[str, str], dict[str, int]]] = []
     work = []
     # Every table there is, not every entry the manifest has: a table for a
     # spec the manifest does not name is an error here too.
@@ -262,21 +330,42 @@ def verify(names: list[str], shard: tuple[int, int], root: Path = PROOFS) -> int
         if problems:
             print(f"error: {name}: {problems[0]}", file=sys.stderr)
             return 1
-        rows = tomllib.loads(table.read_text()).get("guard", [])
+        read = tomllib.loads(table.read_text())
+        specs.append((name, spec_text, configs, stored_states(name, configs, read)))
         work += [(name, spec_text, configs, guard, row)
-                 for guard, row in zip(cm.guards(spec_text, cm.specification_of(configs)), rows, strict=True)]
+                 for guard, row in zip(cm.guards(spec_text, cm.specification_of(configs)), read.get("guard", []),
+                                       strict=True)]
     if not work:
         print("error: no guard table to verify", file=sys.stderr)
         return 1
     index, count = shard
     ok = True
+    # Each row is measured against the states its table gives. One part
+    # checks those for each spec, so that the parts together check them once.
+    bases = {name: stored for name, _, _, stored in specs}
+    for number, (name, spec_text, configs, stored) in enumerate(specs):
+        if number % count != index:
+            continue
+        try:
+            reached_now = base_states(name, spec_text, configs)
+        except Inconclusive as undecided:
+            print(f"error: {undecided}", file=sys.stderr)
+            return 1
+        if reached_now == stored:
+            print(f"    HOLDS     {name}: with every guard in place it reaches {stored}", flush=True)
+        else:
+            print(f"    WRONG     {name}: its table says it reaches {stored}, but it reaches {reached_now}",
+                  file=sys.stderr, flush=True)
+            ok = False
     for position, (name, spec_text, configs, guard, row) in enumerate(work):
         if position % count != index:
             continue
-        true, seen = holds(name, cm.without_guard(spec_text, guard, cm.specification_of(configs)), configs, row)
+        true, seen = holds(name, cm.without_guard(spec_text, guard, cm.specification_of(configs)), configs, row,
+                           bases[name])
         label = f"{name}/{guard.action}: {guard.text}"
         if true:
-            print(f"    HOLDS     {label}: breaks {row['breaks']}", flush=True)
+            print(f"    HOLDS     {label}: breaks {row['breaks']}"
+                  + (f", reaches {row['reaches']}" if row.get("reaches") else ""), flush=True)
         else:
             print(f"    WRONG     {label}: said to break {row['breaks']}, but {seen}",
                   file=sys.stderr, flush=True)
@@ -293,41 +382,48 @@ def verify(names: list[str], shard: tuple[int, int], root: Path = PROOFS) -> int
 # the configuration's order is the row. Mark's guard is a bound too, but past
 # it Listed cannot be evaluated, so nothing says what the other invariants
 # would do. Dip's guard holds up only the second property: without it x can
-# fall back to 1 for ever, and never to 0.
+# fall back to 1 for ever, and never to 0. Bump's guard holds up nothing and
+# is not idle: without it u is set while x is still 0, a state the model
+# does not otherwise reach. Step's second guard is idle: the model reaches
+# the same states without it.
 _SELF_TEST_SPEC = r"""---- MODULE Tiny ----
 EXTENDS Naturals, Sequences
 CONSTANT Never
-VARIABLES x, q, y, z
-Init == x = 0 /\ q = << 1 >> /\ y = 0 /\ z = 0
+VARIABLES x, q, y, z, u
+Init == x = 0 /\ q = << 1 >> /\ y = 0 /\ z = 0 /\ u = 0
 Step ==
     /\ x < 2
     /\ x >= 0
     /\ x # Never
     /\ x' = x + 1
-    /\ UNCHANGED << q, y, z >>
+    /\ UNCHANGED << q, y, z, u >>
 Pop ==
     /\ q # << >>
     /\ q' = Tail(q)
-    /\ UNCHANGED << x, y, z >>
+    /\ UNCHANGED << x, y, z, u >>
 Flag ==
     /\ y = 0
     /\ y' = y + 1
-    /\ UNCHANGED << x, q, z >>
+    /\ UNCHANGED << x, q, z, u >>
 Back ==
     /\ x = 99
     /\ x' = 0
-    /\ UNCHANGED << q, y, z >>
+    /\ UNCHANGED << q, y, z, u >>
 Mark ==
     /\ z = 0
     /\ z' = z + 1
-    /\ UNCHANGED << x, q, y >>
+    /\ UNCHANGED << x, q, y, u >>
 Dip ==
     /\ x = 98
     /\ x' = 1
-    /\ UNCHANGED << q, y, z >>
-Next == Step \/ Pop \/ Flag \/ Back \/ Mark \/ Dip
-Spec == Init /\ [][Next]_<< x, q, y, z >> /\ WF_<< x, q, y, z >>(Step)
-TypeOK == x \in 0..2 /\ y \in 0..1 /\ z \in 0..1
+    /\ UNCHANGED << q, y, z, u >>
+Bump ==
+    /\ x > 0
+    /\ u' = 1
+    /\ UNCHANGED << x, q, y, z >>
+Next == Step \/ Pop \/ Flag \/ Back \/ Mark \/ Dip \/ Bump
+Spec == Init /\ [][Next]_<< x, q, y, z, u >> /\ WF_<< x, q, y, z, u >>(Step)
+TypeOK == x \in 0..2 /\ y \in 0..1 /\ z \in 0..1 /\ u \in 0..1
 Small == x <= 2
 Low == x <= Never
 Listed == << 5, 6 >>[z + 1] > 0
@@ -342,13 +438,14 @@ _SELF_TEST_CONFIGS = {
 }
 _SELF_TEST_ROWS = [
     {"breaks": "Small"},
-    {"breaks": cm.BREAKS_NOTHING},
+    {"breaks": cm.BREAKS_NOTHING, "reaches": cm.NO_NEW_STATE},
     {"breaks": "Low", "cfg": "tight"},
     {"breaks": cm.BREAKS_EVALUATION},
     {"breaks": cm.TYPE_INVARIANT},
     {"breaks": "Settles"},
     {"breaks": cm.BREAKS_EVALUATION},
     {"breaks": "Stays"},
+    {"breaks": cm.BREAKS_NOTHING, "reaches": cm.NEW_STATES},
 ]
 
 
@@ -357,14 +454,25 @@ def self_test() -> bool:
 
     ok = True
     found = cm.guards(_SELF_TEST_SPEC, "Spec")
-    ok = cm._report("the small model has eight guards", len(found) == 8, str(len(found))) and ok
+    ok = cm._report("the small model has nine guards", len(found) == 9, str(len(found))) and ok
+    base = base_states("Tiny", _SELF_TEST_SPEC, _SELF_TEST_CONFIGS)
+    rest = "Rest ==\n    /\\ ~ENABLED Pop\n    /\\ UNCHANGED << x, q, y, z, u >>\n"
+    reads_enabled = _SELF_TEST_SPEC.replace("Next == Step", rest + "Next == Rest \\/ Step")
+    try:
+        base_states("Tiny", reads_enabled, _SELF_TEST_CONFIGS)
+        refused = ""
+    except Inconclusive as undecided:
+        refused = str(undecided)
+    ok = cm._report("a relation that asks whether an action is enabled is not measured by counting states",
+                    "uses Pop other than as a step" in refused, refused or "measured") and ok
     for guard, row in zip(found, _SELF_TEST_ROWS, strict=False):
         mutated = cm.without_guard(_SELF_TEST_SPEC, guard, "Spec")
-        seen = outcome("Tiny", mutated, _SELF_TEST_CONFIGS)
-        wanted = (row["breaks"], row.get("cfg", ""))
-        ok = cm._report(f"removing {guard.action}'s `{guard.text}` breaks {row['breaks']}",
-                        seen == wanted, f"{seen[0]} {seen[1]}".strip()) and ok
-        true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, row)
+        seen = swept("Tiny", mutated, _SELF_TEST_CONFIGS, base)
+        wanted = (row["breaks"], row.get("cfg", ""), row.get("reaches", ""))
+        ok = cm._report(f"removing {guard.action}'s `{guard.text}` breaks {row['breaks']}"
+                        + (f" and reaches {row['reaches']}" if row.get("reaches") else ""),
+                        seen == wanted, " ".join(part for part in seen if part)) and ok
+        true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, row, base)
         ok = cm._report(f"and --verify accepts that row for {guard.action}'s `{guard.text}`",
                         true, why or "holds") and ok
     false_rows = [
@@ -393,10 +501,15 @@ def self_test() -> bool:
          {"breaks": cm.TYPE_INVARIANT}),
         ("a guard that breaks two properties, said to break the second", 5, {"breaks": "Stays"}),
         ("a guard that breaks the second property, said to break the first", 7, {"breaks": "Settles"}),
+        ("a guard that breaks nothing, said to reach no new state, that reaches some", 8,
+         {"breaks": cm.BREAKS_NOTHING, "reaches": cm.NO_NEW_STATE}),
+        ("a guard that breaks nothing, said to reach new states, that reaches none", 1,
+         {"breaks": cm.BREAKS_NOTHING, "reaches": cm.NEW_STATES}),
+        ("a guard that breaks nothing and does not say what it reaches", 1, {"breaks": cm.BREAKS_NOTHING}),
     ]
     for label, index, row in false_rows:
         mutated = cm.without_guard(_SELF_TEST_SPEC, found[index], "Spec")
-        true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, row)
+        true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, row, base)
         ok = cm._report(f"--verify refuses {label}", not true, why or "accepted") and ok
 
     # A run that TLC did not finish decides nothing, whatever the row says.
@@ -404,10 +517,10 @@ def self_test() -> bool:
     try:
         for label, index, row in [
             ("a row said to break evaluation", 3, {"breaks": cm.BREAKS_EVALUATION}),
-            ("a row said to break nothing", 1, {"breaks": cm.BREAKS_NOTHING}),
+            ("a row said to break nothing", 1, {"breaks": cm.BREAKS_NOTHING, "reaches": cm.NO_NEW_STATE}),
         ]:
             mutated = cm.without_guard(_SELF_TEST_SPEC, found[index], "Spec")
-            true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, row)
+            true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, row, base)
             ok = cm._report(f"--verify refuses {label} when TLC ran out of time",
                             not true and "did not finish" in why, why or "accepted") and ok
     finally:
@@ -424,7 +537,7 @@ def self_test() -> bool:
     ])
     real, cm.run_tlc = cm.run_tlc, lambda *_args, **_kwargs: next(answers)
     try:
-        true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, {"breaks": cm.BREAKS_EVALUATION})
+        true, why = holds("Tiny", mutated, _SELF_TEST_CONFIGS, {"breaks": cm.BREAKS_EVALUATION}, base)
     finally:
         cm.run_tlc = real
     ok = cm._report("--verify refuses every row when two runs of one model disagree",
@@ -444,7 +557,7 @@ def self_test() -> bool:
     ])
     real, cm.run_tlc = cm.run_tlc, lambda *_args, **_kwargs: next(answers)
     try:
-        true, why = holds("Tiny", broken, {"": _SELF_TEST_CONFIGS[""]}, {"breaks": "Stays"})
+        true, why = holds("Tiny", broken, {"": _SELF_TEST_CONFIGS[""]}, {"breaks": "Stays"}, base)
     finally:
         cm.run_tlc = real
     ok = cm._report("--verify refuses a row when an earlier property gives an error that is not its violation",
@@ -458,29 +571,42 @@ def self_test() -> bool:
         (root / "Tiny.tight.cfg").write_text(_SELF_TEST_CONFIGS["tight"])
         (root / "manifest.toml").write_text("[Tiny]\n")
         table = root / "Tiny.guards.toml"
-        swept = sweep("Tiny", [], root) == 0 and table.exists()
-        rows = tomllib.loads(table.read_text())["guard"] if swept else []
+        written = sweep("Tiny", [], root) == 0 and table.exists()
+        rows = tomllib.loads(table.read_text())["guard"] if written else []
         ok = cm._report(
             "a sweep writes the table the rows above describe",
-            [(row["breaks"], row.get("cfg", "")) for row in rows]
-            == [(row["breaks"], row.get("cfg", "")) for row in _SELF_TEST_ROWS],
-            ", ".join(row["breaks"] for row in rows),
+            [(row["breaks"], row.get("cfg", ""), row.get("reaches", "")) for row in rows]
+            == [(row["breaks"], row.get("cfg", ""), row.get("reaches", "")) for row in _SELF_TEST_ROWS],
+            ", ".join(row["breaks"] + (" (" + row["reaches"] + ")" if row.get("reaches") else "") for row in rows),
         ) and ok
         ok = cm._report("a table with a reason missing does not verify",
                         verify([], (0, 1), root) == 1, "refused") and ok
+        def rewrite(rows: list[dict], states: dict[str, int] | None = None) -> None:
+            read = tomllib.loads(table.read_text())
+            write_table(table, read["inputs_sha256"], states or stored_states("Tiny", _SELF_TEST_CONFIGS, read), rows)
+
+        ok = cm._report("and gives the states each configuration reaches with every guard in place",
+                        stored_states("Tiny", _SELF_TEST_CONFIGS, tomllib.loads(table.read_text())) == base,
+                        str(base)) and ok
         for row in rows:
             row["why"] = "written for the self-test only"
-        write_table(table, tomllib.loads(table.read_text())["inputs_sha256"], rows)
+        rewrite(rows)
         ok = cm._report("the same table with its reasons verifies", verify([], (0, 1), root) == 0, "holds") and ok
         ok = cm._report("each part of four verifies, and together they cover every row",
                         all(verify([], (part, 4), root) == 0 for part in range(4)), "holds") and ok
-        rows[1]["breaks"] = "Small"
-        write_table(table, tomllib.loads(table.read_text())["inputs_sha256"], rows)
+        rows[1]["breaks"], rows[1]["reaches"] = "Small", ""
+        rewrite(rows)
         ok = cm._report("a table with one false row does not verify", verify([], (0, 1), root) == 1, "refused") and ok
         ok = cm._report("and the part that holds the false row is the one that fails",
                         [verify([], (part, 4), root) for part in range(4)] == [0, 1, 0, 0], "part 1") and ok
-        rows[1]["breaks"] = cm.BREAKS_NOTHING
-        write_table(table, tomllib.loads(table.read_text())["inputs_sha256"], rows)
+        rows[1]["breaks"], rows[1]["reaches"] = cm.BREAKS_NOTHING, cm.NO_NEW_STATE
+        rewrite(rows, {**base, "": base[""] + 1})
+        ok = cm._report("a table that gives other states than the spec reaches does not verify",
+                        verify([], (0, 1), root) == 1, "refused") and ok
+        ok = cm._report("and the part that checks the spec's states fails",
+                        verify([], (0, 4), root) == 1, "part 0") and ok
+        rewrite(rows, base)
+        ok = cm._report("the table as swept verifies again", verify([], (0, 1), root) == 0, "holds") and ok
         (root / "manifest.toml").write_text("")
         ok = cm._report("a table for a spec the manifest does not name does not verify",
                         verify([], (0, 1), root) == 1, "refused") and ok
