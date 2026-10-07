@@ -190,24 +190,28 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 var errRollback = errors.New("store: rolled back")
 
 // readGranted finds a lease the request's ID already names in its
-// workspace: the request's own lease, granted by an earlier attempt, or
-// another owner's, which refuses it.
+// workspace: the request's own lease, granted by an earlier attempt of the
+// same request, or another's, which refuses it. A retry is the same request
+// only if it asks for the same lease: owner and epoch, amount, region,
+// workspace shard and key-status version alike.
 func readGranted(ctx context.Context, txn *spanner.ReadWriteTransaction, req GrantRequest) (*GrantResult, error) {
 	row, err := txn.ReadRowWithOptions(ctx, "tr_lease", spanner.Key{req.Workspace, req.LeaseID},
-		[]string{"owner_node", "owner_epoch", "granted", "expiry"}, &spanner.ReadOptions{RequestTag: tag("grant")})
+		[]string{"owner_node", "owner_epoch", "granted", "region", "workspace_shard", "key_status_version", "expiry"},
+		&spanner.ReadOptions{RequestTag: tag("grant")})
 	if spanner.ErrCode(err) == codes.NotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var node string
-	var epoch, granted int64
+	var node, region string
+	var epoch, granted, shard, ksv int64
 	var out GrantResult
-	if err := row.Columns(&node, &epoch, &granted, &out.Expiry); err != nil {
+	if err := row.Columns(&node, &epoch, &granted, &region, &shard, &ksv, &out.Expiry); err != nil {
 		return nil, err
 	}
-	if node != req.Owner.Node || epoch != req.Owner.Epoch || granted != req.Amount {
+	if node != req.Owner.Node || epoch != req.Owner.Epoch || granted != req.Amount || region != req.Region ||
+		shard != req.WorkspaceShard || ksv != req.KeyStatusVersion {
 		return &GrantResult{Refused: RefusedLeaseID}, nil
 	}
 	iter := txn.QueryWithOptions(ctx, spanner.Statement{

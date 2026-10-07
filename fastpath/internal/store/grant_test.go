@@ -206,10 +206,21 @@ func TestGrantRetryFindsItsLease(t *testing.T) {
 	if r := reserved(readRows(t, ws)); !slices.Equal(r, []int64{30}) || leaseCount(t, ws) != 1 {
 		t.Fatalf("after the retry: reserved %v, leases %d", r, leaseCount(t, ws))
 	}
-	other := req
-	other.Owner = Owner{Node: "node-b", Epoch: 1}
-	if got, err := s.Grant(ctx, other); err != nil || got.Refused != RefusedLeaseID {
-		t.Fatalf("another owner's grant with the ID: %+v %v", got, err)
+	// A request with the ID that asks for any other lease is not the retry
+	// (Codex, round 3 of S4b: another shard or region was answered as one).
+	for name, change := range map[string]func(*GrantRequest){
+		"another owner":              func(r *GrantRequest) { r.Owner = Owner{Node: "node-b", Epoch: 1} },
+		"another epoch":              func(r *GrantRequest) { r.Owner.Epoch = 2 },
+		"another amount":             func(r *GrantRequest) { r.Amount = 31 },
+		"another region":             func(r *GrantRequest) { r.Region = "europe-west4" },
+		"another workspace shard":    func(r *GrantRequest) { r.WorkspaceShard = 1 },
+		"another key-status version": func(r *GrantRequest) { r.KeyStatusVersion = 7 },
+	} {
+		other := req
+		change(&other)
+		if got, err := s.Grant(ctx, other); err != nil || got.Refused != RefusedLeaseID {
+			t.Errorf("%s with the ID: %+v %v", name, got, err)
+		}
 	}
 	elsewhere := grantOf(seedWorkspace(t, 100), 30)
 	elsewhere.LeaseID = req.LeaseID
