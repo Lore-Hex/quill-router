@@ -62,7 +62,7 @@ def _uint(value: Any) -> bool:
     return type(value) is int and 0 <= value < 1 << 63
 
 
-def validate_counter(identity: str, body: dict[str, Any]) -> None:
+def validate_counter(identity: str, body: dict[str, Any], *, partitions: bool = True) -> None:
     import uuid
     if set(body) != COUNTER_FIELDS or len(canonical(body)) > 65536:
         raise ValueError("counter schema")
@@ -96,7 +96,7 @@ def validate_counter(identity: str, body: dict[str, Any]) -> None:
         if set(bucket) != {"adapter", "route_type", "streamed", *COUNT_FIELDS} or not all(_uint(bucket[k]) for k in COUNT_FIELDS):
             raise ValueError("counter bucket schema")
         found.append((bucket["adapter"], bucket["route_type"], bucket["streamed"]))
-        if (bucket["observed_attempts"] != bucket["settle_attempts"] + bucket["refund_attempts"]
+        if partitions and (bucket["observed_attempts"] != bucket["settle_attempts"] + bucket["refund_attempts"]
                 or bucket["observed_attempts"] != sum(bucket[k] for k in ("observed_eligible", "observed_ineligible", "observed_unknown"))
                 or bucket["authorize_attempts"] != bucket["authorize_fresh"] + bucket["authorize_replay"]
                 or bucket["evaluable"] != bucket["exact"] + bucket["explained"]
@@ -106,7 +106,7 @@ def validate_counter(identity: str, body: dict[str, Any]) -> None:
     if tuple(found) != DIMENSIONS:
         raise ValueError("counter dimensions")
     outcomes = sum(bucket[k] for bucket in buckets for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
-    if outcomes > body["comparison_attempts"] or body["samples_inserted"] > body["comparison_attempts"]:
+    if partitions and (outcomes > body["comparison_attempts"] or body["samples_inserted"] > body["comparison_attempts"]):
         raise ValueError("counter comparison partition")
     if sum(bucket["mismatch"] for bucket in buckets) and body["last_mismatch_at_us"] is None:
         raise ValueError("missing mismatch timestamp")
@@ -186,7 +186,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
             validate_sample(body, identity)
             samples.append(body)
         elif kind == COUNTER:
-            validate_counter(identity, body)
+            validate_counter(identity, body, partitions=False)
             counters[identity] = body
         elif kind == CONTROL and identity.endswith("/manifest-v1"):
             validate_manifest(body, identity)
@@ -245,17 +245,39 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 gap(identity+":persistence_count_gap", day)
             if counter["router_revision"] not in manifest["router_revisions"]:
                 gap(identity+":revision_unknown", day)
-            # Reasons are diagnostic (one attempt can have several), so they
-            # are only an upper bound on accounted attempts. Authorize reasons
-            # and verified out-of-cohort exclusions cannot cover eligible work.
+            eligible = sum(bucket["observed_eligible"] for bucket in counter["counts"])
+            outcomes_total = sum(bucket[k] for bucket in counter["counts"]
+                for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
+            if outcomes_total > counter["comparison_attempts"]:
+                gap(identity+":comparison_outcome_gap", day)
+            if counter["comparison_attempts"] > eligible:
+                gap(identity+":comparison_observation_gap", day)
+            # Reconcile each writer and dimension in both directions. Neither
+            # authorize exclusions nor another bucket can account for a terminal.
+            # Diagnostic failures independently block coverage below.
             for bucket in counter["counts"]:
+                observed = bucket["observed_attempts"]
+                if (observed != sum(bucket[k] for k in ("observed_eligible", "observed_ineligible", "observed_unknown"))
+                        or observed != bucket["settle_attempts"] + bucket["refund_attempts"]
+                        or bucket["authorize_attempts"] != bucket["authorize_fresh"] + bucket["authorize_replay"]
+                        or bucket["evaluable"] != bucket["exact"] + bucket["explained"]
+                        or bucket["envelope_present"] > observed
+                        or bucket["header_absent"] > bucket["authorize_attempts"]):
+                    gap(identity+":observed_partition_gap", day)
+                exclusions = sum(row["count"] for row in counter["exclusions"]
+                    if row["phase"] in {"settle", "refund"} and row["reason"] in COHORT_EXCLUSIONS
+                    and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed")))
+                if exclusions != bucket["observed_ineligible"]:
+                    gap(identity+":ineligible_coverage_gap", day)
                 outcomes = sum(bucket[k] for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
+                if outcomes > observed:
+                    gap(identity+":outcome_observation_gap", day)
                 failures = sum(row["count"] for group in ("exclusions", "rejections", "drops")
                     for row in counter[group] if row["phase"] != "authorize"
                     and row["reason"] not in COHORT_EXCLUSIONS
                     and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed")))
                 accounted = max(0, outcomes - bucket["observed_ineligible"]) + failures
-                if bucket["observed_eligible"] > accounted + counter["booking_pending"] + counter["booking_unknown"]:
+                if bucket["observed_eligible"] != accounted + counter["booking_pending"] + counter["booking_unknown"]:
                     gap(identity+":eligible_coverage_gap", day)
             if (not counter["closed"] or counter["first_gap_at_us"] is not None or counter["counter_overflow"]
                     or counter["dimension_overflow"] or counter["comparison_dropped"] or counter["booking_pending"] or counter["booking_unknown"]

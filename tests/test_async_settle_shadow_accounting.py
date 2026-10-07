@@ -220,6 +220,9 @@ def test_report_restarts_only_after_restored_coverage_and_reviewed_fix():
     rows.append(later)
     rows[2]['body']['samples_inserted'] = rows[2]['body']['comparison_attempts'] = 1
     rows[2]['body']['admission_observer']['prediction_yes'] = 1
+    bucket = next(b for b in rows[2]['body']['counts'] if (b['adapter'], b['route_type'], b['streamed']) == ('openai', 'chat.completions', False))
+    for field in ('settle_attempts', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
+        bucket[field] = 1
     for row in rows:
         if row['kind'] == COUNTER and row['id'].split('/')[0] != days[0]:
             row['body']['router_revision'] = 'b'*40
@@ -444,3 +447,41 @@ def test_writer_union_preserves_actual_midnight_flush_overlap():
     result = report(rows, days, proof)
     assert result['status'] == 'PASS' and result['continuous_seconds'] == 691199
     assert result['gaps'] == []
+
+
+@pytest.mark.parametrize('probe', ['ineligible', 'comparisons', 'partition', 'exclusion_surplus', 'wrong_bucket', 'outcome_surplus'])
+def test_report_reviewer_bidirectional_accounting(probe):
+    rows, days, proof = synthetic_window()
+    counter = rows[2]['body']
+    bucket = counter['counts'][0]
+    if probe == 'comparisons':
+        counter = rows[0]['body']
+        counter.update(comparison_attempts=100, duplicate_samples=99)
+        suffix = ':comparison_observation_gap'
+    elif probe == 'partition':
+        bucket.update(settle_attempts=99, observed_attempts=99)
+        suffix = ':observed_partition_gap'
+    elif probe == 'outcome_surplus':
+        bucket['unevaluable'] = 99
+        suffix = ':outcome_observation_gap'
+    else:
+        bucket.update(settle_attempts=99, observed_attempts=99, observed_ineligible=99)
+        if probe != 'ineligible':
+            counter['exclusions'] = [dict(phase='settle', adapter=bucket['adapter'],
+                route_type='responses' if probe == 'wrong_bucket' else bucket['route_type'],
+                streamed=bucket['streamed'], reason='service_tier', count=100 if probe == 'exclusion_surplus' else 99)]
+        suffix = ':ineligible_coverage_gap'
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert any(g.endswith(suffix) for g in result['gaps'])
+
+
+def test_report_accepts_fully_accounted_ineligible_zero_sample_writer():
+    rows, days, proof = synthetic_window()
+    counter = rows[2]['body']
+    bucket = counter['counts'][0]
+    bucket.update(settle_attempts=99, observed_attempts=99, observed_ineligible=99)
+    counter['exclusions'] = [dict(phase='settle', reason='service_tier', count=99,
+        **{key: bucket[key] for key in ('adapter', 'route_type', 'streamed')})]
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS' and not result['gaps']

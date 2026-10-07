@@ -38,6 +38,7 @@ class Capture:
     document: dict[str, Any] | None = None
     # Replay can recover signed S0, but cannot attest the original S1 booking view.
     prices_match_booking: bool = True
+    dropped: bool = False
 
 
 _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar("async_shadow_capture", default=None)
@@ -45,16 +46,20 @@ _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar("async
 
 def capture_authorization(authorization: GatewayAuthorization) -> None:
     capture = _CAPTURE.get()
-    if capture is not None and capture.runtime.opted(authorization.workspace_id):
-        if capture.authorization is None:
-            capture.runtime.counters.retain(capture.received)
-        capture.authorization = authorization
+    if capture is not None and not capture.dropped and capture.runtime.opted(authorization.workspace_id):
+        with capture.runtime.counters.request_access(capture.received) as acquired:
+            if not acquired:
+                capture.dropped = True
+                return
+            if capture.authorization is None:
+                capture.runtime.counters.retain(capture.received)
+            capture.authorization = authorization
 
 
 def capture_prices(authorization: GatewayAuthorization, endpoint: Any, document: Any, catalog: Any,
                    *, prices_match_booking: bool = True) -> None:
     capture = _CAPTURE.get()
-    if capture is None or capture.authorization is None:
+    if capture is None or capture.authorization is None or capture.dropped:
         return
     try:
         ids = tuple(authorization.candidate_endpoint_ids)
@@ -77,7 +82,7 @@ class Runtime:
         self.settings, self.async_runtime, self.store, self.observer = settings, async_runtime, store, observer
         self.signer = ShadowSigner(async_runtime.signer) if async_runtime.signer else None
         self.counters = Counters(settings.primary_region, settings.release or "unknown")
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.tokens, self.refilled = 10., time.monotonic()
         self.pending = self.queued_bytes = 0
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="settle-shadow")
@@ -97,6 +102,14 @@ class Runtime:
                   header: bool, route: str | None, streamed: bool, endpoints: list[Any]) -> None:
         if not self.opted(authorization.workspace_id):
             return
+        with self.counters.request_access(time.time()) as acquired:
+            if not acquired:
+                return
+            self._authorize(authorization, additions, replay=replay, header=header,
+                            route=route, streamed=streamed, endpoints=endpoints)
+
+    def _authorize(self, authorization: GatewayAuthorization, additions: dict[str, Any], *, replay: bool,
+                   header: bool, route: str | None, streamed: bool, endpoints: list[Any]) -> None:
         started = time.thread_time_ns()
         dims = dimensions(authorization.provider, route, streamed)
         try:
@@ -146,8 +159,17 @@ class Runtime:
             return None
 
     def submit(self, capture: Capture, request: Any, result: Any, background: Any) -> None:
-        with self.counters.day(capture.received):
-            self._submit(capture, request, result, background)
+        with self.counters.request_access(capture.received) as acquired:
+            if not acquired:
+                return
+            if not self.lock.acquire(blocking=False):
+                self.counters.defer("drop", capture.received)
+                return
+            try:
+                with self.counters.day(capture.received):
+                    self._submit(capture, request, result, background)
+            finally:
+                self.lock.release()
 
     def _submit(self, capture: Capture, request: Any, result: Any, background: Any) -> None:
         auth = capture.authorization
@@ -291,7 +313,7 @@ class Runtime:
                     raise ValueError("snapshot_size")
                 return rebuilt
             ctx = Context(auth, capture.body, capture.kind,
-                          capture.endpoint.id if capture.endpoint else capture.body.selected_endpoint_id or auth.endpoint_id,
+                          capture.endpoint.id if capture.endpoint else None,
                           self.async_runtime.region, self.async_runtime.epoch, int(capture.received), booking,
                           rebuild if capture.endpoints else None, capture.endpoints is not None and capture.prices_match_booking,
                           "stage_d_document" if capture.document else "catalog_at_authorize_time" if capture.endpoints else "unknown")
@@ -412,11 +434,11 @@ async def observe_entry(request: Any, body: Any, settings: Settings, background:
         _CAPTURE.reset(token)
         try:
             try:
-                if capture.authorization is not None and runtime.opted(capture.authorization.workspace_id):
+                if capture.authorization is not None and not capture.dropped and runtime.opted(capture.authorization.workspace_id):
                     runtime.submit(capture, request, result, background)
             finally:
                 if capture.authorization is not None:
-                    runtime.counters.release(capture.received)
+                    runtime.counters.release_request(capture.received)
         except Exception:  # noqa: S110 - preserve the original outcome, no untrusted logs
             # The caller's original result/error/cancellation always wins.
             pass

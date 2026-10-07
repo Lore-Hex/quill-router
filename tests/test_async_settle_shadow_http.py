@@ -7,6 +7,7 @@ import copy
 import datetime as dt
 import hashlib
 import json
+import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
@@ -59,12 +60,13 @@ def pin_clocks(monkeypatch):
         monkeypatch.setattr(module, 'datetime', Clock)
     for module in (storage_models, storage_gcp_authorize):
         monkeypatch.setattr(module, 'utcnow', lambda: fixed)
+    monkeypatch.setattr(time, 'time', lambda: NOW)
     monkeypatch.setattr(uuid, 'uuid4', lambda: uuid.UUID(int=42))
     monkeypatch.setattr(gateway, 'perf_counter', lambda: 1.)
     monkeypatch.setattr(gateway_timing, 'perf_counter', lambda: 1.)
 
 
-def transcripts(monkeypatch, store, db, cfg, path, payload, headers):
+def transcripts(monkeypatch, store, db, cfg, path, payload, headers, signer_present=False):
     pin_clocks(monkeypatch)
     frozen = frozen_routes()
     saved = {k: copy.deepcopy(v) for k, v in vars(db).items() if isinstance(v, (dict, list, set, int))}
@@ -81,6 +83,8 @@ def transcripts(monkeypatch, store, db, cfg, path, payload, headers):
             if old:
                 patch.setattr(gateway, 'register', frozen['register'])
             client = _client(cfg)
+            if signer_present:
+                client.app.state.async_settle = runtime()
             # Keep a runtime installed even with the set empty: the HTTP gate
             # must prevent every observer, read and comparator invocation.
             shadow = Runtime(cfg, runtime())
@@ -118,7 +122,8 @@ def transcripts(monkeypatch, store, db, cfg, path, payload, headers):
 @pytest.mark.parametrize('eligible', [True, False])
 @pytest.mark.parametrize('admission', [False, True])
 @pytest.mark.parametrize('optin', ['', 'nonmember'])
-def test_flag_off_authorize_http_identity(monkeypatch, header, eligible, admission, optin):
+@pytest.mark.parametrize('signer_present', [False, True])
+def test_flag_off_authorize_http_identity(monkeypatch, header, eligible, admission, optin, signer_present):
     store, db, key = _seed_typed_gateway_store()
     cfg = settings(async_settle_enabled=admission, async_settle_shadow_workspaces=optin)
     body = _body(key.hash)
@@ -127,14 +132,15 @@ def test_flag_off_authorize_http_identity(monkeypatch, header, eligible, admissi
     headers = {'none': [], 'exact': [('X-TR-Settlement-Mode', 'async-v1')],
         'duplicate': [('X-TR-Settlement-Mode', 'async-v1')]*2,
         'bad': [('X-TR-Settlement-Mode', '!')]}[header]
-    transcripts(monkeypatch, store, db, cfg, '/v1/internal/gateway/authorize', body.model_dump(), headers)
+    transcripts(monkeypatch, store, db, cfg, '/v1/internal/gateway/authorize', body.model_dump(), headers, signer_present)
 
 
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 @pytest.mark.parametrize('header', ['none', 'valid', 'invalid', 'oversize', 'duplicate'])
 @pytest.mark.parametrize('admission', [False, True])
 @pytest.mark.parametrize('optin', ['', 'nonmember'])
-def test_flag_off_terminal_http_identity(env, monkeypatch, kind, header, admission, optin):
+@pytest.mark.parametrize('signer_present', [False, True])
+def test_flag_off_terminal_http_identity(env, monkeypatch, kind, header, admission, optin, signer_present):
     body, auth, _ = prepare(env, kind=kind)
     store, db, rt, cfg = env
     cfg.async_settle_enabled = admission
@@ -170,5 +176,5 @@ def test_flag_off_terminal_http_identity(env, monkeypatch, kind, header, admissi
         'valid': wire(envelope)[0], 'duplicate': wire(envelope)[0], 'invalid': '!', 'oversize': '!'*12289}[header])]
     if header == 'duplicate':
         headers *= 2
-    outputs = transcripts(monkeypatch, store, db, cfg, '/v1/internal/gateway/'+kind, repair, headers)
+    outputs = transcripts(monkeypatch, store, db, cfg, '/v1/internal/gateway/'+kind, repair, headers, signer_present)
     assert json.loads(outputs[0][0][2])['data']['cost_microdollars'] == (2 if kind == 'settle' else 0)

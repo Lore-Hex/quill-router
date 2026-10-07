@@ -50,7 +50,7 @@ MUTATIONS = [
     ('missing-coverage-clean',REPORT,[('start = candidates[0]["observed_at_us"] if candidates and not unresolved else None',
         'start = samples[0]["observed_at_us"] if samples else 0')],
         'tests/test_async_settle_shadow_accounting.py::test_report_cannot_start_from_empty_counter_or_null_samples'),
-    ('eligible-coverage-removed',REPORT,[('if bucket["observed_eligible"] > accounted + counter["booking_pending"] + counter["booking_unknown"]:', 'if False:')],
+    ('eligible-coverage-removed',REPORT,[('if bucket["observed_eligible"] != accounted + counter["booking_pending"] + counter["booking_unknown"]:', 'if False:')],
         'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_unaccounted_eligible_probe'),
     ('writer-interval-removed',REPORT,[('if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):', 'if False:')],
         'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_counter_time_probe[after_close]'),
@@ -62,11 +62,11 @@ MUTATIONS = [
     ('flag-off-invalid-header-http','src/trusted_router/routes/internal/gateway.py',[
         ('    """Run one settlement off-loop behind the process-local per-key gate."""\n    require_internal_gateway(request, settings)',
          '    """Run one settlement off-loop behind the process-local per-key gate."""\n    require_internal_gateway(request, settings)\n    if not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Shadow") == "!":\n        return {"data": {"review_mutant": True}}')],
-        'tests/test_async_settle_shadow_http.py::test_flag_off_terminal_http_identity[-False-invalid-settle]'),
+        'tests/test_async_settle_shadow_http.py::test_flag_off_terminal_http_identity[False--False-invalid-settle]'),
     ('flag-off-admission-on-bad-mode-http','src/trusted_router/routes/internal/gateway.py',[
         ('    subject = body.api_key_lookup_hash or body.api_key_hash',
          '    if settings.async_settle_enabled and not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Mode") == "!":\n        return {"data": {"review_mutant": True}}\n    subject = body.api_key_lookup_hash or body.api_key_hash')],
-        'tests/test_async_settle_shadow_http.py::test_flag_off_authorize_http_identity[-True-True-bad]'),
+        'tests/test_async_settle_shadow_http.py::test_flag_off_authorize_http_identity[False--True-True-bad]'),
     ('inline-snapshot-cap-removed','src/trusted_router/async_settle_shadow_wire.py',[
         ('if len(snapshot_bytes) > INLINE_BYTES:', 'if False:')], BASE+'test_inline_snapshot_boundary[6145]'),
     ('cold-cpu-gate-removed','scripts/async_settle/shadow_benchmark.py',[
@@ -84,6 +84,21 @@ MUTATIONS = [
          '(lambda *args, **kwargs: None)(authorization, _select_authorized_endpoint(authorization, body),')],
         'tests/test_async_settle_shadow_integration.py::test_reviewer_hash_only_replay'),
 
+    ('counter-capture-blocks-worker', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('acquired = self.lock.acquire(blocking=False)', 'acquired = self.lock.acquire(blocking=True)')],
+        'tests/test_async_settle_shadow_counter_isolation.py::test_evidence_worker_counter_lock_does_not_hold_money[counter-True]'),
+    ('rejected-endpoint-persisted', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('endpoint_id=ctx.selected_endpoint if (ctx.selected_endpoint and len(ctx.selected_endpoint) <= 128\n                    and ctx.selected_endpoint in (*auth.candidate_endpoint_ids, auth.endpoint_id)) else None,',
+         'endpoint_id=ctx.body.selected_endpoint_id,')],
+        'tests/test_async_settle_shadow_rejected_endpoint.py::test_rejected_replay_endpoint_is_not_persisted'),
+    ('bidirectional-reconciliation-removed', REPORT, [
+        ('if exclusions != bucket["observed_ineligible"]:', 'if False:'),
+        ('if counter["comparison_attempts"] > eligible:', 'if False:')],
+        'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_bidirectional_accounting'),
+    ('loaded-signer-bad-header-http', 'src/trusted_router/routes/internal/gateway.py', [
+        ('    subject = body.api_key_lookup_hash or body.api_key_hash',
+         '    if request.app.state.async_settle.signer is not None and not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Mode") == "!":\n        return {"data": {"review_mutant": True}}\n    subject = body.api_key_lookup_hash or body.api_key_hash')],
+        'tests/test_async_settle_shadow_http.py::test_flag_off_authorize_http_identity[True--False-True-bad]'),
 ]
 
 

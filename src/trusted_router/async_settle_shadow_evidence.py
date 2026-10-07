@@ -7,6 +7,7 @@ import itertools
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -68,8 +69,9 @@ def sample(ctx: Context, comparison: Comparison, *, observed_us: int, router_us:
                 booking_observed_at_us=None if booking_us is None else observed_us + booking_us,
                 workspace_fingerprint=analytics_surrogate("workspace", auth.workspace_id),
                 adapter=adapter, route_type=route, streamed=streamed,
-                model_id=(comparison.model_id or auth.model_id) if len(comparison.model_id or auth.model_id) <= 128 else None,
-                endpoint_id=ctx.selected_endpoint if ctx.selected_endpoint and len(ctx.selected_endpoint) <= 128 else None,
+                model_id=auth.model_id if len(auth.model_id) <= 128 else None,
+                endpoint_id=ctx.selected_endpoint if (ctx.selected_endpoint and len(ctx.selected_endpoint) <= 128
+                    and ctx.selected_endpoint in (*auth.candidate_endpoint_ids, auth.endpoint_id)) else None,
                 frozen_micro=comparison.python_micro, reason_codes=sorted(comparison.reasons),
                 eligibility=dict(requested=comparison.binding_verified, observed=comparison.observed_eligible,
                                  exclusion=next(iter(sorted(comparison.reasons)), None) if comparison.observed_eligible is False else None),
@@ -200,8 +202,63 @@ class Counters:
         self.region, self.revision = region, revision
         self.days: dict[str, dict[str, Any]] = {}
         self.active: dict[str, int] = {}
+        # CPython deque append/popleft are atomic. Bounded immutable messages
+        # never acquire the worker lock; overflow permanently disqualifies coverage.
+        self.mailbox: deque[tuple[int, str, float]] = deque(maxlen=128)
+        self.mailbox_sequence = itertools.count()
+        self.mailbox_expected = 0
+        self.mailbox_overflow = False
         self.retired_through = ""
         self.observation_day: contextvars.ContextVar[str | None] = contextvars.ContextVar("shadow_counter_day", default=None)
+
+    def defer(self, operation: str, observed: float) -> None:
+        if len(self.mailbox) == self.mailbox.maxlen:
+            self.mailbox_overflow = True
+        self.mailbox.append((next(self.mailbox_sequence), operation, observed))
+
+    @contextmanager
+    def request_access(self, observed: float) -> Iterator[bool]:
+        acquired = self.lock.acquire(blocking=False)
+        if not acquired:
+            self.defer("drop", observed)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                self.lock.release()
+
+    def release_request(self, observed: float) -> None:
+        if not self.lock.acquire(blocking=False):
+            self.defer("release", observed)
+            return
+        try:
+            self.release(observed)
+        finally:
+            self.lock.release()
+
+    def _drain_mailbox(self) -> None:
+        # Called with the worker lock. Never chase concurrent producers forever.
+        for _ in range(len(self.mailbox)):
+            sequence, operation, observed = self.mailbox.popleft()
+            # Detect eviction even if concurrent producers race the length
+            # check. Reordered producers conservatively mark the same gap.
+            if sequence != self.mailbox_expected:
+                self.mailbox_overflow = True
+            self.mailbox_expected = sequence + 1
+            if operation == "release":
+                self.release(observed)
+            else:
+                token = self.observation_day.set(day_at(observed))
+                try:
+                    self.reason(dimensions(None, None, None), "worker", "queue_full")
+                except ValueError:
+                    self.observation_day.set(None)
+                    self.reason(dimensions(None, None, None), "worker", "queue_full")
+                finally:
+                    self.observation_day.reset(token)
+        if self.mailbox_overflow:
+            self._day()["counter_overflow"] = True
+            self._day()["first_gap_at_us"] = int(self.clock() * 1e6)
 
     @contextmanager
     def day(self, observed: float) -> Iterator[None]:
@@ -331,6 +388,7 @@ class Counters:
     def snapshot(self, closed: bool = False, *, retiring_only: bool = False) -> list[tuple[str, dict[str, Any]]]:
         import copy
         with self.lock:
+            self._drain_mailbox()
             result = []
             for day, body in sorted(self.days.items()):
                 if retiring_only and (day >= day_at(self.clock()) or self.active.get(day)):
@@ -338,11 +396,21 @@ class Counters:
                 self.add(body, body, "sequence")
                 body["flushed_at_us"] = int(self.clock() * 1e6)
                 body["closed"] = body["closed"] or ((closed or day < day_at(self.clock())) and not self.active.get(day))
-                if len(canonical(body)) > 65536:
-                    body["counter_overflow"] = True
-                    raise ValueError("counter_overflow")
-                result.append((day + "/" + self.instance, copy.deepcopy(body)))
-            return result
+                # Detach the bounded schema using only builtin shallow copies.
+                # Serialization/deep-copy below own no shared mutable state and
+                # hold no lock needed by request capture.
+                detached = dict(body)
+                for key in ("counts", "exclusions", "rejections", "drops"):
+                    detached[key] = [dict(row) for row in body[key]]
+                for key in ("authorize_shadow_hist", "evidence_write_hist"):
+                    detached[key] = list(body[key])
+                detached["admission_observer"] = dict(body["admission_observer"])
+                result.append((day + "/" + self.instance, detached))
+        private = [(identity, copy.deepcopy(body)) for identity, body in result]
+        for _, body in private:
+            if len(canonical(body)) > 65536:
+                raise ValueError("counter_overflow")
+        return private
 
     def acknowledge(self, identity: str, body: dict[str, Any]) -> None:
         """Retire only a successfully persisted final cumulative snapshot."""
