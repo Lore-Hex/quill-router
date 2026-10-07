@@ -200,6 +200,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
     MODEL_ENDPOINTS,
     MODELS,
 )
+from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
@@ -863,6 +864,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
     if documentation is not None:
         tr_block["documentation"] = documentation
+    usage_estimation = provider_usage_estimation_policy(model.provider)
+    if usage_estimation is not None:
+        tr_block["usage_estimation"] = usage_estimation
     if model.id == GREEN_MODEL_ID:
         tr_block.update({
             "renewable_energy_required": True,
@@ -909,7 +913,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             model.documentation.description
             if model.documentation is not None
             else f"{model.name} via TrustedRouter"
-        ),
+        ) + (f". {usage_estimation['description']}" if usage_estimation else ""),
         "context_length": model.context_length,
         "architecture": {
             "modality": (
