@@ -51,6 +51,11 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	if cfg.LiveFor <= 0 || cfg.Window <= 0 {
 		return nil, errors.New("store: LiveFor and Window must be positive")
 	}
+	// Spanner's intervals here are whole microseconds; a finer duration
+	// would be cut short, and the window with it.
+	if cfg.Window%time.Microsecond != 0 {
+		return nil, errors.New("store: Window must be whole microseconds")
+	}
 	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {
 		return nil, errors.New("store: the allowance must be positive, the floor not negative, and the tier 0 to 3")
 	}

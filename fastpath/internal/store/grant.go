@@ -153,11 +153,11 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 			SQL: `INSERT INTO tr_lease (workspace_id, lease_id, region, workspace_shard, owner_node, owner_epoch, state,
 			                           granted, allocation, expiry, key_status_version)
 			      VALUES (@w, @l, @region, @wshard, @node, @epoch, 'open', @amount, @amount,
-			              TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL @window MILLISECOND), @ksv)
+			              TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL @window MICROSECOND), @ksv)
 			      THEN RETURN expiry`,
 			Params: map[string]any{"w": req.Workspace, "l": req.LeaseID, "region": req.Region, "wshard": req.WorkspaceShard,
 				"node": req.Owner.Node, "epoch": req.Owner.Epoch, "amount": req.Amount,
-				"window": s.cfg.Window.Milliseconds(), "ksv": req.KeyStatusVersion},
+				"window": s.cfg.Window.Microseconds(), "ksv": req.KeyStatusVersion},
 		}, spanner.QueryOptions{RequestTag: tag("grant")})
 		if err := iter.Do(func(row *spanner.Row) error { return row.Column(0, &out.Expiry) }); err != nil {
 			if spanner.ErrCode(err) == codes.AlreadyExists {

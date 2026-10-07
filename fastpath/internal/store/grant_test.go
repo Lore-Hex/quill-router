@@ -263,3 +263,18 @@ func TestGrantsRaceForOneWorkspace(t *testing.T) {
 	}
 	identityHolds(t, s, ws)
 }
+
+// TestTheWindowIsWholeMicroseconds: Spanner's intervals here are whole
+// microseconds, so a window finer than that is refused rather than cut
+// short, and one with a part of a millisecond in it is taken whole.
+func TestTheWindowIsWholeMicroseconds(t *testing.T) {
+	cfg := testConfig()
+	cfg.Window = 30*time.Second + 500*time.Nanosecond
+	if _, err := New(shared, cfg); err == nil {
+		t.Fatal("a window finer than a microsecond is taken")
+	}
+	s := spikeStore(t, func(c *Config) { c.Window = 30*time.Second + 500*time.Microsecond })
+	if got, err := s.Grant(context.Background(), grantOf(seedWorkspace(t, 100), 10)); err != nil || got.Refused != "" {
+		t.Fatalf("a grant with a window of 30.0005 s: %+v %v", got, err)
+	}
+}

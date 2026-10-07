@@ -16,7 +16,26 @@ import (
 
 // The tests below put amounts at int64's bounds into rows no legitimate
 // write makes, so that the store's arithmetic on them is exact (Codex,
-// review round 1 of S4b).
+// review round 1 of S4b). They delete those rows when they end: the
+// emulator evaluates a statement's whole condition on every row it scans,
+// so another test's statement would overflow on them, as Spanner, which
+// reads the one row the key names, would not.
+
+// dropWorkspace deletes a workspace's rows when the test ends.
+func dropWorkspace(t *testing.T, ws string) {
+	t.Cleanup(func() {
+		_, err := shared.ReadWriteTransaction(context.Background(), func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.BatchUpdate(ctx, []spanner.Statement{
+				{SQL: `DELETE FROM tr_lease WHERE workspace_id = @w`, Params: map[string]any{"w": ws}},
+				{SQL: `DELETE FROM tr_credit_balance WHERE workspace_id = @w`, Params: map[string]any{"w": ws}},
+			})
+			return err
+		})
+		if err != nil {
+			t.Errorf("deleting %s's rows: %v", ws, err)
+		}
+	})
+}
 
 func insertLease(t *testing.T, ws, lease string, granted int64) {
 	t.Helper()
@@ -30,6 +49,7 @@ func insertLease(t *testing.T, ws, lease string, granted int64) {
 func TestAnExposureAtTheTopRefusesAGrant(t *testing.T) {
 	s := spikeStore(t, func(c *Config) { c.Allowance = math.MaxInt64 })
 	ws := seedWorkspace(t, 20)
+	dropWorkspace(t, ws)
 	insertLease(t, ws, storetest.UniqueID("l"), math.MaxInt64-1)
 	got, err := s.Grant(context.Background(), grantOf(ws, 10))
 	if err != nil || got.Refused != RefusedAllowance {
@@ -78,6 +98,7 @@ func TestCheckIdentitySumsExactly(t *testing.T) {
 	ctx := context.Background()
 	// A lease of 1 whose donors hold MaxInt64, MaxInt64 and 3, which wrap to 1.
 	ws := seedWorkspace(t, math.MaxInt64, math.MaxInt64, 3)
+	dropWorkspace(t, ws)
 	lease := storetest.UniqueID("l")
 	insertLease(t, ws, lease, 1)
 	var mutations []*spanner.Mutation
@@ -97,6 +118,7 @@ func TestCheckIdentitySumsExactly(t *testing.T) {
 	}
 	// Marked rows whose sum wraps negative are still solvent.
 	ws = seedWorkspace(t, math.MaxInt64, math.MaxInt64)
+	dropWorkspace(t, ws)
 	setRows(t, ws, map[string]any{"in_debt": true})
 	problems, err = s.CheckIdentity(ctx, ws)
 	if err != nil || !strings.Contains(strings.Join(problems, "\n"), "the rows are marked and their signed sum is 18446744073709551614") {

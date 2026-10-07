@@ -173,7 +173,7 @@ func adjust(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace st
 	iter := txn.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `UPDATE tr_credit_balance
 		         SET reserved = reserved + @r, total_usage = total_usage + @u, updated_at = CURRENT_TIMESTAMP()
-		       WHERE workspace_id = @w AND shard = @shard AND reserved + @r >= 0
+		       WHERE workspace_id = @w AND shard = @shard AND reserved >= -@r
 		      THEN RETURN total_credits - total_usage - reserved`,
 		Params: map[string]any{"r": reservedBy, "u": usageBy, "w": workspace, "shard": shard},
 	}, spanner.QueryOptions{RequestTag: tag(operation)})
