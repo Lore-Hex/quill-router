@@ -189,16 +189,27 @@ What follows is the spike's proposal, in `fastpath/schema/spike.sql`, applied
 only to the spike's database. It is a first draft of what production will
 need, not a migration:
 
-- `tr_lease`: §4.2's row, with the allocation per donor shard, the fence F,
-  the boundary S and T, the commit version, the shortfall total, the
-  key-status version, and the auditor's progress: the highest owner sequence
-  number applied and the last tick;
+- `tr_lease`: §4.2's row, with the allocation's total and its accounting
+  (L as granted, the shortfall total, the front doors' raises, returns, and
+  consumption beyond the allocation booked as usage), the fence F, the
+  boundary S and T, the commit version, the key-status version, and the
+  auditor's progress: the highest owner sequence number applied, the last
+  tick, the sum the checkpoints are audited against, the applied list of
+  open holds, the alert and the gap. Checks on the row hold its accounting
+  and its states, and the row may be deleted seven days after the lease has
+  closed with no pack's work pending;
+- `tr_lease_donor`: the allocation per donor shard, a row per donor, so each
+  writer's arithmetic is one conditional statement. Donors are in ascending
+  shard order: bookings take from the first donor first, returns from the
+  last;
 - `tr_lease_hold`: §4.8's stored open holds, one row per hold the log has
   shown: its estimate, its latest valid snapshot (sequence, hash, usage and
-  running charge) and its deadline. The auditor's per-lease commit inserts
-  and updates these rows and deletes a hold's row in the commit that stores
-  its winner. If row writes dominate A4, a packed row per lease is measured
-  against it;
+  running charge) and its deadline, and the first heartbeat record's
+  fields. A member that takes over a draining lease builds a reap's full
+  record from those (§4.9), and Pub/Sub does not deliver a record again once
+  it is acknowledged. The auditor's per-lease commit inserts and updates these
+  rows and deletes a hold's row in the commit that stores its winner. If row
+  writes dominate A4, a packed row per lease is measured against it;
 - `tr_lease_winners`: §4.8's packs, one row per lease per commit, each winner
   with its pending work, and the timestamp the row-deletion policy reads,
   set once the lease is closed and the pack's work is done;
@@ -208,7 +219,9 @@ need, not a migration:
 - `tr_lease_record`: the records the pending work writes, standing for the
   generation and activity records and the disposition records (§4.9);
 - `tr_spike_staged`: the stand-in for staging (§2);
-- `tr_credit_balance`, with the columns grants and bookings touch, its debt
+- `tr_credit_balance`: production's table word for word, which a test holds
+  equal to `scripts/deploy/migrate_typed_counters.sh`'s, so the spike's
+  statements meet production's columns, nullability and defaults, the debt
   mark included (§4.7);
 - `tr_fastpath_member`: membership (below).
 

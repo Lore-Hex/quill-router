@@ -424,6 +424,10 @@ jobs:
   fastpath:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # The module stays on Go 1.24, the enclave's: a dependency that needs a
+    # later Go fails the build rather than fetching a newer toolchain.
+    env:
+      GOTOOLCHAIN: local
     defaults:
       run:
         working-directory: fastpath
@@ -432,7 +436,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-          cache-dependency-path: fastpath/go.mod
+          cache-dependency-path: fastpath/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -455,6 +459,44 @@ jobs:
       # timeout for a package's tests.
       - name: go test, with the comparisons against TLC
         run: go test -count=1 -timeout 30m ./...
+
+  # The spike's store (fastpath/internal/store) against the Spanner emulator,
+  # at the image the spanner-emulator job pins. The emulator runs one
+  # read-write transaction at a time, so the tests run one package at a time.
+  # With FASTPATH_SPANNER_EMULATOR=1 an emulator that cannot be reached fails
+  # the tests; the fastpath job, without it, skips them.
+  fastpath-spanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      SPANNER_EMULATOR_HOST: 127.0.0.1:9010
+      FASTPATH_SPANNER_EMULATOR: "1"
+    services:
+      spanner:
+        image: gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+        ports:
+          - 9010:9010
+          - 9020:9020
+    defaults:
+      run:
+        working-directory: fastpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: fastpath/go.sum
+      - name: Wait for the Spanner emulator (fail if unavailable)
+        run: |
+          for _ in $(seq 1 120); do
+            (exec 3<>/dev/tcp/127.0.0.1/9010) 2>/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "the Spanner emulator did not start"
+          exit 1
+      - name: The store against the emulator
+        run: go test -race -count=1 -p 1 ./internal/store/...
 
   proofs:
     runs-on: ubuntu-latest
