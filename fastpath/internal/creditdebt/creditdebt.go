@@ -20,13 +20,16 @@
 // These functions only compute: the store reads the rows, calls them and
 // writes what they return. Only credit moves, so a row's change of headroom
 // is a change of its total_credits. Unlike Python's integers, int64 has
-// bounds: rows whose sum leaves them, or a row at the lowest int64, whose
-// negation does, are refused.
+// bounds, but the rules need only the sign of the rows' sum, which is taken
+// exactly, and covering and repaying move each row toward zero, so every
+// row stays in range. A row at the lowest int64, whose negation does not, is
+// refused.
 package creditdebt
 
 import (
 	"errors"
 	"math"
+	"math/big"
 )
 
 // Squared is what the rows end with: each row's headroom, in shard order,
@@ -49,31 +52,31 @@ type Inflow struct {
 
 var errNoRows = errors.New("creditdebt: a workspace has at least one credit row")
 
-// rows copies headroom and sums it, refusing what int64 cannot hold.
-func rows(headroom []int64) ([]int64, int64, error) {
+// rows copies headroom and returns the sign of its sum, taken exactly.
+func rows(headroom []int64) ([]int64, int, error) {
 	if len(headroom) == 0 {
 		return nil, 0, errNoRows
 	}
 	out := append([]int64(nil), headroom...)
-	var sum int64
+	sum := new(big.Int)
 	for _, v := range out {
-		if v == math.MinInt64 || (v > 0 && sum > math.MaxInt64-v) || (v < 0 && sum < math.MinInt64-v) {
-			return nil, 0, errors.New("creditdebt: the rows are out of int64's range")
+		if v == math.MinInt64 {
+			return nil, 0, errors.New("creditdebt: a row at the lowest int64")
 		}
-		sum += v
+		sum.Add(sum, big.NewInt(v))
 	}
-	return out, sum, nil
+	return out, sum.Sign(), nil
 }
 
 // Cover moves headroom from positive rows to negative ones until none is
 // negative: the lowest negative row takes from the lowest positive row
 // first, as Cover does. The signed sum must not be negative.
 func Cover(headroom []int64) ([]int64, error) {
-	r, sum, err := rows(headroom)
+	r, sign, err := rows(headroom)
 	if err != nil {
 		return nil, err
 	}
-	if sum < 0 {
+	if sign < 0 {
 		return nil, errors.New("creditdebt: rows whose signed sum is negative are marked, not covered")
 	}
 	return cover(r), nil
@@ -110,11 +113,11 @@ func cover(r []int64) []int64 {
 // sum is negative, every row is marked and nothing moves; otherwise every
 // negative row is covered and no row is marked.
 func Square(headroom []int64) (Squared, error) {
-	r, sum, err := rows(headroom)
+	r, sign, err := rows(headroom)
 	if err != nil {
 		return Squared{}, err
 	}
-	if sum < 0 {
+	if sign < 0 {
 		return Squared{Headroom: r, Marked: true}, nil
 	}
 	return Squared{Headroom: cover(r)}, nil
@@ -153,11 +156,11 @@ func TakeInflow(headroom []int64, amount int64) (Inflow, error) {
 	if err != nil {
 		return Inflow{}, err
 	}
-	r, sum, err := rows(repaid)
+	r, sign, err := rows(repaid)
 	if err != nil {
 		return Inflow{}, err
 	}
-	if sum < 0 {
+	if sign < 0 {
 		// The money ran out with a row still negative: all of it repaid.
 		return Inflow{Headroom: r, Marked: true}, nil
 	}

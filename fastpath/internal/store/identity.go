@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"cloud.google.com/go/spanner"
 )
@@ -17,7 +18,8 @@ import (
 //   - no row is negative unless every row is marked, rows are marked only
 //     while the signed sum is negative, and every row has the same mark.
 //
-// An empty result is a workspace that keeps them all.
+// An empty result is a workspace that keeps them all. Sums are exact, so
+// none wraps past int64 and hides a breach.
 func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, error) {
 	ro := s.client.ReadOnlyTransaction()
 	defer ro.Close()
@@ -43,6 +45,9 @@ func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, 
 	if err != nil {
 		return nil, err
 	}
+	if len(reserved) == 0 {
+		return nil, ErrCreditRowsIncomplete
+	}
 	type totals struct{ allocation, consumed int64 }
 	live := map[string]totals{}
 	err = query(`SELECT lease_id, allocation, consumed FROM tr_lease
@@ -58,8 +63,12 @@ func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, 
 	if err != nil {
 		return nil, err
 	}
-	held := make([]int64, len(reserved))
-	donors := map[string]totals{}
+	held := make([]*big.Int, len(reserved))
+	for i := range held {
+		held[i] = new(big.Int)
+	}
+	type sums struct{ allocation, consumed *big.Int }
+	donors := map[string]sums{}
 	var problems []string
 	err = query(`SELECT lease_id, credit_shard, allocation, consumed FROM tr_lease_donor WHERE workspace_id = @w`,
 		func(row *spanner.Row) error {
@@ -75,30 +84,39 @@ func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, 
 				problems = append(problems, fmt.Sprintf("lease %s has a donor on shard %d, which has no row", lease, shard))
 				return nil
 			}
-			held[shard] += allocation - consumed
-			d := donors[lease]
-			donors[lease] = totals{d.allocation + allocation, d.consumed + consumed}
+			held[shard].Add(held[shard], new(big.Int).Sub(big.NewInt(allocation), big.NewInt(consumed)))
+			d, ok := donors[lease]
+			if !ok {
+				d = sums{new(big.Int), new(big.Int)}
+				donors[lease] = d
+			}
+			d.allocation.Add(d.allocation, big.NewInt(allocation))
+			d.consumed.Add(d.consumed, big.NewInt(consumed))
 			return nil
 		})
 	if err != nil {
 		return nil, err
 	}
 	for shard := range reserved {
-		if reserved[shard] != held[shard] {
-			problems = append(problems, fmt.Sprintf("shard %d reserves %d, and its live leases' donors hold %d",
+		if big.NewInt(reserved[shard]).Cmp(held[shard]) != 0 {
+			problems = append(problems, fmt.Sprintf("shard %d reserves %d, and its live leases' donors hold %s",
 				shard, reserved[shard], held[shard]))
 		}
 	}
 	for lease, t := range live {
-		if d := donors[lease]; d != t {
-			problems = append(problems, fmt.Sprintf("lease %s has allocation %d and consumption %d, its donors %d and %d",
+		d, ok := donors[lease]
+		if !ok {
+			d = sums{new(big.Int), new(big.Int)}
+		}
+		if d.allocation.Cmp(big.NewInt(t.allocation)) != 0 || d.consumed.Cmp(big.NewInt(t.consumed)) != 0 {
+			problems = append(problems, fmt.Sprintf("lease %s has allocation %d and consumption %d, its donors %s and %s",
 				lease, t.allocation, t.consumed, d.allocation, d.consumed))
 		}
 	}
-	var signed int64
+	signed := new(big.Int)
 	negative, marked, alike := false, marks[0], true
 	for i, h := range headroom {
-		signed += h
+		signed.Add(signed, big.NewInt(h))
 		negative = negative || h < 0
 		alike = alike && marks[i] == marks[0]
 	}
@@ -107,7 +125,7 @@ func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, 
 		problems = append(problems, fmt.Sprintf("the rows' marks differ: %v", marks))
 	case negative && !marked:
 		problems = append(problems, fmt.Sprintf("a row is negative and the rows are not marked: %v", headroom))
-	case marked && signed >= 0:
+	case marked && signed.Sign() >= 0:
 		problems = append(problems, fmt.Sprintf("the rows are marked and their signed sum is %d", signed))
 	}
 	return problems, nil

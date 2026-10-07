@@ -198,10 +198,12 @@ func adjust(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace st
 }
 
 // release frees amount of a row's reservation, as production's
-// release_credit does, never taking more than the row reserves. On a marked
-// workspace the freed money repays the negative rows first, lowest first,
-// and the rows are squared; what repaid nothing stays on the row that freed
-// it (§4.7, Inflow). An unmarked workspace has no negative row to repay.
+// release_credit does, never taking more than the row reserves. Then, as
+// production's take_inflow does, the freed money repays any negative rows
+// first, lowest first, and the rows are squared; what repaid nothing stays
+// on the row that freed it (§4.7, Inflow). The spike's own writes leave no
+// row negative unmarked, but production has such rows from before the debt
+// rules, and the port repairs them as production does.
 func release(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace string, shard, amount int64, operation string) error {
 	if amount < 0 {
 		return fmt.Errorf("store: a release of %d", amount)
@@ -218,8 +220,15 @@ func release(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace s
 		return fmt.Errorf("%w: %s/%d reserves less than %d", ErrCreditRowsChanged, workspace, shard, amount)
 	}
 	rows, err := readCreditRows(ctx, txn, workspace, operation)
-	if err != nil || !rows.marked() {
+	if err != nil {
 		return err
+	}
+	negative := false
+	for _, h := range rows.headroom {
+		negative = negative || h < 0
+	}
+	if !rows.marked() && !negative {
+		return nil
 	}
 	if shard < 0 || shard >= int64(len(rows.headroom)) {
 		return ErrCreditRowsIncomplete
