@@ -41,6 +41,9 @@ type Config struct {
 	RequiredTier int64
 }
 
+// MaxSetting bounds every duration in Config.
+const MaxSetting = 7 * 24 * time.Hour
+
 // Store reads and writes the spike's database through client, which its
 // caller opens and closes.
 type Store struct {
@@ -57,10 +60,12 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 		return nil, errors.New("store: LiveFor, Window, Skew and PublishDeadline must be positive")
 	}
 	// Spanner's intervals here are whole microseconds; a finer duration
-	// would be cut short, and the window or the fence with it.
+	// would be cut short, and the window or the fence with it. No lease's
+	// setting is near a week, and bounding them there keeps every sum of
+	// them, and every time they are added to, in range.
 	for _, d := range []time.Duration{cfg.Window, cfg.Skew, cfg.PublishDeadline} {
-		if d%time.Microsecond != 0 {
-			return nil, errors.New("store: Window, Skew and PublishDeadline must be whole microseconds")
+		if d%time.Microsecond != 0 || d > MaxSetting {
+			return nil, errors.New("store: Window, Skew and PublishDeadline must be whole microseconds, at most MaxSetting")
 		}
 	}
 	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {

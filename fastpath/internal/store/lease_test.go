@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"slices"
 	"sync"
 	"testing"
@@ -383,5 +384,17 @@ func TestTheFenceIsKeptToTheMicrosecond(t *testing.T) {
 	cfg.Skew = time.Millisecond + 1
 	if _, err := New(shared, cfg); err == nil {
 		t.Fatal("a skew finer than a microsecond is taken")
+	}
+	// Two settings whose sum overflows a duration (Codex, round 2): F
+	// would have come out before the expiry.
+	cfg = testConfig()
+	cfg.Skew, cfg.PublishDeadline = time.Duration(math.MaxInt64/2+1), time.Duration(math.MaxInt64/2+1)
+	if _, err := New(shared, cfg); err == nil {
+		t.Fatal("a skew and a deadline that overflow together are taken")
+	}
+	cfg = testConfig()
+	cfg.Skew, cfg.PublishDeadline = MaxSetting, MaxSetting
+	if _, err := New(shared, cfg); err != nil {
+		t.Fatalf("settings of a week each are refused: %v", err)
 	}
 }
