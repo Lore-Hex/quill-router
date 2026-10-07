@@ -1385,6 +1385,10 @@ def _statement_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]]:
         return original_sql(self, sql, **kwargs)
 
     def spy_update(self: Any, sql: str, **kwargs: Any) -> int:
+        # The fake serves a DML ... THEN RETURN read through execute_update;
+        # that is one client statement, already recorded by spy_sql.
+        if getattr(self, "_in_returning", False):
+            return original_update(self, sql, **kwargs)
         calls.append((txn_number(self), sql))
         return original_update(self, sql, **kwargs)
 

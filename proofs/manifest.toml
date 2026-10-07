@@ -1501,9 +1501,12 @@ new = '''
 [CreditDebt]
 # docs/design/fast-admission-and-batched-settlement.md, sections 4.2 and
 # 4.7. Its shadow is a pure module of the debt rules, which the existing
-# primitives call (section 5.1).
-state = "planned"
+# primitives call (section 5.1): storage_gcp_credit_debt applies it to the
+# credit rows, and tests/test_credit_debt.py checks it against this spec's
+# Cover, Squared, Distribute and Inflow over every small case.
+state = "implemented"
 code = ["src/trusted_router/credit_debt.py"]
+tests = ["tests/test_credit_debt.py"]
 
 # Section 4.2's first claim, and what keeps it.
 

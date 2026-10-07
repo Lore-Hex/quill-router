@@ -290,7 +290,7 @@ def reshard_credit_account(
             transaction.execute_sql(
                 "SELECT shard, total_credits, total_usage, reserved, "
                 + ", ".join(CREDIT_BALANCE_TRUST_COLUMNS)
-                + " "
+                + ", COALESCE(in_debt, FALSE) "
                 "FROM tr_credit_balance WHERE workspace_id=@pk "
                 "AND shard>=0 AND shard<@shard_count ORDER BY shard",
                 params={"pk": workspace_id, "shard_count": current_count},
@@ -299,6 +299,11 @@ def reshard_credit_account(
         )
         observed = [int(row[0]) for row in rows]
         if observed != list(range(current_count)):
+            return None
+        if any(bool(row[-1]) for row in rows):
+            # A workspace marked in debt (section 4.7) is not resharded: its
+            # rows are refused until money clears the mark, and new rows would
+            # not carry it.
             return None
         total_credits = sum(int(row[1]) for row in rows)
         total_usage = sum(int(row[2]) for row in rows)

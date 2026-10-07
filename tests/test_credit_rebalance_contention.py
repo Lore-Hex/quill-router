@@ -912,7 +912,12 @@ def test_later_grant_and_donor_overage_cannot_expose_consolidated_debt(
         AuthorizeOutcome.INSUFFICIENT_CREDITS, None,
     )
     assert _typed_rows(database) == before
-    assert _headrooms(database) == [500_000, -1_000_000, 1_000_000, 900_000]
+    # The settle's overrun left shard 1 at -1,000,000 while the workspace's
+    # signed sum was 1,400,000, so the same transaction covered it from the
+    # lowest positive shards, 500,000 from shard 0 and then shard 2 (section
+    # 4.7). No shard is negative and none is marked.
+    assert _headrooms(database) == [0, 0, 500_000, 900_000]
+    assert not any(row.get("in_debt") for row in before.values())
     assert sum(row["total_credits"] for row in before.values()) == 4_000_000
 
 
@@ -1091,7 +1096,9 @@ def test_guarded_debit_repairs_settlement_debt_before_subsequent_spending(
         database, store._param_types, reservation_id=held.credit_reservation_id,
         actual_micro=3_500_000, settled_usage_type="Credits", success=True,
     )["outcome"] == "settled"
-    assert _headrooms(database) == [-2_000_000, 1_500_000, 1_500_000]
+    # The overrun left shard 0 at -2,000,000 with a signed sum of 1,000,000,
+    # and the settle covered it from shards 1 and 2, lowest first (section 4.7).
+    assert _headrooms(database) == [0, 0, 1_000_000]
     assert store.debit_workspace_guarded(
         WORKSPACE_ID, 1_000_000, "evt-debt-repair", kind="verification_fee",
     ) == "accepted"

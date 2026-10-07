@@ -29,7 +29,7 @@ APPLY_SECONDS = 20.0
 MAX_OWNER_WORKSPACES = 32
 CREDIT_COLUMNS = (
     "workspace_id", "shard", "total_credits", "total_usage", "reserved",
-    *CREDIT_BALANCE_TRUST_COLUMNS,
+    *CREDIT_BALANCE_TRUST_COLUMNS, "in_debt",
 )
 KEY_COLUMNS = (
     "key_hash", "shard", "limit_micro", "usage", "byok_usage", "reserved",
@@ -57,6 +57,8 @@ def expand_credit_rows(rows: list[dict[str, Any]], target: int) -> list[dict[str
             raise ValueError("divergent trust replication")
         if row.get("billing_pause_causes"):
             raise ValueError("workspace is paused")
+        if row.get("in_debt"):
+            raise ValueError("workspace is marked in debt")
     if len(rows) == target:
         return copy.deepcopy(rows)
     free = sum(int(row["total_credits"]) - int(row["total_usage"]) - int(row["reserved"]) for row in rows)
@@ -67,6 +69,7 @@ def expand_credit_rows(rows: list[dict[str, Any]], target: int) -> list[dict[str
             "workspace_id": rows[0]["workspace_id"], "shard": shard,
             "total_usage": 0, "reserved": 0,
             **dict(zip(CREDIT_BALANCE_TRUST_COLUMNS, trust, strict=True)),
+            "in_debt": False,
         })
     for shard, row in enumerate(result):
         row["total_credits"] = int(row["total_usage"]) + int(row["reserved"]) + parts[shard]

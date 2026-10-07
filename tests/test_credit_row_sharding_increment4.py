@@ -118,6 +118,21 @@ def test_reshard_copies_all_replicated_trust_columns_to_every_new_shard() -> Non
     )
 
 
+
+def test_reshard_refuses_a_workspace_marked_in_debt() -> None:
+    """Section 4.7: a marked workspace's rows refuse until money clears the
+    mark, and rows a reshard creates would not carry it."""
+    store, database = _seed(shard_credits=[101], shard_usage=[37])
+    for row in _rows(database):
+        row["in_debt"] = True
+    before_rows = [dict(row) for row in _rows(database)]
+
+    result = reshard_credit_account(store, "ws-reshard", 4, apply=True)
+
+    assert result.applied is False
+    assert _rows(database) == before_rows
+    assert store.get_credit_account("ws-reshard").shard_count == 1
+
 def test_reshard_validation_rejects_any_replicated_trust_divergence() -> None:
     store, database = _seed(shard_credits=[50, 50], shard_usage=[10, 10])
     for row in _rows(database):

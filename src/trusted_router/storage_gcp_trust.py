@@ -9,11 +9,9 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from trusted_router.storage_gcp_counter_dml import credit_credit_shard
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_TRUST_COLUMNS,
     credit_shard_count,
-    distribute_credit_amount,
 )
 from trusted_router.storage_models import (
     AdverseTrustEvent,
@@ -612,16 +610,23 @@ def apply_adverse_trust_event_tx(
         restore = min(decrease - canceled, recovered)
         recovered -= restore
         if restore:
-            for shard, amount in enumerate(distribute_credit_amount(restore, shard_count)):
-                if amount and credit_credit_shard(
-                    transaction,
-                    param_types,
-                    workspace_id,
-                    amount,
-                    shard=shard,
-                    now=now,
-                ) != 1:
-                    raise RuntimeError("principal restoration found a missing shard")
+            # Money coming in: it repays the workspace's negative shards first
+            # (fast-admission design section 4.7). It absorbs no payment claim:
+            # this transaction cancels claims in the variables above and
+            # writes the payment row only below, so a claim read now could be
+            # one it is cancelling.
+            from trusted_router.storage_gcp_credit_debt import (
+                CreditRowsIncomplete,
+                take_inflow,
+            )
+
+            try:
+                take_inflow(
+                    transaction, param_types, workspace_id, restore,
+                    landing_shard=None, absorb=None, now=now, shard_count=shard_count,
+                )
+            except CreditRowsIncomplete:
+                raise RuntimeError("principal restoration found a missing shard") from None
     if target != recovered + unrecovered:
         raise RuntimeError("payment recovery invariant violated after transition")
     debit_status = "debited" if unrecovered == 0 else ("unrecovered" if recovered == 0 else "partial")

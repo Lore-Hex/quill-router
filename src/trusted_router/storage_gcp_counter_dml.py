@@ -73,10 +73,12 @@ def reserve_credit(
     True = accepted (row-count 1); False = insufficient credits (row-count 0).
     """
     # Static table name (literal, not interpolated) + bound params only.
+    # A row marked in debt (section 4.7) refuses, as an exhausted one does.
     sql = (
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est"
+        "AND (total_credits - total_usage - reserved) >= @est "
+        "AND NOT COALESCE(in_debt, FALSE)"
     )
     count = transaction.execute_update(
         sql,
@@ -107,7 +109,8 @@ def reserve_credit_statement(
     return (
         "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
         "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est" + pause_predicate,
+        "AND (total_credits - total_usage - reserved) >= @est "
+        "AND NOT COALESCE(in_debt, FALSE)" + pause_predicate,
         {"est": int(amount), "ws": workspace_id, "shard": shard},
         {"est": param_types.INT64, "ws": param_types.STRING, "shard": param_types.INT64},
     )
@@ -127,6 +130,7 @@ def reserve_credit_with_pause(
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
+        "AND NOT COALESCE(in_debt, FALSE) "
         "THEN RETURN billing_pause_causes, pause_epoch",
         params={"est": int(amount), "ws": workspace_id, "shard": shard},
         param_types={
@@ -310,31 +314,53 @@ def release_credit(
     The `reserved >= @hold` guard makes a stale/double release a 0-row no-op
     instead of driving `reserved` negative (which would inflate apparent
     availability) — row-count 0 trips the caller's assert/alarm.
-    """
-    sql = (
-        "UPDATE tr_credit_balance "
-        "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
-        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold"
-    )
-    count = transaction.execute_update(
-        sql,
-        params={"hold": int(hold), "actual": int(actual), "ws": workspace_id, "shard": shard},
-        param_types={
-            "hold": param_types.INT64,
-            "actual": param_types.INT64,
-            "ws": param_types.STRING,
-            "shard": param_types.INT64,
-        },
-    )
-    free = int(hold) - int(actual)
-    if count == 1 and free > 0:
-        from trusted_router.storage_gcp_trust import absorb_unrecovered_recovery_tx
 
-        absorbed = absorb_unrecovered_recovery_tx(
+    The debt rules (fast-admission design section 4.7, `credit_debt`): an
+    overrun that leaves the row negative covers it from the workspace's other
+    rows, or marks every row when the workspace's signed sum is negative. A
+    release that frees money on a marked row, or on a row that was negative
+    before it, repays the negative rows first, lowest shard first, and only
+    then offers what is left to unrecovered payment claims. Both read the
+    other rows only then, so an ordinary settle still touches one row.
+    """
+    rows = list(
+        transaction.execute_sql(
+            "UPDATE tr_credit_balance "
+            "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
+            "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+            "THEN RETURN total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)",
+            params={"hold": int(hold), "actual": int(actual), "ws": workspace_id, "shard": shard},
+            param_types={
+                "hold": param_types.INT64,
+                "actual": param_types.INT64,
+                "ws": param_types.STRING,
+                "shard": param_types.INT64,
+            },
+        )
+    )
+    count = len(rows)
+    if count != 1:
+        return count
+    headroom, marked = int(rows[0][0]), bool(rows[0][1])
+    free = int(hold) - int(actual)
+    now = datetime.now(UTC)
+    if free < 0:
+        if headroom < 0 and not marked:
+            from trusted_router.storage_gcp_credit_debt import cover_or_mark
+
+            cover_or_mark(transaction, param_types, workspace_id, now=now)
+        return count
+    if free == 0:
+        return count
+
+    from trusted_router.storage_gcp_trust import absorb_unrecovered_recovery_tx
+
+    def absorb(offered: int) -> int:
+        return absorb_unrecovered_recovery_tx(
             transaction,
             param_types,
             workspace_id=workspace_id,
-            amount_micro=free,
+            amount_micro=offered,
             # Lazy on purpose (#1071 follow-up): the shard-set read takes
             # ReaderShared on EVERY credit shard while this transaction holds
             # Exclusive on one of them — the cross-shard X-on-mine/S-on-yours
@@ -343,28 +369,40 @@ def release_credit(
             shard_count=lambda: _credit_shard_count_from_rows(
                 transaction, param_types, workspace_id
             ),
-            now=datetime.now(UTC),
+            now=now,
             read_entity_tx=None,
             write_entity_tx=None,
         )
-        if absorbed:
-            debited = transaction.execute_update(
-                "UPDATE tr_credit_balance SET total_credits=total_credits-@amount "
-                "WHERE workspace_id=@ws AND shard=@shard "
-                "AND (total_credits-total_usage-reserved)>=@amount",
-                params={
-                    "amount": absorbed,
-                    "ws": workspace_id,
-                    "shard": shard,
-                },
-                param_types={
-                    "amount": param_types.INT64,
-                    "ws": param_types.STRING,
-                    "shard": param_types.INT64,
-                },
-            )
-            if int(debited) != 1:
-                raise RuntimeError("released credit could not satisfy recovery debt")
+
+    if marked or headroom - free < 0:
+        from trusted_router.storage_gcp_credit_debt import take_inflow
+
+        take_inflow(
+            transaction, param_types, workspace_id, free,
+            landing_shard=shard, absorb=absorb, now=now,
+        )
+        return count
+    absorbed = absorb(free)
+    if absorbed:
+        # The row's headroom before the release was not negative, so it now
+        # holds at least `free`, which covers what the claims took.
+        debited = transaction.execute_update(
+            "UPDATE tr_credit_balance SET total_credits=total_credits-@amount "
+            "WHERE workspace_id=@ws AND shard=@shard "
+            "AND (total_credits-total_usage-reserved)>=@amount",
+            params={
+                "amount": absorbed,
+                "ws": workspace_id,
+                "shard": shard,
+            },
+            param_types={
+                "amount": param_types.INT64,
+                "ws": param_types.STRING,
+                "shard": param_types.INT64,
+            },
+        )
+        if int(debited) != 1:
+            raise RuntimeError("released credit could not satisfy recovery debt")
     return count
 
 
@@ -374,12 +412,15 @@ def release_credit_no_debt_statement(
     """Speculative release: exact hold and transactional absence of recovery debt.
 
     A zero requires rollback of the entire batch before sequential classification.
-    Match absorb_unrecovered_recovery_tx's workspace/payment debt predicate.
+    Match absorb_unrecovered_recovery_tx's workspace/payment debt predicate. A row
+    marked in debt (section 4.7) matches nothing either: release_credit releases
+    it, repaying the workspace's negative rows first.
     """
     return (
         "UPDATE tr_credit_balance "
         "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
         "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold "
+        "AND NOT COALESCE(in_debt, FALSE) "
         "AND (@hold <= @actual OR NOT EXISTS ("
         "SELECT 1 FROM tr_trust_event "
         "WHERE workspace_id=@ws AND kind='payment' AND unrecovered_micro>0))",

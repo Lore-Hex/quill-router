@@ -522,7 +522,9 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     assert operations[2] == ("T1 DML",
         "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
         "WHERE workspace_id=@ws AND shard=@shard "
-        "AND (total_credits - total_usage - reserved) >= @est"
+        "AND (total_credits - total_usage - reserved) >= @est "
+        # A row marked in debt refuses (fast-admission design section 4.7).
+        "AND NOT COALESCE(in_debt, FALSE)"
         + (" AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if armed else ""),
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
