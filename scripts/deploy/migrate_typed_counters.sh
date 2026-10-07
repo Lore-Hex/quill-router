@@ -86,6 +86,7 @@ if table_exists tr_credit_balance; then log "tr_credit_balance exists, skip"; el
     billing_pause_causes ARRAY<STRING(32)>,
     pause_epoch INT64 DEFAULT (0),
     trust_reconciled_through TIMESTAMP,
+    in_debt BOOL DEFAULT (FALSE),
     source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   ) PRIMARY KEY (workspace_id, shard)"
@@ -250,6 +251,14 @@ ensure_column tr_credit_balance trust_override_tier "INT64"
 ensure_column tr_credit_balance billing_pause_causes "ARRAY<STRING(32)>"
 ensure_column tr_credit_balance pause_epoch "INT64 DEFAULT (0)"
 ensure_column tr_credit_balance trust_reconciled_through "TIMESTAMP"
+
+# The debt mark (fast-admission design section 4.7): set on every shard row of a
+# workspace whose signed sum a write left negative, and cleared on every row once
+# money brings it back to zero or above. A marked row refuses reservations. It is
+# not unrecovered payment debt (tr_trust_event), and not a billing pause. Nullable
+# with a default, as Spanner adds a column to an existing table; readers use
+# COALESCE(in_debt, FALSE).
+ensure_column tr_credit_balance in_debt "BOOL DEFAULT (FALSE)"
 
 if table_exists tr_trust_event; then log "tr_trust_event exists, skip"; else
   apply_ddl "CREATE TABLE tr_trust_event (

@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS tr_credit_balance (
     billing_pause_causes JSONB,
     pause_epoch BIGINT DEFAULT 0,
     trust_reconciled_through TIMESTAMPTZ,
+    in_debt BOOLEAN DEFAULT FALSE,
     source_updated_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (workspace_id, shard)
@@ -92,6 +93,11 @@ ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS billing_pause_causes JSON
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS pause_epoch BIGINT;
 ALTER TABLE tr_credit_balance ALTER COLUMN pause_epoch SET DEFAULT 0;
 ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_reconciled_through TIMESTAMPTZ;
+-- The debt mark (fast-admission design section 4.7), as in Spanner. A Postgres
+-- workspace keeps one shard, whose own headroom refuses while it is negative, so
+-- nothing here sets it yet; the column keeps the two schemas the same shape.
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS in_debt BOOLEAN;
+ALTER TABLE tr_credit_balance ALTER COLUMN in_debt SET DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS tr_trust_event (
     workspace_id TEXT NOT NULL,
