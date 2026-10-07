@@ -16,6 +16,10 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
 - `internal/store`: the spike's Spanner store, each operation's guards in the
   transaction that writes. `internal/store/storetest` runs its tests against
   the Spanner emulator.
+- `internal/creditdebt`: the debt rules of the design's section 4.7, ported
+  from `src/trusted_router/credit_debt.py` and held to its results by
+  `testdata/credit_debt_vectors.json`. `scripts/fastpath/credit_debt_vectors.py`
+  writes the file, and a Python test fails when it is stale.
 - `internal/tlc`: for tests only. It runs the pinned TLC from `proofs/`, reads
   the state graph TLC writes with `-dump dot,actionlabels` as it streams, has
   TLC judge whether a `.cfg` has the constants a test declares, and reads the

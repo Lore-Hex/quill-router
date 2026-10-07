@@ -5,6 +5,11 @@
 // tag naming its operation, so Spanner's statistics tell the operations
 // apart. The store reads no clock of this machine: the times it writes are
 // Spanner's, and a time the design puts on a node's clock is a parameter.
+//
+// The store changes rows that exist only with DML. The emulator the tests run
+// on resets the columns an update mutation does not name to their defaults,
+// which Spanner does not; inserts name what they set and take the defaults
+// for the rest, on both.
 package store
 
 import (
@@ -19,6 +24,16 @@ type Config struct {
 	// LiveFor is how recent a member's heartbeat must be for the member to
 	// be live: three seconds in the spike (spike plan, §4).
 	LiveFor time.Duration
+	// Window is how far past Spanner's time a grant or a renewal sets a
+	// lease's expiry (§4.2).
+	Window time.Duration
+	// Allowance caps a workspace's exposure, across its regions and shards;
+	// Floor is the headroom a grant leaves outside leases; RequiredTier is
+	// the trust tier that allows leases (§4.2, §4.7, §4.11). The spike has
+	// one tier, so one allowance.
+	Allowance    int64
+	Floor        int64
+	RequiredTier int64
 }
 
 // Store reads and writes the spike's database through client, which its
@@ -33,8 +48,11 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	if client == nil {
 		return nil, errors.New("store: no client")
 	}
-	if cfg.LiveFor <= 0 {
-		return nil, errors.New("store: LiveFor must be positive")
+	if cfg.LiveFor <= 0 || cfg.Window <= 0 {
+		return nil, errors.New("store: LiveFor and Window must be positive")
+	}
+	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {
+		return nil, errors.New("store: the allowance must be positive, the floor not negative, and the tier 0 to 3")
 	}
 	return &Store{client: client, cfg: cfg}, nil
 }
