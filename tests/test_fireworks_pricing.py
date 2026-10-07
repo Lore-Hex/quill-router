@@ -434,6 +434,7 @@ def test_fireworks_fetch_preserves_live_unpriced_model_as_dark_metadata(
         "display_name": "GLM 5.3 Flash on Fireworks",
         "endpoints": ["chat/completions"],
         "context_length": 1_048_576,
+        "supported_features": [],
     }
     assert fireworks.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == native_id
     assert "qwen/qwen3-embedding-8b" not in fireworks._DISCOVERED_MANIFEST_ROWS

@@ -154,6 +154,10 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for source in rows:
         row = dict(source)
+        features = source.get("features")
+        row["supported_features"] = (
+            ["tools"] if isinstance(features, dict) and features.get("tool_use") is True else []
+        )
         # Model detail can advertise image-text-to-text while the legacy
         # vision_supported flag still says false (V4.1 Flash, verified live).
         tasks = source.get("tasks")

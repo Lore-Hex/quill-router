@@ -1,0 +1,21 @@
+[
+  {
+    "model_name": "openchat/openchat-3.6-8b",
+    "tags": [
+      "openai"
+    ]
+  },
+  {
+    "model_name": "zai-org/GLM-5.3",
+    "tags": [
+      "openai",
+      "cc-native",
+      "tools",
+      "json",
+      "structured-output",
+      "reasoning",
+      "flex",
+      "featured"
+    ]
+  }
+]

@@ -87,8 +87,9 @@ def test_native_capability_declaration_is_provider_scoped_and_explicit(monkeypat
         }))
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     assert catalog_ingest._native_endpoint_capabilities() == {
-        ("grok", "model"): ("tools", "max_tokens"),
-        ("other", "model"): ("max_tokens", "logprobs"),
+        ("grok", "model"): catalog_ingest._NativeEndpointCapabilities(("tools", "max_tokens"), True),
+        ("other", "model"): catalog_ingest._NativeEndpointCapabilities(("max_tokens", "logprobs"), True),
+        ("partial", "model"): catalog_ingest._NativeEndpointCapabilities(("tools",), False),
     }
 
 

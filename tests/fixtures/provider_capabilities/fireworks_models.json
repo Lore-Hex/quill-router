@@ -1,0 +1,8 @@
+{
+  "data": [
+    {
+      "id": "accounts/fireworks/models/glm-5p3",
+      "supports_tools": true
+    }
+  ]
+}
