@@ -14,6 +14,7 @@ driven to the bad schedule. It is written before the code it describes.
 | `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, its last record and its draining write, draining and close under clock skew (fast admission §4.2, §4.3, §4.8) | planned |
 | `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | planned |
 | `AuditorCommit` | The auditor's per-lease commit: what a member stores so another can carry on, under redelivery, takeover, a member that stalled, records stored twice or out of order, raises between a load and a commit, reaps, the drain log and the checkpoint audit (fast admission §4.8) | planned |
+| `KeyCapFence` | Adding a cap to a key while leases may hold its requests: the key-status version a grant carries, the owners' caches, the checkpoint that shows none of the key's holds open, and the condition on which Python enables the cap (fast admission §4.6) | planned |
 
 `docs/design/fast-admission-and-batched-settlement.md` §5.1 has the plan for
 the fast-admission specs.
@@ -188,7 +189,7 @@ knows S, and the member takes it for a gap the log does not have
 pair needs one of, the other 50 removed all together break nothing. That
 covers every claim in `two`, `lying` and `ahead`; in `again` and the main
 configuration, at 95 and 69 million states, the liveness claims were not
-checked.
+checked. `KeyCapFence`'s 6 break nothing even when all are removed together.
 
 ## Ways a check proves nothing
 
