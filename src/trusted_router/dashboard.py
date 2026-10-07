@@ -210,6 +210,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/security",
     "/trust",
     "/eu",
+    "/green-tokens",
     "/trustedos",
     "/token-exchange",
     "/token-exchange/savings",

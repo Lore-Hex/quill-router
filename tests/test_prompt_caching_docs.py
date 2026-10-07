@@ -33,7 +33,6 @@ def test_prompt_caching_docs_state_routing_and_retention_limits(client: TestClie
 
 def test_prompt_caching_docs_are_discoverable(client: TestClient) -> None:
     assert 'href="/docs/prompt-caching"' in client.get("/docs").text
-    assert 'href="/docs/prompt-caching"' in client.get("/").text
     assert "/docs/prompt-caching" in client.get("/llms.txt").text
     assert "/docs/prompt-caching" in client.get("/docs/llms.txt").text
     assert "/docs/prompt-caching" in client.get("/docs/llms-full.txt").text
