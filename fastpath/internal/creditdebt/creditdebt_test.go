@@ -149,12 +149,18 @@ func TestTheRulesHoldOnRandomRows(t *testing.T) {
 }
 
 func TestRowsInt64CannotHoldAreRefused(t *testing.T) {
-	for _, r := range [][]int64{
-		{math.MinInt64}, {math.MinInt64, math.MaxInt64, 1}, {math.MaxInt64, 1}, {math.MinInt64 + 1, -2},
-	} {
+	for _, r := range [][]int64{{math.MinInt64}, {math.MinInt64, math.MaxInt64, 1}} {
 		if _, err := Square(r); err == nil {
 			t.Errorf("Square(%v) is computed", r)
 		}
+	}
+	// A sum past int64's bounds has a sign all the same, and the rows stay
+	// in range: Python's results, which the vectors hold too.
+	if got, err := Square([]int64{math.MaxInt64, 1}); err != nil || got.Marked {
+		t.Errorf("Square past the top: %+v %v", got, err)
+	}
+	if got, err := Square([]int64{math.MinInt64 + 1, -2}); err != nil || !got.Marked {
+		t.Errorf("Square past the bottom: %+v %v", got, err)
 	}
 	if _, err := CreditDeltas([]int64{math.MinInt64 + 1}, []int64{math.MaxInt64}); err == nil {
 		t.Error("a change past int64's range is computed")

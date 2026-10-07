@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -86,10 +88,10 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil {
 			return err
 		}
-		var signed int64
+		signed := new(big.Int)
 		tier := int64(3)
 		for i, h := range rows.headroom {
-			signed += h
+			signed.Add(signed, big.NewInt(h))
 			t := rows.tiers[i]
 			if rows.latched[i] {
 				t = 0
@@ -111,10 +113,13 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil {
 			return err
 		}
+		// Compared so nothing wraps: the allowance is positive and L is, so
+		// their difference fits; the signed sum is exact.
+		floor := new(big.Int).Add(big.NewInt(s.cfg.Floor), big.NewInt(req.Amount))
 		switch {
-		case exposure+req.Amount > s.cfg.Allowance:
+		case exposure > s.cfg.Allowance-req.Amount:
 			out.Refused = RefusedAllowance
-		case signed-req.Amount < s.cfg.Floor:
+		case signed.Cmp(floor) < 0:
 			out.Refused = RefusedFloor
 		}
 		if out.Refused != "" {
@@ -245,7 +250,7 @@ func readExposure(ctx context.Context, txn *spanner.ReadWriteTransaction, worksp
 		case state == "draining" && holdsListed:
 			listed[lease] = true
 		case state == "open" || state == "draining":
-			exposure += max(remaining, 0)
+			exposure = addSaturating(exposure, max(remaining, 0))
 		}
 		return nil
 	})
@@ -263,11 +268,21 @@ func readExposure(ctx context.Context, txn *spanner.ReadWriteTransaction, worksp
 			return err
 		}
 		if listed[lease] {
-			exposure += estimate
+			exposure = addSaturating(exposure, max(estimate, 0))
 		}
 		return nil
 	})
 	return exposure, err
+}
+
+// addSaturating adds two amounts that are not negative, stopping at the
+// largest int64 rather than wrapping: an exposure that large refuses any
+// grant.
+func addSaturating(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 func anyTrue(values []bool) bool {
