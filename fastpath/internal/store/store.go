@@ -27,6 +27,11 @@ type Config struct {
 	// Window is how far past Spanner's time a grant or a renewal sets a
 	// lease's expiry (§4.2).
 	Window time.Duration
+	// Skew is the allowance for nodes' clocks, and PublishDeadline the
+	// owner's deadline for a publish (§4.5); a draining write stores the
+	// fence F as the expiry plus both (§4.8).
+	Skew            time.Duration
+	PublishDeadline time.Duration
 	// Allowance caps a workspace's exposure, across its regions and shards;
 	// Floor is the headroom a grant leaves outside leases; RequiredTier is
 	// the trust tier that allows leases (§4.2, §4.7, §4.11). The spike has
@@ -48,8 +53,8 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	if client == nil {
 		return nil, errors.New("store: no client")
 	}
-	if cfg.LiveFor <= 0 || cfg.Window <= 0 {
-		return nil, errors.New("store: LiveFor and Window must be positive")
+	if cfg.LiveFor <= 0 || cfg.Window <= 0 || cfg.Skew <= 0 || cfg.PublishDeadline <= 0 {
+		return nil, errors.New("store: LiveFor, Window, Skew and PublishDeadline must be positive")
 	}
 	// Spanner's intervals here are whole microseconds; a finer duration
 	// would be cut short, and the window with it.
@@ -60,6 +65,13 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 		return nil, errors.New("store: the allowance must be positive, the floor not negative, and the tier 0 to 3")
 	}
 	return &Store{client: client, cfg: cfg}, nil
+}
+
+// readTimestamp is a read-only transaction's timestamp in UTC, as every
+// time the store returns is, those it reads from rows included.
+func readTimestamp(ro *spanner.ReadOnlyTransaction) (time.Time, error) {
+	t, err := ro.Timestamp()
+	return t.UTC(), err
 }
 
 // tag is the transaction tag of an operation, and the request tag of each of
