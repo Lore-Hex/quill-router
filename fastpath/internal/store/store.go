@@ -32,9 +32,11 @@ type Config struct {
 	// fence F as the expiry plus both (§4.8).
 	Skew            time.Duration
 	PublishDeadline time.Duration
-	// MaxLife is a hold's longest life, and Grace the time past it before a
-	// lease whose holds were never listed may close (§4.8): 2 h 20 min and
-	// the grace in production, scaled down for the spike's correctness runs.
+	// MaxLife is a hold's longest life, and Grace the reaper's grace (§4.8):
+	// a hold is reaped only at a tick past its deadline plus the grace, and a
+	// lease whose holds were never listed closes only once its expiry plus
+	// both has passed. 2 h 20 min and the grace in production, scaled down
+	// for the spike's correctness runs.
 	MaxLife time.Duration
 	Grace   time.Duration
 	// Allowance caps a workspace's exposure, across its regions and shards;

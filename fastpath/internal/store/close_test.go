@@ -56,6 +56,10 @@ func drained(t *testing.T, s *Store, credits ...int64) (LeaseRef, int64) {
 	return ref, got.NewVersion
 }
 
+// due is a tick past the deadline of every hold the tests store, plus the
+// grace.
+var due = time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
+
 // reapOf is a reap of a at a charge, of a hold of 10 from owner record 2,
 // as drained's a1 is at a charge of 3.
 func reapOf(a string, charge int64) ReapRow {
@@ -75,7 +79,7 @@ func TestAReapNeedsItsOpenHold(t *testing.T) {
 		Winners:  []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 4, RecordID: "o2"}},
 		PutHolds: []HoldRow{hold("a2", 10), snapped("a3", 10, 15, 2)}})
 	for _, a := range []string{"a1", "a9"} {
-		if r, _, err := s.Reap(ctx, ref, got.NewVersion, reapOf(a, 3)); err != nil || r != RefusedNoHold {
+		if r, _, err := s.Reap(ctx, ref, got.NewVersion, due, reapOf(a, 3)); err != nil || r != RefusedNoHold {
 			t.Fatalf("a reap of %s, which has no open hold: %q %v", a, r, err)
 		}
 	}
@@ -85,17 +89,33 @@ func TestAReapNeedsItsOpenHold(t *testing.T) {
 		"another snapshot":        {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 10, SnapshotOwnerSeq: 1, Money: []byte("{}")},
 		"a charge on no snapshot": reapOf("a2", 1),
 	} {
-		if _, _, err := s.Reap(ctx, ref, got.NewVersion, r); err == nil {
+		if _, _, err := s.Reap(ctx, ref, got.NewVersion, due, r); err == nil {
 			t.Fatalf("a reap at %s is taken", name)
 		}
 	}
 	// A snapshot past the estimate is capped at it; a hold with none charges nothing.
-	if r, _, err := s.Reap(ctx, ref, got.NewVersion, reapOf("a3", 10)); err != nil || r != "" {
+	if r, _, err := s.Reap(ctx, ref, got.NewVersion, due, reapOf("a3", 10)); err != nil || r != "" {
 		t.Fatalf("a reap at the estimate: %q %v", r, err)
 	}
-	if r, _, err := s.Reap(ctx, ref, got.NewVersion, ReapRow{AuthorizationID: "a2", RecordID: "reap-a2", Estimate: 10,
+	if r, _, err := s.Reap(ctx, ref, got.NewVersion, due, ReapRow{AuthorizationID: "a2", RecordID: "reap-a2", Estimate: 10,
 		Money: []byte("{}")}); err != nil || r != "" {
 		t.Fatalf("a reap of a hold with no snapshot: %q %v", r, err)
+	}
+}
+
+// TestAReapWaitsForItsDeadlinePlusGrace: a reap is taken only at a tick past
+// its hold's deadline plus the grace, so a settle the hold may still have
+// cannot lose to it.
+func TestAReapWaitsForItsDeadlinePlusGrace(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref, version := drained(t, s, 100)
+	at := hold("a1", 10).Deadline.Add(testConfig().Grace)
+	if r, _, err := s.Reap(ctx, ref, version, at.Add(-time.Microsecond), reapOf("a1", 3)); err != nil || r != RefusedNotDue {
+		t.Fatalf("a reap before the deadline plus the grace: %q %v", r, err)
+	}
+	if r, _, err := s.Reap(ctx, ref, version, at, reapOf("a1", 3)); err != nil || r != "" {
+		t.Fatalf("a reap at the deadline plus the grace: %q %v", r, err)
 	}
 }
 
@@ -137,24 +157,24 @@ func TestAReapIsGuardedAsEveryWriteIs(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
 	open := grantLease(t, s, 30, 100)
-	if r, _, err := s.Reap(ctx, open, 0, reapOf("a1", 3)); err != nil || r != RefusedNotDraining {
+	if r, _, err := s.Reap(ctx, open, 0, due, reapOf("a1", 3)); err != nil || r != RefusedNotDraining {
 		t.Fatalf("a reap of an open lease: %q %v", r, err)
 	}
 	noS := grantLease(t, s, 30, 100)
 	if ok, _, err := s.OwnerMarkDraining(ctx, owner, noS); err != nil || !ok {
 		t.Fatal(err)
 	}
-	if r, _, err := s.Reap(ctx, noS, 0, reapOf("a1", 3)); err != nil || r != RefusedNoBoundary {
+	if r, _, err := s.Reap(ctx, noS, 0, due, reapOf("a1", 3)); err != nil || r != RefusedNoBoundary {
 		t.Fatalf("a reap before S is stored: %q %v", r, err)
 	}
 	ref, version := drained(t, s, 100)
-	if r, _, err := s.Reap(ctx, ref, version-1, reapOf("a1", 3)); err != nil || r != RefusedVersion {
+	if r, _, err := s.Reap(ctx, ref, version-1, due, reapOf("a1", 3)); err != nil || r != RefusedVersion {
 		t.Fatalf("a reap from a stale member: %q %v", r, err)
 	}
-	if _, _, err := s.Reap(ctx, ref, version, reapOf("a1", 11)); err == nil {
+	if _, _, err := s.Reap(ctx, ref, version, due, reapOf("a1", 11)); err == nil {
 		t.Fatal("a reap above the hold's estimate is taken")
 	}
-	r, at, err := s.Reap(ctx, ref, version, reapOf("a1", 3))
+	r, at, err := s.Reap(ctx, ref, version, due, reapOf("a1", 3))
 	if err != nil || r != "" {
 		t.Fatalf("the reap: %q %v", r, err)
 	}
@@ -163,14 +183,14 @@ func TestAReapIsGuardedAsEveryWriteIs(t *testing.T) {
 		rows[0].SnapshotOwnerSeq.Int64 != 2 {
 		t.Fatalf("the reap's row: %+v %v", rows, err)
 	}
-	if r, _, err := s.Reap(ctx, ref, version, reapOf("a1", 3)); err != nil || r != RefusedTerminal {
+	if r, _, err := s.Reap(ctx, ref, version, due, reapOf("a1", 3)); err != nil || r != RefusedTerminal {
 		t.Fatalf("a second reap: %q %v", r, err)
 	}
 	// A gap is stored only before S, and stops the lease's later writes.
 	if ok, _, err := s.StopForGap(ctx, noS, 0, 9); err != nil || !ok {
 		t.Fatalf("the gap: %v %v", ok, err)
 	}
-	if r, _, err := s.Reap(ctx, noS, 0, reapOf("a2", 1)); err != nil || r != RefusedGap {
+	if r, _, err := s.Reap(ctx, noS, 0, due, reapOf("a2", 1)); err != nil || r != RefusedGap {
 		t.Fatalf("a reap of a stopped lease: %q %v", r, err)
 	}
 }
@@ -180,7 +200,7 @@ func TestAReapLosesToAFrontDoorsTerminal(t *testing.T) {
 	ctx := context.Background()
 	ref, version := drained(t, s, 100)
 	appendOK(t, s, terminal(ref, "a1", "r1", 4, 10))
-	if r, _, err := s.Reap(ctx, ref, version, reapOf("a1", 3)); err != nil || r != RefusedTerminal {
+	if r, _, err := s.Reap(ctx, ref, version, due, reapOf("a1", 3)); err != nil || r != RefusedTerminal {
 		t.Fatalf("a reap after a settle: %q %v", r, err)
 	}
 }

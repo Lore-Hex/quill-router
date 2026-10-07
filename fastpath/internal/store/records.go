@@ -60,15 +60,66 @@ func (s *Store) ReadStaged(ctx context.Context, authorization string, digest []b
 }
 
 // DropStaged removes an authorization's staged records with the digests
-// given: once its winner's records are written, or once its lease has
-// closed with no winner that needs them (§4.9).
-func (s *Store) DropStaged(ctx context.Context, authorization string, digests ...[]byte) error {
-	mutations := make([]*spanner.Mutation, 0, len(digests))
-	for _, d := range digests {
-		mutations = append(mutations, spanner.Delete("tr_spike_staged", spanner.Key{authorization, d}))
+// given, once nothing can need them (§4.9): once a record for the
+// authorization is written, or once its lease has closed with no charged
+// winner for it, as for losing and refunded terminals. A charged winner
+// writes its records from its staged record, so until then they stay, and
+// DropStaged reports false; so too while the store cannot find the lease.
+// The lease comes from the authorization's ID.
+func (s *Store) DropStaged(ctx context.Context, authorization string, digests ...[]byte) (bool, error) {
+	leaseID, err := LeaseOfAuthorization(authorization)
+	if err != nil {
+		return false, err
 	}
-	_, err := s.client.Apply(ctx, mutations, spanner.TransactionTag(stagingTag))
-	return err
+	var dropped bool
+	_, err = s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		dropped = false
+		query := func(sql string, params map[string]any, each func(*spanner.Row) error) error {
+			return txn.QueryWithOptions(ctx, spanner.Statement{SQL: sql, Params: params},
+				spanner.QueryOptions{RequestTag: stagingTag}).Do(each)
+		}
+		written := false
+		err := query(`SELECT 1 FROM tr_lease_record WHERE authorization_id = @a LIMIT 1`, map[string]any{"a": authorization},
+			func(*spanner.Row) error {
+				written = true
+				return nil
+			})
+		if err != nil {
+			return err
+		}
+		if !written {
+			var ref LeaseRef
+			var state string
+			found := false
+			err := query(`SELECT workspace_id, state FROM tr_lease@{FORCE_INDEX=tr_lease_by_id} WHERE lease_id = @l`,
+				map[string]any{"l": leaseID}, func(row *spanner.Row) error {
+					found = true
+					ref.LeaseID = leaseID
+					return row.Columns(&ref.Workspace, &state)
+				})
+			if err != nil || !found || state != "closed" {
+				return err
+			}
+			packs, err := readPacks(ctx, txn, ref, stagingTag)
+			if err != nil {
+				return err
+			}
+			for _, p := range packs {
+				for _, w := range p.Winners {
+					if w.AuthorizationID == authorization && w.Kind != "refund" && w.Kind != "release" {
+						return nil
+					}
+				}
+			}
+		}
+		mutations := make([]*spanner.Mutation, 0, len(digests))
+		for _, d := range digests {
+			mutations = append(mutations, spanner.Delete("tr_spike_staged", spanner.Key{authorization, d}))
+		}
+		dropped = true
+		return txn.BufferWrite(mutations)
+	}, spanner.TransactionOptions{TransactionTag: stagingTag})
+	return dropped, err
 }
 
 // LeaseRecord is a record the pending work writes (§4.9): an

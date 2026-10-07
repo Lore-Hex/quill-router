@@ -29,11 +29,77 @@ func TestStagedRecordsJoinByAuthorizationAndDigest(t *testing.T) {
 	if err != nil || !ok || string(got.Body) != "retry" {
 		t.Fatalf("the compacted copy: %+v %v %v", got, ok, err)
 	}
-	if err := s.DropStaged(ctx, a, []byte("original"), []byte("compacted")); err != nil {
+	if err := s.WriteRecords(ctx, []LeaseRecord{{AuthorizationID: a, Kind: "generation", Ref: ref, Outcome: "settled",
+		Body: []byte("{}")}}); err != nil {
 		t.Fatal(err)
+	}
+	if dropped, err := s.DropStaged(ctx, a, []byte("original"), []byte("compacted")); err != nil || !dropped {
+		t.Fatalf("dropping records written: %v %v", dropped, err)
 	}
 	if _, ok, err := s.ReadStaged(ctx, a, []byte("original")); err != nil || ok {
 		t.Fatalf("a dropped record is read: %v %v", ok, err)
+	}
+}
+
+// TestStagedRecordsStayUntilNothingNeedsThem: a staged record stays until a
+// record for its authorization is written, or its lease has closed with no
+// charged winner for it (§4.9).
+func TestStagedRecordsStayUntilNothingNeedsThem(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	req := grantOf(seedWorkspace(t, 100), 30)
+	req.LeaseID = NewLeaseID()
+	if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+		t.Fatalf("grant: %+v %v", got, err)
+	}
+	ref := LeaseRef{req.Workspace, req.LeaseID}
+	ids := map[string]string{}
+	for _, name := range []string{"settled", "refunded", "lost", "unseen"} {
+		var err error
+		if ids[name], err = NewAuthorizationID(ref.LeaseID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.StageRecord(ctx, StagedRecord{AuthorizationID: ids[name], Digest: []byte("d"), Ref: ref,
+			Body: []byte("full"), MessageID: "m-" + name, PublishTime: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drop := func(name string) bool {
+		t.Helper()
+		dropped, err := s.DropStaged(ctx, ids[name], []byte("d"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, kept, err := s.ReadStaged(ctx, ids[name], []byte("d"))
+		if err != nil || kept == dropped {
+			t.Fatalf("%s: dropped %v, and kept %v, %v", name, dropped, kept, err)
+		}
+		return dropped
+	}
+	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 1, Money: []MoneyOp{Book(4, 0)},
+		Winners: []Winner{{AuthorizationID: ids["settled"], Kind: "settle", Charge: 4, RecordID: "o1"},
+			{AuthorizationID: ids["refunded"], Kind: "refund", RecordID: "o2"}}})
+	for _, name := range []string{"settled", "refunded", "unseen"} {
+		if drop(name) {
+			t.Fatalf("%s's staged record goes while its lease is open and no record is written", name)
+		}
+	}
+	execLease(t, ref, closeIt)
+	if drop("settled") {
+		t.Fatal("a charged winner's staged record goes before its records are written")
+	}
+	if !drop("refunded") || !drop("unseen") {
+		t.Fatal("a closed lease keeps a staged record no winner needs")
+	}
+	if err := s.WriteRecords(ctx, []LeaseRecord{{AuthorizationID: ids["settled"], Kind: "generation", Ref: ref,
+		Outcome: "settled", Cost: spanner.NullInt64{Int64: 4, Valid: true}, Body: []byte("{}")}}); err != nil {
+		t.Fatal(err)
+	}
+	if !drop("settled") {
+		t.Fatal("a staged record stays after its winner's records are written")
+	}
+	if dropped, err := s.DropStaged(ctx, "gwa-not-one-of-ours", []byte("d")); err == nil || dropped {
+		t.Fatalf("a staged record of an authorization that names no lease: %v %v", dropped, err)
 	}
 }
 
