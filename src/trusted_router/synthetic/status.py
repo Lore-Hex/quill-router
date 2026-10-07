@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import replace
 from typing import Any
 
@@ -571,7 +571,7 @@ def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict
             {
                 "period": period,
                 "period_start": period_start,
-                "status": _aggregate_status_counts(status_counts),
+                "status": _historical_status_counts(status_counts),
                 "uptime_percent": _uptime_percent_counts(status_counts),
                 "sample_count": int(merged["sample_count"]),
                 "group_count": len(period_rollups),
@@ -860,7 +860,7 @@ def _slo_window(
         else None
     )
     return {
-        "overall_status": _aggregate_status_counts(status_counts) if sample_count else "unknown",
+        "overall_status": _historical_status_counts(status_counts),
         "uptime_percent": uptime_percent,
         "sample_count": sample_count,
         "up_count": status_counts.get("up", 0),
@@ -1159,7 +1159,7 @@ def _sample_group_breakdown(
                 monitor_region,
                 target_region or None,
             ),
-            "status": _aggregate_status(statuses),
+            "status": _historical_status_counts(dict(Counter(statuses))),
             "uptime_percent": _uptime_percent(statuses),
             "sample_count": len(probe_samples),
             "p50_latency_milliseconds": _percentile(latencies, 50),
@@ -1221,7 +1221,7 @@ def _rollup_group_breakdown(
                 monitor_region,
                 target_region or None,
             ),
-            "status": _aggregate_status_counts(status_counts),
+            "status": _historical_status_counts(status_counts),
             "uptime_percent": _uptime_percent_counts(status_counts),
             "sample_count": int(merged["sample_count"]),
             "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
@@ -1645,6 +1645,23 @@ def _aggregate_status_counts(counts: dict[str, int]) -> str:
         return "degraded"
     if counts.get("up", 0) > 0:
         return "up"
+    return "unknown"
+
+
+def _historical_status_counts(counts: dict[str, int]) -> str:
+    # A mixed historical interval records degradation, not a current outage.
+    # Preserve every failed probe in uptime/burn metrics and trust failures in
+    # the label; the current-health rule above remains deliberately separate.
+    if counts.get("trust_degraded", 0) > 0:
+        return "trust_degraded"
+    if counts.get("routing_degraded", 0) > 0:
+        return "routing_degraded"
+    if counts.get("degraded", 0) > 0:
+        return "degraded"
+    if counts.get("down", 0) > 0:
+        return "degraded" if counts.get("up", 0) > 0 else "down"
+    if counts.get("up", 0) > 0:
+        return "degraded" if counts.get("unknown", 0) > 0 else "up"
     return "unknown"
 
 
