@@ -106,6 +106,7 @@
     }
   }
   function openSearch(trigger, preset = "") {
+    if (search.open) return;
     searchTrigger = trigger;
     closeMenu();
     search.showModal();
@@ -131,6 +132,11 @@
   });
   query.addEventListener("input", renderSearch);
   document.addEventListener("keydown", (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openSearch(document.activeElement); }
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+    // Leave the shortcut to text fields: Ctrl+K deletes to the end of the line on macOS.
+    const active = document.activeElement;
+    if (active && (active.matches("input, textarea, select") || active.isContentEditable)) return;
+    event.preventDefault();
+    openSearch(active);
   });
 })();

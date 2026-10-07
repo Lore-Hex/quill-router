@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -14,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from trusted_router.catalog import MODELS
+
+logger = logging.getLogger(__name__)
+
 
 _ROOT = Path(__file__).parent
 _PUBLISHERS = {
@@ -42,10 +46,18 @@ def publisher_icons() -> dict[str, str]:
 
 
 def live_model_count() -> int:
-    """Public catalog size for the header search label; reads the cached catalog payload."""
+    """Public catalog size for the header search label; reads the cached catalog payload.
+
+    Every public page renders this, so a catalog that cannot be built must not
+    take the page down: the label falls back to "Search models" on 0.
+    """
     from trusted_router.routes.catalog import _current_catalog_payload
 
-    return len(_current_catalog_payload().shapes)
+    try:
+        return len(_current_catalog_payload().shapes)
+    except Exception:  # noqa: BLE001 - the header label is not worth a 500 on /status
+        logger.exception("header model count unavailable")
+        return 0
 
 
 def homepage_context(api_base_url: str) -> dict[str, Any]:

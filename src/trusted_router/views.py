@@ -27,9 +27,12 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 @lru_cache(maxsize=1)
 def _auth_styles_version() -> str:
     # Auth routes do not receive the dashboard's release context. Fingerprint
-    # both files once per process so immutable CSS URLs change with their bytes.
+    # every sheet the auth pages load once per process so immutable CSS URLs
+    # change with their bytes.
     static_dir = Path(__file__).parent / "static"
-    content = (static_dir / "auth.css").read_bytes() + (static_dir / "charter.css").read_bytes()
+    content = b"".join(
+        (static_dir / name).read_bytes() for name in ("tokens.css", "auth.css", "charter.css")
+    )
     return hashlib.sha256(content).hexdigest()[:16]
 
 
