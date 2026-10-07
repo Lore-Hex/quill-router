@@ -31,11 +31,12 @@ path's settle and leaves leased requests out, and the frozen billing
 snapshot (#1390), a pricing contract the compiled service can share with
 Python and the enclave.
 
-v44 states three rules that writing `AuditorCommit` showed §4.8 needs: a
-reap is conditional on the commit version, a gap is declared with it too,
-and a statement that matched no row is that lease's failed commit. It also
-says what a member drops when the commit version refuses its commit, reap
-or close.
+v44 states the rule that writing `AuditorCommit` showed §4.8 needs, once:
+everything a member writes for a lease, its commit, a reap, the close and a
+gap's stop, is conditional on the commit version it read, and a refusal of
+any of them means it drops what it applied and re-reads. With many leases
+in one transaction, a statement that matched no row is that lease's
+refusal.
 
 All five specs, `TerminalOrder`, `LeaseLifecycle`, `CreditDebt`,
 `AuditorCommit` and `KeyCapFence`, and the tools that check every spec's
@@ -1046,13 +1047,21 @@ synchronous holds, through `settle_atomic`.
   work, since its commit fails and it re-reads. Within that, a member
   recognizes a duplicate terminal from the winners it has loaded.
 - Only then does it acknowledge the records.
-- To re-read, after any transaction of the lease's that the commit version
-  refused (a commit, a reap or a close), a member drops everything it
-  applied and has not committed, with its place in the lease's records and
-  in the drain log. It loads the lease as a member taking over does, and
-  applies again from there: the records Pub/Sub redelivers, and a draining
-  lease's drain log from its start. Keeping its place would skip what it
-  had applied and lost, and its close would then leave that unbooked.
+- **One guard on every write.** Everything a member writes for a lease is
+  conditional on the commit version it read: its commit, a reap row, the
+  close, and the stop a gap makes. Pub/Sub can give a lease back to a
+  member that lost it after another member committed, and nothing it
+  redelivers brings that member's memory up to date. A write from that
+  memory acts on what the member no longer knows: it reaps at an older
+  snapshot than the one stored, or stops the lease for a gap the log does
+  not have.
+  - When the version refuses any of these writes, the member re-reads. It
+    drops everything it applied and has not committed, with its place in
+    the lease's records and in the drain log, loads the lease as a member
+    taking over does, and applies again from there: the records Pub/Sub
+    redelivers, and a draining lease's drain log from its start. Keeping its
+    place would skip what it had applied and lost, and its close would then
+    leave that unbooked.
 - **Taking over a lease.** A member loads the progress and the open holds
   first, extending the records' acknowledgement deadlines while it loads.
   - It skips a redelivered owner record at or below the stored sequence
@@ -1069,10 +1078,9 @@ synchronous holds, through `settle_atomic`.
   alerts. Numbers are given at decision (§4.2), so this is the backstop for
   the lease's order: a later record stored without an earlier one shows as
   a gap, and is not booked.
-  - A member declares a gap only with the commit version it read, as it
-    commits. One another member overtook compares a record with progress the
-    stored row has passed, and would stop the lease for a gap the log does
-    not have; it re-reads first.
+  - Declaring a gap is one of the writes the commit version guards (above):
+    a member another member overtook would compare a record with progress
+    the stored row has passed.
 - One transaction can carry many leases, each its own conditional statement.
   A statement that matches no row is that lease's failed commit, whatever the
   others did: the member re-reads that lease and acknowledges none of its
@@ -1174,12 +1182,10 @@ by the first-terminal rule.
   inserting a reap row, in a read-write transaction that first reads the
   hold's drain-log rows. A concurrent append for the same hold conflicts with
   that read, and one of the two retries. A terminal already there wins.
-  - The transaction is also conditional on the lease's commit version, as a
-    commit is. Pub/Sub can give a lease back to a member that lost it, after
-    another member committed and acknowledged a newer heartbeat. Nothing is
-    then redelivered to bring the first member's memory up to date, and a
-    reap from it would charge the older snapshot. A member whose reap is
-    refused re-reads, as for a refused commit.
+  - The reap is one of the writes the commit version guards (above): a
+    member the lease came back to after another member committed and
+    acknowledged a newer heartbeat would otherwise reap at the older
+    snapshot.
 - It books a draining lease's winners in that order: owner records, then the
   drain log.
 
@@ -1972,14 +1978,14 @@ What the table's short names hide:
   included, and a hold the log showed with an accepted snapshot and no other
   terminal is reaped at that snapshot by the time its lease closes.
 - `AuditorCommit` is written (#1560), with 23 mutants and a guard table.
-  Writing it showed that a reap has to be conditional on the commit version
-  (§4.8): without that, a member the lease came back to reaps at an older
-  snapshot than the one stored. A member refused that way re-reads even with
-  nothing to commit, or the lease never closes, and declares a gap only with
-  the commit version, or a member another overtook stops the lease for a gap
-  the log does not have. It also states what §4.8 left implicit about a
-  transaction that carries several leases: a statement that matched no row
-  is that lease's failed commit, and its records stay unacknowledged.
+  Writing it showed §4.8's one guard on every write, one hole at a time: a
+  reap without the commit version charges an older snapshot than the one
+  stored; a member refused with nothing to commit that does not re-read
+  leaves the lease unable to close; and a gap declared without the version
+  stops the lease for a gap the log does not have. It also states what §4.8
+  left implicit about a transaction that carries several leases: a statement
+  that matched no row is that lease's refusal, and its records stay
+  unacknowledged.
   - It models the boundary S: an owner record stored after the fence tick is
     above S, or a duplicate of one at or below it, and either way is
     ignored; its claims are about the records at or below S, and it checks
@@ -3487,23 +3493,22 @@ record.
   Also: Python's second clock reading is #1542 (§4.13), and §5.1 says what
   writing `CreditDebt` added: the larger-of write as a claim of its own,
   four configurations, and two assumptions.
-- **v44.** Three rules that writing `AuditorCommit` showed §4.8 needs:
-  - a reap's transaction is conditional on the commit version, as a commit
-    is: Pub/Sub can give a lease back to a member whose memory another
-    member's commit overtook, and a reap from that memory charges an older
-    snapshot;
-  - a member declares a gap only with the commit version it read: one
-    another overtook compares a record with progress the row has passed,
-    and would stop the lease for a gap the log does not have;
-  - with many leases in one transaction, a statement that matched no row is
-    that lease's failed commit, and the member acknowledges none of its
-    records.
+- **v44.** One rule for §4.8, which writing `AuditorCommit` showed it
+  needs: everything a member writes for a lease, its commit, a reap row,
+  the close and a gap's stop, is conditional on the commit version it read.
+  Pub/Sub can give a lease back to a member whose memory another member's
+  commit overtook. A reap from that memory would charge an older snapshot,
+  and a gap declared from it would stop the lease for a gap the log does
+  not have. When the version refuses any of these writes, the member
+  re-reads: it drops what it applied and has not committed, with its place
+  in the records and the drain log, and applies again from a fresh load.
+  Keeping its place would let it close with a drain-log row unbooked. With
+  many leases in one transaction, a statement that matched no row is that
+  lease's refusal, and the member acknowledges none of its records.
 
-  It also says what re-reading is, after the commit version refuses a
-  commit, a reap or a close: the member drops what it applied and has not
-  committed, with its place in the records and the drain log, and applies
-  again from a fresh load. Keeping its place would let it close with a
-  drain-log row unbooked, as Codex's review of v44 showed.
+  The rule was found one write at a time: the reap while writing the spec,
+  re-reading by Codex's review of v44, the gap by Codex's second review of
+  the spec. It is stated once so the code guards every write the same way.
 
   §5.1 says what `AuditorCommit` and `KeyCapFence` show, the claims Codex's
   reviews added to `CreditDebt`, and the two assumptions the new specs add.
