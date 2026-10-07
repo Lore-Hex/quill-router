@@ -16,8 +16,17 @@ import (
 // TestTransitionsMatchTLC holds every step of the shadow against TLC's state
 // graphs of the small instances.
 func TestTransitionsMatchTLC(t *testing.T) {
+	noAuths := moved
+	noAuths.Auths = nil
+	secondHolder := moved
+	secondHolder.Holder = 1
 	for name, c := range map[string]Config{
 		"moved": moved, "ahead": ahead, "again": again, "two authorizations": twoAuths,
+		// No authorizations, which the spec allows: TLC prints the functions
+		// on them as the empty sequence.
+		"no authorizations": noAuths,
+		// The configuration names m2 first, so CHOOSE starts the lease there.
+		"m2 named first": secondHolder,
 	} {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -75,6 +84,42 @@ func TestComparisonSeesADifference(t *testing.T) {
 		if got := compareWithTLC(t, c, next); len(got.Diffs) == 0 {
 			t.Errorf("%s: the comparison found no difference", name)
 		}
+	}
+}
+
+// TestWholeConfigurationsMatchTLC compares the whole state graphs of three of
+// the configurations proofs/ checks, read as they stream, with their temporal
+// properties left out of TLC's run. Between them they have three records per
+// owner, two authorizations, a lying owner, a record stored twice, a crash, a
+// late record and two members; the other two configurations, `again` and
+// `ahead`, are too large to write out and are counted below.
+func TestWholeConfigurationsMatchTLC(t *testing.T) {
+	for _, file := range []string{"AuditorCommit.cfg", "AuditorCommit.lying.cfg", "AuditorCommit.two.cfg"} {
+		text := cfgFile(t, file)
+		c := configFromText(t, text)
+		got := compareText(t, c, withoutProperties(text), c.Next)
+		if len(got.Diffs) > 0 {
+			t.Errorf("%s: differences from TLC, the first: %v", file, got.Diffs)
+		}
+		t.Logf("%s: %d states and %d steps, as TLC has them", file, got.States, got.Steps)
+	}
+	// What a review of this package found the small instances could not
+	// see: a checkpoint issued while the lease drains, only where an owner
+	// may issue three records.
+	text := cfgFile(t, "AuditorCommit.two.cfg")
+	c := configFromText(t, text)
+	spurious := func(s State) []Transition {
+		out := c.Next(s)
+		if c.MaxSeq >= 3 && s.St == Draining && int(s.NextSeq) <= c.MaxSeq {
+			to := s
+			to.appendOut(Rec{KCkpt, NoAuth, s.OwnerSum, s.NextSeq, 0})
+			to.NextSeq++
+			out = append(out, Transition{"IssueCheckpoint", to})
+		}
+		return out
+	}
+	if got := compareText(t, c, withoutProperties(text), spurious); len(got.Diffs) == 0 {
+		t.Error("a checkpoint issued while the lease drains is not seen")
 	}
 }
 

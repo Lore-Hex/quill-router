@@ -57,7 +57,11 @@ func tlcGraph(t *testing.T, c Config) *tlc.Graph {
 	return graphs[cfg]
 }
 
+// cfgText writes the instance's configuration, its holder first among the
+// members: TLC's CHOOSE picks the model value its reader meets first.
 func cfgText(c Config) string {
+	members := append([]string{c.Members[c.Holder]}, c.Members[:c.Holder]...)
+	members = append(members, c.Members[c.Holder+1:]...)
 	return fmt.Sprintf(`SPECIFICATION Spec
 CONSTANTS
     Auths = {%s}
@@ -75,28 +79,44 @@ CONSTANTS
     Grant = %d
 INVARIANTS
     TypeOK
-`, strings.Join(c.Auths, ", "), strings.Join(c.Members, ", "), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead,
+`, strings.Join(c.Auths, ", "), strings.Join(members, ", "), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead,
 		c.MaxLate, c.MaxRaise, c.MaxAssign, c.MaxCrash, c.MaxAppend, strings.ToUpper(fmt.Sprint(c.Lying)), c.Grant)
 }
 
-// configOf reads a .cfg's constants into a Config, its model values sorted by
-// name.
-func configOf(t *testing.T, cfgFile string) Config {
+// cfgFile reads proofs/<file>.
+func cfgFile(t *testing.T, file string) string {
 	t.Helper()
 	proofs, err := tlc.ProofsDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := os.ReadFile(filepath.Join(proofs, cfgFile))
+	text, err := os.ReadFile(filepath.Join(proofs, file))
 	if err != nil {
 		t.Fatal(err)
 	}
-	k, err := tlc.ConstantValues(string(text))
+	return string(text)
+}
+
+// configOf reads a .cfg's constants into a Config, its model values sorted by
+// name, and its holder the member TLC's CHOOSE picks: the one the
+// configuration names first.
+func configOf(t *testing.T, file string) Config {
+	t.Helper()
+	return configFromText(t, cfgFile(t, file))
+}
+
+func configFromText(t *testing.T, text string) Config {
+	t.Helper()
+	k, err := tlc.ConstantValues(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order, err := tlc.ModelValueOrder(text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(k) != 13 {
-		t.Fatalf("%s sets %d constants, not the spec's 13: %v", cfgFile, len(k), k)
+		t.Fatalf("the configuration sets %d constants, not the spec's 13: %v", len(k), k)
 	}
 	names := func(name string) []string {
 		s, ok := k[name].(tlc.Set)
@@ -131,10 +151,39 @@ func configOf(t *testing.T, cfgFile string) Config {
 		MaxAssign: num("MaxAssign"), MaxCrash: num("MaxCrash"), MaxAppend: num("MaxAppend"), Lying: lying,
 		Grant: num("Grant"),
 	}
+	first := len(order)
+	for i, name := range order {
+		for m, member := range c.Members {
+			if name == member && i < first {
+				first, c.Holder = i, m
+			}
+		}
+	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// withoutProperties is a configuration with its PROPERTY and PROPERTIES
+// sections left out: the temporal claims cost TLC most of its time, and a
+// state graph is the same without them.
+func withoutProperties(text string) string {
+	var kept []string
+	in := false
+	for _, line := range strings.Split(text, "\n") {
+		word := strings.Fields(line + " x")[0]
+		switch {
+		case word == "PROPERTY" || word == "PROPERTIES":
+			in = true
+			continue
+		case in && (strings.TrimSpace(line) == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")):
+			continue
+		}
+		in = false
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 type step struct {
@@ -258,6 +307,10 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 		return int8(len(xs))
 	}
 	function := func(v tlc.Value, names []string, what string, read func(tlc.Value, int8)) {
+		// TLC prints a function on an empty set as the empty sequence.
+		if seq, isSeq := v.(tlc.Seq); isSeq && len(seq) == 0 && len(names) == 0 {
+			return
+		}
 		f, ok := v.(tlc.Func)
 		if !ok || len(f) != len(names) {
 			fail("not a function on the %ss: %v", what, v)
@@ -376,12 +429,18 @@ func shadowOf(c Config, next func(State) []Transition) tlc.Shadow[State] {
 // with the shadow's.
 func compareWithTLC(t *testing.T, c Config, next func(State) []Transition) tlc.Comparison {
 	t.Helper()
+	return compareText(t, c, cfgText(c), next)
+}
+
+// compareText is compareWithTLC with the configuration's text as given.
+func compareText(t *testing.T, c Config, cfg string, next func(State) []Transition) tlc.Comparison {
+	t.Helper()
 	spec, err := tlc.SpecText("AuditorCommit")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var result tlc.Comparison
-	err = tlc.DumpFile("AuditorCommit", spec, cfgText(c), func(path string) error {
+	err = tlc.DumpFile("AuditorCommit", spec, cfg, func(path string) error {
 		var err error
 		result, err = tlc.Compare(path, func(r tlc.Record) (State, error) { return fromTLC(c, r) },
 			shadowOf(c, next), 5)
@@ -512,6 +571,27 @@ func TestValidateRefusesWhatAStateCannotHold(t *testing.T) {
 	none.Auths = nil
 	if err := none.Validate(); err != nil {
 		t.Errorf("no authorizations is what the spec allows, and is refused: %v", err)
+	}
+}
+
+// TestHolderIsTheMemberNamedFirst: TLC's CHOOSE picks the model value its
+// configuration reader met first, wherever in the configuration that was.
+func TestHolderIsTheMemberNamedFirst(t *testing.T) {
+	base := "CONSTANTS\n MaxSeq = 1\n MaxSnap = 1\n MaxDup = 0\n MaxAhead = 0\n MaxLate = 0\n MaxRaise = 0\n" +
+		" MaxAssign = 0\n MaxCrash = 0\n MaxAppend = 0\n Lying = FALSE\n Grant = 4\n"
+	for _, tc := range []struct {
+		constants, holder string
+	}{
+		{"Auths = {a1}\n Members = {m2, m1}\n", "m2"},
+		{"Auths = {a1}\n Members = {m1, m2}\n", "m1"},
+		// m1 is met first, in Auths: it is the holder although Members
+		// names m2 first.
+		{"Auths = {m1}\n Members = {m2, m1}\n", "m1"},
+	} {
+		c := configFromText(t, strings.Replace(base, "CONSTANTS\n", "CONSTANTS\n "+tc.constants, 1))
+		if got := c.Members[c.Holder]; got != tc.holder {
+			t.Errorf("%q: the holder is %s, not %s", tc.constants, got, tc.holder)
+		}
 	}
 }
 

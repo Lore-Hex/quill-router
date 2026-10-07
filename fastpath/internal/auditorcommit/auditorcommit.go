@@ -21,10 +21,13 @@ const (
 	MaxRows    = 4
 )
 
-// Config is the spec's constants.
+// Config is the spec's constants. Holder is the member Init's CHOOSE picks:
+// TLC picks the model value its configuration reader met first, which is not
+// the first by name, so the configuration says which it is.
 type Config struct {
 	Auths     []string
 	Members   []string
+	Holder    int
 	MaxSeq    int
 	MaxSnap   int
 	MaxDup    int
@@ -59,6 +62,8 @@ func (c Config) Validate() error {
 	case len(c.Members) < 1 || len(c.Members) > MaxMembers:
 		// The spec assumes Members # {}.
 		return fmt.Errorf("%d members, not 1..%d", len(c.Members), MaxMembers)
+	case c.Holder < 0 || c.Holder >= len(c.Members):
+		return fmt.Errorf("the holder %d is no member", c.Holder)
 	case c.MaxSeq > MaxOut:
 		return fmt.Errorf("MaxSeq %d is more than the %d records a State holds", c.MaxSeq, MaxOut)
 	case c.MaxSeq+c.MaxDup+1 > MaxLog:
@@ -192,10 +197,9 @@ type State struct {
 	Gap       bool
 }
 
-// Init is the spec's Init. Its holder is the member TLC's CHOOSE picks from
-// Members, which is the first by name.
+// Init is the spec's Init, with Config.Holder as the member CHOOSE picks.
 func (c Config) Init() State {
-	s := State{NextSeq: 1, St: Open, Alloc: int8(c.Grant), S: NoS}
+	s := State{NextSeq: 1, St: Open, Alloc: int8(c.Grant), S: NoS, Holder: int8(c.Holder)}
 	for a := range c.Auths {
 		s.Holds[a] = NoHold
 		s.Win[a] = NoWin
