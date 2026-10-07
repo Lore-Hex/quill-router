@@ -127,7 +127,7 @@ def test_gpt_55_verified_tools_keep_openai_with_require_parameters(client):
     model = catalog.MODELS["openai/gpt-5.5"]
     prefs = RoutePreferences(require_parameters=True, requested_parameters=frozenset({"tools"}))
     routes = catalog_endpoint_candidates(model, prefs)
-    assert {endpoint.id for _, endpoint in routes} == {
+    assert {endpoint.id for _, endpoint in routes if endpoint.provider == "openai"} == {
         "openai/gpt-5.5@openai/prepaid", "openai/gpt-5.5@openai/byok",
     }
     response = client.get(f"/v1/models/{model.id}/endpoints")
@@ -138,6 +138,92 @@ def test_gpt_55_verified_tools_keep_openai_with_require_parameters(client):
         assert "tools" in row["supported_parameters"]
         assert row["trustedrouter"]["capabilities"]["tools"] is True
         assert row["trustedrouter"]["capabilities"]["seed"] is False
+
+
+@pytest.mark.catalog_as_built
+def test_reviewed_tools_contracts_publish_and_keep_provider_routes(client):
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+    rows = {row["id"]: row for row in response.json()["data"]}
+    prefs = RoutePreferences(require_parameters=True, requested_parameters=frozenset({"tools"}))
+
+    # Positive and negative controls keep documentation evidence provider-scoped.
+    for provider, model_id, tools in (
+        ("siliconflow", "z-ai/glm-5.3", True),
+        ("cloudflare-workers-ai", "openai/gpt-oss-120b", True),
+        ("kimi", "moonshotai/kimi-k3", True),
+        ("google-vertex", "google/gemini-3.5-flash-lite", True),
+        ("siliconflow", "openai/gpt-oss-120b", False),
+        ("cloudflare-workers-ai", "qwen/qwq-32b", False),
+    ):
+        endpoints = [
+            endpoint for endpoint in rows[model_id]["trustedrouter"]["endpoints"]
+            if endpoint["provider"] == provider
+        ]
+        assert endpoints, (provider, model_id)
+        for endpoint in endpoints:
+            assert endpoint["capabilities"]["tools"] is tools, endpoint["id"]
+            assert ("tools" in endpoint["supported_parameters"]) is tools, endpoint["id"]
+            if provider == "kimi":
+                assert endpoint["capabilities"]["reasoning_effort"] == ["low", "high", "max"]
+
+    data = json.loads(request_capabilities._CONTRACT_PATH.read_text())
+    pairs = {
+        (provider, model_id)
+        for contract in data["contracts"] if contract.get("tools") is True
+        for provider in contract["providers"] for model_id in contract["models"]
+    }
+    present = set()
+    for provider, model_id in sorted(pairs):
+        row = rows.get(model_id)
+        endpoints = [
+            endpoint for endpoint in row["trustedrouter"]["endpoints"]
+            if endpoint["provider"] == provider
+        ] if row else []
+        # The hourly catalog refresh can retire a reviewed provider/model pair.
+        if not endpoints:
+            continue
+        present.add((provider, model_id))
+        candidates = {
+            endpoint.id for _, endpoint in catalog_endpoint_candidates(catalog.MODELS[model_id], prefs)
+        }
+        for endpoint in endpoints:
+            assert endpoint["capabilities"]["tools"] is True, endpoint["id"]
+            assert "tools" in endpoint["supported_parameters"], endpoint["id"]
+            assert endpoint["id"] in candidates, endpoint["id"]
+    assert pairs
+    assert len(present) >= 0.9 * len(pairs), sorted(pairs - present)
+
+
+def test_tools_only_contract_preserves_unknown_effort_and_declared_parameter(client, monkeypatch):
+    model = _model(monkeypatch, "fixture/tools-only", "novita")
+    contract = {
+        "providers": ["novita"], "models": [model.id],
+        "source": "Fixture provider's own tools documentation", "tools": True,
+    }
+    _assert_reviewed_contracts([contract])
+    monkeypatch.setattr(
+        request_capabilities, "_reviewed_contracts", lambda: {("novita", model.id): contract},
+    )
+    endpoint = _route(monkeypatch, model, "novita", supported_parameters=("reasoning_effort",))
+    assert endpoint_capabilities(model, endpoint)["reasoning_effort"] is None
+    assert set(endpoint.supported_parameters) == {"tools", "reasoning_effort"}
+    prefs = RoutePreferences(
+        require_parameters=True, requested_parameters=frozenset({"tools", "reasoning_effort"}),
+    )
+    assert [route.id for _, route in catalog_endpoint_candidates(model, prefs)] == [endpoint.id]
+
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+    row = next(row for row in response.json()["data"] if row["id"] == model.id)
+    [published] = row["trustedrouter"]["endpoints"]
+    assert published["capabilities"]["reasoning_effort"] is None
+    assert "reasoning_effort" in published["supported_parameters"]
+    response = client.get(f"/v1/models/{model.id}/endpoints")
+    assert response.status_code == 200
+    [published] = response.json()["data"]
+    assert published["trustedrouter"]["capabilities"]["reasoning_effort"] is None
+    assert "reasoning_effort" in published["supported_parameters"]
 
 
 def test_mistral_large_rejected_effort_excludes_route_with_require_parameters(monkeypatch):
@@ -226,7 +312,7 @@ def test_model_overclaims_are_removed_only_when_all_routes_reject_them():
 
 @pytest.mark.parametrize(("provider", "efforts", "tools"), [
     ("openai", ["none", "low", "medium", "high", "xhigh"], True),
-    ("gmi", None, False),
+    ("gmi", None, True),
     ("atlas-cloud", None, False),
 ])
 def test_gpt_55_endpoint_effort_stays_provider_scoped(monkeypatch, provider, efforts, tools):
@@ -439,14 +525,19 @@ def test_public_openapi_explains_capability_union_and_parameter_filter(client: T
         assert text in description
 
 
-def test_reviewed_contracts_have_unique_routes_and_canonical_efforts():
-    data = json.loads(Path("src/trusted_router/data/request_capabilities.json").read_text())
+def _assert_reviewed_contracts(contracts):
     routes = []
-    for contract in data["contracts"]:
-        assert contract["reasoning_effort"] == [v for v in EFFORT_ORDER if v in contract["reasoning_effort"]]
+    for contract in contracts:
+        if "reasoning_effort" in contract:
+            assert contract["reasoning_effort"] == [v for v in EFFORT_ORDER if v in contract["reasoning_effort"]]
         assert contract["source"]
         routes.extend((provider, model) for provider in contract["providers"] for model in contract["models"])
     assert len(routes) == len(set(routes))
+
+
+def test_reviewed_contracts_have_unique_routes_and_canonical_efforts():
+    data = json.loads(Path("src/trusted_router/data/request_capabilities.json").read_text())
+    _assert_reviewed_contracts(data["contracts"])
 
 
 def test_catalog_efforts_agree_with_gateway_wire_contract_vectors():

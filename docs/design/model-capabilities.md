@@ -59,7 +59,13 @@ The public contract is at `/docs#model-capabilities`.
 
 Provider/model contracts and their source URLs are in
 [`request_capabilities.json`](../../src/trusted_router/data/request_capabilities.json).
-Keep evidence provider-scoped; native support does not verify every host.
+A row may carry only a `tools` contract taken from the provider's own
+documentation. Omit `reasoning_effort` when its accepted values are unknown:
+the endpoint publishes `null` and keeps any declared `reasoning_effort`
+parameter. Do not write `null` or `[]` for unknown effort; `[]` is an explicit
+rejection that removes the parameter. Every row requires a source, and each
+provider/model pair occurs only once across all rows. Keep evidence
+provider-scoped; native support does not verify every host.
 
 Gateway review: quill-cloud-proxy `2f3a86c1bfb6f105184d1bf3b4548fa6c9ad688c`:
 
@@ -73,6 +79,19 @@ Gateway review: quill-cloud-proxy `2f3a86c1bfb6f105184d1bf3b4548fa6c9ad688c`:
 - `internal/llm/openai_responses.go`: newer OpenAI tool requests use Responses.
   Native Mistral forwards `seed` without renaming it to `random_seed`;
   native Anthropic does not transmit seed.
+
+Tools contracts from provider documentation (2026-10-07, quill-cloud-proxy
+`09f09254`): the gateway forwards `tools` for every provider with such a row.
+Most go through an OpenAI-compatible client that passes `tools` unchanged:
+`newOpenAICompatible` in `internal/llm/multi.go` (among them OpenAI, Mistral,
+Grok, Parasail and Morph), `newOpenAICompatibleAt` for Cloudflare Workers AI and
+Databricks, Azure's OpenAI-compatible client for non-Claude models,
+`newTinfoilAttested`, NEAR AI's attested OpenAI-compatible stream, and the
+shared streaming helper in `byok.go` for Kimi, Z.AI and the `directproviders`
+table (SambaNova, Scaleway, NVIDIA NIM, Aion Labs, Arcee, Upstage, Reka,
+Mancer). Google Vertex uses its native adapter (`vertex_gemini.go`), which
+translates tools as it does for the existing Vertex rows. Google AI Studio's
+native client handles only image generation.
 
 The Python test in `tests/test_request_capabilities.py` uses
 `tests/fixtures/gateway_effort_contract.json` to check advertised enums against
