@@ -1084,6 +1084,9 @@ synchronous holds, through `settle_atomic`.
   - Declaring a gap is one of the writes the commit version guards (above):
     a member another member overtook would compare a record with progress
     the stored row has passed.
+  - A member commits what it applied before it declares a gap. The gap
+    stops every later commit, so a fault it found in a checkpoint before
+    the gap would otherwise never be raised.
 - One transaction can carry many leases, each its own conditional statement.
   A statement that matches no row is that lease's failed commit, whatever the
   others did: the member re-reads that lease and acknowledges none of its
@@ -1981,16 +1984,17 @@ What the table's short names hide:
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
   terminal is reaped at that snapshot by the time its lease closes.
-- `AuditorCommit` is written (#1560), with 25 mutants and a guard table.
+- `AuditorCommit` is written (#1560), with 27 mutants and a guard table.
   Writing it showed §4.8's one guard on every write, one hole at a time: a
   reap without the commit version charges an older snapshot than the one
   stored; a member refused with nothing to commit that does not re-read
   leaves the lease unable to close; a gap declared without the version stops
-  the lease for a gap the log does not have; and an alert raised outside the
-  commit may be on a checkpoint above S. It also states what §4.8 left
-  implicit about a transaction that carries several leases: a statement that
-  matched no row is that lease's refusal, and its records stay
-  unacknowledged.
+  the lease for a gap the log does not have; an alert raised outside the
+  commit may be on a checkpoint above S; and a gap declared before the
+  member commits what it applied hides a fault it found. It also states what
+  §4.8 left implicit about a transaction that carries several leases: a
+  statement that matched no row is that lease's refusal, and its records
+  stay unacknowledged.
   - It models the boundary S: an owner record stored after the fence tick is
     above S, or a duplicate of one at or below it, and either way is
     ignored; its claims are about the records at or below S, and it checks
@@ -1998,8 +2002,10 @@ What the table's short names hide:
     is not assumed: a record stored ahead of an earlier one shows as a gap,
     and the gap rule is what keeps the earlier one from being skipped.
   - Its audit holds at each checkpoint, raised with the commit that stores
-    it (Invariant 2), and a draining lease closes while the members keep
-    working, unless a gap stopped it for an operator.
+    it (Invariant 2); a fault a member finds while its version is current
+    is raised, even on a lease that never drains or that a gap stops; and
+    a draining lease closes while the members keep working, unless a gap
+    stopped it for an operator.
 - `KeyCapFence` is written (#1561), with 8 mutants and a guard table.
   Each condition of Python's enabling rule holds Invariant 8 up alone: the
   grant's version in admission, a checkpoint that applies the change, one
@@ -3516,7 +3522,9 @@ record.
   The rule was found one write at a time: the reap while writing the spec,
   re-reading by Codex's review of v44, the gap and the alert by Codex's
   second and third reviews of the spec. It is stated once so the code
-  guards every write the same way.
+  guards every write the same way. A member also commits what it applied
+  before it declares a gap, or a fault it found before the gap is never
+  raised (Codex's fourth review of the spec).
 
   §5.1 says what `AuditorCommit` and `KeyCapFence` show, the claims Codex's
   reviews added to `CreditDebt`, and the two assumptions the new specs add.
