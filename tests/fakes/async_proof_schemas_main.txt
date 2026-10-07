@@ -1,0 +1,113 @@
+# Frozen from f83bbaac; source: src/trusted_router/schemas.py
+from __future__ import annotations
+
+class _Strict(BaseModel):
+    """Reject unknown fields by default — keeps clients honest about schema."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+class _Lenient(BaseModel):
+    """Some legacy callers send extra OpenRouter-shaped fields; allow them."""
+
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+
+class GatewayClientContext(_Strict):
+    v: ClientContextVersion | None = None
+    source: ClientContextSource | None = None
+    sdk: ClientSdk | None = None
+    sdk_version: str | None = Field(
+        default=None,
+        pattern=r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}([-+][0-9A-Za-z.]{0,20})?$",
+        max_length=32,
+    )
+    lang: ClientLang | None = None
+    runtime: str | None = Field(default=None, pattern=r"^[a-z]{1,10}/[0-9A-Za-z.+-]{1,24}$")
+    os: ClientOs | None = None
+    arch: ClientArch | None = None
+    timeout_ms: int | None = Field(default=None, ge=1, le=3_600_000)
+    attempt: int | None = Field(default=None, ge=0, le=99)
+    prev_outcome: ClientPrevOutcome | None = None
+    prev_error_class: ClientPrevErrorClass | None = None
+    prev_host: ClientPrevHost | None = None
+    prev_elapsed_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    since_first_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    stream: bool | None = None
+    failover_used: bool | None = None
+
+class GatewaySettleRequest(_Lenient):
+    cache_affinity_key: str | None = Field(default=None, pattern="^[0-9a-f]{64}$", exclude=True)
+    cache_affinity_explicit: bool = Field(default=False, exclude=True)
+    authorization_id: str = Field(min_length=1)
+    actual_input_tokens: int | None = Field(default=None, ge=0)
+    actual_output_tokens: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    # Prompt-cache accounting reported by the attested gateway. NOTE the
+    # provider-dependent semantics the settle handler normalizes:
+    # Anthropic's input_tokens EXCLUDE cached tokens; OpenAI-compatible
+    # and Gemini prompt counts INCLUDE the cached subset.
+    cache_read_input_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    # Provider-reported initial context used only to choose a context-priced
+    # tier. actual_input_tokens remains the complete billable input count.
+    price_tier_input_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
+    service_tier: str | None = Field(default=None, min_length=1, max_length=20)
+    request_id: str | None = None
+    finish_reason: str | None = None
+    status: str | None = None
+    streamed: bool = False
+    usage_estimated: bool = False
+    elapsed_seconds: float | None = Field(default=None, gt=0)
+    first_token_seconds: float | None = Field(default=None, gt=0)
+    error_status: int | None = Field(default=None, ge=100, le=599)
+    error_type: str | None = Field(default=None, max_length=80)
+    app: str | None = None
+    model: str | None = None
+    selected_model: str | None = None
+    endpoint: str | None = None
+    selected_endpoint: str | None = None
+    user: str | None = Field(default=None, max_length=256)
+    session_id: str | None = Field(default=None, max_length=256)
+    trace: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    tags: dict[str, Any] | None = None
+    http_referer: str | None = Field(default=None, max_length=2048)
+    app_categories: list[str] | None = None
+    route_type: str | None = None
+    client: dict[str, Any] | None = None
+    gateway_request_id: str | None = Field(default=None, max_length=64)
+    additional_cost_microdollars: int = Field(default=0, ge=0, le=100_000_000)
+    video_input_mode: str | None = Field(default=None, pattern="^(text|image|reference|video)$")
+    video_duration_seconds: int | None = Field(default=None, ge=0, le=60)
+    video_resolution: str | None = Field(default=None, max_length=32)
+    video_aspect_ratio: str | None = Field(default=None, max_length=32)
+    video_generate_audio: bool | None = None
+
+    @property
+    def input_count(self) -> int:
+        if self.actual_input_tokens is not None:
+            return self.actual_input_tokens
+        return self.input_tokens or 0
+
+    @property
+    def output_count(self) -> int:
+        if self.actual_output_tokens is not None:
+            return self.actual_output_tokens
+        return self.output_tokens or 0
+
+    @property
+    def cache_read_count(self) -> int:
+        return self.cache_read_input_tokens or 0
+
+    @property
+    def cache_creation_count(self) -> int:
+        return self.cache_creation_input_tokens or 0
+
+    @property
+    def selected_model_id(self) -> str | None:
+        return self.selected_model or self.model
+
+    @property
+    def selected_endpoint_id(self) -> str | None:
+        return self.selected_endpoint or self.endpoint

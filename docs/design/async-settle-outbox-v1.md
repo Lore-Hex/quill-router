@@ -1293,18 +1293,29 @@ both frozen and live route registrations, dispatch and settlement using actual
 Spanner fake transactions. Sources are frozen from `git show f83bbaac:<path>`;
 only frozen files have interpreter-stable `_ast_sha256` pins. Their code
 compiles under `tests/fakes/async_proof_*_main.txt`, preserving coverage honesty.
-The selected gateway/store entry functions, benchmark DTO builders and complete
-producer modules below retain their original algorithms. Imported function aliases
-are rebound before compiling caller modules. Already-constructed composed stores
-have their method descriptors patched, so their existing instances also execute
-frozen producers. The oracle enables both activity and benchmark outboxes.
+The selected gateway/store entry functions, complete storage-model builders and
+producer modules below retain their original algorithms. All loaded
+`trusted_router.*` aliases (including `storage` re-exports) are rebound before
+compiling caller modules. Already-constructed composed stores and DTO classes
+have their method descriptors patched, and captured entity-IO callbacks are
+rebound, so existing instances execute frozen producers too. The oracle enables both activity and benchmark outboxes.
 External catalog inputs, wall time and lease identity are deterministic.
 
 Frozen producer inventory (all copies from **f83bbaac**; pins are canonical AST SHA-256):
 
 | Module | Frozen copy under `tests/fakes/` | Pin |
 |---|---|---|
-| `storage_models.py` | `async_proof_benchmark_model_main.txt` | `14df737dbf22d6f2ea46362ee5bb65823db6ca08e6d1b5817f05af3513e94362` |
+| `money.py` | `async_proof_money_main.txt` | `cfd40db5ad3b5ece35a8301589ad323f89e53597ac01c962809ab0c3cbf3adf5` |
+| `types.py` | `async_proof_types_main.txt` | `2a2cd087219079cc0c5fca3ac94192ecdb3546d5df6fdfdb1a416a31c7b24e00` |
+| `pricing.py` | `async_proof_pricing_main.txt` | `9000d33d5ebb885c34a1f9fc4b56bcf158aeceef95edebe0b9dd6e5ae6d1f5e2` |
+| `provider_lifecycle.py` | `async_proof_provider_lifecycle_main.txt` | `8bd90dfa91be6d5b20c0e69e4973ffbad14809583d666e52f2f8c1fd607c2c14` |
+| `catalog.py` | `async_proof_catalog_main.txt` | `da2957677b6bf4f919c883f91e651767c126f93d60fd97e18e6d87c783b57c9b` |
+| `stage_d.py` | `async_proof_stage_d_main.txt` | `969105e2a50afd37b07adf53e113ca60d856027c060d5cd58529d1d766c47870` |
+| `request_attribution.py` | `async_proof_request_attribution_main.txt` | `42c6633806e9571c1162469fbf5550bb5f922cb72e3eb470ec3cb036cb28bbe4` |
+| `client_context.py` | `async_proof_client_context_main.txt` | `8700078e57410d7ea82bcbf6606b6f0206faa82233c40a3e201f719447d2c805` |
+| `schemas.py` | `async_proof_schemas_main.txt` | `9267120b34e6601d17b7c67b7dcd5872ae7659ff902ba5c716b1ab2545f9f78c` |
+| `storage_models.py` | `async_proof_models_main.txt` | `15b8cd78be715f45807c09f093d7d89ab3c89bbcc94a162da32abc6eb850b4a5` |
+| `spend_windows.py` | `async_proof_windows_main.txt` | `d84f99d97363f6ff88ec4646e10137f27fbcef378e6fb94bf3b1092e8817af45` |
 | `storage_codec.py` | `async_proof_codec_main.txt` | `30691fb408355e3b73ac589ca4b41b5fe5208570bbcec72add5c3f5baded8561` |
 | `storage_gcp_codec.py` | `async_proof_gcp_codec_main.txt` | `1dc9bc29b7d9eb1f178439443e6bf0b409412837c99ddeca608731111a7c2d23` |
 | `storage_gcp_batch_dml.py` | `async_proof_batch_main.txt` | `44d340db7a39a50ad0288057a642ee9b447f4a17a2ab0145d48732793342bf18` |
@@ -1321,25 +1332,50 @@ Frozen producer inventory (all copies from **f83bbaac**; pins are canonical AST 
 | `services/settle_outbox_apply.py` | `async_proof_apply_main.txt` | `f531dc96b0a5e11c6b8e1d01c46b45bfd9c0a5cc0b549b4892f02cb8c366ca6b` |
 | `services/settle_outbox_drain.py` | `async_proof_drain_main.txt` | `dcd00080d137ddc6ff8fac9abd7274c38b1289d28c73171c167037f72c11aa79` |
 | `services/async_settle_handler.py` | `async_proof_handler_main.txt` | `a62623d28e6c1ee446d705aa6d582c8bee33e9f6964d33f722b520ce97b528e5` |
-| `routes/internal/gateway.py` | `async_proof_gateway_main.txt` | `f4421795f19f8e3c4172016c1831214a0e6ff0f47080ad7167785dc6e478de91` |
+| `routes/internal/gateway.py` | `async_proof_gateway_main.txt` | `d632d7f7893603aefa3e07fa762199bdcc0fce85ada0349a72c0a7b705919675` |
 | `routes/settlements.py` | `async_proof_route_main.txt` | `069adcb553d856424807e7638db6c20acf9499fe0de6d6de6efe2596de7b91d2` |
 | `storage_gcp.py` | `async_proof_store_main.txt` | `a3b82c02176a190ee8037ed355160a4f94cbd2b78ec2badba07ce151ca20a497` |
 
-Generation INSERTs are in `generation`; activity row projection/INSERTs in
-`activity_payload`/`activity`; benchmark builders/INSERTs in
-`benchmark_model`/`generations`/`benchmark`. Authorization writes and retention
-completion/clears are in `requests`; reservation retention and key/credit DML
-are in `counter`; `trust` freezes unrecovered-payment absorption reads/writes.
-The selected store copy also freezes generic entity reads, lists and mutation
-helpers, including the already-bound IO callbacks used by broadcast discovery
-and post-commit lookups. SQL/mutation entry-point assertions reject live
-production callers on the frozen leg. `outbox` owns intent INSERTs, refreshes,
-lease updates and resolution; `batch` executes those statement groups. `finalize`, `apply`,
-`drain`, selected `store`/`gateway` entry functions and handler/route dispatch
-complete the call path. The codecs freeze serialized row payloads and keys.
+The 30 copies include these complete persisted-input producers:
+
+| Persisted input | Builder / serializer and frozen boundary |
+|---|---|
+| Generation identity, money, usage and metadata | Complete `storage_models`: `Generation.from_settle_body`, its other constructors, `__post_init__`, `generation_id_for_authorization`, synthetic/type/time helpers; `client_context` parsers and selected `schemas.GatewayClientContext` |
+| Authorization finalization and replay facts | Complete `storage_models.GatewayAuthorization`, including `record_finalization`, `frozen_key_hold_microdollars`, `__post_init__`; `requests` typed-column projection, merge, JSON serialization, finalization and retention SQL |
+| Reservation and intent records | Complete `storage_models.Reservation` and `SettleOutboxRow`, including dataclass defaults; `counter` reservation claim/retention and credit/key DML; `outbox` intent serialization, INSERT, refresh, claim, mark, park and retention |
+| Activity and benchmark payloads | `activity_payload.activity_payload`; `activity` statement builder; complete `storage_models.ProviderBenchmarkSample` constructors and helpers; `generations` and `benchmark` enqueue/statement builders |
+| Repair request and sanitized metadata | Selected `schemas._Strict`, `_Lenient`, `GatewaySettleRequest` (including usage properties) and `GatewayClientContext`; selected gateway safe-attribution, safe-client-context and repair-metadata functions plus `_SETTLE_REPAIR_FIELDS`; complete `request_attribution` validation/`body_fields`; `apply.normalized_prompt_accounting` |
+| Amount and spend-window SQL parameters | Selected gateway pricing/endpoint helpers; `stage_d` candidate/document builders; `pricing`, `money`, `provider_lifecycle`; selected `catalog.effective_endpoint` and `types.UsageType`; complete `spend_windows` floors |
+| Serialized row/key and mutation parameters | `codec.json_body`, `gcp_codec` key builders, `generation` payload serialization/INSERT, `requests` serialization, `trust` payment-recovery records, selected `store` entity IO and rebound `_io` callbacks |
+| Dispatch and transaction groups | `finalize`, `apply`, `drain`, `handler`, `route`, selected `gateway`/`store`, `batch` |
+
+The full `storage_models` copy replaces the earlier benchmark-only extract;
+record constructors and their transitive model helpers are no longer shared.
+Only `types`, `catalog`, `schemas`, `gateway` and `store` are selected-definition
+copies; all other inventory rows freeze complete modules. Catalog records and
+configuration remain controlled inputs; stdlib dataclass/JSON and Pydantic
+machinery remain shared libraries, with the application model definitions frozen.
+
+The SQL/mutation caller-stack assertion still checks the immediate producer.
+`producer_calls` additionally profiles application builder execution in the test
+and HTTP worker threads, rejecting live calls from every complete producer
+module and each selected definition, including nested functions/properties.
+It records violations for assertion **after** dispatch, so best-effort exception
+handlers cannot conceal a live builder. It also requires observed frozen
+finalization/JSON serialization and, on settle, generation/benchmark construction.
+`test_producer_audit_catches_returned_live_builder` deliberately invokes a
+pre-captured live finalization callback, then a frozen serializer: the audit
+must retain the live-builder violation even though that frame has returned.
+This establishes the payload/parameter producer boundary in addition to the
+SQL-text boundary. The differential compares actual SQL parameters and serialized
+payloads, not just those execution labels.
+
 `test_f83bbaac_provenance` pins the copies, not the live implementation.
-The future-generation-terminal mutation must fail the full HTTP-to-retention
-comparison; a shared producer cannot satisfy that witness.
+The independent `oracle-generation-amount-plus-one` and
+`oracle-finalization-input-plus-123` mutations must fail the HTTP-to-retention
+comparison with generation cost 3 versus 2 and finalized input 124 versus 1,
+respectively. The generation TTL mutation remains a separate witness.
+
 
 | Entry path | Flags: admission/protection | Oracle evidence |
 |---|---|---|
@@ -1363,9 +1399,30 @@ No expected billing algorithm is substituted for frozen behavior.
 
 | Paths | Compared fields | Scenario coverage |
 |---|---|---|
-| legacy sync; async enqueue+drain; duplicate same body then drain; fresh snapshot-sync | credit total_usage; key usage; both released holds; reservation actual/settled; authorization settled/cost/outcome/generation ID; generation amount | All 28 positive vectors, including zero usage/rates, cache conventions, tier boundaries and last-tier fallback |
+| legacy sync; async enqueue+drain; duplicate same body then drain; fresh snapshot-sync | credit total_usage; key usage; both released holds; reservation actual/settled; authorization settled/cost/outcome/generation ID; generation amount; repair and persisted usage as detailed below | All 28 positive vectors, including zero usage/rates, cache conventions, tier boundaries and last-tier fallback |
 | Same four paths | async payload/snapshot hash exactness; absence of hashes on legacy rows; done/body clearing/terminal_at; no outbox row for fresh snapshot-sync | Same 28 vectors; F1-001 separately records fresh-sync reservation retention failure |
 | Same four paths | Same fields and window usage/negative balance where applicable | Five independent axes: catalog change, endpoint removal, debt, deleted key, day/week/month rollover |
+
+Usage expectations come directly from each vector's `expected_normalized_usage`,
+not from the handler, live normalizer or record builders. The assertion matrix
+applies to all four paths for every positive vector and successful scenario:
+
+| Usage component | Actual repair payload | Persisted generation | Authorization finalization record |
+|---|---|---|---|
+| Input | `actual_input_tokens`: uncached for Anthropic, total prompt otherwise; independently reconstruct both normalized input counts | `tokens_prompt` = normalized total prompt | `finalized_input_tokens` = normalized total prompt |
+| Cached input | `cache_read_input_tokens` = normalized cache-read | `cached_input_tokens` | `finalized_cached_input_tokens` |
+| Cache creation | `cache_creation_input_tokens` = normalized cache-creation; participates in reconstructed total/uncached input | Included in total prompt; no separate cache-creation field exists | Included in finalized input; no separate cache-creation field exists |
+| Output | `actual_output_tokens` = normalized output | `tokens_completion` | `finalized_output_tokens` |
+| Reasoning | `reasoning_tokens` = normalized reasoning | `reasoning_tokens` | `finalized_reasoning_tokens` |
+
+The proof observes actual constructed `SettleOutboxRow` payloads on every path,
+including legacy's inline-done intent and snapshot-sync's transient repair row.
+For enqueue/drain and duplicate/drain it additionally reads the durable JSON
+before completion clears it. Every observed payload is checked; duplicate replay
+must preserve the whole durable state. Generation and authorization assertions
+read back the stored records. Endpoint-removal's rejected legacy leg instead
+requires unchanged state. This tests the existing storage shape without inventing
+separate persisted cache-creation fields.
 
 There are **33 four-path runs / 132 path executions**. Catalog-change axis:
 legacy books 5 microdollars and the three snapshot paths book 2. Removal axis:
@@ -1498,12 +1555,22 @@ remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
 | Payload equality | C `refresh-conflicting-payload`, `drop-hash-comparisons` |
 | Signature/binding | B `skip-jws-purpose`, `drop-key-id-binding` |
 | Exact amount | C `amount-comparison-removal` |
+| Independent generation builder | C `oracle-generation-amount-plus-one` |
+| Independent authorization finalization builder | C `oracle-finalization-input-plus-123` |
+| Finalized output usage | C `handler-zero-output-usage` |
 | Exact HTTP error literal | C `error-envelope-message` |
 | Admission predicate | C `skip-admission-recheck`, `atomic-settled-predicate` |
 | Lease fence | D `remove-claim-lease-fence`; PR D owner-conditioned mark/park checks |
 | Reaper guard | C `reaper-guard`, `claim-not-exists` |
 | Retention clearing / generation TTL | D `retention-body-clear`, `generation-future-terminal-at` |
 | Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
+
+The executable tables contain B **10**, C **32**, and D **14** mutations
+(**56 total**, +3 from the previous 53). The three additions above select
+`test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]`
+for each builder corruption and
+`test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`
+for the handler output corruption. Collection/import errors never count as kills.
 
 The fake now explicitly requires the claim's `NOT EXISTS`, the atomic
 reservation's `settled=false` (existing check retained), the enabled immutable

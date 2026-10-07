@@ -137,6 +137,18 @@ MUTATIONS = [
         ('GUARD_STATUSES = ("pending", "dead")', 'GUARD_STATUSES = ("dead",)'),
     ])], 'test_enqueue_wins_reaper_and_legacy_fence'),
 
+    ('oracle-generation-amount-plus-one', [('src/trusted_router/storage_models.py', [
+        ('total_cost_microdollars=actual_cost_microdollars,',
+         'total_cost_microdollars=actual_cost_microdollars + 1,'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('oracle-finalization-input-plus-123', [('src/trusted_router/storage_models.py', [
+        ('max(0, int(generation.tokens_prompt)) if generation is not None else 0',
+         'max(0, int(generation.tokens_prompt)) + 123 if generation is not None else 0'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('handler-zero-output-usage', [(HANDLER, [
+        ('actual_output_tokens=usage.output_tokens,', 'actual_output_tokens=0,'),
+    ])], 'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
+
 ]
 
 

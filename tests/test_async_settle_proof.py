@@ -29,6 +29,7 @@ from trusted_router.detached_jws import canonical
 from trusted_router.routes.internal import gateway
 from trusted_router.services import settle_outbox_apply
 from trusted_router.services.settle_outbox_drain import drain_settle_outbox
+from trusted_router.storage_models import SettleOutboxRow
 
 STATE = ('typed', 'rows', 'reservations', 'gateway_authorizations', 'settle_outbox',
          'generation_records', 'operational_analytics_outbox', 'analytics_outbox',
@@ -186,8 +187,25 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
     client = _client(env[3])
     client.app.state.async_settle = env[2]
     outputs = []
+    repair_payloads = []
+    original_init = SettleOutboxRow.__init__
+    def capture_repair(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        if self.settle_body is not None:
+            repair_payloads.append(json.loads(self.settle_body))
+    monkeypatch.setattr(SettleOutboxRow, '__init__', capture_repair)
+    usage = case['expected_normalized_usage']
+    selected = next(c for c in body['billing_snapshot']['candidates']
+                    if c['endpoint_id'] == body['terminal']['selected_endpoint'])
+    repair_usage = dict(
+        actual_input_tokens=usage['uncached_input_tokens'] if selected['provider'] == 'anthropic'
+        else usage['total_prompt_tokens'],
+        cache_read_input_tokens=usage['cache_read_tokens'],
+        cache_creation_input_tokens=usage['cache_creation_tokens'],
+        actual_output_tokens=usage['output_tokens'], reasoning_tokens=usage['reasoning_tokens'])
     for path in ('legacy', 'async', 'duplicate', 'snapshot_sync'):
         restore(db, initial)
+        repair_payloads.clear()
         if path == 'legacy':
             reply = client.post('/v1/internal/gateway/settle', json=legacy_body(body))
             if scenario == 'endpoint_removal':
@@ -207,7 +225,23 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                 before = save(db)
                 assert json.loads(call(env, body).body)['data']['acceptance']['status'] == 'duplicate'
                 assert save(db) == before
+            # Read the actual durable repair JSON before mark_done clears it.
+            persisted = json.loads(db.settle_outbox[(auth.id, 'settle')]['settle_body'])
+            assert {field: persisted[field] for field in repair_usage} == repair_usage
             assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+        # Legacy's atomic done INSERT clears its body; fresh snapshot-sync
+        # never INSERTs an intent. Observe their real constructed repair rows,
+        # not a second call to the builder that could disagree with dispatch.
+        assert repair_payloads, path
+        for payload in repair_payloads:
+            assert {field: payload[field] for field in repair_usage} == repair_usage, path
+            prompt = payload['actual_input_tokens']
+            cached, created = payload['cache_read_input_tokens'], payload['cache_creation_input_tokens']
+            total = prompt + cached + created if selected['provider'] == 'anthropic' else prompt
+            assert dict(uncached_input_tokens=total-cached-created, total_prompt_tokens=total,
+                        cache_read_tokens=cached, cache_creation_tokens=created,
+                        output_tokens=payload['actual_output_tokens'],
+                        reasoning_tokens=payload['reasoning_tokens']) == usage, path
         settled = store.get_gateway_authorization(auth.id)
         generation = store.get_generation(settled.finalized_generation_id)
         reservation = db.reservations[auth.credit_reservation_id]
@@ -224,11 +258,21 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                       actual=reservation['actual_micro'], reservation_settled=reservation['settled'],
                       settled=settled.settled, cost=settled.finalized_cost_microdollars,
                       outcome=settled.finalization_outcome, generation_id=settled.finalized_generation_id,
-                      generation_amount=generation.total_cost_microdollars)
+                      generation_amount=generation.total_cost_microdollars,
+                      generation_usage=dict(input=generation.tokens_prompt, cached=generation.cached_input_tokens,
+                                            output=generation.tokens_completion, reasoning=generation.reasoning_tokens),
+                      authorization_usage=dict(input=settled.finalized_input_tokens,
+                                               cached=settled.finalized_cached_input_tokens,
+                                               output=settled.finalized_output_tokens,
+                                               reasoning=settled.finalized_reasoning_tokens))
         assert fields == dict(credit=expected + (7 if scenario == 'debt' else 0), key=expected if scenario != 'deleted_key' else None, credit_hold=0, key_hold=0 if scenario != 'deleted_key' else None,
                              actual=expected, reservation_settled=True, settled=True, cost=expected,
                              outcome='settled', generation_id=body['terminal']['generation_id'],
-                             generation_amount=expected)
+                             generation_amount=expected,
+                             generation_usage=dict(input=usage['total_prompt_tokens'], cached=usage['cache_read_tokens'],
+                                                   output=usage['output_tokens'], reasoning=usage['reasoning_tokens']),
+                             authorization_usage=dict(input=usage['total_prompt_tokens'], cached=usage['cache_read_tokens'],
+                                                      output=usage['output_tokens'], reasoning=usage['reasoning_tokens']))
         outputs.append(fields)
         row = db.settle_outbox.get((auth.id, 'settle'))
         if path == 'snapshot_sync':
