@@ -54,6 +54,10 @@ OUTBOX_COLUMNS = [
     "created_at",
     "updated_at",
     "terminal_at",
+    "async_version",
+    "workspace_id",
+    "snapshot_hash",
+    "payload_hash",
 ]
 
 AUTO_REFILL_COLUMNS = [
@@ -69,7 +73,7 @@ AUTO_REFILL_COLUMNS = [
     "auto_refill_updated_at",
     "auto_refill_terminal_at",
 ]
-INSERT_COLUMNS = [*OUTBOX_COLUMNS, *AUTO_REFILL_COLUMNS[1:]]
+INSERT_COLUMNS = [*OUTBOX_COLUMNS[:-4], *AUTO_REFILL_COLUMNS[1:]]
 
 # Statuses that must FREEZE the hold — the reaper may not free-release a
 # reservation whose authorization still has an outbox row in one of these
@@ -178,6 +182,7 @@ def intent_insert_statements(
     now: str,
     next_attempt_at: str,
     resolved: bool = False,
+    async_metadata: bool = False,
 ) -> list[DmlStatement]:
     """INSERT-as-claim of one intent, plus the retention clears the intent implies.
 
@@ -195,8 +200,9 @@ def intent_insert_statements(
     """
     pt = param_types
     auto_refill_requested = row.auto_refill_workspace_id is not None
-    cols = ", ".join(INSERT_COLUMNS)
-    binds = ", ".join(f"@{c}" for c in INSERT_COLUMNS)
+    columns = [*INSERT_COLUMNS, *OUTBOX_COLUMNS[-4:]] if async_metadata else INSERT_COLUMNS
+    cols = ", ".join(columns)
+    binds = ", ".join(f"@{c}" for c in columns)
     values = {
         "authorization_id": row.authorization_id,
         "intent_kind": row.intent_kind,
@@ -257,6 +263,11 @@ def intent_insert_statements(
         "auto_refill_updated_at": pt.TIMESTAMP,
         "auto_refill_terminal_at": pt.TIMESTAMP,
     }
+    if async_metadata:
+        values.update(async_version=1, workspace_id=row.workspace_id,
+                      snapshot_hash=row.snapshot_hash, payload_hash=row.payload_hash)
+        types.update({"async_version": pt.INT64, "workspace_id": pt.STRING,
+                      "snapshot_hash": pt.STRING, "payload_hash": pt.STRING})
     statements = [
         (
             f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed columns
@@ -446,6 +457,8 @@ def _row_from_tuple(values: Any) -> SettleOutboxRow:
         created_at=_ts_str(d["created_at"]) or "",
         updated_at=_ts_str(d["updated_at"]),
         terminal_at=_ts_str(d["terminal_at"]),
+        async_version=d["async_version"], workspace_id=d["workspace_id"],
+        snapshot_hash=d["snapshot_hash"], payload_hash=d["payload_hash"],
     )
 
 
@@ -478,9 +491,10 @@ def _ts_str(value: Any) -> str | None:
 class SpannerSettleOutbox:
     """Durable settle-intent store on a native `tr_settle_outbox` table."""
 
-    def __init__(self, database: Any, param_types: Any) -> None:
+    def __init__(self, database: Any, param_types: Any, *, async_fence: bool = False) -> None:
         self._database = database
         self._pt = param_types
+        self._async_fence = async_fence
 
     # ── enqueue (INSERT-as-claim, refresh-latest on a still-pending row) ──────
     def enqueue(self, row: SettleOutboxRow, *, initial_delay_seconds: int = 0, preserve_existing: bool = False) -> str:
@@ -527,7 +541,7 @@ class SpannerSettleOutbox:
         # pending) a later enqueue can refresh again.
         def refresh_txn(transaction: Any) -> int:
             refreshed = transaction.execute_update(
-                "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "
+                "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "  # noqa: S608 - fixed flag predicate
                 "reservation_id=@reservation_id, actual_cost_micro=@actual_cost_micro, "
                 "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
                 "selected_usage_type=@selected_usage_type, settle_body=@settle_body, "
@@ -545,6 +559,7 @@ class SpannerSettleOutbox:
                 "auto_refill_updated_at END, "
                 "updated_at=@now WHERE authorization_id=@authorization_id "
                 "AND intent_kind=@intent_kind AND status='pending' "
+                + ("AND async_version IS NULL " if self._async_fence else "") +
                 "AND (leased_until IS NULL OR leased_until < @now)",
                 params={
                     "settle_origin": row.settle_origin,
@@ -621,6 +636,21 @@ class SpannerSettleOutbox:
                 candidate.leased_until = lease_until
                 claimed.append(candidate)
         return claimed
+
+    def claim_shard(self, *, shard: int, lease_seconds: int) -> list[SettleOutboxRow]:
+        """Fast mode: only one row for an already-running worker slot."""
+        sql, params, types = shard_due_statement(self._pt, shard, _iso_now())
+        with self._database.snapshot() as snapshot:
+            candidates = list(snapshot.execute_sql(sql, params=params, param_types=types,
+                timeout=0.2, retry=None, request_options={"priority": "PRIORITY_LOW"}))
+        for values in candidates:
+            row = _row_from_tuple(values)
+            owner = f"soworker_{uuid.uuid4().hex}"
+            lease_until = _iso_after_seconds(lease_seconds)
+            if self._claim_one(row, owner=owner, lease_until=lease_until):
+                row.lease_owner, row.leased_until = owner, lease_until
+                return [row]
+        return []
 
     def _claim_one(self, row: SettleOutboxRow, *, owner: str, lease_until: str) -> bool:
         now = _iso_now()
@@ -1119,3 +1149,16 @@ def _is_already_exists(exc: Exception) -> bool:
     except Exception:  # pragma: no cover - google libs always present in prod/tests
         return False
     return isinstance(exc, AlreadyExists)
+
+
+def shard_due_statement(pt: Any, shard: int, now: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    return (
+        f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox"  # noqa: S608
+        "@{FORCE_INDEX=tr_settle_outbox_due_v2} "
+        "WHERE queue_shard IS NOT NULL AND queue_shard=@shard "
+        "AND next_attempt_at IS NOT NULL AND status='pending' AND next_attempt_at <= @now "
+        "AND (leased_until IS NULL OR leased_until < @now) "
+        "ORDER BY next_attempt_at LIMIT @limit",
+        {"shard": shard, "now": now, "limit": 2},
+        {"shard": pt.INT64, "now": pt.TIMESTAMP, "limit": pt.INT64},
+    )

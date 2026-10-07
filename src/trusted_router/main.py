@@ -93,6 +93,7 @@ from trusted_router.routes.payouts import register_payout_routes
 from trusted_router.routes.provider_portal import register_provider_portal_routes
 from trusted_router.routes.public import register_public_action_routes, register_public_routes
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
+from trusted_router.routes.settlements import register_settlement_routes
 from trusted_router.routes.signup import register_signup_routes
 from trusted_router.routes.user_models import register_user_model_routes
 from trusted_router.routes.user_models_public import register_user_model_public_routes
@@ -282,6 +283,10 @@ def create_app(
     if surface in {"combined", "internal"} and settings.speculative_provider_shadow_enabled:
         from trusted_router.services.speculation_shadow import install
         install(app, settings)
+    if surface in {"combined", "internal"}:
+        from trusted_router.services.async_settle import load_runtime
+        from trusted_router.storage import typed_billing_store
+        app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,
@@ -833,6 +838,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_oauth_key_routes(router)
         register_payout_routes(router)
         register_activity_routes(router)
+        register_settlement_routes(router)
         register_client_events_routes(router)
         register_credit_transfer_routes(router)
         register_workspace_routes(router)

@@ -3658,3 +3658,46 @@ def test_rollout_fails_closed_when_the_clickhouse_lb_cannot_be_resolved(
     assert "cannot resolve the ClickHouse load balancer address" in run.stderr
     assert not _gcloud_calls(run, "run", "deploy")
     assert not any("10.128.15.214" in " ".join(call) for call in run.calls)
+
+
+def test_rollout_pins_async_admission_and_protection_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hostile = {
+        "TR_ASYNC_SETTLE_ENABLED": "true",
+        "TR_ASYNC_SETTLE_PROTECTION": "true",
+        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/old/ticket.pem",
+        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
+    }
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert {name: rendered[name] for name in hostile} == {
+        "TR_ASYNC_SETTLE_ENABLED": "false",
+        "TR_ASYNC_SETTLE_PROTECTION": "false",
+        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "",
+        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "0",
+    }
+
+
+def test_rollout_pins_dormant_drain_knobs_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = {
+        'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false',
+        'TR_SETTLE_OUTBOX_POLL_INTERVAL_SECONDS': '300',
+        'TR_SETTLE_OUTBOX_HEALTH_PUBLISH_INTERVAL_SECONDS': '2',
+        'TR_SETTLE_OUTBOX_CLAIM_BATCH': '500',
+        'TR_SETTLE_OUTBOX_WORKER_CONCURRENCY': '1',
+        'TR_SETTLE_OUTBOX_LEASE_SECONDS': '300',
+        'TR_SETTLE_OUTBOX_PASS_BUDGET_SECONDS': '240',
+    }
+    hostile = {name: 'true' if name.endswith('ENABLED') else '7' for name in expected}
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run('scripts/deploy/rollout.sh', extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
+    rendered = _cloud_run_job_env(deploy)
+    assert {name: rendered[name] for name in expected} == expected

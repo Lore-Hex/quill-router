@@ -184,6 +184,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/speculation/shadow/refresh"),
         ("POST", "/internal/gateway/home-settlement/drain"),
         ("POST", "/internal/gateway/deferred/reap"),
+        ("POST", "/internal/gateway/video/replay-lookup"),
         ("POST", "/internal/gateway/video/jobs/prepare"),
         ("POST", "/internal/gateway/video/jobs/{job_id}/queued"),
         ("POST", "/internal/gateway/video/jobs/{job_id}/lookup"),

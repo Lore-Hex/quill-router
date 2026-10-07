@@ -1,7 +1,7 @@
 """Abliterate's own catalog and published USD/M token prices.
 
-This is abliterate.ai, not the unrelated abliteration.ai. Paid routes stay
-held until its API reports usage, including internal reasoning/tool calls.
+This is abliterate.ai, not the unrelated abliteration.ai. Reviewed routes use
+explicitly disclosed bounded usage estimates when upstream omits token counts.
 """
 
 from __future__ import annotations
@@ -34,7 +34,9 @@ EXPLICIT_MODEL_MAP = {
         "abliterated-research-0.1",
     )
 }
-HOLD_REASON = "upstream-usage-unavailable"
+OPERATOR_HOLDS = {
+    "abliterate/abliterated-research-0.1": "upstream-output-limit-unenforced",
+}
 
 
 def _asset_url(reference: str) -> str:
@@ -103,9 +105,11 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="ABLITERATE_API_KEY",
         explicit_model_map=EXPLICIT_MODEL_MAP,
         expected_models=tuple(EXPLICIT_MODEL_MAP.values()),
+        include=lambda row: row.get("id") in EXPLICIT_MODEL_MAP,
         price_loader=_load_prices,
         pricing_source_url=PRICING_URL,
-        operator_hold_reasons=dict.fromkeys(EXPLICIT_MODEL_MAP.values(), HOLD_REASON),
+        canary_require_message=True,
+        operator_hold_reasons=OPERATOR_HOLDS,
     ),
     manifest_path=MANIFEST_PATH,
 )

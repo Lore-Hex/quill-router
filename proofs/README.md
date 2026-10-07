@@ -12,6 +12,9 @@ driven to the bad schedule. It is written before the code it describes.
 | `SurfaceCutover` | The routed multi-region Cloud Run rollout, with a crash between any two steps | implemented |
 | `TerminalOrder` | One lease's records: which terminal wins, and why the live auditor and a rebuild agree (fast admission §4.5, §4.8) | planned |
 | `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, its last record and its draining write, draining and close under clock skew (fast admission §4.2, §4.3, §4.8) | planned |
+| `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | planned |
+| `AuditorCommit` | The auditor's per-lease commit: what a member stores so another can carry on, under redelivery, takeover, a member that stalled, records stored twice or out of order, raises between a load and a commit, reaps, the drain log and the checkpoint audit (fast admission §4.8) | planned |
+| `KeyCapFence` | Adding a cap to a key while leases may hold its requests: the key-status version a grant carries, the owners' caches, the checkpoint that shows none of the key's holds open, and the condition on which Python enables the cap (fast admission §4.6) | planned |
 
 `docs/design/fast-admission-and-batched-settlement.md` §5.1 has the plan for
 the fast-admission specs.
@@ -133,6 +136,9 @@ is removed.
   - `nothing`;
   - `evaluation`, when the spec, or its other invariants past `TypeOK`,
     can no longer be evaluated.
+
+  A row names the variant that shows it (`cfg`) when the main configuration
+  does not, for an expression left with no value as for a claim.
 - A run decides something only if TLC found no error, named a violated
   claim, or said, in one of the ways it has, that an expression has no
   value. A timeout, a parse error, out of memory, a stack overflow, one of
@@ -163,7 +169,27 @@ process stops and publishes the lease's last record, listing none of its
 predecessor's holds. Each member's reason names its group, and one group is
 a mutant too. Leaving out `Admit`'s, `OwnerStop`'s and `FinalCheckpoint`'s
 `has`, which every group needs one of, the other 24 removed all together
-break nothing.
+break nothing. `CreditDebt`'s 37 broke a claim the same way, and ten groups
+of two explained it. For example, `Store` asks that the lease is not sealed
+and `OwnerSettle` that it is open: without both, a settle decided after the
+boundary is stored past it (`HoldsCoveredInSpanner`). `Close` asks that
+every hold has a booked terminal and `AuditorApplyRow` that the lease is
+live: without both, a lease closes with a row left and the auditor then
+books it (`ShardIdentity`). Leaving out nine of the groups' members, at
+least one of each group, the other 28 removed all together break nothing.
+`AuditorCommit`'s 52 broke a claim too, and three pairs explained it.
+`LoadWinners` and `Reread` each ask that the member has loaded the lease:
+without both, a member that has not loaded can load the winners and re-read,
+again and again, and never load the lease (`DrainingLeaseCloses`). `Gap`
+asks that the member does not yet know S, and `Store` and `StoreAhead` each
+that the fence tick has not come: without `Gap`'s check and either of the
+others, a record lands after the tick past the progress of a member that
+knows S, and the member takes it for a gap the log does not have
+(`GapIsReal`). Leaving out `LoadWinners`' check and `Gap`'s, which every
+pair needs one of, the other 50 removed all together break nothing. That
+covers every claim in `two`, `lying` and `ahead`; in `again` and the main
+configuration, at 95 and 69 million states, the liveness claims were not
+checked. `KeyCapFence`'s 6 break nothing even when all are removed together.
 
 ## Ways a check proves nothing
 

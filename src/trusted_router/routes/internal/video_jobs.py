@@ -11,6 +11,7 @@ from trusted_router.catalog import MODELS, PROVIDERS, endpoint_for_id
 from trusted_router.errors import api_error
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.schemas import (
+    GatewayAuthorizeRequest,
     GatewayVideoJobClaimRequest,
     GatewayVideoJobLookupRequest,
     GatewayVideoJobPrepareRequest,
@@ -18,6 +19,7 @@ from trusted_router.schemas import (
     GatewayVideoJobUpdateRequest,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_custom_models import is_custom_model_id, is_user_provided_model_id
 from trusted_router.storage_models import ProviderBenchmarkSample, VideoJob
 from trusted_router.types import ErrorType
 from trusted_router.video_billing import video_cost_microdollars, video_token_billed
@@ -134,7 +136,89 @@ def _lookup(
     return {"data": _job_payload(job)}
 
 
+def _replay_lookup(
+    request: Request,
+    body: GatewayAuthorizeRequest,
+    settings: Any,
+) -> dict[str, Any]:
+    """Lookup only: a miss must never reach authorization, pricing or reserve."""
+    from trusted_router.auth import is_api_key_expired
+    from trusted_router.routes.internal.gateway import (
+        _api_key_for_gateway_lookup,
+        _assert_gateway_key_scope,
+        _gateway_authorize_body,
+        _video_cross_region_replay_matches,
+    )
+    from trusted_router.storage import typed_billing_store
+    from trusted_router.storage_legacy_trust import BillingPausedError
+
+    require_internal_gateway(request, settings)
+    if (
+        body.route_type != "videos"
+        or is_custom_model_id(body.model)
+        or is_user_provided_model_id(body.model)
+        or not body.idempotency_key
+        or not body.request_fingerprint
+        or not body.api_key_lookup_hash
+        or body.api_key_hash
+        or body.additional_cost_reservation_microdollars
+        or body.invocation_nonce
+    ):
+        raise api_error(400, "Invalid read-only video replay lookup", ErrorType.BAD_REQUEST)
+    api_key = _api_key_for_gateway_lookup(
+        api_key_hash=None, api_key_lookup_hash=body.api_key_lookup_hash,
+    )
+    if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
+    _assert_gateway_key_scope(api_key)
+    workspace = STORE.get_workspace(api_key.workspace_id)
+    if workspace is None:
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
+    original, _ = _gateway_authorize_body(body)
+    original.pop("additional_cost_reservation_microdollars", None)
+    typed_store = typed_billing_store(STORE)
+    try:
+        authorization = (
+            typed_store.get_typed_authorization_by_idempotency(
+                workspace.id, api_key.hash, body.idempotency_key,
+            )
+            if typed_store is not None
+            else STORE.get_gateway_authorization_by_idempotency_key(
+                workspace.id, api_key.hash, body.idempotency_key,
+            )
+        )
+    except BillingPausedError as exc:
+        raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
+    if authorization is None:
+        return {"data": {"found": False}}
+    if not _video_cross_region_replay_matches(
+        authorization, workspace.id, api_key.hash, original, body.idempotency_key,
+    ):
+        raise api_error(
+            409, "Idempotency key was already used for a different gateway request",
+            ErrorType.CONFLICT,
+        )
+    # Identity only. Never return routes, credentials, pricing, or a dispatch
+    # nonce. The enclave must fetch the existing job at this same authority.
+    return {"data": {"found": True, "authorization": {
+        "authorization_id": authorization.id,
+        "workspace_id": authorization.workspace_id,
+        "api_key_hash": authorization.key_hash,
+        "model": authorization.model_id,
+        "idempotent_replay": True,
+    }}}
+
+
 def register(router: APIRouter) -> None:
+    @router.post("/internal/gateway/video/replay-lookup")
+    async def lookup_video_replay(
+        request: Request,
+        body: GatewayAuthorizeRequest,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        return await run_in_threadpool(_replay_lookup, request, body, settings)
+
+
     @router.post("/internal/gateway/video/jobs/prepare")
     async def prepare_video_job(
         request: Request,

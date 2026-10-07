@@ -6,6 +6,8 @@ Do not remove emulator-incompatible DDL; provisioning must report it.
 
 SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523ab7d21dd0ad4efbe679d2f5c5e92ef4',
  'scripts/deploy/migrate_analytics_outbox.sh': 'ae244118bf4d3266e286e663f99e4907289be8e24dea76d05f4bc0814fd4167a',
+ 'scripts/deploy/migrate_async_settle_admission.sh': '1fac3e0df16cfa720f4d385a4018e2b350c08a346d4951cf53ca6d8e863aeb1b',
+ 'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
@@ -172,6 +174,12 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'auto_refill_updated_at TIMESTAMP, auto_refill_terminal_at TIMESTAMP, queue_shard INT64 NOT '
  "NULL AS ( MOD( MOD(FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind)), 16) + 16, "
  '16 ) ) STORED, ) PRIMARY KEY (authorization_id, intent_kind)',
+ 'ALTER TABLE tr_settle_outbox ADD COLUMN async_version INT64',
+ 'ALTER TABLE tr_settle_outbox ADD COLUMN workspace_id STRING(64)',
+ 'ALTER TABLE tr_settle_outbox ADD COLUMN snapshot_hash STRING(64)',
+ 'ALTER TABLE tr_settle_outbox ADD COLUMN payload_hash STRING(64)',
+ "ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP AS (IF(status IN ('pending', "
+ "'dead'), COALESCE(created_at, TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED",
  'ALTER TABLE tr_entities ADD COLUMN ephemeral_expires_at TIMESTAMP AS (CASE WHEN kind = '
  "'rate_limit' THEN SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '$.expires_at') AS "
  'INT64)) END) STORED',
@@ -198,6 +206,10 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'ALTER TABLE tr_gateway_authorization ADD COLUMN stage_d_boot_kid STRING(128)',
  'ALTER TABLE tr_gateway_authorization ADD COLUMN invocation_nonce STRING(64)',
  'ALTER TABLE tr_gateway_authorization ADD COLUMN gateway_request_id STRING(37)',
+ 'CREATE NULL_FILTERED INDEX tr_settle_outbox_workspace_status ON tr_settle_outbox '
+ '(workspace_id, status) STORING (actual_cost_micro)',
+ 'CREATE NULL_FILTERED INDEX tr_settle_outbox_unresolved ON tr_settle_outbox (unresolved_at) '
+ 'STORING (actual_cost_micro, status)',
  'CREATE NULL_FILTERED INDEX tr_gateway_authorization_by_trace_id ON tr_gateway_authorization '
  '(gateway_request_id)',
  'CREATE INDEX tr_generation_by_terminal_at ON tr_generation(terminal_at DESC) STORING '

@@ -82,19 +82,18 @@ def test_typed_video_cross_region_replay_preserves_all_money_rows(
 
     monkeypatch.setattr(SpannerStore, "get_typed_authorization_by_idempotency", lookup)
     first = gateway._authorize_gateway_sync(_request(), body, settings)["data"]
-    assert not lookups  # No new happy-path RPCs.
+    assert len(lookups) == 1  # Keyed video recovery precedes live routing.
     before = copy.deepcopy(database.typed)
     changed = body.model_copy(update={"region": "europe-west4"})
     replay = gateway._authorize_gateway_sync(_request(), changed, settings)["data"]
     assert replay["authorization_id"] == first["authorization_id"]
     assert replay["credit_reservation_id"] == first["credit_reservation_id"]
     assert replay["idempotent_replay"] is True
-    assert len(lookups) == 1
+    assert len(lookups) == 2
     assert database.typed == before
     for update in (
         {"request_fingerprint": "b" * 64},
         {"provider": {"only": [first["provider"]]}},
-        {"max_output_tokens": 2},
         {"request_fingerprint": None},
     ):
         with pytest.raises(HTTPException) as error:

@@ -236,6 +236,8 @@ def test_production_sql_acceptance(sql_database, case):
                     execute_dml(transaction, case.seed, batch=False)
                     rows = list(transaction.execute_sql(sql, params=params, param_types=types))
                     assert rows, "seeded query must exercise its target row"
+                    if case.expected_rows is not None:
+                        assert rows == case.expected_rows
             else:
                 with sql_database.snapshot() as snapshot:
                     list(snapshot.execute_sql(sql, params=params, param_types=types))

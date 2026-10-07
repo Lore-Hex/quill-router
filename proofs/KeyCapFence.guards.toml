@@ -1,0 +1,132 @@
+# Every guard of every action, and what breaks when it alone is removed.
+# Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
+
+inputs_sha256 = "c9d6fa93f2bc252da3879d0ae3d2e4740dbb6b64a2bf3151e355e03637baf433"
+
+[[guard]]
+action = "Grant"
+text = '''/\ lst[l] = "none"'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "Refresh"
+text = '''/\ lst[l] # "none"'''
+breaks = "nothing"
+why = '''
+An owner's cache belongs to its process, not to a lease, and may be refreshed before the lease is granted: new states, none a claim reads differently. A newer cache only makes the owner stop admitting the key sooner, and Admit's check of the grant's version reads it the same way.
+'''
+
+[[guard]]
+action = "Refresh"
+text = '''/\ cache[l] < kv'''
+breaks = "nothing"
+why = '''
+A refresh that reads the version the cache already holds changes nothing: without the guard it is a step to the same state, and no new state is reached.
+'''
+
+[[guard]]
+action = "Admit"
+text = '''/\ lst[l] = "open"'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "Admit"
+text = '''/\ admitted[l] < MaxAdmit'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the key's holds an owner admits under one lease.
+'''
+
+[[guard]]
+action = "Admit"
+text = '''/\ cache[l] >= gv[l]'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "Admit"
+text = '''/\ capAt = NoCap \/ cache[l] < capAt'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "Terminal"
+text = '''/\ open[l] > 0'''
+breaks = "TypeOK"
+why = '''
+An enabling condition: a terminal ends one of the key's open holds. Without it the owner's count of open holds falls below zero, which TypeOK bounds; such a terminal is not a step the system takes.
+'''
+
+[[guard]]
+action = "Checkpoint"
+text = '''/\ lst[l] = "open"'''
+breaks = "nothing"
+why = '''
+A checkpoint is true whenever its owner publishes it (A1): the version it applies and the key's holds open in its books. When an owner may still publish is LeaseLifecycle's. Later checkpoints reach new states, and one clears its lease only if it applies the change and shows none of the key's holds open, which is what the claim rests on.
+'''
+
+[[guard]]
+action = "Checkpoint"
+text = '''/\ ckpts[l] < MaxCkpt'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the checkpoints an owner publishes under one lease.
+'''
+
+[[guard]]
+action = "Book"
+text = '''/\ booked[l] < Len(log[l])'''
+breaks = "evaluation"
+why = '''
+The auditor books a record the log holds. Without the guard the next record's index is past the end of the log, and has no value.
+'''
+
+[[guard]]
+action = "Drain"
+text = '''/\ lst[l] = "open"'''
+breaks = "nothing"
+why = '''
+A lease that drains from another state still has to close, or clear, before the cap is enabled, and Admit asks for an open lease. The new states this reaches only narrow what its owner may do.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ lst[l] = "draining"'''
+breaks = "nothing"
+why = '''
+From open, draining and then closing reaches the state a direct close would: Drain changes nothing else, and a lease may drain at any moment here. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ open[l] = 0'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "Close"
+text = '''/\ booked[l] = Len(log[l])'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "AddCap"
+text = '''/\ capAt = NoCap'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: one change to the key. A second leaves the version's range, which TypeOK bounds.
+'''
+
+[[guard]]
+action = "EnableCap"
+text = '''/\ capAt # NoCap'''
+breaks = "CapAfterBooking"
+
+[[guard]]
+action = "EnableCap"
+text = '''/\ ~capOn'''
+breaks = "nothing"
+why = '''
+Enabling a cap that is already enabled changes nothing: the step goes to the same state, and no new state is reached.
+'''
+
+[[guard]]
+action = "EnableCap"
+text = '''/\ \A l \in Earlier : lst[l] = "closed" \/ Cleared(l)'''
+breaks = "CapAfterBooking"

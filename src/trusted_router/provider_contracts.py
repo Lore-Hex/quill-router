@@ -5,7 +5,17 @@ SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
 NEXTBIT_UNSLOPNEMO_MODEL_ID = "thedrummer/unslopnemo-12b-v4.1"
 NEXTBIT_UNSLOPNEMO_HOLD_REASON = "provider-alias-unavailable"
-LIGHTNING_GOOGLE_PASSTHROUGH_HOLD_REASON = "google-passthrough-disabled"
+THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
+# These providers also advertise third-party API wrappers. Only their native
+# hosted namespaces may route here; the original providers serve passthroughs.
+_NATIVE_HOSTED_MODEL_PREFIXES = {
+    "lightning": "lightning-ai/",
+    "cloudflare-workers-ai": "@cf/",
+}
+_NATIVE_HOSTED_MODEL_EXCEPTIONS = frozenset({
+    # Reviewed Workers AI early-access deployment, before model-search listing.
+    ("cloudflare-workers-ai", "moonshotai/kimi-k3"),
+})
 # Hold a provider's prepaid routes when its operator key is rejected, e.g.
 # {"crusoe": "operator-credential-rejected"}. Catalog discovery can succeed
 # without validating inference credentials, so clear a hold only after a
@@ -67,16 +77,15 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # a supported egress region without bypassing Sakana's geographic policy.
 
 
-def provider_model_operator_held(provider_slug: str, model_id: str) -> bool:
-    # Google passthrough routes are intentionally served directly, not through
-    # Lightning. Cover future discoveries too, but preserve its hosted Gemma
-    # weights: a Google model author is not necessarily a Google backend.
-    lightning_google_passthrough = (
-        provider_slug == "lightning"
-        and model_id.startswith("google/")
-        and not model_id.startswith("google/gemma-")
-    )
-    return lightning_google_passthrough or (provider_slug, model_id) in OPERATOR_HELD_PROVIDER_MODELS
+def provider_model_operator_held(
+    provider_slug: str, model_id: str, upstream_id: str | None = None,
+) -> bool:
+    native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
+    native_id = upstream_id or model_id
+    if native_prefix is not None and not native_id.startswith(native_prefix):
+        if (provider_slug, native_id) not in _NATIVE_HOSTED_MODEL_EXCEPTIONS:
+            return True
+    return (provider_slug, model_id) in OPERATOR_HELD_PROVIDER_MODELS
 
 
 def provider_model_requires_exact_global_settlement(

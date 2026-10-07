@@ -56,7 +56,9 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
 EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
-_CANARY_QUARANTINE_REASONS = frozenset({"provider-canary-failed", "upstream-usage-unavailable"})
+_CANARY_QUARANTINE_REASONS = frozenset({
+    "provider-canary-failed", "upstream-usage-unavailable", "upstream-output-limit-unenforced",
+})
 
 
 def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:

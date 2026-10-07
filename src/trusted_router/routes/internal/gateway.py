@@ -16,6 +16,7 @@ import functools
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -23,6 +24,7 @@ from collections import OrderedDict
 from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache
+from itertools import product
 from time import perf_counter
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -791,6 +793,7 @@ def _authorize_gateway_sync_impl(
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
     require_internal_gateway(request, settings)
+    video_allowed_providers = _video_allowed_providers_header(request, body.route_type, validate_catalog=False)
     if body.video_resolution is not None and (
         body.route_type != "videos" or body.video_resolution not in {"480p", "720p", "1080p"}
     ):
@@ -866,18 +869,6 @@ def _authorize_gateway_sync_impl(
     )
     if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
-    body_dict = body.model_dump(exclude_none=True)
-    # The invocation nonce distinguishes enclave invocations, not logical
-    # idempotency. A fresh invocation with the same public idempotency key must
-    # replay the original nonce rather than mismatch the stored fingerprint.
-    body_dict.pop("invocation_nonce", None)
-    # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
-    # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
-    if not body.additional_cost_reservation_microdollars:
-        body_dict.pop("additional_cost_reservation_microdollars", None)
-    if not body.inference_receipt:
-        # Keep pre-receipt idempotency fingerprints stable for ordinary calls.
-        body_dict.pop("inference_receipt", None)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)
@@ -888,115 +879,118 @@ def _authorize_gateway_sync_impl(
         # requests intentionally expose a smaller public schema than chat and
         # cannot carry metadata.trustedrouter_synthetic themselves.
         effective_tags = {**effective_tags, "purpose": "synthetic_monitoring"}
-    try:
-        attribution = validate_request_attribution(
-            user=body.user,
-            session_id=body.session_id,
-            trace=body.trace,
-            app=body.app,
-            http_referer=body.http_referer,
-            app_categories=body.app_categories,
-        )
-    except InvalidAttribution as exc:
-        raise api_error(400, str(exc), ErrorType.INVALID_REQUEST_METADATA) from exc
-    for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
-        body_dict.pop(key, None)
-    body_dict.update(attribution.body_fields())
+    body_dict, attribution = _gateway_authorize_body(body)
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
-    # Every guard below keys on the model id as a STRING, and routing rewrites
-    # that string before it resolves a model (variant suffix, alias, dated
-    # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
-    # guard and routed as the model anyway: no decide-only rule, no host chain,
-    # and a response naming the backing model. A pinned model is accepted under
-    # its exact id only. Stated as "routing resolved it from something else",
-    # not as a list of spellings: the first version of this guard listed the
-    # variant suffixes and missed the dated one.
-    for raw_model_id in (requested_model_id, *(body.models or [])):
-        catalog_id = canonical_model_id(raw_model_id)
-        if catalog_id == raw_model_id:
-            continue
-        catalog_model = MODELS.get(catalog_id)
-        if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or catalog_id == POLYPHEMUS_MODEL_ID or (
-            catalog_model is not None and catalog_model.supports_decide
-        ):
-            raise api_error(
-                400,
-                f"{catalog_id} must be requested by its exact id, "
-                "without a routing variant or dated suffix",
-                ErrorType.BAD_REQUEST,
-            )
-    if body.models and any(
-        canonical_model_id(model_id) == POLYPHEMUS_MODEL_ID
-        for model_id in (requested_model_id, *body.models)
-    ):
-        raise api_error(400, "Polyphemus cannot be used with models fallback arrays", ErrorType.BAD_REQUEST)
-    private_proxy_ids = {
-        model_id
-        for model_id in (requested_model_id, *(body.models or []))
-        if model_id in PRIVATE_PROXY_MODEL_TARGETS
-    }
-    if private_proxy_ids and body.models:
-        raise api_error(
-            400,
-            "Private proxy models cannot be combined with models fallback arrays",
-            ErrorType.BAD_REQUEST,
-        )
-    if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
-        raise api_error(
-            400,
-            "Custom models cannot be used with models fallback arrays in v1",
-            ErrorType.BAD_REQUEST,
-        )
+    # Only catalog video requests defer live preparation for early replay.
+    # Classify the request string, never mutable model/catalog state.
+    catalog_video_request = body.route_type == "videos" and not (
+        is_custom_model_id(requested_model_id)
+        or is_user_provided_model_id(requested_model_id)
+    )
     custom_model = None
     user_model = None
-    if is_custom_model_id(requested_model_id):
-        normalized = normalize_custom_model_id(requested_model_id)
-        custom_model = STORE.get_custom_model(normalized)
-        if custom_model is None or not custom_model.enabled:
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        body_dict["model"] = custom_model.base_model_id
-        body_dict.pop("models", None)
-        body_dict["custom_model_id"] = custom_model.id
-        body_dict["custom_model_revision"] = custom_model.revision
-        _force_custom_model_credit_routes(body_dict)
-    elif is_user_provided_model_id(requested_model_id):
-        normalized = normalize_user_provided_model_id(requested_model_id)
-        user_model = STORE.get_user_model(normalized)
-        if (
-            user_model is None
-            or not user_model.enabled
-            or user_model.status != "active"
-            # Serving is gated until settle/refund exist for these
-            # authorizations; an unreleasable hold is worse than a 404.
-            or not settings.user_models_dispatch_enabled
+    route_model_id = str(body_dict.get("model") or body.model)
+    native_retention_allowed = False
+    def prepare_model() -> None:
+        nonlocal custom_model, user_model
+        # Every guard below keys on the model id as a STRING, and routing rewrites
+        # that string before it resolves a model (variant suffix, alias, dated
+        # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
+        # guard and routed as the model anyway: no decide-only rule, no host chain,
+        # and a response naming the backing model. A pinned model is accepted under
+        # its exact id only. Stated as "routing resolved it from something else",
+        # not as a list of spellings: the first version of this guard listed the
+        # variant suffixes and missed the dated one.
+        for raw_model_id in (requested_model_id, *(body.models or [])):
+            catalog_id = canonical_model_id(raw_model_id)
+            if catalog_id == raw_model_id:
+                continue
+            catalog_model = MODELS.get(catalog_id)
+            if catalog_id in PRIVATE_PROXY_MODEL_TARGETS or catalog_id == POLYPHEMUS_MODEL_ID or (
+                catalog_model is not None and catalog_model.supports_decide
+            ):
+                raise api_error(
+                    400,
+                    f"{catalog_id} must be requested by its exact id, "
+                    "without a routing variant or dated suffix",
+                    ErrorType.BAD_REQUEST,
+                )
+        if body.models and any(
+            canonical_model_id(model_id) == POLYPHEMUS_MODEL_ID
+            for model_id in (requested_model_id, *body.models)
         ):
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
-            # The billing-path 5xx alert counts this 503; without a line the
-            # request log alone cannot tell it from storage contention.
-            logger.warning(
-                "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
-                "user_model_id=%s kind=%s",
-                workspace.id,
-                getattr(request.state, "request_id", None),
-                _log_value(user_model.id),
-                _log_value(user_model.kind),
-            )
+            raise api_error(400, "Polyphemus cannot be used with models fallback arrays", ErrorType.BAD_REQUEST)
+        private_proxy_ids = {
+            model_id
+            for model_id in (requested_model_id, *(body.models or []))
+            if model_id in PRIVATE_PROXY_MODEL_TARGETS
+        }
+        if private_proxy_ids and body.models:
             raise api_error(
-                503,
-                f"User-provided {user_model.kind} model {user_model.id} is off the clock",
-                ErrorType.MODEL_OFF_THE_CLOCK,
+                400,
+                "Private proxy models cannot be combined with models fallback arrays",
+                ErrorType.BAD_REQUEST,
             )
-        # Same fingerprint discipline as prompt wrappers: a same-key retry
-        # after a material edit must 409, not replay stale frozen prices.
-        body_dict.pop("models", None)
-        body_dict["custom_model_id"] = user_model.id
-        body_dict["custom_model_revision"] = user_model.revision
-        _force_custom_model_credit_routes(
-            body_dict,
-            error_message="User-provided models do not support BYOK routes",
-        )
+        if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
+            raise api_error(
+                400,
+                "Custom models cannot be used with models fallback arrays in v1",
+                ErrorType.BAD_REQUEST,
+            )
+        custom_model = None
+        user_model = None
+        if is_custom_model_id(requested_model_id):
+            normalized = normalize_custom_model_id(requested_model_id)
+            custom_model = STORE.get_custom_model(normalized)
+            if custom_model is None or not custom_model.enabled:
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            body_dict["model"] = custom_model.base_model_id
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = custom_model.id
+            body_dict["custom_model_revision"] = custom_model.revision
+            _force_custom_model_credit_routes(body_dict)
+        elif is_user_provided_model_id(requested_model_id):
+            normalized = normalize_user_provided_model_id(requested_model_id)
+            user_model = STORE.get_user_model(normalized)
+            if (
+                user_model is None
+                or not user_model.enabled
+                or user_model.status != "active"
+                # Serving is gated until settle/refund exist for these
+                # authorizations; an unreleasable hold is worse than a 404.
+                or not settings.user_models_dispatch_enabled
+            ):
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
+                # The billing-path 5xx alert counts this 503; without a line the
+                # request log alone cannot tell it from storage contention.
+                logger.warning(
+                    "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
+                    "user_model_id=%s kind=%s",
+                    workspace.id,
+                    getattr(request.state, "request_id", None),
+                    _log_value(user_model.id),
+                    _log_value(user_model.kind),
+                )
+                raise api_error(
+                    503,
+                    f"User-provided {user_model.kind} model {user_model.id} is off the clock",
+                    ErrorType.MODEL_OFF_THE_CLOCK,
+                )
+            # Same fingerprint discipline as prompt wrappers: a same-key retry
+            # after a material edit must 409, not replay stale frozen prices.
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = user_model.id
+            body_dict["custom_model_revision"] = user_model.revision
+            _force_custom_model_credit_routes(
+                body_dict,
+                error_message="User-provided models do not support BYOK routes",
+            )
+
+    # Preserve main's validation order for non-video and creator-model requests.
+    if not catalog_video_request:
+        prepare_model()
     presented_idempotency_key = _gateway_idempotency_key(request, body)
     request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
@@ -1005,34 +999,186 @@ def _authorize_gateway_sync_impl(
         route_type=body.route_type,
         idempotency_key=request_idempotency_key,
     )
-    if partner_mode is not None:
-        _force_partner_credit_routes(body_dict)
-    native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
-    # Embedding-only models can't go through the chat resolver (it
-    # rejects supports_chat=False). Route them to the embeddings
-    # resolver so the attested enclave can authorize + bill an
-    # embeddings call exactly like a chat one.
-    route_model_id = str(body_dict.get("model") or body.model)
-    if route_model_id == POLYPHEMUS_MODEL_ID:
-        if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE or custom_model is not None:
+
+    def prepare_live_routing() -> None:
+        nonlocal route_model_id, native_retention_allowed
+        if catalog_video_request:
+            prepare_model()
+        if partner_mode is not None:
+            _force_partner_credit_routes(body_dict)
+        native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
+        # Embedding-only models can't go through the chat resolver (it
+        # rejects supports_chat=False). Route them to the embeddings
+        # resolver so the attested enclave can authorize + bill an
+        # embeddings call exactly like a chat one.
+        route_model_id = str(body_dict.get("model") or body.model)
+        if route_model_id == POLYPHEMUS_MODEL_ID:
+            if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE or custom_model is not None:
+                raise api_error(
+                    400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
+                )
+            provider_options = body_dict.get("provider") or {}
+            if isinstance(provider_options, dict) and provider_options.get("data_collection") == "deny":
+                raise api_error(400, "Polyphemus does not support no-retention requests", ErrorType.BAD_REQUEST)
+        elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
+            raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
+        if body.additional_cost_reservation_microdollars and (
+            _is_web_search_restricted_model(route_model_id)
+            or _is_web_search_restricted_provider(body_dict.get("provider"))
+        ):
             raise api_error(
-                400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
+                400,
+                "web_search is not available for this privacy tier",
+                ErrorType.BAD_REQUEST,
             )
-        provider_options = body_dict.get("provider") or {}
-        if isinstance(provider_options, dict) and provider_options.get("data_collection") == "deny":
-            raise api_error(400, "Polyphemus does not support no-retention requests", ErrorType.BAD_REQUEST)
-    elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
-        raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
-    if body.additional_cost_reservation_microdollars and (
-        _is_web_search_restricted_model(route_model_id)
-        or _is_web_search_restricted_provider(body_dict.get("provider"))
-    ):
-        raise api_error(
-            400,
-            "web_search is not available for this privacy tier",
-            ErrorType.BAD_REQUEST,
-        )
+
+    if not catalog_video_request:
+        prepare_live_routing()
     region = choose_region(settings, body.region or None)
+    is_video_request = body.route_type == "videos"
+    is_image_request = body.route_type == "images"
+    def prepare_fingerprint() -> tuple[dict[str, Any], str]:
+        fingerprint_body = dict(body_dict)
+        if is_video_request or is_image_request:
+            # Provider quotes can change between retries. The enclave supplies a
+            # keyed content fingerprint, so media idempotency binds to the logical
+            # request without storing content or coupling replay to a fresh quote.
+            fingerprint_body.pop("additional_cost_reservation_microdollars", None)
+        # Preserve the pre-tagging router's distinction between an absent tags
+        # field and an explicitly supplied empty object. That lets an idempotent
+        # retry carrying tags={} replay an authorization created before rollout.
+        if body.tags is not None:
+            fingerprint_body["tags"] = request_tags
+        else:
+            fingerprint_body.pop("tags", None)
+        body_dict["tags"] = effective_tags
+        request_fingerprint = _gateway_authorize_fingerprint(
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            body=fingerprint_body,
+            idempotency_key=request_idempotency_key,
+        )
+        return fingerprint_body, request_fingerprint
+
+    if catalog_video_request:
+        fingerprint_body, request_fingerprint = prepare_fingerprint()
+
+    def _replay_response(
+        existing_authorization: Any,
+        fallback: list[tuple[Model, ModelEndpoint]] | None = None,
+    ) -> dict[str, Any]:
+        gateway_timing_phase("post_commit_ms")
+        if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
+            # The selector has no upstream idempotency contract. Never repeat
+            # selection (including concurrent replays) on an existing hold.
+            raise api_error(409, "Polyphemus request already admitted; use a new idempotency key for a new request", ErrorType.BAD_REQUEST)
+        # Build the replay response from the STORED authorization (NOT current
+        # routing), so a replay across catalog/pricing/BYOK drift advertises
+        # the endpoint that was actually authorized (codex 3e route review #1).
+        existing_candidates = _authorization_endpoint_candidates(
+            existing_authorization,
+            fallback or [],
+            privacy_requirements=(
+                frozenset() if catalog_video_request
+                else _required_privacy_postures(effective_route_preferences)
+            ),
+            video_replay=catalog_video_request,
+        )
+        byok_configs = _byok_configs_for_candidates(
+            existing_candidates, workspace.id, folded_rows=folded_byok,
+        )
+        broadcast_destinations = [
+            payload
+            for destination in _broadcast_destinations_for_authorize(workspace.id)
+            if (payload := gateway_destination_payload(destination)) is not None
+        ]
+        existing_model, existing_endpoint = existing_candidates[0]
+        existing_usage_type = UsageType.for_endpoint(existing_endpoint)
+        byok_config = (
+            _get_byok_provider(workspace.id, existing_endpoint.provider, byok_configs)
+            if existing_usage_type.is_byok()
+            else None
+        )
+        return _gateway_authorize_response(
+            authorization=existing_authorization,
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            model=existing_model,
+            endpoint=existing_endpoint,
+            requested_model_id=requested_model_id,
+            model_usage_type=existing_usage_type,
+            limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
+            estimate=existing_authorization.estimated_microdollars,
+            credit_reservation_id=existing_authorization.credit_reservation_id,
+            byok_config=byok_config,
+            byok_configs=byok_configs,
+            region=existing_authorization.region or region,
+            settings=settings,
+            broadcast_destinations=broadcast_destinations,
+            endpoint_candidates=existing_candidates,
+            idempotent_replay=True,
+            custom_model=custom_model,
+            stage_d_reason_override="replayed",
+            async_request=request, async_body=body,
+            async_federated=bool(workspace.federated_home or api_key.federated_home),
+            # Replays never re-freeze prices; pricing_effective_at is assigned later.
+            async_effective_at=None,
+        )
+
+    _typed_store = typed_billing_store(STORE)
+
+    def _lookup_replay(
+        fallback: list[tuple[Model, ModelEndpoint]] | None = None,
+    ) -> dict[str, Any] | None:
+        from trusted_router.storage_legacy_trust import BillingPausedError
+        try:
+            existing_authorization = (
+                _typed_store.get_typed_authorization_by_idempotency(
+                    workspace.id, api_key.hash, request_idempotency_key,
+                )
+                if _typed_store is not None
+                else STORE.get_gateway_authorization_by_idempotency_key(
+                    workspace.id, api_key.hash, request_idempotency_key,
+                )
+            )
+        except BillingPausedError as exc:
+            if settings.speculative_provider_shadow_enabled:
+                with speculation_shadow.isolate("reason"):
+                    speculation_shadow.reason("billing_paused")
+            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
+
+        if existing_authorization is not None:
+            if (
+                existing_authorization.idempotency_fingerprint != request_fingerprint
+                and not _video_cross_region_replay_matches(
+                    existing_authorization, workspace.id, api_key.hash,
+                    fingerprint_body, request_idempotency_key,
+                )
+            ):
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(existing_authorization, fallback)
+        return None
+
+    early_video_replay = catalog_video_request and (
+        body.video_resolution is not None
+        or bool(presented_idempotency_key and body.request_fingerprint)
+    )
+    if early_video_replay:
+        # Recover frozen video terms before live catalog filtering can reject
+        # a retry. This indexed read never reserves funds: the transaction below
+        # still arbitrates concurrent first requests atomically after a miss.
+        replay = _lookup_replay()
+        if replay is not None:
+            return replay
+
+    video_allowed_providers = _video_allowed_providers_header(request, body.route_type)
+    if catalog_video_request:
+        prepare_live_routing()
+
     normalized_routing = normalize_routing_inputs(
         body_dict,
         settings,
@@ -1040,8 +1186,6 @@ def _authorize_gateway_sync_impl(
     )
     route_preferences = normalized_routing.preferences
     requested_model = MODELS.get(route_model_id) if route_model_id else None
-    is_video_request = body.route_type == "videos"
-    is_image_request = body.route_type == "images"
     is_embeddings_request = (
         requested_model is not None
         and requested_model.supports_embeddings
@@ -1092,126 +1236,15 @@ def _authorize_gateway_sync_impl(
                 ErrorType.BAD_REQUEST,
             )
     effective_route_preferences = route_preferences
-    fingerprint_body = dict(body_dict)
-    if is_video_request or is_image_request:
-        # Provider quotes can change between retries. The enclave supplies a
-        # keyed content fingerprint, so media idempotency binds to the logical
-        # request without storing content or coupling replay to a fresh quote.
-        fingerprint_body.pop("additional_cost_reservation_microdollars", None)
-    # Preserve the pre-tagging router's distinction between an absent tags
-    # field and an explicitly supplied empty object. That lets an idempotent
-    # retry carrying tags={} replay an authorization created before rollout.
-    if body.tags is not None:
-        fingerprint_body["tags"] = request_tags
-    else:
-        fingerprint_body.pop("tags", None)
-    body_dict["tags"] = effective_tags
-    request_fingerprint = _gateway_authorize_fingerprint(
-        workspace_id=workspace.id,
-        key_hash=api_key.hash,
-        body=fingerprint_body,
-        idempotency_key=request_idempotency_key,
-    )
-
-    def _replay_response(
-        existing_authorization: Any,
-        fallback: list[tuple[Model, ModelEndpoint]] | None = None,
-    ) -> dict[str, Any]:
-        gateway_timing_phase("post_commit_ms")
-        if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
-            # The selector has no upstream idempotency contract. Never repeat
-            # selection (including concurrent replays) on an existing hold.
-            raise api_error(409, "Polyphemus request already admitted; use a new idempotency key for a new request", ErrorType.BAD_REQUEST)
-        # Build the replay response from the STORED authorization (NOT current
-        # routing), so a replay across catalog/pricing/BYOK drift advertises
-        # the endpoint that was actually authorized (codex 3e route review #1).
-        existing_candidates = _authorization_endpoint_candidates(
-            existing_authorization,
-            fallback or [],
-            privacy_requirements=_required_privacy_postures(effective_route_preferences),
-        )
-        byok_configs = _byok_configs_for_candidates(
-            existing_candidates, workspace.id, folded_rows=folded_byok,
-        )
-        broadcast_destinations = [
-            payload
-            for destination in _broadcast_destinations_for_authorize(workspace.id)
-            if (payload := gateway_destination_payload(destination)) is not None
-        ]
-        existing_model, existing_endpoint = existing_candidates[0]
-        existing_usage_type = UsageType.for_endpoint(existing_endpoint)
-        byok_config = (
-            _get_byok_provider(workspace.id, existing_endpoint.provider, byok_configs)
-            if existing_usage_type.is_byok()
-            else None
-        )
-        return _gateway_authorize_response(
-            authorization=existing_authorization,
-            workspace_id=workspace.id,
-            key_hash=api_key.hash,
-            model=existing_model,
-            endpoint=existing_endpoint,
-            requested_model_id=requested_model_id,
-            model_usage_type=existing_usage_type,
-            limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
-            estimate=existing_authorization.estimated_microdollars,
-            credit_reservation_id=existing_authorization.credit_reservation_id,
-            byok_config=byok_config,
-            byok_configs=byok_configs,
-            region=existing_authorization.region or region,
-            settings=settings,
-            broadcast_destinations=broadcast_destinations,
-            endpoint_candidates=existing_candidates,
-            idempotent_replay=True,
-            custom_model=custom_model,
-            stage_d_reason_override="replayed",
-        )
-
-    _typed_store = typed_billing_store(STORE)
-
-    def _lookup_replay(
-        fallback: list[tuple[Model, ModelEndpoint]] | None = None,
-    ) -> dict[str, Any] | None:
-        from trusted_router.storage_legacy_trust import BillingPausedError
-        try:
-            existing_authorization = (
-                _typed_store.get_typed_authorization_by_idempotency(
-                    workspace.id, api_key.hash, request_idempotency_key,
-                )
-                if _typed_store is not None
-                else STORE.get_gateway_authorization_by_idempotency_key(
-                    workspace.id, api_key.hash, request_idempotency_key,
-                )
-            )
-        except BillingPausedError as exc:
-            if settings.speculative_provider_shadow_enabled:
-                with speculation_shadow.isolate("reason"):
-                    speculation_shadow.reason("billing_paused")
-            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
-
-        if existing_authorization is not None:
-            if (
-                existing_authorization.idempotency_fingerprint != request_fingerprint
-                and not _video_cross_region_replay_matches(
-                    existing_authorization, workspace.id, api_key.hash,
-                    fingerprint_body, request_idempotency_key,
-                )
-            ):
-                raise api_error(
-                    409,
-                    "Idempotency key was already used for a different gateway request",
-                    ErrorType.CONFLICT,
-                )
-            return _replay_response(existing_authorization, fallback)
-        return None
-
-    if body.video_resolution is not None:
-        # Recover frozen video terms before live catalog filtering can reject
-        # a retry. This indexed read never reserves funds: the transaction below
-        # still arbitrates concurrent first requests atomically after a miss.
-        replay = _lookup_replay()
-        if replay is not None:
-            return replay
+    if not catalog_video_request:
+        # Main prepares and validates creator models before fingerprinting.
+        # Its resolution-triggered replay still precedes live routing and any
+        # user-model slot acquisition; only catalog requests replay earlier.
+        fingerprint_body, request_fingerprint = prepare_fingerprint()
+        if body.video_resolution is not None:
+            replay = _lookup_replay()
+            if replay is not None:
+                return replay
 
     # The authorization's one clock reading. The estimate, the pricing
     # snapshot and the stored created_at all use it, and settlement prices a
@@ -1224,6 +1257,13 @@ def _authorize_gateway_sync_impl(
             raise api_error(
                 400,
                 "User-provided models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        if video_allowed_providers is not None:
+            # Owner-dispatch sentinels bypass catalog candidate construction;
+            # they cannot satisfy an enclave video capability constraint.
+            raise api_error(
+                400, "Video provider constraints require catalog video routes",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         if _required_privacy_postures(route_preferences):
@@ -1241,6 +1281,7 @@ def _authorize_gateway_sync_impl(
             defer_no_fallback_selection=True,
             video_resolution=body.video_resolution,
             pricing_effective_at=pricing_effective_at,
+            allowed_providers=video_allowed_providers,
         )
     elif is_image_request:
         if custom_model is not None:
@@ -1472,7 +1513,7 @@ def _authorize_gateway_sync_impl(
         requested_model_id=requested_model_id,
         endpoint=endpoint,
     )
-    if _typed_store is None and body.video_resolution is None:
+    if _typed_store is None and (catalog_video_request or body.video_resolution is None):
         replay = _lookup_replay(endpoint_candidates)
         if replay is not None:
             return replay
@@ -2003,6 +2044,9 @@ def _authorize_gateway_sync_impl(
         idempotent_replay=idempotent_replay,
         custom_model=custom_model,
         stage_d_reason_override=stage_d_reason,
+        async_request=request, async_body=body,
+        async_federated=bool(workspace.federated_home or api_key.federated_home),
+        async_effective_at=pricing_effective_at,
     )
 
 
@@ -2247,6 +2291,11 @@ def register(router: APIRouter) -> None:
             settings,
         )
 
+    from trusted_router.routes.settlements import AsyncSettlementRoute
+
+    legacy_route_class = router.route_class
+    router.route_class = AsyncSettlementRoute
+
     @router.post("/internal/gateway/settle", responses={200: {"model": GatewaySettleResponse}})
     async def gateway_settle(
         request: Request,
@@ -2272,6 +2321,8 @@ def register(router: APIRouter) -> None:
             background_tasks=background_tasks,
         )
 
+    router.route_class = legacy_route_class
+
     @router.post("/internal/gateway/settle-outbox/drain")
     async def gateway_settle_outbox_drain(
         request: Request,
@@ -2283,6 +2334,7 @@ def register(router: APIRouter) -> None:
             drain_settle_outbox,
             limit,
             reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled,
+            **({"settings": settings} if settings.settle_outbox_fast_drain_enabled else {}),
         )
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.
@@ -2405,12 +2457,71 @@ def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) ->
     return key
 
 
+def _video_allowed_providers_header(
+    request: Request, route_type: str | None, *, validate_catalog: bool = True,
+) -> frozenset[str] | None:
+    """Parse enclave-derived execution constraints without changing request identity."""
+    values = request.headers.getlist("X-Quill-Video-Allowed-Providers")
+    if not values:
+        return None
+    if route_type != "videos" or len(values) != 1 or len(values[0]) > 4096:
+        raise api_error(400, "Invalid X-Quill-Video-Allowed-Providers header", ErrorType.BAD_REQUEST)
+    providers = [value.strip(" \t") for value in values[0].split(",")]
+    if (
+        not 1 <= len(providers) <= 64
+        or len(set(providers)) != len(providers)
+        or any(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", provider) is None
+               or (validate_catalog and provider not in PROVIDERS) for provider in providers)
+    ):
+        raise api_error(400, "Invalid X-Quill-Video-Allowed-Providers header", ErrorType.BAD_REQUEST)
+    return frozenset(providers)
+
+
+def _gateway_authorize_body(body: GatewayAuthorizeRequest) -> tuple[dict[str, Any], Any]:
+    """Canonical request metadata shared by authorization and replay lookup."""
+    body_dict = body.model_dump(exclude_none=True)
+    # The invocation nonce distinguishes enclave invocations, not logical
+    # idempotency. A fresh invocation with the same public idempotency key must
+    # replay the original nonce rather than mismatch the stored fingerprint.
+    body_dict.pop("invocation_nonce", None)
+    # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
+    # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
+    if not body.additional_cost_reservation_microdollars:
+        body_dict.pop("additional_cost_reservation_microdollars", None)
+    if not body.inference_receipt:
+        # Keep pre-receipt idempotency fingerprints stable for ordinary calls.
+        body_dict.pop("inference_receipt", None)
+    try:
+        if body.tags is not None:
+            body_dict["tags"] = validate_tags(body.tags)
+        else:
+            body_dict.pop("tags", None)
+    except InvalidTags as exc:
+        raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+    try:
+        attribution = validate_request_attribution(
+            user=body.user,
+            session_id=body.session_id,
+            trace=body.trace,
+            app=body.app,
+            http_referer=body.http_referer,
+            app_categories=body.app_categories,
+        )
+    except InvalidAttribution as exc:
+        raise api_error(400, str(exc), ErrorType.INVALID_REQUEST_METADATA) from exc
+    for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
+        body_dict.pop(key, None)
+    body_dict.update(attribution.body_fields())
+    return body_dict, attribution
+
+
 def _gateway_authorize_fingerprint(
     *,
     workspace_id: str,
     key_hash: str,
     body: dict[str, Any],
     idempotency_key: str | None = None,
+    legacy_video: bool = False,
 ) -> str:
     # Standard idempotency semantics: the key can replay the same logical
     # request, but a caller cannot reuse it for a different request body.
@@ -2427,6 +2538,14 @@ def _gateway_authorize_fingerprint(
             "spend_lease_admission",
         }
     }
+    if body.get("route_type") == "videos" and not legacy_video:
+        # The enclave HMAC binds the logical request. These values describe
+        # execution and can change when eligible providers change on rollout.
+        for dynamic_key in (
+            "video_resolution", "max_tokens", "max_output_tokens", "max_completion_tokens",
+            "additional_cost_reservation_microdollars", "region",
+        ):
+            material.pop(dynamic_key, None)
     if _is_native_batch_idempotency_key(idempotency_key):
         # One encrypted Batch object is claimed across regions and rolling
         # enclave revisions. These fields are gateway estimates or execution
@@ -2450,9 +2569,10 @@ def _video_cross_region_replay_matches(
 ) -> bool:
     """Recover a video's original hold without changing persisted fingerprints.
 
-    Video content/options are HMAC-bound by the enclave. Its execution region
-    can change on retry; caller provider/region restrictions remain in the body.
-    No other field is relaxed, and ordinary text/image requests are unchanged.
+    Video content/options are HMAC-bound by the enclave. Execution region,
+    resolution, token limits and quotes may change; caller policy stays bound.
+    Legacy hashes are checked exactly against reconstructed execution values,
+    never accepted merely because the stored model or caller scope matches.
     """
     if (
         authorization is None
@@ -2464,20 +2584,47 @@ def _video_cross_region_replay_matches(
         or authorization.idempotency_key != idempotency_key
     ):
         return False
-    original = {**body, "region": authorization.region}
-    if authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
-        workspace_id=workspace_id, key_hash=key_hash,
-        body=original, idempotency_key=idempotency_key,
-    ):
-        return True
-    # Older/internal callers may have omitted the region and used the default.
-    original.pop("region")
-    return bool(authorization.idempotency_fingerprint) and (
-        authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
+    def matches(candidate: dict[str, Any], *, legacy: bool = False) -> bool:
+        return authorization.idempotency_fingerprint == _gateway_authorize_fingerprint(
             workspace_id=workspace_id, key_hash=key_hash,
-            body=original, idempotency_key=idempotency_key,
+            body=candidate, idempotency_key=idempotency_key, legacy_video=legacy,
         )
-    )
+
+    original = {**body, "region": authorization.region}
+    omitted_region = dict(body)
+    omitted_region.pop("region", None)
+    originals = (body, original, omitted_region)
+    if any(matches(candidate) or matches(candidate, legacy=True) for candidate in originals):
+        return True
+
+    snapshot = getattr(authorization, "video_pricing_snapshot", None)
+    try:
+        frozen = json.loads(snapshot) if snapshot else {}
+        # Before token billing, enclaves sent the fixed-price sentinel 1.
+        limit = frozen.get("output_token_limit", 1)
+        resolution = frozen.get("video_tariff_resolution")
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if type(limit) is not int or limit < 1 or resolution not in {None, "480p", "720p", "1080p"}:
+        return False
+    token_fields = ("max_tokens", "max_output_tokens", "max_completion_tokens")
+    # Old enclaves used one or multiple aliases with the same effective limit.
+    # Try absent/frozen/current values per alias to also preserve unchanged
+    # redundant aliases. This bounded comparison covers main and the earlier
+    # resolution-excluding hash without storing or rewriting request content.
+    choices = [tuple(dict.fromkeys((None, limit, body.get(field)))) for field in token_fields]
+    for candidate in originals:
+        for values in product(*choices):
+            legacy_body = {k: v for k, v in candidate.items() if k not in token_fields}
+            legacy_body.pop("additional_cost_reservation_microdollars", None)
+            legacy_body.update({k: v for k, v in zip(token_fields, values, strict=True) if v is not None})
+            for old_resolution in (None, resolution):
+                legacy_body.pop("video_resolution", None)
+                if old_resolution is not None:
+                    legacy_body["video_resolution"] = old_resolution
+                if matches(legacy_body, legacy=True):
+                    return True
+    return False
 
 
 def _new_gateway_authorization_id() -> str:
@@ -2490,6 +2637,7 @@ def _authorization_endpoint_candidates(
     fallback: list[tuple[Model, ModelEndpoint]],
     *,
     privacy_requirements: frozenset[int] = frozenset(),
+    video_replay: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     user_model_pair = _authorized_user_model_pair(authorization)
     if user_model_pair is not None:
@@ -2501,6 +2649,24 @@ def _authorization_endpoint_candidates(
     privacy_excluded = False
     for endpoint_id in endpoint_ids:
         endpoint = _endpoint_for_id_compat(endpoint_id)
+        if video_replay:
+            # Recovery grants no dispatch authority. A catalog removal or
+            # changed privacy posture cannot hide the stored job/hold. Rebuild
+            # identifiers from the frozen route ID when its catalog row is gone;
+            # no current candidate or tariff may be substituted for that route.
+            if endpoint is None:
+                model_id, _, provider_usage = endpoint_id.rpartition("@")
+                provider, _, usage = provider_usage.partition("/")
+                endpoint = ModelEndpoint(
+                    id=endpoint_id, model_id=model_id, provider=provider,
+                    usage_type="BYOK" if usage == "byok" else "Credits",
+                )
+            replay_model = MODELS.get(endpoint.model_id) or Model(
+                id=endpoint.model_id, name=endpoint.model_id,
+                provider=endpoint.provider, context_length=0, supports_video=True,
+            )
+            candidates.append((replay_model, endpoint))
+            continue
         if endpoint is None:
             continue
         # A replay never restores a route the request's privacy floor now
@@ -2576,6 +2742,10 @@ def _gateway_authorize_response(
     idempotent_replay: bool,
     custom_model: Any | None,
     stage_d_reason_override: str | None = None,
+    async_request: Request | None = None,
+    async_body: GatewayAuthorizeRequest | None = None,
+    async_federated: bool = False,
+    async_effective_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
     """Compose the authorization response with a prospective generation identity.
 
@@ -2603,6 +2773,16 @@ def _gateway_authorize_response(
         parse_pricing_snapshot(authorization.video_pricing_snapshot).get("video_tariff_resolution")
         if authorization.video_pricing_snapshot else None
     )
+    async_additions: dict[str, Any] = {}
+    if async_request is not None and async_request.headers.getlist("X-TR-Settlement-Mode") == ["async-v1"]:
+        from trusted_router.services.async_settle import authorize_additions
+        async_store = typed_billing_store(STORE)
+        async_additions = authorize_additions(
+            request=async_request, body=async_body, authorization=authorization,
+            endpoints=[e for _, e in endpoint_candidates], settings=settings,
+            typed=async_store is not None and getattr(async_store, "request_record_write_mode", "legacy") == "typed",
+            federated=async_federated, replay=idempotent_replay, effective_at=async_effective_at,
+        )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -2613,7 +2793,7 @@ def _gateway_authorize_response(
             "upstream_model": upstream_model,
             "endpoint_id": endpoint.id,
             "provider": endpoint.provider,
-            "provider_name": PROVIDERS[endpoint.provider].name,
+            "provider_name": (PROVIDERS[endpoint.provider].name if endpoint.provider in PROVIDERS else endpoint.provider),
             "inference_location": inference_location_metadata(endpoint.provider, model.id),
             **provider_payload,
             "requested_model": requested_model_id,
@@ -2646,6 +2826,7 @@ def _gateway_authorize_response(
             **({"video_token_billing": True} if authorization.video_pricing_snapshot else {}),
             **({"video_tariff_resolution": video_resolution} if video_resolution is not None else {}),
             **stage_d,
+            **async_additions,
             "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None
@@ -3842,6 +4023,16 @@ def _settle_gateway_authorization(
                         authorization.id,
                         exc_info=True,
                     )
+            if settings.async_settle_protection and durable_intent is not None and durable_intent.async_version == 1:
+                from trusted_router.services.async_settle_handler import finish
+
+                # A concurrent async INSERT won. Discard all newly priced inputs.
+                # Frozen apply uses the ordinary finalize and the original amount.
+                finish(durable_intent, settle_outbox)
+                winner = STORE.get_gateway_authorization(authorization.id)
+                if winner is None or not winner.settled:
+                    raise api_error(503, "Settlement is pending", ErrorType.SERVICE_UNAVAILABLE)
+                return {"data": _already_settled_gateway_data(winner)}
             if refill_required:
                 # A matching fresh INSERT already committed the attachment.
                 # Pre-cutover combined rows have no refill columns. Attaching is
@@ -4039,6 +4230,20 @@ def _settle_gateway_authorization(
             raise
         if refreshed.settled:
             return {"data": _already_settled_gateway_data(refreshed)}
+        if settings.async_settle_protection and getattr(STORE, "_database", None) is not None:
+            # The atomic async fence can reject a rolling synchronous writer
+            # while the reservation remains open. Resolve its frozen winner,
+            # including when the ordinary outbox feature flag has rolled back.
+            from trusted_router.services.async_settle_handler import finish
+
+            existing_outbox = spanner_settle_outbox()
+            for existing_kind in (intent_kind, "refund" if success else "settle"):
+                existing_intent = existing_outbox.get(authorization.id, existing_kind)
+                if existing_intent is not None and existing_intent.async_version == 1:
+                    finish(existing_intent, existing_outbox)
+                    winner = STORE.get_gateway_authorization(authorization.id)
+                    if winner is not None and winner.settled:
+                        return {"data": _already_settled_gateway_data(winner)}
         if outbox_enqueued:
             return {"data": _intent_durable_gateway_data(refreshed, durable_intent)}
         return {"data": _already_settled_gateway_data(refreshed)}
@@ -4600,7 +4805,7 @@ def _gateway_candidate_payload(
         "model": model.id,
         "upstream_model": endpoint.upstream_id or model.id,
         "provider": endpoint.provider,
-        "provider_name": PROVIDERS[endpoint.provider].name,
+        "provider_name": (PROVIDERS[endpoint.provider].name if endpoint.provider in PROVIDERS else endpoint.provider),
         "inference_location": inference_location_metadata(endpoint.provider, model.id),
         **_gateway_provider_route_payload(endpoint),
         "usage_type": usage_type.value,

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import product
 from types import SimpleNamespace
 from typing import Any, get_type_hints
@@ -76,6 +76,36 @@ class Capture:
 
 def builder_cases() -> list[SQLCase]:
     cases = []
+    from trusted_router.storage_gcp_async_admission import admission_statement
+    cases.append(SQLCase("async_admission", [admission_statement("admission-ws")]))
+    from trusted_router.storage_gcp_async_admission import control_statement, unresolved_statement
+    from trusted_router.storage_gcp_settle_outbox import shard_due_statement
+    cases.extend([
+        SQLCase("drain-health-point", [control_statement("fleet-v1")]),
+        SQLCase("drain-health-cadence-point", [control_statement("health-publish-v1")]),
+        SQLCase("drain-health-unresolved", [unresolved_statement()]),
+        SQLCase("drain-shard-due", [shard_due_statement(pt, 0, NOW.isoformat().replace("+00:00", "Z"))]),
+    ])
+    # Exercise generated-column membership for inline done inserts and for
+    # pending rows resolved to done/dead, without changing production INSERTs.
+    for transitioned in (False, True):
+        seed = []
+        for i, status in enumerate(("done", "pending", "dead")):
+            seed.append((
+                "INSERT INTO tr_settle_outbox "
+                "(authorization_id, intent_kind, settle_origin, actual_cost_micro, status, created_at) "
+                "VALUES (@id, 'settle', 'repair', @micro, @status, @created)",
+                {"id": f"sparse-health-{i}", "micro": i + 1,
+                 "status": "pending" if transitioned else status, "created": NOW + timedelta(seconds=i)},
+                {"id": pt.STRING, "micro": pt.INT64, "status": pt.STRING, "created": pt.TIMESTAMP},
+            ))
+            if transitioned:
+                seed.append(("UPDATE tr_settle_outbox SET status=@status WHERE authorization_id=@id "
+                             "AND intent_kind='settle'", {"id": f"sparse-health-{i}", "status": status},
+                             {"id": pt.STRING, "status": pt.STRING}))
+        cases.append(SQLCase(f"drain-health-sparse-{transitioned}", [unresolved_statement()], seed=seed,
+                             expected_rows=[[NOW + timedelta(seconds=1), 2, "pending"],
+                                            [NOW + timedelta(seconds=2), 3, "dead"]]))
     # The DDL column is ARRAY<STRING(32)>, not serialized JSON. Edge strings
     # below are individual causes, so even ['[]'] and [''] are paused.
     from trusted_router.trust_eligibility import billing_paused_row
@@ -150,13 +180,13 @@ def builder_cases() -> list[SQLCase]:
         fields = {field: heartbeat_values[field] if bit else None for field, bit in zip(_AUTHORIZATION_HEARTBEAT_FIELDS, bits, strict=True)}
         seed = gateway_authorization_insert_statement(pt, replace(authorization, **fields), created_at=NOW)
         cases.append(SQLCase("settled-heartbeat-" + "".join(str(int(bit)) for bit in bits), [settled], seed=[seed], expected_counts=[1]))
-    for guarded, expired, deferred in product((False, True), repeat=3):
+    for guarded, expired, deferred, async_fence in product((False, True), repeat=4):
         claim = counters.claim_reservation_statement(
             pt, "acceptance-reservation", actual_micro=1, settled_usage_type="credits",
             terminal_at=NOW, outbox_available=guarded, expires_before=NOW if expired else None,
-            defer_retention=deferred,
+            defer_retention=deferred, async_fence=async_fence,
         )
-        cases.append(SQLCase(f"claim-{guarded}-{expired}-{deferred}", [claim]))
+        cases.append(SQLCase(f"claim-{guarded}-{expired}-{deferred}-{async_fence}", [claim]))
     clear = [gateway_authorization_retention_clear_statement(pt, "acceptance-auth"),
              counters.reservation_retention_clear_statement(pt, "acceptance-reservation")]
     cases.append(SQLCase("enqueue-retention-clear-batch", clear, batch=True))
@@ -272,6 +302,43 @@ def builder_cases() -> list[SQLCase]:
             types = {name: pt.TIMESTAMP if name == "now" else pt.STRING for name in params}
             cases.append(SQLCase("guarded-done-returning", [(_DONE_ROW_SQL, params, types)],
                                  seed=[capture.statements[0]], expected_counts=[1]))
+    from time import monotonic
+    from unittest.mock import patch
+
+    from trusted_router.async_settle_fence import APPLY_PAYLOAD
+    from trusted_router.storage_gcp_async_settle import enqueue as async_enqueue
+    from trusted_router.storage_gcp_settle_outbox import intent_insert_statements
+
+    async_row = SettleOutboxRow(
+        authorization_id="acceptance-auth", intent_kind="settle", settle_origin="typed",
+        actual_cost_micro=1, reservation_id="acceptance-reservation", selected_usage_type="Credits",
+        async_version=1, workspace_id="acceptance-ws", snapshot_hash="a"*64, payload_hash="b"*64,
+    )
+    stamp = NOW.isoformat().replace("+00:00", "Z")
+    cases.append(SQLCase("async-base-builder", intent_insert_statements(
+        pt, async_row, now=stamp, next_attempt_at=stamp,
+    ), batch=True))
+    capture = Capture()
+    database = SimpleNamespace(run_in_transaction=lambda fn, **_kw: fn(capture))
+    with patch("trusted_router.storage_gcp_async_settle._iso_now", return_value=stamp):
+        async_enqueue(SpannerSettleOutbox(database, pt), async_row, monotonic()+.5)
+    cases.append(SQLCase("async-enqueue-batch", capture.statements, batch=True,
+                         seed=[insert_auth, insert_reservation], expected_counts=[1, 0, 0, 1]))
+    for binding, actual, expected_count in [
+        (None, 1, 0), (("b"*64, "settle"), 1, 1), (("b"*64, "settle"), 2, 0),
+        (("c"*64, "settle"), 1, 0), (("c"*64, "refund"), 0, 1),
+    ]:
+        token = APPLY_PAYLOAD.set(binding)
+        try:
+            statement = counters.claim_reservation_statement(
+                pt, "acceptance-reservation", actual_micro=actual, settled_usage_type="Credits",
+                terminal_at=NOW, defer_retention=True, async_fence=True,
+            )
+        finally:
+            APPLY_PAYLOAD.reset(token)
+        cases.append(SQLCase(f"async-claim-fence-{binding}-{actual}", [statement],
+                             seed=[insert_auth, insert_reservation, capture.statements[0]],
+                             expected_counts=[expected_count]))
     for floors in (None, {0: NOW}, {shard: NOW for shard in range(32)}):
         capture = Capture()
         database = SimpleNamespace(snapshot=lambda capture=capture: nullcontext(capture))

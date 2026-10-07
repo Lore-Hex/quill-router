@@ -366,6 +366,13 @@ def operational_analytics_sink_problems(settings: Any) -> list[str]:
 
 
 class Settings(BaseSettings):
+    """Runtime configuration, including independent async admission/protection.
+
+    Safe disable order: turn admission off; wait until no tr_settle_outbox row
+    with async_version=1 is pending/dead (keep draining); then turn protection
+    off. Admission requires protection, including for runtime-mutated settings.
+    """
+
     model_config = SettingsConfigDict(
         env_prefix="TR_",
         env_file=".env",
@@ -887,6 +894,21 @@ class Settings(BaseSettings):
     # Independently provisioned mounted file. Never a receipt/real issuer key.
     speculation_shadow_private_key_file: str = ""
 
+    # Dormant async v1 authorize metadata; activation requires later PR gates.
+    async_settle_enabled: bool = False
+    async_settle_protection: bool = False
+    async_settle_ticket_kid: str = ""
+    async_settle_ticket_issuer: str = ""
+    async_settle_ticket_audience: str = ""
+    # Independently mounted purpose key. Empty by default; rollout.sh NEVER
+    # inherits this path from a previous revision (like the image break-glass).
+    async_settle_ticket_private_key_file: str = ""
+    async_settle_pilot_cap_micro: int = Field(default=0, ge=0)
+    async_settle_ticket_ttl_seconds: int = Field(default=300, ge=1, le=300)
+    # Operator-owned local settlement epoch, NOT the billing pause epoch or
+    # shadow grant generation. Zero means authority has not been provisioned.
+    async_settle_authority_epoch: int = Field(default=0, ge=0)
+
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""
@@ -950,6 +972,13 @@ class Settings(BaseSettings):
     # lost so the reaper never releases a completed request for free. Enabling is
     # a billing prod-behavior change — flip deliberately, per the design's
     # rollout section, after the shadow metrics are clean.
+    settle_outbox_fast_drain_enabled: bool = False
+    settle_outbox_poll_interval_seconds: float = Field(default=300, gt=0, le=300)
+    settle_outbox_health_publish_interval_seconds: float = Field(default=2, gt=0, le=5)
+    settle_outbox_claim_batch: int = Field(default=500, ge=1, le=500)
+    settle_outbox_worker_concurrency: int = Field(default=1, ge=1, le=32)
+    settle_outbox_lease_seconds: int = Field(default=300, ge=2, le=300)
+    settle_outbox_pass_budget_seconds: float = Field(default=240, gt=0, le=240)
     settle_outbox_enabled: bool = False
     # Expand/contract switch for per-request Spanner records. ``legacy`` keeps
     # writing gateway authorizations and generation repair rows to tr_entities
@@ -1252,6 +1281,24 @@ class Settings(BaseSettings):
         if mode not in {"off", "observe", "act"}:
             raise ValueError("TR_REMEDIATOR_MODE must be one of: off, observe, act")
         return mode
+
+    @model_validator(mode="after")
+    def drain_budget_within_lease(self) -> Settings:
+        if (self.settle_outbox_fast_drain_enabled
+                and self.settle_outbox_pass_budget_seconds >= self.settle_outbox_lease_seconds):
+            raise ValueError("fast drain pass budget must be below its lease")
+        return self
+
+    @property
+    def async_settle_admission_enabled(self) -> bool:
+        """Fail closed even when callers mutate settings without validation."""
+        return self.async_settle_enabled and self.async_settle_protection
+
+    @model_validator(mode="after")
+    def async_settle_requires_protection(self) -> Settings:
+        if self.async_settle_enabled and not self.async_settle_protection:
+            raise ValueError("TR_ASYNC_SETTLE_ENABLED requires TR_ASYNC_SETTLE_PROTECTION")
+        return self
 
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:

@@ -86,6 +86,30 @@ def count_spanner_rpcs() -> Iterator[SpannerRpcCounter]:
         _SPANNER_RPC_COUNTER.reset(token)
 
 
+_STRICT_RPC_DEADLINE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "strict_spanner_deadline", default=False,
+)
+
+
+@contextlib.contextmanager
+def spanner_rpc_deadline(deadline: float) -> Iterator[None]:
+    """Absolute completion/handoff deadline, including rollback and retries.
+
+    Async statements reserve cleanup time; cleanup has a bounded 50 ms floor
+    even if a late RPC/scheduler wakeup crosses the deadline. It cannot borrow
+    the legacy two-second floor. A failed rollback never permits transaction reuse.
+    """
+    existing = _SPANNER_RPC_DEADLINE.get()
+    token = _SPANNER_RPC_DEADLINE.set(min(deadline, existing) if existing else deadline)
+    strict = _STRICT_RPC_DEADLINE.set(True)
+    try:
+        remaining_rpc_budget(2.0)
+        yield
+    finally:
+        _STRICT_RPC_DEADLINE.reset(strict)
+        _SPANNER_RPC_DEADLINE.reset(token)
+
+
 def spanner_rpc_budget(max_seconds: float) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Share one Spanner deadline across every transaction in a hot-path call."""
     if max_seconds <= 0:
@@ -400,10 +424,16 @@ def _rollback_discarded_transaction(transaction: Any) -> None:
     rollback = getattr(transaction, "rollback", None)
     if not callable(rollback):
         return
+    # A lost reply leaves SDK rolled_back=False. Share the attempt marker across
+    # the callback wrapper and outer disposer; never grant a second async floor.
+    if _STRICT_RPC_DEADLINE.get():
+        if getattr(transaction, "_tr_async_cleanup_attempted", False):
+            return
+        transaction._tr_async_cleanup_attempted = True
     # Independent floor for the Rollback RPC: the failing statement typically
     # exhausted the shared ContextVar budget, and the bounded RPC wrappers
     # would otherwise raise DeadlineExceeded before the request is even sent.
-    floor = time.monotonic() + _ROLLBACK_FLOOR_SECONDS
+    floor = time.monotonic() + (0.05 if _STRICT_RPC_DEADLINE.get() else _ROLLBACK_FLOOR_SECONDS)
     existing_deadline = _SPANNER_RPC_DEADLINE.get()
     token = None
     if existing_deadline is not None and existing_deadline < floor:

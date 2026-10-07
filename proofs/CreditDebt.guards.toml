@@ -1,0 +1,505 @@
+# Every guard of every action, and what breaks when it alone is removed.
+# Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
+
+inputs_sha256 = "e747376896b4e98a435b4d75a4ed8ed70c278cc7ef8dc039a03cb3fe18273703"
+
+[[guard]]
+action = "Grant"
+text = '''/\ st[l] = "none"'''
+breaks = "AllocationAccounted"
+
+[[guard]]
+action = "Grant"
+text = '''/\ \A t \in Shards : ~mark[t]'''
+breaks = "nothing"
+why = '''
+Rows are marked only while the workspace's signed sum is negative (MarkMeansDebt), and the grant asks that the sum less the lease be at least the floor. A marked workspace never passes that.
+'''
+
+[[guard]]
+action = "Grant"
+text = '''/\ Exposure + LeaseSize <= Allowance'''
+breaks = "ExposureWithinAllowance"
+cfg = "two"
+
+[[guard]]
+action = "Grant"
+text = '''/\ Total(RoomNow) - LeaseSize >= Floor'''
+breaks = "nothing"
+why = '''
+The floor keeps the debt mark rare (section 4.7); no claim rests on it. Every configuration has Floor = 0, where it follows from the donor's room: covering leaves no shard negative while the sum is not, and a negative sum marks every row, which the grant's mark check refuses.
+'''
+
+[[guard]]
+action = "Grant"
+text = '''/\ RoomNow[s] >= LeaseSize'''
+breaks = "DebtMarksEveryShard"
+cfg = "money"
+
+[[guard]]
+action = "Admit"
+text = '''/\ st[l] = "open"'''
+breaks = "nothing"
+why = '''
+That an owner admits only under an open lease is LeaseLifecycle's (AdmittedOnlyUnderOpenLease). In money a hold admitted under a draining lease is held against the same allocation, and ends at a terminal or a reap like any other. Removed with Admit's check that the owner is reachable, a process that has died admits after its lease is sealed: a hold the boundary has passed, which nothing covers (HoldsCoveredInSpanner; mutant a-dead-owner-admits-after-the-boundary). Removed with AuditorReap's Live(l), an owner admits under a closed lease and the auditor reaps the hold, booking against a lease that no longer reserves anything (ShardIdentity).
+'''
+
+[[guard]]
+action = "Admit"
+text = '''/\ oUp[l] = "up"'''
+breaks = "nothing"
+why = '''
+An owner cut off from Spanner and the front doors that admits holds them against its own allocation, which covers them. When it may still admit is LeaseLifecycle's cutoff. Removed with Admit's check that the lease is open, a process that has died admits after its lease is sealed (HoldsCoveredInSpanner; mutant a-dead-owner-admits-after-the-boundary).
+'''
+
+[[guard]]
+action = "Admit"
+text = '''/\ \A g \in Mine(l) : ~(hold[g].row = "row" /\ hold[g].own = "none")'''
+breaks = "nothing"
+why = '''
+Adopting a row never lowers the owner's free room, since its raise covers its charge above the hold. So a hold admitted before an adoption can be admitted after it, and the two orders reach the same states.
+'''
+
+[[guard]]
+action = "Admit"
+text = '''/\ ~oStop[l]'''
+breaks = "nothing"
+why = '''
+An owner that has returned its free room and admits again admits only against room that came free since, as Free(l) asks. Stopping is for the lease's end, not its money.
+'''
+
+[[guard]]
+action = "Admit"
+text = '''/\ Free(l) >= 1'''
+breaks = "OwnerBooksBalance"
+
+[[guard]]
+action = "Admit"
+text = '''/\ hold[h].lease = NoLease'''
+breaks = "HoldsCoveredInSpanner"
+
+[[guard]]
+action = "Admit"
+text = '''/\ \A g \in Holds : hold[g].lease = NoLease => h <= g'''
+breaks = "nothing"
+why = '''
+Which free slot a hold takes is the model's naming. Without it a hold takes any free slot: the same behaviours under another numbering.
+'''
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ st[l] = "open"'''
+breaks = "nothing"
+why = '''
+Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. In money a terminal decided on a draining lease is a terminal: stored and booked, or lost at the boundary and the hold reaped, at most its hold. Removed with Store's check that the lease is not sealed, a terminal decided after the boundary is stored past it, and the lease counts the hold twice, once reaped (HoldsCoveredInSpanner).
+'''
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ oUp[l] = "up"'''
+breaks = "nothing"
+why = '''
+Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. In money a cut-off owner's terminal is booked if its record is stored, and is lost at the boundary otherwise.
+'''
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ \A g \in Mine(l) : ~(hold[g].row = "row" /\ hold[g].own = "none")'''
+breaks = "ShortfallIsTheDeficit"
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ h \in Mine(l)'''
+breaks = "HoldsCoveredInSpanner"
+
+[[guard]]
+action = "OwnerSettle"
+text = '''/\ hold[h].own = "none"'''
+breaks = "OwnerBooksBalance"
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ st[l] = "open"'''
+breaks = "nothing"
+why = '''
+Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. An adoption on a draining lease is a terminal with its row's raise already reserved. Removed with Store's check that the lease is not sealed, a terminal adopted after the boundary is stored past it (HoldsCoveredInSpanner). Removed with OwnerAdopt's check that the hold has a row, an owner on a sealed lease adopts a row the auditor has already booked or set aside, with its raise, which the shortfall rule gives only a row still waiting (ShortfallIsTheDeficit).
+'''
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ oUp[l] = "up"'''
+breaks = "nothing"
+why = '''
+Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. A cut-off owner that adopts a row decides the terminal the row carries, with its raise already reserved.
+'''
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ h \in Mine(l)'''
+breaks = "StoredCoversOwner"
+cfg = "two"
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ hold[h].own = "none"'''
+breaks = "StoredCoversOwner"
+
+[[guard]]
+action = "OwnerAdopt"
+text = '''/\ hold[h].row = "row"'''
+breaks = "nothing"
+why = '''
+Without a row the charge it adopts is 0, and adopting is the owner settling the hold at 0, which OwnerSettle does. Removed with OwnerAdopt's check that the lease is open, an owner on a sealed lease adopts a row the auditor has already booked or set aside, with its raise, which the shortfall rule gives only a row still waiting (ShortfallIsTheDeficit).
+'''
+
+[[guard]]
+action = "OwnerReturn"
+text = '''/\ st[l] = "open"'''
+breaks = "nothing"
+why = '''
+A return gives back room the owner does not need. On a draining lease the auditor applies it while the lease is live, and close releases what is left either way. Removed with Store's check that the lease is not sealed, a return made after the boundary is stored past it (HoldsCoveredInSpanner).
+'''
+
+[[guard]]
+action = "OwnerReturn"
+text = '''/\ oUp[l] = "up"'''
+breaks = "nothing"
+why = '''
+A cut-off owner's return is a record like its others: applied if stored, ignored after the boundary, and close releases the room either way.
+'''
+
+[[guard]]
+action = "OwnerReturn"
+text = '''/\ \A g \in Mine(l) : ~(hold[g].row = "row" /\ hold[g].own = "none")'''
+breaks = "nothing"
+why = '''
+A return before an adoption gives back less: Free(l) still counts the undecided hold.
+'''
+
+[[guard]]
+action = "OwnerReturn"
+text = '''/\ Free(l) > 0'''
+breaks = "StoredCoversOwner"
+
+[[guard]]
+action = "OwnerFinish"
+text = '''/\ st[l] = "open"'''
+breaks = "AllocationAccounted"
+
+[[guard]]
+action = "OwnerFinish"
+text = '''/\ oUp[l] = "up"'''
+breaks = "nothing"
+why = '''
+When a lease drains is LeaseLifecycle's. Here a lease may drain at any moment, and money holds either way.
+'''
+
+[[guard]]
+action = "OwnerFinish"
+text = '''/\ \A g \in Mine(l) : ~(hold[g].row = "row" /\ hold[g].own = "none")'''
+breaks = "nothing"
+why = '''
+OHeld(l) = 0 says no hold is undecided, so none has a row waiting to be adopted.
+'''
+
+[[guard]]
+action = "OwnerFinish"
+text = '''/\ OHeld(l) = 0'''
+breaks = "nothing"
+why = '''
+Finishing with holds open is a drain like any other: the boundary drops unstored records and the auditor reaps what has no terminal, at most its hold (assumption A2).
+'''
+
+[[guard]]
+action = "OwnerFinish"
+text = '''/\ out[l] = << >>'''
+breaks = "nothing"
+why = '''
+Finishing with records unstored is a drain like any other: the boundary drops them, and their holds are reaped at most their hold.
+'''
+
+[[guard]]
+action = "OwnerWriteLands"
+text = '''/\ write[l] # NoWrite'''
+breaks = "nothing"
+why = '''
+A write that carries no total raises nothing, and the owner then writes its total as it would after any write.
+'''
+
+[[guard]]
+action = "OwnerWriteLands"
+text = '''/\ Live(l)'''
+breaks = "ShardIdentity"
+
+[[guard]]
+action = "OwnerWriteEnds"
+text = '''/\ write[l] # NoWrite'''
+breaks = "nothing"
+why = '''
+With no write in flight, ending one changes only `due`, the history variable, to 0, and only for an owner cut off or dead or a closed lease, where ShortfallLandsWithinTwoWrites asks nothing. The states it reaches are reached anyway: no new state.
+'''
+
+[[guard]]
+action = "OwnerWriteEnds"
+text = '''/\ oUp[l] # "up" \/ st[l] = "closed"'''
+breaks = "ShortfallIsBeingWritten"
+
+[[guard]]
+action = "OwnerCut"
+text = '''/\ Live(l)'''
+breaks = "nothing"
+why = '''
+The owner of a closed lease has nothing left to write: being cut off changes only its state.
+'''
+
+[[guard]]
+action = "OwnerCut"
+text = '''/\ oUp[l] = "up"'''
+breaks = "nothing"
+why = '''
+OwnerDie changes nothing but the owner's state, so a dead owner that is cut off is in the state a live one reaches by being cut off.
+'''
+
+[[guard]]
+action = "OwnerCut"
+text = '''/\ cuts < MaxCuts'''
+breaks = "TypeOK"
+why = '''
+MaxCuts is a bound of the model.
+'''
+
+[[guard]]
+action = "OwnerReconnect"
+text = '''/\ oUp[l] = "cut"'''
+breaks = "StoredShortfallIsTheLarger"
+
+[[guard]]
+action = "OwnerDie"
+text = '''/\ Live(l)'''
+breaks = "nothing"
+why = '''
+The owner of a closed lease has nothing left to write: dying changes only its state.
+'''
+
+[[guard]]
+action = "OwnerDie"
+text = '''/\ oUp[l] # "dead"'''
+breaks = "nothing"
+why = '''
+Dying twice changes nothing.
+'''
+
+[[guard]]
+action = "Store"
+text = '''/\ out[l] # << >>'''
+breaks = "evaluation"
+why = '''
+It keeps Head(out[l]) defined.
+'''
+
+[[guard]]
+action = "Store"
+text = '''/\ ~sealed[l]'''
+breaks = "nothing"
+why = '''
+Sealing empties `out`, and only the owner of an open lease appends to it, while a sealed lease is draining. Removed with the open-lease check of OwnerSettle, OwnerAdopt or OwnerReturn, a record decided after the boundary is stored past it, which the boundary exists to stop (HoldsCoveredInSpanner).
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ Live(l)'''
+breaks = "nothing"
+why = '''
+A closed lease has no hold that could take a row: close asks that every hold has a booked terminal. Removed with Close's check that every hold has a booked terminal, a lease closes over an open hold and a front door then appends a row with its raise to the closed lease (ShardIdentity).
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ oUp[l] # "up" \/ st[l] = "draining"'''
+breaks = "nothing"
+why = '''
+Which terminal wins, and when an owner may still decide, publish or be routed to, is TerminalOrder's and LeaseLifecycle's. In money a row is a terminal with its raise, booked or losing to the owner's stored record.
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ h \in Mine(l)'''
+breaks = "AllocationAccounted"
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ hold[h].row = "none"'''
+breaks = "AllocationAccounted"
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ hold[h].own \in {"none", "out"}'''
+breaks = "nothing"
+why = '''
+A row for a hold whose owner's record is already stored loses to it (BookedOnce). Its raise stays reserved until close releases it.
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ ~hold[h].reaped'''
+breaks = "BookedOnce"
+
+[[guard]]
+action = "MarkDraining"
+text = '''/\ st[l] = "open"'''
+breaks = "StoredCoversOwner"
+
+[[guard]]
+action = "MarkDraining"
+text = '''/\ oUp[l] # "up"'''
+breaks = "nothing"
+why = '''
+When a lease expires is LeaseLifecycle's. Here a lease may drain at any moment, and money must hold either way.
+'''
+
+[[guard]]
+action = "AuditorApply"
+text = '''/\ Live(l)'''
+breaks = "nothing"
+why = '''
+A closed lease was sealed with an empty log, and nothing is stored after the seal. Removed with Close's check that the lease is sealed, a lease closes with a stored record unapplied, and the auditor then applies it to the closed lease (ShardIdentity).
+'''
+
+[[guard]]
+action = "AuditorApply"
+text = '''/\ log[l] # << >>'''
+breaks = "evaluation"
+why = '''
+It keeps Head(log[l]) defined.
+'''
+
+[[guard]]
+action = "Seal"
+text = '''/\ st[l] = "draining"'''
+breaks = "HoldsCoveredInSpanner"
+cfg = "refund"
+
+[[guard]]
+action = "Seal"
+text = '''/\ ~sealed[l]'''
+breaks = "nothing"
+why = '''
+Sealing again changes nothing: `out` is empty and no hold is still `out`.
+'''
+
+[[guard]]
+action = "Seal"
+text = '''/\ log[l] = << >>'''
+breaks = "HoldsCoveredInSpanner"
+
+[[guard]]
+action = "AuditorApplyRow"
+text = '''/\ sealed[l]'''
+breaks = "HoldsCoveredInSpanner"
+
+[[guard]]
+action = "AuditorApplyRow"
+text = '''/\ Live(l)'''
+breaks = "nothing"
+why = '''
+Close asks that no row is left, and none is appended to a closed lease. Removed with Close's check that every hold has a booked terminal, a lease closes with a row left and the auditor then books it (ShardIdentity).
+'''
+
+[[guard]]
+action = "AuditorApplyRow"
+text = '''/\ h \in Mine(l)'''
+breaks = "HoldsCoveredInSpanner"
+cfg = "two"
+
+[[guard]]
+action = "AuditorApplyRow"
+text = '''/\ hold[h].row = "row"'''
+breaks = "BookedOnce"
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ sealed[l]'''
+breaks = "HoldsCoveredInSpanner"
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ Live(l)'''
+breaks = "nothing"
+why = '''
+Close asks that every hold has a booked terminal. Removed with Close's check that every hold has a booked terminal, or with Admit's check that the lease is open, the auditor reaps a hold of a closed lease (ShardIdentity).
+'''
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ h \in Mine(l)'''
+breaks = "BookedOnce"
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ ~Applied(h)'''
+breaks = "BookedOnce"
+
+[[guard]]
+action = "AuditorReap"
+text = '''/\ hold[h].row = "none"'''
+breaks = "BookedOnce"
+
+[[guard]]
+action = "Close"
+text = '''/\ sealed[l]'''
+breaks = "nothing"
+why = '''
+Close asks that every hold has a booked terminal and no row is left. A record still unstored then is a return or a terminal of a hold already booked, and is never applied to a closed lease. Removed with AuditorApply's Live(l), the auditor applies a record stored before the close to the closed lease (ShardIdentity).
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ st[l] = "draining"'''
+breaks = "nothing"
+why = '''
+Only a draining lease is sealed, and a sealed lease is draining until it closes. Closing it again releases nothing, since its remaining allocation is zero.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ \A h \in Mine(l) : Applied(h) /\ hold[h].row # "row"'''
+breaks = "nothing"
+why = '''
+That a close waits for every hold's terminal is Invariant 4, which TerminalOrder and LeaseLifecycle check (NoAckedDrainRowLost, NoOpenHoldOnClosedLease). In money a hold closed over is a charge never booked: the customer pays less, and no claim here counts what a closed lease no longer holds. Removed with the Live(l) of FrontDoorAppend, AuditorApplyRow or AuditorReap, a lease closes over an open hold, and a row, a booked row or a reap then lands on the closed lease (ShardIdentity).
+'''
+
+[[guard]]
+action = "SyncReserve"
+text = '''/\ syncs < MaxSync'''
+breaks = "TypeOK"
+why = '''
+MaxSync is a bound of the model.
+'''
+
+[[guard]]
+action = "SyncReserve"
+text = '''/\ ~mark[s]'''
+breaks = "MarkRefusesReservations"
+cfg = "money"
+
+[[guard]]
+action = "SyncReserve"
+text = '''/\ RoomNow[s] >= 1'''
+breaks = "DebtMarksEveryShard"
+cfg = "money"
+
+[[guard]]
+action = "SyncSettle"
+text = '''/\ sync[s] >= 1'''
+breaks = "TypeOK"
+why = '''
+A settle with no synchronous hold would take their count below zero, outside TypeOK. There is no such settle.
+'''
+
+[[guard]]
+action = "Pay"
+text = '''/\ pays < MaxPays'''
+breaks = "TypeOK"
+why = '''
+MaxPays is a bound of the model.
+'''

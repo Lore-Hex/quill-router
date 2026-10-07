@@ -957,6 +957,7 @@ def settle_atomic(
     guard_outbox: bool = False,
     outbox_available: bool | None = None,
     expires_before: Any | None = None,
+    async_fence: bool = False,
 ) -> dict:
     """Claim-gated settle/refund in ONE transaction (credit then key lock order).
 
@@ -1009,6 +1010,7 @@ def settle_atomic(
             terminal_at=terminal_at,
             outbox_available=resolved_outbox_available,
             expires_before=expires_before,
+            async_fence=async_fence,
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
@@ -1217,6 +1219,7 @@ def reap_expired_reservations_result(
     now: Any,
     limit: int = 100,
     snapshot_booking_enabled: bool = False,
+    async_fence: bool = False,
     operational_analytics_outbox: Any | None = None,
 ) -> ReapPassResult:
     """Reclaim crashed-before-settle reservations (settled=false AND expires_at<now).
@@ -1290,6 +1293,7 @@ def reap_expired_reservations_result(
             guard_outbox=guard_active,
             snapshot_booking_enabled=snapshot_booking_enabled,
             operational_analytics_outbox=operational_analytics_outbox,
+            async_fence=async_fence,
         )
         if result.outcome == SettleOutcome.AUTHORIZATION_NOT_TYPED:
             # Rolling legacy authorizations have no heartbeat columns. Preserve
@@ -1305,6 +1309,7 @@ def reap_expired_reservations_result(
                 guard_outbox=guard_active,
                 outbox_available=guard_active,
                 expires_before=now,
+                async_fence=async_fence,
             )
             if legacy["outcome"] == SettleOutcome.SETTLED:
                 result = _ReapOneResult(
@@ -1357,7 +1362,8 @@ def reap_expired_reservations_result(
 
 
 def reap_expired_reservations(
-    database: Any, param_types: Any, *, now: Any, limit: int = 100
+    database: Any, param_types: Any, *, now: Any, limit: int = 100,
+    async_fence: bool = False,
 ) -> int:
     """Compatibility wrapper for callers that only need the reaped count."""
 
@@ -1366,6 +1372,7 @@ def reap_expired_reservations(
         param_types,
         now=now,
         limit=limit,
+        async_fence=async_fence,
     ).count
 
 
@@ -1378,6 +1385,7 @@ def _finalize_reaped_reservation_atomic(
     guard_outbox: bool,
     snapshot_booking_enabled: bool,
     operational_analytics_outbox: Any | None,
+    async_fence: bool = False,
 ) -> _ReapOneResult:
     """Finalize one advisory reaper candidate under strong transaction reads."""
 
@@ -1508,6 +1516,7 @@ def _finalize_reaped_reservation_atomic(
             defer_retention=True,
             outbox_available=guard_outbox,
             expires_before=reap_timestamp,
+            async_fence=async_fence,
         )
         if not won:
             raise _ReapGuardLost("expired reservation claim guard lost")
@@ -1687,6 +1696,7 @@ def typed_finalize_atomic(
     settle_outbox_intent: SettleOutboxRow | None = None,
     intent_initial_delay_seconds: int = 0,
     benchmark_statement: DmlStatement | None = None,
+    async_fence: bool = False,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -1781,6 +1791,7 @@ def typed_finalize_atomic(
                 pt, reservation_id, actual_micro=book_actual,
                 settled_usage_type=settled_usage_type, terminal_at=now,
                 defer_retention=True, outbox_available=resolved_outbox_available,
+                async_fence=async_fence,
             ))
             reasons.append("claim_zero")
         statements.append(gateway_authorization_settled_statement(pt, authorization))
@@ -1894,6 +1905,7 @@ def typed_finalize_atomic(
                 terminal_at=now,
                 defer_retention=True,
                 outbox_available=resolved_outbox_available,
+                async_fence=async_fence,
             )
             if not won:
                 return {"outcome": SettleOutcome.ALREADY_SETTLED}

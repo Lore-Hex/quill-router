@@ -567,7 +567,10 @@ class SpannerStore:
         # table, so it takes the raw database + param_types like the counter DML
         # rather than the entity IO. Dormant until settle_outbox_enabled + the
         # later increments wire enqueue/drain/reaper-guard to it.
-        self.settle_outbox = SpannerSettleOutbox(self._database, self._param_types)
+        self.settle_outbox = SpannerSettleOutbox(
+            self._database, self._param_types,
+            async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)),
+        )
         self.auth_session_store = SpannerAuthSessions(io)
         self.oauth_code_store = SpannerOAuthCodes(io)
         self.oauth_app_store = SpannerOAuthApps(io)
@@ -4721,6 +4724,8 @@ class SpannerStore:
             "persist_generation_record",
             getattr(self, "_generation_records_enabled", False),
         )
+        if getattr(self.trust_settings, "async_settle_protection", False):
+            kwargs.setdefault("async_fence", True)
         return typed_finalize_atomic(self._database, self._param_types, **kwargs)
 
     def typed_finalize_gateway_authorization(
@@ -4802,10 +4807,15 @@ class SpannerStore:
             selected_usage_type=actual_usage_type,
             generation=generation,
         )
+        # Preserve the frozen legacy call shape when the feature is disabled.
+        async_options: dict[str, Any] = (
+            {"async_fence": True} if getattr(self.trust_settings, "async_settle_protection", False) else {}
+        )
         spanner_start = time.perf_counter()
         result = typed_finalize_atomic(
             self._database,
             self._param_types,
+            **async_options,
             reservation_id=authorization.credit_reservation_id,
             authorization_id=authorization_id,
             success=success,
@@ -4987,9 +4997,13 @@ class SpannerStore:
                 else refund_benchmark if not success else None
             )
             benchmark_outbox = self.generation_store.analytics_outbox
+            async_options: dict[str, Any] = (
+                {"async_fence": True} if getattr(self.trust_settings, "async_settle_protection", False) else {}
+            )
             return cast(dict[str, Any], typed_finalize_atomic(
                 self._database,
                 self._param_types,
+                **async_options,
                 reservation_id=str(authorization.credit_reservation_id),
                 authorization_id=authorization_id,
                 success=success,
@@ -5560,7 +5574,8 @@ class SpannerStore:
             reap_expired_reservations as _reap,
         )
 
-        return _reap(self._database, self._param_types, now=now, limit=limit)
+        return _reap(self._database, self._param_types, now=now, limit=limit,
+                     async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)))
 
     def reap_expired_reservations_result(
         self,
@@ -5579,6 +5594,7 @@ class SpannerStore:
             now=now,
             limit=limit,
             snapshot_booking_enabled=snapshot_booking_enabled,
+            async_fence=bool(getattr(self.trust_settings, "async_settle_protection", False)),
             operational_analytics_outbox=getattr(
                 self,
                 "_operational_analytics_outbox",

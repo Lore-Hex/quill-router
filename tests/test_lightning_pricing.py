@@ -21,7 +21,6 @@ from scripts.pricing.model_ids import mapped_or_canonical_model_id
 from scripts.pricing.providers import lightning
 
 OPUS = "anthropic/claude-opus-4-8"
-OPUS_ROUTE = f"{OPUS} [lightning:lightning:{OPUS}]"
 
 
 def _listing(
@@ -285,30 +284,31 @@ def test_a_price_conflict_pauses_the_route_without_tripping_the_spike_gate(
     )
 
     assert notes == [
-        "lightning: refreshed provider_models/lightning.json "
-        "(2 priced rows, tombstoned 1 unavailable)"
+        "lightning: applied 2 operator hold(s); "
+        "kept all other old rows (mass-prune guard)"
     ]
     opus = rows[OPUS]
-    assert opus["routable"] is False and opus["routable_reason"] == "price-unavailable"
+    assert opus["routable"] is False
+    assert opus["routable_reason"] == "third-party-passthrough-disabled"
     assert opus["display_name"] == "Claude Opus 4.8"
-    assert not [field for field in PRICE_FIELDS if field in opus]
-    failures, _changes, removed = check(*map(_load_provider_manifests, manifests))
+    # The prune guard retains old metadata, but must never veto safety holds.
+    assert opus["input_token_price_per_m"] == 5_000_000
+    failures, changes, removed = check(*map(_load_provider_manifests, manifests))
     assert failures == []
-    assert sorted(removed) == sorted(
-        [OPUS_ROUTE, f"{OPUS_ROUTE} cached-input", f"{OPUS_ROUTE} tier[max=200000]"]
-    )
+    assert changes == []
+    assert removed == []
 
 
 @pytest.mark.parametrize(
-    ("listings", "routable"),
+    ("listings", "priced"),
     [(OPUS_LISTINGS, False), (OPUS_LISTINGS[:1], True)],
     ids=["conflicting-listings", "one-listing"],
 )
-def test_a_relisted_route_recovers_only_with_one_price(
+def test_a_relisted_passthrough_stays_held_even_with_one_price(
     feed: list[dict[str, Any]],
     manifests: tuple[Path, Path],
     listings: list[dict[str, Any]],
-    routable: bool,
+    priced: bool,
 ) -> None:
     feed.extend([*listings, GEMMA, GPT41])
 
@@ -324,14 +324,14 @@ def test_a_relisted_route_recovers_only_with_one_price(
     )
 
     opus = rows[OPUS]
-    if routable:
-        assert opus.get("routable", True) is True and "routable_reason" not in opus
+    assert opus["routable"] is False
+    assert opus["routable_reason"] == "third-party-passthrough-disabled"
+    if priced:
         assert (opus["input_token_price_per_m"], opus["output_token_price_per_m"]) == (
             5_000_000,
             25_000_000,
         )
     else:
-        assert opus["routable"] is False and opus["routable_reason"] == "price-unavailable"
         assert "input_token_price_per_m" not in opus
 
 
@@ -353,7 +353,12 @@ def test_a_new_duplicated_model_gets_no_listing_name(
         _committed({"input_token_price_per_m": 5_000_000, "output_token_price_per_m": 25_000_000}),
     )
 
+    # The first refresh applies the mass hold; subsequent discovery can append
+    # new held metadata without being mistaken for a second mass retirement.
+    lightning.write_provider_manifest(lightning.fetch())
+    rows = {row["id"]: row for row in json.loads((manifests[1] / "lightning.json").read_text())["models"]}
     added = rows["openai/gpt-4-turbo-preview"]
+    assert added["routable"] is False
     assert added["display_name"] == "openai/gpt-4-turbo-preview"
     assert added["context_length"] == 128_000
     assert (added["input_token_price_per_m"], added["output_token_price_per_m"]) == (
@@ -362,8 +367,11 @@ def test_a_new_duplicated_model_gets_no_listing_name(
     )
 
 
-@pytest.mark.parametrize("model_id", ["google/gemini-3.5-flash", "google/gemini-future-preview"])
-def test_google_passthrough_stays_held_across_refresh_and_relisting(
+@pytest.mark.parametrize("model_id", [
+    "google/gemini-3.5-flash", "google/gemini-future-preview",
+    "openai/gpt-6-sol", "anthropic/claude-future", "new-author/new-model",
+])
+def test_passthrough_stays_held_across_refresh_and_relisting(
     feed: list[dict[str, Any]], manifests: tuple[Path, Path], model_id: str,
 ) -> None:
     feed.extend([_listing(model_id, "Google passthrough", 1e-06, 5e-06), GEMMA, GPT41])
@@ -378,19 +386,44 @@ def test_google_passthrough_stays_held_across_refresh_and_relisting(
     _notes, rows = _refresh(manifests, committed)
 
     assert rows[model_id]["routable"] is False
-    assert rows[model_id]["routable_reason"] == "google-passthrough-disabled"
+    assert rows[model_id]["routable_reason"] == "third-party-passthrough-disabled"
     assert rows["google/gemma-4-31b-it"].get("routable", True) is True
-    assert rows["openai/gpt-4.1"].get("routable", True) is True
+    assert rows["openai/gpt-4.1"]["routable"] is False
     lightning.write_provider_manifest(lightning.fetch())
     rows = json.loads((manifests[1] / "lightning.json").read_text())["models"]
     assert next(row for row in rows if row["id"] == model_id)["routable"] is False
 
 
-def test_new_google_passthrough_is_classified_but_never_activated(
+@pytest.mark.parametrize("model_id", [
+    "google/gemini-future-preview", "openai/gpt-future", "anthropic/claude-future",
+])
+def test_new_passthrough_is_classified_but_never_activated(
     feed: list[dict[str, Any]], manifests: tuple[Path, Path],
+    model_id: str,
 ) -> None:
-    model_id = "google/gemini-future-preview"
     feed.extend([_listing(model_id, "Google passthrough", 1e-06, 5e-06), GEMMA, GPT41])
     _notes, rows = _refresh(manifests, _committed({})[1:])
+    lightning.write_provider_manifest(lightning.fetch())
+    rows = {row["id"]: row for row in json.loads((manifests[1] / "lightning.json").read_text())["models"]}
     assert rows[model_id]["routable"] is False
-    assert rows[model_id]["routable_reason"] == "google-passthrough-disabled"
+    assert rows[model_id]["routable_reason"] == "third-party-passthrough-disabled"
+
+
+def test_native_price_conflict_and_recovery_still_work(
+    feed: list[dict[str, Any]], manifests: tuple[Path, Path],
+) -> None:
+    native = "lightning-ai/native-model"
+    feed.extend([
+        GEMMA, _listing(native, "Native", 1e-06, 5e-06),
+        _listing(native, "Conflicting listing", 2e-06, 10e-06),
+    ])
+    _notes, rows = _refresh(manifests, [])
+    assert rows[native]["routable"] is False
+    assert rows[native]["routable_reason"] == "awaiting-price"
+    assert not [field for field in PRICE_FIELDS if field in rows[native]]
+    feed.pop()
+    lightning.write_provider_manifest(lightning.fetch())
+    rows = {row["id"]: row for row in json.loads((manifests[1] / "lightning.json").read_text())["models"]}
+    assert rows[native].get("routable", True) is True
+    assert "routable_reason" not in rows[native]
+    assert rows[native]["input_token_price_per_m"] == 1_000_000

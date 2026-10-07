@@ -235,10 +235,12 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
     assert set(_filter_unserved_provider_endpoints(routes)) == {f"{unverified}@gmi/byok"}
 
 
-def test_anthropic_models_credits_route_first_party_only() -> None:
+@pytest.mark.parametrize("reseller", ["gmi", "lightning", "cloudflare-workers-ai"])
+def test_anthropic_models_credits_route_first_party_only(reseller: str) -> None:
     # Policy: Anthropic-authored (anthropic/*) models route via Anthropic
     # directly for Credits, never resellers (which list Claude ids they mostly
-    # don't serve). BYOK is untouched — a customer's own reseller key is theirs.
+    # don't serve). BYOK survives unless the provider has an explicit all-usage
+    # operator hold, as Lightning and Cloudflare passthroughs now do.
     built = catalog_vehicles.registry_endpoints()
     credits_providers = {
         e.provider
@@ -249,16 +251,17 @@ def test_anthropic_models_credits_route_first_party_only() -> None:
     # Anthropic-direct Credits lineup stays fully routable.
     for model_id in _authoritative_provider_model_ids("anthropic"):
         assert f"{model_id}@anthropic/prepaid" in built, model_id
-    # A reseller that lists Claude keeps its BYOK route but loses Credits.
+    # Unrelated reseller BYOK behavior stays unchanged.
     claude = "anthropic/claude-fixture"
     routes = {
-        f"{claude}@lightning/{suffix}": ModelEndpoint(
-            id=f"{claude}@lightning/{suffix}", model_id=claude, provider="lightning",
+        f"{claude}@{reseller}/{suffix}": ModelEndpoint(
+            id=f"{claude}@{reseller}/{suffix}", model_id=claude, provider=reseller,
             usage_type=usage,
         )
         for suffix, usage in (("prepaid", "Credits"), ("byok", "BYOK"))
     }
-    assert set(_filter_unserved_provider_endpoints(routes)) == {f"{claude}@lightning/byok"}
+    expected = {f"{claude}@{reseller}/byok"} if reseller == "gmi" else set()
+    assert set(_filter_unserved_provider_endpoints(routes)) == expected
 
 
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:

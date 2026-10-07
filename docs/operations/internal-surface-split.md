@@ -115,6 +115,7 @@ and provider analytics are read from ClickHouse alone.
 | `POST /internal/gateway/settle-outbox/drain` | Idempotent settlement recovery and activity repair | Storage; gateway token |
 | `POST /internal/gateway/home-settlement/drain` | Deferred-debt reads/writes and outbound HTTPS to the configured home plane | Storage; gateway token; conditional settlement-home token |
 | `POST /internal/gateway/deferred/reap` | Expired deferred-authorization cleanup | Storage; gateway token |
+| `POST /internal/gateway/video/replay-lookup` | Read-only key/authorization lookup; no reservation | Storage; authenticated internal gateway caller (gateway token) |
 | `POST /internal/gateway/video/jobs/prepare` | Durable video-job and authorization writes | Storage; gateway token |
 | `POST /internal/gateway/video/jobs/{job_id}/queued` | Durable video-job state transition | Storage; gateway token |
 | `POST /internal/gateway/video/jobs/{job_id}/lookup` | Job/key reads | Storage; gateway token |

@@ -971,13 +971,13 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         )
 
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
-    # for Credits — the reseller prepaid route is gone, its BYOK route stays.
+    # for Credits. Lightning's later passthrough hold also removes BYOK.
     assert "anthropic/claude-fable-5@lightning/prepaid" not in built
+    assert "anthropic/claude-fable-5@lightning/byok" not in built
     # Residue quarantine is provider-scoped: healthy siblings survive while
     # their providers list them.
     for endpoint_id in (
         "anthropic/claude-fable-5@anthropic/prepaid",
-        "anthropic/claude-fable-5@lightning/byok",
         "z-ai/glm-5@zai/prepaid",
         "deepseek/deepseek-v4-pro@deepseek/prepaid",
     ):
@@ -2858,7 +2858,6 @@ def test_model_shape_omits_cache_read_price_when_absent() -> None:
     "endpoint_id",
     [
         "anthropic/claude-fable-5@anthropic/prepaid",
-        "anthropic/claude-fable-5@lightning/byok",
         *(
             f"moonshotai/{model}@{host}/{usage}"
             for model, host in (

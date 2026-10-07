@@ -86,13 +86,15 @@ def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> 
     generation = "scripts/deploy/migrate_generation_records.sh --apply"
     provider_outbox = "scripts/deploy/migrate_analytics_outbox.sh"
     operational_outbox = "scripts/deploy/migrate_operational_analytics_outbox.sh"
+    async_admission = "scripts/deploy/migrate_async_settle_admission.sh"
     rollout = "bash scripts/deploy/rollout.sh"
     assert generation in workflow
     assert provider_outbox in workflow
+    assert async_admission in workflow
     assert operational_outbox in workflow
     assert workflow.index(generation) < workflow.index(rollout)
     assert workflow.index(provider_outbox) < workflow.index(rollout)
-    assert workflow.index(operational_outbox) < workflow.index(rollout)
+    assert workflow.index(operational_outbox) < workflow.index(async_admission) < workflow.index(rollout)
 
 
 def test_legacy_combined_rollout_requires_and_emits_the_workflow_opt_in() -> None:

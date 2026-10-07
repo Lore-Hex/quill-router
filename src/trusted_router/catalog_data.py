@@ -4042,6 +4042,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- No single creator country ---
     "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
+    "abliterate": ModelOrigin(
+        country=None,
+        lab_name="Abliterate (API model namespace)",
+        source_url="https://abliterate.ai/docs",
+        note=(
+            "These are Abliterate's API model names. The origin country and "
+            "underlying model creators are not verified; the serving namespace "
+            "does not establish where the model weights were built."
+        ),
+    ),
     "aion-labs": ModelOrigin(
         country=None,
         lab_name="Aion Labs",

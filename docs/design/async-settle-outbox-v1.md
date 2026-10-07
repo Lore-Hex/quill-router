@@ -120,8 +120,7 @@ Long invocations whose tickets expire use snapshot-bearing synchronous settle.
 
 The following is the **literal addition projection** of an authorize response;
 existing response fields remain as defined by `GatewayAuthorizeResponse` in
-`schemas.py`. The numeric example is #1390's `component_half_up`: one input and
-one output token at 500,000 microdollars/million independently round to **2**.
+`schemas.py`. This literal is regenerated from `tests/fixtures/async_settlement/authorize_v1_builder.json`: the frozen builder derives cache-read/cache-creation rates of 250,000/625,000 for this endpoint. One ordinary input and one output token at 500,000 microdollars/million independently round to **2**. `authorize_v1.json` retains the older zero-cache-rate literal for signature parity; neither fixture is changed.
 The ticket is a real test signature (public test seed = 32 bytes `01`, never a
 production key), verified at `1791244801`. Public key, base64url: `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w`.
 Compact JWS uses sorted compact ASCII JSON and unpadded base64url; claims are
@@ -129,25 +128,25 @@ literal below so implementations can verify bindings, not just price hashes.
 
 ```json
 {
-  "authorization_id": "auth-v1",
-  "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
-  "workspace_id": "ws-v1",
-  "key_id": "key-v1",
-  "invocation_nonce": "nonce-v1",
-  "billing_authority": "local",
-  "journal_region": "us-central1",
-  "epoch": 1,
-  "snapshot_version": 1,
-  "snapshot_hash": "39526c7fde5f32d133358b9e61ef0fff17e006f6c7f87fc5ec6dd211206c50ee",
-  "route_type": "chat.completions",
-  "streamed": false,
-  "reservation_id": "res-v1",
-  "settle_origin": "typed",
   "async_eligible": true,
-  "iss": "router-fixture",
   "aud": "router-settlement",
+  "authorization_id": "auth-v1",
+  "billing_authority": "local",
+  "epoch": 1,
+  "exp": 1791245100,
+  "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
   "iat": 1791244800,
-  "exp": 1791245100
+  "invocation_nonce": "nonce-v1",
+  "iss": "router-fixture",
+  "journal_region": "us-central1",
+  "key_id": "key-v1",
+  "reservation_id": "res-v1",
+  "route_type": "chat.completions",
+  "settle_origin": "typed",
+  "snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4",
+  "snapshot_version": 1,
+  "streamed": false,
+  "workspace_id": "ws-v1"
 }
 ```
 
@@ -156,21 +155,22 @@ literal below so implementations can verify bindings, not just price hashes.
   "data": {
     "authorization_id": "auth-v1",
     "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
+    "async_eligible": true,
     "billing_snapshot": {
       "v": 1,
       "kind": "credits_endpoint",
       "candidates": [
         {
           "endpoint_id": "openai/billing-v1@openai/prepaid",
-          "model_id": "openai/billing-v1",
           "provider": "openai",
+          "model_id": "openai/billing-v1",
           "usage_type": "Credits",
           "price_history_version": 1,
           "rates": {
             "input_micro_per_million": 500000,
-            "output_micro_per_million": 500000,
-            "cached_input_micro_per_million": 0,
-            "cache_creation_micro_per_million": 0
+            "cached_input_micro_per_million": 250000,
+            "cache_creation_micro_per_million": 625000,
+            "output_micro_per_million": 500000
           },
           "tiers": [],
           "request_fee_micro": 0,
@@ -185,9 +185,8 @@ literal below so implementations can verify bindings, not just price hashes.
       "tier_boundary": "inclusive",
       "tier_fallback": "last_tier"
     },
-    "billing_snapshot_hash": "39526c7fde5f32d133358b9e61ef0fff17e006f6c7f87fc5ec6dd211206c50ee",
-    "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6ImFzeW5jLXYxLWZpeHR1cmUiLCJ0eXAiOiJ0ci1hc3luYy1zZXR0bGUtdjEifQ.eyJhc3luY19lbGlnaWJsZSI6dHJ1ZSwiYXVkIjoicm91dGVyLXNldHRsZW1lbnQiLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxMjQ1MTAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjM5NTI2YzdmZGU1ZjMyZDEzMzM1OGI5ZTYxZWYwZmZmMTdlMDA2ZjZjN2Y4N2ZjNWVjNmRkMjExMjA2YzUwZWUiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.ghFdyi8nXmEDGVemPaaExEoR7zKg01E7Nw0MCtOZgSKDD3k3tdDYR9E-sFAtA2vH19pkfUPm3ws05k9HDbuLCA",
-    "async_eligible": true,
+    "billing_snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4",
+    "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6ImFzeW5jLXYxLWZpeHR1cmUiLCJ0eXAiOiJ0ci1hc3luYy1zZXR0bGUtdjEifQ.eyJhc3luY19lbGlnaWJsZSI6dHJ1ZSwiYXVkIjoicm91dGVyLXNldHRsZW1lbnQiLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxMjQ1MTAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImNiOGZlYWYwOGRhMzgxZjBkMzU2ZGNkOGVkNGM2NTc3ZjFkNDRhMTMwZTdmM2I4MDI5NjQ3ZmEzODE0ODcyYjQiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.zbBwIsn5jCD25enkaRK9idg0oVaoBROE8jTK3FxAxrj1iDns3HhYp_KyDjzLsIdhVkJJKhjGQU_s3F8Vm97QDA",
     "settlement_status_url": "/v1/settlements/auth-v1.settle"
   }
 }
@@ -905,3 +904,291 @@ one-request overrun bound; retries before handoff are not durable enclave
 storage; sync fallback needs new frozen-price wiring; refunds are first-writer
 zero-charge finalization, not automatic charge reversal; and latency/probe
 claims are not independently established by the inspected artifacts.
+
+
+### PR C flag-off SQL and additive-schema compatibility
+
+Admission and protection are independent. `async_settle_enabled` admits new
+work; `async_settle_protection` protects accepted work. Both default to false
+and rollout pins `TR_ASYNC_SETTLE_ENABLED=false` and
+`TR_ASYNC_SETTLE_PROTECTION=false` explicitly, never inheriting either value.
+Settings rejects admission on with protection off. Runtime admission checks
+also require both flags, even if settings were mutated without validation.
+Disabling admission stops ticket issuance and async-v1 acceptance; detached
+snapshot metadata remains available. Accepted rows still drain. With protection
+on, snapshot-bearing sync retries still reconcile accepted intents or apply the
+signed frozen price when no intent exists. Fresh async-v1 requests return the
+§3.3 `sync_required` literal with reason `disabled`, without inserting an intent.
+
+With **both false**, the frozen PR B claim/refresh/INSERT SQL, parameters,
+types and RPC counts remain identical, including deferred-retention claims and
+unsuccessful synchronous finalize. Protection alone gates the claim's
+`NOT EXISTS` primary-key range read by authorization ID, the immutable refresh
+predicate, and winner reconciliation. Pending/dead rows are protected (leased
+work remains pending); release-approved and abandoned rows permit the
+operator-approved release. Additive INSERT construction is unchanged.
+
+| Gated site | Classification | Reason |
+|---|---|---|
+| `services/async_settle.snapshot_projection` | Admission (both flags) | Issue tickets and read eligibility only when new work may be accepted. |
+| `routes/settlements.AsyncSettlementRoute` | Protection | Strict async-v1/snapshot-sync recovery dispatch survives admission rollback; ordinary legacy parsing remains unchanged. |
+| `services/async_settle_handler._handle` | Admission (both flags) | Fresh async INSERT acceptance; disabled retries may resolve existing rows, and snapshot-sync recovery retains the frozen price. |
+| `storage_gcp.SpannerStore.__init__` outbox construction | Protection | Supplies the immutable refresh predicate in `SpannerSettleOutbox.enqueue`. |
+| `services/settle_outbox_drain.spanner_settle_outbox` | Protection | The same immutable predicate for gateway and drain outbox instances. |
+| `storage_gcp.typed_finalize_gateway` | Protection | Claim fence in the generic typed finalizer. |
+| `storage_gcp.typed_finalize_gateway_authorization_result` | Protection | Claim fence in the durable two-commit finalizer. |
+| `storage_gcp.typed_settle_one_commit_result` | Protection | Claim fence in the one-commit finalizer. |
+| `storage_gcp.reap_expired_reservations` | Protection | Propagates the async fence alongside the existing reaper guard. |
+| `storage_gcp.reap_expired_reservations_result` | Protection | Same protection for the richer reaper result path. |
+| `gateway._settle_gateway_authorization`, durable async enqueue winner | Protection | Discards repriced legacy inputs and applies the accepted amount. |
+| `gateway._settle_gateway_authorization`, rejected claim reconciliation | Protection | Resolves the async winner even with admission and ordinary outbox admission off. |
+| `storage_gcp_counter_dml.claim_reservation_statement` | Protection argument | Emits extra predicate/parameters only when `async_fence` is true. |
+| `storage_gcp_settle_outbox.SpannerSettleOutbox.enqueue` | Protection argument | Emits `AND async_version IS NULL` only when `_async_fence` is true. |
+
+The gateway winner reads are necessary for correctness **after** acceptance;
+they must not follow admission. Status lookup and accepted-work drain remain
+available without an admission gate.
+
+Only safe disable order (apply to every serving replica before proceeding):
+
+1. Turn admission off, leaving protection on. No new tickets or async acceptances.
+2. Keep draining until **no** `tr_settle_outbox` row with `async_version=1` is
+   pending/dead. Wait for in-flight admission requests from old revisions too.
+   Dead rows require normal operator resolution; they are not drained merely
+   by disabling admission.
+3. Turn protection off only after the zero-backlog check succeeds.
+
+For each workspace ever admitted, use the bounded workspace-index check below
+with `@ws` bound as STRING, a strong snapshot, low priority, no retries and a
+short deadline (as in `storage_gcp_async_admission.read_admission`). The admission
+reader's broader pending/dead count also safely establishes zero when its trust
+row is available; missing/unavailable/truncated results are never proof of zero.
+Keep the complete admitted-workspace roster: one workspace's zero is not fleet
+clearance. Do not scan entity bodies or infer the roster from an unbounded scan.
+
+```sql
+SELECT COUNT(*) AS unresolved_async
+FROM (
+  SELECT authorization_id
+  FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_workspace_status}
+  WHERE workspace_id=@ws AND status IN ('pending', 'dead') AND async_version=1
+  LIMIT 1001
+)
+```
+
+Any positive count blocks protection disablement; 1001 is a bounded sentinel,
+not an exact backlog size. A read failure also blocks disablement.
+
+Outbox reads use the additive 22-column projection for both flag states; the old
+18-field tuple path is gone. This is safe because `.github/workflows/deploy.yml`
+runs `migrate-schema` before the deploy job invokes `rollout.sh`. Rolling back
+code still works with additive nullable columns. The legacy INSERT remains
+byte-identical; the async INSERT adds its four typed metadata columns in the
+shared builder, without editing an already-built SQL string.
+
+Async batch statements stop 50 ms before the handoff deadline to leave cleanup
+time. Commit may use the remaining budget. A reply at 499 ms can confirm
+acceptance; one at 501 ms cannot produce 202. Cleanup attempts one bounded Rollback RPC per discarded transaction, including
+after an unexpectedly late wakeup: its async floor is 50 ms, not the legacy two
+seconds. A per-transaction attempted marker is set before the RPC; a lost reply
+cannot give the outer disposer another floor merely because SDK `rolled_back`
+is still false. A scheduler/RPC overrun can therefore extend
+best-effort cleanup past 500 ms; it never extends the acceptance deadline.
+
+### PR D dormant drain and health implementation
+
+The unchanged scheduler path is frozen against main
+`ecb794597f32b0775594f8944f40f935b7f07278`. Defaults preserve its SQL/parameters,
+response, 500-row limit clamp, sequential apply, 240-second pass budget,
+300-second lease and per-tick purge/reap. No scheduler, cron, warm-worker service
+or job is deployed by PR D. PR G/operators must measure and approve enablement.
+Protection remains independent of admission: accepted work drains during an
+admission rollback, through the same frozen-money apply and resolution helpers.
+
+| Setting (`TR_` environment prefix) | Default | Meaning and read point |
+|---|---:|---|
+| `settle_outbox_fast_drain_enabled` | false | Select fast pass at the drain entry; required by the callable warm loop. |
+| `settle_outbox_poll_interval_seconds` | 300 | Warm-loop interruptible delay after a pass; unused in legacy mode. |
+| `settle_outbox_health_publish_interval_seconds` | 2 | Fleet publisher cadence; validated positive and at most `CACHE_SECONDS=5`. Fast mode only. |
+| `settle_outbox_claim_batch` | 500 | Upper bound on a claim wave; fast mode further clamps to available worker slots. Unused in legacy mode, which retains the caller's limit and 500 clamp. |
+| `settle_outbox_worker_concurrency` | 1 | Maximum independent running apply slots per pass, validated 1–32; fast mode only. |
+| `settle_outbox_lease_seconds` | 300 | Lease assigned by each running slot; fast mode only. |
+| `settle_outbox_pass_budget_seconds` | 240 | Deadline for starting new work; must be below the lease in fast mode. Does not cancel in-flight money transactions. |
+
+Rollout pins all seven defaults explicitly, never copying ambient/live settings.
+`run_worker(settings, stop)` exposes the warm loop without installing a schedule.
+It passes `stop` into `drain_pass` and every executor slot. The wave loop and
+slots check it before starting claims; claims already in flight and their
+applies resolve normally. Stop also interrupts the inter-pass polling wait.
+Each executor slot claims at most one row after starting, using a rotating
+existing queue shard. There is no queue of claimed executor tasks. A slow claim
+that consumes the lease or pass budget leaves the row untouched for fenced
+reclaim. Existing apply RPC/retry bounds still govern in-flight work; this code
+does not assert an upper bound on transaction duration through an outage.
+
+Health uses `tr_entities` primary key `(kind='settle_drain_control', id='fleet-v1')`
+in each independent authority database. It is a fixed-key control record, not
+a per-request counter. It requires no new table. Its JSON fields are `v`,
+`authority`, `observed_at` (UTC epoch at read start), `worker_heartbeat` (UTC epoch
+after the observation), `complete`, `sample_count`, `backlog_count`,
+`frozen_micro`, `p50_age_seconds`, `p95_age_seconds`,
+`oldest_unresolved_age_seconds`, and `dead_count`.
+The exact schema is shared by publisher output, its previous-record reader,
+and the admission reader/decoder:
+
+| Field(s) | Validation |
+|---|---|
+| `v` | Exact int, equal to 1 (bool rejected) |
+| `authority` | Exact str, equal to `local` |
+| `complete` | Exact bool; only true is eligible |
+| `sample_count`, `backlog_count`, `frozen_micro`, `dead_count` | Exact ints, non-negative; sample equals backlog; dead ≤ backlog |
+| `observed_at`, `worker_heartbeat` | Exact int/float, finite and non-negative; observed ≤ heartbeat; eligibility requires both ages in [0, 5) seconds |
+| `p50_age_seconds`, `p95_age_seconds`, `oldest_unresolved_age_seconds` | Exact int/float, finite, 0 ≤ p50 ≤ p95 ≤ oldest; eligibility requires p95 ≤ 5 |
+
+No missing or extra keys, coercions, duplicate JSON keys, or non-finite numbers
+are accepted. JSON is bounded to 4,096 UTF-8 bytes before parsing (and after
+serialization for direct dict callers). Empty backlog requires zero frozen
+micro and all three ages zero. Missing/wrong-kind/wrong-id records fail closed
+through the exact primary-key lookup. Invalid raw observation timestamps,
+amounts or statuses make the publication incomplete; sample and backlog counts
+still match and partial amounts are never eligible. A malformed previous
+record is ignored rather than trusted for newest-observation ordering.
+
+Health uses this sparse covering index, including active leases and legacy
+rows without workspace ownership:
+
+```sql
+ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP
+AS (IF(status IN ('pending', 'dead'), COALESCE(created_at, TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED;
+CREATE NULL_FILTERED INDEX tr_settle_outbox_unresolved
+ON tr_settle_outbox (unresolved_at) STORING (actual_cost_micro, status);
+```
+
+[Spanner supports partial indexes using generated columns](https://docs.cloud.google.com/spanner/docs/generated-column/how-to).
+The incremental logical index-operation cost is:
+
+| Operation | New unresolved index maintenance |
+|---|---|
+| Inline already-done INSERT | 0 |
+| Pending INSERT | +1 entry |
+| Lease-only update | 0 |
+| Retry / park | 0 |
+| Pending → dead | Stored-status update |
+| Pending → done | Delete 1 entry |
+| Dead INSERT | +1 entry |
+
+This maintenance applies even with fast mode off. The existing due index
+already pays comparable maintenance on these transitions. “Done rows pay
+nothing” applies only to the inline already-done INSERT, not a drain's
+pending-to-done mark. The STORED expression is evaluated when its dependencies
+change; zero index operations does not imply zero expression CPU. No money-path
+INSERT or resolution statement is changed. Both schema additions are
+independently idempotent and fail closed on migration errors. The existing
+sparse due index cannot observe dead rows: their `next_attempt_at` is NULL.
+Membership depends only on status. NULL `created_at` maps to the epoch sentinel,
+so pending/dead rows remain counted, contribute frozen micro and sort oldest.
+The publisher marks epoch-or-earlier timestamps incomplete, making admission
+UNHEALTHY even when the unknown-age row is below the p95 sample rank.
+The exact covering observation statement is:
+
+```sql
+SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL ORDER BY unresolved_at LIMIT @limit
+```
+
+`@limit=10001` bounds the 0.2-second low-priority, no-retry query. More than
+10,000 rows or invalid returned evidence means incomplete/ineligible; counts
+and sums then describe only the bounded observation, never the full backlog.
+Empty is healthy only after a complete fleet observation with a fresh heartbeat.
+
+Before observing health, workers transactionally claim the complete control key
+`(kind='settle_drain_control', id='health-publish-v1')` using the same cadence
+primitive as housekeeping. At most one worker wins per publish interval
+(default 2 seconds; positive and at most the consumer's 5-second freshness
+bound). Losers skip observation and publication. Apply work precedes the claim,
+so a lost or failed claim cannot block that pass's applies. A crashed winner
+consumes its interval; failed publication ages out. Slow passes, failed claims
+or observations can still cause stale evidence and fail-closed admission; the
+interval setting alone does not guarantee freshness under those conditions.
+Conditional publication preserves newest-observation-wins even if an older
+winner finishes after the next interval's winner.
+
+The deterministic cadence proof runs N concurrent workers on each of M polls:
+(1, 9, 1-second poll, 2-second interval), (6, 17, 0.25-second poll, 2-second
+interval), and (4, 21, 0.5-second poll, 5-second interval). It counts actual
+observation queries, verifies at most `ceil(M * poll / interval)` fleet-wide,
+checks that successive observations are separated by at least the interval,
+and verifies the persisted claim and health timestamps. These are synthetic
+correctness cases, not measured production capacity. Separate tests cover lost
+and failed claims with successful apply, and a delayed older publication.
+
+The consumer lazily refreshes health only when admission is enabled. Refreshes
+are coalesced for one second per process, using one strong complete-primary-key
+read (`timeout=0.2`, `retry=None`, `PRIORITY_LOW`); hits add no RPC. Missing,
+invalid, future, unhealthy or five-second-old evidence is ineligible. Receipt
+never rejuvenates the publisher's timestamp. The existing workspace admission
+index/read remains bounded to 1,001 rows and retains its independent five-second
+freshness rule. Turning admission off stops health reads, including already
+constructed consumers; enabling it is a settings/application rollout.
+
+Housekeeping has its own fixed control key, `housekeeping-v1`, containing the
+last claimed UTC `observed_at`. A transaction admits at most one fast-mode
+purge/reap pass per 300 seconds across replicas. A crashed claimant delays the
+next pass until that interval ends. It does not change reaper SQL, the claim
+fence, retention, purge semantics, or the legacy scheduler path. The unit proof
+runs 31 polls over 300 seconds and observes only the passes at 0 and 300, then
+races six independent callers for the next interval and observes one winner.
+During mixed-mode rollout, the unchanged scheduler can still perform its
+ordinary housekeeping; this gate bounds additional fast-worker housekeeping.
+
+Structured aggregate logs add fleet pending age p50/p95/max, backlog frozen
+micro/count and dead count with completeness, per-row apply-plus-resolution
+service time and outcome,
+confirmed outbox completion latency, pass elapsed time/claimed/outcome counts,
+park/dead transitions, resolution fence misses, and consumer health data age.
+They emit no key or workspace IDs. The per-workspace admission-miss log is
+removed entirely; its count/sum would be a tenant diagnostic, not a fleet metric. A fence miss includes lease loss or a concurrently resolved
+row; it is not falsely reported as a proven lease takeover. Existing handler
+fallback/unknown-outcome logs remain the source for request-path outcomes.
+
+TODO measurement instrumentation: accepted-arrival rate from enqueue commits;
+booking-versus-repair completion timestamps; confirmed lease takeover attribution;
+full unknown-commit disambiguation counts; amount/hash diagnostic mismatches;
+and a joined fleet sync-fallback-by-reason report. Do not synthesize any of these
+from incomplete drain observations. No price comparison changes an accepted
+frozen amount.
+
+### PR D measurement plan
+
+Before selecting poll/batch/concurrency/lease/budget values or enabling fast mode:
+
+1. Export bounded `SPANNER_SYS` finalize rates as an approximation to settle λ,
+   plus async acceptance commit timestamps, explicit observation windows and
+   peak/burst windows. Document what traffic the finalize approximation includes.
+2. Export `async_drain.timing` for `settled_now` and other outcomes separately;
+   measure per-row service distributions, pass overhead, booking latency and
+   outbox completion/repair latency under each proposed concurrency. Include idle
+   periods in arrival windows. Drain throughput alone is not an arrival rate.
+3. Sweep bounded concurrency and small claim waves while measuring Spanner
+   contention/retries, row service tails, claim time, resolution fence misses,
+   confirmed lease loss and crash reclaim delay. Select lease and pass budget
+   together from these measurements, with room for claim and resolution RPCs.
+4. Measure publisher observation time, completeness/truncation, health read cost,
+   heartbeat/data age, admission flips and the shared housekeeping cadence with
+   multiple worker replicas and the watchdog scheduler present.
+5. Use `scripts/async_settle/drain_capacity.py` on file exports to calculate λ,
+   observed peak λ, service-time percentiles and an ideal independent-worker
+   concurrency estimate with an explicitly supplied recovery margin and burst
+   backlog/target. It prints `T_clear=B/(c/mean(service)-peak_lambda)`. Validate
+   that estimate against measured μ(c); it does not model contention or certify
+   an SLO. JSONL outbox exports must include independently measured
+   `service_seconds`; creation-to-completion is latency, not service time.
+6. Run crash/lease-loss and burst recovery trials against the proposed 5/60-second
+   objective, including repair completion, or obtain an approved revision before
+   enablement. No production rates or concurrency recommendations are filled in.
+
+Design corrections found in PR D: §3.1's original zero-cache-rate literal was
+not producible by the frozen builder; only that section now uses the builder
+fixture. A due-index observation cannot establish fleet health because it omits
+dead rows. The current five-minute cadence/300-second lease still cannot support
+the proposed 5/60-second objective. Cached admission remains a lag guard, not a
+strict exposure cap; PR D does not resolve the policy questions in §6/§10.

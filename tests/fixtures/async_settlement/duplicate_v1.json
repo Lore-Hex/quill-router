@@ -1,0 +1,17 @@
+{
+  "data": {
+    "acceptance": {
+      "status": "duplicate",
+      "payload_hash": "f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32",
+      "settlement_status": "pending"
+    },
+    "trusted_router_settlement": {
+      "v": 1,
+      "settlement_id": "auth-v1.settle",
+      "settlement_status": "pending",
+      "cost_microdollars": 2,
+      "status_url": "/v1/settlements/auth-v1.settle",
+      "poll_after_ms": 1000
+    }
+  }
+}

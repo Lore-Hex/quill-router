@@ -303,7 +303,12 @@ def test_absent_resolution_preserves_snapshot_response_and_fingerprint(client, i
     assert replay.json()["data"]["authorization_id"] == auth.id
     assert "video_tariff_resolution" not in replay.json()["data"]
     changed_resolution = resolution_authorize(client, inference_key)
-    assert changed_resolution.status_code == 409, changed_resolution.text
+    assert changed_resolution.status_code == 200, changed_resolution.text
+    assert changed_resolution.json()["data"]["authorization_id"] == auth.id
+    assert changed_resolution.json()["data"]["idempotent_replay"] is True
+    assert "video_tariff_resolution" not in changed_resolution.json()["data"]
+    conflict = resolution_authorize(client, inference_key, request_fingerprint="d" * 64)
+    assert conflict.status_code == 409, conflict.text
 
 
 @pytest.mark.parametrize("overrides", [
