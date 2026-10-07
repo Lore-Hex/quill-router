@@ -458,6 +458,15 @@ class ProviderClient:
 
     @staticmethod
     def _provider_extra_headers(model: Model) -> dict[str, str]:
+        if model.provider == "cloudflare-workers-ai":
+            # Match the enclave: use prepaid credits without retaining content
+            # in AI Gateway logs or its response cache.
+            return {
+                "cf-aig-gateway-id": "default",
+                "cf-aig-collect-log": "false",
+                "cf-aig-collect-log-payload": "false",
+                "cf-aig-skip-cache": "true",
+            }
         if model.provider == "zero-g":
             return {"X-0G-Provider-Trust-Mode": "private"}
         if model.provider == "wafer" and wafer_zdr_support(model.upstream_id or model.id) is True:
