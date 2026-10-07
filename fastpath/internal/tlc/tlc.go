@@ -58,6 +58,19 @@ func Dump(spec, cfg string) (*Graph, error) {
 	if err != nil {
 		return nil, err
 	}
+	text, err := os.ReadFile(filepath.Join(proofs, spec+".tla"))
+	if err != nil {
+		return nil, err
+	}
+	return DumpText(spec, string(text), cfg)
+}
+
+// DumpText is Dump of a spec's text, such as a changed copy of one in proofs/.
+func DumpText(spec, specText, cfg string) (*Graph, error) {
+	proofs, err := ProofsDir()
+	if err != nil {
+		return nil, err
+	}
 	java, err := exec.LookPath("java")
 	if err != nil {
 		return nil, fmt.Errorf("java is needed to run TLC: %w", err)
@@ -67,11 +80,7 @@ func Dump(spec, cfg string) (*Graph, error) {
 		return nil, err
 	}
 	defer os.RemoveAll(work)
-	text, err := os.ReadFile(filepath.Join(proofs, spec+".tla"))
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(work, spec+".tla"), text, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(work, spec+".tla"), []byte(specText), 0o644); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(filepath.Join(work, spec+".cfg"), []byte(cfg), 0o644); err != nil {
@@ -94,7 +103,20 @@ var (
 	// it, a tooltip and, on an initial state, a fill.
 	nodeLine    = regexp.MustCompile(`^(-?\d+) \[label="((?:[^"\\]|\\.)*)"((?:,tooltip="(?:[^"\\]|\\.)*"|,style = filled)*)\];?$`)
 	tooltipAttr = regexp.MustCompile(`,tooltip="(?:[^"\\]|\\.)*"`)
-	edgeLine    = regexp.MustCompile(`^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)"`)
+	edgeLine    = regexp.MustCompile(`^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)",color="black",fontcolor="black"\];$`)
+	rankLine    = regexp.MustCompile(`^\{rank = same; (?:-?\d+;)+\}$`)
+	// The rest of what TLC writes around the states and steps, line for line.
+	// Anything else, an indented step included, is refused rather than
+	// skipped.
+	scaffolding = map[string]bool{
+		"strict digraph DiskGraph {":     true,
+		"node [shape=box,style=rounded]": true,
+		"nodesep=0.35;":                  true,
+		"subgraph cluster_graph {":       true,
+		`color="white";`:                 true,
+		"}":                              true,
+		"":                               true,
+	}
 )
 
 // ReadDot reads a state graph TLC wrote with `-dump dot,actionlabels`.
@@ -127,8 +149,8 @@ func ReadDot(path string) (*Graph, error) {
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "-") || line != "" && line[0] >= '0' && line[0] <= '9' {
-			return nil, fmt.Errorf("a line that is neither a state nor a step: %.80q", line)
+		if !scaffolding[line] && !rankLine.MatchString(line) {
+			return nil, fmt.Errorf("a line that is no state, step or part of TLC's graph: %.80q", line)
 		}
 	}
 	if err := scanner.Err(); err != nil {

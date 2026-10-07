@@ -91,6 +91,19 @@ func TestReadDotReadsStatesStepsAndTheInitialState(t *testing.T) {
 	if _, err := ReadDot(path); err == nil {
 		t.Fatal("a state line with an unknown attribute is read")
 	}
+	for name, line := range map[string]string{
+		"an indented step":            `  22 -> 22 [label="Extra",color="black",fontcolor="black"];`,
+		"a step drawn in a color":     `22 -> -11 [label="Extra",color="red",fontcolor="red"];`,
+		"a statement TLC never wrote": `edge [style=dashed]`,
+	} {
+		extra := strings.Replace(dot, "{rank = same; -11;}", line+"\n{rank = same; -11;}", 1)
+		if err := os.WriteFile(path, []byte(extra), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadDot(path); err == nil {
+			t.Errorf("%s is skipped, not refused", name)
+		}
+	}
 }
 
 func TestConstantsReadsACfg(t *testing.T) {

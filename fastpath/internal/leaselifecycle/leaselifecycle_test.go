@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -103,36 +104,49 @@ func explore(t *testing.T, c Config, next func(State) []Transition, keep bool) (
 	return seen, steps
 }
 
-// fromTLC reads a state TLC printed into a State.
+// fromTLC reads a state TLC printed into a State. It refuses anything a State
+// would not hold exactly: a missing or extra variable or record field, an
+// integer outside int8, a value of the wrong kind. Otherwise two states TLC
+// tells apart could become one State, and the comparison would not see it.
 func fromTLC(c Config, r tlc.Record) (State, error) {
 	var s State
 	var err error
+	fail := func(format string, args ...any) {
+		if err == nil {
+			err = fmt.Errorf(format, args...)
+		}
+	}
 	num := func(v tlc.Value) int8 {
 		n, ok := v.(int64)
-		if !ok && err == nil {
-			err = fmt.Errorf("not an integer: %v", v)
+		if !ok || n < -128 || n > 127 {
+			fail("not an int8: %v", v)
 		}
 		return int8(n)
 	}
 	flag := func(v tlc.Value) bool {
 		b, ok := v.(bool)
-		if !ok && err == nil {
-			err = fmt.Errorf("not a boolean: %v", v)
+		if !ok {
+			fail("not a boolean: %v", v)
 		}
 		return b
 	}
-	rec := func(v tlc.Value) tlc.Record {
+	rec := func(v tlc.Value, fields ...string) tlc.Record {
 		x, ok := v.(tlc.Record)
-		if !ok && err == nil {
-			err = fmt.Errorf("not a record: %v", v)
+		if !ok || len(x) != len(fields) {
+			fail("not a record of %v: %v", fields, v)
+			return tlc.Record{}
+		}
+		for _, f := range fields {
+			if _, ok := x[f]; !ok {
+				fail("a record without %s: %v", f, v)
+			}
 		}
 		return x
 	}
-	if len(r) != 15 {
-		return s, fmt.Errorf("%d variables, not 15", len(r))
-	}
+	r = rec(r, "now", "lease", "epoch", "has", "known", "stopped", "answer", "holds", "handoff", "listed",
+		"audRead", "paused", "pausedFor", "view", "revokedFor")
 	s.Now = num(r["now"])
-	lease := rec(r["lease"])
+	lease := rec(r["lease"], "state", "epoch", "expiry", "revoked")
 	switch lease["state"] {
 	case "open":
 		s.Lease.State = Open
@@ -141,20 +155,23 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 	case "closed":
 		s.Lease.State = Closed
 	default:
-		return s, fmt.Errorf("lease state %v", lease["state"])
+		fail("lease state %v", lease["state"])
 	}
 	s.Lease.Epoch, s.Lease.Expiry, s.Lease.Revoked = num(lease["epoch"]), num(lease["expiry"]), flag(lease["revoked"])
 	s.Epoch, s.Has, s.Known = num(r["epoch"]), flag(r["has"]), num(r["known"])
 	s.Stopped, s.Answer = flag(r["stopped"]), num(r["answer"])
 	holds, ok := r["holds"].(tlc.Seq)
 	if !ok || len(holds) != c.MaxHolds {
-		return s, fmt.Errorf("holds is not a sequence of %d: %v", c.MaxHolds, r["holds"])
+		fail("holds is not a sequence of %d: %v", c.MaxHolds, r["holds"])
 	}
 	for i := range s.Holds {
 		s.Holds[i] = NoHold
 	}
 	for i, v := range holds {
-		h := rec(v)
+		if i >= MaxSlots {
+			break
+		}
+		h := rec(v, "open", "epoch", "life", "underOpen", "inPauseAge", "inRevokeWindow", "late")
 		s.Holds[i] = Hold{
 			Open: flag(h["open"]), Epoch: num(h["epoch"]), Life: num(h["life"]),
 			UnderOpen: flag(h["underOpen"]), InPauseAge: flag(h["inPauseAge"]),
@@ -169,33 +186,55 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 	case "complete":
 		s.Handoff = Complete
 	default:
-		return s, fmt.Errorf("handoff %v", r["handoff"])
+		fail("handoff %v", r["handoff"])
 	}
 	listed, ok := r["listed"].(tlc.Set)
 	if !ok {
-		return s, fmt.Errorf("listed is not a set: %v", r["listed"])
+		fail("listed is not a set: %v", r["listed"])
 	}
 	for _, v := range listed {
-		s.Listed |= 1 << (num(v) - 1)
+		h := num(v)
+		if h < 1 || int(h) > c.MaxHolds {
+			fail("listed names no hold: %v", v)
+			continue
+		}
+		s.Listed |= 1 << (h - 1)
 	}
 	s.AudRead, s.Paused, s.PausedFor = num(r["audRead"]), flag(r["paused"]), num(r["pausedFor"])
-	view := rec(r["view"])
+	view := rec(r["view"], "paused", "age")
 	s.View = View{Paused: flag(view["paused"]), Age: num(view["age"])}
 	s.RevokedFor = num(r["revokedFor"])
 	return s, err
+}
+
+// mapStates reads every state of TLC's graph into a State, one to one.
+func mapStates(c Config, g *tlc.Graph) (map[string]State, error) {
+	states := map[string]State{}
+	byState := map[State]string{}
+	for fp, v := range g.States {
+		r, ok := v.(tlc.Record)
+		if !ok {
+			return nil, fmt.Errorf("state %s is not a record of variables", fp)
+		}
+		s, err := fromTLC(c, r)
+		if err != nil {
+			return nil, fmt.Errorf("state %s: %w", fp, err)
+		}
+		if other, dup := byState[s]; dup {
+			return nil, fmt.Errorf("TLC's states %s and %s are one State here: the mapping loses something", other, fp)
+		}
+		states[fp], byState[s] = s, fp
+	}
+	return states, nil
 }
 
 // compare holds the shadow's steps, from Init by next, against TLC's graph.
 // It returns what differs: a state or a step one has and the other does not.
 func compare(t *testing.T, c Config, g *tlc.Graph, next func(State) []Transition) []string {
 	t.Helper()
-	states := map[string]State{}
-	for fp, v := range g.States {
-		s, err := fromTLC(c, v.(tlc.Record))
-		if err != nil {
-			t.Fatalf("state %s: %v", fp, err)
-		}
-		states[fp] = s
+	states, err := mapStates(c, g)
+	if err != nil {
+		t.Fatal(err)
 	}
 	theirs := map[step]struct{}{}
 	for _, e := range g.Edges {
@@ -279,6 +318,96 @@ func TestComparisonSeesADifference(t *testing.T) {
 	for name, next := range cases {
 		if diffs := compare(t, small, g, next); len(diffs) == 0 {
 			t.Errorf("%s: the comparison found no difference", name)
+		}
+	}
+}
+
+// TestMappingRefusesAStateItCannotHold runs TLC on a copy of the spec whose
+// lease row has a field more, which OwnerRenew turns over. The shadow knows
+// nothing of it, so reading TLC's states must fail, rather than fold the
+// states the field tells apart into one and compare as if nothing differed.
+func TestMappingRefusesAStateItCannotHold(t *testing.T) {
+	proofs, err := tlc.ProofsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(filepath.Join(proofs, "LeaseLifecycle.tla"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := string(text)
+	for _, edit := range [][2]string{
+		{`/\ lease = [state |-> "open", epoch |-> 0, expiry |-> Window,
+                revoked |-> FALSE]`,
+			`/\ lease = [state |-> "open", epoch |-> 0, expiry |-> Window,
+                revoked |-> FALSE, turn |-> 0]`},
+		{`/\ lease' = [lease EXCEPT !.expiry = now + Window]
+    /\ answer' = now + Window`,
+			`/\ lease' = [lease EXCEPT !.expiry = now + Window, !.turn = 1 - @]
+    /\ answer' = now + Window`},
+	} {
+		if strings.Count(spec, edit[0]) != 1 {
+			t.Fatalf("the spec no longer has %q once", edit[0])
+		}
+		spec = strings.Replace(spec, edit[0], edit[1], 1)
+	}
+	g, err := tlc.DumpText("LeaseLifecycle", spec, cfgText(small))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.States) <= len(smallTLCGraph(t).States) {
+		t.Fatalf("the changed spec reaches %d states, no more than the spec's %d: the change did nothing",
+			len(g.States), len(smallTLCGraph(t).States))
+	}
+	if _, err := mapStates(small, g); err == nil {
+		t.Fatal("states with a field the shadow does not hold are read as the shadow's")
+	}
+}
+
+// TestMappingHasTwoChecks holds each of mapStates' checks to a case only it
+// catches: a field the shadow does not hold whose value never changes, which
+// folds no two states together, and two of TLC's states that read as one.
+func TestMappingHasTwoChecks(t *testing.T) {
+	g := smallTLCGraph(t)
+	var fp string
+	var init tlc.Record
+	for _, f := range g.Init {
+		fp, init = f, g.States[f].(tlc.Record)
+	}
+	withExtra := tlc.Record{}
+	for k, v := range init {
+		withExtra[k] = v
+	}
+	lease := tlc.Record{"constant": int64(0)}
+	for k, v := range init["lease"].(tlc.Record) {
+		lease[k] = v
+	}
+	withExtra["lease"] = lease
+	if _, err := fromTLC(small, withExtra); err == nil {
+		t.Error("a lease row with a field the shadow does not hold is read")
+	}
+	twice := &tlc.Graph{States: map[string]tlc.Value{fp: init, "twin": init}, Init: []string{fp}}
+	if _, err := mapStates(small, twice); err == nil {
+		t.Error("two of TLC's states that read as one State are accepted")
+	}
+}
+
+// TestTypeOKRefusesWhatTheSpecsTypesDoNot checks the bounds TypeOK has that
+// the Go types do not: the lease's state and the hand-off are enumerations.
+func TestTypeOKRefusesWhatTheSpecsTypesDoNot(t *testing.T) {
+	s := small.Init()
+	if !small.TypeOK(s) {
+		t.Fatal("Init is refused")
+	}
+	for name, bad := range map[string]State{
+		"a lease state below open":   func() State { b := s; b.Lease.State = Open - 1; return b }(),
+		"a lease state past closed":  func() State { b := s; b.Lease.State = Closed + 1; return b }(),
+		"a hand-off below none":      func() State { b := s; b.Handoff = NoHandoff - 1; return b }(),
+		"a hand-off past complete":   func() State { b := s; b.Handoff = Complete + 1; return b }(),
+		"a listed hold that is shut": func() State { b := s; b.Listed = 1; return b }(),
+	} {
+		if small.TypeOK(bad) {
+			t.Errorf("%s passes TypeOK", name)
 		}
 	}
 }
@@ -380,6 +509,11 @@ func TestValidateRefusesWhatTheSpecAssumesAway(t *testing.T) {
 	bad.MaxHolds = MaxSlots + 1
 	if bad.Validate() == nil {
 		t.Error("more holds than slots are accepted")
+	}
+	bad = small
+	bad.MaxRestarts = 128
+	if bad.Validate() == nil {
+		t.Error("more restarts than an epoch holds are accepted")
 	}
 	if err := small.Validate(); err != nil {
 		t.Errorf("the small instance is refused: %v", err)

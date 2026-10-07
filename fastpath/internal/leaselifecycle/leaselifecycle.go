@@ -44,8 +44,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("Window and MaxLife must be positive")
 	case c.Skew < 0 || c.Grace < c.Skew || c.CacheAge < 0 || c.LastRenew < 0 || c.MaxRestarts < 0:
 		return fmt.Errorf("Skew, CacheAge, LastRenew and MaxRestarts must be natural and Grace at least Skew")
-	case c.MaxTime()+c.Skew > 120:
-		return fmt.Errorf("times up to %d do not fit a State", c.MaxTime()+c.Skew)
+	case c.MaxTime()+c.Skew > 120 || c.MaxRestarts > 120:
+		return fmt.Errorf("times up to %d and %d restarts do not fit a State", c.MaxTime()+c.Skew, c.MaxRestarts)
 	}
 	return nil
 }
@@ -543,13 +543,13 @@ func in(v int8, lo, hi int) bool { return int(v) >= lo && int(v) <= hi }
 func (c Config) TypeOK(s State) bool {
 	maxExpiry := c.MaxExpiry()
 	if !in(s.Now, 0, c.MaxTime()) ||
-		s.Lease.State > Closed ||
+		s.Lease.State < Open || s.Lease.State > Closed ||
 		!in(s.Lease.Epoch, 0, c.MaxRestarts) ||
 		!in(s.Lease.Expiry, 0, maxExpiry) ||
 		!in(s.Epoch, 0, c.MaxRestarts) ||
 		!in(s.Known, 0, maxExpiry) ||
 		!in(s.Answer, 0, maxExpiry+1) ||
-		s.Handoff > Complete ||
+		s.Handoff < NoHandoff || s.Handoff > Complete ||
 		!in(s.AudRead, 0, maxExpiry+1) ||
 		!in(s.PausedFor, 0, c.CacheAge+1) ||
 		!in(s.View.Age, 0, c.CacheAge+1) ||
