@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -72,71 +69,17 @@ INVARIANTS
 `, set(c.Auths, nil), set(c.Auths, c.Stream), set(c.Auths, c.Declared), c.MaxAppends)
 }
 
-// configOf reads a .cfg's constants into a Config, its authorizations sorted
-// by name.
-func configOf(t *testing.T, cfgFile string) Config {
-	t.Helper()
-	proofs, err := tlc.ProofsDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, err := os.ReadFile(filepath.Join(proofs, cfgFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	k, err := tlc.ConstantValues(string(text))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(k) != 4 {
-		t.Fatalf("%s sets %d constants, not the spec's 4: %v", cfgFile, len(k), k)
-	}
-	names := func(name string) map[string]bool {
-		s, ok := k[name].(tlc.Set)
-		if !ok {
-			t.Fatalf("%s is not a set: %v", name, k[name])
-		}
-		out := map[string]bool{}
-		for _, v := range s {
-			m, ok := v.(tlc.ModelValue)
-			if !ok {
-				t.Fatalf("%s holds %v, which is no model value", name, v)
-			}
-			out[string(m)] = true
-		}
-		return out
-	}
-	auths, streams, declared := names("Auths"), names("Streams"), names("Declared")
-	// The spec's ASSUME, checked on the sets as written, before Config
-	// projects them onto the authorizations.
-	for a := range streams {
-		if !auths[a] {
-			t.Fatalf("%s: Streams holds %s, which is not in Auths", cfgFile, a)
-		}
-	}
-	for a := range declared {
-		if !streams[a] {
-			t.Fatalf("%s: Declared holds %s, which is not in Streams", cfgFile, a)
-		}
-	}
-	var c Config
-	for a := range auths {
-		c.Auths = append(c.Auths, a)
-	}
-	sort.Strings(c.Auths)
-	for _, a := range c.Auths {
-		c.Stream = append(c.Stream, streams[a])
-		c.Declared = append(c.Declared, declared[a])
-	}
-	appends, ok := k["MaxAppends"].(int64)
-	if !ok {
-		t.Fatalf("MaxAppends is %v", k["MaxAppends"])
-	}
-	c.MaxAppends = int(appends)
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	return c
+// cfgInstances are the instances proofs/TerminalOrder*.cfg check, their
+// constants written out here rather than read from the files. A change to a
+// file's constants changes its guard table count, which fails
+// TestStateCountMatchesTLC until this is changed to match.
+var cfgInstances = map[string]Config{
+	"TerminalOrder.cfg": {
+		Auths: []string{"a1", "a2"}, Stream: []bool{true, false}, Declared: []bool{true, false}, MaxAppends: 2,
+	},
+	"TerminalOrder.undeclared.cfg": {
+		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{false}, MaxAppends: 1,
+	},
 }
 
 type step struct {

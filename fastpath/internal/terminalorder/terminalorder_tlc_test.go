@@ -88,18 +88,20 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{"TerminalOrder.cfg", "TerminalOrder.undeclared.cfg"} {
+	if len(counts) != len(cfgInstances) {
+		t.Errorf("the guard table counts %v, and this test declares %d configurations", counts, len(cfgInstances))
+	}
+	for file, c := range cfgInstances {
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
 		want, ok := counts[file]
 		if !ok {
 			t.Fatalf("the guard table gives no count for %s: %v", file, counts)
 		}
-		c := configOf(t, file)
 		seen, _ := explore(t, c, c.Next, false)
 		if len(seen) != want {
 			t.Errorf("%s: the shadow reaches %d distinct states, TLC %d", file, len(seen), want)
 		}
-	}
-	if len(counts) != 2 {
-		t.Errorf("the guard table counts %d configurations, and this test explores 2: %v", len(counts), counts)
 	}
 }

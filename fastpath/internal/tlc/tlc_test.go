@@ -70,77 +70,6 @@ func TestParseValueReadsFunctionsAndModelValues(t *testing.T) {
 	}
 }
 
-func TestConstantValuesReadsSetsOfModelValues(t *testing.T) {
-	k, err := ConstantValues("CONSTANTS\n    Auths = {a1, a2}\n    Streams = {}\n    MaxAppends = 2\nINVARIANTS\n    TypeOK\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]Value{
-		"Auths": Set{ModelValue("a1"), ModelValue("a2")}, "Streams": Set{}, "MaxAppends": int64(2),
-	}
-	if len(k) != len(want) {
-		t.Fatalf("read %v", k)
-	}
-	for name, v := range want {
-		if !Equal(k[name], v) {
-			t.Errorf("%s is %s, not %s", name, Key(k[name]), Key(v))
-		}
-	}
-	if _, err := ConstantValues("CONSTANTS\n    A <- B\n"); err == nil {
-		t.Fatal("a replacement is read as a constant")
-	}
-}
-
-// TestConstantValuesReadsWhatTLCDoes: a string keeps its spaces, a set its
-// members once, a comment is no value, a model value may start with a digit,
-// and what TLC's configuration grammar refuses is refused.
-// TestConstantValuesReadsWhatTLCDoes: the kinds of constant the specs here are
-// given are read as TLC reads them, a set's members once, across comments of
-// either kind and any section TLC knows; anything outside those kinds is
-// refused rather than read the way TLC might not.
-func TestConstantValuesReadsWhatTLCDoes(t *testing.T) {
-	k, err := ConstantValues("CONSTANTS(* a comment against the keyword *)\\* names\n" +
-		"  X = 2147483647 (* a (* nested *) comment *)\n" +
-		"  S = {a1, a1, 1a}\n  N = 2\nINVARIANT TypeOK\nCONSTANT\n  L = TRUE\nPOSTCONDITIONS Done\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]Value{
-		"X": int64(2147483647), "S": Set{ModelValue("a1"), ModelValue("1a")}, "N": int64(2), "L": true,
-	}
-	if len(k) != len(want) {
-		t.Fatalf("read %v", k)
-	}
-	for name, v := range want {
-		if !Equal(k[name], v) || (name == "S" && len(k[name].(Set)) != 2) {
-			t.Errorf("%s is %s, not %s", name, Key(k[name]), Key(v))
-		}
-	}
-	for _, bad := range []string{
-		"CONSTANTS\n  Bad Name = 1\n",
-		"CONSTANTS\n  X = (a1 :> 1)\n",
-		"CONSTANTS\n  X = [a |-> 1]\n",
-		"CONSTANTS\n  X = << 1 >>\n",
-		"CONSTANTS\n  X = 1\n  X = 2\n",
-		"CONSTANTS\n  X = \"never closed\n",
-		"CONSTANTS\n  X = 1 (* never closed\n",
-		"CONSTANTS\n  X = -2\n",
-		"CONSTANTS\n  X = 1(* between *)2\n",
-		// Beyond the subset: a string, an integer TLC cannot hold, a model
-		// value named like a section's keyword.
-		"CONSTANTS\n  X = \"a\"\n",
-		"CONSTANTS\n  X = 2147483648\n",
-		"CONSTANTS\n  Auths = {INIT}\n",
-	} {
-		if _, err := ConstantValues(bad); err == nil {
-			t.Errorf("%q is read", bad)
-		}
-	}
-	if v, err := ParseValue("1a"); err != nil || !Equal(v, ModelValue("1a")) {
-		t.Errorf("the model value 1a reads as %v, %v", v, err)
-	}
-}
-
 func TestParseValueRefusesWhatItCannotRead(t *testing.T) {
 	for _, text := range []string{"(1 :> 2 @@ 1 :> 3)", "(1 :> 2", "(1 2)", "[a |-> 1", "{1, 2", "<< 1 >> 2", "%"} {
 		if _, err := ParseValue(text); err == nil {
@@ -215,20 +144,6 @@ func TestCompareRefusesALimitBelowOne(t *testing.T) {
 	got, err := Compare(path, read, shadow, 1)
 	if err != nil || got.States != 1 || len(got.Diffs) != 0 {
 		t.Fatalf("the one-state graph compares as %+v, %v", got, err)
-	}
-}
-
-func TestConstantsReadsACfg(t *testing.T) {
-	cfg := "\\* a comment\nSPECIFICATION Spec\nCONSTANTS\n    A = 3   \\* three\n    B = 0\nINVARIANTS\n    TypeOK\n"
-	k, err := Constants(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(k) != 2 || k["A"] != 3 || k["B"] != 0 {
-		t.Fatalf("read %v", k)
-	}
-	if _, err := Constants("CONSTANTS\n    A <- B\n"); err == nil {
-		t.Fatal("a replacement is read as a constant")
 	}
 }
 

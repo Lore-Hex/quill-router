@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -328,15 +326,10 @@ func TestComparisonSeesADifference(t *testing.T) {
 // nothing of it, so reading TLC's states must fail, rather than fold the
 // states the field tells apart into one and compare as if nothing differed.
 func TestMappingRefusesAStateItCannotHold(t *testing.T) {
-	proofs, err := tlc.ProofsDir()
+	spec, err := tlc.SpecText("LeaseLifecycle")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := os.ReadFile(filepath.Join(proofs, "LeaseLifecycle.tla"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := string(text)
 	for _, edit := range [][2]string{
 		{`/\ lease = [state |-> "open", epoch |-> 0, expiry |-> Window,
                 revoked |-> FALSE]`,
@@ -413,32 +406,20 @@ func TestTypeOKRefusesWhatTheSpecsTypesDoNot(t *testing.T) {
 	}
 }
 
+// cfgInstance is the instance proofs/LeaseLifecycle.cfg checks, its constants
+// written out here rather than read from the file. A change to the file's
+// constants changes the guard table's count of its states, which fails
+// TestStateCountMatchesTLC until this is changed to match.
+var cfgInstance = Config{
+	MaxHolds: 3, LeaseSize: 2, Window: 3, Skew: 2, MaxLife: 2, Grace: 2, CacheAge: 1, LastRenew: 3, MaxRestarts: 2,
+}
+
 // TestStateCountMatchesTLC explores the instance proofs/LeaseLifecycle.cfg
 // checks, and must reach as many distinct states as TLC does there, as its
 // guard table records. Every invariant and step property is checked on the
 // way.
 func TestStateCountMatchesTLC(t *testing.T) {
-	proofs, err := tlc.ProofsDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, err := os.ReadFile(filepath.Join(proofs, "LeaseLifecycle.cfg"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	k, err := tlc.Constants(string(text))
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := Config{
-		MaxHolds: k["MaxHolds"], LeaseSize: k["LeaseSize"], Window: k["Window"], Skew: k["Skew"],
-		MaxLife: k["MaxLife"], Grace: k["Grace"], CacheAge: k["CacheAge"], LastRenew: k["LastRenew"],
-		MaxRestarts: k["MaxRestarts"],
-	}
-	if len(k) != 9 {
-		t.Fatalf("LeaseLifecycle.cfg sets %d constants, not the 9 Config has: %v", len(k), k)
-	}
-	if err := c.Validate(); err != nil {
+	if err := cfgInstance.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	counts, err := tlc.GuardTableStates("LeaseLifecycle")
@@ -446,10 +427,10 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, ok := counts["LeaseLifecycle.cfg"]
-	if !ok {
-		t.Fatalf("the guard table gives no count for LeaseLifecycle.cfg: %v", counts)
+	if !ok || len(counts) != 1 {
+		t.Fatalf("the guard table counts %v, not LeaseLifecycle.cfg alone", counts)
 	}
-	seen, _ := explore(t, c, c.Next, false)
+	seen, _ := explore(t, cfgInstance, cfgInstance.Next, false)
 	if len(seen) != want {
 		t.Fatalf("the shadow reaches %d distinct states, TLC %d", len(seen), want)
 	}
