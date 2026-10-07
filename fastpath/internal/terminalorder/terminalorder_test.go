@@ -71,8 +71,8 @@ INVARIANTS
 
 // cfgInstances are the instances proofs/TerminalOrder*.cfg check, their
 // constants written out here rather than read from the files.
-// TestStateCountMatchesTLC has TLC check that each file's constants are these
-// (declares), and fails until a change to a file is made here too.
+// TestStateCountMatchesTLC binds each file to its instance (bind), and fails
+// until a change to a file is made here too.
 var cfgInstances = map[string]Config{
 	"TerminalOrder.cfg": {
 		Auths: []string{"a1", "a2"}, Stream: []bool{true, false}, Declared: []bool{true, false}, MaxAppends: 2,
@@ -80,6 +80,21 @@ var cfgInstances = map[string]Config{
 	"TerminalOrder.undeclared.cfg": {
 		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{false}, MaxAppends: 1,
 	},
+}
+
+// specConstants are the constants TerminalOrder declares: a configuration of
+// it assigns them, and nothing else.
+var specConstants = []string{"Auths", "Streams", "Declared", "MaxAppends"}
+
+// bind has TLC check that proofs/<file> sets up c's model: TLC's parser finds
+// the file assigns the spec's constants and sets nothing else that changes
+// the graph TLC explores, and TLC finds the constants are c's (declares).
+func bind(file string, c Config) error {
+	proofs, err := tlc.ProofsDir()
+	if err != nil {
+		return err
+	}
+	return tlc.BindConfiguration(proofs, "TerminalOrder", file, specConstants, declares(c))
 }
 
 // declares is the formula that a configuration has c's constants, up to the

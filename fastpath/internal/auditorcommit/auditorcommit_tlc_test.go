@@ -7,7 +7,10 @@
 package auditorcommit
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/tlc"
@@ -109,9 +112,10 @@ func TestComparisonSeesADifference(t *testing.T) {
 // TestWholeConfigurationsMatchTLC compares the whole state graphs of all five
 // configurations proofs/ checks, up to 822,229 states, with the shadow's, step
 // for step, read as they stream. TLC runs each from its declaration in
-// cfgInstances, which TestStateCountMatchesTLC binds to its file, checking
-// TypeOK alone. So on every configuration TLC checks, the shadow is the spec:
-// a spurious step in a state only those configurations reach would show.
+// cfgInstances, checking TypeOK alone; TestStateCountMatchesTLC binds each
+// file to its declaration, so the file sets up the same model. So on every
+// configuration TLC checks, the shadow is the spec: a spurious step in a state
+// only those configurations reach would show.
 func TestWholeConfigurationsMatchTLC(t *testing.T) {
 	files := make([]string, 0, len(cfgInstances))
 	for file := range cfgInstances {
@@ -153,6 +157,10 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	proofs, err := tlc.ProofsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(counts) != len(cfgInstances) {
 		t.Errorf("the guard table counts %v, and this test declares %d configurations", counts, len(cfgInstances))
 	}
@@ -166,7 +174,7 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
-		if err := tlc.CheckAssumption("AuditorCommit", file, declares(c)); err != nil {
+		if err := bind(proofs, file, c); err != nil {
 			t.Fatal(err)
 		}
 		want, ok := counts[file]
@@ -180,12 +188,33 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	}
 }
 
-// TestDeclarationsAreBoundToTheirFiles: a declaration that differs from its
-// .cfg is refused by TLC reading the file.
+// TestDeclarationsAreBoundToTheirFiles: a file that differs from its
+// declaration is refused, in a constant's value or in a definition it
+// overrides. A copy of AuditorCommit.cfg that sets SettleCharge to 3 has TLC
+// charge 3 a settle where the shadow charges 2, in a graph of the same
+// 164,159 states and 501,981 steps (Codex, review round 4).
 func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
+	proofs, err := tlc.ProofsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	wrong := cfgInstances["AuditorCommit.again.cfg"]
 	wrong.Lying = false
-	if err := tlc.CheckAssumption("AuditorCommit", "AuditorCommit.again.cfg", declares(wrong)); err == nil {
-		t.Fatal("a declaration with an honest owner is taken for AuditorCommit.again.cfg's")
+	if err := bind(proofs, "AuditorCommit.again.cfg", wrong); err == nil {
+		t.Error("a declaration with an honest owner is taken for AuditorCommit.again.cfg's")
+	}
+	dir := t.TempDir()
+	for name, more := range map[string]string{"AuditorCommit.tla": "", "AuditorCommit.cfg": "\nCONSTANT SettleCharge = 3\n"} {
+		text, err := os.ReadFile(filepath.Join(proofs, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), append(text, more...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = bind(dir, "AuditorCommit.cfg", cfgInstances["AuditorCommit.cfg"])
+	if err == nil || !strings.Contains(err.Error(), "SettleCharge is assigned, and is no constant the test declares") {
+		t.Errorf("a file that sets SettleCharge to 3 is bound, or refused for another reason: %v", err)
 	}
 }

@@ -49,8 +49,8 @@ var (
 
 // cfgInstances are the instances proofs/AuditorCommit*.cfg check, their
 // constants written out here rather than read from the files.
-// TestStateCountMatchesTLC has TLC check that each file's constants are these
-// (declares), and fails until a change to a file is made here too. In each
+// TestStateCountMatchesTLC binds each file to its instance (bind), and fails
+// until a change to a file is made here too. In each
 // file m1 is the member named first, so it holds the lease at the start.
 var cfgInstances = map[string]Config{
 	"AuditorCommit.cfg": {
@@ -120,6 +120,21 @@ INVARIANTS
     TypeOK
 `, strings.Join(members, ", "), strings.Join(c.Auths, ", "), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead,
 		c.MaxLate, c.MaxRaise, c.MaxAssign, c.MaxCrash, c.MaxAppend, strings.ToUpper(fmt.Sprint(c.Lying)), c.Grant)
+}
+
+// specConstants are the constants AuditorCommit declares: a configuration of
+// it assigns them, and nothing else.
+var specConstants = []string{
+	"Auths", "Members", "MaxSeq", "MaxSnap", "MaxDup", "MaxAhead", "MaxLate", "MaxRaise", "MaxAssign",
+	"MaxCrash", "MaxAppend", "Lying", "Grant",
+}
+
+// bind has TLC check that dir/<file> sets up c's model: TLC's parser finds
+// the file assigns the spec's constants and sets nothing else that changes
+// the graph TLC explores, and TLC finds the constants are c's (declares).
+// dir is tlc.ProofsDir for the files proofs/ checks.
+func bind(dir, file string, c Config) error {
+	return tlc.BindConfiguration(dir, "AuditorCommit", file, specConstants, declares(c))
 }
 
 // declares is the formula that a configuration has c's constants, up to the
