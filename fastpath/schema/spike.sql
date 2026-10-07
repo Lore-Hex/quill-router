@@ -107,6 +107,12 @@ CREATE TABLE tr_lease (
 -- so the index is not written by renewals.
 CREATE INDEX tr_lease_by_state ON tr_lease (state);
 
+-- A lease by its ID alone. An authorization names its lease but not the
+-- workspace, and the answer for an authorization (§4.9) is looked up from
+-- its ID: this finds the lease's workspace, and with it the lease's packs.
+-- Lease IDs are random, and unique across workspaces.
+CREATE UNIQUE INDEX tr_lease_by_id ON tr_lease (lease_id);
+
 -- The allocation per donor shard (§4.2). The spike's choice of form: a row
 -- per donor, so each of the three writers' arithmetic is one conditional
 -- statement. Donors are in ascending shard order, the first the lowest:

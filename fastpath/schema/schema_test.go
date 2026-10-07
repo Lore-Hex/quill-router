@@ -25,6 +25,18 @@ func TestSplitKeepsQuotesAndDropsComments(t *testing.T) {
 	}
 }
 
+// TestSplitEndsALineCommentAtACarriageReturn: a statement after a comment
+// that a carriage return ends is kept, as GoogleSQL's lexer keeps it.
+func TestSplitEndsALineCommentAtACarriageReturn(t *testing.T) {
+	got, err := Split("CREATE TABLE a (x INT64) PRIMARY KEY (x);-- one\rCREATE TABLE b (x INT64) PRIMARY KEY (x);# two\rSELECT 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[1] != "CREATE TABLE b (x INT64) PRIMARY KEY (x)" || got[2] != "SELECT 1" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestSplitRefusesWhatItCannotClose(t *testing.T) {
 	for _, sql := range []string{"SELECT 'a", "SELECT \"a\\\"", "SELECT '''a''", "SELECT 1 /* a", "SELECT `a"} {
 		if _, err := Split(sql); err == nil {
@@ -38,7 +50,7 @@ func TestStatementsAreTheSpikesTablesAndIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := regexp.MustCompile(`^CREATE (TABLE|INDEX) (\w+)`)
+	created := regexp.MustCompile(`^CREATE (TABLE|INDEX|UNIQUE INDEX) (\w+)`)
 	var names []string
 	for _, s := range statements {
 		m := created.FindStringSubmatch(s)
@@ -47,7 +59,7 @@ func TestStatementsAreTheSpikesTablesAndIndexes(t *testing.T) {
 		}
 		names = append(names, m[2])
 	}
-	want := "tr_credit_balance tr_lease tr_lease_by_state tr_lease_donor tr_lease_hold tr_lease_winners " +
+	want := "tr_credit_balance tr_lease tr_lease_by_state tr_lease_by_id tr_lease_donor tr_lease_hold tr_lease_winners " +
 		"tr_lease_winners_by_work tr_lease_drain tr_lease_drain_by_commit tr_lease_record tr_spike_staged " +
 		"tr_spike_staged_by_lease tr_fastpath_member"
 	if got := strings.Join(names, " "); got != want {

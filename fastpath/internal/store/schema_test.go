@@ -68,7 +68,8 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(indexes)
-	wantIndexes := "tr_lease_by_state ON tr_lease IN , tr_lease_drain_by_commit ON tr_lease_drain IN tr_lease, " +
+	wantIndexes := "tr_lease_by_id ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
+		"tr_lease_drain_by_commit ON tr_lease_drain IN tr_lease, " +
 		"tr_lease_winners_by_work ON tr_lease_winners IN , tr_spike_staged_by_lease ON tr_spike_staged IN "
 	if got := strings.Join(indexes, ", "); got != wantIndexes {
 		t.Errorf("the indexes are %s", got)
@@ -134,6 +135,11 @@ func TestChecksRefuseRowsTheDesignForbids(t *testing.T) {
 		}
 	}
 	workspace, lease := newLease()
+	// A lease ID is the lease's alone, across workspaces.
+	if err := insert("tr_lease", leaseRow(storetest.UniqueID("ws"), lease, expiry)); err == nil ||
+		!strings.Contains(err.Error(), "tr_lease_by_id") {
+		t.Errorf("a second workspace's lease with the ID %s: want a refusal by tr_lease_by_id, got %v", lease, err)
+	}
 	key := map[string]any{"workspace_id": workspace, "lease_id": lease}
 	children := []struct {
 		name, table string

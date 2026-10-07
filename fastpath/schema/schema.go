@@ -18,7 +18,8 @@ func Statements() ([]string, error) {
 
 // Split splits GoogleSQL text into its statements at the semicolons outside
 // quotes and comments, and drops the comments: `--` and `#` to the end of the
-// line, and `/* */`. A quote, single, double, triple or backquoted, runs to
+// line, at a newline or a carriage return as GoogleSQL's lexer has it, and
+// `/* */`. A quote, single, double, triple or backquoted, runs to
 // its closing quote; a backslash escapes the next character in every kind,
 // raw strings included. Text that ends inside a quote or a block comment is
 // refused rather than split by guess.
@@ -34,7 +35,7 @@ func Split(sql string) ([]string, error) {
 	for i := 0; i < len(sql); {
 		switch {
 		case strings.HasPrefix(sql[i:], "--") || sql[i] == '#':
-			end := strings.IndexByte(sql[i:], '\n')
+			end := strings.IndexAny(sql[i:], "\n\r")
 			if end < 0 {
 				end = len(sql) - i
 			}
