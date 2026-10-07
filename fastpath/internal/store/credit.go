@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"cloud.google.com/go/spanner"
 
@@ -18,7 +19,10 @@ import (
 // shard order, the lock order of the design's section 4.7. Writes stamp
 // updated_at with Spanner's CURRENT_TIMESTAMP(): a commit timestamp written
 // by DML would bar the later statements on the same table that covering
-// needs.
+// needs. A condition that computes a headroom uses SAFE_SUBTRACT, which is
+// NULL where the subtraction would overflow, so no row's extreme columns
+// stop a statement about another row: the emulator evaluates a condition on
+// every row it scans.
 //
 // Production's release also offers what repaid nothing to unrecovered
 // payment claims (absorb_unrecovered_recovery_tx). The spike has no claims
@@ -103,7 +107,8 @@ func writeCreditRows(ctx context.Context, txn *spanner.ReadWriteTransaction, wor
 		}
 		n, err := txn.UpdateWithOptions(ctx, spanner.Statement{
 			SQL: `UPDATE tr_credit_balance SET total_credits = total_credits + @delta, updated_at = CURRENT_TIMESTAMP()
-			       WHERE workspace_id = @w AND shard = @shard AND total_credits - total_usage - reserved = @before`,
+			       WHERE workspace_id = @w AND shard = @shard
+			         AND SAFE_SUBTRACT(SAFE_SUBTRACT(total_credits, total_usage), reserved) = @before`,
 			Params: map[string]any{"delta": delta, "w": workspace, "shard": int64(shard), "before": before.headroom[shard]},
 		}, spanner.QueryOptions{RequestTag: tag(operation)})
 		if err != nil {
@@ -154,7 +159,8 @@ func squareCreditRows(ctx context.Context, txn *spanner.ReadWriteTransaction, wo
 func reserve(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace string, shard, amount int64, operation string) (bool, error) {
 	n, err := txn.UpdateWithOptions(ctx, spanner.Statement{
 		SQL: `UPDATE tr_credit_balance SET reserved = reserved + @x, updated_at = CURRENT_TIMESTAMP()
-		       WHERE workspace_id = @w AND shard = @shard AND total_credits - total_usage - reserved >= @x
+		       WHERE workspace_id = @w AND shard = @shard
+		         AND SAFE_SUBTRACT(SAFE_SUBTRACT(total_credits, total_usage), reserved) >= @x
 		         AND NOT COALESCE(in_debt, FALSE)`,
 		Params: map[string]any{"x": amount, "w": workspace, "shard": shard},
 	}, spanner.QueryOptions{RequestTag: tag(operation)})
@@ -233,6 +239,11 @@ func release(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace s
 	if shard < 0 || shard >= int64(len(rows.headroom)) {
 		return ErrCreditRowsIncomplete
 	}
+	// The row's headroom before the release, which the stored columns may
+	// not be able to hold: refused rather than wrapped.
+	if rows.headroom[shard] < math.MinInt64+1+amount {
+		return fmt.Errorf("store: %s/%d's headroom before releasing %d is out of int64's range", workspace, shard, amount)
+	}
 	without := append([]int64(nil), rows.headroom...)
 	without[shard] -= amount
 	in, err := creditdebt.TakeInflow(without, amount)
@@ -240,6 +251,9 @@ func release(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace s
 		return err
 	}
 	after := append([]int64(nil), in.Headroom...)
+	if after[shard] > 0 && in.Left > math.MaxInt64-after[shard] {
+		return fmt.Errorf("store: %s/%d's headroom after releasing %d is out of int64's range", workspace, shard, amount)
+	}
 	after[shard] += in.Left
 	return writeCreditRows(ctx, txn, workspace, rows, after, in.Marked, operation)
 }

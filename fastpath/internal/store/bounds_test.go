@@ -125,3 +125,62 @@ func TestCheckIdentitySumsExactly(t *testing.T) {
 		t.Fatalf("marked rows summing past int64: %q %v", problems, err)
 	}
 }
+
+// TestAReleaseThatWouldWrapIsRefused: a row of 0 credits, MaxInt64 used and
+// 2 reserved, marked, whose headroom before a release of the 2 is below
+// int64's range (Codex, review round 2 of S4b: it wrapped to a positive
+// headroom and cleared the mark).
+func TestAReleaseThatWouldWrapIsRefused(t *testing.T) {
+	spikeStore(t)
+	ws := seedWorkspace(t, 0)
+	dropWorkspace(t, ws)
+	setRow(t, ws, 0, map[string]any{"total_usage": int64(math.MaxInt64), "reserved": int64(2), "in_debt": true})
+	err := inTransaction(t, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return release(ctx, txn, ws, 0, 2, "test")
+	})
+	if err == nil || !strings.Contains(err.Error(), "out of int64's range") {
+		t.Fatalf("the release: %v", err)
+	}
+	var r int64
+	var marked bool
+	row, err := shared.Single().ReadRow(context.Background(), "tr_credit_balance", spanner.Key{ws, int64(0)}, []string{"reserved", "in_debt"})
+	if err == nil {
+		err = row.Columns(&r, &marked)
+	}
+	if err != nil || r != 2 || !marked {
+		t.Fatalf("the refused release left reserved %d, marked %v, %v", r, marked, err)
+	}
+}
+
+// TestStatementsIgnoreAnotherWorkspacesExtremeRow: a reservation and a
+// cover in one workspace are not stopped by another workspace's row whose
+// headroom overflows, though the emulator evaluates their conditions on it.
+func TestStatementsIgnoreAnotherWorkspacesExtremeRow(t *testing.T) {
+	spikeStore(t)
+	extreme := seedWorkspace(t, 0)
+	dropWorkspace(t, extreme)
+	setRow(t, extreme, 0, map[string]any{"total_usage": int64(math.MaxInt64), "reserved": int64(2)})
+	ws := seedWorkspace(t, 100)
+	err := inTransaction(t, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		ok, err := reserve(ctx, txn, ws, 0, 10, "test")
+		if err == nil && !ok {
+			t.Error("the reservation matched no row")
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatalf("a reservation beside an extreme row: %v", err)
+	}
+	covered := seedWorkspace(t, 0, 20)
+	setRow(t, covered, 0, map[string]any{"total_usage": int64(10)})
+	err = inTransaction(t, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := squareCreditRows(ctx, txn, covered, "test")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("a cover beside an extreme row: %v", err)
+	}
+	if got := headrooms(readRows(t, covered)); !slices.Equal(got, []int64{0, 10}) {
+		t.Fatalf("after the cover: %v", got)
+	}
+}
