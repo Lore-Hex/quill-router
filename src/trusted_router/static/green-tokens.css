@@ -12,7 +12,7 @@
 .green-hero-copy { padding-top: 52px; padding-bottom: 330px; }
 .green-hero h1 { color: var(--text-display); margin-inline: auto; /* the shared h1 max-width would otherwise sit left of a centred hero */ }
 .green-hero p { margin-inline: auto; }
-.green-hero .green-eyebrow { color: var(--text-accent); }
+.green-hero .green-eyebrow { color: var(--text-accent); margin-inline: auto; }
 .green-hero .green-lead { font-size: 24px; line-height: 1.4; margin-block: 18px; }
 .green-hero .green-intro { color: var(--text-body); font-size: 17px; max-width: 620px; margin-block: 18px 24px; }
 .green-actions { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
