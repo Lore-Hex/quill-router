@@ -60,12 +60,14 @@ func (s *Store) ReadStaged(ctx context.Context, authorization string, digest []b
 }
 
 // DropStaged removes an authorization's staged records with the digests
-// given, once nothing can need them (§4.9): once a record for the
-// authorization is written, or once its lease has closed with no charged
-// winner for it, as for losing and refunded terminals. A charged winner
-// writes its records from its staged record, so until then they stay, and
-// DropStaged reports false; so too while the store cannot find the lease.
-// The lease comes from the authorization's ID.
+// given, once nothing can need them (§4.9): once the pack that holds the
+// authorization's winner is marked done, so the winner's records are all
+// written and its outcome published; or, for an authorization with no
+// winner, once its lease has closed, as for losing terminals. A record
+// written alone is not enough: the winner's others may not be. Until then
+// the records stay and DropStaged reports false; so too while the store
+// cannot find the lease. The lease comes from the authorization's ID, and
+// its packs from the lease.
 func (s *Store) DropStaged(ctx context.Context, authorization string, digests ...[]byte) (bool, error) {
 	leaseID, err := LeaseOfAuthorization(authorization)
 	if err != nil {
@@ -74,43 +76,33 @@ func (s *Store) DropStaged(ctx context.Context, authorization string, digests ..
 	var dropped bool
 	_, err = s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		dropped = false
-		query := func(sql string, params map[string]any, each func(*spanner.Row) error) error {
-			return txn.QueryWithOptions(ctx, spanner.Statement{SQL: sql, Params: params},
-				spanner.QueryOptions{RequestTag: stagingTag}).Do(each)
+		ref := LeaseRef{LeaseID: leaseID}
+		var state string
+		found := false
+		err := txn.QueryWithOptions(ctx, spanner.Statement{
+			SQL:    `SELECT workspace_id, state FROM tr_lease@{FORCE_INDEX=tr_lease_by_id} WHERE lease_id = @l`,
+			Params: map[string]any{"l": leaseID},
+		}, spanner.QueryOptions{RequestTag: stagingTag}).Do(func(row *spanner.Row) error {
+			found = true
+			return row.Columns(&ref.Workspace, &state)
+		})
+		if err != nil || !found {
+			return err
 		}
-		written := false
-		err := query(`SELECT 1 FROM tr_lease_record WHERE authorization_id = @a LIMIT 1`, map[string]any{"a": authorization},
-			func(*spanner.Row) error {
-				written = true
-				return nil
-			})
+		packs, err := readPacks(ctx, txn, ref, stagingTag)
 		if err != nil {
 			return err
 		}
-		if !written {
-			var ref LeaseRef
-			var state string
-			found := false
-			err := query(`SELECT workspace_id, state FROM tr_lease@{FORCE_INDEX=tr_lease_by_id} WHERE lease_id = @l`,
-				map[string]any{"l": leaseID}, func(row *spanner.Row) error {
-					found = true
-					ref.LeaseID = leaseID
-					return row.Columns(&ref.Workspace, &state)
-				})
-			if err != nil || !found || state != "closed" {
-				return err
-			}
-			packs, err := readPacks(ctx, txn, ref, stagingTag)
-			if err != nil {
-				return err
-			}
-			for _, p := range packs {
-				for _, w := range p.Winners {
-					if w.AuthorizationID == authorization && w.Kind != "refund" && w.Kind != "release" {
-						return nil
-					}
+		won, done := false, false
+		for _, p := range packs {
+			for _, w := range p.Winners {
+				if w.AuthorizationID == authorization && !won {
+					won, done = true, p.WorkDoneAt.Valid
 				}
 			}
+		}
+		if (won && !done) || (!won && state != "closed") {
+			return nil
 		}
 		mutations := make([]*spanner.Mutation, 0, len(digests))
 		for _, d := range digests {

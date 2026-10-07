@@ -84,11 +84,16 @@ func TestAReapNeedsItsOpenHold(t *testing.T) {
 			t.Fatalf("a reap of %s, which has no open hold: %q %v", a, r, err)
 		}
 	}
+	noDigest := reapOf("a3", 10)
+	noDigest.Digest = nil
 	for name, r := range map[string]ReapRow{
-		"another charge":          reapOf("a3", 9),
-		"another estimate":        {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 11, SnapshotOwnerSeq: 2, Money: []byte("{}")},
-		"another snapshot":        {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 10, SnapshotOwnerSeq: 1, Money: []byte("{}")},
-		"a charge on no snapshot": reapOf("a2", 1),
+		"another charge": reapOf("a3", 9),
+		"another estimate": {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 11, SnapshotOwnerSeq: 2,
+			Digest: []byte("d"), Money: []byte("{}")},
+		"another snapshot": {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 10, SnapshotOwnerSeq: 1,
+			Digest: []byte("d"), Money: []byte("{}")},
+		"a charge on no snapshot":      reapOf("a2", 1),
+		"no digest of its full record": noDigest,
 	} {
 		if _, _, err := s.Reap(ctx, ref, got.NewVersion, due, r); err == nil {
 			t.Fatalf("a reap at %s is taken", name)
@@ -99,7 +104,7 @@ func TestAReapNeedsItsOpenHold(t *testing.T) {
 		t.Fatalf("a reap at the estimate: %q %v", r, err)
 	}
 	if r, _, err := s.Reap(ctx, ref, got.NewVersion, due, ReapRow{AuthorizationID: "a2", RecordID: "reap-a2", Estimate: 10,
-		Money: []byte("{}")}); err != nil || r != "" {
+		Digest: []byte("d"), Money: []byte("{}")}); err != nil || r != "" {
 		t.Fatalf("a reap of a hold with no snapshot: %q %v", r, err)
 	}
 }

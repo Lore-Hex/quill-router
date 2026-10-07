@@ -50,8 +50,10 @@ type ReapRow struct {
 // commit that applies the row books it. It returns the refusal, if any, and
 // the row's commit.
 func (s *Store) Reap(ctx context.Context, ref LeaseRef, readVersion int64, tick time.Time, r ReapRow) (Refusal, time.Time, error) {
-	if r.AuthorizationID == "" || r.RecordID == "" || r.Charge < 0 || r.Charge > r.Estimate || len(r.Money) == 0 {
-		return "", time.Time{}, errors.New("store: a reap names its authorization and record, and charges at most the hold")
+	if r.AuthorizationID == "" || r.RecordID == "" || r.Charge < 0 || r.Charge > r.Estimate || len(r.Money) == 0 ||
+		len(r.Digest) == 0 {
+		return "", time.Time{}, errors.New("store: a reap names its authorization, its record and the record's digest, " +
+			"and charges at most the hold")
 	}
 	var refused Refusal
 	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
