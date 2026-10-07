@@ -89,8 +89,9 @@ def transcripts(monkeypatch, store, db, cfg, path, payload, headers, signer_pres
             # must prevent every observer, read and comparator invocation.
             shadow = Runtime(cfg, runtime())
             shadow.signer = signer()
-            def unexpected(*args, **kwargs):
-                pytest.fail('flag-off HTTP request reached shadow')
+            shadow_calls = []
+            def unexpected(*args, shadow_calls=shadow_calls, **kwargs):
+                shadow_calls.append((args, kwargs))
             shadow.submit = shadow.authorize = unexpected
             client.app.state.async_settle_shadow = shadow
             raw_calls = []
@@ -104,15 +105,18 @@ def transcripts(monkeypatch, store, db, cfg, path, payload, headers, signer_pres
                 record(_FakeTransaction, method)
             record(_FakeSnapshot, 'execute_sql')
             responses = []
-            # Exercise a real fresh request and durable idempotent replay.
-            for _ in range(2):
-                response = client.post(path, json=payload, headers=headers)
-                assert response.status_code == 200, response.text
-                responses.append((response.status_code, list(response.headers.multi_items()), response.content))
-            state = {k: copy.deepcopy(v) for k, v in vars(db).items() if isinstance(v, (dict, list, set, int))}
-            outputs.append((responses, raw_calls, state))
-            shadow.executor.shutdown()
-            client.close()
+            try:
+                # Exercise a real fresh request and durable idempotent replay.
+                for _ in range(2):
+                    response = client.post(path, json=payload, headers=headers)
+                    assert response.status_code == 200, response.text
+                    responses.append((response.status_code, list(response.headers.multi_items()), response.content))
+                state = {k: copy.deepcopy(v) for k, v in vars(db).items() if isinstance(v, (dict, list, set, int))}
+                outputs.append((responses, raw_calls, state))
+            finally:
+                shadow.executor.shutdown()
+                client.close()
+            assert shadow_calls == [], 'flag-off HTTP request reached shadow'
     assert outputs[0] == outputs[1]
     return outputs[1]
 

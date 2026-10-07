@@ -28,9 +28,12 @@ class Database:
         self.rows = {}
         self.lock = threading.Lock()
         self.trace = []
+        self.transaction_options = []
+        self.query_options = []
+        self.write_shapes = []
 
     def run_in_transaction(self, callback, **kwargs):
-        assert kwargs == dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})
+        self.transaction_options.append(kwargs)
         with self.lock:
             before = copy.deepcopy(self.rows)
             try:
@@ -40,13 +43,13 @@ class Database:
                 raise
 
     def execute_sql(self, sql, *, params, param_types, timeout, retry, request_options):
-        assert 0 < timeout <= .2 and retry is None and request_options == {'priority':'PRIORITY_LOW'}
+        self.query_options.append((timeout, retry, request_options))
         self.trace.append((sql, params, param_types))
         value = self.rows.get((params['kind'], params['id']))
         return [] if value is None else [(value,)]
 
     def insert_or_update(self, *, table, columns, values):
-        assert table == 'tr_entities' and columns == ('kind','id','body','updated_at')
+        self.write_shapes.append((table, columns))
         for kind, identity, body, _ in values:
             self.rows[kind,identity] = body
 
@@ -485,3 +488,14 @@ def test_report_accepts_fully_accounted_ineligible_zero_sample_writer():
         **{key: bucket[key] for key in ('adapter', 'route_type', 'streamed')})]
     result = report(rows, days, proof)
     assert result['status'] == 'PASS' and not result['gaps']
+
+
+def test_evidence_storage_call_contract():
+    db = Database()
+    granted = EvidenceStore(db).reserve('2026-10-06', time.monotonic()+1)
+    assert granted == 100
+    assert db.transaction_options == [dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})]
+    assert len(db.query_options) == 1
+    timeout, retry, options = db.query_options[0]
+    assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
+    assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]

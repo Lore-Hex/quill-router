@@ -103,26 +103,24 @@ def test_evidence_worker_counter_lock_does_not_hold_money(env, monkeypatch, opte
 
     client.app.add_middleware(Watch)
     # The real evidence worker runs the exact counter-snapshot operation used by flush().
-    snapshot = shadow.executor.submit(shadow.counters.snapshot)
-    assert held.wait(5)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(client.post, "/v1/internal/gateway/settle", json=repair)
-        try:
-            assert entered.wait(5)
-            responded = finished.wait(0.25) and sent.is_set()
-            booked = _typed_credit(db, "ws-v1")["total_usage"]
-            print(
-                "evidence worker snapshot blocked; money booked =",
-                booked,
-                "response started =",
-                responded,
-                flush=True,
-            )
-        finally:
-            release.set()
-        assert future.result(timeout=5).status_code == 200
-    detached = snapshot.result(timeout=5)[0][1]
-    shadow.executor.shutdown()
+    try:
+        snapshot = shadow.executor.submit(shadow.counters.snapshot)
+        assert held.wait(5)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            try:
+                future = pool.submit(client.post, "/v1/internal/gateway/settle", json=repair)
+                assert entered.wait(5)
+                responded = finished.wait(0.25) and sent.is_set()
+                booked = _typed_credit(db, "ws-v1")["total_usage"]
+            finally:
+                # Release before the request pool's context manager joins it.
+                release.set()
+            assert future.result(timeout=5).status_code == 200
+        detached = snapshot.result(timeout=5)[0][1]
+    finally:
+        # Covers failure/inversion of held.wait(), before the request pool exists.
+        release.set()
+        shadow.executor.shutdown()
     assert capture.is_set() is opted
     assert booked == 2, "evidence worker held real booking"
     assert responded, "evidence counter snapshot blocked the real money path for 250ms"
@@ -137,13 +135,15 @@ def test_evidence_worker_counter_lock_does_not_hold_money(env, monkeypatch, opte
 def test_nonblocking_counter_mailbox_is_bounded_and_records_drops():
     from trusted_router.async_settle_shadow_evidence import Counters
     counters = Counters('us-central1', 'a'*40, clock=lambda: 1791244801)
+    observations = []
     with ThreadPoolExecutor(max_workers=1) as pool:
         for _ in range(130):
             with counters.lock:
                 def request():
                     with counters.request_access(1791244801) as acquired:
-                        assert not acquired
+                        observations.append(acquired)
                 pool.submit(request).result(timeout=1)
+    assert observations == [False] * 130
     assert len(counters.mailbox) == 128
     body = counters.snapshot()[0][1]
     assert body['counter_overflow'] and body['first_gap_at_us'] is not None

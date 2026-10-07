@@ -93,8 +93,17 @@ MUTATIONS = [
         'tests/test_async_settle_shadow_rejected_endpoint.py::test_rejected_replay_endpoint_is_not_persisted'),
     ('bidirectional-reconciliation-removed', REPORT, [
         ('if exclusions != bucket["observed_ineligible"]:', 'if False:'),
-        ('if counter["comparison_attempts"] > eligible:', 'if False:')],
+        ('if counter["comparison_attempts"] > verified:', 'if False:')],
         'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_bidirectional_accounting'),
+    ('comparison-ceiling-excludes-ineligible', REPORT, [
+        ('bucket["observed_eligible"] + bucket["observed_ineligible"]', 'bucket["observed_eligible"]')],
+        'tests/test_async_settle_shadow_real_exclusion.py::test_actual_verified_cohort_exclusion_does_not_break_clean_window'),
+    ('real-exclusion-counter-unreconciled', REPORT, [
+        ('if exclusions != bucket["observed_ineligible"]:', 'if False:')],
+        'tests/test_async_settle_shadow_real_exclusion.py::test_real_exclusion_counter_mutation_blocks[missing_exclusion]'),
+    ('expired-observation-persisted', RUNTIME, [
+        ('if "proof_expired" in compared.reasons or retired:', 'if False:')],
+        'tests/test_async_settle_shadow_expired_retention.py::test_expired_replay_cannot_repopulate_deleted_authorization_day'),
     ('loaded-signer-bad-header-http', 'src/trusted_router/routes/internal/gateway.py', [
         ('    subject = body.api_key_lookup_hash or body.api_key_hash',
          '    if request.app.state.async_settle.signer is not None and not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Mode") == "!":\n        return {"data": {"review_mutant": True}}\n    subject = body.api_key_lookup_hash or body.api_key_hash')],

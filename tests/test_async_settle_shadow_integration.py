@@ -99,18 +99,19 @@ def test_shadow_failure_after_real_money_commit(env,monkeypatch,go_amount,inject
     envelope['payload_hash'] = hashlib.sha256(canonical(envelope['terminal'])).hexdigest()
     evidence = []
     evidence_commit_counts = []
+    booking_observations = []
+    sample_commit_counts = []
     commits_before = db.commits
     class DetachedStore:
         def booking(self,identity,deadline):
-            assert db.commits > commits_before and db.gateway_authorizations[identity]['settled']
+            booking_observations.append((db.commits, db.gateway_authorizations[identity]['settled']))
             record = db.gateway_authorizations[identity]
             return Booking(record['finalized_cost_microdollars'],record['finalization_outcome'],True)
         def reserve(self,day,deadline):
             evidence_commit_counts.append(db.commits)
-            assert db.commits > commits_before
             return 100
         def insert_sample(self,identity,row,deadline):
-            assert db.commits > commits_before
+            sample_commit_counts.append(db.commits)
             validate_sample(row,identity)
             if injection == 'storage':
                 raise RuntimeError('injected')
@@ -139,7 +140,11 @@ def test_shadow_failure_after_real_money_commit(env,monkeypatch,go_amount,inject
         result = client.post('/v1/internal/gateway/settle',json=repair,headers={'X-TR-Settlement-Shadow':wire(envelope)[0]})
     except RuntimeError as error:
         result = error
+    finally:
+        shadow.executor.shutdown()
     assert not isinstance(result, RuntimeError), 'shadow changed the money response'
+    assert all(count > commits_before and settled for count, settled in booking_observations)
+    assert all(count > commits_before for count in sample_commit_counts)
     assert all(count > commits_before for count in evidence_commit_counts), 'evidence preceded money outcome'
     assert result.status_code == 200 and result.json()['data']['cost_microdollars'] == 2
     assert _typed_credit(db,'ws-v1')['total_usage'] == _typed_key(db,key.hash)['usage'] == 2
@@ -265,18 +270,19 @@ def test_reviewer_hash_only_replay(env,monkeypatch):
     evidence = []
     persistence = []
     evidence_commit_counts = []
+    booking_observations = []
+    sample_commit_counts = []
     commits_before = db.commits
     class DetachedStore:
         def booking(self,identity,deadline):
-            assert db.commits > commits_before and db.gateway_authorizations[identity]['settled']
+            booking_observations.append((db.commits, db.gateway_authorizations[identity]['settled']))
             record = db.gateway_authorizations[identity]
             return Booking(record['finalized_cost_microdollars'],record['finalization_outcome'],True)
         def reserve(self,day,deadline):
             evidence_commit_counts.append(db.commits)
-            assert db.commits > commits_before
             return 100
         def insert_sample(self,identity,row,deadline):
-            assert db.commits > commits_before
+            sample_commit_counts.append(db.commits)
             validate_sample(row,identity)
             evidence.append(row)
             outcome = evidence_store.insert_sample(identity,row,deadline)
@@ -294,7 +300,11 @@ def test_reviewer_hash_only_replay(env,monkeypatch):
         result = client.post('/v1/internal/gateway/settle',json=repair,headers={'X-TR-Settlement-Shadow':wire(envelope)[0]})
     except RuntimeError as error:
         result = error
+    finally:
+        shadow.executor.shutdown()
     assert not isinstance(result, RuntimeError), 'shadow changed the money response'
+    assert all(count > commits_before and settled for count, settled in booking_observations)
+    assert all(count > commits_before for count in sample_commit_counts)
     assert all(count > commits_before for count in evidence_commit_counts), 'evidence preceded money outcome'
     assert result.status_code == 200 and result.json()['data']['cost_microdollars'] == 2
     assert _typed_credit(db,'ws-v1')['total_usage'] == _typed_key(db,key.hash)['usage'] == 2

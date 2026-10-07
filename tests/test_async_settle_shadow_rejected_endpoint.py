@@ -94,11 +94,13 @@ def test_rejected_replay_endpoint_is_not_persisted(env, monkeypatch):
     evidence = []
     persistence = []
     evidence_commit_counts = []
+    booking_observations = []
+    sample_commit_counts = []
     commits_before = db.commits
 
     class DetachedStore:
         def booking(self, identity, deadline):
-            assert db.commits > commits_before and db.gateway_authorizations[identity]["settled"]
+            booking_observations.append((db.commits, db.gateway_authorizations[identity]["settled"]))
             record = db.gateway_authorizations[identity]
             return Booking(
                 record["finalized_cost_microdollars"], record["finalization_outcome"], True
@@ -106,11 +108,10 @@ def test_rejected_replay_endpoint_is_not_persisted(env, monkeypatch):
 
         def reserve(self, day, deadline):
             evidence_commit_counts.append(db.commits)
-            assert db.commits > commits_before
             return 100
 
         def insert_sample(self, identity, row, deadline):
-            assert db.commits > commits_before
+            sample_commit_counts.append(db.commits)
             validate_sample(row, identity)
             if not evidence:
                 evidence.append(row)
@@ -142,7 +143,11 @@ def test_rejected_replay_endpoint_is_not_persisted(env, monkeypatch):
         )
     except RuntimeError as error:
         result = error
+    finally:
+        shadow.executor.shutdown()
     assert not isinstance(result, RuntimeError), "shadow changed the money response"
+    assert all(count > commits_before and settled for count, settled in booking_observations)
+    assert all(count > commits_before for count in sample_commit_counts)
     assert all(count > commits_before for count in evidence_commit_counts), (
         "evidence preceded money outcome"
     )

@@ -245,12 +245,13 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 gap(identity+":persistence_count_gap", day)
             if counter["router_revision"] not in manifest["router_revisions"]:
                 gap(identity+":revision_unknown", day)
-            eligible = sum(bucket["observed_eligible"] for bucket in counter["counts"])
+            verified = sum(bucket["observed_eligible"] + bucket["observed_ineligible"]
+                for bucket in counter["counts"])
             outcomes_total = sum(bucket[k] for bucket in counter["counts"]
                 for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
             if outcomes_total > counter["comparison_attempts"]:
                 gap(identity+":comparison_outcome_gap", day)
-            if counter["comparison_attempts"] > eligible:
+            if counter["comparison_attempts"] > verified:
                 gap(identity+":comparison_observation_gap", day)
             # Reconcile each writer and dimension in both directions. Neither
             # authorize exclusions nor another bucket can account for a terminal.

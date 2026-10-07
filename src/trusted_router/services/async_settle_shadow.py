@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import datetime as dt
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -326,6 +327,15 @@ class Runtime:
                 if reason != "catalog_change":
                     self.counters.reason(dims, capture.kind, reason,
                         "rejections" if reason in {"header_duplicate", "header_size", "base64", "json_encoding", "json_duplicate", "json_shape", "integer", "proof_signature", "proof_expired", "hash", "identity", "raw_usage", "go_failure"} else "exclusions")
+            # Expired observations are counters only, on the receipt day. Check
+            # server-owned age as well: a malformed proof can fail before expiry
+            # verification, and queued work must not recreate a retired partition.
+            created_at = dt.datetime.fromisoformat(auth.created_at.replace("Z", "+00:00")).timestamp()
+            retired = day_at(created_at) < day_at(time.time() - 30*86400)
+            if "proof_expired" in compared.reasons or retired:
+                if "proof_expired" not in compared.reasons:
+                    self.counters.reason(dims, capture.kind, "proof_expired", "rejections")
+                return
             if not booking.confirmed:
                 field = "booking_pending" if booking.outcome == "pending" else "booking_unknown"
                 self.counters.increment(dims, field)

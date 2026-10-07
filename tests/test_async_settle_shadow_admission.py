@@ -54,7 +54,8 @@ def test_continuous_health_phase_sweep(phase):
 @pytest.mark.asyncio
 async def test_timer_populates_without_eligible(monkeypatch):
     from trusted_router.services.async_settle import AdmissionCache
-    monkeypatch.setattr(AdmissionCache,'eligible',lambda *args:pytest.fail('money admission called'))
+    eligible_calls = []
+    monkeypatch.setattr(AdmissionCache, 'eligible', lambda *args: eligible_calls.append(args))
     calls = []
     import time
     observer = Observer(frozenset({'ws'}),lambda ws:calls.append(ws) or Admission(0,2),
@@ -69,13 +70,16 @@ async def test_timer_populates_without_eligible(monkeypatch):
         assert calls == ['ws'] and observer.counts['health_reads'] == 1
     finally:
         await observer.close()
+    assert eligible_calls == [], 'money admission called'
     assert observer.peek('ws')['prediction'] == 'unknown'
 
 
 def test_empty_creates_no_timer():
-    observer = Observer(frozenset(),lambda _:pytest.fail('workspace read'),lambda:pytest.fail('health read'))
+    calls = []
+    observer = Observer(frozenset(), lambda _: calls.append('workspace'), lambda: calls.append('health'))
     observer.start()
     assert observer.task is observer.executor is None
+    assert calls == []
 
 
 def test_maximum_workspaces_share_two_readers_with_health_priority(monkeypatch):

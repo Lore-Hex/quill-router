@@ -273,9 +273,11 @@ def test_authorize_shadow_signing_no_ticket_api(monkeypatch):
     config = Settings(environment='test', async_settle_shadow_workspaces='ws-v1')
     rt = Runtime(config, runtime())
     rt.signer = signer()
-    monkeypatch.setattr(TicketSigner, 'sign', lambda *args: pytest.fail('ticket capability minted'))
+    ticket_calls = []
+    monkeypatch.setattr(TicketSigner, 'sign', lambda *args: ticket_calls.append(args))
     additions = {'billing_snapshot':FIXTURE['billing_snapshot'], 'billing_snapshot_hash':FIXTURE['terminal']['snapshot_hash']}
     rt.authorize(authorization(), additions, replay=False, header=True, route='chat.completions', streamed=False, endpoints=[endpoint()])
+    assert ticket_calls == [], 'ticket capability minted'
     assert 'billing_shadow_binding' in additions and 'settlement_ticket' not in additions
     for ws in ('', 'nonmember'):
         config = Settings(environment='test', async_settle_shadow_workspaces=ws)
