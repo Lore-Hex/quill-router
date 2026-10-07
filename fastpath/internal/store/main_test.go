@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 // what it is about.
 func testConfig() Config {
 	return Config{LiveFor: time.Hour, Window: 30 * time.Second, Skew: 2 * time.Second, PublishDeadline: 5 * time.Second,
-		Allowance: 1_000_000, Floor: 0, RequiredTier: 3}
+		MaxLife: 5 * time.Minute, Grace: time.Minute, Allowance: 1_000_000, Floor: 0, RequiredTier: 3}
 }
 
 // spikeStore is a store of the shared database with testConfig as changes

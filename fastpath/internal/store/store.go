@@ -32,6 +32,11 @@ type Config struct {
 	// fence F as the expiry plus both (§4.8).
 	Skew            time.Duration
 	PublishDeadline time.Duration
+	// MaxLife is a hold's longest life, and Grace the time past it before a
+	// lease whose holds were never listed may close (§4.8): 2 h 20 min and
+	// the grace in production, scaled down for the spike's correctness runs.
+	MaxLife time.Duration
+	Grace   time.Duration
 	// Allowance caps a workspace's exposure, across its regions and shards;
 	// Floor is the headroom a grant leaves outside leases; RequiredTier is
 	// the trust tier that allows leases (§4.2, §4.7, §4.11). The spike has
@@ -56,8 +61,8 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	if client == nil {
 		return nil, errors.New("store: no client")
 	}
-	if cfg.LiveFor <= 0 || cfg.Window <= 0 || cfg.Skew <= 0 || cfg.PublishDeadline <= 0 {
-		return nil, errors.New("store: LiveFor, Window, Skew and PublishDeadline must be positive")
+	if cfg.LiveFor <= 0 || cfg.Window <= 0 || cfg.Skew <= 0 || cfg.PublishDeadline <= 0 || cfg.MaxLife <= 0 || cfg.Grace <= 0 {
+		return nil, errors.New("store: LiveFor, Window, Skew, PublishDeadline, MaxLife and Grace must be positive")
 	}
 	// Spanner's intervals here are whole microseconds; a finer duration
 	// would be cut short, and the window or the fence with it. No lease's
