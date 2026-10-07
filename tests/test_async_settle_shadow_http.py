@@ -116,9 +116,11 @@ def transcripts(monkeypatch, store, db, cfg, path, payload, headers):
 @pytest.mark.usefixtures('fixed_operation_catalog')
 @pytest.mark.parametrize('header', ['none', 'exact', 'duplicate', 'bad'])
 @pytest.mark.parametrize('eligible', [True, False])
-def test_flag_off_authorize_http_identity(monkeypatch, header, eligible):
+@pytest.mark.parametrize('admission', [False, True])
+@pytest.mark.parametrize('optin', ['', 'nonmember'])
+def test_flag_off_authorize_http_identity(monkeypatch, header, eligible, admission, optin):
     store, db, key = _seed_typed_gateway_store()
-    cfg = settings(async_settle_enabled=False, async_settle_shadow_workspaces='')
+    cfg = settings(async_settle_enabled=admission, async_settle_shadow_workspaces=optin)
     body = _body(key.hash)
     body.route_type = 'chat.completions' if eligible else None
     body.invocation_nonce = 'http-identity'
@@ -129,12 +131,15 @@ def test_flag_off_authorize_http_identity(monkeypatch, header, eligible):
 
 
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
-@pytest.mark.parametrize('header', ['none', 'valid', 'invalid', 'oversize'])
-def test_flag_off_terminal_http_identity(env, monkeypatch, kind, header):
+@pytest.mark.parametrize('header', ['none', 'valid', 'invalid', 'oversize', 'duplicate'])
+@pytest.mark.parametrize('admission', [False, True])
+@pytest.mark.parametrize('optin', ['', 'nonmember'])
+def test_flag_off_terminal_http_identity(env, monkeypatch, kind, header, admission, optin):
     body, auth, _ = prepare(env, kind=kind)
     store, db, rt, cfg = env
-    cfg.async_settle_enabled = cfg.async_settle_protection = False
-    cfg._async_settle_shadow_workspace_ids = frozenset()
+    cfg.async_settle_enabled = admission
+    cfg.async_settle_protection = False
+    cfg._async_settle_shadow_workspace_ids = frozenset({optin}) if optin else frozenset()
     repair = json.loads(row_for(env, body).settle_body)
     stored = json.loads(db.gateway_authorizations[auth.id]['payload'])
     stored['invocation_nonce'] = auth.invocation_nonce
@@ -162,6 +167,8 @@ def test_flag_off_terminal_http_identity(env, monkeypatch, kind, header):
                                             'settled' if kind == 'settle' else 'refunded', True))
         assert compare(wire(envelope), ctx, [signer().trusted]).classification == 'exact'
     headers = [] if header == 'none' else [('X-TR-Settlement-Shadow', {
-        'valid': wire(envelope)[0], 'invalid': '!', 'oversize': '!'*12289}[header])]
+        'valid': wire(envelope)[0], 'duplicate': wire(envelope)[0], 'invalid': '!', 'oversize': '!'*12289}[header])]
+    if header == 'duplicate':
+        headers *= 2
     outputs = transcripts(monkeypatch, store, db, cfg, '/v1/internal/gateway/'+kind, repair, headers)
     assert json.loads(outputs[0][0][2])['data']['cost_microdollars'] == (2 if kind == 'settle' else 0)

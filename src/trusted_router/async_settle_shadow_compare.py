@@ -167,6 +167,10 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
         if (terminal.terminal_kind != ctx.attempted_kind or terminal.selected_endpoint != ctx.selected_endpoint
                 or any(getattr(terminal, key) != getattr(claims, key) for key in expected if key != "reservation_id")):
             return out.reject("identity", "identity")
+        # Signature, identities and the terminal digest are already verified.
+        # Preserve attempt identity even if this writer cannot reconstruct S0;
+        # the first durable observation still owns this identical retry.
+        out.payload_hash = envelope.payload_hash
     snapshot = envelope.snapshot
     rebuilt = None
     out.snapshot_transport = "full" if snapshot is not None else "hash_only"
@@ -187,7 +191,6 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
     if out.snapshot_hash != claims.snapshot_hash:
         return out.reject("hash", "hash")
     if terminal is not None:
-        out.payload_hash = envelope.payload_hash
         out.go_micro, out.go_usage = terminal.charge_micro, terminal.usage.model_dump()
     raw = _raw_body(body)
     if raw is None:

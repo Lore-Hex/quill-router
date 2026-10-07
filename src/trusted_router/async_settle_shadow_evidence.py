@@ -253,7 +253,7 @@ class Counters:
                 flushed_at_us=now, sequence=0, closed=False,
                 counts=[dict(adapter=a, route_type=r, streamed=s, **dict.fromkeys(COUNT_FIELDS, 0)) for a, r, s in DIMENSIONS],
                 exclusions=[], rejections=[], drops=[], dimension_overflow=0, counter_overflow=False,
-                comparison_attempts=0, samples_inserted=0, duplicate_samples=0, conflicting_samples=0,
+                comparison_attempts=0, comparison_dropped=0, samples_inserted=0, duplicate_samples=0, conflicting_samples=0,
                 booking_pending=0, booking_unknown=0, first_evidence_at_us=None,
                 last_mismatch_at_us=None, first_gap_at_us=None, authorize_shadow_hist=[0]*9,
                 evidence_write_hist=[0]*9,

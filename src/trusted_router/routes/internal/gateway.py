@@ -3396,7 +3396,7 @@ def _settle_gateway_with_admission_sync(
         authorization = STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
-    if authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
+    if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
             capture_authorization(authorization)
@@ -3450,13 +3450,21 @@ def _settle_gateway_authorization(
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
-    if authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
+    if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
             capture_authorization(authorization)
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
     if authorization.settled:
+        if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
+            try:
+                from trusted_router.services.async_settle_shadow import capture_prices
+                capture_prices(authorization, _select_authorized_endpoint(authorization, body),
+                               billing_pricing_snapshot(authorization), model_catalog.MODEL_ENDPOINTS,
+                               prices_match_booking=False)
+            except Exception:  # noqa: S110 - replay diagnostics cannot affect billing
+                pass
         _release_user_model_slot_safely(authorization)
         # No timing line for replays: they are ~one point-read and would dominate
         # the latency dataset with noise.
@@ -3623,7 +3631,7 @@ def _settle_gateway_authorization(
         except ValueError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     billing_snapshot = billing_pricing_snapshot(authorization)
-    if authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
+    if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_prices
             capture_prices(authorization, selected_endpoint, billing_snapshot, model_catalog.MODEL_ENDPOINTS)

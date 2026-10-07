@@ -208,14 +208,15 @@ def test_signed_evidence_delta_survives_strict_storage_decode():
 
 
 def test_cpu_budget_has_a_failing_witness(monkeypatch):
-    import itertools
-
     import pytest
 
     from scripts.async_settle import shadow_benchmark
-    ticks = itertools.count(step=6000000)
+    # Fast cold requests cannot conceal a slow warm tail (and vice versa in
+    # test_cpu_budget_rejects_only_cold_tail).
+    ticks = iter(tick for index in range(6) for tick in (
+        index*10_000_000, index*10_000_000+(100_000 if index < 5 else 6_000_000)))
     monkeypatch.setattr(shadow_benchmark.time,'thread_time_ns',lambda:next(ticks))
-    with pytest.raises(AssertionError,match='exceeds 5 ms CPU budget'):
+    with pytest.raises(AssertionError,match='warm shadow comparator exceeds 5 ms CPU budget'):
         shadow_benchmark.benchmark(iterations=6)
 
 
@@ -347,3 +348,33 @@ def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch):
     assert json.loads(db.rows[COUNTER, old])['closed']
     assert day_at(received) not in rt.counters.days
     rt.executor.shutdown()
+
+
+def test_cpu_budget_rejects_only_cold_tail(monkeypatch):
+
+    from scripts.async_settle import shadow_benchmark
+    calls, tick = 0, 0
+    def cpu_clock():
+        nonlocal calls, tick
+        index = calls
+        calls += 1
+        if index % 2:
+            tick += 6_000_000 if (index//2) % 6 < 5 else 100_000
+        return tick
+    monkeypatch.setattr(shadow_benchmark.time, 'thread_time_ns', cpu_clock)
+    rejected = False
+    try:
+        shadow_benchmark.benchmark(iterations=6)
+    except AssertionError as error:
+        rejected = 'cold shadow comparator exceeds 5 ms CPU budget' in str(error)
+    assert rejected, 'five 6 ms cold requests must fail even with a 0.1 ms warm p99'
+
+
+def test_runtime_prewarms_only_when_shadow_opted_in(monkeypatch):
+    from trusted_router.services import async_settle_shadow
+    calls = []
+    monkeypatch.setattr(async_settle_shadow, 'prewarm_catalog', lambda: calls.append('warm'))
+    for workspaces, admission in (('', False), ('ws-v1', True), ('ws-v1', False)):
+        rt = Runtime(settings(async_settle_enabled=admission, async_settle_shadow_workspaces=workspaces), runtime())
+        rt.executor.shutdown()
+    assert calls == ['warm']

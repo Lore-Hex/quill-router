@@ -21,19 +21,24 @@ from trusted_router.async_settle_shadow_evidence import (
 from trusted_router.detached_jws import canonical
 from trusted_router.storage_gcp_io import spanner_rpc_deadline
 
+FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
+                    "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id")
+POINT_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
+DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start "
+           "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
+
 Statement = tuple[str, dict[str, Any], dict[str, Any]]
 
 
 def finalization_statement(authorization_id: str) -> Statement:
-    return ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
-            "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id",
+    return (FINALIZATION_SQL,
             {"authorization_id": authorization_id}, {"authorization_id": pt.STRING})
 
 
 def point_statement(kind: str, identity: str) -> Statement:
     if kind not in KINDS:
         raise ValueError("shadow kind")
-    return ("SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
+    return (POINT_SQL,
             {"kind": kind, "id": identity}, {"kind": pt.STRING, "id": pt.STRING})
 
 
@@ -44,8 +49,7 @@ def day_statement(kind: str, day: str, after_id: str = "", page_size: int = 200)
     start, end = day + "/", (parsed + dt.timedelta(days=1)).isoformat() + "/"
     if after_id and not start <= after_id < end:
         raise ValueError("shadow cursor")
-    return ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start "
-            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size",
+    return (DAY_SQL,
             dict(kind=kind, day_start=start, next_day_start=end, after_id=after_id, page_size=page_size),
             dict(kind=pt.STRING, day_start=pt.STRING, next_day_start=pt.STRING, after_id=pt.STRING, page_size=pt.INT64))
 
@@ -60,7 +64,11 @@ class EvidenceStore:
         if remaining <= 0:
             raise TimeoutError("shadow budget")
         sql, params, types = statement
-        return list(reader.execute_sql(sql, params=params, param_types=types, timeout=remaining,
+        if sql not in (FINALIZATION_SQL, POINT_SQL, DAY_SQL):
+            raise ValueError("unknown shadow statement")
+        return list(reader.execute_sql(
+            FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
+            params=params, param_types=types, timeout=remaining,
                                        retry=None, request_options={"priority": "PRIORITY_LOW"}))
 
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
@@ -126,7 +134,10 @@ class EvidenceStore:
                 validate_sample(previous, identity)
                 if previous["booking"]["attempted_kind"] != body["booking"]["attempted_kind"]:
                     return "winner_polarity"
-                if (previous["payload_hash"], previous["classification"]) != (body["payload_hash"], body["classification"]):
+                # A verified terminal identifies the attempt. A later diagnostic
+                # classification cannot rewrite the first durable observation.
+                if previous["payload_hash"] != body["payload_hash"] or (
+                        body["payload_hash"] is None and previous["classification"] != body["classification"]):
                     return "conflict"
                 return "duplicate"
             self.write(tx, SAMPLE, identity, body)

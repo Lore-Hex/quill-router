@@ -62,7 +62,28 @@ MUTATIONS = [
     ('flag-off-invalid-header-http','src/trusted_router/routes/internal/gateway.py',[
         ('    """Run one settlement off-loop behind the process-local per-key gate."""\n    require_internal_gateway(request, settings)',
          '    """Run one settlement off-loop behind the process-local per-key gate."""\n    require_internal_gateway(request, settings)\n    if not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Shadow") == "!":\n        return {"data": {"review_mutant": True}}')],
-        'tests/test_async_settle_shadow_http.py::test_flag_off_terminal_http_identity[invalid-settle]'),
+        'tests/test_async_settle_shadow_http.py::test_flag_off_terminal_http_identity[-False-invalid-settle]'),
+    ('flag-off-admission-on-bad-mode-http','src/trusted_router/routes/internal/gateway.py',[
+        ('    subject = body.api_key_lookup_hash or body.api_key_hash',
+         '    if settings.async_settle_enabled and not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Mode") == "!":\n        return {"data": {"review_mutant": True}}\n    subject = body.api_key_lookup_hash or body.api_key_hash')],
+        'tests/test_async_settle_shadow_http.py::test_flag_off_authorize_http_identity[-True-True-bad]'),
+    ('inline-snapshot-cap-removed','src/trusted_router/async_settle_shadow_wire.py',[
+        ('if len(snapshot_bytes) > INLINE_BYTES:', 'if False:')], BASE+'test_inline_snapshot_boundary[6145]'),
+    ('cold-cpu-gate-removed','scripts/async_settle/shadow_benchmark.py',[
+        ("        assert records[-1]['cold_max_us'] <= 5000, f'cold shadow comparator exceeds 5 ms CPU budget: {records[-1]}'", '')],
+        'tests/test_async_settle_shadow_lifecycle.py::test_cpu_budget_rejects_only_cold_tail'),
+    ('persistence-reconciliation-removed',REPORT,[
+        ('if persistence != counter["comparison_attempts"]:', 'if False:')],
+        'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_missing_persistence_outcomes[0]'),
+    ('writer-coverage-union-removed',REPORT,[
+        ('intervals.extend(merged)', 'intervals.append((start, end))'),
+        ('gap(day+":writer_coverage_gap", day)', 'pass')],
+        'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_same_boot_uncovered_day'),
+    ('hash-replay-capture-removed','src/trusted_router/routes/internal/gateway.py',[
+        ('capture_prices(authorization, _select_authorized_endpoint(authorization, body),',
+         '(lambda *args, **kwargs: None)(authorization, _select_authorized_endpoint(authorization, body),')],
+        'tests/test_async_settle_shadow_integration.py::test_reviewer_hash_only_replay'),
+
 ]
 
 

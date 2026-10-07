@@ -333,3 +333,114 @@ def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at):
     assert isinstance(failure, RuntimeError) and str(failure) == 'shadow_transaction_retry'
     assert len(calls) == 1 and 0 < horizons[0] <= .2
     assert session.transaction.return_value.commit.call_count == int(abort_at == 'commit')
+
+
+@pytest.mark.parametrize('delta', [-1, 0, 1])
+def test_report_reviewer_missing_persistence_outcomes(delta):
+    rows, days, proof = synthetic_window()
+    counter = rows[0]['body']
+    bucket = next(b for b in counter['counts'] if b['exact'])
+    for name in ('settle_attempts', 'observed_attempts', 'observed_eligible',
+                 'envelope_present', 'exact', 'evaluable'):
+        bucket[name] = 100
+    counter['comparison_attempts'] = 100
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert any(g.endswith(':persistence_count_gap') for g in result['gaps'])
+    counter['duplicate_samples'] = 99 + delta
+    result = report(rows, days, proof)
+    assert (result['status'] == 'PASS') is (delta == 0)
+    assert any(g.endswith(':persistence_count_gap') for g in result['gaps']) is (delta != 0)
+
+
+def test_report_reviewer_same_boot_uncovered_day():
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+    rows, days, proof = synthetic_window()
+    rows[0]['body']['flushed_at_us'] = rows[-1]['body']['observed_at_us'] + 1
+    boot = rows[0]['body']['instance']
+    for day in days:
+        proof['instance_boot_ids_by_day'][day] = [boot]
+    for row in rows:
+        if row['kind'] == COUNTER:
+            row['body']['instance'] = boot
+            row['id'] = row['id'].split('/')[0] + '/' + boot
+        elif row['kind'] == CONTROL:
+            row['body']['instance_boot_ids'] = [boot]
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED' and result['continuous_seconds'] == 0
+    assert days[0]+':writer_coverage_gap' in result['gaps']
+
+
+def test_same_verified_payload_retains_original_observation():
+    db, row = Database(), sample_row()
+    store = EvidenceStore(db)
+    identity, deadline = '2026-10-06/auth-v1', time.monotonic()+1
+    assert store.insert_sample(identity, row, deadline) == 'inserted'
+    original = copy.deepcopy(row)
+    from dataclasses import replace
+
+    from tests.test_async_settle_shadow import FIXTURE
+    value = copy.deepcopy(FIXTURE)
+    del value['billing_snapshot']
+    ctx = replace(context(), rebuild=None)
+    failed = compare(wire(value), ctx, [signer().trusted])
+    row = sample(ctx, failed, observed_us=NOW*1000000, router_us=1,
+        comparator_us=1, booking_us=1, instance=original['deployment']['instance'], revision='a'*40)
+    assert row['classification'] == 'unevaluable'
+    assert row['reason_codes'] == ['snapshot_reconstruction_failed']
+    assert store.insert_sample(identity, row, deadline) == 'duplicate'
+    assert json.loads(db.rows[SAMPLE, identity]) == original
+
+
+@pytest.mark.parametrize('overlap_us', [0, 1_000_000])
+def test_writer_union_counts_overlapping_and_adjacent_intervals_once(overlap_us):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+    rows, days, proof = synthetic_window()
+    first = rows[0]['body']
+    second = copy.deepcopy(rows[0])
+    boot = '00000000-0000-0000-0000-000000000002'
+    split = first['started_at_us'] + 12*3600_000000
+    first['flushed_at_us'] = split
+    second['id'] = days[0]+'/'+boot
+    second['body'].update(instance=boot, started_at_us=split-overlap_us,
+                          samples_inserted=0, comparison_attempts=0)
+    for bucket in second['body']['counts']:
+        for field in ('settle_attempts', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
+            bucket[field] = 0
+    rows.append(second)
+    proof['instance_boot_ids_by_day'][days[0]].append(boot)
+    proof['instance_boot_ids_by_day'][days[0]].sort()
+    rows[1]['body']['instance_boot_ids'] = proof['instance_boot_ids_by_day'][days[0]]
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS'
+    assert result['continuous_seconds'] == 691199
+    assert result['gaps'] == []
+
+
+
+def test_writer_union_preserves_actual_midnight_flush_overlap():
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+    rows, days, proof = synthetic_window()
+    boot = rows[0]['body']['instance']
+    rows[0]['body']['flushed_at_us'] += 5_000_000
+    rows[2]['body']['started_at_us'] += 5_000_000
+    rows[2]['body']['instance'] = boot
+    rows[2]['id'] = days[1]+'/'+boot
+    proof['instance_boot_ids_by_day'][days[1]] = [boot]
+    rows[3]['body']['instance_boot_ids'] = [boot]
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS' and result['continuous_seconds'] == 691199
+    assert result['gaps'] == []

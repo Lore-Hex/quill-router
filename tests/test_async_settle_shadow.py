@@ -161,6 +161,7 @@ def test_hash_only_success_and_corrected_failure():
         result = compare(wire(value), context(rebuild=rebuild, booking=Booking(3, 'settled', True)), [signer().trusted])
         assert result.classification == 'unevaluable' and result.reasons == {'snapshot_reconstruction_failed'}
         assert result.python_micro is result.legacy_frozen_micro is result.booked_minus_frozen is None
+        assert result.payload_hash == value['payload_hash']
 
 
 @pytest.mark.parametrize('booked', [2, 3, 4])
@@ -444,3 +445,37 @@ def test_projection_cache_keys_include_time_catalog_and_document(monkeypatch):
             assert projection.snapshot_material(value) == (b.canonical_bytes(value), b.canonical_hash(value))
     finally:
         projection.clear_caches()
+
+
+@pytest.mark.parametrize('size', [6144, 6145])
+def test_inline_snapshot_boundary(size):
+    # Review reproduction: structurally valid candidates, with only ID length
+    # varied. The decoded envelope still fits its independent 8192-byte cap.
+    value = copy.deepcopy(FIXTURE)
+    template = value['billing_snapshot']['candidates'][0]
+    candidates = []
+    for index in range(13):
+        item = copy.deepcopy(template)
+        item['endpoint_id'] = f'openai/e{index:02d}'
+        candidates.append(item)
+    value['billing_snapshot']['candidates'] = candidates
+    remaining = size - len(canonical(value['billing_snapshot']))
+    for item in candidates:
+        extra = min(remaining, 121-len(item['endpoint_id']))
+        item['endpoint_id'] += 'x'*extra
+        remaining -= extra
+    assert remaining == 0
+    snapshot = snapshot_from_object(value['billing_snapshot'])
+    assert len(b.canonical_bytes(snapshot)) == size
+    assert len(canonical(value)) == size + 1931
+    rejected = None
+    try:
+        parsed = parse_header(wire(value))
+    except Rejection as error:
+        rejected = str(error)
+    if size == 6144:
+        assert rejected is None and parsed.snapshot == snapshot
+    else:
+        assert rejected == 'header_size'
+        del value['billing_snapshot']
+        assert parse_header(wire(value)).snapshot is None

@@ -115,3 +115,24 @@ def clear_caches() -> None:
     candidate.cache_clear()
     _project.cache_clear()
     snapshot_material.cache_clear()
+
+
+def prewarm_catalog() -> None:
+    """Prepare current immutable candidates once at opted-in runtime startup.
+
+    Historical times and corrected catalog values still use their own keys.
+    This only warms shared pricing DTOs, never request/header observations.
+    """
+    from datetime import UTC, datetime
+
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    at = datetime.now(UTC)
+    for endpoint in tuple(MODEL_ENDPOINTS.values()):
+        model = MODELS.get(endpoint.model_id)
+        if (endpoint.provider in {"openai", "anthropic"} and endpoint.usage_type == "Credits"
+                and model is not None and model.supports_chat):
+            try:
+                candidate(effective_endpoint(endpoint, at=at))
+            except ValueError:
+                # Unsupported shapes remain ineligible at observation time.
+                continue

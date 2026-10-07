@@ -40,7 +40,7 @@ EXTERNAL_GATES = ("deployment_inventory", "authorization_transport_measurements"
                   "fleet_load_budget", "publisher_poll_freshness", "lifecycle_cpu", "shared_fixtures",
                   "frozen_pricing_crash_mutations", "d2_d3_capacity_slo", "policy_rollback_status", "rare_cases")
 MANIFEST_FIELDS = set("v day instance_boot_ids router_revisions go_revisions configuration_sha256 admission_disabled_from_us admission_disabled_until_us first_evidence_at_us completeness gap_intervals proof_manifest_sha256".split())
-COUNTER_FIELDS = set("v instance region router_revision policy_version started_at_us flushed_at_us sequence closed counts exclusions rejections drops dimension_overflow counter_overflow comparison_attempts samples_inserted duplicate_samples conflicting_samples booking_pending booking_unknown first_evidence_at_us last_mismatch_at_us first_gap_at_us authorize_shadow_hist evidence_write_hist admission_observer".split())
+COUNTER_FIELDS = set("v instance region router_revision policy_version started_at_us flushed_at_us sequence closed counts exclusions rejections drops dimension_overflow counter_overflow comparison_attempts comparison_dropped samples_inserted duplicate_samples conflicting_samples booking_pending booking_unknown first_evidence_at_us last_mismatch_at_us first_gap_at_us authorize_shadow_hist evidence_write_hist admission_observer".split())
 
 
 def percentiles(values: list[int | None]) -> dict[str, Any]:
@@ -72,7 +72,7 @@ def validate_counter(identity: str, body: dict[str, Any]) -> None:
         raise ValueError("counter identity")
     if body["policy_version"] != "shadow-v1" or type(body["closed"]) is not bool:
         raise ValueError("counter policy")
-    if not all(_uint(body[k]) for k in ("started_at_us", "flushed_at_us", "sequence", "dimension_overflow", "comparison_attempts", "samples_inserted", "duplicate_samples", "conflicting_samples", "booking_pending", "booking_unknown")):
+    if not all(_uint(body[k]) for k in ("started_at_us", "flushed_at_us", "sequence", "dimension_overflow", "comparison_attempts", "comparison_dropped", "samples_inserted", "duplicate_samples", "conflicting_samples", "booking_pending", "booking_unknown")):
         raise ValueError("counter integer")
     if body["flushed_at_us"] < body["started_at_us"] or body["sequence"] < 1:
         raise ValueError("counter interval")
@@ -207,7 +207,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
     if proof.get("fixture_sha256") != FIXTURE_SHA256 or not all(gates.values()):
         gap("external_proofs_missing")
     inventory = proof.get("instance_boot_ids_by_day", {})
-    intervals = []
+    intervals: list[tuple[int, int]] = []
     for day in requested:
         manifest = manifests.get(day)
         if manifest is None:
@@ -222,11 +222,27 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         start, end = manifest["admission_disabled_from_us"], manifest["admission_disabled_until_us"]
         if not _uint(start) or not _uint(end) or end <= start:
             gap(day+":flag_interval_unknown", day)
-        else:
-            intervals.append((start, end))
+            continue
+        covered = []
+        day_start = int(dt.datetime.combine(dt.date.fromisoformat(day), dt.time(), dt.UTC).timestamp()*1e6)
+        day_end = day_start + 86400_000000
+        # A midnight flush can close yesterday's row after today's row starts.
+        # Retain that real overlap for rostered writers, never infer continuity
+        # merely from the recurrence of the same boot ID on another day.
+        for counter in counters.values():
+            if counter["instance"] not in actual or counter["router_revision"] not in manifest["router_revisions"]:
+                continue
+            left = max(day_start, start, counter["started_at_us"])
+            right = min(day_end, end, counter["flushed_at_us"])
+            if left < right:
+                covered.append((left, right))
         for identity, counter in counters.items():
             if not identity.startswith(day+"/"):
                 continue
+            persistence = sum(counter[k] for k in (
+                "samples_inserted", "duplicate_samples", "conflicting_samples", "comparison_dropped"))
+            if persistence != counter["comparison_attempts"]:
+                gap(identity+":persistence_count_gap", day)
             if counter["router_revision"] not in manifest["router_revisions"]:
                 gap(identity+":revision_unknown", day)
             # Reasons are diagnostic (one attempt can have several), so they
@@ -242,13 +258,24 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 if bucket["observed_eligible"] > accounted + counter["booking_pending"] + counter["booking_unknown"]:
                     gap(identity+":eligible_coverage_gap", day)
             if (not counter["closed"] or counter["first_gap_at_us"] is not None or counter["counter_overflow"]
-                    or counter["dimension_overflow"] or counter["booking_pending"] or counter["booking_unknown"]
+                    or counter["dimension_overflow"] or counter["comparison_dropped"] or counter["booking_pending"] or counter["booking_unknown"]
                     or any(counter["admission_observer"][key] for key in ("prediction_unknown", "read_failures", "missed_ticks"))
                     or any(row["count"] for key in ("drops", "rejections") for row in counter[key])
                     or any(row["observed_unknown"] for row in counter["counts"])):
                 gap(identity+":counter_gap", day)
             if counter["last_mismatch_at_us"] is not None or counter["conflicting_samples"]:
                 resets.append(dict(at_us=counter["last_mismatch_at_us"], revision=counter["router_revision"], reason="counter_mismatch"))
+        # Only the union of actual writer lifetimes inside the flag interval
+        # covers time. A boot ID in tomorrow's roster cannot bridge a shutdown.
+        merged: list[tuple[int, int]] = []
+        for left, right in sorted(covered):
+            if merged and left <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], right))
+            else:
+                merged.append((left, right))
+        if not merged or merged[0][0] > max(day_start, start) or merged[-1][1] < min(day_end, end) or len(merged) > 1:
+            gap(day+":writer_coverage_gap", day)
+        intervals.extend(merged)
     intervals.sort()
     for previous, current in zip(intervals, intervals[1:], strict=False):
         if previous[1] < current[0]:
@@ -308,8 +335,14 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         restored_after = max(restored_after, resolved["serving_since_us"])
     candidates = [row for row in samples if positive_sample(row) and row["observed_at_us"] >= restored_after]
     start = candidates[0]["observed_at_us"] if candidates and not unresolved else None
-    end = min(intervals[-1][1], high) if intervals else None
-    continuous = (end-start)/1e6 if start is not None and end is not None and intervals[0][0] <= start else 0
+    # Measure the connected covered interval containing the positive seed.
+    # Overlap counts once; an uncovered interval can never accrue clean time.
+    end = start
+    if start is not None:
+        for left, right in intervals:
+            if left <= end < right:
+                end = min(right, high)
+    continuous = (end-start)/1e6 if start is not None and end is not None else 0
     completeness = not unresolved and restored_after < high
     metrics = {"classification": dict(Counter(row["classification"] for row in samples)),
                "prediction": dict(Counter(row["admission"]["prediction"] for row in samples)),

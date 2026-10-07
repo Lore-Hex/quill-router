@@ -12,7 +12,11 @@ from typing import Any
 from trusted_router.async_settle_shadow_binding import LIFETIME, ShadowSigner
 from trusted_router.async_settle_shadow_compare import Booking, Context, compare
 from trusted_router.async_settle_shadow_evidence import Counters, day_at, dimensions, sample
-from trusted_router.async_settle_shadow_projection import project, snapshot_material
+from trusted_router.async_settle_shadow_projection import (
+    prewarm_catalog,
+    project,
+    snapshot_material,
+)
 from trusted_router.async_settle_shadow_wire import LOCAL_BYTES
 from trusted_router.billing_snapshot import BillingSnapshot
 from trusted_router.config import Settings
@@ -32,6 +36,8 @@ class Capture:
     endpoint: Any = None
     endpoints: tuple[Any, ...] | None = None
     document: dict[str, Any] | None = None
+    # Replay can recover signed S0, but cannot attest the original S1 booking view.
+    prices_match_booking: bool = True
 
 
 _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar("async_shadow_capture", default=None)
@@ -45,7 +51,8 @@ def capture_authorization(authorization: GatewayAuthorization) -> None:
         capture.authorization = authorization
 
 
-def capture_prices(authorization: GatewayAuthorization, endpoint: Any, document: Any, catalog: Any) -> None:
+def capture_prices(authorization: GatewayAuthorization, endpoint: Any, document: Any, catalog: Any,
+                   *, prices_match_booking: bool = True) -> None:
     capture = _CAPTURE.get()
     if capture is None or capture.authorization is None:
         return
@@ -58,6 +65,7 @@ def capture_prices(authorization: GatewayAuthorization, endpoint: Any, document:
         # references used for this booking, not a later background catalog read.
         capture.endpoints = tuple(endpoint if identity == endpoint.id else catalog[identity] for identity in ids)
         capture.document = document
+        capture.prices_match_booking = prices_match_booking
     except Exception:
         capture.endpoints = None
 
@@ -76,6 +84,11 @@ class Runtime:
         self.permit_day, self.permits, self.next_allocate = "", 0, 0.
         self.last_flush = 0.
         self.observer_flushed: dict[str, int] = {}
+        if settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
+            try:
+                prewarm_catalog()
+            except Exception:  # noqa: S110 - optional cache warming cannot affect startup
+                pass
 
     def opted(self, workspace: str) -> bool:
         return workspace in self.settings.async_settle_shadow_workspace_ids and not self.settings.async_settle_enabled
@@ -247,6 +260,7 @@ class Runtime:
         deadline = time.monotonic() + 1
         self.counters.increment(dims, "comparison_attempts")
         failure_reason = "store_unavailable"
+        persisted = False
         try:
             if self.store is None:
                 raise ValueError("store_unavailable")
@@ -279,7 +293,7 @@ class Runtime:
             ctx = Context(auth, capture.body, capture.kind,
                           capture.endpoint.id if capture.endpoint else capture.body.selected_endpoint_id or auth.endpoint_id,
                           self.async_runtime.region, self.async_runtime.epoch, int(capture.received), booking,
-                          rebuild if capture.endpoints else None, capture.endpoints is not None,
+                          rebuild if capture.endpoints else None, capture.endpoints is not None and capture.prices_match_booking,
                           "stage_d_document" if capture.document else "catalog_at_authorize_time" if capture.endpoints else "unknown")
             failure_reason = "worker_error"
             cpu_started = time.thread_time_ns()
@@ -315,18 +329,23 @@ class Runtime:
                 with self.counters.lock:
                     counter = self.counters._day()
                     counter["first_evidence_at_us"] = counter["first_evidence_at_us"] or int(capture.received * 1e6)
+            if outcome in {"inserted", "duplicate", "conflict"}:
+                self.counters.increment(dims, {"inserted": "samples_inserted", "duplicate": "duplicate_samples", "conflict": "conflicting_samples"}[outcome])
+                persisted = True
             if outcome == "winner_polarity":
                 self.counters.reason(dims, "worker", "winner_polarity", "exclusions")
-            else:
-                self.counters.increment(dims, {"inserted": "samples_inserted", "duplicate": "duplicate_samples", "conflict": "conflicting_samples"}[outcome])
-                if outcome == "conflict":
-                    with self.counters.lock:
-                        self.counters._day()["last_mismatch_at_us"] = int(time.time()*1e6)
+            elif outcome == "conflict":
+                with self.counters.lock:
+                    self.counters._day()["last_mismatch_at_us"] = int(time.time()*1e6)
+            elif not persisted:
+                raise ValueError("unknown persistence outcome")
         except Exception as error:
             if isinstance(error, ValueError) and str(error) == "evidence_size":
                 failure_reason = "evidence_size"
             self.counters.reason(dims, "worker", failure_reason)
         finally:
+            if not persisted:
+                self.counters.increment(dims, "comparison_dropped")
             self.flush(deadline)
 
     def flush(self, deadline: float, closed: bool = False) -> None:

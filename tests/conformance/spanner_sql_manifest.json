@@ -26,9 +26,9 @@
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
-    "storage_gcp_async_settle_shadow:finalization_statement": "772a1eab0d74d27b07c415da00dcdca428bfb03e3678b67a7dc3ec09d4d1b30d",
-    "storage_gcp_async_settle_shadow:point_statement": "cc0bdd46c5c3f8a78ba4f2f72976589affbc9778a9bf1a2010343cf7c200b959",
-    "storage_gcp_async_settle_shadow:day_statement": "54fd0a5da44fdba51a844994f9da50373e93bf839c79662202b7523378e81b24"
+    "storage_gcp_async_settle_shadow:finalization_statement": "32ac2efa5936b82f57d56e9eb2866b63565beb69488969b31372aeeabd519892",
+    "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
+    "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4293,8 +4293,8 @@
         }
       ]
     },
-    "storage_gcp_async_settle_shadow:finalization_statement:1": {
-      "fingerprint": "772a1eab0d74d27b07c415da00dcdca428bfb03e3678b67a7dc3ec09d4d1b30d",
+    "storage_gcp_async_settle_shadow:constants:1": {
+      "fingerprint": "b3405c2645a776aa136304421b2b7c604e9ebf7eef665bb0d22f651161ae97cf",
       "scenarios": [
         {
           "bindings": {},
@@ -4304,8 +4304,8 @@
         }
       ]
     },
-    "storage_gcp_async_settle_shadow:point_statement:1": {
-      "fingerprint": "cc0bdd46c5c3f8a78ba4f2f72976589affbc9778a9bf1a2010343cf7c200b959",
+    "storage_gcp_async_settle_shadow:constants:2": {
+      "fingerprint": "162357c49c8591ab45f8c0d83562a7c6451a65a29bba2f69cb37369318ae4b67",
       "scenarios": [
         {
           "bindings": {},
@@ -4316,8 +4316,8 @@
         }
       ]
     },
-    "storage_gcp_async_settle_shadow:day_statement:1": {
-      "fingerprint": "54fd0a5da44fdba51a844994f9da50373e93bf839c79662202b7523378e81b24",
+    "storage_gcp_async_settle_shadow:constants:3": {
+      "fingerprint": "89ad8c27b5768b784d33e06f3f0b62d74d8498f81619ebda3c4aa1fcea7ec633",
       "scenarios": [
         {
           "bindings": {},
@@ -4506,7 +4506,7 @@
     "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
-    "storage_gcp_async_settle_shadow:EvidenceStore.query": "09f168935b06cc6c0308e0666c696c29889acebff22e4450cbffef2ff244e92c"
+    "storage_gcp_async_settle_shadow:EvidenceStore.query": "8a4bedcb675f57aafe86727fda8f26ab55539c6025b61edca42d2db62d15547f"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
