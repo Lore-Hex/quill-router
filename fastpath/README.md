@@ -30,5 +30,11 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
 They run TLC, so they need Java as well as Go, as CI's `fastpath` job has:
 
 ```bash
-cd fastpath && go test -race ./...
+cd fastpath && go test ./...
 ```
+
+The whole-graph comparisons are in files built only without the race
+detector (`//go:build !race`): they are single-threaded and some ten times
+slower under it. CI runs `go test -race ./...` without them and `go test
+./...` with them. A large instance's graph is read as it streams
+(`tlc.Compare`), and TLC runs with a 1 GB heap.

@@ -13,14 +13,20 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/tlc"
 )
 
-// Two instances small enough for TLC to write their whole state graphs. One
-// has a single authorization that is a declared stream, with front-door
-// appends: heartbeats, the release, adoption and reaps. The other has two
-// that do not stream: the per-authorization functions, and Close's look at
-// every hold. TLC reaches 4,742 and 46,728 distinct states in them.
+// Instances for TLC to write whole state graphs of. One has a single
+// authorization that is a declared stream, with front-door appends:
+// heartbeats, the release, adoption and reaps. Another has two that do not
+// stream: the per-authorization functions, and Close's look at every hold.
+// The third gives the drain log rows of both, so that a hold's first row can
+// come after another's: adoption, ApplyDrain and the acknowledged rows across
+// authorizations. TLC reaches 4,742, 46,728 and 264,008 distinct states in
+// them; the third is read as it streams (tlc.Compare).
 var (
-	oneStream = Config{Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, MaxAppends: 2}
-	twoPlain  = Config{Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false}}
+	oneStream  = Config{Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, MaxAppends: 2}
+	twoPlain   = Config{Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false}}
+	twoAppends = Config{
+		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false}, MaxAppends: 2,
+	}
 )
 
 var (
@@ -100,6 +106,18 @@ func configOf(t *testing.T, cfgFile string) Config {
 		return out
 	}
 	auths, streams, declared := names("Auths"), names("Streams"), names("Declared")
+	// The spec's ASSUME, checked on the sets as written, before Config
+	// projects them onto the authorizations.
+	for a := range streams {
+		if !auths[a] {
+			t.Fatalf("%s: Streams holds %s, which is not in Auths", cfgFile, a)
+		}
+	}
+	for a := range declared {
+		if !streams[a] {
+			t.Fatalf("%s: Declared holds %s, which is not in Streams", cfgFile, a)
+		}
+	}
 	var c Config
 	for a := range auths {
 		c.Auths = append(c.Auths, a)
@@ -307,96 +325,78 @@ func mapStates(c Config, g *tlc.Graph) (map[string]State, error) {
 	return states, nil
 }
 
-func compare(t *testing.T, c Config, g *tlc.Graph, next func(State) []Transition) []string {
+// shadowOf is the shadow tlc.Compare holds against TLC: from Init by next,
+// with every invariant judged on each state.
+func shadowOf(c Config, next func(State) []Transition) tlc.Shadow[State] {
+	return tlc.Shadow[State]{
+		Init: c.Init(),
+		Next: func(s State) []tlc.Step[State] {
+			out := []tlc.Step[State]{}
+			for _, tr := range next(s) {
+				out = append(out, tlc.Step[State]{Action: tr.Action, To: tr.To})
+			}
+			return out
+		},
+		Check: func(s State) error {
+			for _, inv := range c.Invariants() {
+				if !inv.Holds(s) {
+					return fmt.Errorf("%s does not hold", inv.Name)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// compareWithTLC runs TLC on the instance and compares its whole state graph
+// with the shadow's.
+func compareWithTLC(t *testing.T, c Config, next func(State) []Transition) tlc.Comparison {
 	t.Helper()
-	states, err := mapStates(c, g)
+	spec, err := tlc.SpecText("TerminalOrder")
 	if err != nil {
 		t.Fatal(err)
 	}
-	theirs := map[step]struct{}{}
-	for _, e := range g.Edges {
-		theirs[step{states[e.From], e.Action, states[e.To]}] = struct{}{}
+	var result tlc.Comparison
+	err = tlc.DumpFile("TerminalOrder", spec, cfgText(c), func(path string) error {
+		var err error
+		result, err = tlc.Compare(path, func(r tlc.Record) (State, error) { return fromTLC(c, r) },
+			shadowOf(c, next), 5)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	theirStates := map[State]struct{}{}
-	for _, s := range states {
-		theirStates[s] = struct{}{}
-	}
-	var diffs []string
-	if len(g.Init) != 1 || states[g.Init[0]] != c.Init() {
-		diffs = append(diffs, fmt.Sprintf("TLC's initial states %v are not the shadow's Init", g.Init))
-	}
-	ours, steps := explore(t, c, next, true)
-	for s := range ours {
-		if _, ok := theirStates[s]; !ok {
-			diffs = append(diffs, fmt.Sprintf("the shadow reaches a state TLC does not: %+v", s))
-		}
-	}
-	for s := range theirStates {
-		if _, ok := ours[s]; !ok {
-			diffs = append(diffs, fmt.Sprintf("TLC reaches a state the shadow does not: %+v", s))
-		}
-	}
-	for st := range steps {
-		if _, ok := theirs[st]; !ok {
-			diffs = append(diffs, fmt.Sprintf("the shadow takes %s where TLC does not, from %+v", st.action, st.from))
-		}
-	}
-	for st := range theirs {
-		if _, ok := steps[st]; !ok {
-			diffs = append(diffs, fmt.Sprintf("TLC takes %s where the shadow does not, from %+v", st.action, st.from))
-		}
-	}
-	sort.Strings(diffs)
-	return diffs
+	return result
 }
 
-// TestTransitionsMatchTLC holds every step of the shadow against TLC's state
-// graphs of the two small instances.
-func TestTransitionsMatchTLC(t *testing.T) {
-	for name, c := range map[string]Config{"one stream": oneStream, "two plain": twoPlain} {
-		g := tlcGraph(t, c)
-		if diffs := compare(t, c, g, c.Next); len(diffs) > 0 {
-			t.Errorf("%s: %d differences from TLC, the first: %v", name, len(diffs), diffs[:min(5, len(diffs))])
-		}
-		t.Logf("%s: %d states and %d steps, as TLC has them", name, len(g.States), len(g.Edges))
+// TestUndefinedWhereTLCHasNoValue: where TLC would stop because an expression
+// has no value, the shadow panics with Undefined rather than answer. These
+// states are not reachable; the point is that a predicate is the spec's on
+// them too.
+func TestUndefinedWhereTLCHasNoValue(t *testing.T) {
+	undefined := func(f func() bool) (ok bool) {
+		defer func() {
+			if r := recover(); r != nil {
+				_, ok = r.(Undefined)
+			}
+		}()
+		f()
+		return false
 	}
-}
-
-// TestComparisonSeesADifference shows the comparison is not vacuous.
-func TestComparisonSeesADifference(t *testing.T) {
-	c := oneStream
-	g := tlcGraph(t, c)
-	cases := map[string]func(State) []Transition{
-		"a step dropped": func(s State) []Transition {
-			var out []Transition
-			for _, tr := range c.Next(s) {
-				if tr.Action != "Deliver" {
-					out = append(out, tr)
-				}
-			}
-			return out
-		},
-		"a step between reached states added": func(s State) []Transition {
-			out := c.Next(s)
-			if s.Lease == Draining {
-				out = append(out, Transition{"MarkDraining", s})
-			}
-			return out
-		},
-		"a step under another action's name": func(s State) []Transition {
-			out := c.Next(s)
-			for i := range out {
-				if out[i].Action == "OwnerReap(a1)" {
-					out[i].Action = "OwnerSettle(a1)"
-				}
-			}
-			return out
-		},
+	acked := oneStream.Init()
+	acked.Lease, acked.Acked = Closed, 1
+	if !undefined(func() bool { return oneStream.NoStreamClosedOver(acked) }) {
+		t.Error("NoStreamClosedOver reads past the end of the outbox and answers")
 	}
-	for name, next := range cases {
-		if diffs := compare(t, c, g, next); len(diffs) == 0 {
-			t.Errorf("%s: the comparison found no difference", name)
-		}
+	adopted := oneStream.Init()
+	adopted.Outbox[0] = Rec{0, Settle, 1}
+	adopted.OutboxLen = 1
+	adopted.Winner[0] = Winner{Owner, 1}
+	if !undefined(func() bool { return oneStream.AdoptionKeepsTheWinner(adopted) }) {
+		t.Error("AdoptionKeepsTheWinner takes the least of an empty set of rows")
+	}
+	if undefined(func() bool { return oneStream.TypeOK(oneStream.Init()) }) {
+		t.Error("TypeOK has no value on Init")
 	}
 }
 
@@ -438,30 +438,6 @@ func TestMappingRefusesWhatAStateCannotHold(t *testing.T) {
 	twice := &tlc.Graph{States: map[string]tlc.Value{g.Init[0]: init, "twin": init}, Init: g.Init}
 	if _, err := mapStates(c, twice); err == nil {
 		t.Error("two of TLC's states that read as one State are accepted")
-	}
-}
-
-// TestStateCountMatchesTLC explores each configuration in proofs/ and must
-// reach as many distinct states as TLC does there, as the guard table
-// records. Every invariant is checked on the way.
-func TestStateCountMatchesTLC(t *testing.T) {
-	counts, err := tlc.GuardTableStates("TerminalOrder")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range []string{"TerminalOrder.cfg", "TerminalOrder.undeclared.cfg"} {
-		want, ok := counts[file]
-		if !ok {
-			t.Fatalf("the guard table gives no count for %s: %v", file, counts)
-		}
-		c := configOf(t, file)
-		seen, _ := explore(t, c, c.Next, false)
-		if len(seen) != want {
-			t.Errorf("%s: the shadow reaches %d distinct states, TLC %d", file, len(seen), want)
-		}
-	}
-	if len(counts) != 2 {
-		t.Errorf("the guard table counts %d configurations, and this test explores 2: %v", len(counts), counts)
 	}
 }
 
@@ -511,6 +487,20 @@ func TestValidateRefusesWhatTheSpecAssumesAway(t *testing.T) {
 	bad.MaxAppends = MaxDrain
 	if bad.Validate() == nil {
 		t.Error("more appends than the drain log holds are accepted")
+	}
+	bad = twoPlain
+	bad.Auths = []string{"a1", "a1"}
+	if bad.Validate() == nil {
+		t.Error("one authorization named twice is accepted")
+	}
+	fits := oneStream
+	fits.MaxAppends = MaxDrain - 1
+	if err := fits.Validate(); err != nil {
+		t.Errorf("one authorization and %d appends fit, and are refused: %v", fits.MaxAppends, err)
+	}
+	none := Config{}
+	if err := none.Validate(); err != nil {
+		t.Errorf("no authorizations at all is what the spec allows, and is refused: %v", err)
 	}
 	if err := twoPlain.Validate(); err != nil {
 		t.Errorf("a small instance is refused: %v", err)

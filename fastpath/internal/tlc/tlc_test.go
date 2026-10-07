@@ -91,6 +91,44 @@ func TestConstantValuesReadsSetsOfModelValues(t *testing.T) {
 	}
 }
 
+// TestConstantValuesReadsWhatTLCDoes: a string keeps its spaces, a set its
+// members once, a comment is no value, a model value may start with a digit,
+// and what TLC's configuration grammar refuses is refused.
+func TestConstantValuesReadsWhatTLCDoes(t *testing.T) {
+	k, err := ConstantValues("CONSTANTS \\* names\n  X = \"a  b\" (* a (* nested *) comment *)\n" +
+		"  S = {a1, a1, 1a}\n  N = -2\nINVARIANT TypeOK\nCONSTANT\n  L = TRUE\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Value{
+		"X": "a  b", "S": Set{ModelValue("a1"), ModelValue("1a")}, "N": int64(-2), "L": true,
+	}
+	if len(k) != len(want) {
+		t.Fatalf("read %v", k)
+	}
+	for name, v := range want {
+		if !Equal(k[name], v) || (name == "S" && len(k[name].(Set)) != 2) {
+			t.Errorf("%s is %s, not %s", name, Key(k[name]), Key(v))
+		}
+	}
+	for _, bad := range []string{
+		"CONSTANTS\n  Bad Name = 1\n",
+		"CONSTANTS\n  X = (a1 :> 1)\n",
+		"CONSTANTS\n  X = [a |-> 1]\n",
+		"CONSTANTS\n  X = << 1 >>\n",
+		"CONSTANTS\n  X = 1\n  X = 2\n",
+		"CONSTANTS\n  X = \"never closed\n",
+		"CONSTANTS\n  X = 1 (* never closed\n",
+	} {
+		if _, err := ConstantValues(bad); err == nil {
+			t.Errorf("%q is read", bad)
+		}
+	}
+	if v, err := ParseValue("1a"); err != nil || !Equal(v, ModelValue("1a")) {
+		t.Errorf("the model value 1a reads as %v, %v", v, err)
+	}
+}
+
 func TestParseValueRefusesWhatItCannotRead(t *testing.T) {
 	for _, text := range []string{"(1 :> 2 @@ 1 :> 3)", "(1 :> 2", "(1 2)", "[a |-> 1", "{1, 2", "<< 1 >> 2", "%"} {
 		if _, err := ParseValue(text); err == nil {

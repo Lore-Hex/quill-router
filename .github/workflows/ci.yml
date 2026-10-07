@@ -444,8 +444,14 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: go vet
         run: go vet ./...
-      - name: go test
+      - name: go test -race
         run: go test -race -count=1 ./...
+      # The whole-graph comparisons with TLC are single-threaded and some ten
+      # times slower under the race detector. The files that hold them say
+      # `//go:build !race`, so the step above leaves them out and this one,
+      # without the race detector, runs them with everything else.
+      - name: go test, with the comparisons against TLC
+        run: go test -count=1 ./...
 
   proofs:
     runs-on: ubuntu-latest

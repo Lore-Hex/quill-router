@@ -37,12 +37,19 @@ type Config struct {
 func (c Config) Validate() error {
 	n := len(c.Auths)
 	switch {
-	case n < 1 || n > MaxAuths:
-		return fmt.Errorf("%d authorizations, not 1..%d", n, MaxAuths)
+	case n > MaxAuths:
+		return fmt.Errorf("%d authorizations, more than %d", n, MaxAuths)
 	case len(c.Stream) != n || len(c.Declared) != n:
 		return fmt.Errorf("Stream and Declared must say something of each authorization")
-	case c.MaxAppends < 0 || c.MaxAppends > MaxDrain-MaxAuths:
-		return fmt.Errorf("MaxAppends %d is not in 0..%d", c.MaxAppends, MaxDrain-MaxAuths)
+	case c.MaxAppends < 0 || c.MaxAppends+n > MaxDrain:
+		return fmt.Errorf("MaxAppends %d and %d authorizations make more drain rows than %d", c.MaxAppends, n, MaxDrain)
+	}
+	names := map[string]bool{}
+	for _, name := range c.Auths {
+		if names[name] {
+			return fmt.Errorf("%s is named twice: a set holds it once", name)
+		}
+		names[name] = true
 	}
 	for a := range n {
 		if c.Declared[a] && !c.Stream[a] {
@@ -177,8 +184,26 @@ type Transition struct {
 
 // --- Helpers
 
-func (s *State) outbox(i int8) Rec { return s.Outbox[i-1] }
-func (s *State) drain(j int8) Row  { return s.Drain[j-1] }
+// Undefined is what a function here panics with where TLC would stop because
+// an expression has no value: an index outside a sequence, the least element
+// of an empty set. No state the spec reaches does that.
+type Undefined struct{ What string }
+
+func (u Undefined) Error() string { return "no value: " + u.What }
+
+func (s *State) outbox(i int8) Rec {
+	if i < 1 || i > s.OutboxLen {
+		panic(Undefined{fmt.Sprintf("outbox[%d] of %d records", i, s.OutboxLen)})
+	}
+	return s.Outbox[i-1]
+}
+
+func (s *State) drain(j int8) Row {
+	if j < 1 || j > s.DrainLen {
+		panic(Undefined{fmt.Sprintf("drain[%d] of %d rows", j, s.DrainLen)})
+	}
+	return s.Drain[j-1]
+}
 
 // HbIssued: the owner has issued a heartbeat record for a.
 func (s *State) HbIssued(a int8) bool { return s.hbIn(a, s.OutboxLen) }
@@ -631,10 +656,6 @@ func (c Config) WinnerIsFirstInOrder(s State) bool {
 	return true
 }
 
-// validOwner and validDrain say an index names a record or row there is.
-func (s *State) validOwner(i int8) bool { return i >= 1 && i <= s.OutboxLen }
-func (s *State) validDrain(j int8) bool { return j >= 1 && j <= s.DrainLen }
-
 // AdoptionKeepsTheWinner: an adopted record that wins is the drain log's first
 // row for its authorization.
 func (c Config) AdoptionKeepsTheWinner(s State) bool {
@@ -643,10 +664,15 @@ func (c Config) AdoptionKeepsTheWinner(s State) bool {
 		if w.Src != Owner {
 			continue
 		}
-		if !s.validOwner(w.Idx) {
-			return false
+		row := s.outbox(w.Idx).Row
+		if row == 0 {
+			continue
 		}
-		if row := s.outbox(w.Idx).Row; row != 0 && row != s.firstDrainRow(a) {
+		first := s.firstDrainRow(a)
+		if first == 0 {
+			panic(Undefined{fmt.Sprintf("Min(DrainRows(%d)), which is empty", a)})
+		}
+		if row != first {
 			return false
 		}
 	}
@@ -684,7 +710,7 @@ func (c Config) AckedOwnerTerminalWins(s State) bool {
 		if i > s.OwnerApplied && s.S == c.NoS() {
 			continue
 		}
-		if !s.validOwner(i) || s.Winner[s.outbox(i).Auth] != (Winner{Owner, i}) {
+		if s.Winner[s.outbox(i).Auth] != (Winner{Owner, i}) {
 			return false
 		}
 	}
@@ -698,7 +724,7 @@ func (c Config) NoAckedDrainRowLost(s State) bool {
 		return true
 	}
 	for _, j := range bits(s.GwAckedDrain) {
-		if j > s.DrainApplied || !s.validDrain(j) || s.Winner[s.drain(j).Auth] == NoWinner {
+		if j > s.DrainApplied || s.Winner[s.drain(j).Auth] == NoWinner {
 			return false
 		}
 	}
@@ -741,29 +767,22 @@ func (c Config) DurableHeartbeatNeverReleased(s State) bool {
 		if w == NoWinner {
 			return false
 		}
-		if w.Src == Owner && (!s.validOwner(w.Idx) || s.outbox(w.Idx).Kind == Release) {
+		if w.Src == Owner && s.outbox(w.Idx).Kind == Release {
 			return false
 		}
 	}
 	return true
 }
 
-func (s *State) releasedByOwner(a int8) (bool, bool) {
+func (s *State) releasedByOwner(a int8) bool {
 	i := s.OwnerWinner[a]
-	if i == 0 {
-		return false, true
-	}
-	if !s.validOwner(i) {
-		return false, false
-	}
-	return s.outbox(i).Kind == Release, true
+	return i != 0 && s.outbox(i).Kind == Release
 }
 
 // NoLiveRequestReleased: the enclave of a released hold has given up.
 func (c Config) NoLiveRequestReleased(s State) bool {
 	for a := range int8(len(c.Auths)) {
-		released, ok := s.releasedByOwner(a)
-		if !ok || released && s.Enc[a] != EncGone {
+		if s.releasedByOwner(a) && s.Enc[a] != EncGone {
 			return false
 		}
 	}
@@ -774,11 +793,7 @@ func (c Config) NoLiveRequestReleased(s State) bool {
 // owner's records or in the drain log.
 func (c Config) ReleasedHoldOwesNothing(s State) bool {
 	for a := range int8(len(c.Auths)) {
-		released, ok := s.releasedByOwner(a)
-		if !ok {
-			return false
-		}
-		if !released {
+		if !s.releasedByOwner(a) {
 			continue
 		}
 		for i := int8(1); i <= s.OutboxLen; i++ {
