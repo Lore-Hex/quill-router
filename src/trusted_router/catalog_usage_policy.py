@@ -2,9 +2,9 @@
 
 ABLITERATE_ESTIMATED_USAGE_NOTICE = (
     "When Abliterate omits usage, successful prepaid calls are billed using up to "
-    "twice the locally estimated input and output tokens, bounded by the request's "
-    "authorized budget. Estimated output is also bounded by the requested output "
-    "limit. Responses mark usage_estimated=true. Provider-reported usage takes "
+    "twice the locally estimated input and output tokens. The added buffer is "
+    "limited by the authorized request budget and requested output limit. "
+    "Responses mark usage_estimated=true. Provider-reported usage takes "
     "precedence. These are estimates, not verified upstream token counts."
 )
 
