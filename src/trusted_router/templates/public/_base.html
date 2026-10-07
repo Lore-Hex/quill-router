@@ -78,6 +78,7 @@
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
   <script defer src="/static/site-chrome.js?v={{ static_version|default('local') }}"></script>
+  <script defer src="/static/homepage/status.js?v={{ static_version|default('local') }}"></script>
   {% block body_scripts %}{% endblock %}
 </body>
 </html>
