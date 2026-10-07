@@ -181,12 +181,20 @@ func TestSIsStoredOnceWithItsProgress(t *testing.T) {
 	if _, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, AppliedSeq: 5, Boundary: &Boundary{S: 4, T: at}}}); err == nil {
 		t.Fatal("S is stored with other progress than its own")
 	}
+	// The drain log is applied only once S is durable: not before S, nor in
+	// the commit that stores it.
 	drained := Winner{AuthorizationID: "a9", Kind: "settle", Charge: 1, FromDrain: true, RecordID: "d1"}
-	if _, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, AppliedSeq: 4, Winners: []Winner{drained}}}); err == nil {
-		t.Fatal("a winner from the drain log is stored before S")
+	for name, r := range map[string]CommitRequest{
+		"before S": {Ref: ref, AppliedSeq: 4, Winners: []Winner{drained}, Money: []MoneyOp{Book(1, 0)}},
+		"beside S": {Ref: ref, AppliedSeq: 4, Boundary: &Boundary{S: 4, T: at}, Winners: []Winner{drained},
+			Money: []MoneyOp{Book(1, 0)}},
+	} {
+		if _, _, err := s.Commit(ctx, []CommitRequest{r}); err == nil {
+			t.Fatalf("a winner from the drain log is stored %s", name)
+		}
 	}
-	if got := commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 4, Boundary: &Boundary{S: 4, T: at},
-		Winners: []Winner{drained}, Money: []MoneyOp{Book(1, 0)}}); got.Refused != "" || got.State != "draining" {
+	if got := commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 4, Boundary: &Boundary{S: 4, T: at}}); got.Refused != "" ||
+		got.State != "draining" {
 		t.Fatalf("storing S: %+v", got)
 	}
 	l := readLease(t, s, ref)
@@ -196,8 +204,9 @@ func TestSIsStoredOnceWithItsProgress(t *testing.T) {
 	if got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 5, Boundary: &Boundary{S: 5, T: at}}); got.Refused != RefusedBoundary {
 		t.Fatalf("another S: %+v", got)
 	}
-	if got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 4, Money: []MoneyOp{Book(1, 0)}}); got.Refused != "" {
-		t.Fatalf("a commit after S: %+v", got)
+	if got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 4, Winners: []Winner{drained},
+		Money: []MoneyOp{Book(1, 0)}}); got.Refused != "" {
+		t.Fatalf("the drain log's winner after S: %+v", got)
 	}
 	// Past S no owner record is applied, whether or not the request names S.
 	late := Winner{AuthorizationID: "a8", Kind: "settle", Charge: 7, RecordID: "o5"}
@@ -270,6 +279,30 @@ func TestAGapStopsTheLease(t *testing.T) {
 	if ok, _, err := s.StopForGap(ctx, ref, 1, 4); err != nil || ok {
 		t.Fatalf("a second gap: %v %v", ok, err)
 	}
+}
+
+// TestAClosedLeaseIsRefusedAndTheBatchCommits: a lease closed since the
+// member read it is refused, its row kept or deleted by retention since, and
+// the batch's other leases commit.
+func TestAClosedLeaseIsRefusedAndTheBatchCommits(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	gone, kept, fresh := grantLease(t, s, 30, 100), grantLease(t, s, 30, 100), grantLease(t, s, 30, 100)
+	execLease(t, gone, `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`)
+	execLease(t, kept, closeIt)
+	before := readLease(t, s, kept)
+	got, _, err := s.Commit(ctx, []CommitRequest{
+		{Ref: gone, AppliedSeq: 1, Money: []MoneyOp{Book(5, 0)}},
+		{Ref: kept, AppliedSeq: 1, Money: []MoneyOp{Book(5, 0)}},
+		{Ref: fresh, AppliedSeq: 1, Money: []MoneyOp{Book(5, 0)}},
+	})
+	if err != nil || len(got) != 3 || got[0].Refused != RefusedClosed || got[1].Refused != RefusedClosed || got[2].Refused != "" {
+		t.Fatalf("a batch with a deleted and a closed lease: %+v %v", got, err)
+	}
+	if readLease(t, s, kept) != before || readLease(t, s, fresh).Consumed != 5 {
+		t.Fatal("the closed lease changed, or the fresh one did not book")
+	}
+	identityHolds(t, s, fresh.Workspace)
 }
 
 // TestNoGapPastS: once S is stored, owner records past it are not applied,

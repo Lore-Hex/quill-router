@@ -135,15 +135,19 @@ func (r CommitRequest) validate() error {
 
 // Commit is the auditor's per-lease commit (§4.8): one transaction for
 // many leases. Each lease's part is conditional on the version the member
-// read, on no gap, and, once S is stored, on the request's progress being
-// S, since no owner record past S is applied; a lease refused writes
-// nothing, and the others commit. For a lease it commits, it advances the
-// version by one, stores the progress, books and returns the money in log
-// order against the row as read in the transaction (applyMoney), so a raise
-// an owner or a front door made since the member loaded the lease is kept,
-// and stores the holds and one pack of the winners, each of whose holds
-// goes with it. S, once stored, does not change; a winner from the drain
-// log needs it stored, before or by this commit. Then, for each workspace,
+// read, on the lease not being closed, its row kept or deleted since, on no
+// gap, and, once S is stored, on the request's progress being S, since no
+// owner record past S is applied; a lease refused writes nothing, and the
+// others commit. A closed lease's remainder is returned and its row may be
+// going, so nothing more is booked on it or left pending in a pack. For a
+// lease it commits, it advances the version by one, stores the progress,
+// books and returns the money in log order against the row as read in the
+// transaction (applyMoney), so a raise an owner or a front door made since
+// the member loaded the lease is kept, and stores the holds and one pack of
+// the winners, each of whose holds goes with it. S, once stored, does not
+// change; a winner from the drain log needs it stored by an earlier commit,
+// since the drain log is applied only once S is durable. Then, for each
+// workspace,
 // the credit rows take the bookings and raises in ascending shard order and
 // are squared (§4.7), and each return frees its money, repaying any debt
 // first. Money that would pass int64's range is an error, and nothing is
@@ -168,12 +172,20 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 		for i, r := range reqs {
 			out[i] = CommitResult{Ref: r.Ref}
 			l, money, err := readLeaseMoney(ctx, txn, r.Ref, "commit")
+			if errors.Is(err, ErrNoLease) {
+				// Closed, and its row deleted since: a member that stalled
+				// past both learns it here, and the batch's others commit.
+				out[i].Refused = RefusedClosed
+				continue
+			}
 			if err != nil {
 				return err
 			}
 			switch {
 			case l.CommitVersion != r.ReadVersion:
 				out[i].Refused = RefusedVersion
+			case l.State == "closed":
+				out[i].Refused = RefusedClosed
 			case l.GapSeq.Valid:
 				out[i].Refused = RefusedGap
 			case l.BoundarySeq.Valid && l.BoundarySeq.Int64 != r.AppliedSeq:
@@ -186,7 +198,7 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 				return fmt.Errorf("store: S is stored on a draining lease, and %v is open", r.Ref)
 			}
 			for _, w := range r.Winners {
-				if w.FromDrain && !l.BoundarySeq.Valid && r.Boundary == nil {
+				if w.FromDrain && !l.BoundarySeq.Valid {
 					return fmt.Errorf("store: a winner from the drain log of %v before S is stored (§4.8)", r.Ref)
 				}
 			}
@@ -305,8 +317,8 @@ func writeLeaseCommit(ctx context.Context, txn *spanner.ReadWriteTransaction, r 
 		             holds_listed_seq = COALESCE(@listed, holds_listed_seq),
 		             audit_fault_seq = COALESCE(@fault_seq, audit_fault_seq),
 		             revoked = revoked OR @fault_seq IS NOT NULL
-		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND gap_seq IS NULL
-		         AND (boundary_seq IS NULL OR boundary_seq = @applied)
+		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND state != 'closed'
+		         AND gap_seq IS NULL AND (boundary_seq IS NULL OR boundary_seq = @applied)
 		      THEN RETURN state, commit_version`,
 		Params: params,
 	}, spanner.QueryOptions{RequestTag: tag("commit")}).Do(func(row *spanner.Row) error {
