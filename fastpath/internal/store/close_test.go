@@ -29,8 +29,18 @@ func TestAnAuthorizationNamesItsLease(t *testing.T) {
 	}
 }
 
-// drained grants a lease, drains it, and stores S with a commit; it returns
-// the lease and the version the commit left.
+// snapped is an open hold of estimate whose latest snapshot, from owner
+// record seq, has the running charge given.
+func snapped(a string, estimate, charge, seq int64) HoldRow {
+	h := hold(a, estimate)
+	h.SnapshotSeq, h.RunningCharge = spanner.NullInt64{Int64: 1, Valid: true}, spanner.NullInt64{Int64: charge, Valid: true}
+	h.SnapshotOwnerSeq = spanner.NullInt64{Int64: seq, Valid: true}
+	return h
+}
+
+// drained grants a lease, drains it, and stores S with a commit, with a1's
+// hold open at a snapshot of 3 of 10 from owner record 2; it returns the
+// lease and the version the commit left.
 func drained(t *testing.T, s *Store, credits ...int64) (LeaseRef, int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -39,16 +49,86 @@ func drained(t *testing.T, s *Store, credits ...int64) (LeaseRef, int64) {
 		t.Fatalf("drain: %v %v", ok, err)
 	}
 	got := commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 2, Boundary: &Boundary{S: 2, T: time.Now().UTC()},
-		PutHolds: []HoldRow{hold("a1", 10)}})
+		PutHolds: []HoldRow{snapped("a1", 10, 3, 2)}})
 	if got.Refused != "" {
 		t.Fatalf("storing S: %+v", got)
 	}
 	return ref, got.NewVersion
 }
 
+// reapOf is a reap of a at a charge, of a hold of 10 from owner record 2,
+// as drained's a1 is at a charge of 3.
 func reapOf(a string, charge int64) ReapRow {
 	return ReapRow{AuthorizationID: a, RecordID: "reap-" + a, Charge: charge, Estimate: 10, SnapshotOwnerSeq: 2,
 		Digest: []byte("d"), Money: []byte(`{"cost":0}`)}
+}
+
+// TestAReapNeedsItsOpenHold: a reap is of a stored open hold, at the hold's
+// snapshot. An authorization whose winner is stored, its hold gone with it,
+// or one the lease never held has none to reap; a reap at another charge,
+// estimate or snapshot is not the hold's.
+func TestAReapNeedsItsOpenHold(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref, version := drained(t, s, 100)
+	got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: version, AppliedSeq: 2, Money: []MoneyOp{Book(4, 0)},
+		Winners:  []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 4, RecordID: "o2"}},
+		PutHolds: []HoldRow{hold("a2", 10), snapped("a3", 10, 15, 2)}})
+	for _, a := range []string{"a1", "a9"} {
+		if r, _, err := s.Reap(ctx, ref, got.NewVersion, reapOf(a, 3)); err != nil || r != RefusedNoHold {
+			t.Fatalf("a reap of %s, which has no open hold: %q %v", a, r, err)
+		}
+	}
+	for name, r := range map[string]ReapRow{
+		"another charge":          reapOf("a3", 9),
+		"another estimate":        {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 11, SnapshotOwnerSeq: 2, Money: []byte("{}")},
+		"another snapshot":        {AuthorizationID: "a3", RecordID: "x", Charge: 10, Estimate: 10, SnapshotOwnerSeq: 1, Money: []byte("{}")},
+		"a charge on no snapshot": reapOf("a2", 1),
+	} {
+		if _, _, err := s.Reap(ctx, ref, got.NewVersion, r); err == nil {
+			t.Fatalf("a reap at %s is taken", name)
+		}
+	}
+	// A snapshot past the estimate is capped at it; a hold with none charges nothing.
+	if r, _, err := s.Reap(ctx, ref, got.NewVersion, reapOf("a3", 10)); err != nil || r != "" {
+		t.Fatalf("a reap at the estimate: %q %v", r, err)
+	}
+	if r, _, err := s.Reap(ctx, ref, got.NewVersion, ReapRow{AuthorizationID: "a2", RecordID: "reap-a2", Estimate: 10,
+		Money: []byte("{}")}); err != nil || r != "" {
+		t.Fatalf("a reap of a hold with no snapshot: %q %v", r, err)
+	}
+}
+
+// TestNoCommitAfterTheClose: the close advances the version, and a commit at
+// the new version is refused and writes nothing, so nothing is booked on a
+// lease whose remainder went back, or left pending in a pack of a lease
+// whose row may be going.
+func TestNoCommitAfterTheClose(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref, version := drained(t, s, 100)
+	listed := int64(2)
+	got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: version, AppliedSeq: 2, HoldsListedSeq: &listed,
+		Winners: []Winner{{AuthorizationID: "a1", Kind: "refund", RecordID: "o2"}}})
+	_, read, err := s.ReadDrainSince(ctx, ref, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CloseLease(ctx, ref, got.NewVersion, read, time.Now())
+	if err != nil || c.Refused != "" || c.Released != 30 {
+		t.Fatalf("the close: %+v %v", c, err)
+	}
+	before := readLease(t, s, ref)
+	packs, _, err := s.LoadWinners(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: c.NewVersion, AppliedSeq: 2, Money: []MoneyOp{Book(4, 10)}})
+	after, _, err := s.LoadWinners(ctx, ref)
+	if err != nil || late.Refused != RefusedClosed || readLease(t, s, ref) != before || len(after) != len(packs) {
+		t.Fatalf("a commit after the close: %+v, %d packs then %d, %v", late, len(packs), len(after), err)
+	}
+	identityHolds(t, s, ref.Workspace)
 }
 
 // TestAReapIsGuardedAsEveryWriteIs answers AuditorCommit's mutants

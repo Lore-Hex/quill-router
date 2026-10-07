@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,7 +95,7 @@ func TestDispositionAnswersAsTheDesignSays(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("a record written twice: %d rows, %v", n, err)
 	}
-	pending, err := s.PendingPacks(ctx, 100000)
+	pending, err := s.PendingPacks(ctx, PendingPack{}, 100000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +105,33 @@ func TestDispositionAnswersAsTheDesignSays(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the lease's pack with its work pending is not listed")
+	}
+}
+
+// TestPendingPacksPageInKeyOrder: the sweep pages through the packs with
+// work pending in key order, from the last it read, so one whose work stays
+// pending holds up none after it.
+func TestPendingPacksPageInKeyOrder(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ws := seedWorkspace(t, 1000)
+	var refs []LeaseRef
+	for range 3 {
+		req := grantOf(ws, 10)
+		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+			t.Fatalf("the grant: %+v %v", got, err)
+		}
+		ref := LeaseRef{ws, req.LeaseID}
+		commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 1})
+		refs = append(refs, ref)
+	}
+	slices.SortFunc(refs, func(a, b LeaseRef) int { return strings.Compare(a.LeaseID, b.LeaseID) })
+	cursor := PendingPack{Ref: LeaseRef{Workspace: ws}}
+	for _, want := range refs {
+		page, err := s.PendingPacks(ctx, cursor, 1)
+		if err != nil || len(page) != 1 || page[0] != (PendingPack{Ref: want, CommitVersion: 1}) {
+			t.Fatalf("the page after %+v: %+v %v, want %v", cursor, page, err, want)
+		}
+		cursor = page[0]
 	}
 }

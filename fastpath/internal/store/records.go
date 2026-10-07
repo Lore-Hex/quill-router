@@ -111,15 +111,21 @@ type PendingPack struct {
 	CommitVersion int64
 }
 
-// PendingPacks reads up to limit packs whose work is not done, in one strong
-// read through the packs' index on that time: the sweep over closed leases'
-// pending work.
-func (s *Store) PendingPacks(ctx context.Context, limit int) ([]PendingPack, error) {
+// PendingPacks reads up to limit packs whose work is not done, in key order
+// after the pack named by after (the zero PendingPack: from the first), in
+// one strong read through the packs' index on that time: the sweep over
+// closed leases' pending work. The sweep pages from the last pack it read
+// and starts again from the first at the end, so a pack whose work cannot be
+// done yet, such as one whose staged record is missing, holds up none after
+// it.
+func (s *Store) PendingPacks(ctx context.Context, after PendingPack, limit int) ([]PendingPack, error) {
 	var out []PendingPack
 	err := s.client.Single().QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT workspace_id, lease_id, commit_version FROM tr_lease_winners@{FORCE_INDEX=tr_lease_winners_by_work}
-		       WHERE work_done_at IS NULL LIMIT @limit`,
-		Params: map[string]any{"limit": int64(limit)},
+		       WHERE work_done_at IS NULL
+		         AND (workspace_id > @w OR (workspace_id = @w AND (lease_id > @l OR (lease_id = @l AND commit_version > @v))))
+		       ORDER BY workspace_id, lease_id, commit_version LIMIT @limit`,
+		Params: map[string]any{"w": after.Ref.Workspace, "l": after.Ref.LeaseID, "v": after.CommitVersion, "limit": int64(limit)},
 	}, spanner.QueryOptions{RequestTag: tag("pending-packs")}).Do(func(row *spanner.Row) error {
 		var p PendingPack
 		if err := row.Columns(&p.Ref.Workspace, &p.Ref.LeaseID, &p.CommitVersion); err != nil {
