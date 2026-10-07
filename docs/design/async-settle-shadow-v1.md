@@ -1,6 +1,6 @@
 # PR F2 — async-settle shadow comparator
 
-Status: **design appendix, 2026-10-06; dormant implementation required**.
+Status: **design appendix, round 2, 2026-10-06; dormant implementation required**.
 This implements the measurement plan in
 `docs/design/async-settle-outbox-v1.md:794` (§8) and its row F at line 837.
 It does not edit that design or authorize enablement. All new names, limits,
@@ -10,8 +10,8 @@ Source pins inspected read-only:
 
 | Tree | Revision / citation convention |
 |---|---|
-| Router, this worktree | `f83bbaacb3e91271f7bac9ba26d826532f10962f`; paths below are repository-relative, including `src/trusted_router/` |
-| Enclave PR E worktree | Final source check: `d94bf2132be38ae5e4adb59312699e5a11603de4`; **E/** means `/Users/jperla/josh/repos/tr/wt/pr-e/`, not a router path. The local `docs/validation/` note is untracked; code citations take precedence. |
+| Router, this worktree | Round-2 read at `7842ba5a1c236ae0e16dc67277986be90643a039`; round-1 executable baseline `f83bbaacb3e91271f7bac9ba26d826532f10962f`; paths below are repository-relative, including `src/trusted_router/` |
+| Enclave PR E worktree | Final round-2 citation audit at round-4 HEAD `80de3a50f2a50b2cb5f8d35a8ed1ee42a1c0a06f` (advanced from `d94bf213` during this pass); **E/** means `/Users/jperla/josh/repos/tr/wt/pr-e/`, not a router path. The local `docs/validation/` note is untracked; code citations take precedence. |
 | Design and appendices read | `docs/design/async-settle-outbox-v1.md:56`, `:93`, `:693`, `:794`, `:828`; PR C compatibility `:909`, PR D implementation `:998`, PR D measurement plan `:1160` |
 
 ## 1. Invariants and numbered decisions
@@ -33,7 +33,7 @@ HTTP response alone is not a booked-amount oracle.
 2. **D-S2 — enclave switch and transport. Decision:** exact environment value
    `TR_ASYNC_SETTLE_SHADOW=on` enables shadow; every other value is off. Send
    `X-TR-Settlement-Mode: async-v1` only on authorize, and a bounded
-   `X-TR-Settlement-Shadow` header on ordinary synchronous settle. Reject the
+   `X-TR-Settlement-Shadow` header on ordinary synchronous settle/refund. Reject the
    alternative top-level JSON field: `_Lenient` preserves extras, rather than
    discarding them (`src/trusted_router/schemas.py:51`), and settlement projects
    that model into side-effect data (`src/trusted_router/routes/internal/gateway.py:3470`,
@@ -101,6 +101,13 @@ to D-S2 to satisfy §8's **signed-snapshot inputs**; the existing flag-off path
 alone is insufficient. It is not `settlement_ticket`, cannot be submitted to
 async admission, and has no billing authority.
 
+Legacy internal-token authentication verifies a shared credential
+(`src/trusted_router/routes/internal/_shared.py:53`), not an attested signature
+over this diagnostic envelope. A current-catalog rebuild cannot authenticate
+historical S0 after a correction; keep the separate signed binding even with
+the independent legacy S0 arithmetic oracle (§3.1; effective-time lookup at
+`src/trusted_router/catalog.py:352`).
+
 Use the already-loaded Ed25519 material through a distinct shadow signer and
 distinct `TrustedKey` purpose/audience descriptor; do not invoke
 `TicketSigner.sign`. The strict purpose/type dispatch primitives are at
@@ -147,12 +154,15 @@ Content-Type: application/json
 X-TR-Settlement-Shadow: <unpadded-base64url(UTF-8 shadow envelope JSON)>
 ```
 
-There is **no `X-TR-Settlement-Mode` on shadow settle**, including no `sync`
+The same diagnostic header may accompany `/internal/gateway/refund`; that
+legacy sender has its own body/send path
+(`E/enclave-go/internal/trustedrouter/client.go:1223`, `:1257`).
+There is **no `X-TR-Settlement-Mode` on shadow settle/refund**, including no `sync`
 value. Both `sync` and `async-v1` can select the strict async recovery handler
 when protection is on (`src/trusted_router/routes/settlements.py:31`). The
 ordinary settle body is built and marshalled exactly as today
-(`E/enclave-go/internal/trustedrouter/client.go:1075`, `:1151`, `:1403`). Add
-the shadow header at the HTTP send seam (`:1345`), using a distinct request-local
+(`E/enclave-go/internal/trustedrouter/client.go:1074`, `:1150`, `:1402`). Add
+the shadow header at the HTTP send seam (`:1348`), using a distinct request-local
 context value; never inherit the authorize negotiation context into settle.
 Reuse the same frozen header on identical retries and the existing pinned
 authority. Never change retries or the return value because shadow failed.
@@ -166,11 +176,44 @@ object, no duplicate keys at any depth, trailing data, unknown fields,
 non-finite numbers, floats/strings/bools for integers or surrogate characters.
 Limit integer lexemes before conversion; counts/micro are checked nonnegative
 int64. IDs use the DTO identity alphabet plus the tighter limits above;
-endpoint/model IDs at most 128. Oversized snapshots are excluded whole, never
-trimmed to alter their signed hash. Existing DTO parsers/canonicalization are
+endpoint/model IDs at most 128. Oversized snapshots fail shadow coverage whole,
+never trimmed to alter their signed hash. Existing DTO parsers/canonicalization are
 at `src/trusted_router/billing_snapshot.py:361`, `:399`, `:420`; add the outer
 size/depth/numeric bounds explicitly rather than assuming those APIs supply
 every outer bound.
+
+**Transport decision:** retain the full-snapshot envelope and these bounds;
+`snapshot_size` is a **coverage failure**, not a cohort exclusion. No supported
+fallback traffic is removed from the denominator. The review's canonical-byte
+measurements are 645 for `request_v1.json`, 1,041 for its largest inspected
+single-model projection, 3,563 for the four-model OpenAI fallback
+`gpt-6-astra,gpt-5.6-sol,gpt-6.1-sol,gpt-5.5`, and 28,821 for the inspected
+43-candidate supported chat projection. These are snapshot bytes, before the
+proof, terminal and base64 overhead; the routing and projection sources are
+`src/trusted_router/routing.py:947`,
+`src/trusted_router/routes/internal/gateway.py:2782`,
+`src/trusted_router/billing_snapshot.py:361`, and the literal source is
+`tests/fixtures/async_settlement/request_v1.json:1`. F2b/F2c must reproduce these
+size cases against their pinned catalog. The current bound demonstrably cannot
+cover that four-model request or the larger projection: either occurrence
+blocks/resets the clean window. Authorize counts the oversize projection before
+issuing a binding; keep PR B's response unchanged, omit only the new binding,
+and retain the sticky coverage failure even if no settle envelope follows.
+F2 is not a full-cohort transport proof until this is resolved in a reviewed
+transport revision. There is no silent single-model pilot restriction.
+
+Known server configuration supplies **no application-set total-header limit**:
+`src/trusted_router/serve.py:104` leaves the HTTP parser and h11 incomplete-event
+size at dependency defaults; `Dockerfile:37` selects this runner. The locked
+dependencies are uvicorn 0.46.0, h11 0.16.0 and httptools 0.7.1
+(`uv.lock:5135`, `:1636`, `:1699`; standard extra at `:5147`). Inspection of those
+local dependency sources found auto selection prefers httptools; the h11
+fallback defaults to **16,384 bytes of incomplete-event buffering**, not a
+guaranteed per-header or end-to-end total limit. No larger header bound is
+justified by this setting. Rollout must record the actual parser, proxy/internal
+hop limits and acceptance of the maximum 8,192-byte shadow value plus ordinary
+auth headers, including fragmented header delivery, in every pilot region.
+These are required measurements, not established ingress acceptance.
 
 With opt-in empty or server workspace absent from the set, do not decode, hash,
 copy, log or count the header. The existing internal authentication and legacy
@@ -293,6 +336,23 @@ measure the reply to the request carrying it. No estimated end-to-end timing.
 Production populates observed `Eligibility` facts; `{}` in this fixture means
 the DTO's ordinary defaults (`src/trusted_router/billing_snapshot.py:149`).
 
+F2c must capture provider tier **before** `applyCacheUsage` sanitizes it
+(`E/enclave-go/cmd/enclave/main.go:2639`, `:2659`), at every stream/nonstream
+call site (`:1701`, `:1804`, `:2013`, `:2479`, `:2552`). Retain a request-local
+diagnostic fact separate from `Usage` and the legacy body. The shadow
+`observed.service_tier` is absent only for a confirmed absent provider tier,
+`default` only for an actual default, and a fixed `unsupported` sentinel for
+every other nonempty provider tier (including `standard`, `priority`, `flex`,
+`batch`, `scale`, unknown or oversized strings). Do not retain arbitrary provider
+strings. Missing provider usage is `usage_missing`, not confirmed absence.
+This follows Python's absent/default-only rule
+(`src/trusted_router/billing_snapshot.py:190`); widening that rule for aliases
+requires a separate reviewed change. Keep requested eligibility separately and
+require both requested and observed to pass. Sanitized `Usage.ServiceTier` is
+insufficient (`E/enclave-go/internal/trustedrouter/async_settlement.go:153`).
+Unsupported observed tiers produce the bounded `unsupported_observed` failure
+variant even when the unchanged legacy body retains requested/default tier.
+
 ## 3. Comparator algorithm and classification
 
 1. At successful authorize, count the opted-in attempt before cohort/header
@@ -309,6 +369,15 @@ the DTO's ordinary defaults (`src/trusted_router/billing_snapshot.py:149`).
    Execute the unchanged legacy entry once. After its outcome, acquire the
    local rate/queue permit before copying a bounded envelope into the worker;
    refusal only increments the drop counter.
+   Refund has a separate seam: `/internal/gateway/refund` calls
+   `_settle_gateway_authorization(..., success=False)` directly, bypassing that
+   per-key wrapper (`src/trusted_router/routes/internal/gateway.py:2308`,
+   `:2316`). Add the same detached observation capture at its existing
+   authorization read (`:3424`) and post-outcome submission around the refund
+   entry, retaining request header/context outside the money API. Do not reroute
+   refund through the settle gate or add a pre-response lookup. Infer attempted
+   kind from the actual server entry's `success` value, never the header; require
+   terminal kind to agree. Off/nonmember refund has the same zero-work guard.
 3. Preserve its result or original exception. After the booking outcome, submit
    an immutable observation to a bounded worker. Parsing, proof verification,
    evaluation, evidence I/O and their failures cannot alter the response.
@@ -343,16 +412,25 @@ the DTO's ordinary defaults (`src/trusted_router/billing_snapshot.py:149`).
    aliases win; absent optional cache/reasoning counts mean zero) and require
    equality with envelope raw counts. Those aliases are defined at
    `src/trusted_router/schemas.py:608`. Compare route, stream, selected endpoint,
-   service tier, estimated flag and observed additional costs too. Unknown or
+   sanitized body service tier, estimated flag and observed additional costs too.
+   Check provider-tier eligibility separately using the pre-sanitization fact
+   in §2.3: it need not equal the sanitized legacy tier, and sanitization must
+   never upgrade an unsupported observation to eligible. Unknown or
    missing final usage is excluded/unevaluable, not coerced into exact zero.
 6. Run Python `evaluate(snapshot, selected_endpoint, raw, observed)`, capture
-   normalized usage and `python_micro`, compare all six normalized counts with
+   normalized usage and its usage charge. Set `python_micro` to that charge for
+   **settle**, to **0 for refund**, even with positive usage; apply the same
+   kind selection in the Go builder and to rebuilt expected amounts. Never
+   overwrite the received Go charge with zero to conceal an invalid refund.
+   Compare all six counts with
    the Go terminal, then `validate_envelope(snapshot, terminal)`. Do not lose
    the independently computed Python amount when validation rejects the Go
    charge. `go_micro=terminal.charge_micro`; `frozen_micro=python_micro` only
    after a verified frozen snapshot evaluates. Existing implementations are
-   `src/trusted_router/billing_snapshot.py:477`, `:520` and
-   `E/enclave-go/internal/trustedrouter/async_settlement.go:140`.
+   `src/trusted_router/billing_snapshot.py:477`, `:539`,
+   `src/trusted_router/services/async_settle_handler.py:122`, and
+   `E/enclave-go/internal/trustedrouter/async_settlement.go:157`, `:163`.
+   Legacy likewise zeroes refunds (`src/trusted_router/routes/internal/gateway.py:3631`).
    For the failure variant, first verify the proof/snapshot and use the legacy
    endpoint plus proof context; do not dereference a null terminal. Run Python
    if valid raw usage is available. Python success against a Go evaluator
@@ -370,17 +448,34 @@ the DTO's ordinary defaults (`src/trusted_router/billing_snapshot.py:149`).
    `src/trusted_router/stage_d.py:25`). If reconstructing the exact view is
    impossible, set rebuild unknown, never manufacture an explanation.
 8. Compute signed integer deltas and classify by the precedence below; retain
-   all bounded secondary reasons. Peek at admission cache under a nonblocking
-   lock, without calling `eligible()` or initiating a refresh. Emit one logical
+   all bounded secondary reasons. Peek at the separate observation cache (§5)
+   under a nonblocking lock, without calling `eligible()` or initiating a refresh. Emit one logical
    evidence sample, and update attempt/outcome counters separately (§4).
 
 ### 3.1 Exact arithmetic for catalog explanations
 
 Let `S0` be the signed authorize snapshot, `S1` the diagnostic rebuild of the
 booking's price source, `u` identical raw usage, and `e` the selected endpoint.
-Let `P=E(S0,e,u)`, `G=go_micro`, `R=E(S1,e,u)`, `B=booked_micro`.
+Let `k` be the verified attempted terminal kind and define
+`E_k(S,e,u)=E(S,e,u).charge_micro` for settle, **0** for refund, after successful
+normalization/eligibility evaluation (`src/trusted_router/billing_snapshot.py:539`).
+Let `P=E_k(S0,e,u)`, `G=go_micro`, `R=E_k(S1,e,u)`, `B=booked_micro`.
 Store `python_minus_go=P-G`, `booked_minus_frozen=B-P`,
 `rebuilt_minus_frozen=R-P`, `booked_minus_rebuilt=B-R` (null if undefined).
+Book-to-attempt deltas are undefined when attempted kind differs from the durable
+winner's polarity; retain both amounts and kinds, but set those deltas null.
+
+The first reservation claimant wins settle/refund races
+(`src/trusted_router/storage_gcp_counter_dml.py:753`); the durable authorization
+exposes the winner, including zero-cost settle versus refund
+(`src/trusted_router/routes/internal/gateway.py:4579`, `:4597`). For same-kind
+attempts compare B normally. For opposite-kind attempts, still validate P/G and
+usage, but classify `requires_review/winner_polarity`, a coverage gap, not an
+arithmetic disagreement or catalog explanation. Do not recompute P for the
+winner kind using the loser's usage, turn B into zero for a losing refund, or
+overwrite the winner sample. Unknown winner remains `booking_unknown`. A valid
+refund winner with positive usage is exact at `P=G=B=0`; refund cannot have a
+nonzero catalog-price delta. Missing refund usage remains unevaluable.
 
 For each of uncached input, cache read, cache creation, output, cost component
 is `checked(checked(tokens*rate)+500000)//1000000`; checked sums then have a
@@ -390,16 +485,37 @@ of output, never a fifth charge. This is the existing evaluator arithmetic
 (`src/trusted_router/billing_snapshot.py:484`). No float tolerance or percentage
 allowance is permitted.
 
+Define **L0**, an independent legacy-side S0 oracle: copy the selected signed
+S0 candidate's rates, tiers, request fee and rounding into the existing legacy
+frozen-candidate pricing function
+`src/trusted_router/stage_d.py:161`. Feed it the **legacy** normalized counts
+from `src/trusted_router/services/settle_outbox_apply.py:101`, with raw output
+and cache counts and no private tier override. Verify the provider/convention
+mapping and six-count agreement first; reject unsupported mapping. This oracle
+uses `src/trusted_router/money.py:57` for rounding and Stage D's independent
+tier/minimum logic (`src/trusted_router/stage_d.py:183`, `:211`), not
+`billing_snapshot.evaluate`, its normalized output, or its arithmetic helpers.
+It is a post-outcome pure diagnostic, never a second booking. Select L0=0 for
+refund only after validating inputs. Persist `legacy_frozen_micro=L0` and oracle
+identity `stage_d_candidate_v1`; missing/unsupported oracle yields null plus
+`requires_review/legacy_oracle_unavailable`. F2b must prove the adapter copies
+every pricing field without live-catalog substitution and pin the independent
+legacy functions in its oracle/mutation manifest.
+
 `explained-by-catalog-change` requires **all**: valid signature/hash/identity,
-identical raw and normalized usage across legacy/Python/Go, `P=G`, `B != P`,
+identical raw and normalized usage across legacy/Python/Go, attempted and winner
+kind both settle, **`L0=P=G`**, `B != P`,
 `H(S0) != H(S1)`, a supported ordinary price-only difference with unchanged
-candidate identity/conventions, proven legacy price source, `B=R`, and
-`B-P=R-P` exactly. A changed hash alone is insufficient; changes to an unused
+candidate identity/conventions, proven legacy price source, and **`B=R`** exactly.
+`B-P=R-P` is retained as a reported delta, not independent evidence: it follows
+from B=R. If L0 is unavailable, the delta is `requires_review`, never clean;
+if L0 differs from P, it is `evaluator_disagreement` even when P=G and B=R.
+A changed hash alone is insufficient; changes to an unused
 candidate cannot explain a selected endpoint's amount mismatch. Added/removed
 candidates, feature/cohort changes and unverifiable rebuilds are not allowlisted.
 
 Example fixture: no Stage D billing document; one input plus one output token,
-no cache, S0 input/output rates 500,000/500,000 → `P=G=1+1=2`.
+no cache, S0 input/output rates 500,000/500,000 → `L0=P=G=1+1=2`.
 Before settle, the applicable catalog history is corrected to
 1,500,000/500,000 → `R=B=2+1=3`; the hashes differ and both deltas are `+1`.
 This is explained. A price scheduled **after** authorization does not qualify:
@@ -414,18 +530,21 @@ catalog drift if available. If legacy books 4, neither example explains it.
 | `hash` | Invalid proof signature, wrong purpose, snapshot or payload hash mismatch | Correctness mismatch; reset after fix |
 | `identity` | Validly parsed but wrong authorization/owner/nonce/reservation/endpoint/route/stream/authority | Correctness mismatch; reset after fix |
 | `normalization` | Same eligible request yields different raw-body mapping or normalized counts; includes legacy clamping versus strict usage rejection | Correctness mismatch; reset after fix |
-| `evaluator_disagreement` | Evaluable identical inputs, `P != G`, or unexplained `B != P` | Correctness mismatch; reset after fix |
+| `evaluator_disagreement` | Evaluable identical inputs, `P != G` or known `L0 != P`; same-kind unexplained `B != P` with complete oracle/rebuild evidence | Correctness mismatch; reset after fix |
+| `requires_review` | Opposite winner polarity or an apparent catalog delta lacking the independent S0 oracle | Coverage failure; cannot count as clean or explained |
 | `unevaluable` | Parse error, expired proof, missing usage, Go/Python failure, unknown booking, required rebuild unavailable | Coverage failure; cannot count clean time across the unresolved gap |
-| `exact` | Verified inputs and normalized counts, `P=G=B` | Clean comparison; rebuild failure alone need not invalidate independently proven equality |
+| `exact` | Verified inputs and normalized counts, same attempted/winner kind, `P=G=B`, no known L0 disagreement | Clean comparison; rebuild failure alone need not invalidate independently proven equality |
 | `explained-by-catalog-change` | All equations and provenance conditions above | Clean comparison with separately reported catalog-change count |
 
 Explicit cohort exclusions are denominator outcomes, not exact comparisons.
 If a purported eligible sample cannot evaluate, the “100% evaluable” gate fails.
 Malformed excessive-cache usage can book via the legacy clamp
 (`src/trusted_router/services/settle_outbox_apply.py:112`); never hide that as a
-catalog explanation. Refunds are separate fixture cases with amount zero and
-winner races; live failed-provider refund attempts without exact usage are
-excluded, not invented evaluator successes.
+catalog explanation. Refunds need positive-usage and winner-race fixtures;
+live failed-provider refund attempts without exact usage are unevaluable,
+not invented evaluator successes. The current enclave refund body omits usage
+(`E/enclave-go/internal/trustedrouter/client.go:1223`); preserve those bytes and
+record `usage_missing` rather than interpreting schema defaults as observed zero.
 
 ## 4. Evidence schema, bounds and durability
 
@@ -450,15 +569,15 @@ objects have exactly their listed keys, no arbitrary maps or free text.
 | `snapshot_hash`, `payload_hash`, `rebuilt_snapshot_hash` | 64 lowercase hex or null; invalid received strings never copied |
 | `raw_usage` | null or exact five RawUsage integer fields |
 | `python_usage`, `go_usage`, `legacy_usage` | null or exact six NormalizedUsage integer fields |
-| `frozen_micro`, `python_micro`, `go_micro`, `booked_micro`, `rebuilt_micro` | nonnegative int64 or null; booked only from confirmed winner |
+| `frozen_micro`, `python_micro`, `go_micro`, `booked_micro`, `rebuilt_micro`, `legacy_frozen_micro` | nonnegative int64 or null; kind-dependent expectations (§3.1), booked only from confirmed winner; independent L0 never substituted from P |
 | `python_minus_go`, `booked_minus_frozen`, `rebuilt_minus_frozen`, `booked_minus_rebuilt` | signed int64 or null; no absolute-value loss of direction |
 | `classification`, `reason_codes` | §3 enum; sorted unique list, maximum 8 fixed enum values from §§2–5 |
 | `eligibility` | `{requested: boolean, observed: boolean|null, exclusion: enum|null}`; never an admission bit |
-| `booking` | `{outcome: settled|refunded|pending|unknown, source: finalized_authorization|none, price_source: catalog_at_authorize_time|stage_d_document|unknown}` |
+| `booking` | `{attempted_kind: settle|refund, outcome: settled|refunded|pending|unknown, source: finalized_authorization|none, price_source: catalog_at_authorize_time|stage_d_document|unknown}`; compare polarity before booking deltas (§3.1; `src/trusted_router/routes/internal/gateway.py:4597`) |
 | `admission` | `{prediction: yes|no|unknown, reason: enum, tier: int|null, pending_micro: int|null, cap_micro: int|null, workspace_age_us: int|null, health_age_us: int|null, health_p95_us: int|null}` |
 | `timing` | `{authorize_shadow_us, handoff_prepare_us, router_settle_us, booking_confirm_us, comparator_us, evidence_write_us}`; nonnegative int64 or null |
 | `deployment` | `{region, instance, router_revision, go_revision, python_evaluator, go_evaluator}`; bounded strings ≤128, revisions 40 hex, evaluator names fixed |
-| `provenance` | `{binding_verified: boolean, raw_matches_body: boolean, rebuild_matches_booking_view: boolean, fixture_sha256: digest}` |
+| `provenance` | `{binding_verified: boolean, raw_matches_body: boolean, rebuild_matches_booking_view: boolean, legacy_oracle: stage_d_candidate_v1|unavailable, fixture_sha256: digest}`; independent oracle at `src/trusted_router/stage_d.py:161` |
 
 Maximum serialized sample body **8,192 UTF-8 bytes**. Reject oversize evidence
 with `evidence_size`; never truncate numeric facts, identifiers or reason lists
@@ -481,13 +600,16 @@ observation is available; authorize's aggregate histogram supplies this gate
 across instances without adding another field to the proof or an RPC join.
 
 First insertion wins. Exact retry observations increment retry counters without
-overwriting. On a same-key conflicting payload or classification, retain the
+overwriting. On a same-key, same-kind conflicting payload or classification, retain the
 first row and durably increment the counter's correctness/reset fields; do not
 silently hide a later mismatch behind deduplication. A compact monotonic
 `conflict_seen` counter entry is sufficient; no raw competing payload. Reports
 check both samples and counters. Refund/settle races share this authorization
-sample identity, with polarity conflicts counted, never double-counted as two
-successful comparisons.
+sample identity; opposite-polarity attempts increment `winner_polarity` coverage
+counters without overwriting the winner or automatically calling a legitimate
+race a correctness defect (§3.1; `src/trusted_router/storage_gcp_counter_dml.py:753`).
+Same-kind changed payload/classification remains a sticky correctness conflict.
+Never count the two polarities as two successful comparisons.
 
 ### 4.2 Counter rows, sampling and completeness
 
@@ -515,18 +637,38 @@ observation day; retention/report reads remain by authorization day.
 
 Per-day counter row:
 `kind='async_settle_shadow_counter'`, `id='<observation-day>/<instance-boot-id>'`.
-Boot ID is a server-generated UUID, not a raw hostname. Body at most **32 KiB**:
+Boot ID is a server-generated UUID, not a raw hostname. Proposed body bound is
+**64 KiB**, increased to retain the dimensional evidence required by parent §8
+(`docs/design/async-settle-outbox-v1.md:802`):
 
 | Fields | Schema / semantics |
 |---|---|
 | `v`, `instance`, `region`, `router_revision`, `policy_version` | fixed version, boot ID, bounded deployment identity |
 | `started_at_us`, `flushed_at_us`, `sequence`, `closed` | integer UTC times, monotonic cumulative flush sequence, boolean graceful close |
-| `counts` | fixed bucket array; each entry `{adapter,route_type,streamed,authorize_attempts,authorize_fresh,authorize_replay,header_absent,requested_eligible,snapshot_sent,settle_attempts,envelope_present,evaluable,exact,explained,mismatch,unevaluable}` with nonnegative int64 counts |
-| `exclusions`, `rejections`, `drops` | sparse arrays of `{reason,count}` from the frozen enums; at most 96 distinct reasons overall; drops include `rate_limit`, `queue_full`, `daily_cap`, `store_unavailable`, `evidence_size`, `worker_error` |
+| `counts` | fixed bucket array; each entry `{adapter,route_type,streamed,authorize_attempts,authorize_fresh,authorize_replay,header_absent,requested_eligible,snapshot_sent,settle_attempts,refund_attempts,envelope_present,observed_attempts,observed_eligible,observed_ineligible,observed_unknown,evaluable,exact,explained,mismatch,requires_review,unevaluable}` with nonnegative int64 counts; observed denominator is unsampled |
+| `exclusions`, `rejections`, `drops` | sparse arrays of `{phase,adapter,route_type,streamed,reason,count}`; phase `authorize|settle|refund|worker`; same finite dimensions as counts, unknown bucket when unavailable; at most 96 reason enums and 128 distinct dimension/phase/reason entries total across these arrays; drops include `rate_limit`, `queue_full`, `daily_cap`, `store_unavailable`, `evidence_size`, `worker_error` |
+| `dimension_overflow`, `counter_overflow` | nonnegative count of events beyond sparse-entry/byte capacity and sticky boolean coverage failure; no silent aggregation into a reason-only bucket |
 | `comparison_attempts`, `samples_inserted`, `duplicate_samples`, `conflicting_samples` | cumulative nonnegative integers; rates label attempts versus distinct samples explicitly |
 | `booking_pending`, `booking_unknown` | cumulative attempts lacking a confirmed booking; never counted as exact or inferred from HTTP 200 |
 | `first_evidence_at_us`, `last_mismatch_at_us`, `first_gap_at_us` | nullable UTC times; gap is sticky, not cleared by later successful flushing |
 | `authorize_shadow_hist`, `evidence_write_hist` | fixed integer microsecond bucket counts: ≤100, 500, 1000, 2000, 5000, 10000, 50000, 200000, >200000 |
+| `admission_observer` | bounded cumulative `{workspace_reads,health_reads,read_failures,missed_ticks,prediction_yes,prediction_no,prediction_unknown}`; no workspace IDs; population/cost evidence for §5 (`src/trusted_router/storage_gcp_async_admission.py:29`, `:78`) |
+
+Increment `observed_attempts` and provisionally `observed_unknown` for **every**
+opted-in settle/refund before rate/sample admission. `observed_attempts` equals
+`settle_attempts + refund_attempts`; eligible + ineligible + unknown equals
+observed_attempts in every bucket. A bounded, verified diagnostic may move
+that attempt from unknown to eligible/ineligible even if no sample is persisted.
+Requests dropped before verification stay unknown; never infer provider
+eligibility from a sanitized body or the sampled population (§2.3;
+`E/enclave-go/cmd/enclave/main.go:2639`). Flush cumulative consistent partitions;
+no parser/evaluator bypass of the rate limit to obtain this denominator. Every
+rejection/exclusion/drop carries the captured dimensions and phase, including
+attempts with no sample. Sparse/serialization overflow sets the sticky gap and
+blocks the window; absence of a bucket is never evidence of zero. F2b's maximum
+schema-size and report tests must cover this bounded representation and the
+same reason in multiple adapter/route/stream/phase buckets (parent §8 at
+`docs/design/async-settle-outbox-v1.md:802`).
 
 Flush cumulative counters at most once per five seconds per active instance,
 including after rate/cap drops, with no synchronous request wait. Transactional
@@ -562,11 +704,16 @@ adapter, so fallback movement is not mistaken for missing traffic. Exclusion
 enums include `billing_snapshot.exclusion`'s fixed reasons
 (`src/trusted_router/billing_snapshot.py:181`) plus `unsupported_adapter`,
 `unknown_parameters`, `replay`, `header_absent`, `snapshot_unavailable`,
-`snapshot_size`, `usage_missing`, `usage_estimated`, `malformed_usage` and
+`usage_missing`, `usage_estimated`, `malformed_usage` and
 `arithmetic_overflow`. Additional diagnostic reasons are `booking_pending`,
 `booking_unknown`, `rebuild_unavailable`, `catalog_change`, `go_failure`,
-`configuration_conflict`, `missing_envelope`, and the §2 rejection/§4 drop
+`configuration_conflict`, `missing_envelope`, `snapshot_size`, `winner_polarity`,
+`legacy_oracle_unavailable`, `counter_overflow`, and the §2 rejection/§4 drop
 enums. Adding a reason requires a versioned schema/fixture update.
+`snapshot_size` is recorded in rejections with its authorize/settle/refund
+phase and dimensions; it always fails coverage for otherwise-supported traffic
+(§2.2; projection includes fallback candidates at
+`src/trusted_router/routes/internal/gateway.py:2782`).
 
 **D-S4 limitation:** best-effort, post-commit writes cannot guarantee durable
 drop counts during database outage or crash between counter flushes. Record
@@ -615,7 +762,8 @@ authorization-day prefixes for long calls; include all requested counter days.
 
 ## 5. Admission prediction, cost and latency budget
 
-**Decision:** read-only cache peek; reject calling the current `eligible()` for
+**Decision:** read-only peek of a separate shadow observation cache, populated
+by the bounded timer below; reject calling the current `eligible()` for
 shadow because it can issue workspace/health RPCs and takes a timed lock
 (`src/trusted_router/services/async_settle.py:64`). Prediction is `yes` only
 with valid tier 2/3, fresh nonnegative pending sum ≤ pilot override or
@@ -628,12 +776,51 @@ refresh age on receipt. Code sources for caps/predicate are
 Admission reason enum: `eligible`, `ineligible_tier`, `cap_exceeded`,
 `drain_unhealthy`, `cache_missing`, `cache_stale`, `cache_busy`, `invalid_data`.
 
-The admission-off runtime does not populate fleet health from storage
-(`src/trusted_router/services/async_settle.py:214`), so most production shadow
-predictions may be **unknown**. Report the known fraction; do not label unknown
-as a successful prediction, or claim observed pending exposure models async
-traffic while all traffic is synchronous. A background admission observer
-would be a separately budgeted extension, not a hidden authorize cache miss.
+The existing runtime starts with empty workspace entries and no health
+(`src/trusted_router/services/async_settle.py:59`); entries populate only inside
+`eligible()` (`:83`), admission-off projection returns before that call (`:248`),
+and construction omits the health reader (`:214`). Thus the old peek proposal
+would yield **no known predictions**, not merely a low known fraction.
+
+**F2b owner: the router implementation author must add and prove this observer
+before enablement.** While admission is off and the opt-in set is nonempty,
+start a lifecycle-owned timer with a separate cache/executor, maximum two
+in-flight reads, no unbounded queue and no calls to `eligible()`. Once per four
+seconds read each configured opted workspace, at most 32, using the existing
+bounded indexed `read_admission` (`src/trusted_router/storage_gcp_async_admission.py:13`,
+`:29`), plus one fixed-key `read_health` (`:78`). Do not discover workspaces or
+scan/publish fleet health from shadow. Rate-limit all reads to 10 starts/second,
+burst two; spread reads across the cycle, at most one outstanding read per key,
+skip overdue ticks without catch-up. Each read uses LOW priority, ≤200 ms and
+no retry, as those readers already specify (`:33`, `:75`). Disable/stop the
+timer and clear evidence on opt-in removal or admission enablement. Empty set
+creates neither timer nor reads. Nonmembers never populate this cache.
+
+Cost per opted-in router instance is at most **(N+1)/4 bounded reads/second**
+in steady state, **8.25/s at N=32**, bounded additionally by the rate limiter;
+zero writes, zero request-triggered reads. Each workspace read inspects at most
+1,001 indexed pending/dead rows plus its complete-key trust row
+(`src/trusted_router/storage_gcp_async_admission.py:18`), so disclose up to
+8,008 pending-row visits/second per instance at maximum N, not just RPC counts.
+Fleet cost multiplies by the manifest's instance count. Require pilot regional
+load evidence within this budget; no automatic increase if reads miss cadence.
+
+Timestamp workspace observations at read start. Preserve health's durable
+observation/heartbeat ages and completeness when decoding
+(`src/trusted_router/services/async_settle.py:166`); receiving stale data never
+rejuvenates it. Missing/incomplete/stale health, absent or truncated workspace
+rows, timeout, timer starvation, lock contention or startup produce `unknown`.
+Fresh complete unhealthy data gives `no`; inspect validated health fields
+before `decode_health` collapses unhealthy data to None (`:118`, `:173`).
+The observer does not create the required fleet-health publisher. If no fresh
+complete row exists, record the reason and fail prediction coverage. F2b must
+prove lifecycle CPU/timer progress under the actual Cloud Run configuration;
+a thread with no CPU after the response is insufficient. Until that proof and
+a working health source exist, parent §8's prediction/cache-age requirement
+(`docs/design/async-settle-outbox-v1.md:802`) is **unmet**, with F2b owning closure.
+Require known prediction/age evidence for every evaluable sample in the clean
+interval; unknowns block/reset it, and an all-null run can never pass. Known
+pending exposure with all traffic synchronous is not async-load capacity proof.
 
 | Request / work | Additional CPU | Additional RPC / commit |
 |---|---|---|
@@ -641,9 +828,10 @@ would be a separately budgeted extension, not a hidden authorize cache miss.
 | Header-bearing non-opted authorize | Existing PR B snapshot work remains; **0 incremental shadow work** | 0 incremental |
 | Opted fresh authorize with header | Existing snapshot build/hash plus one bounded shadow signature, optional-field serialization, counter increment | **0 synchronous, 0 per-request background RPC**; amortized counter flush only |
 | Opted authorize exclusion/replay | Bounded reason classification/counters; no new snapshot for replay | 0 per-request |
+| Opted-workspace observation timer | Bounded decode/cache update, two readers max; independent of request rate | ≤(N+1)/4 reads/s/instance, 10/s burst two limit, zero writes; §5 bounds apply |
 | Enclave eligible shadow settle | Hash, Evaluate + ValidateEnvelope, encode ≤8 KiB header, monotonic timing | Same single legacy settle call/retry policy; no additional network call |
 | Opted router settle before response | Constant observation capture/queue submission; no evaluator or evidence I/O | 0 on response path |
-| Admitted comparator worker | Strict decode, signature/hash verification, Python Evaluate + ValidateEnvelope, at most one bounded rebuild, serialization | ≤1 complete-key booked-authorization read; ≤1 separate sample transaction with same-key dedup read/insert; amortized cap/counter transactions |
+| Admitted comparator worker | Strict decode, signature/hash verification, Python Evaluate + ValidateEnvelope, independent legacy S0 oracle, at most one bounded rebuild, serialization | ≤1 complete-key booked-authorization read; ≤1 separate sample transaction with same-key dedup read/insert; amortized cap/counter transactions |
 
 “One transaction” is not “one RPC”: dedup uses a read and mutation commit;
 SDK begin/commit overhead must be included in measured cost. All shadow storage
@@ -684,9 +872,9 @@ that baseline effect separately from F2's incremental router cost.
 
 Proposed `scripts/async_settle/shadow_report.py --day YYYY-MM-DD [--day ...]`
 reads only the bounded day ranges above and an explicit proof manifest. Print:
-coverage interval and completeness; authorize/settle attempt denominators by
+coverage interval and completeness; authorize/settle/refund attempt denominators by
 adapter/route/streaming; requested/observed eligibility and exclusion reasons;
-distinct samples versus retries; exact/explained/mismatch/unevaluable counts;
+distinct samples versus retries; exact/explained/mismatch/requires_review/unevaluable counts;
 all dropped/rejected counts; signed delta histogram; prediction yes/no/unknown
 and known fraction; cache-age/timing p50/p95/p99 with count/null count per region;
 source/fixture/report hashes; clean-window start, reset dates and reason.
@@ -698,12 +886,19 @@ No inferred zeroes for absent buckets. Percentiles use nearest rank on sample
 values; histogram-only counters report bucket bounds, never invented precision.
 Delta bins: `0`, signed `1`, `2–10`, `11–100`, `101–1000`, `>1000` micro.
 
-Clock starts at the first durable evidence row's observation time after both
-enablement steps. Success means ≥604,800 seconds of continuous complete
+Clock starts only at the first **durable evaluable sample** after both
+enablement steps: classification exact/explained, verified binding/hashes/usage,
+same-kind confirmed booking, defined P/G/B and required oracle for explanation,
+known admission prediction/ages, and complete deployment/counter coverage.
+F2b must enforce this positive predicate; a control/counter row, empty run,
+all-null run or first unevaluable sample cannot start the clock (parent §8,
+`docs/design/async-settle-outbox-v1.md:796`, `:802`, `:811`).
+Success means ≥604,800 seconds of continuous complete
 observation, not seven calendar filenames. Every correctness mismatch, even
 an unsampled one counted in counters or a retry conflict, resets eligibility
-for a clean interval. Start again at the first evidence after the fixed revision
-is serving and the mismatch is resolved; retain reset timestamps/revisions.
+for a clean interval. Start again at the first sample satisfying that predicate
+after the fixed revision is serving and the mismatch is resolved; retain reset
+timestamps/revisions.
 An evidence gap is not proof of a correctness bug, but cannot count as clean
 time: conservative restart after coverage is restored. A router restart does
 not erase durable history; continuation requires verified closed/flushed
@@ -727,7 +922,7 @@ D2 is ≤500 ms durable handoff and ≤2 seconds total in the parent design
 documents a shared **28-second** recovery budget
 (`E/docs/validation/async-settle-pr-e.md:20`;
 `E/enclave-go/internal/trustedrouter/settlement_retry.go:12`,
-`E/enclave-go/internal/trustedrouter/async_settlement.go:212`). Do not claim D2
+`E/enclave-go/internal/trustedrouter/async_settlement.go:216`). Do not claim D2
 passes from that implementation or from this shadow report; reconciliation of
 that budget is an external activation blocker. D3 and the 5/60-second drain
 objective likewise require independent evidence, as the parent already says
@@ -770,6 +965,8 @@ does not add an OTel exporter or logging repair.
 | Snapshot/payload/proof mismatch | Hash/signature classification, correctness reset; neither envelope charge nor rebuilt price can influence booking. |
 | Identity mismatch | Count/reset; opt-in comes from server authorization so foreign-workspace envelope cannot activate collection. |
 | Snapshot rebuild fails / catalog removed | Preserve frozen Python/Go and confirmed booked comparison; exact can remain exact, otherwise `unevaluable/rebuild_unavailable`; never mark unexplained delta as catalog change. |
+| S0 legacy oracle unavailable / disagrees | Apparent catalog delta is `requires_review/legacy_oracle_unavailable`, or correctness mismatch if known L0 differs from P. B=R alone cannot validate S0 (`src/trusted_router/stage_d.py:161`; §3.1). |
+| Supported snapshot exceeds cap | `snapshot_size` coverage failure with dimensions at authorize or terminal phase; retain all candidate identities and PR B baseline, never silently narrow cohort (`src/trusted_router/routes/internal/gateway.py:2782`; §2.2). |
 | Local rate/queue limit hit | Drop before expensive work, cumulative per-day `rate_limit`/`queue_full`; coverage fails for otherwise-eligible dropped traffic. |
 | Daily cap hit / permit allocator fails | No sample write; `daily_cap`/`store_unavailable` counter; keep counters under their separate cadence. Never bypass cap to record the drop. |
 | Enclave sends envelope without workspace opt-in | Ignore entirely, no parse/log/count/RPC. A non-opted counter would itself violate the zero-additional-work contract. |
@@ -778,14 +975,16 @@ does not add an OTel exporter or logging repair.
 | Crash after money commit, before sample/counter write | Money remains booked, sample may be absent. Mark interval incomplete from writer/manifest reconciliation; no claim of lossless evidence. |
 | Legacy returns durable intent, not booking | `booked_micro=null`, `booking_pending`; no comparison against intent amount; bounded later read may document winner but cannot backdate a clean comparison. |
 | Legacy throws / caller cancels | Preserve original exception/cancellation and retry ownership. Observer may fail to run; denominator/completeness must show the gap. Never cancel or retry money on shadow's behalf. |
-| Retry with changed payload or refund winner | Existing money idempotency wins; evidence first-write retained, conflict/reset counter is sticky. No second pending intent. |
+| Retry with changed payload or opposite winner | Existing first reservation claimant wins; same-kind payload conflict resets correctness, opposite-kind `winner_polarity` blocks coverage, first sample retained. No second pending intent (`src/trusted_router/storage_gcp_counter_dml.py:753`; §3.1). |
+| Observer cannot populate / timer starved | Prediction unknown with ages/reason; no request refresh, no invented healthy zero. Block window until F2b observation/health proof is met (`src/trusted_router/services/async_settle.py:59`, `:214`; §5). |
 | Proof expires / key rotates / regional failover | Count unevaluable or identity failure as appropriate; never regenerate an old snapshot from a new catalog; retain verification keys for the observation lifetime. |
 | Both enclave switches on / router admission enabled during window | Force local legacy shadow mode; configuration counter. Report rejects the interval if admission is enabled on any serving router. |
 
 ## 8. PR F2b — router implementation and proof
 
 Scope: setting/off rollout pin; separate-purpose binding after authorize; bounded
-header observer around legacy settle; pure comparator/classifier; post-commit
+header observer around legacy settle and refund; independent legacy S0 oracle;
+timer-driven admission observation (§5); pure comparator/classifier; post-commit
 sample/cap/counter writer; day-prefix report/cleanup; content-free diagnostics.
 No modification to pricing formulas, transaction SQL, reservation gates,
 `GatewaySettleRequest`, async handler dispatch or operational-outbox schema.
@@ -796,10 +995,13 @@ No modification to pricing formulas, transaction SQL, reservation gates,
 | Frozen-main legacy settle | Valid/invalid/oversize shadow headers with empty set/nonmember: parser, response/error bytes, SQL/params/types/read/commit counts, full counters/holds/generation/outbox/side effects match frozen source. Extend operation oracles `tests/test_async_settle_oracle.py:25`, `:43` and `tests/test_settle_c1_oracle.py:14`. |
 | Opted-in no interference | Inject every parser/evaluator/storage/queue/signature exception after real sync result; response and money state unchanged for success/replay/refund/deferred/error. Comparator cannot call finalize/enqueue/finish. Evidence transaction identity differs from money transaction and begins only after outcome. |
 | Provenance and wire | Exact literal pin; strict parsing/bounds; altered snapshot plus recomputed self-hash still rejected by signed binding; valid foreign binding rejected; proof cannot pass either ticket validator; absent/malformed nonce or signer never replaced by defaults. |
-| Arithmetic / explanation | Integer ±1 boundary, both prompt conventions, reasoning subset, inclusive/last tier, zero, overflow, changed applicable catalog, later scheduled price, Stage D frozen document, removed endpoint, unrelated candidate change, stale rebuilt view; `B=R` required exactly. |
-| Accounting and reporting | Caps across concurrent instances, dedup/retries/midnight, changed-payload retry, rate-before-evaluate, cumulative idempotent flush, counter failure, unclosed restart, unknown admission, percentile null counts, signed histograms and seven-day/reset/coverage logic. No log dependency. |
+| Arithmetic / explanation | Integer ±1 boundary, both prompt conventions, reasoning subset, inclusive/last tier, zero, overflow, changed applicable catalog, later scheduled price, Stage D frozen document, removed endpoint, unrelated candidate change, stale rebuilt view; require independent `L0=P=G` and `B=R`. Test missing oracle → requires_review; known L0 mismatch → disagreement; legacy candidate adapter field mapping and dependency separation (`src/trusted_router/stage_d.py:161`; §3.1). |
+| Refund / winner | Positive exact usage refund: evaluate usage charge 2 but P=G=B=0; body without usage → usage_missing; exercise actual refund entry, empty/nonmember/opted guards and exceptions. Race settle/refund in both reservation-claim orders, delayed observations, both delivery orders, lost-ack replay and zero-cost settle winner: winner amount/polarity retained, cross-kind deltas null and requires_review, no false arithmetic disagreement or second booking (`src/trusted_router/routes/internal/gateway.py:2316`, `:4597`; §3.1). |
+| Transport coverage | Reproduce 645/1,041/3,563/28,821-byte projections at pinned catalog, four-model fallback and all-candidate selection; snapshot_size retains unsampled dimensions and blocks window without a sample or header. Keep §2.3 literal hashes/lengths unchanged; maximum auth+shadow headers and fragmented delivery must pass actual ingress before rollout (§2.2; `src/trusted_router/routing.py:947`). |
+| Accounting and reporting | Caps across concurrent instances, dedup/retries/midnight, changed-payload retry, rate-before-evaluate, cumulative idempotent flush, counter failure, unclosed restart, unknown admission, percentile null counts, signed histograms and seven-day/reset/coverage logic. Same reason in multiple adapter/route/streaming/phase buckets with **no sample rows** must remain separate; observed partitions reconcile all settle/refund attempts, overflow blocks, and empty/counter-only/all-null evidence never starts clock. No log dependency (parent §8, `docs/design/async-settle-outbox-v1.md:802`, `:811`). |
+| Admission observation | Fresh runtime with admission off must gain known predictions/ages from bounded timer only; `eligible()` spy never called. Empty/nonmember workspaces cause zero reads; exact N+1 cadence, concurrency/rate/deadline/index-row bounds, absent/stale/unhealthy/truncated health/workspace data, restart/removal, CPU starvation and missing publisher fail closed (§5; `src/trusted_router/storage_gcp_async_admission.py:13`, `:78`). |
 | Native storage | Emulator/integration transaction conflict tests for cap permits and sample uniqueness; exact indexed day bounds/pagination/cleanup; no body scans; unavailable storage cannot hold response. No new DDL. |
-| Cost | Assert no added authorize RPC, nonmember shadow calls zero, no cache refresh; measure §5 CPU/wall overhead including sign and maximum envelope and report region/build evidence. |
+| Cost | Assert no added authorize RPC, nonmember shadow calls zero, no request-triggered cache refresh; measure §5 CPU/wall overhead including sign, independent oracle, maximum envelope and timer reads/row visits multiplied by instances; report region/build evidence. |
 
 Use backend-class patches, not the module-global STORE proxy. All implementation
 gates remain full `uv run ruff check .`, `uv run mypy`, `uv run pytest -q`,
@@ -811,20 +1013,21 @@ than absorb unexpected behavior into an exception list.
 ## 9. PR F2c — enclave implementation and cross-repo pins
 
 Scope: exact `on` flag, optional opaque shadow binding/snapshot retention
-separate from `Authorization.async`, terminal Evaluate + ValidateEnvelope,
-bounded header with failure variant, legacy-byte preservation. No pending
+separate from `Authorization.async`, pre-sanitization provider observations,
+kind-dependent terminal Evaluate + ValidateEnvelope, bounded header on
+settle/refund with failure variant, legacy-byte preservation. No pending
 metadata or stream-order changes. Existing optional fields and binding are at
-`E/enclave-go/internal/trustedrouter/client.go:475`, `:841`; evaluator use at
-`E/enclave-go/internal/trustedrouter/async_settlement.go:152`.
+`E/enclave-go/internal/trustedrouter/client.go:477`, `:852`; evaluator and validation at
+`E/enclave-go/internal/trustedrouter/async_settlement.go:157`, `:163`.
 
 Pin off everywhere negotiation is pinned: AWS image
 `E/enclave-go/Dockerfile.enclave:75`, GCP MIG metadata
-`E/tools/deploy-gcp-mig.sh:565`, Azure measured environment
-`E/tools/deploy-azure-aci.sh:564`. Add to all three GCP image
+`E/tools/deploy-gcp-mig.sh:566`, Azure measured environment
+`E/tools/deploy-azure-aci.sh:565`. Add to all three GCP image
 `tee.launch_policy.allow_env_override` lists:
-`E/enclave-go/Dockerfile.enclave.gcp:42`,
-`E/enclave-go/Dockerfile.enclave.gcp.anthropic:53`,
-`E/enclave-go/Dockerfile.enclave.gcp.multi:92`. Keep NEGOTIATE off and preserve
+`E/enclave-go/Dockerfile.enclave.gcp:43`,
+`E/enclave-go/Dockerfile.enclave.gcp.anthropic:54`,
+`E/enclave-go/Dockerfile.enclave.gcp.multi:93`. Keep NEGOTIATE off and preserve
 existing keyring pins; shadow receiving an opaque proof does not require an
 async acceptance keyring. Reviewed image/attestation rollout is still required.
 
@@ -833,6 +1036,8 @@ async acceptance keyring. Reviewed image/attestation rollout is still required.
 | Off oracle | Both switches off, arbitrary optional wire metadata: frozen-main authorize/settle/refund bytes and all chat/Responses streaming frames unchanged. Extend `E/enclave-go/internal/trustedrouter/async_off_oracle_test.go:19`. |
 | Header only | Shadow on/no ticket: authorize header present; no async binding; settle uses original body bytes, no mode header, one bounded shadow header. No async binding on both-flags-on or forged metadata. |
 | Dual evaluator | Run all positive shared evaluator cases through shadow builder; same normalized terminal and charge as Python. Exercise unsupported/missing/estimated/overflow failures without hiding denominator. No evaluator changes or drift allowlist widening. |
+| Provider observation through stream | Drive provider absent/default/standard/priority/flex/batch/scale/unknown/oversized tier and missing usage through actual chat and Responses stream-to-settle paths, with requested default and nondefault tiers. Assert pre-sanitization eligibility, unsupported failure envelope and dimensional denominator; legacy bodies/frames identical. Supplying a prebuilt Eligibility directly to the builder is insufficient (`E/enclave-go/cmd/enclave/main.go:2013`, `:2479`, `:2639`; §2.3). |
+| Refund header / size | Exercise actual refund sender, preserve no-usage body bytes and usage_missing; independently pin positive-usage refund terminal with zero charge. Full snapshot transport over cap must preserve legacy outcome while producing coverage failure; never truncate candidates (`E/enclave-go/internal/trustedrouter/client.go:1223`, `:1257`; §§2.2, 3.1). |
 | Retries / failures | Identical body/header across retry; same authority; evaluator/encoding/size failure still sends legacy settle; no new retry or refund; no mutation of authorization shared with another request. |
 | Streaming / metadata | All existing stream hooks stay legacy; client bytes, metadata location, completion and error/refund behavior match baseline for shadow on/off. No `trusted_router_settlement` introduced by shadow. |
 | Deployment | Exact-value flag tests, boot/default precedence, every off pin and launch-policy list, maximum-header transport through the reviewed ingress. |
@@ -863,7 +1068,9 @@ specific checked arithmetic classification, never a new blanket tolerance.
 | Opt-in check dropped | Valid and invalid shadow header on nonmember/empty set; spy asserts zero comparator/counter/key-read/evidence calls and exact baseline response. |
 | Rate limit dropped | Burst beyond 10 at frozen time; assert only 10 comparator invocations/attempted sample writes and exact `rate_limit` remainder; advance clock to prove refill of 2/s. |
 | Daily cap dropped | Two processes race final permit block; aggregate reservations ≤100,000; later attempts only count drops. |
-| Catalog explanation reduced to unequal hashes | Wrong booked amount or altered unused candidate cannot pass explanation; signed delta equation test fails. |
+| Catalog explanation reduced to unequal hashes | Wrong booked amount or altered unused candidate cannot pass explanation; independent L0 and exact B=R assertions fail (§3.1; `src/trusted_router/stage_d.py:161`). |
+| Both new evaluators share a defect | Mutate Python and Go to truncate rather than round while preserving normalized usage. One input/output token at S0=500,000/500,000 gives corrupt P=G=1; corrected S1=1,000,000/1,000,000 gives R=B=2. Signed hashes/identities and B=R remain valid, but independent legacy L0=2 must force evaluator_disagreement, reset, and no explained count. Pin legacy oracle code unchanged; mutate the actual comparator inputs/execution in both implementation gates, not just an expected-value mock (`src/trusted_router/billing_snapshot.py:514`, `src/trusted_router/money.py:57`; §3.1). |
+| Provider diagnostic captured after sanitization | Inject flex/batch/unknown into real provider stream; unchanged legacy body may retain default, but observed eligibility must stay unsupported and the report denominator must include it (`E/enclave-go/cmd/enclave/main.go:2639`; §2.3). |
 | Restart clears mismatch / missing counters treated as zero | Report over restart with old durable mismatch or unclosed writer cannot print seven-day PASS. |
 | Shadow binds async / changes body | No-ticket fixture plus both flags on: exact legacy body/frame oracle and zero async calls must fail the mutation. |
 
@@ -872,8 +1079,10 @@ specific checked arithmetic classification, never a new blanket tolerance.
 Land **router F2b first**, tolerating/ignoring the header while off; land
 **enclave F2c second**, shadow and negotiation pinned off. Reviewed enablement:
 provision signer/epoch prerequisites with admission still disabled; router
-workspace opt-in → enclave shadow on → first durable evidence row starts the
-clock. Confirm all serving revisions/pins and evidence writes; queued or partial
+workspace opt-in → enclave shadow on → first durable sample satisfying §6's
+positive evaluability/coverage predicate starts the clock (parent §8 at
+`docs/design/async-settle-outbox-v1.md:811`). Confirm all serving revisions/pins,
+observer/health progress and evidence writes; queued or partial
 rollout is not enabled. Disabling shadow removes collection and preserves sync.
 Do not alter accepted-work protection during shadow rollback; the independent
 protection/admission rule remains (`docs/design/async-settle-outbox-v1.md:952`).
@@ -904,6 +1113,13 @@ CPU/latency/capacity numbers; 759-case execution in both
 repos for the eventual F2 revisions; Spanner concurrency/load/crash results;
 all-cache D3 proof; seven days of traffic, exposure-policy approval and dormant
 PR G overlap. Proposed limits are engineering gates, not measured results.
+All enclave file:line citations were re-read against the HEAD in the source-pin
+table, including evaluator/validation at `E/enclave-go/internal/trustedrouter/async_settlement.go:157`,
+`:163` and deadline at `:216`; no enclave citation remains unverified. The
+untracked validation note is corroborative only. Dependency-default inspection
+does not establish deployed ingress limits (§2.2). Supported oversize snapshots
+remain a transport coverage blocker; missing timer/health evidence remains an
+F2b-owned prediction blocker (§5), not a policy question for Joseph.
 The current source pins are local worktree observations, not confirmation that
 PR E has merged or deployed.
 
