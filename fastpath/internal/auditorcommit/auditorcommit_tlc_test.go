@@ -27,6 +27,9 @@ func TestTransitionsMatchTLC(t *testing.T) {
 		"no authorizations": noAuths,
 		// The configuration names m2 first, so CHOOSE starts the lease there.
 		"m2 named first": secondHolder,
+		"back again":     backAgain,
+		"gap and crash":  gapCrash,
+		"two by two":     twoByTwo,
 	} {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -85,19 +88,35 @@ func TestComparisonSeesADifference(t *testing.T) {
 			t.Errorf("%s: the comparison found no difference", name)
 		}
 	}
+	// What a review of this package found the first instances could not see:
+	// a step taken only once the lease has come back to a member, or after a
+	// gap and a crash. The instances added for it have such states.
+	for name, inst := range map[string]Config{"back again": backAgain, "gap and crash": gapCrash} {
+		inst := inst
+		spurious := func(s State) []Transition {
+			out := inst.Next(s)
+			if s.St == Draining && (s.Assigns >= 2 || s.Gap && s.Crashes > 0) {
+				out = append(out, Transition{"MarkDraining", s})
+			}
+			return out
+		}
+		if got := compareWithTLC(t, inst, spurious); len(got.Diffs) == 0 {
+			t.Errorf("%s: a step taken only there is not seen", name)
+		}
+	}
 }
 
 // TestWholeConfigurationsMatchTLC compares the whole state graphs of three of
-// the configurations proofs/ checks, read as they stream, with their temporal
-// properties left out of TLC's run. Between them they have three records per
-// owner, two authorizations, a lying owner, a record stored twice, a crash, a
-// late record and two members; the other two configurations, `again` and
-// `ahead`, are too large to write out and are counted below.
+// the configurations proofs/ checks, read as they stream. TLC runs each from
+// its declared constants (cfgInstances), checking TypeOK alone. Between them
+// they have three records per owner, two authorizations, a lying owner, a
+// record stored twice, a crash, a late record and two members; the other two
+// configurations, `again` and `ahead`, are too large to write out and are
+// counted below.
 func TestWholeConfigurationsMatchTLC(t *testing.T) {
 	for _, file := range []string{"AuditorCommit.cfg", "AuditorCommit.lying.cfg", "AuditorCommit.two.cfg"} {
-		text := cfgFile(t, file)
-		c := configFromText(t, text)
-		got := compareText(t, c, withoutProperties(text), c.Next)
+		c := cfgInstances[file]
+		got := compareWithTLC(t, c, c.Next)
 		if len(got.Diffs) > 0 {
 			t.Errorf("%s: differences from TLC, the first: %v", file, got.Diffs)
 		}
@@ -106,8 +125,7 @@ func TestWholeConfigurationsMatchTLC(t *testing.T) {
 	// What a review of this package found the small instances could not
 	// see: a checkpoint issued while the lease drains, only where an owner
 	// may issue three records.
-	text := cfgFile(t, "AuditorCommit.two.cfg")
-	c := configFromText(t, text)
+	c := cfgInstances["AuditorCommit.two.cfg"]
 	spurious := func(s State) []Transition {
 		out := c.Next(s)
 		if c.MaxSeq >= 3 && s.St == Draining && int(s.NextSeq) <= c.MaxSeq {
@@ -118,32 +136,39 @@ func TestWholeConfigurationsMatchTLC(t *testing.T) {
 		}
 		return out
 	}
-	if got := compareText(t, c, withoutProperties(text), spurious); len(got.Diffs) == 0 {
+	if got := compareWithTLC(t, c, spurious); len(got.Diffs) == 0 {
 		t.Error("a checkpoint issued while the lease drains is not seen")
 	}
 }
 
-// TestStateCountMatchesTLC explores each configuration in proofs/ and must
-// reach as many distinct states as TLC does there, as the guard table
+// TestStateCountMatchesTLC explores each configuration proofs/ checks and
+// must reach as many distinct states as TLC does there, as the guard table
 // records. Every invariant and the step property are checked on the way.
 func TestStateCountMatchesTLC(t *testing.T) {
 	counts, err := tlc.GuardTableStates("AuditorCommit")
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := make([]string, 0, len(counts))
-	for file := range counts {
+	if len(counts) != len(cfgInstances) {
+		t.Errorf("the guard table counts %v, and this test declares %d configurations", counts, len(cfgInstances))
+	}
+	files := make([]string, 0, len(cfgInstances))
+	for file := range cfgInstances {
 		files = append(files, file)
 	}
 	sort.Strings(files)
-	if len(files) != 5 {
-		t.Errorf("the guard table counts %d configurations, not the spec's 5: %v", len(files), files)
-	}
 	for _, file := range files {
-		c := configOf(t, file)
+		c := cfgInstances[file]
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		want, ok := counts[file]
+		if !ok {
+			t.Fatalf("the guard table gives no count for %s: %v", file, counts)
+		}
 		seen, _ := explore(t, c, c.Next, false)
-		if len(seen) != counts[file] {
-			t.Errorf("%s: the shadow reaches %d distinct states, TLC %d", file, len(seen), counts[file])
+		if len(seen) != want {
+			t.Errorf("%s: the shadow reaches %d distinct states, TLC %d", file, len(seen), want)
 		}
 	}
 }

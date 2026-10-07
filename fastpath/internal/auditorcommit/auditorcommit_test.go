@@ -3,9 +3,6 @@ package auditorcommit
 import (
 	"fmt"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -35,7 +32,47 @@ var (
 	twoAuths = Config{
 		Auths: []string{"a1", "a2"}, Members: []string{"m1"}, MaxSeq: 2, MaxSnap: 1, MaxAppend: 1, Grant: 4,
 	}
+	// The lease moved twice, so it comes back to a member that held it
+	// (13,770 states); a gap the log really has, with a crash and a lying
+	// owner (13,936); two authorizations under two members (6,034).
+	backAgain = Config{
+		Auths: []string{"a1"}, Members: []string{"m1", "m2"}, MaxSeq: 1, MaxSnap: 1, MaxAssign: 2, Grant: 4,
+	}
+	gapCrash = Config{
+		Auths: []string{"a1"}, Members: []string{"m1"}, MaxSeq: 2, MaxSnap: 1, MaxAhead: 1, MaxCrash: 1,
+		Lying: true, Grant: 4,
+	}
+	twoByTwo = Config{
+		Auths: []string{"a1", "a2"}, Members: []string{"m1", "m2"}, MaxSeq: 1, MaxSnap: 1, MaxAssign: 1, Grant: 4,
+	}
 )
+
+// cfgInstances are the instances proofs/AuditorCommit*.cfg check, their
+// constants written out here rather than read from the files. A change to a
+// file's constants changes its guard table count, which fails
+// TestStateCountMatchesTLC until this is changed to match. In each file m1 is
+// the member named first, so it holds the lease at the start.
+var cfgInstances = map[string]Config{
+	"AuditorCommit.cfg": {
+		Auths: []string{"a1"}, Members: []string{"m1", "m2"}, MaxSeq: 2, MaxSnap: 2, MaxLate: 1, MaxAssign: 1,
+		MaxAppend: 1, Grant: 4,
+	},
+	"AuditorCommit.again.cfg": {
+		Auths: []string{"a1"}, Members: []string{"m1", "m2"}, MaxSeq: 2, MaxSnap: 2, MaxLate: 1, MaxAssign: 2,
+		Lying: true, Grant: 4,
+	},
+	"AuditorCommit.ahead.cfg": {
+		Auths: []string{"a1"}, Members: []string{"m1"}, MaxSeq: 3, MaxSnap: 2, MaxAhead: 1, MaxRaise: 1,
+		MaxCrash: 1, MaxAppend: 1, Lying: true, Grant: 4,
+	},
+	"AuditorCommit.lying.cfg": {
+		Auths: []string{"a1"}, Members: []string{"m1"}, MaxSeq: 2, MaxSnap: 1, MaxDup: 1, MaxLate: 1,
+		MaxCrash: 1, Lying: true, Grant: 4,
+	},
+	"AuditorCommit.two.cfg": {
+		Auths: []string{"a1", "a2"}, Members: []string{"m1"}, MaxSeq: 3, MaxSnap: 1, MaxLate: 1, Grant: 4,
+	},
+}
 
 var (
 	graphs   = map[string]*tlc.Graph{}
@@ -57,15 +94,17 @@ func tlcGraph(t *testing.T, c Config) *tlc.Graph {
 	return graphs[cfg]
 }
 
-// cfgText writes the instance's configuration, its holder first among the
-// members: TLC's CHOOSE picks the model value its reader meets first.
+// cfgText writes the instance's configuration: the members first, the holder
+// first among them, then the authorizations. TLC orders model values as its
+// configuration reader meets them, and CHOOSE picks the first, so the holder
+// has to be the first model value written.
 func cfgText(c Config) string {
 	members := append([]string{c.Members[c.Holder]}, c.Members[:c.Holder]...)
 	members = append(members, c.Members[c.Holder+1:]...)
 	return fmt.Sprintf(`SPECIFICATION Spec
 CONSTANTS
-    Auths = {%s}
     Members = {%s}
+    Auths = {%s}
     MaxSeq = %d
     MaxSnap = %d
     MaxDup = %d
@@ -79,111 +118,8 @@ CONSTANTS
     Grant = %d
 INVARIANTS
     TypeOK
-`, strings.Join(c.Auths, ", "), strings.Join(members, ", "), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead,
+`, strings.Join(members, ", "), strings.Join(c.Auths, ", "), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead,
 		c.MaxLate, c.MaxRaise, c.MaxAssign, c.MaxCrash, c.MaxAppend, strings.ToUpper(fmt.Sprint(c.Lying)), c.Grant)
-}
-
-// cfgFile reads proofs/<file>.
-func cfgFile(t *testing.T, file string) string {
-	t.Helper()
-	proofs, err := tlc.ProofsDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, err := os.ReadFile(filepath.Join(proofs, file))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(text)
-}
-
-// configOf reads a .cfg's constants into a Config, its model values sorted by
-// name, and its holder the member TLC's CHOOSE picks: the one the
-// configuration names first.
-func configOf(t *testing.T, file string) Config {
-	t.Helper()
-	return configFromText(t, cfgFile(t, file))
-}
-
-func configFromText(t *testing.T, text string) Config {
-	t.Helper()
-	k, err := tlc.ConstantValues(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	order, err := tlc.ModelValueOrder(text)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(k) != 13 {
-		t.Fatalf("the configuration sets %d constants, not the spec's 13: %v", len(k), k)
-	}
-	names := func(name string) []string {
-		s, ok := k[name].(tlc.Set)
-		if !ok {
-			t.Fatalf("%s is not a set: %v", name, k[name])
-		}
-		var out []string
-		for _, v := range s {
-			m, ok := v.(tlc.ModelValue)
-			if !ok {
-				t.Fatalf("%s holds %v, which is no model value", name, v)
-			}
-			out = append(out, string(m))
-		}
-		sort.Strings(out)
-		return out
-	}
-	num := func(name string) int {
-		n, ok := k[name].(int64)
-		if !ok {
-			t.Fatalf("%s is %v, not an integer", name, k[name])
-		}
-		return int(n)
-	}
-	lying, ok := k["Lying"].(bool)
-	if !ok {
-		t.Fatalf("Lying is %v", k["Lying"])
-	}
-	c := Config{
-		Auths: names("Auths"), Members: names("Members"), MaxSeq: num("MaxSeq"), MaxSnap: num("MaxSnap"),
-		MaxDup: num("MaxDup"), MaxAhead: num("MaxAhead"), MaxLate: num("MaxLate"), MaxRaise: num("MaxRaise"),
-		MaxAssign: num("MaxAssign"), MaxCrash: num("MaxCrash"), MaxAppend: num("MaxAppend"), Lying: lying,
-		Grant: num("Grant"),
-	}
-	first := len(order)
-	for i, name := range order {
-		for m, member := range c.Members {
-			if name == member && i < first {
-				first, c.Holder = i, m
-			}
-		}
-	}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
-// withoutProperties is a configuration with its PROPERTY and PROPERTIES
-// sections left out: the temporal claims cost TLC most of its time, and a
-// state graph is the same without them.
-func withoutProperties(text string) string {
-	var kept []string
-	in := false
-	for _, line := range strings.Split(text, "\n") {
-		word := strings.Fields(line + " x")[0]
-		switch {
-		case word == "PROPERTY" || word == "PROPERTIES":
-			in = true
-			continue
-		case in && (strings.TrimSpace(line) == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")):
-			continue
-		}
-		in = false
-		kept = append(kept, line)
-	}
-	return strings.Join(kept, "\n")
 }
 
 type step struct {
@@ -571,27 +507,6 @@ func TestValidateRefusesWhatAStateCannotHold(t *testing.T) {
 	none.Auths = nil
 	if err := none.Validate(); err != nil {
 		t.Errorf("no authorizations is what the spec allows, and is refused: %v", err)
-	}
-}
-
-// TestHolderIsTheMemberNamedFirst: TLC's CHOOSE picks the model value its
-// configuration reader met first, wherever in the configuration that was.
-func TestHolderIsTheMemberNamedFirst(t *testing.T) {
-	base := "CONSTANTS\n MaxSeq = 1\n MaxSnap = 1\n MaxDup = 0\n MaxAhead = 0\n MaxLate = 0\n MaxRaise = 0\n" +
-		" MaxAssign = 0\n MaxCrash = 0\n MaxAppend = 0\n Lying = FALSE\n Grant = 4\n"
-	for _, tc := range []struct {
-		constants, holder string
-	}{
-		{"Auths = {a1}\n Members = {m2, m1}\n", "m2"},
-		{"Auths = {a1}\n Members = {m1, m2}\n", "m1"},
-		// m1 is met first, in Auths: it is the holder although Members
-		// names m2 first.
-		{"Auths = {m1}\n Members = {m2, m1}\n", "m1"},
-	} {
-		c := configFromText(t, strings.Replace(base, "CONSTANTS\n", "CONSTANTS\n "+tc.constants, 1))
-		if got := c.Members[c.Holder]; got != tc.holder {
-			t.Errorf("%q: the holder is %s, not %s", tc.constants, got, tc.holder)
-		}
 	}
 }
 
