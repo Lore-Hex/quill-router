@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from trusted_router.catalog_usage_policy import ABLITERATE_ESTIMATED_USAGE_NOTICE
+
 
 @dataclass(frozen=True)
 class ProviderBrand:
@@ -21,7 +23,7 @@ class ProviderBrand:
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "abliterate": ProviderBrand(
         "https://abliterate.ai/",
-        description="OpenAI-compatible abliterated chat and research models. Paid routing is pending verified upstream usage accounting.",
+        description=("OpenAI-compatible chat and research models. " + ABLITERATE_ESTIMATED_USAGE_NOTICE),
         resources=(("API and pricing", "https://abliterate.ai/docs"), ("Service terms", "https://abliterate.ai/terms")),
     ),
     "aion-labs": ProviderBrand("https://www.aionlabs.ai/"),

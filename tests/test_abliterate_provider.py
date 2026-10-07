@@ -63,27 +63,39 @@ def test_load_prices_tracks_hashed_assets_without_executing_them(monkeypatch):
         abliterate._load_prices()
 
 
-def test_refresh_cannot_clear_accounting_hold_or_make_paid_probes(monkeypatch, tmp_path):
+def test_reviewed_estimated_routes_require_successful_canary(monkeypatch, tmp_path):
     adapter = _direct_openai.DirectOpenAIProvider(abliterate.CATALOG.spec, manifest_path=tmp_path / "abliterate.json")
     monkeypatch.setenv("ABLITERATE_API_KEY", "test-only-key")
     monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_a, **_kw: {
-        "data": [{"id": name} for name in abliterate.EXPLICIT_MODEL_MAP]
+        "data": [{"id": name} for name in abliterate.EXPLICIT_MODEL_MAP] + [{"id": "abliterate-new"}]
     })
     monkeypatch.setattr(adapter, "_joined_prices", lambda: abliterate._parse_prices(docs_prices()))
-    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **_kw: pytest.fail("held models must not spend"))
+    checked = []
+
+    def canary(**kwargs):
+        checked.append(kwargs)
+        return kwargs["model"] != "abliterate-0.3-clever"
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", canary)
     for _ in range(2):
         result = adapter.fetch()
         adapter.write_provider_manifest(result)
         manifest = json.loads(adapter.manifest_path.read_text())
         assert len(manifest["models"]) == 4
         for row in manifest["models"]:
-            assert row["routable"] is False
-            assert row["routable_reason"] == "upstream-usage-unavailable"
+            assert row["routable"] is (row["upstream_id"] in {"abliterate-0.3-fast", "abliterate-0.3-balanced"})
+            if row["id"] in abliterate.OPERATOR_HOLDS:
+                assert row["routable_reason"] == "upstream-output-limit-unenforced"
+            elif row["routable"] is False:
+                assert row["routable_reason"] == "provider-canary-failed"
             assert row["upstream_id"] in abliterate.EXPLICIT_MODEL_MAP
             assert row.get("context_length") is None
+    assert {check["model"] for check in checked} == set(abliterate.EXPLICIT_MODEL_MAP) - {"abliterated-research-0.1"}
+    assert all(check["require_message"] is True for check in checked)
+    assert all(check["require_usage"] is False for check in checked)
 
 
-def test_registration_privacy_secret_and_no_live_routes():
+def test_registration_privacy_secret_and_reviewed_live_routes():
     from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
     from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
     from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
@@ -99,7 +111,10 @@ def test_registration_privacy_secret_and_no_live_routes():
     assert "abliterate" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert "abliterate" in EXPIRING_PROVIDER_MANIFEST_SLUGS
     assert any(row[0] == "abliterate" for row in _DISCOVERABLE_MANIFEST_PROVIDERS)
-    assert not any(endpoint.provider == "abliterate" for endpoint in MODEL_ENDPOINTS.values())
+    assert all(
+        endpoint.model_id in abliterate.EXPLICIT_MODEL_MAP.values()
+        for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "abliterate"
+    )
     assert OPENAI_COMPATIBLE_PROVIDERS["abliterate"] == (("ABLITERATE_API_KEY",), abliterate.BASE_URL)
     assert default_provider_secret_ref("abliterate") == "env://ABLITERATE_API_KEY"
     assert "abliterate_api_key" in SENSITIVE_STRING_FRAGMENTS
@@ -107,7 +122,7 @@ def test_registration_privacy_secret_and_no_live_routes():
     assert "ABLITERATE_API_KEY:trustedrouter-abliterate-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
 
 
-def test_accounting_hold_is_valid_quarantine_not_valid_routing():
+def test_failed_canaries_are_quarantined_not_routable():
     from datetime import UTC, datetime, timedelta
 
     from trusted_router.provider_manifest_policy import (
@@ -117,9 +132,69 @@ def test_accounting_hold_is_valid_quarantine_not_valid_routing():
     )
 
     raw = json.loads(abliterate.MANIFEST_PATH.read_text())
+    for row in raw["models"]:
+        row["routable"] = False
+        row["routable_reason"] = "provider-canary-failed"
     generated = datetime.now(UTC)
     raw["generated_at"] = generated.isoformat()
     assert provider_manifest_valid_until("abliterate", raw) == EXPIRED_PROVIDER_MANIFEST
     assert provider_manifest_canary_quarantine_valid_until("abliterate", raw) == generated + timedelta(days=14)
     raw["models"][0]["routable"] = True
     assert provider_manifest_canary_quarantine_valid_until("abliterate", raw) == EXPIRED_PROVIDER_MANIFEST
+
+
+def test_estimated_billing_disclosed_without_changing_published_prices():
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_to_openrouter_shape
+    from trusted_router.catalog_usage_policy import (
+        ABLITERATE_ESTIMATED_USAGE_NOTICE,
+        provider_usage_estimation_policy,
+    )
+    from trusted_router.provider_branding import PROVIDER_BRANDS
+
+    policy = provider_usage_estimation_policy("abliterate")
+    assert policy is not None
+    assert policy["maximum_estimate_multiplier"] == 2
+    assert policy["authorized_budget_bounded"] is True
+    assert policy["prepaid_only"] is True
+    assert policy["provider_usage_preferred"] is True
+    assert ABLITERATE_ESTIMATED_USAGE_NOTICE in PROVIDER_BRANDS["abliterate"].description
+    assert provider_usage_estimation_policy("sambanova") is None
+    expected = set(abliterate.EXPLICIT_MODEL_MAP.values()) - abliterate.OPERATOR_HOLDS.keys()
+    assert {endpoint.model_id for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "abliterate"} == expected
+    prices = abliterate._parse_prices(docs_prices())
+    for model in MODELS.values():
+        if model.provider != "abliterate":
+            continue
+        payload = model_to_openrouter_shape(model)
+        assert payload["trustedrouter"]["usage_estimation"] == policy
+        assert ABLITERATE_ESTIMATED_USAGE_NOTICE in payload["description"]
+        # Existing 5.5% platform pricing remains unchanged; no hidden 2x rate.
+        assert model.published_prompt_price_microdollars_per_million_tokens == prices[model.id].prompt_micro_per_m * 1055 // 1000
+        assert model.published_completion_price_microdollars_per_million_tokens == prices[model.id].completion_micro_per_m * 1055 // 1000
+
+
+def test_model_page_displays_estimated_billing_notice():
+    from bs4 import BeautifulSoup
+
+    from trusted_router.catalog_usage_policy import ABLITERATE_ESTIMATED_USAGE_NOTICE
+    from trusted_router.config import Settings
+    from trusted_router.dashboard import public_model_detail_html
+
+    html = public_model_detail_html(Settings(environment="test"), "abliterate/abliterate-0.3-fast")
+    assert html is not None
+    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    assert "Estimated usage" in text
+    assert ABLITERATE_ESTIMATED_USAGE_NOTICE in text
+
+
+def test_missing_or_ambiguous_prices_still_stop_activation(monkeypatch, tmp_path):
+    adapter = _direct_openai.DirectOpenAIProvider(abliterate.CATALOG.spec, manifest_path=tmp_path / "abliterate.json")
+    monkeypatch.setenv("ABLITERATE_API_KEY", "test-only-key")
+    monkeypatch.setattr(_direct_openai, "fetch_json", lambda *_a, **_kw: {
+        "data": [{"id": name} for name in abliterate.EXPLICIT_MODEL_MAP]
+    })
+    monkeypatch.setattr(adapter, "_joined_prices", lambda: abliterate._parse_prices(""))
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", lambda **_kw: pytest.fail("unpriced probes must not spend"))
+    with pytest.raises(RuntimeError, match="incomplete"):
+        adapter.fetch()
+    assert not adapter.manifest_path.exists()

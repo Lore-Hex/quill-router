@@ -18,10 +18,9 @@
       "id": "abliterate/abliterate-0.3-balanced",
       "upstream_id": "abliterate-0.3-balanced",
       "created": 1700000000,
-      "routable": false,
-      "routable_reason": "upstream-usage-unavailable",
       "input_token_price_per_m": 900000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "routable": true
     },
     {
       "display_name": "abliterate-0.3-clever",
@@ -40,10 +39,9 @@
       "id": "abliterate/abliterate-0.3-clever",
       "upstream_id": "abliterate-0.3-clever",
       "created": 1700000000,
-      "routable": false,
-      "routable_reason": "upstream-usage-unavailable",
       "input_token_price_per_m": 2500000,
-      "output_token_price_per_m": 5000000
+      "output_token_price_per_m": 5000000,
+      "routable": true
     },
     {
       "display_name": "abliterate-0.3-fast",
@@ -62,10 +60,9 @@
       "id": "abliterate/abliterate-0.3-fast",
       "upstream_id": "abliterate-0.3-fast",
       "created": 1700000000,
-      "routable": false,
-      "routable_reason": "upstream-usage-unavailable",
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1000000
+      "output_token_price_per_m": 1000000,
+      "routable": true
     },
     {
       "display_name": "abliterated-research-0.1",
@@ -85,14 +82,14 @@
       "upstream_id": "abliterated-research-0.1",
       "created": 1700000000,
       "routable": false,
-      "routable_reason": "upstream-usage-unavailable",
+      "routable_reason": "upstream-output-limit-unenforced",
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 20000000
     }
   ],
   "source": "https://abliterate.ai/api/v1/models",
   "pricing_source": "https://abliterate.ai/docs",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-07T03:03:24Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }

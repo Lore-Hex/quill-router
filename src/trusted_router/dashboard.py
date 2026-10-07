@@ -64,6 +64,7 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
+from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.competitor_comparisons import (
     COMPETITOR_COMPARISONS,
     CompetitorComparison,
@@ -5550,6 +5551,7 @@ def _model_detail_view(
         "ai_iq": ai_iq,
         "is_meta": is_meta,
         "configuration_hidden": model.hidden_public_metadata,
+        "usage_estimation": provider_usage_estimation_policy(model.provider),
         "documentation": (
             model.documentation.to_dict()
             if model.documentation is not None

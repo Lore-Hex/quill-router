@@ -84,6 +84,7 @@
           {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
         </td></tr>
         {% if model.prepaid %}<tr><th>Billing</th><td><span class="pill good">Credits</span></td></tr>{% endif %}
+        {% if model.usage_estimation %}<tr><th>Estimated usage</th><td>{{ model.usage_estimation.description }}</td></tr>{% endif %}
       </tbody>
     </table>
   </div>

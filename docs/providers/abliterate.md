@@ -23,21 +23,37 @@ documentation assets as data; it never executes them. Missing or ambiguous
 prices fail closed. No context size, tool-input support, or structured-output
 capability is inferred from the model names.
 
-## Activation Gate
+## Estimated Billing
 
-Direct Fast canaries returned HTTP 200 and `PONG` in both JSON and SSE, but
-neither included token usage. SSE also omitted usage with
-`stream_options.include_usage=true`. Balanced SSE also returned content and
-`[DONE]` without usage. Research SSE likewise completed without usage; Clever
-exceeded the 75-second canary read timeout. These are response-format/accounting gaps, not evidence
-of downtime. The manifests retain an explicit `upstream-usage-unavailable`
-operator hold; an ordinary successful PONG must not remove it.
+On October 6, 2026, the operator approved conservative estimated billing for
+these four routes because JSON and SSE still omit token usage. When a successful
+prepaid response has no usage, the enclave buffers its local input and output
+token estimates by up to 2x. It never adds more than the authorized request
+budget permits, and the output buffer cannot exceed the requested output limit
+(512 when unspecified). The published per-token rates themselves are unchanged.
 
-Before enabling prepaid routing, obtain and test upstream `prompt_tokens` and
-`completion_tokens` for both response modes, including any internally billed
-reasoning, research, escalation, and tool calls. Verify output limits and error
-termination. Then remove the reviewed hold, refresh the manifest with keyed
-canaries, deploy the gateway first, and test pinned requests through TR.
+Responses expose `usage_estimated=true`, with the same counts sent to settlement.
+`/v1/models` exposes the policy as `trustedrouter.usage_estimation`. Provider and
+model pages disclose it. Verified provider usage takes precedence if it becomes
+available; partial provider usage receives no extra buffer. BYOK, interrupted,
+failed, and empty responses do not receive the buffer. Settlement retries reuse
+the same counts and existing idempotency protocol.
+
+The buffer is a billing policy, not a guarantee about upstream cost: hidden
+reasoning, research, internal tool calls, and tokenizer differences cannot be
+verified without upstream usage. Monitor provider invoices against collected
+revenue. Do not advertise these counts as exact or infer new model capabilities.
+
+Deploy the gateway policy before publishing active routes. Only the four
+reviewed models can enter this policy; new models require review. Refreshes
+still require public prices and successful non-empty response canaries. A
+timeout, missing price, or failed canary keeps the affected route unavailable.
+
+The October 6 direct check returned successful JSON and SSE for Fast, Balanced,
+and Clever. Research returned about 3,900 characters with `max_tokens=16`, so
+it retains the separate `upstream-output-limit-unenforced` operator hold.
+Estimated billing does not authorize unbounded generation. Do not clear this
+hold until the provider enforces output limits and bounded canaries verify it.
 
 ## Privacy
 
@@ -45,13 +61,3 @@ canaries, deploy the gateway first, and test pinned requests through TR.
 and no server-side retention after completion. They also say requests transit
 another inference provider. That downstream retention and attestation are not
 established. Do not label these routes Confidential, E2EE, or end-to-end ZDR.
-
-## October 5 Recheck
-
-The current key still returns HTTP 200 and non-empty answers for
-`abliterate-0.3-fast`, but both JSON and SSE responses omit `usage`, even with
-`stream_options.include_usage=true`. The SSE stream terminates with `[DONE]`.
-The four model definitions and public prices remain configured, but the
-`upstream-usage-unavailable` hold must remain until the provider supplies
-authoritative billable usage. Do not activate routes using a local tokenizer
-or inferred counts.
