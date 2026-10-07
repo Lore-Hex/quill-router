@@ -31,10 +31,11 @@ path's settle and leaves leased requests out, and the frozen billing
 snapshot (#1390), a pricing contract the compiled service can share with
 Python and the enclave.
 
-v44 states two rules that writing `AuditorCommit` showed §4.8 needs: a
-reap is conditional on the commit version, and a statement that matched no
-row is that lease's failed commit. It also says what a member drops when
-the commit version refuses its commit, reap or close.
+v44 states three rules that writing `AuditorCommit` showed §4.8 needs: a
+reap is conditional on the commit version, a gap is declared with it too,
+and a statement that matched no row is that lease's failed commit. It also
+says what a member drops when the commit version refuses its commit, reap
+or close.
 
 All five specs, `TerminalOrder`, `LeaseLifecycle`, `CreditDebt`,
 `AuditorCommit` and `KeyCapFence`, and the tools that check every spec's
@@ -1068,6 +1069,10 @@ synchronous holds, through `settle_atomic`.
   alerts. Numbers are given at decision (§4.2), so this is the backstop for
   the lease's order: a later record stored without an earlier one shows as
   a gap, and is not booked.
+  - A member declares a gap only with the commit version it read, as it
+    commits. One another member overtook compares a record with progress the
+    stored row has passed, and would stop the lease for a gap the log does
+    not have; it re-reads first.
 - One transaction can carry many leases, each its own conditional statement.
   A statement that matches no row is that lease's failed commit, whatever the
   others did: the member re-reads that lease and acknowledges none of its
@@ -1966,20 +1971,21 @@ What the table's short names hide:
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
   terminal is reaped at that snapshot by the time its lease closes.
-- `AuditorCommit` is written (#1560), with 21 mutants and a guard
-  table. Writing it showed that a reap has to be conditional on the commit
-  version (§4.8): without that, a member the lease came back to reaps at an
-  older snapshot than the one stored. A member refused that way re-reads
-  even with nothing to commit, or the lease never closes. It also states
-  what §4.8 left implicit about a transaction that carries several leases:
-  a statement that matched no row is that lease's failed commit, and its
-  records stay unacknowledged.
-  - It models the boundary S: an owner record stored after the fence tick
-    is above S, or a duplicate of one at or below it, and either way is
-    ignored; its claims are about the records at or below S.
-    The log's order is not assumed: a record stored ahead of an earlier one
-    shows as a gap, and the gap rule is what keeps the earlier one from
-    being skipped.
+- `AuditorCommit` is written (#1560), with 23 mutants and a guard table.
+  Writing it showed that a reap has to be conditional on the commit version
+  (§4.8): without that, a member the lease came back to reaps at an older
+  snapshot than the one stored. A member refused that way re-reads even with
+  nothing to commit, or the lease never closes, and declares a gap only with
+  the commit version, or a member another overtook stops the lease for a gap
+  the log does not have. It also states what §4.8 left implicit about a
+  transaction that carries several leases: a statement that matched no row
+  is that lease's failed commit, and its records stay unacknowledged.
+  - It models the boundary S: an owner record stored after the fence tick is
+    above S, or a duplicate of one at or below it, and either way is
+    ignored; its claims are about the records at or below S, and it checks
+    that S is stored before any reap or drain-log booking. The log's order
+    is not assumed: a record stored ahead of an earlier one shows as a gap,
+    and the gap rule is what keeps the earlier one from being skipped.
   - Its audit holds at each checkpoint, as a member applies it
     (Invariant 2), and a draining lease closes while the members keep
     working, unless a gap stopped it for an operator.
@@ -3481,11 +3487,14 @@ record.
   Also: Python's second clock reading is #1542 (§4.13), and §5.1 says what
   writing `CreditDebt` added: the larger-of write as a claim of its own,
   four configurations, and two assumptions.
-- **v44.** Two rules that writing `AuditorCommit` showed §4.8 needs:
+- **v44.** Three rules that writing `AuditorCommit` showed §4.8 needs:
   - a reap's transaction is conditional on the commit version, as a commit
     is: Pub/Sub can give a lease back to a member whose memory another
     member's commit overtook, and a reap from that memory charges an older
     snapshot;
+  - a member declares a gap only with the commit version it read: one
+    another overtook compares a record with progress the row has passed,
+    and would stop the lease for a gap the log does not have;
   - with many leases in one transaction, a statement that matched no row is
     that lease's failed commit, and the member acknowledges none of its
     records.
