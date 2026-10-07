@@ -94,16 +94,19 @@ func TestConstantValuesReadsSetsOfModelValues(t *testing.T) {
 // TestConstantValuesReadsWhatTLCDoes: a string keeps its spaces, a set its
 // members once, a comment is no value, a model value may start with a digit,
 // and what TLC's configuration grammar refuses is refused.
+// TestConstantValuesReadsWhatTLCDoes: the kinds of constant the specs here are
+// given are read as TLC reads them, a set's members once, across comments of
+// either kind and any section TLC knows; anything outside those kinds is
+// refused rather than read the way TLC might not.
 func TestConstantValuesReadsWhatTLCDoes(t *testing.T) {
 	k, err := ConstantValues("CONSTANTS(* a comment against the keyword *)\\* names\n" +
-		"  X = \"a  b\" (* a (* nested *) comment *)\n  E = \"a\\nb\"\n" +
-		"  S = {a1, a1, 1a}\n  N = 2\nINVARIANT TypeOK\nCONSTANT\n  L = TRUE\n")
+		"  X = 2147483647 (* a (* nested *) comment *)\n" +
+		"  S = {a1, a1, 1a}\n  N = 2\nINVARIANT TypeOK\nCONSTANT\n  L = TRUE\nPOSTCONDITIONS Done\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]Value{
-		// TLC's configuration reader keeps a backslash in a string as text.
-		"X": "a  b", "E": `a\nb`, "S": Set{ModelValue("a1"), ModelValue("1a")}, "N": int64(2), "L": true,
+		"X": int64(2147483647), "S": Set{ModelValue("a1"), ModelValue("1a")}, "N": int64(2), "L": true,
 	}
 	if len(k) != len(want) {
 		t.Fatalf("read %v", k)
@@ -123,6 +126,11 @@ func TestConstantValuesReadsWhatTLCDoes(t *testing.T) {
 		"CONSTANTS\n  X = 1 (* never closed\n",
 		"CONSTANTS\n  X = -2\n",
 		"CONSTANTS\n  X = 1(* between *)2\n",
+		// Beyond the subset: a string, an integer TLC cannot hold, a model
+		// value named like a section's keyword.
+		"CONSTANTS\n  X = \"a\"\n",
+		"CONSTANTS\n  X = 2147483648\n",
+		"CONSTANTS\n  Auths = {INIT}\n",
 	} {
 		if _, err := ConstantValues(bad); err == nil {
 			t.Errorf("%q is read", bad)

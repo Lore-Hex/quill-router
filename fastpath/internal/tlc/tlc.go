@@ -736,11 +736,13 @@ func Constants(cfgText string) (map[string]int, error) {
 }
 
 // ConstantValues reads the CONSTANT and CONSTANTS sections of a .cfg: each
-// `Name = value`, where a value is an integer, a string, TRUE or FALSE, a
+// `Name = value`, where a value is an integer TLC can hold, TRUE or FALSE, a
 // model value, or a set of these, whose repeated members count once as TLC's
-// do. A replacement `Name <- Op`, or a value of any other kind, is refused.
-// It reads tokens, not lines, so a string keeps its spaces and a value may
-// run across lines.
+// do. That is every kind of constant the specs here are given, and what lies
+// outside it is refused rather than read the way TLC might not: a string, a
+// replacement `Name <- Op`, a model value named like a section's keyword,
+// any other value. It reads tokens, not lines, so a value may run across
+// lines.
 func ConstantValues(cfgText string) (map[string]Value, error) {
 	text, err := withoutComments(cfgText)
 	if err != nil {
@@ -776,12 +778,14 @@ func ConstantValues(cfgText string) (map[string]Value, error) {
 	return consts, nil
 }
 
-// The words that open a section of a .cfg.
+// The words that open a section of a .cfg: the pinned jar's own, as
+// proofs/check_mutants.py checks them against its ModelConfig.
 var cfgKeywords = map[string]bool{
-	"CONSTANT": true, "CONSTANTS": true, "INIT": true, "NEXT": true, "SPECIFICATION": true,
-	"INVARIANT": true, "INVARIANTS": true, "PROPERTY": true, "PROPERTIES": true, "SYMMETRY": true,
-	"VIEW": true, "CONSTRAINT": true, "CONSTRAINTS": true, "ACTION_CONSTRAINT": true,
-	"ACTION_CONSTRAINTS": true, "CHECK_DEADLOCK": true, "POSTCONDITION": true, "ALIAS": true,
+	"SPECIFICATION": true, "INIT": true, "NEXT": true, "INVARIANT": true, "INVARIANTS": true,
+	"PROPERTY": true, "PROPERTIES": true, "CONSTANT": true, "CONSTANTS": true, "CONSTRAINT": true,
+	"CONSTRAINTS": true, "ACTION_CONSTRAINT": true, "ACTION_CONSTRAINTS": true, "SYMMETRY": true,
+	"VIEW": true, "ALIAS": true, "POSTCONDITION": true, "POSTCONDITIONS": true, "CHECK_DEADLOCK": true,
+	"_PERIODIC": true, "_RL_REWARD": true, "_POSSIBLE": true,
 }
 
 // withoutComments removes `\*` line comments and `(* *)` block comments,
@@ -792,14 +796,9 @@ func withoutComments(text string) (string, error) {
 	for i := 0; i < len(text); i++ {
 		switch {
 		case depth == 0 && text[i] == '"':
-			// As in TLC's configuration reader, a string ends at the next
-			// quote: a backslash in it is text.
-			j := strings.IndexByte(text[i+1:], '"')
-			if j < 0 {
-				return "", errors.New("a string that never closes")
-			}
-			b.WriteString(text[i : i+j+2])
-			i += j + 1
+			// No constant of the specs here is a string, and TLC's rules for
+			// one are not followed here, so one is refused.
+			return "", errors.New("a string, which this reader does not read")
 		case strings.HasPrefix(text[i:], "(*"):
 			depth++
 			i++
@@ -860,14 +859,11 @@ func (p *parser) configValue() (Value, error) {
 		return true, nil
 	case t == "FALSE":
 		return false, nil
-	case strings.HasPrefix(t, `"`):
-		// TLC's configuration reader keeps a string's text as written,
-		// a backslash included.
-		return t[1 : len(t)-1], nil
 	case unsigned.MatchString(t):
-		n, err := strconv.ParseInt(t, 10, 64)
+		// TLC holds an integer in 32 bits.
+		n, err := strconv.ParseInt(t, 10, 32)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s is no integer TLC holds", t)
 		}
 		return n, nil
 	case identifier.MatchString(t) && !cfgKeywords[t]:
@@ -878,10 +874,9 @@ func (p *parser) configValue() (Value, error) {
 
 var unsigned = regexp.MustCompile(`^[0-9]+$`)
 
-// tokenizeConfig splits a configuration's text as TLC's configuration reader
-// does where it differs from the dump's: a string ends at the next quote,
-// with no escapes, and a sign is a token of its own, which no value starts
-// with.
+// tokenizeConfig splits a configuration's text for configValue: a sign is a
+// token of its own, which no value starts with. Strings are refused before
+// this (withoutComments).
 func tokenizeConfig(s string) []string {
 	var toks []string
 	for i := 0; i < len(s); {
@@ -889,15 +884,7 @@ func tokenizeConfig(s string) []string {
 		switch {
 		case c == ' ' || c == '\n' || c == '\t' || c == '\r':
 			i++
-		case c == '"':
-			j := strings.IndexByte(s[i+1:], '"')
-			if j < 0 {
-				toks = append(toks, s[i:])
-				return toks
-			}
-			toks = append(toks, s[i:i+j+2])
-			i += j + 2
-		case strings.ContainsRune("{}[](),=-", rune(c)):
+		case strings.ContainsRune("{}[](),=-\"", rune(c)):
 			toks = append(toks, string(c))
 			i++
 		case strings.HasPrefix(s[i:], "<<") || strings.HasPrefix(s[i:], ">>") || strings.HasPrefix(s[i:], "<-"):
