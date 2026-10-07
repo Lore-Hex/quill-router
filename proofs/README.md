@@ -176,13 +176,17 @@ every hold has a booked terminal and `AuditorApplyRow` that the lease is
 live: without both, a lease closes with a row left and the auditor then
 books it (`ShardIdentity`). Leaving out nine of the groups' members, at
 least one of each group, the other 28 removed all together break nothing.
-`AuditorCommit`'s 53 broke `DrainingLeaseCloses`, and one pair explained it:
-`LoadWinners` and `Reread` each ask that the member has loaded the lease.
-Without both, a member that has not loaded can load the winners and re-read,
-again and again, and never load the lease. Leaving out one of them, the
-other 52 removed all together break nothing. That covers every claim in
-`two`, `lying` and `ahead`; in `again` and the main configuration, at 102
-and 153 million states, the liveness claim was not checked.
+`AuditorCommit`'s 52 broke a claim too, and two pairs explained it.
+`LoadWinners` and `Reread` each ask that the member has loaded the lease:
+without both, a member that has not loaded can load the winners and re-read,
+again and again, and never load the lease (`DrainingLeaseCloses`). `Store`
+asks that the fence tick has not come and `Gap` that the member does not
+know S: without both, two records land after the tick, and a member that
+knows S takes the second for a gap the log does not have (`GapIsReal`).
+Leaving out one of each pair, the other 50 removed all together break
+nothing. That covers every claim in `two`, `lying` and `ahead`; in `again`
+and the main configuration, at 33 and 52 million states, the liveness claim
+was not checked.
 
 ## Ways a check proves nothing
 

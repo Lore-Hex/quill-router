@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "fcad3e636fd5f2a9a86b3013c3e9a8e1b4960e60c81d8278719dbce80a943d75"
+inputs_sha256 = "737b40b7eaedb40933f34196697185543f4e8672df45235bef9d1e595a55d986"
 
 [[guard]]
 action = "IssueHeartbeat"
@@ -108,7 +108,7 @@ action = "Store"
 text = '''/\ ~ticked'''
 breaks = "nothing"
 why = '''
-After the fence tick, Store stores what StoreLate would, past MaxLate's bound: more records above S, each skipped. New states, which no claim rests on.
+After the fence tick, Store stores what StoreLate would, past MaxLate's bound: more records above S, each skipped. New states, which no claim rests on. Removed with Gap's check that the member does not know S, two records land after the tick, and a member that knows S takes the second for a gap the log does not have (GapIsReal).
 '''
 
 [[guard]]
@@ -257,7 +257,7 @@ A member the records do not go to can load the row, but applies no record, tick 
 [[guard]]
 action = "Load"
 text = '''/\ ~mem[m].loaded'''
-breaks = "BoundaryIsS"
+breaks = "GapIsReal"
 
 [[guard]]
 action = "LoadWinners"
@@ -294,14 +294,14 @@ A member the lease moved from may go on working: that is what the commit version
 [[guard]]
 action = "ApplyRecord"
 text = '''/\ mem[m].loaded'''
-breaks = "BoundaryIsS"
+breaks = "GapIsReal"
 
 [[guard]]
 action = "ApplyRecord"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it applies the next record in sequence. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member applies the next record in sequence, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]
@@ -351,7 +351,7 @@ action = "SkipRecord"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it skips a duplicate, which moves only its position. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member skips a duplicate, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]
@@ -370,7 +370,7 @@ breaks = "WinnerIsFirst"
 [[guard]]
 action = "SkipRecord"
 text = '''/\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS'''
-breaks = "BoundaryIsS"
+breaks = "GapIsReal"
 
 [[guard]]
 action = "Gap"
@@ -385,7 +385,7 @@ action = "Gap"
 text = '''/\ mem[m].loaded'''
 breaks = "nothing"
 why = '''
-A member that has not loaded has progress 0, so every record but the first looks like a gap to it, and it stops the lease for nothing. Stopping is safe: every claim holds of a lease a gap stopped, DrainingLeaseCloses included.
+A member that has not loaded has progress and version 0, and the version check lets it declare a gap only before any commit, when its position is the log's first record. A gap there is real, the log having stored a record before one issued before it, and a member that has loaded declares it too. New states, and GapIsReal holds.
 '''
 
 [[guard]]
@@ -409,16 +409,19 @@ action = "Gap"
 text = '''/\ mem[m].S = NoS'''
 breaks = "nothing"
 why = '''
-A member that knows S has applied every owner record up to it, and records the log stores after the fence tick come in the order issued, S + 1 first. In these bounds at most one lands after the tick (MaxLate is at most 1), so none is past the member's progress by more than one, and no new state is reached. With more, the member would take the second for a gap and stop the lease, which every claim allows.
+A member that knows S has applied every owner record up to it, and records the log stores after the fence tick come in the order issued, S + 1 first. In these bounds at most one lands after the tick (MaxLate is at most 1), so none is past the member's progress by more than one, and no new state is reached. Removed with Store's check that the tick has not come, two records land after it, and a member that knows S takes the second for a gap the log does not have (GapIsReal).
 '''
 
 [[guard]]
 action = "Gap"
 text = '''/\ log[pos[m]].seq > mem[m].prog + 1'''
-breaks = "nothing"
-why = '''
-A gap declared where there is none stops the lease, which is safe: every claim holds of a lease a gap stopped, DrainingLeaseCloses included.
-'''
+breaks = "GapIsReal"
+
+[[guard]]
+action = "Gap"
+text = '''/\ ver = mem[m].ver'''
+breaks = "GapIsReal"
+cfg = "again"
 
 [[guard]]
 action = "ApplyTick"
@@ -438,7 +441,7 @@ action = "ApplyTick"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it applies the fence tick, which takes S from the records it applied. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member applies a fence tick it has reached, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]
@@ -480,7 +483,7 @@ action = "ApplyRow"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it books a drain-log row, which a member does only once it knows S. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member books a drain-log row, having reached the log's end, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]
@@ -493,8 +496,8 @@ Drain-log rows are appended only while the lease drains. A row applied again aft
 
 [[guard]]
 action = "ApplyRow"
-text = '''/\ mem[m].S # NoS'''
-breaks = "WinnerIsFirst"
+text = '''/\ S # NoS'''
+breaks = "StoredSFirst"
 
 [[guard]]
 action = "ApplyRow"
@@ -517,7 +520,7 @@ action = "Reap"
 text = '''/\ m = holder'''
 breaks = "nothing"
 why = '''
-Reap changes only the drain log. A member the lease moved from reaps only with the commit version it read and every stored record applied: the member holding the lease, once it has loaded and applied the same records, shows the same snapshot and appends the same row. No new state is reached.
+A member the lease moved from may still reap: the reap is conditional on the commit version it read, so it holds what is committed and has applied every stored record, and its row is the one the member holding the lease would append. New states, which no claim rests on.
 '''
 
 [[guard]]
@@ -541,7 +544,7 @@ action = "Reap"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it reaps, which a member does only once it knows S. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member reaps, having reached the log's end, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]
@@ -554,8 +557,8 @@ Reap also asks for the winners, which are loaded only once the lease drains, and
 
 [[guard]]
 action = "Reap"
-text = '''/\ mem[m].S # NoS'''
-breaks = "ReapAtLastSnapshot"
+text = '''/\ S # NoS'''
+breaks = "StoredSFirst"
 
 [[guard]]
 action = "Reap"
@@ -613,7 +616,7 @@ action = "Commit"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it commits what it applied before the gap. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member commits what it applied before the gap, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]
@@ -695,7 +698,7 @@ action = "Close"
 text = '''/\ ~gap'''
 breaks = "nothing"
 why = '''
-The gap flag stops the lease for an operator to rebuild. Without this check a member goes on after another met a gap: it closes, which a member does only once it knows S. Records are applied in sequence order anyway, so nothing past the gap is applied before the record the gap is waiting for. New states, which no claim rests on.
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member closes, having reached the log's end, which it could do before the flag, and the flag changes nothing else. No new state is reached.
 '''
 
 [[guard]]

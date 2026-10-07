@@ -36,14 +36,14 @@
 (*   Owners and front doors, as writers of the lease row: each raises the   *)
 (*   allocation, at any moment, between a member's load and its commit.     *)
 (*                                                                          *)
-(*   Once the lease is draining, front doors append terminals to its        *)
-(*   drain log, and the auditor publishes the fence tick into the lease's   *)
+(*   Once the lease is draining, front doors append terminals to its drain  *)
+(*   log, and the auditor publishes the fence tick into the lease's         *)
 (*   records. The member that applies the tick takes S, the highest owner   *)
 (*   sequence number it has applied, and stores it with its next commit.    *)
-(*   Past S it reaps the open holds at their latest snapshots, books the    *)
-(*   drain log after the owner's records, and closes the lease. An owner    *)
-(*   record that arrives after the tick is above S, or a duplicate of one   *)
-(*   at or below it, and is ignored.                                        *)
+(*   Once S is stored, a member reaps the open holds at their latest        *)
+(*   snapshots, books the drain log after the owner's records, and closes   *)
+(*   the lease. An owner record that arrives after the tick is above S, or  *)
+(*   a duplicate of one at or below it, and is ignored.                     *)
 (*                                                                          *)
 (* WHAT IS ABSTRACTED                                                       *)
 (*                                                                          *)
@@ -83,7 +83,8 @@
 (*                                                                          *)
 (*   BoundaryIsS. The stored S is that boundary: the highest sequence       *)
 (*   number up to which every owner record was received before the fence    *)
-(*   tick.                                                                  *)
+(*   tick. StoredSFirst: S is stored before the drain log is reaped or      *)
+(*   booked.                                                                *)
 (*                                                                          *)
 (*   WinnerIsFirst. An authorization's stored winner is the first           *)
 (*   terminal in the lease's order: the owner's, else the drain log's       *)
@@ -110,9 +111,11 @@
 (*   it. The configuration `lying` has an owner that may lie. A property    *)
 (*   of steps.                                                              *)
 (*                                                                          *)
-(*   DrainingLeaseCloses. A draining lease closes, unless a gap stopped     *)
-(*   it for an operator, as long as the members keep working. It is what    *)
-(*   a member left with nothing it may do would break.                      *)
+(*   GapIsReal: a gap stops the lease only where the log stored an owner    *)
+(*   record before one the owner issued before it. DrainingLeaseCloses: a   *)
+(*   draining lease closes, unless such a gap stopped it, as long as the    *)
+(*   members keep working. It is what a member left with nothing it may do  *)
+(*   would break.                                                           *)
 (*                                                                          *)
 (* WHAT WRITING THIS FOUND                                                  *)
 (*                                                                          *)
@@ -127,7 +130,11 @@
 (*                                                                          *)
 (*   And a member refused that way re-reads even with nothing applied to    *)
 (*   commit, or it is left with nothing it may do (mutant                   *)
-(*   no-reread-when-clean, in `again`). Design v44 states both.             *)
+(*   no-reread-when-clean, in `again`). A gap is declared with the commit   *)
+(*   version too: a member another overtook compares a record with progress *)
+(*   the row has passed, and stops the lease for a gap the log does not     *)
+(*   have (mutant a-gap-from-stale-progress, in `again`). Design v44 states *)
+(*   all three.                                                             *)
 (*                                                                          *)
 (* EVERY GUARD IS ACCOUNTED FOR in AuditorCommit.guards.toml: what breaks   *)
 (* when it alone is removed, or why nothing does.                           *)
@@ -445,7 +452,9 @@ SkipRecord(m) ==
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, mem, dpos, done, crashes, ghosts >>
 
 \* A record beyond the next sequence number is a gap. The lease's
-\* processing stops, and an operator rebuilds it.
+\* processing stops, and an operator rebuilds it. A member declares one only
+\* with the commit version it read, as it commits: one another member
+\* overtook has fallen behind the stored progress, and re-reads first.
 Gap(m) ==
     /\ m = holder
     /\ mem[m].loaded
@@ -453,6 +462,7 @@ Gap(m) ==
     /\ pos[m] <= Len(log)
     /\ mem[m].S = NoS
     /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ver = mem[m].ver
     /\ gap' = TRUE
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, members, alert >>
 
@@ -469,21 +479,21 @@ ApplyTick(m) ==
     /\ pos' = [pos EXCEPT ![m] = @ + 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, ghosts >>
 
-\* Past the fence, the member books the drain log in order.
+\* Once S is stored, the member books the drain log in order.
 ApplyRow(m) ==
     /\ m = holder
     /\ mem[m].loaded
     /\ mem[m].wl
     /\ ~gap
     /\ st = "draining"
-    /\ mem[m].S # NoS
+    /\ S # NoS
     /\ pos[m] = Len(log) + 1
     /\ dpos[m] <= Len(drain)
     /\ mem' = [mem EXCEPT ![m] = RowAppliedTo(mem[m], drain[dpos[m]])]
     /\ dpos' = [dpos EXCEPT ![m] = @ + 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, pos, done, crashes, ghosts >>
 
-\* Past the fence, the member reaps an open hold at its latest snapshot, by
+\* Once S is stored, the member reaps an open hold at its latest snapshot, by
 \* appending a reap row in a transaction that first reads the hold's rows.
 \* The transaction is conditional on the commit version, as a commit is: a
 \* member another overtook may hold an older snapshot than the one stored.
@@ -493,7 +503,7 @@ Reap(m, a) ==
     /\ mem[m].wl
     /\ ~gap
     /\ st = "draining"
-    /\ mem[m].S # NoS
+    /\ S # NoS
     /\ pos[m] = Len(log) + 1
     /\ mem[m].holds[a] # NoHold
     /\ mem[m].win[a] = NoWin
@@ -710,6 +720,20 @@ Heartbeats(a) == { r \in Range(log) : r.k = "hb" /\ r.a = a /\ Accepted(r) }
 
 \* The stored S is the boundary the order of receipt defines.
 BoundaryIsS == S # NoS => S = Bound
+
+\* S is stored before the drain log is reaped or booked: a reap row, and a
+\* winner from the drain log, exist only once S does.
+StoredSFirst ==
+    /\ \A i \in DOMAIN drain : drain[i].k = "reap" => S # NoS
+    /\ \A a \in Auths : win[a].idx > 0 => S # NoS
+
+\* A gap stops the lease only where the log has one: an owner record it
+\* stored before one the owner issued before it.
+StoredAhead ==
+    \E i \in DOMAIN log :
+        /\ log[i].k # "tick"
+        /\ \E s \in 1..(log[i].seq - 1) : \A k \in 1..(i - 1) : log[k].seq # s
+GapIsReal == gap => StoredAhead
 
 \* The lease's order: the owner's records, then the drain log. The owner
 \* issues one terminal per authorization, and a record stored twice is the

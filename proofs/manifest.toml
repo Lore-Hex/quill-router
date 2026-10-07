@@ -167,6 +167,34 @@ Reread(m) ==
     /\ mem[m].loaded
     /\ mem[m].dirty'''
 
+# S is stored before a reap: one appended from S known only in memory
+# outlives a crash that loses that S (Codex's second review).
+[[AuditorCommit.mutants]]
+name = "a-reap-before-s-is-stored"
+violates = "StoredSFirst"
+old = '''
+    /\ S # NoS
+    /\ pos[m] = Len(log) + 1
+    /\ mem[m].holds[a] # NoHold'''
+new = '''
+    /\ mem[m].S # NoS
+    /\ pos[m] = Len(log) + 1
+    /\ mem[m].holds[a] # NoHold'''
+
+# A member declares a gap only with the version it read: one another member
+# overtook compares a record with progress the row has passed.
+[[AuditorCommit.mutants]]
+name = "a-gap-from-stale-progress"
+cfg = "again"
+violates = "GapIsReal"
+old = '''
+    /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ver = mem[m].ver
+    /\ gap' = TRUE'''
+new = '''
+    /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ gap' = TRUE'''
+
 # A heartbeat at 0 is an open hold like any other: no positive minimum.
 [[AuditorCommit.mutants]]
 name = "a-zero-snapshot-shows-no-hold"
