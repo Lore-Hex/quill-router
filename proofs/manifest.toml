@@ -40,8 +40,9 @@
 [AuditorCommit]
 # docs/design/fast-admission-and-batched-settlement.md, section 4.8. Its
 # shadow is a package of its own in the Go service.
-state = "planned"
+state = "implemented"
 code = ["fastpath/internal/auditorcommit"]
+tests = ["fastpath/internal/auditorcommit/auditorcommit_test.go"]
 
 # The commit version: a member another overtook cannot commit over its work.
 [[AuditorCommit.mutants]]

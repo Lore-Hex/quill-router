@@ -6,11 +6,11 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
 
 ## Layout
 
-- `internal/leaselifecycle` and `internal/terminalorder`: the shadows of
-  `proofs/LeaseLifecycle.tla` and `proofs/TerminalOrder.tla`. Each action of a
+- `internal/leaselifecycle`, `internal/terminalorder` and
+  `internal/auditorcommit`: the shadows of `proofs/LeaseLifecycle.tla`,
+  `proofs/TerminalOrder.tla` and `proofs/AuditorCommit.tla`. Each action of a
   spec is a function under the spec's name, and each invariant a method.
-  `AuditorCommit` gets a package of its own (`internal/auditorcommit`) when it
-  is written; `proofs/manifest.toml` names each spec's package and tests.
+  `proofs/manifest.toml` names each spec's package and tests.
 - `internal/tlc`: for tests only. It runs the pinned TLC from `proofs/`, reads
   the state graph TLC writes with `-dump dot,actionlabels` as it streams, has
   TLC judge whether a `.cfg` has the constants a test declares, and reads the
