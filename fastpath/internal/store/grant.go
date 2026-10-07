@@ -181,7 +181,7 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 	if err != nil {
 		return GrantResult{}, err
 	}
-	out.CommitTS = resp.CommitTs
+	out.CommitTS = resp.CommitTs.UTC()
 	return out, nil
 }
 
