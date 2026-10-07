@@ -1508,10 +1508,25 @@ new = '''
 # 4.7. Its shadow is a pure module of the debt rules, which the existing
 # primitives call (section 5.1): storage_gcp_credit_debt applies it to the
 # credit rows, and tests/test_credit_debt.py checks it against this spec's
-# Cover, Squared, Distribute and Inflow over every small case.
+# Cover, Squared, Distribute and Inflow over every small case. The spike's
+# Go store has a port of it, fastpath/internal/creditdebt, held to the
+# Python module's results by golden vectors that
+# tests/test_fastpath_credit_debt_vectors.py keeps current; the store's
+# credit.go applies it to the spike's credit rows, and grant.go grants.
 state = "implemented"
-code = ["src/trusted_router/credit_debt.py"]
-tests = ["tests/test_credit_debt.py"]
+code = [
+    "src/trusted_router/credit_debt.py",
+    "fastpath/internal/creditdebt/creditdebt.go",
+    "fastpath/internal/store/credit.go",
+    "fastpath/internal/store/grant.go",
+]
+tests = [
+    "tests/test_credit_debt.py",
+    "tests/test_fastpath_credit_debt_vectors.py",
+    "fastpath/internal/creditdebt/creditdebt_test.go",
+    "fastpath/internal/store/credit_test.go",
+    "fastpath/internal/store/grant_test.go",
+]
 
 # Section 4.2's first claim, and what keeps it.
 

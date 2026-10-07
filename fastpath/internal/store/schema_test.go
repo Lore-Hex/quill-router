@@ -15,7 +15,7 @@ import (
 // TestSchemaIsAsWritten: the emulator holds spike.sql's tables, with their
 // parents, cascades and deletion policies, and its indexes.
 func TestSchemaIsAsWritten(t *testing.T) {
-	spikeStore(t, Config{LiveFor: time.Second})
+	spikeStore(t)
 	ctx := context.Background()
 	tables := map[string]string{}
 	iter := shared.Single().Query(ctx, spanner.Statement{SQL: `
@@ -88,7 +88,7 @@ func leaseRow(workspace, lease string, expiry time.Time) map[string]any {
 // TestChecksRefuseRowsTheDesignForbids: each check refuses the row it is
 // there for, naming itself, where the row without the defect is taken.
 func TestChecksRefuseRowsTheDesignForbids(t *testing.T) {
-	spikeStore(t, Config{LiveFor: time.Second})
+	spikeStore(t)
 	ctx := context.Background()
 	expiry := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	insert := func(table string, row map[string]any) error {
@@ -184,7 +184,7 @@ func TestChecksRefuseRowsTheDesignForbids(t *testing.T) {
 // statement the store's later operations rest on, so that a form the
 // emulator lacks shows here.
 func TestTheEmulatorRunsTheStatementsTheStoreUses(t *testing.T) {
-	spikeStore(t, Config{LiveFor: time.Second})
+	spikeStore(t)
 	ctx := context.Background()
 	workspace, lease := storetest.UniqueID("ws"), storetest.UniqueID("l")
 	expiry := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
