@@ -2,6 +2,7 @@ package leaselifecycle
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -514,6 +515,17 @@ func TestValidateRefusesWhatTheSpecAssumesAway(t *testing.T) {
 	bad.MaxRestarts = 128
 	if bad.Validate() == nil {
 		t.Error("more restarts than an epoch holds are accepted")
+	}
+	for name, set := range map[string]func(*Config){
+		"a window whose sums overflow":    func(c *Config) { c.Window = math.MaxInt },
+		"a cache age whose sum overflows": func(c *Config) { c.CacheAge = math.MaxInt },
+		"a life whose sums overflow":      func(c *Config) { c.MaxLife = math.MaxInt },
+	} {
+		bad = small
+		set(&bad)
+		if bad.Validate() == nil {
+			t.Errorf("%s is accepted", name)
+		}
 	}
 	if err := small.Validate(); err != nil {
 		t.Errorf("the small instance is refused: %v", err)

@@ -35,6 +35,19 @@ const MaxSlots = 4
 // Validate reports a configuration the spec's ASSUME refuses, or this package
 // cannot hold.
 func (c Config) Validate() error {
+	// Each constant is bounded before any sum of them is taken, so that no sum
+	// below can overflow.
+	for _, k := range []struct {
+		name  string
+		value int
+	}{
+		{"LeaseSize", c.LeaseSize}, {"Window", c.Window}, {"Skew", c.Skew}, {"MaxLife", c.MaxLife},
+		{"Grace", c.Grace}, {"CacheAge", c.CacheAge}, {"LastRenew", c.LastRenew}, {"MaxRestarts", c.MaxRestarts},
+	} {
+		if k.value > 120 {
+			return fmt.Errorf("%s %d does not fit a State", k.name, k.value)
+		}
+	}
 	switch {
 	case c.MaxHolds < 1 || c.MaxHolds > MaxSlots:
 		return fmt.Errorf("MaxHolds %d is not in 1..%d", c.MaxHolds, MaxSlots)
