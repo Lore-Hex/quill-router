@@ -199,20 +199,54 @@ class Counters:
         self.instance = str(uuid.uuid4())
         self.region, self.revision = region, revision
         self.days: dict[str, dict[str, Any]] = {}
+        self.active: dict[str, int] = {}
+        self.retired_through = ""
         self.observation_day: contextvars.ContextVar[str | None] = contextvars.ContextVar("shadow_counter_day", default=None)
 
     @contextmanager
     def day(self, observed: float) -> Iterator[None]:
+        self.retain(observed)
         token = self.observation_day.set(day_at(observed))
         try:
             yield
         finally:
             self.observation_day.reset(token)
+            self.release(observed)
+
+    def retain(self, observed: float) -> None:
+        """Keep a receipt day open through money work and queued observation."""
+        with self.lock:
+            token = self.observation_day.set(day_at(observed))
+            try:
+                body = self._day()
+                body["started_at_us"] = min(body["started_at_us"], int(observed * 1e6))
+                day = day_at(observed)
+                self.active[day] = self.active.get(day, 0) + 1
+            finally:
+                self.observation_day.reset(token)
+
+    def release(self, observed: float) -> None:
+        with self.lock:
+            day = day_at(observed)
+            remaining = self.active.get(day, 0) - 1
+            if remaining > 0:
+                self.active[day] = remaining
+            else:
+                self.active.pop(day, None)
 
 
     def _day(self) -> dict[str, Any]:
         now = int(self.clock() * 1e6)
         day = self.observation_day.get() or day_at(self.clock())
+        if (day <= self.retired_through and day not in self.days) or self.days.get(day, {}).get("closed"):
+            # Never reopen a durable closed writer for a late/abandoned task.
+            token = self.observation_day.set(None)
+            try:
+                if day < day_at(self.clock()):
+                    self._day()["first_gap_at_us"] = now
+            finally:
+                self.observation_day.reset(token)
+            raise ValueError("closed shadow day")
         if day not in self.days:
             self.days[day] = dict(v=1, instance=self.instance, region=self.region,
                 router_revision=self.revision, policy_version="shadow-v1", started_at_us=now,
@@ -229,6 +263,8 @@ class Counters:
             # remain unclosed durably; the current day also retains a gap.
             oldest = min(key for key in self.days if key != day)
             self.days.pop(oldest)
+            self.active.pop(oldest, None)
+            self.retired_through = max(self.retired_through, oldest)
             self.days[day]["first_gap_at_us"] = now
         return self.days[day]
 
@@ -292,19 +328,30 @@ class Counters:
             if not clean and not excluded:
                 day["first_gap_at_us"] = day["first_gap_at_us"] or now
 
-    def snapshot(self, closed: bool = False) -> list[tuple[str, dict[str, Any]]]:
+    def snapshot(self, closed: bool = False, *, retiring_only: bool = False) -> list[tuple[str, dict[str, Any]]]:
         import copy
         with self.lock:
             result = []
-            for day, body in self.days.items():
+            for day, body in sorted(self.days.items()):
+                if retiring_only and (day >= day_at(self.clock()) or self.active.get(day)):
+                    continue
                 self.add(body, body, "sequence")
                 body["flushed_at_us"] = int(self.clock() * 1e6)
-                body["closed"] = closed
+                body["closed"] = body["closed"] or ((closed or day < day_at(self.clock())) and not self.active.get(day))
                 if len(canonical(body)) > 65536:
                     body["counter_overflow"] = True
                     raise ValueError("counter_overflow")
                 result.append((day + "/" + self.instance, copy.deepcopy(body)))
             return result
+
+    def acknowledge(self, identity: str, body: dict[str, Any]) -> None:
+        """Retire only a successfully persisted final cumulative snapshot."""
+        with self.lock:
+            day = identity.split("/")[0]
+            current = self.days.get(day)
+            if body["closed"] and current is not None and current["sequence"] == body["sequence"]:
+                self.days.pop(day)
+                self.retired_through = max(self.retired_through, day)
 
 
 def validate_manifest(body: dict[str, Any], identity: str) -> None:

@@ -33,7 +33,7 @@ MUTATIONS = [
          'import json\n        from trusted_router.detached_jws import b64decode\n        payload = b64decode(token.split(".")[1])\n        claims = json.loads(payload)\n        key = keys[0]')],BASE+'test_invalid_signature'),
     ('signed-snapshot-hash',COMPARE,[('if out.snapshot_hash != claims.snapshot_hash:', 'if False:'), ('terminal.snapshot_hash != claims.snapshot_hash or ', '')],BASE+'test_signed_hash_not_self_hash'),
     ('terminal-payload-hash',COMPARE,[('or b.canonical_hash(terminal) != envelope.payload_hash','')],BASE+'test_signed_hash_not_self_hash'),
-    ('hash-only-equality',COMPARE,[('or b.canonical_hash(snapshot) != claims.snapshot_hash',''),
+    ('hash-only-equality',COMPARE,[('or snapshot_hash != claims.snapshot_hash',''),
         ('if out.snapshot_hash != claims.snapshot_hash:', 'if False:'),
         ('if terminal.snapshot_hash != claims.snapshot_hash or b.canonical_hash(terminal) != envelope.payload_hash:', 'if False:')],BASE+'test_hash_only_success_and_corrected_failure'),
     ('opt-in-removed',RUNTIME,[('return workspace in self.settings.async_settle_shadow_workspace_ids and not self.settings.async_settle_enabled',
@@ -50,6 +50,19 @@ MUTATIONS = [
     ('missing-coverage-clean',REPORT,[('start = candidates[0]["observed_at_us"] if candidates and not unresolved else None',
         'start = samples[0]["observed_at_us"] if samples else 0')],
         'tests/test_async_settle_shadow_accounting.py::test_report_cannot_start_from_empty_counter_or_null_samples'),
+    ('eligible-coverage-removed',REPORT,[('if bucket["observed_eligible"] > accounted + counter["booking_pending"] + counter["booking_unknown"]:', 'if False:')],
+        'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_unaccounted_eligible_probe'),
+    ('writer-interval-removed',REPORT,[('if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):', 'if False:')],
+        'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_counter_time_probe[after_close]'),
+    ('rollover-close-removed','src/trusted_router/async_settle_shadow_evidence.py',[
+        ('closed or day < day_at(self.clock())', 'closed')],
+        'tests/test_async_settle_shadow_lifecycle.py::test_long_lived_writer_closes_seven_clean_days_before_new_writer'),
+    ('transaction-attempt-fence-removed',STORAGE,[('if attempted:', 'if False:')],
+        'tests/test_async_settle_shadow_accounting.py::test_sdk_abort_cannot_repeat_evidence_attempt[commit]'),
+    ('flag-off-invalid-header-http','src/trusted_router/routes/internal/gateway.py',[
+        ('    """Run one settlement off-loop behind the process-local per-key gate."""\n    require_internal_gateway(request, settings)',
+         '    """Run one settlement off-loop behind the process-local per-key gate."""\n    require_internal_gateway(request, settings)\n    if not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Shadow") == "!":\n        return {"data": {"review_mutant": True}}')],
+        'tests/test_async_settle_shadow_http.py::test_flag_off_terminal_http_identity[invalid-settle]'),
 ]
 
 

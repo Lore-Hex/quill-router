@@ -248,3 +248,88 @@ def test_report_prints_source_builds_and_usage_vectors():
     expected = dict(count=1,null_count=0,p50=1,p95=1,p99=1)
     assert (output['source_revisions'],output['usage']['raw_usage']['input_tokens'],output['usage']['legacy_usage']['total_prompt_tokens']) == (
         dict(router=['a'*40],go=[FIXTURE['go_revision']]),expected,expected)
+
+
+def test_report_reviewer_unaccounted_eligible_probe():
+    rows, days, proof = synthetic_window()
+    bucket = next(b for b in rows[0]['body']['counts'] if b['exact'])
+    for key in ('settle_attempts', 'observed_attempts', 'observed_eligible', 'envelope_present'):
+        bucket[key] = 100
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert any(g.endswith(':eligible_coverage_gap') for g in result['gaps'])
+
+
+@pytest.mark.parametrize('boundary', ['before_start', 'after_close'])
+def test_report_reviewer_counter_time_probe(boundary):
+    rows, days, proof = synthetic_window()
+    for row in rows:
+        if row['kind'] == COUNTER:
+            if boundary == 'after_close':
+                row['body']['flushed_at_us'] = row['body']['started_at_us']
+            else:
+                row['body']['started_at_us'] += 2_000_000
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert any(g.endswith(':writer_interval_gap') for g in result['gaps'])
+
+
+def test_report_reconciles_samples_per_writer():
+    rows, days, proof = synthetic_window()
+    other = copy.deepcopy(rows[0])
+    boot = '00000000-0000-0000-0000-000000000002'
+    other['id'] = days[0] + '/' + boot
+    other['body']['instance'] = boot
+    other['body']['samples_inserted'] = 0
+    rows.append(other)
+    # Aggregate insert count remains correct, but the sample names the wrong writer.
+    rows[-2]['body']['deployment']['instance'] = boot
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert sum(g.endswith(':sample_count_gap') for g in result['gaps']) == 2
+
+
+@pytest.mark.parametrize('abort_at', ['callback', 'commit'])
+def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at):
+    import contextlib
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import google.cloud.spanner_v1.session as sdk
+    from google.api_core.exceptions import Aborted
+    from google.rpc.error_details_pb2 import RetryInfo
+
+    from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
+
+    session = MagicMock()
+    session._database.log_commit_stats = False
+    session.is_multiplexed = False
+    cause = SimpleNamespace(trailing_metadata=lambda: (
+        ('google.rpc.retryinfo-bin', RetryInfo().SerializeToString()),))
+    error = Aborted('synthetic abort', errors=[cause])
+    session.transaction.return_value.commit.side_effect = [error, None] if abort_at == 'commit' else None
+    calls = []
+    horizons = []
+    class DB:
+        spanner_api = SimpleNamespace()
+        def run_in_transaction(self, callback, **kwargs):
+            horizons.append(kwargs['timeout_secs'])
+            return sdk.Session.run_in_transaction(session, callback, **kwargs)
+    def callback(tx):
+        calls.append(tx)
+        if abort_at == 'callback':
+            raise error
+        return 'first'
+    monkeypatch.setattr(sdk, 'trace_call', lambda *a, **kw: contextlib.nullcontext(None))
+    monkeypatch.setattr(sdk, 'MetricsCapture', lambda *a, **kw: contextlib.nullcontext())
+    monkeypatch.setattr(sdk, 'add_span_event', lambda *a, **kw: None)
+    db = DB()
+    configure_spanner_rpc_deadlines(db)
+    failure = None
+    try:
+        EvidenceStore(db).transaction(callback, time.monotonic()+1)
+    except Exception as exc:
+        failure = exc
+    assert isinstance(failure, RuntimeError) and str(failure) == 'shadow_transaction_retry'
+    assert len(calls) == 1 and 0 < horizons[0] <= .2
+    assert session.transaction.return_value.commit.call_count == int(abort_at == 'commit')

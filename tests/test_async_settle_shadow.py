@@ -415,3 +415,32 @@ def test_unavailable_or_unproven_booking_view_cannot_explain(rebuild_available):
 def test_one_micro_unexplained_delta_is_not_tolerated(booked):
     result = compare(wire(),context(booking=Booking(booked,'settled',True)),[signer().trusted])
     assert (result.classification,result.booked_minus_frozen,result.booked_minus_rebuilt) == ('evaluator_disagreement',booked-2,booked-2)
+
+
+def test_projection_cache_keys_include_time_catalog_and_document(monkeypatch):
+    from dataclasses import replace
+
+    from trusted_router import async_settle_shadow_projection as projection
+    projection.clear_caches()
+    source = endpoint()
+    calls = []
+    def effective(value, *, at):
+        calls.append((value, at))
+        return replace(value, completion_price_microdollars_per_million_tokens=1000000 if at.endswith('00Z') else 2000000)
+    monkeypatch.setattr(projection, 'effective_endpoint', effective)
+    try:
+        early = project((source,), '2026-10-06T00:00:00Z')
+        assert project((source,), '2026-10-06T00:00:00Z') is early
+        later = project((source,), '2026-10-06T00:00:01Z')
+        changed = project((replace(source, prompt_price_microdollars_per_million_tokens=3000000),), '2026-10-06T00:00:00Z')
+        assert len(calls) == 3
+        assert len({projection.snapshot_material(v)[1] for v in (early, later, changed)}) == 3
+        document = {'candidates': [early.candidates[0].model_dump(mode='json')]}
+        one = project((source,), '2026-10-06T00:00:00Z', document)
+        document['candidates'][0]['rates']['input_micro_per_million'] += 1
+        two = project((source,), '2026-10-06T00:00:00Z', document)
+        assert projection.snapshot_material(one)[1] != projection.snapshot_material(two)[1]
+        for value in (early, later, changed, one, two):
+            assert projection.snapshot_material(value) == (b.canonical_bytes(value), b.canonical_hash(value))
+    finally:
+        projection.clear_caches()

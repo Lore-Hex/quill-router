@@ -12,9 +12,9 @@ from typing import Any
 from trusted_router.async_settle_shadow_binding import LIFETIME, ShadowSigner
 from trusted_router.async_settle_shadow_compare import Booking, Context, compare
 from trusted_router.async_settle_shadow_evidence import Counters, day_at, dimensions, sample
-from trusted_router.async_settle_shadow_projection import project
+from trusted_router.async_settle_shadow_projection import project, snapshot_material
 from trusted_router.async_settle_shadow_wire import LOCAL_BYTES
-from trusted_router.billing_snapshot import BillingSnapshot, canonical_bytes
+from trusted_router.billing_snapshot import BillingSnapshot
 from trusted_router.config import Settings
 from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import Observer
@@ -40,6 +40,8 @@ _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar("async
 def capture_authorization(authorization: GatewayAuthorization) -> None:
     capture = _CAPTURE.get()
     if capture is not None and capture.runtime.opted(authorization.workspace_id):
+        if capture.authorization is None:
+            capture.runtime.counters.retain(capture.received)
         capture.authorization = authorization
 
 
@@ -207,7 +209,12 @@ class Runtime:
             elapsed = int((time.monotonic()-capture.started)*1e6)
             data = result.get("data", {}) if isinstance(result, dict) else {}
             outcome = dict(data={name: data.get(name) for name in ("settled", "already_settled", "finalization_outcome")})
-            background.add_task(self.work, capture, headers, outcome, elapsed, dims, size)
+            self.counters.retain(capture.received)
+            try:
+                background.add_task(self.work, capture, headers, outcome, elapsed, dims, size)
+            except Exception:
+                self.counters.release(capture.received)
+                raise
         except Exception:
             with self.lock:
                 self.pending -= 1
@@ -222,6 +229,7 @@ class Runtime:
         except Exception:
             self.counters.reason(dims, "worker", "worker_error")
         finally:
+            self.counters.release(capture.received)
             with self.lock:
                 self.pending -= 1
                 self.queued_bytes -= size
@@ -265,7 +273,7 @@ class Runtime:
                 if capture.endpoints is None:
                     raise ValueError("rebuild unavailable")
                 rebuilt = project(capture.endpoints, auth.created_at, capture.document)
-                if len(canonical_bytes(rebuilt)) > LOCAL_BYTES:
+                if len(snapshot_material(rebuilt)[0]) > LOCAL_BYTES:
                     raise ValueError("snapshot_size")
                 return rebuilt
             ctx = Context(auth, capture.body, capture.kind,
@@ -326,10 +334,23 @@ class Runtime:
             return
         self.last_flush = time.monotonic()
         try:
+            # Persist and acknowledge older days before registering the current
+            # writer. Active money/queued tasks retain their receipt day until
+            # completion; the next timer then closes it. Failed closes stay in
+            # the bounded retention set and are never silently acknowledged.
+            for identity, body in self.counters.snapshot(retiring_only=True):
+                self.store.flush(identity, body, deadline)
+                self.counters.acknowledge(identity, body)
             # Register even an idle serving instance. The external inventory,
             # not the set of successful writers, remains the roster authority.
             with self.counters.lock:
                 self.counters._day()
+                if any(day < day_at(self.counters.clock()) for day in self.counters.days):
+                    # In-flight old-day work still owns its writer. Accumulate
+                    # new-day counters in memory, but don't open that durable
+                    # writer until the prior close is acknowledged. No waiting
+                    # or I/O is added to the request path.
+                    return
             if self.observer is not None:
                 with self.counters.lock:
                     counter = self.counters._day()
@@ -340,6 +361,7 @@ class Runtime:
                         self.observer_flushed[key] = value
             for identity, body in self.counters.snapshot(closed):
                 self.store.flush(identity, body, deadline)
+                self.counters.acknowledge(identity, body)
         except Exception:
             self.counters.reason(dimensions(None, None, None), "worker", "store_unavailable")
 
@@ -370,8 +392,12 @@ async def observe_entry(request: Any, body: Any, settings: Settings, background:
     finally:
         _CAPTURE.reset(token)
         try:
-            if capture.authorization is not None and runtime.opted(capture.authorization.workspace_id):
-                runtime.submit(capture, request, result, background)
+            try:
+                if capture.authorization is not None and runtime.opted(capture.authorization.workspace_id):
+                    runtime.submit(capture, request, result, background)
+            finally:
+                if capture.authorization is not None:
+                    runtime.counters.release(capture.received)
         except Exception:  # noqa: S110 - preserve the original outcome, no untrusted logs
             # The caller's original result/error/cancellation always wins.
             pass

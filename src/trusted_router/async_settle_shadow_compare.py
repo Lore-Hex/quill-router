@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from trusted_router import billing_snapshot as b
 from trusted_router.async_settle_shadow_binding import verify_binding
+from trusted_router.async_settle_shadow_projection import snapshot_material
 from trusted_router.async_settle_shadow_wire import CANDIDATES, LOCAL_BYTES, Envelope, parse_header
 from trusted_router.detached_jws import TrustedKey
 from trusted_router.schemas import GatewaySettleRequest
@@ -144,7 +145,7 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
     # an adversarial envelope contains both. Hash-only reconstruction failure
     # remains the lower-priority coverage outcome specified separately.
     if envelope.snapshot is not None:
-        out.snapshot_hash = b.canonical_hash(envelope.snapshot)
+        out.snapshot_hash = snapshot_material(envelope.snapshot)[1]
         if out.snapshot_hash != claims.snapshot_hash:
             return out.reject("hash", "hash")
     if terminal is not None:
@@ -175,13 +176,14 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
             if ctx.rebuild is None:
                 raise ValueError("missing rebuild")
             rebuilt = snapshot = ctx.rebuild()
-            if (len(snapshot.candidates) > CANDIDATES or len(b.canonical_bytes(snapshot)) > LOCAL_BYTES
-                    or b.canonical_hash(snapshot) != claims.snapshot_hash):
+            snapshot_bytes, snapshot_hash = snapshot_material(snapshot)
+            if (len(snapshot.candidates) > CANDIDATES or len(snapshot_bytes) > LOCAL_BYTES
+                    or snapshot_hash != claims.snapshot_hash):
                 raise ValueError("snapshot hash")
         except Exception:
             return out.reject("snapshot_reconstruction_failed")
         out.s0_reconstruction = "verified"
-    out.snapshot_hash = out.snapshot_hash or b.canonical_hash(snapshot)
+    out.snapshot_hash = out.snapshot_hash or snapshot_material(snapshot)[1]
     if out.snapshot_hash != claims.snapshot_hash:
         return out.reject("hash", "hash")
     if terminal is not None:
@@ -239,7 +241,7 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
         if rebuilt is None and ctx.rebuild is not None:
             rebuilt = ctx.rebuild()
         if rebuilt is not None:
-            out.rebuilt_snapshot_hash = b.canonical_hash(rebuilt)
+            out.rebuilt_snapshot_hash = snapshot_material(rebuilt)[1]
             reval = b.evaluate(rebuilt, selected.endpoint_id, raw, envelope.observed)
             out.rebuilt_micro = reval.charge_micro if ctx.attempted_kind == "settle" else 0
             out.rebuilt_minus_frozen = out.rebuilt_micro - out.python_micro

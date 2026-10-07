@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from pydantic import ValidationError
@@ -18,6 +19,9 @@ LOCAL_BYTES = 65536
 CANDIDATES = 128
 ERRORS = frozenset({"usage_missing", "usage_estimated", "unsupported_observed", "malformed_usage", "arithmetic_overflow", "evaluator_failed"})
 KEYS = frozenset({"v", "billing_shadow_binding", "billing_snapshot", "raw_usage", "observed", "terminal", "payload_hash", "go_error", "go_evaluator", "go_revision", "handoff_prepare_us"})
+REVISION = re.compile(r"[0-9a-f]{40}")
+DIGEST = re.compile(r"[0-9a-f]{64}")
+SURROGATE = re.compile(r"[\ud800-\udfff]")
 
 
 class Rejection(ValueError):
@@ -85,7 +89,7 @@ def bounded_json(raw: bytes, limit: int = JSON_BYTES, *, signed: bool = False) -
         return _refuse("json_shape")
     def strings(item: Any) -> None:
         if isinstance(item, str):
-            if any(0xD800 <= ord(ch) <= 0xDFFF for ch in item):
+            if SURROGATE.search(item):
                 _refuse("json_encoding")
         elif isinstance(item, dict):
             for key, child in item.items():
@@ -112,6 +116,13 @@ def snapshot_from_object(value: Any) -> billing.BillingSnapshot:
     if any(len(c.endpoint_id) > 128 or len(c.model_id) > 128 for c in snapshot.candidates):
         _refuse("identity")
     return snapshot
+
+
+@lru_cache(maxsize=128)
+def _inline_snapshot(raw: bytes) -> billing.BillingSnapshot:
+    # Only canonical bytes from bounded_json enter this cache. Every new value
+    # still gets full DTO validation; no signature or per-request fact is cached.
+    return snapshot_from_object(json.loads(raw))
 
 
 @dataclass(frozen=True)
@@ -148,7 +159,7 @@ def parse_header(headers: tuple[str, ...]) -> Envelope:
     if not isinstance(proof, str) or not proof.isascii() or len(proof) > 2048:
         _refuse("proof_signature")
     if (value["go_evaluator"] != "billing-v1" or not isinstance(value["go_revision"], str)
-            or re.fullmatch(r"[0-9a-f]{40}", value["go_revision"]) is None):
+            or REVISION.fullmatch(value["go_revision"]) is None):
         _refuse("json_shape")
     if type(value["handoff_prepare_us"]) is not int:
         _refuse("integer")
@@ -165,9 +176,10 @@ def parse_header(headers: tuple[str, ...]) -> Envelope:
     try:
         snapshot = None
         if "billing_snapshot" in value:
-            if len(canonical(value["billing_snapshot"])) > INLINE_BYTES:
+            snapshot_bytes = canonical(value["billing_snapshot"])
+            if len(snapshot_bytes) > INLINE_BYTES:
                 _refuse("header_size")
-            snapshot = snapshot_from_object(value["billing_snapshot"])
+            snapshot = _inline_snapshot(snapshot_bytes)
         usage = billing.RawUsage.model_validate(value["raw_usage"]) if value["raw_usage"] is not None else None
         observed = billing.Eligibility.model_validate(value["observed"])
         terminal_value = value["terminal"]
@@ -185,7 +197,7 @@ def parse_header(headers: tuple[str, ...]) -> Envelope:
             for name in ("generation_id", "journal_region", "selected_endpoint"):
                 if len(getattr(terminal, name)) > 128:
                     _refuse("identity")
-            if not isinstance(value["payload_hash"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["payload_hash"]):
+            if not isinstance(value["payload_hash"], str) or not DIGEST.fullmatch(value["payload_hash"]):
                 _refuse("hash")
     except ValidationError as exc:
         if any(error["type"] in {"int_type", "int_parsing", "greater_than_equal", "less_than_equal"} for error in exc.errors()):

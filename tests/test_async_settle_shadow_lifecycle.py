@@ -275,3 +275,75 @@ def test_flush_failure_counts_drop_and_preserves_first_gap():
     assert body['first_gap_at_us'] == 1791244801000000
     assert body['drops'] == [dict(phase='worker',adapter='unknown',route_type='unknown',streamed=None,reason='store_unavailable',count=1)]
     rt.executor.shutdown()
+
+
+def test_long_lived_writer_closes_seven_clean_days_before_new_writer():
+    import time
+
+    from scripts.async_settle.shadow_report import validate_counter
+    from trusted_router.async_settle_shadow_evidence import day_at
+    now = [1791244800.]
+    db = Database()
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.counters.clock = lambda: now[0]
+    dims = dimensions('openai', 'responses', False)
+    for n in range(8):
+        now[0] = 1791244800. + 86400*n
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+1)
+        for prior in range(n):
+            key = day_at(1791244800. + 86400*prior) + '/' + rt.counters.instance
+            body = json.loads(db.rows[COUNTER, key])
+            validate_counter(key, body)
+            assert body['closed'] and body['first_gap_at_us'] is None
+            assert body['flushed_at_us'] == int((1791244800. + 86400*(prior+1))*1e6)
+        assert len(rt.counters.days) == 1
+        rt.counters.increment(dims, 'authorize_attempts')
+        rt.counters.increment(dims, 'authorize_fresh')
+        now[0] += 10
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+1)
+    writes = [(params['id'], params) for _, params, _ in db.trace]
+    # Each prior close's point read precedes the new day's first write/read.
+    for n in range(1, 8):
+        old = day_at(1791244800. + 86400*(n-1)) + '/' + rt.counters.instance
+        new = day_at(1791244800. + 86400*n) + '/' + rt.counters.instance
+        assert max(i for i, (key, _) in enumerate(writes) if key == old) < min(i for i, (key, _) in enumerate(writes) if key == new)
+    rt.executor.shutdown()
+
+
+def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch):
+    import time
+
+    from trusted_router.async_settle_shadow_evidence import day_at
+    now = [1791244801.]
+    db = Database()
+    store = EvidenceStore(db)
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), store)
+    rt.counters.clock = lambda: now[0]
+    received = now[0]
+    rt.counters.retain(received)
+    rt.flush(time.monotonic()+1)
+    now[0] += 86400
+    rt.last_flush = 0
+    rt.flush(time.monotonic()+1)
+    old = day_at(received) + '/' + rt.counters.instance
+    assert not json.loads(db.rows[COUNTER, old])['closed']
+    assert (COUNTER, day_at(now[0]) + '/' + rt.counters.instance) not in db.rows
+    rt.counters.release(received)
+    original = store.flush
+    def fail_close(identity, body, deadline):
+        if body['closed']:
+            raise RuntimeError('lost close')
+        return original(identity, body, deadline)
+    monkeypatch.setattr(store, 'flush', fail_close)
+    rt.last_flush = 0
+    rt.flush(time.monotonic()+1)
+    assert day_at(received) in rt.counters.days
+    assert not json.loads(db.rows[COUNTER, old])['closed']
+    monkeypatch.setattr(store, 'flush', original)
+    rt.last_flush = 0
+    rt.flush(time.monotonic()+1)
+    assert json.loads(db.rows[COUNTER, old])['closed']
+    assert day_at(received) not in rt.counters.days
+    rt.executor.shutdown()

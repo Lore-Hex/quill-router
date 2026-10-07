@@ -1,6 +1,8 @@
 """Frozen catalog projection cache; no catalog reloads or request-time I/O."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from functools import lru_cache
 from typing import Any
@@ -8,7 +10,17 @@ from typing import Any
 from trusted_router import billing_snapshot as b
 from trusted_router.catalog import effective_endpoint
 from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.detached_jws import canonical
 from trusted_router.stage_d import endpoint_pricing_candidate
+
+IDENTITY = re.compile(r"[A-Za-z0-9_./:@+\-]{1,128}")
+
+
+@lru_cache(maxsize=128)
+def snapshot_material(snapshot: b.BillingSnapshot) -> tuple[bytes, str]:
+    """Bounded cache of canonical bytes and digest of an immutable DTO."""
+    raw = b.canonical_bytes(snapshot)
+    return raw, hashlib.sha256(raw).hexdigest()
 
 
 def _integer(value: Any) -> None:
@@ -31,7 +43,7 @@ def candidate(endpoint: ModelEndpoint) -> b.Candidate:
     if (endpoint.provider not in {"openai", "anthropic"} or endpoint.usage_type != "Credits"
             or not endpoint.model_id.startswith(endpoint.provider + "/")
             or endpoint.request_price_microdollars != 0
-            or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,128}", identity) is None for identity in (endpoint.id, endpoint.model_id))):
+            or any(IDENTITY.fullmatch(identity) is None for identity in (endpoint.id, endpoint.model_id))):
         raise ValueError("unsupported candidate")
     price = endpoint_pricing_candidate(endpoint)
     def rates(value: dict[str, int]) -> b.Rates:
@@ -68,13 +80,23 @@ def candidate(endpoint: ModelEndpoint) -> b.Candidate:
 
 def project(endpoints: tuple[ModelEndpoint, ...], created_at: str,
             document: dict[str, Any] | None = None) -> b.BillingSnapshot:
+    # Keys include the complete immutable catalog values, authorization time,
+    # and Stage D document bytes. Price changes cannot alias an older view.
+    return _project(endpoints, created_at, canonical(document) if document is not None else None)
+
+
+@lru_cache(maxsize=128)
+def _project(endpoints: tuple[ModelEndpoint, ...], created_at: str,
+             document_bytes: bytes | None) -> b.BillingSnapshot:
     if not endpoints or len(endpoints) > 128:
         raise ValueError("snapshot_size")
+    document = json.loads(document_bytes) if document_bytes is not None else None
+    sources = {c["endpoint_id"]: c for c in document["candidates"]} if document is not None else None
     candidates = []
     for endpoint in endpoints:
         frozen = candidate(effective_endpoint(endpoint, at=created_at))
-        if document is not None:
-            source = next(c for c in document["candidates"] if c["endpoint_id"] == endpoint.id)
+        if sources is not None:
+            source = sources[endpoint.id]
             frozen = b.Candidate.model_validate({**frozen.model_dump(), **source})
         candidates.append(frozen)
     ordered = tuple(sorted(candidates, key=lambda c: c.endpoint_id))
@@ -87,3 +109,9 @@ def project(endpoints: tuple[ModelEndpoint, ...], created_at: str,
     return b.BillingSnapshot.model_construct(v=1, kind="credits_endpoint", candidates=ordered,
         minimum_charge="one_micro_if_positive", charge_cap=None, tier_basis="total_prompt",
         tier_boundary="inclusive", tier_fallback="last_tier")
+
+
+def clear_caches() -> None:
+    candidate.cache_clear()
+    _project.cache_clear()
+    snapshot_material.cache_clear()

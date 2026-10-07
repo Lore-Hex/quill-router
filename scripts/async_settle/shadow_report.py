@@ -229,6 +229,18 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 continue
             if counter["router_revision"] not in manifest["router_revisions"]:
                 gap(identity+":revision_unknown", day)
+            # Reasons are diagnostic (one attempt can have several), so they
+            # are only an upper bound on accounted attempts. Authorize reasons
+            # and verified out-of-cohort exclusions cannot cover eligible work.
+            for bucket in counter["counts"]:
+                outcomes = sum(bucket[k] for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
+                failures = sum(row["count"] for group in ("exclusions", "rejections", "drops")
+                    for row in counter[group] if row["phase"] != "authorize"
+                    and row["reason"] not in COHORT_EXCLUSIONS
+                    and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed")))
+                accounted = max(0, outcomes - bucket["observed_ineligible"]) + failures
+                if bucket["observed_eligible"] > accounted + counter["booking_pending"] + counter["booking_unknown"]:
+                    gap(identity+":eligible_coverage_gap", day)
             if (not counter["closed"] or counter["first_gap_at_us"] is not None or counter["counter_overflow"]
                     or counter["dimension_overflow"] or counter["booking_pending"] or counter["booking_unknown"]
                     or any(counter["admission_observer"][key] for key in ("prediction_unknown", "read_failures", "missed_ticks"))
@@ -250,6 +262,9 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         manifest = manifests.get(observation_day)
         deployment = row["deployment"]
         inserted[observation_day, deployment["instance"]] += 1
+        writer = counters.get(observation_day + "/" + deployment["instance"])
+        if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):
+            gap(row["authorization_id"]+":writer_interval_gap", observation_day)
         if (manifest is None or deployment["instance"] not in manifest["instance_boot_ids"]
                 or deployment["router_revision"] not in manifest["router_revisions"]
                 or deployment["go_revision"] not in manifest["go_revisions"]):

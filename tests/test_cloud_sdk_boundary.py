@@ -41,6 +41,8 @@ ALLOWED = {
     "storage_gcp_async_admission.py",
     # Native Spanner atomic async-intent enqueue and reservation admission fence.
     "storage_gcp_async_settle.py",
+    # Bounded native Spanner evidence adapter; no money-writing APIs.
+    "storage_gcp_async_settle_shadow.py",
     "storage_gcp_batch_dml.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",

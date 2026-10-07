@@ -67,10 +67,18 @@ class EvidenceStore:
         if time.monotonic() >= deadline:
             raise TimeoutError("shadow budget")
         rpc_deadline = min(deadline, time.monotonic() + .2)
+        attempted = False
+        def once(tx: Any) -> Any:
+            nonlocal attempted
+            if attempted:
+                # The deadline wrapper can extend timeout_secs=0. The SDK may
+                # re-enter on Aborted, but it must never repeat reads/writes or
+                # commit a second attempt. Runtime counts this as a store drop.
+                raise RuntimeError("shadow_transaction_retry")
+            attempted = True
+            return callback(tx)
         with spanner_rpc_deadline(rpc_deadline):
-            # A zero retry horizon still executes the initial transaction in the
-            # SDK; an abort cannot start a second attempt or recycle cap permits.
-            result = self.database.run_in_transaction(callback, timeout_secs=0,
+            result = self.database.run_in_transaction(once, timeout_secs=0,
                 commit_request_options={"priority": "PRIORITY_LOW"})
             if time.monotonic() >= rpc_deadline:
                 raise TimeoutError("shadow commit budget")
