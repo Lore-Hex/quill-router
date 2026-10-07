@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "d15ae66a805b36b3d7400cfaaa1343fbd1ea292e183607367044cdf5e42f9b92"
+inputs_sha256 = "0e1bdbe31681ec0794eb5d49fdb8c2d22059f96e14c08d6e9343145db2d04f0c"
 
 [[guard]]
 action = "IssueHeartbeat"
@@ -416,6 +416,12 @@ A member that knows S has applied every owner record up to it, and records the l
 action = "Gap"
 text = '''/\ log[pos[m]].seq > mem[m].prog + 1'''
 breaks = "GapIsReal"
+
+[[guard]]
+action = "Gap"
+text = '''/\ ~mem[m].dirty'''
+breaks = "FaultReported"
+cfg = "ahead"
 
 [[guard]]
 action = "Gap"

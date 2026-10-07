@@ -187,7 +187,7 @@ knows S, and the member takes it for a gap the log does not have
 (`GapIsReal`). Leaving out `LoadWinners`' check and `Gap`'s, which every
 pair needs one of, the other 50 removed all together break nothing. That
 covers every claim in `two`, `lying` and `ahead`; in `again` and the main
-configuration, at 95 and 69 million states, the liveness claim was not
+configuration, at 95 and 69 million states, the liveness claims were not
 checked.
 
 ## Ways a check proves nothing

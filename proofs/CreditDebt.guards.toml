@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "73e71cf0e6f3d43b7da7ae49ea971748ba1e83d2d166988c26e4eff576abb182"
+inputs_sha256 = "e747376896b4e98a435b4d75a4ed8ed70c278cc7ef8dc039a03cb3fe18273703"
 
 [[guard]]
 action = "Grant"

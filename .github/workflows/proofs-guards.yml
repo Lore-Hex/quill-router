@@ -5,8 +5,9 @@ name: Proofs guard tables
 # nothing if its row says so. CI's `proofs` job checks on every pull request
 # that a table lists its spec's guards and was swept against the spec as it
 # is. This checks that the table is true. That takes a model-checking run per
-# guard, so it runs only when proofs/ changes, in eight parts: AuditorCommit's
-# table, with its liveness claim, took four parts past their hour.
+# guard, so it runs only when proofs/ changes, in sixteen parts: in eight,
+# AuditorCommit's table took a part 45 minutes with one liveness claim, and
+# its second claim and lying owner in `ahead` nearly double that.
 
 on:
   pull_request:
@@ -35,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -47,4 +48,4 @@ jobs:
       - name: Check the TLA+ tools jar
         run: cd proofs && sha256sum -c tla2tools.jar.sha256
       - name: Verify the guard tables
-        run: python3 proofs/guard_sweep.py --verify --shard ${{ matrix.shard }}/8
+        run: python3 proofs/guard_sweep.py --verify --shard ${{ matrix.shard }}/16

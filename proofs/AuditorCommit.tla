@@ -116,8 +116,9 @@
 (*   GapIsReal: a gap stops the lease only where the log, before the fence  *)
 (*   tick, stored an owner record before one the owner issued before it.    *)
 (*   DrainingLeaseCloses: a draining lease closes, unless such a gap        *)
-(*   stopped it, as long as the members keep working. It is what a member   *)
-(*   left with nothing it may do would break.                               *)
+(*   stopped it, as long as the members keep working. FaultReported: an     *)
+(*   audit fault a member finds while its version is current is raised,     *)
+(*   even on a lease that never drains or that a gap stops.                 *)
 (*                                                                          *)
 (* WHAT WRITING THIS FOUND                                                  *)
 (*                                                                          *)
@@ -135,9 +136,11 @@
 (*   no-reread-when-clean, in `again`). A gap is declared with the commit   *)
 (*   version too: a member another overtook compares a record with progress *)
 (*   the row has passed, and stops the lease for a gap the log does not     *)
-(*   have (mutant a-gap-from-stale-progress, in `again`). So is an audit's  *)
-(*   alert, raised with the commit: that member may apply a wrong           *)
-(*   checkpoint above S it never learned to ignore (mutant                  *)
+(*   have (mutant a-gap-from-stale-progress, in `again`); and a member      *)
+(*   commits what it applied before it declares one, or a fault it found    *)
+(*   there is never raised (mutant a-gap-before-the-commit, in `ahead`). So *)
+(*   is an audit's alert, raised with the commit: that member may apply a   *)
+(*   wrong checkpoint above S it never learned to ignore (mutant            *)
 (*   a-refused-member-alerts, in `again`). Design v44 states one guard on   *)
 (*   every write.                                                           *)
 (*                                                                          *)
@@ -460,7 +463,9 @@ SkipRecord(m) ==
 \* A record beyond the next sequence number is a gap. The lease's
 \* processing stops, and an operator rebuilds it. A member declares one only
 \* with the commit version it read, as it commits: one another member
-\* overtook has fallen behind the stored progress, and re-reads first.
+\* overtook has fallen behind the stored progress, and re-reads first. And
+\* it commits what it applied before the gap first, so that a fault it found
+\* there is raised.
 Gap(m) ==
     /\ m = holder
     /\ mem[m].loaded
@@ -468,6 +473,7 @@ Gap(m) ==
     /\ pos[m] <= Len(log)
     /\ mem[m].S = NoS
     /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ~mem[m].dirty
     /\ ver = mem[m].ver
     /\ gap' = TRUE
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, members, alert >>
@@ -793,5 +799,11 @@ AuditsEachCheckpoint ==
 \* A draining lease closes, unless a gap stopped it for an operator: no
 \* member is left with nothing it can do.
 DrainingLeaseCloses == st = "draining" ~> (st = "closed" \/ gap)
+
+\* An audit fault a member finds while its version is current is raised,
+\* even on a lease that never drains or that a gap stops. Said of some
+\* member, it means what it would of each, and TLC checks it once rather
+\* than once a member.
+FaultReported == (\E m \in Members : mem[m].fault /\ mem[m].ver = ver) ~> alert
 
 =============================================================================

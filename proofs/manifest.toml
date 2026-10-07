@@ -188,11 +188,9 @@ name = "a-gap-from-stale-progress"
 cfg = "again"
 violates = "GapIsReal"
 old = '''
-    /\ log[pos[m]].seq > mem[m].prog + 1
     /\ ver = mem[m].ver
     /\ gap' = TRUE'''
 new = '''
-    /\ log[pos[m]].seq > mem[m].prog + 1
     /\ gap' = TRUE'''
 
 # The alert is raised with the commit that stores the checkpoint, as every
@@ -223,6 +221,37 @@ new = '''
     /\ mem[m].S # NoS
     /\ pos[m] = Len(log) + 1
     /\ dpos[m] <= Len(drain)'''
+
+# A member commits what it applied before it declares a gap: a fault it
+# found before the gap is raised, though the gap stops every later commit
+# (Codex's fourth review).
+[[AuditorCommit.mutants]]
+name = "a-gap-before-the-commit"
+cfg = "ahead"
+violates_property = "FaultReported"
+old = '''
+    /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ~mem[m].dirty
+    /\ ver = mem[m].ver'''
+new = '''
+    /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ver = mem[m].ver'''
+
+# A fault is raised with the next commit, not held until the lease drains,
+# which it may never do.
+[[AuditorCommit.mutants]]
+name = "a-fault-held-while-open"
+cfg = "lying"
+violates_property = "FaultReported"
+old = '''
+Commit(m) ==
+    /\ mem[m].loaded
+    /\ mem[m].dirty'''
+new = '''
+Commit(m) ==
+    /\ mem[m].loaded
+    /\ mem[m].dirty
+    /\ ~mem[m].fault \/ st # "open"'''
 
 # A heartbeat at 0 is an open hold like any other: no positive minimum.
 [[AuditorCommit.mutants]]
