@@ -19,9 +19,14 @@ approval covered, all merged in #1503:
 - every fast-path charge is priced from the envelope (§4.4), which §9 leaves
   to Joseph.
 
-The first two specs, `TerminalOrder` and `LeaseLifecycle`, and the runner that
-checks every spec's mutants are written (#1515 and the pull request stacked
-on it).
+v42 states rules the approved text left unsaid, which writing
+`LeaseLifecycle` showed the lease needs (§4.2, §4.3): an owner process uses
+only the leases it was granted, takes a new epoch each time it starts, and
+is never given a lease back by a late answer; a forced exit stops admitting
+before it lists its holds; and the owner's draining write is conditional.
+
+The first two specs, `TerminalOrder` and `LeaseLifecycle`, and the tools that
+check every spec's mutants and guards are written (#1515 and #1533).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -174,7 +179,8 @@ A lease is an amount L of a workspace's balance, reserved in Spanner for one
 owner. Its row records:
 
 - the workspace, region and shard;
-- the owner node and its ownership epoch;
+- the owner node and its ownership epoch. A process takes a new epoch each
+  time it starts, so an epoch names one process;
 - L, and its allocation over donor credit shards;
 - its state: open, draining or closed;
 - an expiry, which each renewal extends, and whether renewal is revoked;
@@ -403,6 +409,15 @@ other is a shortfall write (above).
 - In a batch, each lease is its own conditional statement. One that changes
   no row means the lease was revoked or is draining. The owner re-reads it
   and stops using it.
+- The owner takes a lease's new expiry from the write's answer, never from
+  its own clock, and only for a lease it still holds. Nothing waits for an
+  answer, so one can arrive after the owner has marked the lease draining or
+  let it go. It then changes nothing: an answer never brings a lease back
+  into the owner's memory. A handler that created the lease it did not find
+  would let the owner admit under a lease it had itself marked draining.
+- A renewal that is applied twice, or after its process has died, extends
+  the expiry of an open, unrevoked lease as the first did. It does nothing
+  else.
 - Each record the owner publishes carries the lease's next **owner sequence
   number**, assigned when the record is decided, under the lease's lock
   (above). A retry republishes the same record with the same number, so a
@@ -462,7 +477,11 @@ lease's expiry minus a skew allowance.
     releases the amount from the donors, last donor first, and lowers the
     allocation by it there.
   - It keeps serving the lease's holds. Once none is open, it publishes a
-    final checkpoint record and marks the lease draining.
+    final checkpoint record. It then marks the lease draining, in a write
+    conditional on the lease being open and on its epoch, and lets the
+    lease go. A write that changes no row means the lease is no longer
+    open: the auditor marked it first, or an earlier try of the same write
+    landed and its answer was lost.
   - The auditor then finishes the lease (§4.8).
 - **Retiring.** An owner leaving in a deploy stops admitting, keeps serving
   and renewing its leases until their holds end (at most 2 h 20 min), then
@@ -479,11 +498,15 @@ lease's expiry minus a skew allowance.
     return is applied.
   - A deploy that stops processes sooner turns every deploy into forced exits,
     which cut streams.
-- **A forced exit.** An owner that must exit sooner publishes its open holds in
-  hand-off records (authorization, estimate, deadline and last snapshot,
-  chunked under the message limit), then a manifest: the number of chunks, a
-  digest of their holds, and the sequence numbers they used. It then stops
-  deciding and marks its leases draining.
+- **A forced exit.** An owner that must exit sooner stops admitting. It then
+  publishes its open holds in hand-off records (authorization, estimate,
+  deadline and last snapshot, chunked under the message limit), then a
+  manifest: the number of chunks, a digest of their holds, and the sequence
+  numbers they used. It then stops deciding and marks its leases draining,
+  by the same conditional write.
+  - It stops admitting first because the chunks list the holds that were
+    open when they were cut. A hold admitted later is in none of them, and
+    a lease that closed on the manifest (§4.8) would close over it.
 - The maximum life bounds the winners the auditor stores for a lease.
 
 ### 4.3 Ownership
@@ -503,6 +526,21 @@ lease's expiry minus a skew allowance.
   - If a membership change briefly lets two nodes act as owner, each holds its
     own lease. Neither can spend the other's.
   - The cost is a little extra reservation for a while.
+- **A process uses only the leases it was granted.** It starts with none,
+  and is granted new ones (§4.8).
+  - It does not read its node's leases back from Spanner.
+  - The node's address outlives a process, so requests for a dead process's
+    leases reach its successor. It answers one that names a lease it does
+    not hold as an owner past its cutoff does (§4.2): a terminal gets
+    `past_cutoff` and goes to the drain log, and a heartbeat gets `retry`.
+    It never takes the lease up: it neither admits under it nor publishes
+    a record for it. Its predecessor's last record, had it published one,
+    would list none of the predecessor's holds, and the auditor would
+    close the lease over them.
+  - This is Invariant 6, and only the owner's code can keep it. The epoch
+    condition on an owner's writes (§4.2) keeps a process that broke it from
+    renewing or draining the lease. It does not keep that process from
+    admitting in memory until the cutoff of the expiry it read.
 - **Requests carry their lease.** Heartbeats, settles and refunds go to the
   owner and lease named in the authorization's signed envelope.
   - While the lease is open, only its owner publishes its records to the log.
@@ -1737,6 +1775,8 @@ Each has a production check.
 5. **No charge invented.** Only boot-signed settles, and reaps at the last
    validated heartbeat's snapshot, charge.
 6. **No lease is reused after its owner stops.** A new owner gets a new lease.
+   An owner process uses only the leases it was granted, and none it has let
+   go (§4.3).
 7. **Ownership is routing, not safety.** Two owners can never spend the same
    reserved money.
 8. **Key caps.** Capped keys are served synchronously. A new cap takes effect
@@ -1750,7 +1790,9 @@ Each has a production check.
    exposure through leases is what they reserve plus what their requests
    overrun their holds by.
 10. **Renewals and bookings are conditional:** renewals on lease state and
-    epoch, bookings on the auditor's commit version. Replays change nothing.
+    epoch, bookings on the auditor's commit version. A replayed booking
+    changes nothing. A replayed renewal extends the expiry of an open,
+    unrevoked lease, as its original did, and changes nothing else.
 11. **Debt marks every shard.** No credit shard is negative unless every
     shard row of the workspace is marked in debt. A marked row refuses
     reservations and grants at once, and open leases stop admitting within
@@ -1791,7 +1833,7 @@ in TLA+ and checked with TLC before the code that implements them is written
 
 | Spec | Protocol | Invariants above |
 |---|---|---|
-| `LeaseLifecycle` | One lease over time: renewal, the owner's cutoff, revocation, expiry, draining and close, with clocks that differ by up to the skew allowance; a process that restarts; a hand-off; a stop that reaches owners through the state cache; the drain's end condition | The first sentence of 1, 6, 7, the stop half of 9, the renewal half of 10, and the reservation half of 4 |
+| `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, revocation, expiry, the owner's last record and its draining write, draining and close, with clocks that differ by up to the skew allowance; a process that restarts; a hand-off; a stop that reaches owners through the state cache; the drain's end condition | The first sentence of 1, the stop half of 9, the renewal half of 10, and the reservation half of 4. It assumes 6 (below) |
 | `TerminalOrder` | One lease's records, for a stream and for a request that does not stream: the owner's sequence, its cutoff and publish deadline, the drain log, adoption, the fence tick, the boundary S, reaps by the owner and by the auditor, the release of a stream's hold before its first heartbeat, records stored late, close against appends, and a rebuild from the archive | 3, and 4 for terminals and for streams that ran |
 | `AuditorCommit` | The per-lease conditional commit under member takeover, crashes and redelivery; the open holds and snapshots it stores; the checkpoint audit; a raise of the allocation that lands between a member's read and its commit | 2, the reap half of 5, the booking half of 10, and 4 across a takeover |
 | `CreditDebt` | Money across leases and credit shards: grants under the range lock and the allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering a negative shard, the debt mark, and inflows that repay debt first | The rest of 1, the exposure half of 9, 11, and the per-shard identity in 2 |
@@ -1817,6 +1859,23 @@ What the table's short names hide:
   signed sum is no longer negative, no row of it stays marked (§4.7).
   Invariant 11 and the identity alone would pass a workspace that paid and
   stayed blocked, which is the v11 hazard.
+- `LeaseLifecycle` cannot check Invariant 6. No rule of Spanner's keeps a
+  process from using a lease it was not granted: that is the owner's code.
+  The spec assumes it, and its mutants widen it three ways: a later process
+  that takes the lease up, an answer that brings a finished lease back, and
+  a later process that publishes the lease's last record. They break its
+  single-writer claim, which is Invariant 7 for one lease, the allocation,
+  the first sentence of Invariant 1, and the reservation half of Invariant 4.
+  So what the spec
+  shows of 6 and 7 is what rests on them, not that they hold. In the model
+  the epoch conditions on the owner's writes then hold up nothing, and its
+  guard table says so.
+- Writing it showed rules the design had not stated, which §4.2 and §4.3
+  now do: the one above; that a process's epoch changes when it restarts;
+  that a late answer to a renewal never brings a lease back; that a forced
+  exit stops admitting before it cuts its chunks; and that the owner's
+  draining write is conditional on the lease being open. It also showed
+  that Invariant 10's "replays change nothing" was false of a renewal.
 - `LeaseLifecycle` has no money in it. Leases interact only through money,
   and a model with two leases, grants, returns and the allowance beside the
   clocks passed thirty million states without finishing. So it models one
@@ -1893,13 +1952,21 @@ What the table's short names hide:
     auditor's stored state, and an inflow that repays the debt but leaves the
     marks set.
   - A guard whose removal breaks nothing is either unnecessary or not
-    modeled, and the spec says which. The manifest lists it as a survivor,
-    and the runner checks that it still breaks nothing.
+    modeled. Each new spec has a guard table (#1515): a row for every
+    condition of every action, with the claim its removal breaks or the
+    reason it breaks none, and CI sweeps each row again when `proofs/`
+    changes. A change worth naming that breaks nothing is listed in the
+    manifest as a survivor, and the runner checks that it still does.
 - **The assumptions are stated, each with a mutant that widens it.** Each
   spec's header lists its own. Across the specs they are:
   - the bounded skew. Widening it must break Invariant 1;
   - the state cache's age. An owner admitting on a cache older than its
     maximum age must break Invariant 9;
+  - that a process uses only the leases it was granted (Invariant 6, §4.3).
+    A later process that takes a lease up must break the single-writer
+    claim, an answer that brings a finished lease back must break the
+    first sentence of Invariant 1, and a later process that publishes a
+    lease's last record must break the reservation half of Invariant 4;
   - the margin within which Pub/Sub's servers agree, on which a rebuild's
     completeness rests (§4.8). An archive reported complete while a record
     received before the tick is missing must break Invariant 4;
@@ -3195,3 +3262,22 @@ record.
   they changed. Both then accepted, Fable with three P3s: the status line
   now lists every rule that changed after the approval, and the one-time
   pass is said to include a one-shard workspace's negative row.
+- **v42.** Rules that writing `LeaseLifecycle` showed the design had left
+  unsaid. The first version of the spec made a renewal and its answer one
+  step, and Fable's review of it (#1533) found what that hid: an answer that
+  arrives after the owner has marked its lease draining, applied by a
+  handler that takes the lease up again, admits under a draining lease. So:
+  - an owner process uses only the leases it was granted, and none it has
+    let go; a request that names a lease it does not hold is answered as
+    past its cutoff (§4.3, Invariant 6);
+  - a process takes a new epoch each time it starts (§4.2);
+  - a renewal's answer is applied only to a lease the owner still holds
+    (§4.2);
+  - a forced exit stops admitting before it cuts its chunks (§4.2);
+  - the owner's draining write is conditional on the lease being open and
+    on its epoch (§4.2);
+  - Invariant 10 says what a replayed renewal does, where it said replays
+    change nothing.
+
+  §5.1 says what `LeaseLifecycle` can and cannot show of Invariants 6 and 7,
+  and that a guard's survival is now a row in a table that CI checks.
