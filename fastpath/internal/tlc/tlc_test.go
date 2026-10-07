@@ -46,8 +46,53 @@ func TestEqualTellsValuesApart(t *testing.T) {
 	}
 }
 
+func TestParseValueReadsFunctionsAndModelValues(t *testing.T) {
+	v, err := ParseValue(`(a1 :> [src |-> "none", idx |-> 0] @@ a2 :> "open")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := v.(Func)
+	if !ok || len(f) != 2 {
+		t.Fatalf("read %s", Key(v))
+	}
+	if got, ok := f.At(ModelValue("a2")); !ok || got != "open" {
+		t.Fatalf("f[a2] is %v", got)
+	}
+	if _, ok := f.At("a2"); ok {
+		t.Fatal("the string \"a2\" is taken for the model value a2")
+	}
+	reordered, err := ParseValue(`(a2 :> "open" @@ a1 :> [idx |-> 0, src |-> "none"])`)
+	if err != nil || !Equal(v, reordered) {
+		t.Fatalf("one function printed in another order reads as another: %v", err)
+	}
+	if Equal(ModelValue("a1"), "a1") {
+		t.Fatal("a model value equals the string of its name")
+	}
+}
+
+func TestConstantValuesReadsSetsOfModelValues(t *testing.T) {
+	k, err := ConstantValues("CONSTANTS\n    Auths = {a1, a2}\n    Streams = {}\n    MaxAppends = 2\nINVARIANTS\n    TypeOK\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Value{
+		"Auths": Set{ModelValue("a1"), ModelValue("a2")}, "Streams": Set{}, "MaxAppends": int64(2),
+	}
+	if len(k) != len(want) {
+		t.Fatalf("read %v", k)
+	}
+	for name, v := range want {
+		if !Equal(k[name], v) {
+			t.Errorf("%s is %s, not %s", name, Key(k[name]), Key(v))
+		}
+	}
+	if _, err := ConstantValues("CONSTANTS\n    A <- B\n"); err == nil {
+		t.Fatal("a replacement is read as a constant")
+	}
+}
+
 func TestParseValueRefusesWhatItCannotRead(t *testing.T) {
-	for _, text := range []string{"(1 :> 2 @@ 2 :> 3)", "[a |-> 1", "{1, 2", "<< 1 >> 2", "x"} {
+	for _, text := range []string{"(1 :> 2 @@ 1 :> 3)", "(1 :> 2", "(1 2)", "[a |-> 1", "{1, 2", "<< 1 >> 2", "%"} {
 		if _, err := ParseValue(text); err == nil {
 			t.Errorf("%q is read", text)
 		}

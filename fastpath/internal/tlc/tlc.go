@@ -191,8 +191,32 @@ func unescape(s string) string {
 
 // --- TLA+ values, as TLC prints them
 
-// Value is a TLA+ value: int64, bool, string, Seq, Set or Record.
+// Value is a TLA+ value: int64, bool, string, ModelValue, Seq, Set, Record
+// or Func.
 type Value any
+
+// ModelValue is a model value, such as a1 in `Auths = {a1, a2}`: an
+// identifier, unlike a string.
+type ModelValue string
+
+// Func is a function TLC prints as `(k1 :> v1 @@ k2 :> v2)`: one whose domain
+// is not 1..n. Its pairs are in the order TLC printed them.
+type Func []Pair
+
+// Pair is one argument of a Func and its value.
+type Pair struct {
+	Arg, Val Value
+}
+
+// At is the value of f at arg, and whether arg is in its domain.
+func (f Func) At(arg Value) (Value, bool) {
+	for _, p := range f {
+		if Equal(p.Arg, arg) {
+			return p.Val, true
+		}
+	}
+	return nil, false
+}
 
 // Seq is a sequence, which is also how TLC prints a function on 1..n.
 type Seq []Value
@@ -215,6 +239,15 @@ func Key(v Value) string {
 		return strconv.FormatBool(x)
 	case string:
 		return strconv.Quote(x)
+	case ModelValue:
+		return "@" + string(x)
+	case Func:
+		parts := make([]string, len(x))
+		for i, p := range x {
+			parts[i] = Key(p.Arg) + ":>" + Key(p.Val)
+		}
+		sort.Strings(parts)
+		return "(" + strings.Join(parts, "@@") + ")"
 	case Seq:
 		parts := make([]string, len(x))
 		for i, e := range x {
@@ -367,13 +400,45 @@ func (p *parser) value() (Value, error) {
 	case t == "[":
 		return p.record()
 	case t == "(":
-		return nil, errors.New("a function printed with :> and @@ is not read here")
+		return p.function()
 	default:
-		n, err := strconv.ParseInt(t, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("not a value: %q", t)
+		if n, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return n, nil
 		}
-		return n, nil
+		if identifier.MatchString(t) {
+			return ModelValue(t), nil
+		}
+		return nil, fmt.Errorf("not a value: %q", t)
+	}
+}
+
+var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (p *parser) function() (Value, error) {
+	var f Func
+	for {
+		arg, err := p.value()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(":>"); err != nil {
+			return nil, err
+		}
+		val, err := p.value()
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := f.At(arg); dup {
+			return nil, fmt.Errorf("a function with %s twice in its domain", Key(arg))
+		}
+		f = append(f, Pair{arg, val})
+		switch p.next() {
+		case "@@":
+		case ")":
+			return f, nil
+		default:
+			return nil, errors.New("expected @@ or )")
+		}
 	}
 }
 
@@ -459,6 +524,46 @@ func Constants(cfgText string) (map[string]int, error) {
 			return nil, fmt.Errorf("constant %s is not an integer: %q", strings.TrimSpace(name), value)
 		}
 		consts[strings.TrimSpace(name)] = n
+	}
+	return consts, nil
+}
+
+// ConstantValues reads the CONSTANTS section of a .cfg as values: integers,
+// model values and sets of them, as in `Auths = {a1, a2}`.
+func ConstantValues(cfgText string) (map[string]Value, error) {
+	consts := map[string]Value{}
+	inSection := false
+	for _, line := range strings.Split(cfgText, "\n") {
+		if i := strings.Index(line, `\*`); i >= 0 {
+			line = line[:i]
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "CONSTANT", "CONSTANTS":
+			inSection = true
+			fields = fields[1:]
+		case "SPECIFICATION", "INVARIANT", "INVARIANTS", "PROPERTY", "PROPERTIES", "INIT", "NEXT", "SYMMETRY",
+			"VIEW", "CONSTRAINT", "CONSTRAINTS", "ACTION_CONSTRAINT", "ACTION_CONSTRAINTS", "CHECK_DEADLOCK",
+			"POSTCONDITION", "ALIAS":
+			inSection = false
+			continue
+		}
+		if !inSection || len(fields) == 0 {
+			continue
+		}
+		joined := strings.Join(fields, " ")
+		name, value, ok := strings.Cut(joined, "=")
+		if !ok || strings.Contains(name, "<") {
+			return nil, fmt.Errorf("a constant that is not `Name = value`: %q", joined)
+		}
+		v, err := ParseValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("constant %s: %w", strings.TrimSpace(name), err)
+		}
+		consts[strings.TrimSpace(name)] = v
 	}
 	return consts, nil
 }
