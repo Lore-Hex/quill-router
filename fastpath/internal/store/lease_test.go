@@ -358,3 +358,30 @@ func TestAShortfallWriteCoversOrMarks(t *testing.T) {
 		t.Fatalf("after a raise past the workspace: %v %v; want [-20 10], every row marked", headrooms(rows), marks(rows))
 	}
 }
+
+// TestTheFenceIsKeptToTheMicrosecond: F is the stored expiry plus the skew
+// plus the publish deadline exactly, a part of a millisecond included, for
+// both draining writes (Codex, review round 1 of S4c: in milliseconds, a
+// skew of 100 µs and a deadline of 400 µs stored F at the expiry itself).
+func TestTheFenceIsKeptToTheMicrosecond(t *testing.T) {
+	ctx := context.Background()
+	s := spikeStore(t, func(c *Config) { c.Skew, c.PublishDeadline = 100*time.Microsecond, 400*time.Microsecond })
+	ownerDrained := grantLease(t, s, 10, 100)
+	if ok, _, err := s.OwnerMarkDraining(ctx, owner, ownerDrained); err != nil || !ok {
+		t.Fatalf("the owner's draining write: %v %v", ok, err)
+	}
+	auditorDrained := grantLease(t, s, 10, 100)
+	if ok, _, err := s.AuditorMarkDraining(ctx, auditorDrained, readLease(t, s, auditorDrained).Expiry); err != nil || !ok {
+		t.Fatalf("the auditor's draining write: %v %v", ok, err)
+	}
+	for _, ref := range []LeaseRef{ownerDrained, auditorDrained} {
+		if l := readLease(t, s, ref); l.FenceTime.Time.Sub(l.Expiry) != 500*time.Microsecond {
+			t.Errorf("F - expiry = %v, want 500µs", l.FenceTime.Time.Sub(l.Expiry))
+		}
+	}
+	cfg := testConfig()
+	cfg.Skew = time.Millisecond + 1
+	if _, err := New(shared, cfg); err == nil {
+		t.Fatal("a skew finer than a microsecond is taken")
+	}
+}
