@@ -1,5 +1,5 @@
 // Package schema holds the spike's schema, spike.sql, and splits it into the
-// statements Spanner's DDL requests take.
+// statements Spanner's schema updates take.
 package schema
 
 import (
