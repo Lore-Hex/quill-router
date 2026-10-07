@@ -143,3 +143,12 @@ def test_frozen_main_effects_and_operation_trace(env, monkeypatch, scenario, suc
                             [getattr(db, name) - before for name, before in zip(rpc_counters, rpc_before, strict=True)],
                             list(zip(db.snapshot_sql[snapshot_start:], db.snapshot_sql_params[snapshot_start:], strict=True))))
     assert outputs[0] == outputs[1]
+
+
+@pytest.mark.parametrize('scenario', ['ordinary', 'unresolved', 'refresh'])
+@pytest.mark.parametrize('success', [False, True])
+def test_frozen_main_effects_with_nonmember_shadow(env, monkeypatch, scenario, success):
+    from trusted_router.config import Settings
+    env[3]._async_settle_shadow_workspace_ids = Settings(
+        environment="test", async_settle_shadow_workspaces="nonmember").async_settle_shadow_workspace_ids
+    test_frozen_main_effects_and_operation_trace(env, monkeypatch, scenario, success, True)

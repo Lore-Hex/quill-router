@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+import copy
+import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+
+from scripts.async_settle.shadow_report import delta_bin, percentiles, report, validate_counter
+from tests.test_async_settle_shadow import NOW, context, signer, wire
+from trusted_router.async_settle_shadow_compare import compare
+from trusted_router.async_settle_shadow_evidence import (
+    CONTROL,
+    COUNTER,
+    SAMPLE,
+    Counters,
+    dimensions,
+    sample,
+)
+from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore, day_statement
+
+
+class Database:
+    """Serialize actual adapter callbacks; native tests own real abort evidence."""
+    def __init__(self):
+        self.rows = {}
+        self.lock = threading.Lock()
+        self.trace = []
+
+    def run_in_transaction(self, callback, **kwargs):
+        assert kwargs == dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})
+        with self.lock:
+            before = copy.deepcopy(self.rows)
+            try:
+                return callback(self)
+            except Exception:
+                self.rows = before
+                raise
+
+    def execute_sql(self, sql, *, params, param_types, timeout, retry, request_options):
+        assert 0 < timeout <= .2 and retry is None and request_options == {'priority':'PRIORITY_LOW'}
+        self.trace.append((sql, params, param_types))
+        value = self.rows.get((params['kind'], params['id']))
+        return [] if value is None else [(value,)]
+
+    def insert_or_update(self, *, table, columns, values):
+        assert table == 'tr_entities' and columns == ('kind','id','body','updated_at')
+        for kind, identity, body, _ in values:
+            self.rows[kind,identity] = body
+
+
+def test_daily_cap_concurrent_instances():
+    db = Database()
+    db.rows[CONTROL,'2026-10-06/cap-v1'] = json.dumps(dict(v=1,limit=100000,reserved=99900,updated_at_us=0))
+    def attempt(_):
+        return EvidenceStore(db).reserve('2026-10-06', time.monotonic()+1)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(attempt,range(2))) == [0,100]
+    assert json.loads(db.rows[CONTROL,'2026-10-06/cap-v1'])['reserved'] == 100000
+    assert attempt(0) == 0
+
+
+def sample_row():
+    ctx = context()
+    return sample(ctx, compare(wire(),ctx,[signer().trusted]), observed_us=NOW*1000000,
+        router_us=1, comparator_us=1, booking_us=1, instance='00000000-0000-0000-0000-000000000001', revision='a'*40)
+
+
+def test_first_sample_wins_and_conflicts():
+    db, row = Database(), sample_row()
+    store = EvidenceStore(db)
+    identity = '2026-10-06/auth-v1'
+    deadline = time.monotonic()+1
+    assert store.insert_sample(identity,row,deadline) == 'inserted'
+    assert store.insert_sample(identity,row,deadline) == 'duplicate'
+    row['payload_hash'] = '0'*64
+    assert store.insert_sample(identity,row,deadline) == 'conflict'
+    row['booking']['attempted_kind'] = 'refund'
+    row['classification'] = 'requires_review'
+    row['reason_codes'] = ['winner_polarity']
+    row['booked_minus_frozen'] = row['booked_minus_rebuilt'] = None
+    assert store.insert_sample(identity,row,deadline) == 'winner_polarity'
+    assert json.loads(db.rows[SAMPLE,identity]) == sample_row()
+
+
+def test_cumulative_flush_monotonic_and_partition():
+    db = Database()
+    counters = Counters('us-central1','a'*40,clock=lambda:NOW)
+    dims = dimensions('openai','responses',True)
+    for field in ('settle_attempts','observed_attempts','observed_unknown'):
+        counters.increment(dims,field)
+    identity, first = counters.snapshot()[0]
+    validate_counter(identity,first)
+    second = copy.deepcopy(first)
+    second['sequence'] += 1
+    store = EvidenceStore(db)
+    for row in (second,first,second):
+        store.flush(identity,row,time.monotonic()+1)
+    assert json.loads(db.rows[COUNTER,identity]) == second
+    broken = copy.deepcopy(first)
+    broken['counts'][0]['observed_attempts'] += 1
+    with pytest.raises(ValueError,match='partition'):
+        validate_counter(identity,broken)
+
+
+def test_day_reads_are_bounded_and_exact():
+    sql, params, types = day_statement(SAMPLE,'2026-10-06','2026-10-06/auth',200)
+    assert params == dict(kind=SAMPLE,day_start='2026-10-06/',next_day_start='2026-10-07/',after_id='2026-10-06/auth',page_size=200)
+    assert 'LIKE' not in sql and 'JSON' not in sql and 'id>@after_id' in sql
+    assert set(types) == set(params)
+    for kwargs in ({'kind':'other'}, {'page_size':201}, {'after_id':'2026-10-05/x'}):
+        with pytest.raises(ValueError):
+            day_statement(**{'kind':SAMPLE,'day':'2026-10-06',**kwargs})
+
+
+def test_report_cannot_start_from_empty_counter_or_null_samples():
+    for rows in ([],[dict(kind=SAMPLE,id='2026-10-06/auth-v1',body=sample_row())]):
+        result = report(rows,['2026-10-06'],{})
+        assert result['status'] == 'BLOCKED' and result['clean_window_start_us'] is None
+        assert {r['criterion']:r['status'] for r in result['exit_criteria']} == {
+            'seven_days_admission_off':'BLOCKED','denominators_and_diagnostics':'BLOCKED',
+            'zero_unexplained_all_evaluable':'BLOCKED','shared_fixtures':'BLOCKED',
+            'frozen_pricing_crash_mutations':'BLOCKED','d2_d3_capacity_slo':'BLOCKED',
+            'policy_rollback_status':'BLOCKED','rare_cases':'BLOCKED'}
+
+
+def test_percentiles_retain_nulls_and_signed_deltas():
+    assert percentiles([None,1,2,3,None]) == dict(count=3,null_count=2,p50=2,p95=3,p99=3)
+    assert [delta_bin(v) for v in (-1001,-11,-1,0,1,10,1000)] == ['->1000','-11-100','-1','0','+1','+2-10','+101-1000']
+
+
+def test_report_rejects_damaged_evidence():
+    row = sample_row()
+    row['python_micro'] = '2'
+    with pytest.raises(ValueError):
+        report([dict(kind=SAMPLE,id='2026-10-06/auth-v1',body=row)],['2026-10-06'],{})
+
+
+def synthetic_window():
+    import datetime as dt
+    import hashlib
+
+    from scripts.async_settle.shadow_report import EXTERNAL_GATES
+    from trusted_router.async_settle_shadow_binding import FIXTURE_SHA256
+    from trusted_router.detached_jws import canonical
+
+    days = [(dt.date(2026,10,6)+dt.timedelta(days=n)).isoformat() for n in range(8)]
+    proof = {gate:'a'*64 for gate in EXTERNAL_GATES}
+    proof.update(fixture_sha256=FIXTURE_SHA256,instance_boot_ids_by_day={})
+    rows = []
+    for day in days:
+        start = int(dt.datetime.fromisoformat(day).replace(tzinfo=dt.UTC).timestamp())
+        counter = Counters('us-central1','a'*40,clock=lambda start=start:start)
+        dims = dimensions('openai','chat.completions',False)
+        if day == days[0]:
+            for name in ('settle_attempts','observed_attempts','observed_eligible','evaluable','exact'):
+                counter.increment(dims,name)
+            counter.increment(dims,'samples_inserted')
+            counter.increment(dims,'comparison_attempts')
+            counter._day()['admission_observer']['prediction_yes'] = 1
+        else:
+            counter.increment(dims,'authorize_attempts',0)
+        identity,body = counter.snapshot(closed=True)[0]
+        body['flushed_at_us'] = (start+86400)*1000000
+        rows.append(dict(kind=COUNTER,id=identity,body=body))
+        proof['instance_boot_ids_by_day'][day] = [counter.instance]
+        rows.append(dict(kind=CONTROL,id=day+'/manifest-v1',body=dict(v=1,day=day,
+            instance_boot_ids=[counter.instance],router_revisions=['a'*40],go_revisions=[sample_row()['deployment']['go_revision']],
+            configuration_sha256='c'*64,admission_disabled_from_us=start*1000000,
+            admission_disabled_until_us=(start+86400)*1000000,first_evidence_at_us=None,
+            completeness='complete',gap_intervals=[],proof_manifest_sha256=None)))
+    digest = hashlib.sha256(canonical(proof)).hexdigest()
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = digest
+    value = sample_row()
+    value['deployment']['instance'] = proof['instance_boot_ids_by_day'][days[0]][0]
+    value['admission'].update(prediction='yes',reason='eligible',tier=2,pending_micro=0,cap_micro=25000000,
+                              workspace_age_us=1000,health_age_us=1000,health_p95_us=0)
+    rows.append(dict(kind=SAMPLE,id='2026-10-06/auth-v1',body=value))
+    return rows,days,proof
+
+
+def test_positive_clock_requires_604800_seconds_and_complete_roster():
+    rows,days,proof = synthetic_window()
+    result = report(rows,days,proof)
+    assert result['status'] == 'PASS' and result['continuous_seconds'] == 691199
+    assert result['clean_window_start_us'] == NOW*1000000
+    # Seven UTC filenames are only 604799 seconds from the first positive sample.
+    short = report(rows,days[:7],proof)
+    assert short['status'] == 'BLOCKED' and short['continuous_seconds'] == 604799
+    for damage in ('unclosed','mismatch','roster','counter_missing'):
+        broken = copy.deepcopy(rows)
+        if damage == 'unclosed':
+            broken[0]['body']['closed'] = False
+        elif damage == 'mismatch':
+            broken[0]['body']['last_mismatch_at_us'] = NOW*1000000
+        elif damage == 'roster':
+            broken[1]['body']['instance_boot_ids'] = []
+        else:
+            broken.pop(0)
+        damaged = report(broken,days,proof)
+        assert damaged['status'] == 'BLOCKED' and damaged['clean_window_start_us'] is None
+
+
+def test_report_restarts_only_after_restored_coverage_and_reviewed_fix():
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+    rows,days,proof = synthetic_window()
+    rows[0]['body']['last_mismatch_at_us'] = NOW*1000000
+    later = copy.deepcopy(rows[-1])
+    later['body']['observed_at_us'] = (NOW+86400)*1000000
+    later['body']['authorization_id'] = 'auth-after-fix'
+    later['body']['deployment']['instance'] = proof['instance_boot_ids_by_day'][days[1]][0]
+    later['body']['deployment']['router_revision'] = 'b'*40
+    later['id'] = later['body']['authorization_day']+'/auth-after-fix'
+    rows.append(later)
+    rows[2]['body']['samples_inserted'] = rows[2]['body']['comparison_attempts'] = 1
+    rows[2]['body']['admission_observer']['prediction_yes'] = 1
+    for row in rows:
+        if row['kind'] == COUNTER and row['id'].split('/')[0] != days[0]:
+            row['body']['router_revision'] = 'b'*40
+        if row['kind'] == CONTROL and row['body']['day'] != days[0]:
+            row['body']['router_revisions'] = ['b'*40]
+    assert report(rows,days,proof)['clean_window_start_us'] is None
+    proof['resolved_mismatches'] = [dict(at_us=NOW*1000000,revision='a'*40,fixed_revision='b'*40,
+        serving_since_us=(NOW+86400)*1000000,artifact_sha256='d'*64)]
+    digest = hashlib.sha256(canonical(proof)).hexdigest()
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = digest
+    result = report(rows,days,proof)
+    assert result['clean_window_start_us'] == (NOW+86400)*1000000
+    assert result['resets'] == [dict(at_us=NOW*1000000,revision='a'*40,reason='counter_mismatch',resolved_at_us=(NOW+86400)*1000000,fixed_revision='b'*40)]
+    assert result['continuous_seconds'] == 604799 and result['status'] == 'BLOCKED'
+    # Coverage gaps need a fully covered later day, never an in-memory clear.
+    rows[0]['body']['first_gap_at_us'] = NOW*1000000
+    assert report(rows,days,proof)['clean_window_start_us'] == (NOW+86400)*1000000
+
+
+def test_report_prints_source_builds_and_usage_vectors():
+    from tests.test_async_settle_shadow import FIXTURE
+    rows, days, proof = synthetic_window()
+    output = report(rows, days, proof)
+    expected = dict(count=1,null_count=0,p50=1,p95=1,p99=1)
+    assert (output['source_revisions'],output['usage']['raw_usage']['input_tokens'],output['usage']['legacy_usage']['total_prompt_tokens']) == (
+        dict(router=['a'*40],go=[FIXTURE['go_revision']]),expected,expected)

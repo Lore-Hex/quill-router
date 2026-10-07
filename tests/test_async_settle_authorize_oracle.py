@@ -47,9 +47,10 @@ def test_flag_preserves_frozen_main_durable_effect_and_operations(enabled, shape
 @pytest.mark.parametrize('enabled', [False, True])
 @pytest.mark.usefixtures('fixed_operation_catalog')
 @pytest.mark.parametrize('optin', [False, True])
-def test_live_authorize_metadata_after_identical_hold(monkeypatch, enabled, optin):
+@pytest.mark.parametrize('shadow_workspaces', ['', 'nonmember'])
+def test_live_authorize_metadata_after_identical_hold(monkeypatch, enabled, optin, shadow_workspaces):
     store, db, key = _seed_typed_gateway_store()
-    config = settings()
+    config = settings(async_settle_shadow_workspaces=shadow_workspaces)
     config.async_settle_enabled = enabled
     rt = runtime()
     calls = []

@@ -25,7 +25,10 @@
     "storage_gcp_settle_outbox:intent_insert_statements": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
-    "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0"
+    "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
+    "storage_gcp_async_settle_shadow:finalization_statement": "772a1eab0d74d27b07c415da00dcdca428bfb03e3678b67a7dc3ec09d4d1b30d",
+    "storage_gcp_async_settle_shadow:point_statement": "cc0bdd46c5c3f8a78ba4f2f72976589affbc9778a9bf1a2010343cf7c200b959",
+    "storage_gcp_async_settle_shadow:day_statement": "54fd0a5da44fdba51a844994f9da50373e93bf839c79662202b7523378e81b24"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4289,6 +4292,44 @@
           }
         }
       ]
+    },
+    "storage_gcp_async_settle_shadow:finalization_statement:1": {
+      "fingerprint": "772a1eab0d74d27b07c415da00dcdca428bfb03e3678b67a7dc3ec09d4d1b30d",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "authorization_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_settle_shadow:point_statement:1": {
+      "fingerprint": "cc0bdd46c5c3f8a78ba4f2f72976589affbc9778a9bf1a2010343cf7c200b959",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_settle_shadow:day_statement:1": {
+      "fingerprint": "54fd0a5da44fdba51a844994f9da50373e93bf839c79662202b7523378e81b24",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "day_start": "STRING",
+            "next_day_start": "STRING",
+            "after_id": "STRING",
+            "page_size": "INT64"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4464,7 +4505,8 @@
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
     "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
-    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2"
+    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
+    "storage_gcp_async_settle_shadow:EvidenceStore.query": "09f168935b06cc6c0308e0666c696c29889acebff22e4450cbffef2ff244e92c"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

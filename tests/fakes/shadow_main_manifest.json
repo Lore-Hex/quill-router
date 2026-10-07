@@ -1,0 +1,30 @@
+{
+  "revision": "887e08a8037a8e587a942b2bbcc10b993f57defc",
+  "sources": {
+    "routes/internal/gateway.py": {
+      "fixture": "tests/fakes/shadow_main_routes_internal_gateway.py.txt",
+      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f",
+      "ast_sha256": "ff52ed959ad0c8f22635607319660384faaf8d6d2ac8bb9f5c99822e29340bac"
+    },
+    "services/async_settle.py": {
+      "fixture": "tests/fakes/shadow_main_services_async_settle.py.txt",
+      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297",
+      "ast_sha256": "800b7364b17d8c412afc4cb14f7573541ac3baf00b6dfca0163951846fc8c691"
+    },
+    "stage_d.py": {
+      "fixture": "tests/fakes/shadow_main_stage_d.py.txt",
+      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b",
+      "ast_sha256": "969105e2a50afd37b07adf53e113ca60d856027c060d5cd58529d1d766c47870"
+    },
+    "money.py": {
+      "fixture": "tests/fakes/shadow_main_money.py.txt",
+      "sha256": "d6abdb139ed01852ff0235ce9f4ce3ea6c781a6713391f3ee318986c4a8445eb",
+      "ast_sha256": "cfd40db5ad3b5ece35a8301589ad323f89e53597ac01c962809ab0c3cbf3adf5"
+    },
+    "services/settle_outbox_apply.py": {
+      "fixture": "tests/fakes/shadow_main_services_settle_outbox_apply.py.txt",
+      "sha256": "636a8b6a48ee61bdd0d2f47d3e158aff73ce6da7b9f0e125b9459275e2bcb9de",
+      "ast_sha256": "f531dc96b0a5e11c6b8e1d01c46b45bfd9c0a5cc0b549b4892f02cb8c366ca6b"
+    }
+  }
+}
