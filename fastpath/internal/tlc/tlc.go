@@ -5,6 +5,7 @@ package tlc
 
 import (
 	"bufio"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -697,22 +698,95 @@ func (p *parser) record() (Value, error) {
 
 // A shadow's tests declare each configuration they run in Go and write its
 // text for TLC themselves, so nothing here reads a .cfg. A declaration of a
-// configuration proofs/ checks is bound to its file by CheckAssumption, which
-// has TLC itself read the file.
+// configuration proofs/ checks is bound to its file by BindConfiguration,
+// which has TLC itself read the file.
 
-// CheckAssumption has TLC read proofs/<cfgFile> as it is and judge
-// assumption, a formula over the spec's constants, such as a declaration of
-// them. TLC runs a module of its own that extends the spec, unchanged, and
-// assumes the formula, printing a mark only if it holds; one step of
-// simulation evaluates every ASSUME first. It returns an error unless TLC
-// prints the mark and finishes, so an assumption TLC never evaluated is not
-// taken for a true one.
-func CheckAssumption(spec, cfgFile, assumption string) error {
+// BindConfiguration checks that dir/<cfgFile>, as TLC reads it, sets up the
+// model a test declares for dir/<spec>.tla: the test's constants and nothing
+// else that changes the graph TLC explores, so the test's own text for the
+// configuration explores the same graph. TLC's parser reads the file
+// (ConfigFacts.java). It must name SPECIFICATION Spec, and assign exactly
+// the constants named, none with parameters; a name assigned that is not a
+// constant overrides a definition. Invariants and properties, which change no
+// graph, may be anything, and so may CHECK_DEADLOCK. Every other setting is
+// refused: a substitution (<-), a constraint, a symmetry, a view, or
+// anything else TLC reads, a keyword ConfigFacts.java does not know included.
+// Then
+// TLC judges declaration, a formula over the constants, against the file
+// (checkAssumption). For proofs/'s own files, dir is ProofsDir.
+func BindConfiguration(dir, spec, cfgFile string, constants []string, declaration string) error {
 	proofs, err := ProofsDir()
 	if err != nil {
 		return err
 	}
-	return checkAssumption(proofs, proofs, spec, cfgFile, assumption)
+	facts, err := configFacts(proofs, filepath.Join(dir, cfgFile))
+	if err != nil {
+		return err
+	}
+	declared := map[string]bool{}
+	for _, name := range constants {
+		declared[name] = true
+	}
+	assigned := map[string]bool{}
+	sawSpec := false
+	var problems []string
+	for _, f := range facts {
+		switch {
+		case len(f) == 2 && f[0] == "spec" && f[1] == "Spec" && !sawSpec:
+			sawSpec = true
+		case len(f) == 3 && f[0] == "constant" && declared[f[1]] && f[2] == "0" && !assigned[f[1]]:
+			assigned[f[1]] = true
+		case len(f) == 3 && f[0] == "constant" && !declared[f[1]]:
+			problems = append(problems, f[1]+" is assigned, and is no constant the test declares: it overrides a definition")
+		case len(f) == 2 && (f[0] == "modconstants" || f[0] == "modoverrides") && f[1] == "0":
+		case len(f) == 2 && (f[0] == "invariant" || f[0] == "property"):
+		case len(f) == 2 && f[0] == "checkdeadlock" && (f[1] == "true" || f[1] == "false"):
+		default:
+			problems = append(problems, strings.Join(f, " "))
+		}
+	}
+	if !sawSpec {
+		problems = append(problems, "no SPECIFICATION Spec")
+	}
+	for _, name := range constants {
+		if !assigned[name] {
+			problems = append(problems, name+" is not assigned")
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s sets more than the constants the test declares: %s", cfgFile, strings.Join(problems, "; "))
+	}
+	return checkAssumption(proofs, dir, spec, cfgFile, declaration)
+}
+
+//go:embed ConfigFacts.java
+var configFactsJava []byte
+
+// configFacts runs ConfigFacts.java on the .cfg at path: what TLC's parser
+// reads there, each fact its fields.
+func configFacts(proofs, path string) ([][]string, error) {
+	java, err := exec.LookPath("java")
+	if err != nil {
+		return nil, fmt.Errorf("java is needed to run TLC: %w", err)
+	}
+	work, err := os.MkdirTemp("", "tlc-config-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(work)
+	program := filepath.Join(work, "ConfigFacts.java")
+	if err := os.WriteFile(program, configFactsJava, 0o644); err != nil {
+		return nil, err
+	}
+	out, err := exec.Command(java, "-Xmx1g", "-cp", filepath.Join(proofs, "tla2tools.jar"), program, path).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("TLC's parser did not read %s (%v):\n%s", path, err, out)
+	}
+	var facts [][]string
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		facts = append(facts, strings.Split(line, "\t"))
+	}
+	return facts, nil
 }
 
 // assumptionHolds is what the module TLC runs prints when the assumption

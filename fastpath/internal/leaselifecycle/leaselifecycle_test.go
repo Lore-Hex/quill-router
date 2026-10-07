@@ -408,8 +408,8 @@ func TestTypeOKRefusesWhatTheSpecsTypesDoNot(t *testing.T) {
 
 // cfgInstance is the instance proofs/LeaseLifecycle.cfg checks, its constants
 // written out here rather than read from the file. TestStateCountMatchesTLC
-// has TLC check that the file's constants are these (declares), and fails
-// until a change to the file is made here too.
+// binds the file to it (bind), and fails until a change to the file is made
+// here too.
 var cfgInstance = Config{
 	MaxHolds: 3, LeaseSize: 2, Window: 3, Skew: 2, MaxLife: 2, Grace: 2, CacheAge: 1, LastRenew: 3, MaxRestarts: 2,
 }
@@ -422,7 +422,7 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	if err := cfgInstance.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if err := tlc.CheckAssumption("LeaseLifecycle", "LeaseLifecycle.cfg", declares(cfgInstance)); err != nil {
+	if err := bind("LeaseLifecycle.cfg", cfgInstance); err != nil {
 		t.Fatal(err)
 	}
 	counts, err := tlc.GuardTableStates("LeaseLifecycle")
@@ -437,6 +437,23 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	if len(seen) != want {
 		t.Fatalf("the shadow reaches %d distinct states, TLC %d", len(seen), want)
 	}
+}
+
+// specConstants are the constants LeaseLifecycle declares: a configuration of
+// it assigns them, and nothing else.
+var specConstants = []string{
+	"MaxHolds", "LeaseSize", "Window", "Skew", "MaxLife", "Grace", "CacheAge", "LastRenew", "MaxRestarts",
+}
+
+// bind has TLC check that proofs/<file> sets up c's model: TLC's parser finds
+// the file assigns the spec's constants and sets nothing else that changes
+// the graph TLC explores, and TLC finds the constants are c's (declares).
+func bind(file string, c Config) error {
+	proofs, err := tlc.ProofsDir()
+	if err != nil {
+		return err
+	}
+	return tlc.BindConfiguration(proofs, "LeaseLifecycle", file, specConstants, declares(c))
 }
 
 // declares is the formula that a configuration has c's constants.
@@ -454,7 +471,7 @@ func declares(c Config) string {
 func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
 	wrong := cfgInstance
 	wrong.MaxHolds = 2
-	if err := tlc.CheckAssumption("LeaseLifecycle", "LeaseLifecycle.cfg", declares(wrong)); err == nil {
+	if err := bind("LeaseLifecycle.cfg", wrong); err == nil {
 		t.Fatal("a declaration with MaxHolds 2 is taken for LeaseLifecycle.cfg's")
 	}
 }

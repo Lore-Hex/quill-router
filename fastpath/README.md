@@ -6,11 +6,11 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
 
 ## Layout
 
-- `internal/leaselifecycle` and `internal/terminalorder`: the shadows of
-  `proofs/LeaseLifecycle.tla` and `proofs/TerminalOrder.tla`. Each action of a
+- `internal/leaselifecycle`, `internal/terminalorder` and
+  `internal/auditorcommit`: the shadows of `proofs/LeaseLifecycle.tla`,
+  `proofs/TerminalOrder.tla` and `proofs/AuditorCommit.tla`. Each action of a
   spec is a function under the spec's name, and each invariant a method.
-  `AuditorCommit` gets a package of its own (`internal/auditorcommit`) when it
-  is written; `proofs/manifest.toml` names each spec's package and tests.
+  `proofs/manifest.toml` names each spec's package and tests.
 - `internal/tlc`: for tests only. It runs the pinned TLC from `proofs/`, reads
   the state graph TLC writes with `-dump dot,actionlabels` as it streams, has
   TLC judge whether a `.cfg` has the constants a test declares, and reads the
@@ -22,11 +22,14 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   from every state the shadow takes the same actions to the same states. The
   tests do this for small instances and for every configuration `proofs/`
   checks.
-- The tests declare each configuration in Go rather than read its `.cfg`.
-  TLC binds a declaration to its file (`tlc.CheckAssumption`): it reads the
-  file as it is and evaluates the declaration as an assumption. The shadow
-  must also reach the count of distinct states in the spec's guard table
-  (`[states]` in `proofs/<Spec>.guards.toml`).
+- The tests declare each configuration in Go rather than read its `.cfg`,
+  and TLC binds each declaration to its file (`tlc.BindConfiguration`). TLC's
+  own parser reads the file, which may assign the spec's constants and list
+  invariants and properties, and nothing else that changes the graph TLC
+  explores: no override of a definition, constraint, symmetry or view. TLC
+  then evaluates the declaration as an assumption against the file. The
+  shadow must also reach the count of distinct states in the spec's guard
+  table (`[states]` in `proofs/<Spec>.guards.toml`).
 - Random walks on a larger instance check every invariant and step property.
 - Controls: a test changes the shadow by one step and checks that the
   comparison notices, and a declaration one constant off is refused.
@@ -43,4 +46,7 @@ The whole-graph comparisons are in files built only without the race
 detector (`//go:build !race`): they are single-threaded and some ten times
 slower under it. CI runs `go test -race ./...` without them and `go test
 ./...` with them. A large instance's graph is read as it streams
-(`tlc.Compare`), and TLC runs with a 1 GB heap.
+(`tlc.Compare`), and TLC runs with a 1 GB heap. AuditorCommit's take about
+five minutes on a laptop and longer on a CI runner, past Go's default timeout
+of ten minutes for a package's tests, so CI passes `-timeout 30m`, as a slower
+machine should too.

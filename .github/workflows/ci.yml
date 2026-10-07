@@ -423,7 +423,7 @@ jobs:
   # so this job needs Java as well as Go.
   fastpath:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: fastpath
@@ -450,8 +450,11 @@ jobs:
       # times slower under the race detector. The files that hold them say
       # `//go:build !race`, so the step above leaves them out and this one,
       # without the race detector, runs them with everything else.
+      # AuditorCommit's five configurations take about five minutes on a
+      # laptop and ran past ten here beside the other packages, Go's default
+      # timeout for a package's tests.
       - name: go test, with the comparisons against TLC
-        run: go test -count=1 ./...
+        run: go test -count=1 -timeout 30m ./...
 
   proofs:
     runs-on: ubuntu-latest

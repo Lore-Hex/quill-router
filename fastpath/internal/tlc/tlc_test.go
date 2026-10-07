@@ -194,3 +194,65 @@ func TestCheckAssumptionTakesOnlyWhatTLCFindsTrue(t *testing.T) {
 		}
 	}
 }
+
+// leaseLifecycleConstants are the constants proofs/LeaseLifecycle.cfg assigns.
+var leaseLifecycleConstants = []string{
+	"MaxHolds", "LeaseSize", "Window", "Skew", "MaxLife", "Grace", "CacheAge", "LastRenew", "MaxRestarts",
+}
+
+// TestBindConfigurationRefusesWhatChangesTheModel: a copy of LeaseLifecycle's
+// files is bound as it is, and refused once anything that changes the graph
+// TLC explores is appended to its .cfg, an override of a definition among
+// them, or once the constants the test names differ from the file's.
+func TestBindConfigurationRefusesWhatChangesTheModel(t *testing.T) {
+	proofs, err := ProofsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyWith := func(more string) string {
+		dir := t.TempDir()
+		for name, extra := range map[string]string{"LeaseLifecycle.tla": "", "LeaseLifecycle.cfg": more} {
+			text, err := os.ReadFile(filepath.Join(proofs, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), append(text, extra...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	bind := func(dir string, constants []string) error {
+		return BindConfiguration(dir, "LeaseLifecycle", "LeaseLifecycle.cfg", constants, "MaxHolds = 3")
+	}
+	// The file as it is, and with settings that change no graph.
+	for _, more := range []string{"", "\nCHECK_DEADLOCK FALSE\n", "\nINVARIANT TypeOK\n"} {
+		if err := bind(copyWith(more), leaseLifecycleConstants); err != nil {
+			t.Fatalf("with %q: %v", more, err)
+		}
+	}
+	// Each refusal must name what it refuses, or a copy refused for another
+	// reason, such as one TLC cannot parse, would pass here too.
+	refused := func(dir string, constants []string, want string) {
+		t.Helper()
+		err := bind(dir, constants)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want a refusal naming %q, got %v", want, err)
+		}
+	}
+	for more, want := range map[string]string{
+		"\nCONSTANT HoldIds = {1}\n":          "HoldIds is assigned, and is no constant the test declares",
+		"\nCONSTANTS MaxHolds <- LeaseSize\n": "override MaxHolds LeaseSize",
+		"\nCONSTRAINT TypeOK\n":               "constraint TypeOK",
+		"\nACTION_CONSTRAINT TypeOK\n":        "actionconstraint TypeOK",
+		"\nSYMMETRY TypeOK\n":                 "symmetry TypeOK",
+		"\nVIEW TypeOK\n":                     "view TypeOK",
+		"\nINIT Init\n":                       "init Init",
+		"\n_POSSIBLE TypeOK\n":                "possible TypeOK",
+	} {
+		refused(copyWith(more), leaseLifecycleConstants, want)
+	}
+	dir := copyWith("")
+	refused(dir, leaseLifecycleConstants[1:], "MaxHolds is assigned, and is no constant the test declares")
+	refused(dir, append([]string{"MaxOwners"}, leaseLifecycleConstants...), "MaxOwners is not assigned")
+}

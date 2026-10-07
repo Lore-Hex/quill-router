@@ -95,7 +95,7 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
-		if err := tlc.CheckAssumption("TerminalOrder", file, declares(c)); err != nil {
+		if err := bind(file, c); err != nil {
 			t.Fatal(err)
 		}
 		want, ok := counts[file]
@@ -129,7 +129,7 @@ func TestWholeConfigurationsMatchTLC(t *testing.T) {
 func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
 	wrong := cfgInstances["TerminalOrder.cfg"]
 	wrong.Declared = []bool{false, false}
-	if err := tlc.CheckAssumption("TerminalOrder", "TerminalOrder.cfg", declares(wrong)); err == nil {
+	if err := bind("TerminalOrder.cfg", wrong); err == nil {
 		t.Fatal("a declaration with no declared stream is taken for TerminalOrder.cfg's")
 	}
 }
