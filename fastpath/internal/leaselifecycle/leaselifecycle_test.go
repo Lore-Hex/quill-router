@@ -407,9 +407,9 @@ func TestTypeOKRefusesWhatTheSpecsTypesDoNot(t *testing.T) {
 }
 
 // cfgInstance is the instance proofs/LeaseLifecycle.cfg checks, its constants
-// written out here rather than read from the file. A change to the file's
-// constants changes the guard table's count of its states, which fails
-// TestStateCountMatchesTLC until this is changed to match.
+// written out here rather than read from the file. TestStateCountMatchesTLC
+// has TLC check that the file's constants are these (declares), and fails
+// until a change to the file is made here too.
 var cfgInstance = Config{
 	MaxHolds: 3, LeaseSize: 2, Window: 3, Skew: 2, MaxLife: 2, Grace: 2, CacheAge: 1, LastRenew: 3, MaxRestarts: 2,
 }
@@ -420,6 +420,9 @@ var cfgInstance = Config{
 // way.
 func TestStateCountMatchesTLC(t *testing.T) {
 	if err := cfgInstance.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tlc.CheckAssumption("LeaseLifecycle", "LeaseLifecycle.cfg", declares(cfgInstance)); err != nil {
 		t.Fatal(err)
 	}
 	counts, err := tlc.GuardTableStates("LeaseLifecycle")
@@ -433,6 +436,26 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	seen, _ := explore(t, cfgInstance, cfgInstance.Next, false)
 	if len(seen) != want {
 		t.Fatalf("the shadow reaches %d distinct states, TLC %d", len(seen), want)
+	}
+}
+
+// declares is the formula that a configuration has c's constants.
+func declares(c Config) string {
+	return fmt.Sprintf("MaxHolds = %d /\\ LeaseSize = %d /\\ Window = %d /\\ Skew = %d /\\ MaxLife = %d /\\ "+
+		"Grace = %d /\\ CacheAge = %d /\\ LastRenew = %d /\\ MaxRestarts = %d",
+		c.MaxHolds, c.LeaseSize, c.Window, c.Skew, c.MaxLife, c.Grace, c.CacheAge, c.LastRenew, c.MaxRestarts)
+}
+
+// TestDeclarationsAreBoundToTheirFiles: a declaration that differs from its
+// .cfg in one constant is refused, even where the two reach as many states.
+// With MaxHolds 2 the model reaches the same 522,054 states as the file's 3,
+// since LeaseSize 2 bounds the open holds anyway, so no count would see it;
+// TLC reading the file does.
+func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
+	wrong := cfgInstance
+	wrong.MaxHolds = 2
+	if err := tlc.CheckAssumption("LeaseLifecycle", "LeaseLifecycle.cfg", declares(wrong)); err == nil {
+		t.Fatal("a declaration with MaxHolds 2 is taken for LeaseLifecycle.cfg's")
 	}
 }
 

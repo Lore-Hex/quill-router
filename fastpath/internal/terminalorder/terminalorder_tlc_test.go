@@ -95,6 +95,9 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
+		if err := tlc.CheckAssumption("TerminalOrder", file, declares(c)); err != nil {
+			t.Fatal(err)
+		}
 		want, ok := counts[file]
 		if !ok {
 			t.Fatalf("the guard table gives no count for %s: %v", file, counts)
@@ -103,5 +106,15 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		if len(seen) != want {
 			t.Errorf("%s: the shadow reaches %d distinct states, TLC %d", file, len(seen), want)
 		}
+	}
+}
+
+// TestDeclarationsAreBoundToTheirFiles: a declaration that differs from its
+// .cfg is refused by TLC reading the file.
+func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
+	wrong := cfgInstances["TerminalOrder.cfg"]
+	wrong.Declared = []bool{false, false}
+	if err := tlc.CheckAssumption("TerminalOrder", "TerminalOrder.cfg", declares(wrong)); err == nil {
+		t.Fatal("a declaration with no declared stream is taken for TerminalOrder.cfg's")
 	}
 }

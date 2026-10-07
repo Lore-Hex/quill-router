@@ -696,9 +696,62 @@ func (p *parser) record() (Value, error) {
 // --- What proofs/ records
 
 // A shadow's tests declare each configuration they run in Go and write its
-// text for TLC themselves, so nothing here reads a .cfg. The link to a .cfg
-// in proofs/ is its guard table's count of states, which changes when the
-// .cfg does.
+// text for TLC themselves, so nothing here reads a .cfg. A declaration of a
+// configuration proofs/ checks is bound to its file by CheckAssumption, which
+// has TLC itself read the file.
+
+// CheckAssumption has TLC read proofs/<cfgFile> as it is and judge
+// assumption, a formula over the spec's constants, such as a declaration of
+// them: it adds `ASSUME assumption` to a copy of the spec and runs one step of
+// simulation, which evaluates every ASSUME first. It returns an error unless
+// TLC finds the assumption true of the file's constants.
+func CheckAssumption(spec, cfgFile, assumption string) error {
+	proofs, err := ProofsDir()
+	if err != nil {
+		return err
+	}
+	java, err := exec.LookPath("java")
+	if err != nil {
+		return fmt.Errorf("java is needed to run TLC: %w", err)
+	}
+	text, err := SpecText(spec)
+	if err != nil {
+		return err
+	}
+	cfg, err := os.ReadFile(filepath.Join(proofs, cfgFile))
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last == "" || strings.Trim(last, "=") != "" {
+		return fmt.Errorf("%s.tla does not end with its ==== line", spec)
+	}
+	lines = append(lines[:len(lines)-1], "ASSUME "+assumption, lines[len(lines)-1])
+	work, err := os.MkdirTemp("", "tlc-assume-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
+	if err := os.WriteFile(filepath.Join(work, spec+".tla"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(work, spec+".cfg"), cfg, 0o644); err != nil {
+		return err
+	}
+	cmd := exec.Command(java, "-Xmx1g", "-cp", filepath.Join(proofs, "tla2tools.jar"), "tlc2.TLC",
+		"-simulate", "num=1", "-depth", "1", "-metadir", filepath.Join(work, "states"),
+		"-config", spec+".cfg", spec+".tla")
+	cmd.Dir = work
+	out, err := cmd.CombinedOutput()
+	if strings.Contains(string(out), "is false") {
+		return fmt.Errorf("TLC finds %s's constants are not %s", cfgFile, assumption)
+	}
+	if err != nil || strings.Contains(string(out), "Error:") || !strings.Contains(string(out), "Finished in") {
+		return fmt.Errorf("TLC did not judge the assumption (%v):\n%s", err, out)
+	}
+	return nil
+}
 
 var statesLine = regexp.MustCompile(`^"([^"]+)" = (\d+)$`)
 

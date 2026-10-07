@@ -70,9 +70,9 @@ INVARIANTS
 }
 
 // cfgInstances are the instances proofs/TerminalOrder*.cfg check, their
-// constants written out here rather than read from the files. A change to a
-// file's constants changes its guard table count, which fails
-// TestStateCountMatchesTLC until this is changed to match.
+// constants written out here rather than read from the files.
+// TestStateCountMatchesTLC has TLC check that each file's constants are these
+// (declares), and fails until a change to a file is made here too.
 var cfgInstances = map[string]Config{
 	"TerminalOrder.cfg": {
 		Auths: []string{"a1", "a2"}, Stream: []bool{true, false}, Declared: []bool{true, false}, MaxAppends: 2,
@@ -80,6 +80,23 @@ var cfgInstances = map[string]Config{
 	"TerminalOrder.undeclared.cfg": {
 		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{false}, MaxAppends: 1,
 	},
+}
+
+// declares is the formula that a configuration has c's constants, up to the
+// names of its model values, which the spec treats alike.
+func declares(c Config) string {
+	streams, declared := 0, 0
+	for a := range c.Auths {
+		if c.Stream[a] {
+			streams++
+		}
+		if c.Declared[a] {
+			declared++
+		}
+	}
+	return fmt.Sprintf("Cardinality(Auths) = %d /\\ Cardinality(Streams) = %d /\\ Cardinality(Declared) = %d /\\ "+
+		"Declared \\subseteq Streams /\\ Streams \\subseteq Auths /\\ MaxAppends = %d",
+		len(c.Auths), streams, declared, c.MaxAppends)
 }
 
 type step struct {
