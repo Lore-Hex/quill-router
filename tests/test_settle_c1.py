@@ -518,8 +518,14 @@ def test_new_payment_debt_conflicts_with_absence_guard(monkeypatch: pytest.Monke
     assert db.typed['tr_key_limit'][('key', 0)]['usage'] == 70
 
 
-@pytest.mark.parametrize('reserved,debt,expected', [(99, 0, 0), (100, 50, 0), (100, 0, 1)])
-def test_credit_guards_execute_without_fake_predicate_assertions(reserved: int, debt: int, expected: int) -> None:
+@pytest.mark.parametrize('reserved,debt,marked,expected', [
+    (99, 0, None, 0), (100, 50, None, 0), (100, 0, None, 1), (100, 0, False, 1),
+    # A row marked in debt is released by release_credit, which repays debt first.
+    (100, 0, True, 0),
+])
+def test_credit_guards_execute_without_fake_predicate_assertions(
+    reserved: int, debt: int, marked: bool | None, expected: int,
+) -> None:
     """Execute the portable predicate/arithmetic itself; guard deletion makes debt/underflow reachable."""
     import sqlite3
 
@@ -528,10 +534,12 @@ def test_credit_guards_execute_without_fake_predicate_assertions(reserved: int, 
     with sqlite3.connect(':memory:') as connection:
         connection.executescript('''
             CREATE TABLE tr_credit_balance(workspace_id TEXT, shard INTEGER,
-                                           reserved INTEGER, total_usage INTEGER);
+                                           reserved INTEGER, total_usage INTEGER, in_debt BOOLEAN);
             CREATE TABLE tr_trust_event(workspace_id TEXT, kind TEXT, unrecovered_micro INTEGER);
         ''')
-        connection.execute('INSERT INTO tr_credit_balance VALUES (?, 0, ?, 0)', ('workspace', reserved))
+        connection.execute(
+            'INSERT INTO tr_credit_balance VALUES (?, 0, ?, 0, ?)', ('workspace', reserved, marked)
+        )
         connection.execute('INSERT INTO tr_trust_event VALUES (?, ?, ?)', ('workspace', 'payment', debt))
         sql, params, _ = release_credit_no_debt_statement(param_types, 'workspace', 100, 70, shard=0)
         count = connection.execute(sql, params).rowcount

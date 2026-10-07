@@ -1285,47 +1285,56 @@ def reap_expired_reservations_result(
         advisory_credit_hold_micro,
         advisory_key_hold_micro,
     ) in rows:
-        result = _finalize_reaped_reservation_atomic(
-            database,
-            pt,
-            reservation_id=str(reservation_id),
-            reap_now=now,
-            guard_outbox=guard_active,
-            snapshot_booking_enabled=snapshot_booking_enabled,
-            operational_analytics_outbox=operational_analytics_outbox,
-            async_fence=async_fence,
-        )
-        if result.outcome == SettleOutcome.AUTHORIZATION_NOT_TYPED:
-            # Rolling legacy authorizations have no heartbeat columns. Preserve
-            # their existing zero-release behavior, now with the same strong
-            # expiry predicate that protects typed Stage D reservations.
-            legacy = settle_atomic(
+        # One reservation's failure is that reservation's error, never the
+        # end of the pass: the rows after it still expire and still hold credit.
+        try:
+            result = _finalize_reaped_reservation_atomic(
                 database,
                 pt,
                 reservation_id=str(reservation_id),
-                actual_micro=0,
-                settled_usage_type="Credits",
-                success=False,
+                reap_now=now,
                 guard_outbox=guard_active,
-                outbox_available=guard_active,
-                expires_before=now,
+                snapshot_booking_enabled=snapshot_booking_enabled,
+                operational_analytics_outbox=operational_analytics_outbox,
                 async_fence=async_fence,
             )
-            if legacy["outcome"] == SettleOutcome.SETTLED:
-                result = _ReapOneResult(
-                    outcome=SettleOutcome.SETTLED,
-                    released_hold_micro=max(
-                        int(advisory_credit_hold_micro or 0),
-                        int(advisory_key_hold_micro or 0),
-                    ),
-                    out_of_cohort=True,
+            if result.outcome == SettleOutcome.AUTHORIZATION_NOT_TYPED:
+                # Rolling legacy authorizations have no heartbeat columns. Preserve
+                # their existing zero-release behavior, now with the same strong
+                # expiry predicate that protects typed Stage D reservations.
+                legacy = settle_atomic(
+                    database,
+                    pt,
+                    reservation_id=str(reservation_id),
+                    actual_micro=0,
+                    settled_usage_type="Credits",
+                    success=False,
+                    guard_outbox=guard_active,
+                    outbox_available=guard_active,
+                    expires_before=now,
+                    async_fence=async_fence,
                 )
-            elif legacy["outcome"] == SettleOutcome.OUTBOX_GUARDED:
-                result = _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
-            elif legacy["outcome"] == SettleOutcome.ERROR:
-                result = _ReapOneResult(SettleOutcome.ERROR)
-            else:
-                result = _ReapOneResult(SettleOutcome.GUARD_LOST)
+                if legacy["outcome"] == SettleOutcome.SETTLED:
+                    result = _ReapOneResult(
+                        outcome=SettleOutcome.SETTLED,
+                        released_hold_micro=max(
+                            int(advisory_credit_hold_micro or 0),
+                            int(advisory_key_hold_micro or 0),
+                        ),
+                        out_of_cohort=True,
+                    )
+                elif legacy["outcome"] == SettleOutcome.OUTBOX_GUARDED:
+                    result = _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
+                elif legacy["outcome"] == SettleOutcome.ERROR:
+                    result = _ReapOneResult(SettleOutcome.ERROR)
+                else:
+                    result = _ReapOneResult(SettleOutcome.GUARD_LOST)
+        except Exception:
+            log.exception(
+                "gateway reap failed reservation_id=%s; continuing the pass",
+                reservation_id,
+            )
+            result = _ReapOneResult(SettleOutcome.ERROR)
         if result.outcome == SettleOutcome.NOT_ELIGIBLE:
             not_eligible += 1
             continue

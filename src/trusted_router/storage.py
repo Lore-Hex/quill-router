@@ -2107,6 +2107,17 @@ class InMemoryStore:
             self.stripe_events.add(event_id)
             self.trust_events[(workspace_id, event_id)] = trust_event
             available = int(amount_microdollars)
+            # Money coming in repays a negative balance first, and only what
+            # is left goes to unrecovered payment claims (fast-admission design
+            # section 4.7, as the Spanner store's credit rows do).
+            headroom = (
+                money.total_credits_microdollars
+                - money.total_usage_microdollars
+                - money.reserved_microdollars
+            )
+            repaid = min(max(available, 0), max(-headroom, 0))
+            money.total_credits_microdollars += repaid
+            available -= repaid
             for payment in sorted(
                 (
                     row

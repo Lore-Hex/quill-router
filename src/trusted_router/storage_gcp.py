@@ -151,6 +151,9 @@ from trusted_router.storage_gcp_counters import (
     distribute_credit_amount,
     key_usage_shard_count,
 )
+from trusted_router.storage_gcp_credit_debt import CreditRowsIncomplete
+from trusted_router.storage_gcp_credit_debt import cover_or_mark as cover_or_mark_credit
+from trusted_router.storage_gcp_credit_debt import take_inflow as take_credit_inflow
 from trusted_router.storage_gcp_credit_shards import (
     CreditShardConfigurationMissingError,
     CreditShardCountCache,
@@ -1865,6 +1868,40 @@ class SpannerStore:
         )
         return randomized_credit_shards(count)
 
+    def _heal_stale_debt_mark(self, workspace_id: str) -> bool:
+        """Clear a debt mark the workspace's balance no longer bears out.
+
+        A mark is stale when code that does not know it credited the workspace
+        without clearing it: older revisions during a rollout, or a rollback
+        and roll forward. Section 4.7: once the signed sum is not negative,
+        the negative rows are covered from the others and the mark is cleared
+        on every row. A snapshot finds it first, so a refusal of an unmarked
+        workspace pays one read and takes no lock. True if a mark was cleared.
+        """
+        pt = self._param_types
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT total_credits - total_usage - reserved, COALESCE(in_debt, FALSE) "
+                    "FROM tr_credit_balance WHERE workspace_id=@pk",
+                    params={"pk": workspace_id},
+                    param_types={"pk": pt.STRING},
+                )
+            )
+        if not any(bool(row[1]) for row in rows) or sum(int(row[0]) for row in rows) < 0:
+            return False
+
+        def txn(transaction: Any) -> bool:
+            squared = cover_or_mark_credit(
+                transaction, pt, workspace_id, now=dt.datetime.now(dt.UTC)
+            )
+            return not squared.marked
+
+        healed = bool(self._run_in_transaction(txn))
+        if healed:
+            log.warning("credit.debt_mark_healed workspace=%s", workspace_id)
+        return healed
+
     def _credit_rebalance_cooldown_allows(self, workspace_id: str) -> bool:
         from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
@@ -3302,21 +3339,41 @@ class SpannerStore:
             raise ValueError("credit_account_not_found")
         amount = int(amount_microdollars)
         shard_count = credit_shard_count(account)
-        absorbed = absorb_unrecovered_recovery_tx(
-            transaction,
-            self._param_types,
-            workspace_id=workspace_id,
-            amount_micro=amount,
-            shard_count=shard_count,
-            now=now,
-            read_entity_tx=self._read_entity_tx,
-            write_entity_tx=self._write_entity_trust_dml_tx,
-        )
-        deltas = distribute_credit_amount(
-            amount - absorbed,
-            shard_count,
-        )
-        for shard, delta in enumerate(deltas):
+        if amount >= 0:
+            # Money coming in repays the workspace's negative rows first, then
+            # unrecovered payment claims, and only then is spread (fast-admission
+            # design section 4.7, `credit_debt`).
+            try:
+                take_credit_inflow(
+                    transaction,
+                    self._param_types,
+                    workspace_id,
+                    amount,
+                    landing_shard=None,
+                    absorb=lambda offered: absorb_unrecovered_recovery_tx(
+                        transaction,
+                        self._param_types,
+                        workspace_id=workspace_id,
+                        amount_micro=offered,
+                        shard_count=shard_count,
+                        now=now,
+                        read_entity_tx=self._read_entity_tx,
+                        write_entity_tx=self._write_entity_trust_dml_tx,
+                    ),
+                    now=now,
+                    shard_count=shard_count,
+                )
+            except CreditRowsIncomplete as incomplete:
+                # A credit that cannot reach every configured shard would land
+                # somewhere it should not, or nowhere: roll the whole grant back.
+                raise RuntimeError(
+                    "missing authoritative tr_credit_balance shard "
+                    f"{incomplete.missing_shard} for workspace {workspace_id}"
+                ) from None
+            return
+        # A negative grant takes money out: spread it as before, then cover a
+        # row it left negative, or mark the rows.
+        for shard, delta in enumerate(distribute_credit_amount(amount, shard_count)):
             updated = credit_credit_shard(
                 transaction,
                 self._param_types,
@@ -3330,6 +3387,7 @@ class SpannerStore:
                     "missing authoritative tr_credit_balance shard "
                     f"{shard} for workspace {workspace_id}"
                 )
+        cover_or_mark_credit(transaction, self._param_types, workspace_id, now=now)
 
     def _write_entity_trust_dml_tx(
         self,
@@ -5345,15 +5403,35 @@ class SpannerStore:
         proactive_reload_done = False
         forced_reload_done = False
         cooldown_passed = False
+        debt_mark_checked = False
 
         def recover_credit(
             result: dict[str, Any], *, after_key_repair: bool = False,
         ) -> dict[str, Any]:
             nonlocal credit_shard_candidates, aggregate_exhaustion_proven
             nonlocal proactive_reload_done, forced_reload_done, cooldown_passed
+            nonlocal debt_mark_checked
             # run_tracked shares last_credit_candidates across both entries too.
             if result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS or not has_credit_candidate:
                 return result
+            if not debt_mark_checked:
+                # A stale debt mark (section 4.7) refuses a funded workspace on
+                # every shard, one shard or many. Heal it once per request,
+                # before anything below reads the shards.
+                debt_mark_checked = True
+                try:
+                    healed = self._heal_stale_debt_mark(workspace_id)
+                except Exception:
+                    log.warning(
+                        "credit debt-mark heal failed; keeping the refusal workspace=%s",
+                        workspace_id,
+                        exc_info=True,
+                    )
+                    healed = False
+                if healed:
+                    result = run_tracked(credit_shard_candidates)
+                    if result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS:
+                        return result
             from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
             # A bounded write-set rejection is cold. Refresh once so a remote

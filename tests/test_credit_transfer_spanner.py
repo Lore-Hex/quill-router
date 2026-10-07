@@ -270,13 +270,14 @@ def test_rejected_transfer_returns_the_exact_total_across_shards() -> None:
     store.resolve_credit_transfer(transfer_id="t-ret", outcome=credit_transfer.REJECTED)
 
     assert _spendable(database) == before
-    # The debit drained shards 2 and 1 and took 10 from shard 0; the refund
-    # spreads 80 over three shards (28/26/26, remainder to shard 0). Pinned
-    # exactly because conservation alone does not catch a refund that dumps the
-    # whole amount onto shard 0: the total would still be right while the
-    # workspace quietly loses the write-spreading that sharding exists to give
-    # it, recreating the hot row on every returned transfer.
-    assert _totals(database) == [48, 26, 26]
+    # The debit drained shards 0 and 1 and took 20 from shard 2, lowest shard
+    # first (section 4.7's lock order); the refund spreads 80 over three shards
+    # (28/26/26, remainder to shard 0). Pinned exactly because conservation
+    # alone does not catch a refund that dumps the whole amount onto shard 0:
+    # the total would still be right while the workspace quietly loses the
+    # write-spreading that sharding exists to give it, recreating the hot row
+    # on every returned transfer.
+    assert _totals(database) == [28, 26, 46]
 
 
 def test_delivered_transfer_never_touches_the_source_balance_again() -> None:
@@ -672,7 +673,7 @@ def test_a_refund_whose_shard_row_vanished_rolls_back_rather_than_part_paying() 
         amount_microdollars=80,
         destination="peer",
     )
-    assert _totals(database) == [20, 0, 0]
+    assert _totals(database) == [0, 0, 20]
     database.typed[CREDIT_BALANCE_TABLE].pop((WORKSPACE_ID, 2))
     before = _spendable(database)
 
@@ -682,7 +683,7 @@ def test_a_refund_whose_shard_row_vanished_rolls_back_rather_than_part_paying() 
         )
 
     # Nothing partial was committed: no shard took its share of the refund.
-    assert _totals(database) == [20, 0]
+    assert _totals(database) == [0, 0]
     assert _spendable(database) == before
     # Still escrowed, still queued, so a later pass can retry the refund.
     transfer = store.get_credit_transfer("t-shardgone")

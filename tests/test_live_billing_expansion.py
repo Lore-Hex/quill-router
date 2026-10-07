@@ -95,7 +95,7 @@ def test_key_cap_refuses_all_mutations(cap, management):
 
 
 @pytest.mark.parametrize("management", [False, True])
-@pytest.mark.parametrize("defect", ["paused", "credit_pause", "wrong_workspace", "wrong_key", "key_hold", "typed_cap", "negative_usage", "inventory", "missing_inventory", "extra_shard", "bad_credit", "federated", "consolidation", "trust_divergence"])
+@pytest.mark.parametrize("defect", ["paused", "credit_pause", "wrong_workspace", "wrong_key", "key_hold", "typed_cap", "negative_usage", "inventory", "missing_inventory", "extra_shard", "bad_credit", "federated", "consolidation", "trust_divergence", "marked"])
 def test_unsafe_state_fails_closed(defect, management):
     inputs = state()
     ws, credit, key, rows, key_rows, owner, inventory, _ = inputs
@@ -129,6 +129,8 @@ def test_unsafe_state_fails_closed(defect, management):
     elif defect == "trust_divergence":
         credit["shard_count"] = 2
         rows.append({**rows[0], "shard": 1, "pause_epoch": 4})
+    elif defect == "marked":
+        rows[0]["in_debt"] = True
     with pytest.raises(ValueError):
         repair.make_plan(*inputs, allow_management_key=management)
 

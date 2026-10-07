@@ -12,7 +12,7 @@ driven to the bad schedule. It is written before the code it describes.
 | `SurfaceCutover` | The routed multi-region Cloud Run rollout, with a crash between any two steps | implemented |
 | `TerminalOrder` | One lease's records: which terminal wins, and why the live auditor and a rebuild agree (fast admission §4.5, §4.8) | planned |
 | `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, its last record and its draining write, draining and close under clock skew (fast admission §4.2, §4.3, §4.8) | planned |
-| `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | planned |
+| `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | implemented |
 | `AuditorCommit` | The auditor's per-lease commit: what a member stores so another can carry on, under redelivery, takeover, a member that stalled, records stored twice or out of order, raises between a load and a commit, reaps, the drain log and the checkpoint audit (fast admission §4.8) | planned |
 | `KeyCapFence` | Adding a cap to a key while leases may hold its requests: the key-status version a grant carries, the owners' caches, the checkpoint that shows none of the key's holds open, and the condition on which Python enables the cap (fast admission §4.6) | planned |
 
