@@ -26,12 +26,14 @@
 (*   record not acknowledged. The member it moved them from is not told,    *)
 (*   and may still commit what it applied.                                  *)
 (*                                                                          *)
-(*   Members of the auditor's consumer group. A member loads the lease      *)
-(*   row, applies records in memory and commits them in one transaction,    *)
-(*   conditional on the commit version it read. Only then does it           *)
-(*   acknowledge them. It may crash and lose its memory. When the commit    *)
-(*   version refuses its commit, reap or close, it re-reads: it drops       *)
-(*   what it applied and its places, and loads again.                       *)
+(*   Members of the auditor's consumer group. A member loads the lease row, *)
+(*   applies records in memory and commits them in one transaction,         *)
+(*   conditional on the commit version it read; an audit fault it finds is  *)
+(*   raised with that commit. Only then does it acknowledge them. It may    *)
+(*   crash and lose its memory. Everything it writes for the lease, its     *)
+(*   commit, a reap, the close and a gap's stop, is conditional on the      *)
+(*   commit version, and when the version refuses one, it re-reads: it      *)
+(*   drops what it applied and its places, and loads again.                 *)
 (*                                                                          *)
 (*   Owners and front doors, as writers of the lease row: each raises the   *)
 (*   allocation, at any moment, between a member's load and its commit.     *)
@@ -84,7 +86,7 @@
 (*   BoundaryIsS. The stored S is that boundary: the highest sequence       *)
 (*   number up to which every owner record was received before the fence    *)
 (*   tick. StoredSFirst: S is stored before the drain log is reaped or      *)
-(*   booked.                                                                *)
+(*   booked, in a member's memory too.                                      *)
 (*                                                                          *)
 (*   WinnerIsFirst. An authorization's stored winner is the first           *)
 (*   terminal in the lease's order: the owner's, else the drain log's       *)
@@ -104,18 +106,18 @@
 (*   NoChargeLost. A closed lease has a winner for every authorization      *)
 (*   the log or the drain log showed (Invariant 4, across takeover).        *)
 (*                                                                          *)
-(*   AuditsEachCheckpoint. A member that applies a checkpoint audits it     *)
-(*   then: the alert is raised when the checkpoint's `consumed` differs     *)
-(*   from the sum of the owner's terminals with lower sequence numbers, a   *)
-(*   republished one counted once (Invariant 2), and nothing else raises    *)
-(*   it. The configuration `lying` has an owner that may lie. A property    *)
-(*   of steps.                                                              *)
+(*   AuditsEachCheckpoint. The audit at each checkpoint: a commit that      *)
+(*   stores a checkpoint at or below S whose `consumed` differs from the    *)
+(*   sum of the owner's terminals with lower sequence numbers, a            *)
+(*   republished one counted once, raises the alert (Invariant 2), and      *)
+(*   nothing else raises it. The configurations `lying` and `again` have an *)
+(*   owner that may lie. A property of steps.                               *)
 (*                                                                          *)
-(*   GapIsReal: a gap stops the lease only where the log stored an owner    *)
-(*   record before one the owner issued before it. DrainingLeaseCloses: a   *)
-(*   draining lease closes, unless such a gap stopped it, as long as the    *)
-(*   members keep working. It is what a member left with nothing it may do  *)
-(*   would break.                                                           *)
+(*   GapIsReal: a gap stops the lease only where the log, before the fence  *)
+(*   tick, stored an owner record before one the owner issued before it.    *)
+(*   DrainingLeaseCloses: a draining lease closes, unless such a gap        *)
+(*   stopped it, as long as the members keep working. It is what a member   *)
+(*   left with nothing it may do would break.                               *)
 (*                                                                          *)
 (* WHAT WRITING THIS FOUND                                                  *)
 (*                                                                          *)
@@ -133,8 +135,11 @@
 (*   no-reread-when-clean, in `again`). A gap is declared with the commit   *)
 (*   version too: a member another overtook compares a record with progress *)
 (*   the row has passed, and stops the lease for a gap the log does not     *)
-(*   have (mutant a-gap-from-stale-progress, in `again`). Design v44 states *)
-(*   all three.                                                             *)
+(*   have (mutant a-gap-from-stale-progress, in `again`). So is an audit's  *)
+(*   alert, raised with the commit: that member may apply a wrong           *)
+(*   checkpoint above S it never learned to ignore (mutant                  *)
+(*   a-refused-member-alerts, in `again`). Design v44 states one guard on   *)
+(*   every write.                                                           *)
 (*                                                                          *)
 (* EVERY GUARD IS ACCOUNTED FOR in AuditorCommit.guards.toml: what breaks   *)
 (* when it alone is removed, or why nothing does.                           *)
@@ -177,7 +182,8 @@ OwnerTerminal(r) == r.k \in {"settle", "refund"}
 \* A member's memory. `loaded` is false until it reads the lease row.
 Blank == [loaded |-> FALSE, ver |-> 0, prog |-> 0, alloc |-> 0,
           holds |-> [a \in Auths |-> NoHold], win |-> [a \in Auths |-> NoWin],
-          wl |-> FALSE, osum |-> 0, dbooked |-> 0, dirty |-> FALSE, S |-> NoS]
+          wl |-> FALSE, osum |-> 0, dbooked |-> 0, dirty |-> FALSE, S |-> NoS,
+          fault |-> FALSE]
 
 VARIABLES
     \* The owner
@@ -254,7 +260,8 @@ AppliedTo(M, r) ==
                     ELSE M.holds,
           !.win = IF decides THEN [M.win EXCEPT ![r.a] = r] ELSE M.win,
           !.dbooked = IF decides THEN M.dbooked + r.c ELSE M.dbooked,
-          !.osum = IF OwnerTerminal(r) THEN M.osum + r.c ELSE M.osum]
+          !.osum = IF OwnerTerminal(r) THEN M.osum + r.c ELSE M.osum,
+          !.fault = M.fault \/ (r.k = "ckpt" /\ r.c # M.osum)]
 
 \* A member's memory after it applies the drain-log row r.
 RowAppliedTo(M, r) ==
@@ -409,7 +416,7 @@ Load(m) ==
                   holds |-> holds,
                   win |-> IF st = "open" THEN [a \in Auths |-> NoWin] ELSE win,
                   wl |-> st # "open", osum |-> osum, dbooked |-> 0, dirty |-> FALSE,
-                  S |-> S]]
+                  S |-> S, fault |-> FALSE]]
     /\ dpos' = [dpos EXCEPT ![m] = 1]
     /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, pos, done, crashes, ghosts >>
 
@@ -435,8 +442,7 @@ ApplyRecord(m) ==
     /\ log[pos[m]].seq = mem[m].prog + 1
     /\ mem' = [mem EXCEPT ![m] = AppliedTo(mem[m], log[pos[m]])]
     /\ pos' = [pos EXCEPT ![m] = @ + 1]
-    /\ alert' = (alert \/ (log[pos[m]].k = "ckpt" /\ log[pos[m]].c # mem[m].osum))
-    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, gap >>
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, ghosts >>
 
 \* A record at or below its progress is a redelivery or a duplicate. Once
 \* the member knows S, every owner record is one of those or above S, and
@@ -529,9 +535,11 @@ Commit(m) ==
     /\ win' = [a \in Auths |-> IF mem[m].win[a] # NoWin THEN mem[m].win[a] ELSE win[a]]
     /\ osum' = mem[m].osum
     /\ S' = mem[m].S
-    /\ mem' = [mem EXCEPT ![m].ver = Advanced(mem[m].dirty), ![m].dbooked = 0, ![m].dirty = FALSE]
+    /\ alert' = (alert \/ mem[m].fault)
+    /\ mem' = [mem EXCEPT ![m].ver = Advanced(mem[m].dirty), ![m].dbooked = 0, ![m].dirty = FALSE,
+                          ![m].fault = FALSE]
     /\ done' = [done EXCEPT ![m] = pos[m] - 1]
-    /\ UNCHANGED << ownerv, logv, st, raised, drainv, pubsub, pos, dpos, crashes, ghosts >>
+    /\ UNCHANGED << ownerv, logv, st, raised, drainv, pubsub, pos, dpos, crashes, gap >>
 
 \* Another member committed since this one read the row, so whatever this
 \* one does next with the lease, a commit, a reap or a close, is refused:
@@ -722,15 +730,18 @@ Heartbeats(a) == { r \in Range(log) : r.k = "hb" /\ r.a = a /\ Accepted(r) }
 BoundaryIsS == S # NoS => S = Bound
 
 \* S is stored before the drain log is reaped or booked: a reap row, and a
-\* winner from the drain log, exist only once S does.
+\* winner from the drain log, stored or decided in a member's memory, exist
+\* only once S does.
 StoredSFirst ==
     /\ \A i \in DOMAIN drain : drain[i].k = "reap" => S # NoS
     /\ \A a \in Auths : win[a].idx > 0 => S # NoS
+    /\ \A m \in Members, a \in Auths : mem[m].win[a].idx > 0 => S # NoS
 
-\* A gap stops the lease only where the log has one: an owner record it
-\* stored before one the owner issued before it.
+\* A gap stops the lease only where the log has one: before the fence tick,
+\* an owner record it stored before one the owner issued before it.
 StoredAhead ==
     \E i \in DOMAIN log :
+        /\ ~ticked \/ i < TickAt
         /\ log[i].k # "tick"
         /\ \E s \in 1..(log[i].seq - 1) : \A k \in 1..(i - 1) : log[k].seq # s
 GapIsReal == gap => StoredAhead
@@ -767,22 +778,17 @@ TermsBelow(n) == { r \in Range(log) : OwnerTerminal(r) /\ r.seq < n }
 BadCheckpoint(r) ==
     r.k = "ckpt" /\ r.c # SumOver([q \in TermsBelow(r.seq) |-> q.c], TermsBelow(r.seq))
 
-\* Member m applies the checkpoint it is at: it moves past it and its
-\* progress becomes the checkpoint's. Skipping a duplicate moves past it
-\* without that.
-AppliesCheckpoint(m) ==
-    /\ pos[m] <= Len(log)
-    /\ log[pos[m]].k = "ckpt"
-    /\ pos'[m] = pos[m] + 1
-    /\ mem'[m].prog = log[pos[m]].seq
-    /\ mem[m].prog # log[pos[m]].seq
+\* The checkpoints a commit stores the application of: those its progress
+\* passes.
+Committed(r) == r.k = "ckpt" /\ prog < r.seq /\ r.seq <= prog'
 
-\* The audit at each checkpoint: applying a wrong one raises the alert, and
-\* nothing else changes it.
+\* The audit at each checkpoint, raised with the commit that stores it, as
+\* every write a member makes is: a commit that stores a wrong checkpoint at
+\* or below S raises the alert, and nothing else raises it.
 AuditsEachCheckpoint ==
-    [][/\ \A m \in Members :
-            AppliesCheckpoint(m) => (alert' = (alert \/ BadCheckpoint(log[pos[m]])))
-       /\ alert' # alert => \E m \in Members : AppliesCheckpoint(m)]_vars
+    [][/\ prog' # prog =>
+            alert' = (alert \/ \E r \in Range(log) : Committed(r) /\ Accepted(r) /\ BadCheckpoint(r))
+       /\ alert' # alert => prog' # prog]_vars
 
 \* A draining lease closes, unless a gap stopped it for an operator: no
 \* member is left with nothing it can do.

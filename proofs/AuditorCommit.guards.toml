@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "737b40b7eaedb40933f34196697185543f4e8672df45235bef9d1e595a55d986"
+inputs_sha256 = "d15ae66a805b36b3d7400cfaaa1343fbd1ea292e183607367044cdf5e42f9b92"
 
 [[guard]]
 action = "IssueHeartbeat"
@@ -90,7 +90,7 @@ Issuing changes only the owner's records and draining only the lease's state, so
 action = "IssueWrongCheckpoint"
 text = '''/\ nextSeq <= MaxSeq'''
 breaks = "TypeOK"
-cfg = "lying"
+cfg = "again"
 why = '''
 A bound of the model: the records the owner issues.
 '''
@@ -148,7 +148,7 @@ action = "StoreAhead"
 text = '''/\ ~ticked'''
 breaks = "nothing"
 why = '''
-A record stored after the fence tick is above S, as the one issued before it is, and every owner record there is skipped in whatever order it lands. New states, which no claim rests on.
+A record stored after the fence tick is above S, as the one issued before it is, and every owner record there is skipped in whatever order it lands. New states, which no claim rests on. Removed with Gap's check that the member does not know S, a record stored ahead after the tick is past the progress of a member that knows S, which takes it for a gap the log does not have before the tick (GapIsReal).
 '''
 
 [[guard]]
@@ -409,7 +409,7 @@ action = "Gap"
 text = '''/\ mem[m].S = NoS'''
 breaks = "nothing"
 why = '''
-A member that knows S has applied every owner record up to it, and records the log stores after the fence tick come in the order issued, S + 1 first. In these bounds at most one lands after the tick (MaxLate is at most 1), so none is past the member's progress by more than one, and no new state is reached. Removed with Store's check that the tick has not come, two records land after it, and a member that knows S takes the second for a gap the log does not have (GapIsReal).
+A member that knows S has applied every owner record up to it, and records the log stores after the fence tick come in the order issued, S + 1 first. In these bounds at most one lands after the tick (MaxLate is at most 1), so none is past the member's progress by more than one, and no new state is reached. Removed with Store's check that the tick has not come, two records land after it, and a member that knows S takes the second for a gap the log does not have (GapIsReal); removed with StoreAhead's, a record stored ahead after the tick is taken for one the same way.
 '''
 
 [[guard]]
