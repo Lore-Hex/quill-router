@@ -364,13 +364,235 @@ def test_guard_reviewer_references(monkeypatch, bridge):
             pytest.fail('a dormant live bridge reached the guarded body')
 
 
-def test_guard_explicit_harness_root():
+@pytest.mark.parametrize('bridge', ['private_slot', 'mapping_proxy'])
+def test_guard_reviewer_separate_warmed_cache(monkeypatch, bridge):
     import functools
+    from types import MappingProxyType
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    # A separate wrapper is essential: clearing the live module's own cache
+    # would mask a traversal gap by turning the attack into a profiled cold call.
+    live = functools.lru_cache(maxsize=1)(transient_store_error_types.__wrapped__)
+    expected = live()
+    assert live.cache_info().currsize == 1
+    if bridge == 'private_slot':
+        class Holder:
+            __slots__ = ('__callback',)
+            def __init__(self, callback):
+                self.__callback = callback
+            def __call__(self):
+                return self.__callback()
+        root = Holder(live)
+        action = root
+    else:
+        root = MappingProxyType({'callback': live})
+        def action():
+            return root['callback']()
+    monkeypatch.setattr(module('storage_errors'), 'review_root', root, raising=False)
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard():
+            assert action() is expected
+            assert live.cache_info().hits == 1
+
+
+@pytest.mark.parametrize('api', [
+    '_thread.start_new_thread', '_thread.start_joinable_thread',
+    'threading._start_joinable_thread',
+])
+def test_guard_raw_thread_finishes_before_exit(api):
+    import _thread
+    import sys
+    import threading
+    import time
+
+    namespace, name = api.split('.')
+    owner = _thread if namespace == '_thread' else threading
+    if not hasattr(owner, name):
+        pytest.skip(f'{api} unavailable on Python {sys.version_info[:2]}')
+    values = []
+    done = threading.Event()
+    def worker():
+        values.append(importlib.import_module('trusted_router.storage_errors')
+                      .is_transient_store_error(ValueError()))
+        done.set()
+    original = getattr(owner, name)
+    previous, previous_thread = sys.getprofile(), threading.getprofile()
+    with pytest.raises(AssertionError, match='live callable'):
+        with execution_guard():
+            if name == 'start_new_thread':
+                ident = getattr(owner, name)(worker, ())
+                assert done.wait(10)
+                deadline = time.monotonic() + 10
+                while ident in sys._current_frames():
+                    assert time.monotonic() < deadline, 'raw worker did not exit'
+                    time.sleep(.001)
+            else:
+                handle = getattr(owner, name)(worker)
+                handle.join(10)
+                assert handle.is_done()
+            assert values == [False]
+    assert getattr(owner, name) is original
+    assert sys.getprofile() is previous
+    assert threading.getprofile() is previous_thread
+
+
+@pytest.mark.parametrize('live_at_shutdown', [False, True])
+def test_guard_joins_raw_worker_with_profiler_active(live_at_shutdown):
+    import _thread
+    import threading
+    import time
+
+    done = threading.Event()
+    def worker():
+        time.sleep(.1)  # Still running when the guarded body returns.
+        if live_at_shutdown:
+            importlib.import_module('trusted_router.storage_errors').is_transient_store_error(ValueError())
+        done.set()
+    expected = pytest.raises(AssertionError, match='live callable') if live_at_shutdown else nullcontext()
+    with expected:
+        with execution_guard():
+            _thread.start_new_thread(worker, ())
+    assert done.is_set()
+
+
+@pytest.mark.parametrize('live_callback', [False, True])
+def test_guard_profiles_raw_exception_cleanup(monkeypatch, live_callback):
+    import _thread
+    import sys
+    import threading
+
+    done = threading.Event()
+    def hook(unraisable):
+        if live_callback:
+            importlib.import_module('trusted_router.storage_errors').is_transient_store_error(ValueError())
+        done.set()
+    def worker():
+        raise ValueError('raw exception cleanup witness')
+    monkeypatch.setattr(sys, 'unraisablehook', hook)
+    expected = pytest.raises(AssertionError, match='live callable') if live_callback else nullcontext()
+    with expected:
+        with execution_guard():
+            _thread.start_new_thread(worker, ())
+    assert done.is_set()
+
+
+def test_guard_rejects_unfinished_raw_worker():
+    import _thread
+    import sys
+    import threading
+    import time
+
+    release = threading.Event()
+    done = threading.Event()
+    def worker():
+        release.wait(15)
+        done.set()
+    original = _thread.start_new_thread
+    try:
+        with pytest.raises(AssertionError, match='worker threads must finish'):
+            with execution_guard():
+                ident = _thread.start_new_thread(worker, ())
+    finally:
+        release.set()
+        assert done.wait(10)
+        deadline = time.monotonic() + 10
+        while ident in sys._current_frames():
+            assert time.monotonic() < deadline
+            time.sleep(.001)
+    assert _thread.start_new_thread is original
+
+
+def test_guard_rejects_prebound_raw_starter():
+    import _thread
+    import threading
+
+    start = _thread.start_new_thread
+    ran = threading.Event()
+    with pytest.raises(AssertionError, match='unwrapped raw worker'):
+        with execution_guard():
+            start(ran.set, ())
+    assert not ran.is_set()
+
+
+@pytest.mark.parametrize('kind', [
+    'mapping_key', 'mapping_value', 'sequence', 'set', 'inherited_private_slot',
+    'shadowed_slot', 'wrapped_descriptor', 'cached_property', 'getstate',
+])
+def test_reference_walk_python_state(kind):
+    from collections.abc import Mapping, Sequence, Set
+    from functools import cached_property
+
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    # Keep protocol-only values in external function globals, which the walker
+    # deliberately cannot follow. A closure/instance dict would let a broken
+    # container/state traversal pass by reaching the marker through another edge.
+    namespace = {'__name__': 'review_external', 'marker': marker,
+                 'Mapping': Mapping, 'Sequence': Sequence, 'Set': Set}
+    exec("""
+class ReadableMapping(Mapping):
+    def __iter__(self): return iter(data)
+    def __getitem__(self, key): return data[key]
+    def __len__(self): return len(data)
+class ReadableSequence(Sequence):
+    def __getitem__(self, index): return data[index]
+    def __len__(self): return len(data)
+class ReadableSet(Set):
+    def __contains__(self, value): return value in data
+    def __iter__(self): return iter(data)
+    def __len__(self): return len(data)
+class Wrapped:
+    @property
+    def __wrapped__(self): return marker
+class State:
+    def __getstate__(self): return {'callback': marker}
+""", namespace)
+    if kind in {'mapping_key', 'mapping_value'}:
+        namespace['data'] = {marker: None} if kind == 'mapping_key' else {'callback': marker}
+        root = namespace['ReadableMapping']()
+    elif kind in {'sequence', 'set'}:
+        namespace['data'] = (marker,)
+        root = namespace['ReadableSequence' if kind == 'sequence' else 'ReadableSet']()
+    elif kind in {'inherited_private_slot', 'shadowed_slot'}:
+        class Base:
+            __slots__ = ('__callback', 'callback')
+        class Child(Base):
+            __slots__ = ('callback',)
+        root = Child()
+        descriptor = Base.__dict__['_Base__callback' if kind == 'inherited_private_slot'
+                                   else 'callback']
+        descriptor.__set__(root, marker)
+        root.callback = None
+    elif kind == 'wrapped_descriptor':
+        root = namespace['Wrapped']()
+    elif kind == 'cached_property':
+        class Cached:
+            @cached_property
+            def callback(self):
+                return None
+        root = Cached()
+        root.__dict__['callback'] = marker
+    else:
+        root = namespace['State']()
+    assert any(value is marker for value in _references([root], namespaces=()))
+
+
+@pytest.mark.parametrize('root_kind', ['namespace', 'module', 'logger'])
+def test_guard_explicit_harness_root(root_kind):
+    import functools
+    import logging
+    from types import ModuleType
 
     from trusted_router.storage_errors import transient_store_error_types
 
     transient_store_error_types()
-    io = SimpleNamespace(callback=functools.partial(transient_store_error_types))
+    if root_kind == 'logger':
+        io = logging.Logger('review_explicit_io')
+    else:
+        io = SimpleNamespace() if root_kind == 'namespace' else ModuleType('review_external_io')
+    io.callback = functools.partial(transient_store_error_types)
     with pytest.raises(AssertionError, match='live reference'):
         with execution_guard(io):
             pytest.fail('unattached fake IO escaped the root scan')

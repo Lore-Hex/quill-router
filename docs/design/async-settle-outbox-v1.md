@@ -1308,31 +1308,70 @@ feature stores, captured IO callbacks, gateway, middleware and the HTTP app are
 constructed independently in that namespace. No live production globals seed it.
 
 `execution_guard(*harness)` profiles Python calls by module globals and source
-path and exposed C-call events in the calling thread and new threads. It installs
-`threading.setprofile` before checking `sys._current_frames()` and
-`threading.enumerate()`: **pre-existing application workers refuse the frozen leg**
-because Python 3.11 cannot install their profiler retroactively. Frozen executors
-must start and join inside the guarded scope; the exit check rejects leaked
-workers. The only infrastructure exceptions are xdist's active execnet receiver
-stack and pytest-timeout's Timer target, not application thread names. Live calls
-are recorded even if application error handling swallows an exception.
+path and exposed C-call events in **all threads, including raw `_thread`
+workers**. On Python 3.12+ (verified separately on 3.14), entry calls
+`threading.setprofile_all_threads(profile)` for already-running threads and
+`threading.setprofile(profile)` for later `threading.Thread` workers. During the
+scope it wraps `_thread.start_new_thread`, `_thread.start_joinable_thread` and
+`threading._start_joinable_thread` when present, plus the 3.11
+`threading._start_new_thread` alias. Each bootstrap installs `sys.setprofile`
+before calling its target. A C-call fence rejects prebound raw starter aliases
+that would bypass the bootstrap. Pending/active bootstraps are registered before
+startup; guard exit performs a bounded five-second join while profiling remains
+active, then rejects any unfinished worker. This covers AnyIO shutdown, which
+signals its workers without joining them. Live events are retained by thread ID,
+so a raw worker that finishes before the frame-based exit check is still detected.
+Worker profiling continues through native exception cleanup, including
+`sys.unraisablehook`. Main/default hooks and starter APIs are restored on
+successful and failed guard exits.
+
+Pre-existing application workers still refuse the frozen leg, and frame checks
+reject leaked workers. The only infrastructure exceptions are xdist's active
+execnet receiver stack and pytest-timeout's Timer target, not application thread
+names; profiling still applies to them. The supplied worktree's resolved venv is
+Python **3.11.15**, not 3.14: it lacks `setprofile_all_threads`, so it uses the
+existing-worker refusal plus instrumented new-worker bootstraps. The retroactive
+all-thread installation is specifically a Python 3.12+ guarantee. Live calls are
+recorded even if application error handling swallows an exception.
 
 At entry and exit the reference walk starts at every loaded frozen module's
 globals, the shared fake Spanner module and the explicit store/database/HTTP client
-roots supplied by the harness. It follows containers, instance dictionaries and
-slots, partial function/arguments/keywords, Python and C bound-method receivers,
-function defaults/keyword defaults/closures, properties, wrapped functions,
-dataclass fields/default factories, and CPython `functools` cache GC referents
-(including cached results). Function code filenames detect disguised module
-labels. Test callback global names used in bytecode are followed as well. Before
-a frozen leg runs, all reachable `functools.cache`/`lru_cache` wrappers from **both**
-router namespaces and the harness are cleared, including nested cache results.
-The shared lock recorder's installation metadata is separate from its runtime
-recording state, so fake Spanner callbacks no longer capture live Postgres hooks.
-Settings cross the setup boundary as plain data; the protected-header frozen
-client runs the same signing/admission fixture factories with snapshot classes
-and literal key inputs, so neither its runtime nor callbacks come from the live
-leg. No production code or snapshot bytes change.
+roots supplied by the harness. Its traversal is:
+
+| Object kind | References followed |
+|---|---|
+| Frozen modules and harness module roots | Global values, excluding loader/spec/builtins machinery |
+| Every `collections.abc.Mapping`, including `MappingProxyType` | Iterated keys and their values |
+| Every `collections.abc.Sequence` / `Set` | Elements; primitive scalar strings/bytes terminate the walk |
+| Instance attributes | `__dict__`, including cached property values |
+| Slots, including inherited, private and shadowed slots | Each `MemberDescriptorType` in every MRO class dictionary, via its own `__get__`; unset slots have no value |
+| Classes | Class dictionary values and base classes |
+| Functions | Defaults, keyword defaults, closure cells, attribute state; test callback global names used in bytecode |
+| Partial functions | Function, positional arguments and keyword arguments |
+| Python bound methods | Function and receiver |
+| C bound methods / method wrappers | `__self__`, including cached `__call__` receivers |
+| Static/class methods and properties | Wrapped function or getter/setter/deleter; cached values through instance state |
+| Decorator wrappers | Explicit `__wrapped__` plus normal attribute/slot state |
+| CPython `functools.cache` / `lru_cache` | GC referents, including keys/results, wrapped function and nested caches |
+| Objects exposing `__getstate__` | Returned state, recursively; objects refusing serialization still have their attributes/slots inspected |
+
+Container protocols that refuse iteration (for example an unbuilt Pydantic base
+schema) still have their attributes, slots and class definitions inspected.
+Function `__globals__`/`__builtins__` native descriptors obey the module/global
+boundary below; they do not open every external module registry. The visited map
+keeps objects alive, preventing temporary state dictionaries from reusing an
+already-visited identity. Function source paths also detect disguised module
+labels. Dataclass factories and Pydantic validators are reached through these
+same class, descriptor and object-state rules.
+
+Before a frozen leg runs, all reachable `functools.cache`/`lru_cache` wrappers
+from **both** router namespaces and the harness are cleared, including nested
+cache results. The shared lock recorder's installation metadata is separate from
+its runtime recording state, so fake Spanner callbacks no longer capture live
+Postgres hooks. Settings cross the setup boundary as plain data; the
+protected-header frozen client runs the same signing/admission fixture factories
+with snapshot classes and literal key inputs. No production code or snapshot
+bytes change.
 
 The broad class walk also reaches `typing.Annotated._class_getitem_inner`.
 A consecutive-case probe showed that its shared functools cache retained the
@@ -1343,27 +1382,37 @@ then **every** collected cache is cleared before execution, including nested
 caches disconnected by the first purge. A regression witness warms that exact
 typing cache between legs and requires it to be empty in the guarded body.
 
-The guard covers these Python reference/call boundaries; it is not an arbitrary
-Python sandbox. **Deliberate harness bridges through external module registries,
-dynamically computed callback global lookups,
-or opaque native extension state are out of scope**: traversing all interpreter
-registries reaches the intentionally live comparison leg, and opaque C state has
-no general Python reference API. In particular, attempting full logger traversal
-reached live `trusted_router.main._ApplicationConsoleFormatter` through the shared
-logging manager. Logger registries are therefore a reference boundary (executed
-Python formatter calls remain profiled), not a blanket permission to inject
-callbacks there. Third-party classes/modules remain shared runtime machinery;
-class definitions/bases, supplied object state and function captures are inspected. CPython's
-`functools` wrappers are explicitly supported, unlike arbitrary native caches.
-The test harness itself, the profiler hooks and the pytest/xdist infrastructure
-are trusted; malicious changes disabling the guard are not an independence proof.
+The reference scope is **all references reachable through the Python-level
+attributes, containers, descriptors, wrappers and caches above from the frozen
+namespace and harness roots**, together with executed Python/exposed C calls in
+all threads, including raw threads. This is an independence check with a trusted
+harness and profiler, not an arbitrary Python sandbox. The reference exclusions
+are explicit:
 
-All eleven reviewer wrapper/thread/callback cases have detecting witnesses; none
-of those eleven is scoped out. Additional witnesses cover partial arguments and
-keywords, bound-method receivers, cached results, explicit fake IO roots, disguised
-module labels, and clearing nested caches. The pre-existing-worker witness uses
-the reviewer's actual native cost **2 → 3** change. Both that bridge and the warmed
-native-cost cache bridge also run as failing complete-oracle mutations.
+| Exclusion | Reason |
+|---|---|
+| `ctypes` / opaque native extension state (other than the explicitly inspected CPython functools caches) | No general Python API exposes the stored native references. |
+| External registries outside both router namespaces and supplied harness roots, including external module globals and shared logger registries | Walking process registries reaches the intentionally live comparison leg; a full logger walk reached its `_ApplicationConsoleFormatter`. |
+| Computed global callback lookups | Static reference traversal cannot resolve runtime-generated lookup keys without executing arbitrary application logic. |
+
+Executed Python callbacks remain profiled even when retrieved through an excluded
+registry or computed lookup. Third-party classes/modules remain shared runtime
+machinery; class definitions/bases, supplied object state and function captures
+are inspected. No reviewed construction relies on these exclusions. The harness,
+profiler hooks and pytest/xdist infrastructure are trusted; disabling a guard is
+not an independence proof.
+
+All **14** reviewer constructions have detecting witnesses: the eleven Round-4
+cases plus the raw worker, private-slot and mapping-proxy Round-5 survivors. The
+last two use **separately warmed** `lru_cache` wrappers around the live function's
+`__wrapped__`, so clearing its module-owned cache cannot mask a traversal gap.
+Additional witnesses cover raw joinable APIs and prebound starter aliases,
+inherited/shadowed slots, generic containers, wrapper descriptors, cached
+properties, `__getstate__`, partial arguments/keywords, bound receivers, cached
+results, explicit fake IO roots, disguised module labels and nested-cache
+clearing. The pre-existing-worker witness uses the reviewer's actual native cost
+**2 → 3** change. Both that bridge and the warmed native-cost cache bridge also
+run as failing complete-oracle mutations.
 
 `test_production_import_fence` statically scans imports in **every** live Python
 module, including imports inside functions and literal dynamic imports, banning
@@ -1592,7 +1641,7 @@ and the wrong-model intent, witnessed by
 `test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
 The generation/finalization builder and handler output corruptions remain.
 Collection/import errors never count as kills. See the
-[Round-5 verification report](../async-settle-pr-f1-round5.md) for current results
+[Round-6 verification report](../async-settle-pr-f1-round6.md) for current results
 and the reviewer witness matrix; the Round-4 model-identity assertions remain.
 
 The fake now explicitly requires the claim's `NOT EXISTS`, the atomic

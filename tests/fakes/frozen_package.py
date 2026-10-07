@@ -1,6 +1,7 @@
 """A separate, byte-pinned f83bbaac package; no fallback to live router code."""
 from __future__ import annotations
 
+import _thread
 import builtins
 import functools
 import gc
@@ -14,9 +15,11 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
+from collections.abc import Mapping, Sequence, Set
 from contextlib import contextmanager
 from pathlib import Path
-from types import FunctionType, MethodType, ModuleType
+from types import FunctionType, MemberDescriptorType, MethodType, ModuleType
 
 SNAPSHOT = Path(__file__).with_name('frozen_f83bbaac')
 ARCHIVE_SHA256 = 'e68b785ca7d5d62d82e71be5df07c605aa3f2ef83a528769138de6d2eba8d4da'
@@ -114,32 +117,39 @@ def _references(roots, *, namespaces):
     by bytecode are followed. External module globals and logging registries
     are boundaries (see the appendix); class definitions and bases are inspected.
     """
-    pending, visited = list(roots), set()
+    pending, visited = list(roots), {}
+    root_ids = {id(root) for root in pending}
     while pending:
         value = pending.pop()
         if id(value) in visited:
             continue
-        visited.add(id(value))
+        visited[id(value)] = value  # Keep synthesized state alive; ids must not recycle.
         if value is None or type(value) in (str, bytes, int, float, bool, complex):
             continue
         yield value
         owner = _owner(value)
         owned = any(_in_namespace(owner, ns) for ns in namespaces)
         if isinstance(value, ModuleType):
-            if owned:
+            if owned or id(value) in root_ids:
                 pending.extend(v for k, v in list(vars(value).items())
                                if k not in {'__builtins__', '__loader__', '__spec__'})
             continue
         # Loggers are process-wide registries, not IO/callback inputs. Following
         # their manager walks every live application logger/formatter in Python.
         # Executed formatter code is still covered by the call profiler.
-        if isinstance(value, logging.Logger):
+        if isinstance(value, logging.Logger) and id(value) not in root_ids:
             continue
-        if isinstance(value, dict):
-            pending.extend(list(value.keys()))
-            pending.extend(list(value.values()))
-        elif isinstance(value, (list, tuple, set, frozenset)):
-            pending.extend(value)
+        if isinstance(value, (Mapping, Sequence, Set)):
+            try:
+                if isinstance(value, Mapping):
+                    for key in value:
+                        pending.extend((key, value[key]))
+                else:
+                    pending.extend(value)
+            except (TypeError, ValueError, RuntimeError):
+                # E.g. Pydantic's unbuilt abstract schema refuses iteration.
+                # Its attributes/slots and class definitions are still walked.
+                pass
         elif isinstance(value, functools.partial):
             pending.extend((value.func, value.args, value.keywords))
         elif isinstance(value, MethodType):
@@ -180,16 +190,36 @@ def _references(roots, *, namespaces):
             attributes = None
         if attributes is not None:
             pending.append(attributes)
-        # Field uses slots, as do several callback-bearing wrappers.
+        # Descriptor names are already mangled; walking every MRO dictionary
+        # also preserves distinct base/subclass slots with the same spelling.
         for cls in type(value).__mro__:
-            slots = vars(cls).get('__slots__', ())
-            for slot in (slots,) if isinstance(slots, str) else slots:
-                if slot in {'__dict__', '__weakref__'}:
-                    continue
-                try:
-                    pending.append(object.__getattribute__(value, slot))
-                except (AttributeError, TypeError):
-                    pass
+            for descriptor in vars(cls).values():
+                if isinstance(descriptor, MemberDescriptorType):
+                    # Function globals are handled by the namespace/bytecode
+                    # rules above, not as an external interpreter registry.
+                    if isinstance(value, FunctionType) and descriptor.__name__ in {
+                        '__globals__', '__builtins__',
+                    }:
+                        continue
+                    try:
+                        pending.append(descriptor.__get__(value, type(value)))
+                    except AttributeError:  # An unset slot has no reference.
+                        pass
+        try:
+            pending.append(object.__getattribute__(value, '__wrapped__'))
+        except AttributeError:
+            pass
+        # Includes custom pickle state and the default dict/slot state. Do not
+        # evaluate arbitrary properties: cached property values are in __dict__.
+        try:
+            getstate = object.__getattribute__(value, '__getstate__')
+        except AttributeError:
+            pass
+        else:
+            try:
+                pending.append(getstate())
+            except (TypeError, ValueError, RuntimeError):  # Non-pickleable objects still expose dict/slot state.
+                pass
         pending.append(type(value))
 
 
@@ -226,7 +256,7 @@ def clear_functools_caches(*harness, external_only=False):
 
 
 def reject_existing_workers():
-    """3.11 cannot install a profiler in an existing thread: fail closed instead."""
+    """Refuse application workers that could outlive the guarded scope."""
     current = threading.get_ident()
     names = {thread.ident: thread.name for thread in threading.enumerate()}
     foreign = []
@@ -258,15 +288,20 @@ def execution_guard(*harness):
     There are no production-module or omitted-definition exemptions. Module globals
     catch generated dataclass methods (<string>) as well as ordinary source code.
     """
-    first = []
+    first = {}  # Thread id -> first live event; survives a raw worker exiting.
     seen = set()
     recorded = set()
     provenance = {}
+    raw_starters = set()
+    start_codes = set()
     def profile(frame, event, arg):
         if event == 'call':
             name = frame.f_globals.get('__name__', '')
             filename = frame.f_code.co_filename
         elif event == 'c_call':
+            if id(arg) in raw_starters and frame.f_code not in start_codes:
+                first.setdefault(threading.get_ident(), 'unwrapped raw worker creation')
+                raise AssertionError('raw worker must use guarded thread bootstrap')
             name = getattr(arg, '__module__', '') or ''
             filename = ''
         else:
@@ -291,8 +326,8 @@ def execution_guard(*harness):
         # Dataclasses compile generic qualnames; preserve the owning class.
         if filename == '<string>' and 'self' in frame.f_locals:
             qualname = type(frame.f_locals['self']).__qualname__ + '.' + frame.f_code.co_name
-        if live and not first:
-            first.append(f'{name}:{qualname}')
+        if live:
+            first.setdefault(threading.get_ident(), f'{name}:{qualname}')
         identity = (name, qualname, frame.f_code.co_firstlineno)
         if frozen and identity not in recorded:
             recorded.add(identity)
@@ -300,9 +335,48 @@ def execution_guard(*harness):
             relative = str(Path(source).relative_to(ROOT))
             seen.add((name.replace(ALIAS, 'trusted_router', 1), qualname, frame.f_code.co_firstlineno, relative, PINS[relative]))
     previous, previous_thread = sys.getprofile(), threading.getprofile()
-    # Install the new-thread default before inspecting existing frames, closing
-    # the start-between-check-and-install window. Existing workers still fail.
+    all_threads = getattr(threading, 'setprofile_all_threads', None)
+    starters = []
+    active = set()
+    started_threads = set()
+
+    def wrap_start(original):
+        def start(function, *args, **kwargs):
+            token = object()
+            active.add(token)  # Register before startup, including delayed bootstraps.
+            def bootstrap(*worker_args, **worker_kwargs):
+                started_threads.add(threading.get_ident())
+                sys.setprofile(profile)
+                try:
+                    return function(*worker_args, **worker_kwargs)
+                finally:
+                    active.discard(token)
+                    # Keep profiling through native thread teardown, including
+                    # sys.unraisablehook after a raw callback raises. The thread
+                    # state owns this hook until it exits; the main/default hooks
+                    # are restored by the guard after joining all started ids.
+            try:
+                return original(bootstrap, *args, **kwargs)
+            except BaseException:
+                active.discard(token)
+                raise
+        start_codes.add(start.__code__)
+        return start
+
+    # Cover raw APIs as well as threading's cached aliases on 3.11 and 3.14.
+    for namespace, names in ((_thread, ('start_new_thread', 'start_joinable_thread')),
+                             (threading, ('_start_new_thread', '_start_joinable_thread'))):
+        for name in names:
+            if hasattr(namespace, name):
+                original = getattr(namespace, name)
+                starters.append((namespace, name, original))
+                raw_starters.add(id(original))
+                setattr(namespace, name, wrap_start(original))
+    # 3.12+ covers every existing Python thread, including raw workers. The
+    # 3.11 fallback refuses existing workers; new workers use the bootstraps.
     threading.setprofile(profile)
+    if all_threads is not None:
+        all_threads(profile)
     entered = False
     try:
         reject_existing_workers()
@@ -318,10 +392,26 @@ def execution_guard(*harness):
         entered = True
         sys.setprofile(profile)
         yield seen
-        reject_existing_workers()  # all workers must be joined within the scope
     finally:
-        sys.setprofile(previous)
-        threading.setprofile(previous_thread)
-        assert not first, 'live callable reached by frozen leg: ' + ', '.join(first)
+        try:
+            if entered:
+                # AnyIO signals worker shutdown without joining the workers.
+                # Finish the join inside our scope, with profiling still on.
+                # Tokens also cover delayed starts; thread ids cover the tail
+                # between bootstrap completion and native thread-state removal.
+                deadline = time.monotonic() + 5
+                while active or started_threads.intersection(sys._current_frames()):
+                    assert time.monotonic() < deadline, (
+                        'worker threads must finish inside execution_guard')
+                    time.sleep(.001)
+                reject_existing_workers()
+        finally:
+            if all_threads is not None:
+                all_threads(previous_thread)
+            threading.setprofile(previous_thread)
+            sys.setprofile(previous)
+            for namespace, name, original in reversed(starters):
+                setattr(namespace, name, original)
+        assert not first, 'live callable reached by frozen leg: ' + repr(first)
         if entered:
             reject_live_references(*harness)

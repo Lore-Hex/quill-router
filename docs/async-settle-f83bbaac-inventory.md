@@ -12,15 +12,20 @@ Archive SHA-256: `e68b785ca7d5d62d82e71be5df07c605aa3f2ef83a528769138de6d2eba8d4
 
 Each module heading supplies the frozen alias, archive member and SHA-256 for **every** listed entry. `Code line` means `co_firstlineno`; dataclass-generated methods use their generated code line (usually 2), not a literal source line. Their qualified names identify the owning class, whose unchanged definition is in the pinned member. Standard-library/third-party machinery and the fake IO engine are outside this router inventory; their permitted role is described in the verification report.
 
-Round 5 strengthens the guard, without changing this recorded Round-4 execution
+Round 6 strengthens the guard without changing this recorded Round-4 execution
 union or the 747 snapshot members. Existing application workers are rejected;
-new workers are profiled and must join within scope. Frozen module globals and
-explicit harness roots are walked through supported wrappers/captures/cache state,
-and reachable functools caches in both namespaces are cleared before execution.
-Production imports of test assets are separately fenced. All eleven reviewer
-cases are detected. The [appendix](design/async-settle-outbox-v1.md) states the
-explicit boundary for shared runtime registries and opaque native bridges; this
-inventory must not be read as an arbitrary-harness sandbox guarantee.
+new workers, including raw threads, receive profiled bootstraps and must finish
+within scope. Python 3.12+ additionally installs the profiler in every existing
+thread; the supplied venv is 3.11.15, with separate 3.14 API verification.
+Frozen globals and harness roots are walked through Python attributes,
+containers (including generic mappings/sequences/sets), MRO slot descriptors,
+wrappers, captures and cache/state output. Reachable functools caches in both
+namespaces are cleared before execution. All **14** reviewer constructions are
+detected. The [appendix](design/async-settle-outbox-v1.md#frozen-main-coverage)
+contains the traversal table and one-line reasons for the explicit exclusions:
+ctypes/opaque native state, external registries outside both namespaces and
+harness roots, and computed global lookups. This historical inventory is not an
+arbitrary-harness sandbox guarantee.
 
 ## `trusted_router`
 

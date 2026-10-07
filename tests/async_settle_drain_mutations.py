@@ -91,7 +91,7 @@ def run() -> None:
             env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONPATH': str(target / 'src'),
                    'UV_CACHE_DIR': '/tmp/uv', 'RUFF_CACHE_DIR': '/tmp/ruff', 'MYPY_CACHE_DIR': '/tmp/mypy'}
             completed = subprocess.run(  # noqa: S603 - fixed disposable repository/test args
-                [sys.executable, '-m', 'pytest', '-q', '-n', '6', '-p', 'no:cacheprovider', '--disable-warnings', test],
+                [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--disable-warnings', test],
                 cwd=target, env=env, capture_output=True, text=True, timeout=300,
             )
             log = Path('/tmp') / f'pr-d-mutation-{name}.log'
