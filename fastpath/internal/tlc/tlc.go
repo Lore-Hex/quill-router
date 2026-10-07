@@ -702,53 +702,68 @@ func (p *parser) record() (Value, error) {
 
 // CheckAssumption has TLC read proofs/<cfgFile> as it is and judge
 // assumption, a formula over the spec's constants, such as a declaration of
-// them: it adds `ASSUME assumption` to a copy of the spec and runs one step of
-// simulation, which evaluates every ASSUME first. It returns an error unless
-// TLC finds the assumption true of the file's constants.
+// them. TLC runs a module of its own that extends the spec, unchanged, and
+// assumes the formula, printing a mark only if it holds; one step of
+// simulation evaluates every ASSUME first. It returns an error unless TLC
+// prints the mark and finishes, so an assumption TLC never evaluated is not
+// taken for a true one.
 func CheckAssumption(spec, cfgFile, assumption string) error {
 	proofs, err := ProofsDir()
 	if err != nil {
 		return err
 	}
+	return checkAssumption(proofs, proofs, spec, cfgFile, assumption)
+}
+
+// assumptionHolds is what the module TLC runs prints when the assumption
+// holds.
+const assumptionHolds = "fastpath: the assumption holds"
+
+// checkAssumption reads the spec and its configuration from dir, and TLC from
+// proofs.
+func checkAssumption(proofs, dir, spec, cfgFile, assumption string) error {
 	java, err := exec.LookPath("java")
 	if err != nil {
 		return fmt.Errorf("java is needed to run TLC: %w", err)
 	}
-	text, err := SpecText(spec)
-	if err != nil {
-		return err
-	}
-	cfg, err := os.ReadFile(filepath.Join(proofs, cfgFile))
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	last := strings.TrimSpace(lines[len(lines)-1])
-	if last == "" || strings.Trim(last, "=") != "" {
-		return fmt.Errorf("%s.tla does not end with its ==== line", spec)
-	}
-	lines = append(lines[:len(lines)-1], "ASSUME "+assumption, lines[len(lines)-1])
 	work, err := os.MkdirTemp("", "tlc-assume-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(work)
-	if err := os.WriteFile(filepath.Join(work, spec+".tla"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		return err
+	for _, name := range []string{spec + ".tla", cfgFile} {
+		text, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(work, name), text, 0o644); err != nil {
+			return err
+		}
 	}
-	if err := os.WriteFile(filepath.Join(work, spec+".cfg"), cfg, 0o644); err != nil {
+	// The assumption has lines of its own, so a comment in it ends with them.
+	module := strings.Join([]string{
+		"---- MODULE CheckAssumption ----",
+		"EXTENDS " + spec,
+		"AssumptionTLC == INSTANCE TLC",
+		"ASSUME IF (",
+		assumption,
+		`) THEN AssumptionTLC!PrintT("` + assumptionHolds + `") ELSE FALSE`,
+		"====",
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(work, "CheckAssumption.tla"), []byte(module), 0o644); err != nil {
 		return err
 	}
 	cmd := exec.Command(java, "-Xmx1g", "-cp", filepath.Join(proofs, "tla2tools.jar"), "tlc2.TLC",
 		"-simulate", "num=1", "-depth", "1", "-metadir", filepath.Join(work, "states"),
-		"-config", spec+".cfg", spec+".tla")
+		"-config", cfgFile, "CheckAssumption.tla")
 	cmd.Dir = work
 	out, err := cmd.CombinedOutput()
-	if strings.Contains(string(out), "is false") {
+	if strings.Contains(string(out), "of module CheckAssumption is false") {
 		return fmt.Errorf("TLC finds %s's constants are not %s", cfgFile, assumption)
 	}
-	if err != nil || strings.Contains(string(out), "Error:") || !strings.Contains(string(out), "Finished in") {
-		return fmt.Errorf("TLC did not judge the assumption (%v):\n%s", err, out)
+	if err != nil || strings.Contains(string(out), "Error:") || !strings.Contains(string(out), `"`+assumptionHolds+`"`) ||
+		!strings.Contains(string(out), "Finished in") {
+		return fmt.Errorf("TLC did not find the assumption true (%v):\n%s", err, out)
 	}
 	return nil
 }

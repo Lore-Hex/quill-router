@@ -159,3 +159,38 @@ func TestGuardTableStatesReadsTheRepositorysTables(t *testing.T) {
 		t.Fatal("a missing table is read")
 	}
 }
+
+// TestCheckAssumptionTakesOnlyWhatTLCFindsTrue: TLC judges the assumption
+// against the files as they are, whatever follows the spec's module, and
+// anything it does not find true is refused.
+func TestCheckAssumptionTakesOnlyWhatTLCFindsTrue(t *testing.T) {
+	proofs, err := ProofsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A copy of LeaseLifecycle with a second ==== line after its module's,
+	// past which TLC does not read.
+	dir := t.TempDir()
+	for name, more := range map[string]string{"LeaseLifecycle.tla": "\n====\n", "LeaseLifecycle.cfg": ""} {
+		text, err := os.ReadFile(filepath.Join(proofs, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), append(text, more...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(assumption string) error {
+		return checkAssumption(proofs, dir, "LeaseLifecycle", "LeaseLifecycle.cfg", assumption)
+	}
+	for _, assumption := range []string{"MaxHolds = 3", `MaxHolds = 3 \* with a comment`} {
+		if err := check(assumption); err != nil {
+			t.Errorf("%q: %v", assumption, err)
+		}
+	}
+	for _, assumption := range []string{"MaxHolds = 2", "MaxHolds", "MaxHolds =", "NoSuchName = 1"} {
+		if err := check(assumption); err == nil {
+			t.Errorf("%q is taken", assumption)
+		}
+	}
+}
