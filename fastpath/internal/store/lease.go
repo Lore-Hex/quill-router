@@ -125,10 +125,10 @@ func (s *Store) Renew(ctx context.Context, owner Owner, refs []LeaseRef) ([]Rene
 		statements := make([]spanner.Statement, len(refs))
 		for i, ref := range refs {
 			params := ref.params()
-			params["node"], params["epoch"], params["window"] = owner.Node, owner.Epoch, s.cfg.Window.Milliseconds()
+			params["node"], params["epoch"], params["window"] = owner.Node, owner.Epoch, s.cfg.Window.Microseconds()
 			statements[i] = spanner.Statement{
 				SQL: `UPDATE tr_lease
-				         SET expiry = GREATEST(expiry, TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL @window MILLISECOND))
+				         SET expiry = GREATEST(expiry, TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL @window MICROSECOND))
 				       WHERE workspace_id = @w AND lease_id = @l AND state = 'open' AND NOT revoked
 				         AND owner_node = @node AND owner_epoch = @epoch`,
 				Params: params,
@@ -194,7 +194,7 @@ func (s *Store) OwnerMarkDraining(ctx context.Context, owner Owner, ref LeaseRef
 	params["node"], params["epoch"], params["fence"] = owner.Node, owner.Epoch, s.fence()
 	return s.conditional(ctx, "owner-mark-draining", spanner.Statement{
 		SQL: `UPDATE tr_lease
-		         SET state = 'draining', drained_by = 'owner', fence_time = TIMESTAMP_ADD(expiry, INTERVAL @fence MILLISECOND)
+		         SET state = 'draining', drained_by = 'owner', fence_time = TIMESTAMP_ADD(expiry, INTERVAL @fence MICROSECOND)
 		       WHERE workspace_id = @w AND lease_id = @l AND state = 'open' AND owner_node = @node AND owner_epoch = @epoch`,
 		Params: params,
 	})
@@ -243,15 +243,17 @@ func (s *Store) AuditorMarkDraining(ctx context.Context, ref LeaseRef, readExpir
 	params["read"], params["fence"] = readExpiry, s.fence()
 	return s.conditional(ctx, "auditor-mark-draining", spanner.Statement{
 		SQL: `UPDATE tr_lease
-		         SET state = 'draining', drained_by = 'auditor', fence_time = TIMESTAMP_ADD(expiry, INTERVAL @fence MILLISECOND)
+		         SET state = 'draining', drained_by = 'auditor', fence_time = TIMESTAMP_ADD(expiry, INTERVAL @fence MICROSECOND)
 		       WHERE workspace_id = @w AND lease_id = @l AND state = 'open' AND expiry = @read`,
 		Params: params,
 	})
 }
 
-// fence is F's distance past the expiry, in milliseconds.
+// fence is F's distance past the expiry, in microseconds: exact, since New
+// takes only whole microseconds. Cut short, F would let a fence tick pass
+// a publish its owner was still allowed to make.
 func (s *Store) fence() int64 {
-	return (s.cfg.Skew + s.cfg.PublishDeadline).Milliseconds()
+	return (s.cfg.Skew + s.cfg.PublishDeadline).Microseconds()
 }
 
 // conditional runs one conditional statement in its own transaction and
