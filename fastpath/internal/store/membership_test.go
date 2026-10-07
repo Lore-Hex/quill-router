@@ -24,7 +24,7 @@ func member(t *testing.T, s *Store, address string) Member {
 }
 
 func TestJoinTakesTheNextEpoch(t *testing.T) {
-	s := spikeStore(t, Config{LiveFor: time.Hour})
+	s := spikeStore(t)
 	ctx := context.Background()
 	address := storetest.UniqueID("node")
 	first, firstAt, err := s.Join(ctx, address, []string{"owner"})
@@ -42,7 +42,7 @@ func TestJoinTakesTheNextEpoch(t *testing.T) {
 }
 
 func TestHeartbeatNeedsTheNodesEpoch(t *testing.T) {
-	s := spikeStore(t, Config{LiveFor: time.Hour})
+	s := spikeStore(t)
 	ctx := context.Background()
 	address := storetest.UniqueID("node")
 	if _, _, err := s.Join(ctx, address, []string{"owner"}); err != nil {
@@ -68,7 +68,7 @@ func TestHeartbeatNeedsTheNodesEpoch(t *testing.T) {
 }
 
 func TestALeavingMemberStaysLeaving(t *testing.T) {
-	s := spikeStore(t, Config{LiveFor: time.Hour})
+	s := spikeStore(t)
 	ctx := context.Background()
 	address := storetest.UniqueID("node")
 	epoch, _, err := s.Join(ctx, address, []string{"owner"})
@@ -97,7 +97,7 @@ func TestALeavingMemberStaysLeaving(t *testing.T) {
 }
 
 func TestHeartbeatRefusesAStateThatIsNone(t *testing.T) {
-	s := spikeStore(t, Config{LiveFor: time.Hour})
+	s := spikeStore(t)
 	ctx := context.Background()
 	address := storetest.UniqueID("node")
 	epoch, joined, err := s.Join(ctx, address, []string{"owner"})
@@ -114,7 +114,7 @@ func TestHeartbeatRefusesAStateThatIsNone(t *testing.T) {
 
 func TestMembersAreLiveBySpannersTime(t *testing.T) {
 	ctx := context.Background()
-	s := spikeStore(t, Config{LiveFor: time.Hour})
+	s := spikeStore(t)
 	address := storetest.UniqueID("node")
 	_, joined, err := s.Join(ctx, address, []string{"owner"})
 	if err != nil {
@@ -123,7 +123,9 @@ func TestMembersAreLiveBySpannersTime(t *testing.T) {
 	if m := member(t, s, address); !m.Live {
 		t.Fatalf("a member that joined at %v is not live within an hour", joined)
 	}
-	brief, err := New(shared, Config{LiveFor: 50 * time.Millisecond})
+	cfg := testConfig()
+	cfg.LiveFor = 50 * time.Millisecond
+	brief, err := New(shared, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

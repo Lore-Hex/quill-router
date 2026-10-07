@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -46,12 +47,22 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// spikeStore is a store of the shared database, or skips the test without
-// the emulator, saying why.
-func spikeStore(t *testing.T, cfg Config) *Store {
+// testConfig is a configuration every test can run with; a test changes
+// what it is about.
+func testConfig() Config {
+	return Config{LiveFor: time.Hour, Window: 30 * time.Second, Allowance: 1_000_000, Floor: 0, RequiredTier: 3}
+}
+
+// spikeStore is a store of the shared database with testConfig as changes
+// leave it, or skips the test without the emulator, saying why.
+func spikeStore(t *testing.T, changes ...func(*Config)) *Store {
 	t.Helper()
 	if emulator == nil {
 		t.Skip(skipped)
+	}
+	cfg := testConfig()
+	for _, change := range changes {
+		change(&cfg)
 	}
 	s, err := New(shared, cfg)
 	if err != nil {
