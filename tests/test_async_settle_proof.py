@@ -188,9 +188,11 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
     client.app.state.async_settle = env[2]
     outputs = []
     repair_payloads = []
+    intent_identities = []
     original_init = SettleOutboxRow.__init__
     def capture_repair(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
+        intent_identities.append((self.model_id, self.selected_endpoint_id))
         if self.settle_body is not None:
             repair_payloads.append(json.loads(self.settle_body))
     monkeypatch.setattr(SettleOutboxRow, '__init__', capture_repair)
@@ -206,6 +208,7 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
     for path in ('legacy', 'async', 'duplicate', 'snapshot_sync'):
         restore(db, initial)
         repair_payloads.clear()
+        intent_identities.clear()
         if path == 'legacy':
             reply = client.post('/v1/internal/gateway/settle', json=legacy_body(body))
             if scenario == 'endpoint_removal':
@@ -227,13 +230,20 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                 assert save(db) == before
             # Read the actual durable repair JSON before mark_done clears it.
             persisted = json.loads(db.settle_outbox[(auth.id, 'settle')]['settle_body'])
+            durable = db.settle_outbox[(auth.id, 'settle')]
+            assert (durable['model_id'], durable['selected_endpoint_id']) == (
+                selected['model_id'], selected['endpoint_id']), path
             assert {field: persisted[field] for field in repair_usage} == repair_usage
             assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
         # Legacy's atomic done INSERT clears its body; fresh snapshot-sync
         # never INSERTs an intent. Observe their real constructed repair rows,
         # not a second call to the builder that could disagree with dispatch.
+        assert intent_identities, path
+        assert all(identity == (selected['model_id'], selected['endpoint_id'])
+                   for identity in intent_identities), (path, intent_identities)
         assert repair_payloads, path
         for payload in repair_payloads:
+            assert payload['selected_endpoint'] == selected['endpoint_id'], path
             assert {field: payload[field] for field in repair_usage} == repair_usage, path
             prompt = payload['actual_input_tokens']
             cached, created = payload['cache_read_input_tokens'], payload['cache_creation_input_tokens']
@@ -258,6 +268,8 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                       actual=reservation['actual_micro'], reservation_settled=reservation['settled'],
                       settled=settled.settled, cost=settled.finalized_cost_microdollars,
                       outcome=settled.finalization_outcome, generation_id=settled.finalized_generation_id,
+                      generation_model=generation.model,
+                      authorization_model=settled.finalized_model_id,
                       generation_amount=generation.total_cost_microdollars,
                       generation_usage=dict(input=generation.tokens_prompt, cached=generation.cached_input_tokens,
                                             output=generation.tokens_completion, reasoning=generation.reasoning_tokens),
@@ -268,6 +280,8 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
         assert fields == dict(credit=expected + (7 if scenario == 'debt' else 0), key=expected if scenario != 'deleted_key' else None, credit_hold=0, key_hold=0 if scenario != 'deleted_key' else None,
                              actual=expected, reservation_settled=True, settled=True, cost=expected,
                              outcome='settled', generation_id=body['terminal']['generation_id'],
+                             generation_model=selected['model_id'],
+                             authorization_model=selected['model_id'],
                              generation_amount=expected,
                              generation_usage=dict(input=usage['total_prompt_tokens'], cached=usage['cache_read_tokens'],
                                                    output=usage['output_tokens'], reasoning=usage['reasoning_tokens']),
@@ -278,6 +292,8 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
         if path == 'snapshot_sync':
             assert row is None
         else:
+            assert (row['model_id'], row['selected_endpoint_id']) == (
+                selected['model_id'], selected['endpoint_id']), path
             assert row['status'] == 'done' and row['settle_body'] is None
             assert row['terminal_at'] is not None
             if path in ('async', 'duplicate'):

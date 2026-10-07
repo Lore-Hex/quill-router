@@ -15,6 +15,16 @@ HANDLER = 'src/trusted_router/services/async_settle_handler.py'
 STORAGE = 'src/trusted_router/storage_gcp_async_settle.py'
 TEST = 'tests/test_async_settle_handler.py::'
 MUTATIONS = [
+    ('oracle-native-cost-plus-one', [('src/trusted_router/routes/internal/gateway.py', [
+        ('        return cost_microdollars\n    _require_native_batch_route_binding',
+         '        return cost_microdollars + 1\n    _require_native_batch_route_binding'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('oracle-ordinary-partner-free', [('src/trusted_router/partner_billing.py', [
+        ('    return None\n', '    return PartnerBillingMode.INTERNAL\n'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('persist-wrong-model', [(HANDLER, [
+        ('model_id=candidate.model_id,', 'model_id="wrong/model",'),
+    ])], 'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
     ('error-envelope-message', [(HANDLER, [
         ('Invalid async settlement snapshot', 'Changed async settlement snapshot'),
     ])], 'tests/test_async_settle_proof.py::test_error_envelopes_real_http[invalid_snapshot]'),
