@@ -17,6 +17,24 @@
         "system_messages": true
       },
       "reasoning": true
+    },
+    {
+      "id": "zai-org/GLM-5.3-Flash",
+      "pricing": {
+        "input": "0.00000015",
+        "output": "0.0000005",
+        "prompt": "0.00000015",
+        "completion": "0.0000005",
+        "input_cache_read": "0.00000003"
+      },
+      "functionality": {
+        "tool_call": true,
+        "parallel_tool_call": true,
+        "structured_output": true,
+        "tool_choice": true,
+        "system_messages": true
+      },
+      "reasoning": true
     }
   ]
 }

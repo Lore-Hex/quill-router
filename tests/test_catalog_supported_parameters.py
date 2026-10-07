@@ -67,6 +67,7 @@ def test_native_endpoint_replaces_stale_snapshot_model_capabilities(monkeypatch,
     monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
     models, endpoints = catalog_ingest._ingested_models_and_endpoints()
+    assert set(endpoints) == {f"{model_id}@grok/prepaid", f"{model_id}@grok/byok"}
     assert "tools" in models[model_id].supported_parameters
     assert not {"logprobs", "top_logprobs"} & set(models[model_id].supported_parameters)
     assert all(endpoint.supported_parameters == models[model_id].supported_parameters

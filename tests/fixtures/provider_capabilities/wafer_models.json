@@ -61,6 +61,68 @@
           "cache_read_microcents_per_million": 26000000
         }
       }
+    },
+    {
+      "id": "GLM-5.3-Flash",
+      "wafer": {
+        "capabilities": {
+          "vision": true,
+          "tools": true,
+          "reasoning": true,
+          "zdr": {
+            "same_capabilities": true,
+            "supported": true
+          },
+          "messages": {
+            "tools": true,
+            "vision": true,
+            "reasoning": true,
+            "streaming": true,
+            "supported": true,
+            "tool_streaming": true
+          },
+          "responses": {
+            "tools": true,
+            "streaming": true,
+            "supported": true,
+            "text_format": [
+              "text",
+              "json_object",
+              "json_schema"
+            ],
+            "raw_json_schema_text": true
+          },
+          "chat_completions": {
+            "n": true,
+            "regex": false,
+            "tools": true,
+            "grammar": false,
+            "streaming": true,
+            "supported": true,
+            "json_object": true,
+            "json_schema": true,
+            "tool_streaming": true,
+            "json_schema_refs": true,
+            "tools_with_response_format": true
+          },
+          "reasoning_effort": {
+            "efforts": [
+              "none",
+              "low",
+              "high",
+              "max"
+            ],
+            "default": "low"
+          }
+        },
+        "pricing": {
+          "currency": "usd",
+          "input_cents_per_million": 15,
+          "output_cents_per_million": 50,
+          "cache_read_cents_per_million": 3,
+          "cache_read_microcents_per_million": 3000000
+        }
+      }
     }
   ]
 }

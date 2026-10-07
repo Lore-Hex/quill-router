@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -20,7 +21,7 @@ from scripts.pricing.providers import (
     friendli,
     wafer,
 )
-from trusted_router import catalog, catalog_ingest
+from trusted_router import catalog, catalog_ingest, catalog_registry
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.routing import RoutePreferences, catalog_endpoint_candidates
 
@@ -34,10 +35,70 @@ CASES = [
     (friendli, "friendli_models", {"tools", "tool-choice", "parallel-tool-calls", "structured-outputs", "reasoning"}),
     (wafer, "wafer_models", {"tools", "structured-outputs", "json-mode", "reasoning"}),
 ]
+# Expected canonical/native identities are independent of the fetchers' maps.
+# The first pair receives a declaration; the second is an undeclared control.
+MODEL_KEYS = {
+    "deepinfra": (("z-ai/glm-5.3", "zai-org/GLM-5.3"),
+                  ("openchat/openchat-3.6-8b", "openchat/openchat-3.6-8b")),
+    "featherless": (("moonshotai/kimi-k2.5", "moonshotai/Kimi-K2.5"),
+                    ("xiaomi/mimo-v2.5", "XiaomiMiMo/MiMo-V2.5")),
+    "atlas-cloud": (("deepseek/deepseek-v3.2-exp", "deepseek-ai/DeepSeek-V3.2-Exp"),
+                    ("google/gemini-2.5-flash", "google/gemini-2.5-flash")),
+    "fireworks": (("z-ai/glm-5.3", "accounts/fireworks/models/glm-5p3"),
+                  ("z-ai/glm-5.3-flash", "accounts/fireworks/models/glm-5p3-flash")),
+    "friendli": (("z-ai/glm-5.3", "zai-org/GLM-5.3"),
+                 ("z-ai/glm-5.3-flash", "zai-org/GLM-5.3-Flash")),
+    "wafer": (("z-ai/glm-5.3", "GLM-5.3"), ("z-ai/glm-5.3-flash", "GLM-5.3-Flash")),
+}
+FIELD_CASES = [
+    (deepinfra, "deepinfra_models_list", "tools", "tools"),
+    (deepinfra, "deepinfra_models_list", "json", "json-mode"),
+    (deepinfra, "deepinfra_models_list", "structured-output", "structured-outputs"),
+    (deepinfra, "deepinfra_models_list", "reasoning", "reasoning"),
+    (featherless, "featherless_models_subset", "tool_use", "tools"),
+    (atlas_cloud, "atlas-cloud_models", "tools", "tools"),
+    (atlas_cloud, "atlas-cloud_models", "json_mode", "json_mode"),
+    (atlas_cloud, "atlas-cloud_models", "structured_outputs", "structured_outputs"),
+    (atlas_cloud, "atlas-cloud_models", "reasoning", "reasoning"),
+    (fireworks, "fireworks_models", "supports_tools", "tools"),
+    (friendli, "friendli_models", "tool_call", "tools"),
+    (friendli, "friendli_models", "tool_choice", "tool-choice"),
+    (friendli, "friendli_models", "parallel_tool_call", "parallel-tool-calls"),
+    (friendli, "friendli_models", "structured_output", "structured-outputs"),
+    (friendli, "friendli_models", "reasoning", "reasoning"),
+    (wafer, "wafer_models", "tools", "tools"),
+    (wafer, "wafer_models", "json_object", "json-mode"),
+    (wafer, "wafer_models", "json_schema", "structured-outputs"),
+    (wafer, "wafer_models", "reasoning", "reasoning"),
+]
 
 
 def _payload(name):
     return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def _set_declarations(provider, row, declaration):
+    if provider is deepinfra:
+        row["tags"] = ["openai", "non-reasoning"] if declaration is False else declaration
+    elif provider is featherless:
+        row["features"] = {"tool_use": declaration}
+    elif provider is atlas_cloud:
+        row["supported_features"] = [] if declaration is False else declaration
+    elif provider is fireworks:
+        row["supports_tools"] = declaration
+    elif provider is friendli:
+        row["functionality"] = dict.fromkeys(row["functionality"], declaration)
+        row["reasoning"] = declaration
+    else:
+        caps = row["wafer"]["capabilities"]
+        caps["chat_completions"] = dict.fromkeys(caps["chat_completions"], declaration)
+        caps["reasoning"] = declaration
+        # Other Wafer APIs still declare tools; they do not prove chat support.
+
+
+def _manifest_features(manifest):
+    return {(row["id"], row["upstream_id"]): set(row.get("supported_features", []))
+            for row in manifest}
 
 
 def _fetch_manifest(monkeypatch, tmp_path, provider, payload, *, list_failure=None, existing_features=None, reset_manifest=True):
@@ -114,6 +175,13 @@ def _fetch_manifest(monkeypatch, tmp_path, provider, payload, *, list_failure=No
 @pytest.mark.parametrize(("provider", "fixture", "expected"), CASES, ids=[c[0].SLUG for c in CASES])
 def test_fetcher_writes_only_positive_provider_declarations(monkeypatch, tmp_path, provider, fixture, expected):
     original = _payload(fixture)
+    declared_key, control_key = MODEL_KEYS[provider.SLUG]
+    original_rows = original if isinstance(original, list) else original["data"]
+    # Some captures declare every model. Withdraw the control's declarations
+    # without changing its real model ID, pricing, or unrelated capabilities.
+    for row in original_rows:
+        if row.get("model_name", row.get("id")) == control_key[1]:
+            _set_declarations(provider, row, False)
     # Keep the model IDs fixed while removing/changing evidence: no model-name
     # inference, truthiness of "false"/1, or stale discovery state may add labels.
     for declaration in (True, False, None, "false", 1):
@@ -121,40 +189,51 @@ def test_fetcher_writes_only_positive_provider_declarations(monkeypatch, tmp_pat
         rows = payload if isinstance(payload, list) else payload["data"]
         if declaration is not True:
             for row in rows:
-                if provider is deepinfra:
-                    row["tags"] = ["openai", "non-reasoning"] if declaration is False else declaration
-                elif provider is featherless:
-                    row["features"] = {"tool_use": declaration}
-                elif provider is atlas_cloud:
-                    row["supported_features"] = [] if declaration is False else declaration
-                elif provider is fireworks:
-                    row["supports_tools"] = declaration
-                elif provider is friendli:
-                    row["functionality"] = dict.fromkeys(row["functionality"], declaration)
-                    row["reasoning"] = declaration
-                else:
-                    caps = row["wafer"]["capabilities"]
-                    caps["chat_completions"] = dict.fromkeys(caps["chat_completions"], declaration)
-                    caps["reasoning"] = declaration
-                    # Other Wafer APIs still declare tools; they do not prove
-                    # that this chat/completions route accepts them.
+                _set_declarations(provider, row, declaration)
         with monkeypatch.context() as patch:
             manifest = _fetch_manifest(patch, tmp_path, provider, payload)
-        labels = [set(row.get("supported_features", [])) for row in manifest]
-        if declaration is True:
-            assert expected in labels
-            if provider in (deepinfra, featherless, atlas_cloud):
-                assert set() in labels  # Real undeclared row from the capture.
-            if provider is atlas_cloud:
-                assert any("seed" in row.get("supported_sampling_parameters", []) for row in manifest)
-        else:
-            assert all(not features for features in labels)
+        assert _manifest_features(manifest) == {
+            declared_key: expected if declaration is True else set(), control_key: set(),
+        }
+        if provider is atlas_cloud and declaration is True:
+            assert any("seed" in row.get("supported_sampling_parameters", []) for row in manifest)
     with monkeypatch.context() as patch:
         manifest = _fetch_manifest(
             patch, tmp_path, provider, original, existing_features=["logprobs"],
         )
-    assert expected in [set(row.get("supported_features", [])) for row in manifest]
+    assert _manifest_features(manifest) == {declared_key: expected, control_key: set()}
     assert all(row["features"] == ["logprobs"] for row in manifest)
+
+
+@pytest.mark.parametrize(
+    ("provider", "fixture", "field", "label"), FIELD_CASES,
+    ids=[f"{provider.SLUG}-{field}" for provider, _fixture, field, _label in FIELD_CASES],
+)
+def test_fetcher_maps_each_provider_field_independently(
+    monkeypatch, tmp_path, provider, fixture, field, label,
+):
+    payload = _payload(fixture)
+    rows = payload if isinstance(payload, list) else payload["data"]
+    declared_key, control_key = MODEL_KEYS[provider.SLUG]
+    for row in rows:
+        _set_declarations(provider, row, False)
+        if row.get("model_name", row.get("id")) != declared_key[1]:
+            continue
+        if provider is deepinfra:
+            row["tags"].append(field)
+        elif provider is featherless:
+            row["features"][field] = True
+        elif provider is atlas_cloud:
+            row["supported_features"].append(field)
+        elif provider is fireworks:
+            row[field] = True
+        elif provider is friendli:
+            (row if field == "reasoning" else row["functionality"])[field] = True
+        else:
+            caps = row["wafer"]["capabilities"]
+            (caps if field == "reasoning" else caps["chat_completions"])[field] = True
+    manifest = _fetch_manifest(monkeypatch, tmp_path, provider, payload)
+    assert _manifest_features(manifest) == {declared_key: {label}, control_key: set()}
 
 
 @pytest.mark.parametrize("failure", ["timeout", "http", "json", "shape"])
@@ -283,6 +362,61 @@ def test_provider_features_reach_snapshot_and_manifest_routes(monkeypatch, tmp_p
         assert {endpoint.id for _, endpoint in matches} == {
             endpoint.id for endpoint in normalized if endpoint.provider == provider
         }
+
+
+@pytest.mark.parametrize("surface", ["registry", "models-api"])
+def test_final_registry_publishes_replacing_manifest_route_features(monkeypatch, tmp_path, client, surface):
+    from tests.fixture_routes import bypass_catalog_caches
+
+    model_id = "fixture/registry-provider-tools"
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    (manifests / "deepinfra.json").write_text(json.dumps({
+        "provider": "deepinfra", "generated_at": "2026-10-07T00:00:00Z", "models": [{
+            "id": model_id, "upstream_id": "registry-provider-tools", "model_type": "chat",
+            "endpoints": ["chat/completions"], "input_token_price_per_m": 1_000_000,
+            "output_token_price_per_m": 2_000_000, "supported_features": ["tools"],
+        }],
+    }))
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({"models": [{"id": model_id, "endpoints": [{
+        "tr_provider_slug": "deepinfra", "model_id": "registry-provider-tools",
+        "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+        "supported_parameters": ["temperature", "provider_extension"],
+    }]}]}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
+    monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    # Execute the actual construction/merge/normalization in a fresh namespace;
+    # reloading the live module would leave other tests holding stale registries.
+    registry = runpy.run_path(catalog_registry.__file__)
+    expected_ids = {f"{model_id}@deepinfra/prepaid", f"{model_id}@deepinfra/byok"}
+    ingested = {key: ep for key, ep in registry["_INGESTED_ENDPOINTS"].items()
+                if ep.model_id == model_id}
+    supplemental = {key: ep for key, ep in registry["_SUPPLEMENTAL_ENDPOINTS"].items()
+                    if ep.model_id == model_id}
+    registered = {key: ep for key, ep in registry["MODEL_ENDPOINTS"].items()
+                  if ep.model_id == model_id}
+    assert set(ingested) == set(supplemental) == set(registered) == expected_ids
+    assert all("provider_extension" in ep.supported_parameters for ep in ingested.values())
+    # The existing merge replaces the snapshot row. Do not require retention of
+    # snapshot-only parameters: this test pins the provider-owned declaration.
+    if surface == "registry":
+        assert {key: set(ep.supported_parameters) for key, ep in registered.items()} == {
+            key: {"max_tokens", "tools"} for key in expected_ids
+        }
+        return
+    monkeypatch.setitem(catalog.MODELS, model_id, registry["MODELS"][model_id])
+    for key, endpoint in registered.items():
+        monkeypatch.setitem(catalog.MODEL_ENDPOINTS, key, endpoint)
+    bypass_catalog_caches(monkeypatch)
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+    published = next(row for row in response.json()["data"] if row["id"] == model_id)
+    routes = published["trustedrouter"]["endpoints"]
+    assert {row["id"]: (set(row["supported_parameters"]), row["capabilities"]["tools"])
+            for row in routes} == {
+        key: ({"max_tokens", "tools"}, True) for key in expected_ids
+    }
 
 
 @pytest.mark.parametrize("publisher_manifest", [False, True], ids=["absent", "held"])
