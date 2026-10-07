@@ -2,8 +2,9 @@
 
 Status: plan, for review. It is step 5 of the rollout in
 `docs/design/fast-admission-and-batched-settlement.md` (§8), which this
-document calls the design. Nothing here serves production traffic or reads
-production data.
+document calls the design. Nothing here serves production traffic. One
+read-only query of ClickHouse, for aggregates only, sets the load's mix
+(§5); nothing else reads production data.
 
 The spike builds the owner, renewals and the auditor in Go, runs them in one
 GCP region against synthetic load, and answers the five questions §8 lists.
@@ -18,11 +19,11 @@ result, whichever it is.
 
 | # | Question (§8 step 5) | Measured by | Passes when |
 |---|---|---|---|
-| Q1 | Ownership hand-off, and an owner killed mid-stream | Scenarios K1-K6 (§5), each with streams open | Each scenario's own assertions in §5 hold, and the trace check (Q5) finds no violation in its runs. |
+| Q1 | Ownership hand-off, and an owner killed mid-stream | Scenarios K1-K6 (§5), each with streams open | Each scenario's own assertions in §5 hold, and the trace check (Q5) finds no violation in its ordinary runs. |
 | Q2 | The hottest workspace's rate on one owner | H1 and H2 (§5) | At 1,000 generations a second on one lease, the figure §6 assumes for one ordering key, warm authorize measured at the load generator is at most 3 ms p50 and 10 ms p99 (§6, and the design's target of about 10 ms of overhead). One owner's own limit, across as many leases as it takes to reach it, is recorded: it sizes the fleet. |
 | Q3 | Pub/Sub ordering across publishers in one region, the per-key limit, record sizes, and redelivery | Probes P1-P4 (§5) | Each probe's condition in §5 holds. |
 | Q4 | The auditor's conditional commits while its members change, and what it writes | Scenarios A1-A4 (§5) | A1-A3's assertions hold. A4 records rows and bytes per commit, commits a second, and the time to restore a lease, with thousands of open holds and of winners with pending work. |
-| Q5 | Traces from the spike's leases, checked against the specs | Every run's traces through the shadows (§6) | No trace shows a violation. A trace the evidence cannot order is inconclusive, not a pass: the recorder gains the evidence it lacked, and the run is repeated, until every scenario's traces are decided. |
+| Q5 | Traces from the spike's leases, checked against the specs | Every run's traces through the shadows (§6) | No trace of an ordinary run shows a violation, and every negative control's trace shows the violation it was built to cause (K6). A trace the evidence cannot order is inconclusive, not a pass: the recorder gains the evidence it lacked, and the run is repeated, until every scenario's traces are decided. |
 
 Each question gets a section in the results document (§7, S8), with its
 numbers and anything in the design that has to change.
@@ -47,10 +48,16 @@ Each has two kinds of test:
 
 - property tests that drive random sequences of actions, with larger bounds
   than the spec's, and check every invariant after each;
-- an exhaustive search of the spec's own model at its `.cfg`'s constants,
-  which must reach the same number of distinct states as TLC does there: the
-  `[states]` in the spec's guard table. A transcription that adds or loses a
-  behavior changes that number.
+- an exact comparison with TLC on a small instance of the spec, with
+  constants smaller than its `.cfg`'s. TLC writes the instance's whole state
+  graph with its actions' names (`-dump dot,actionlabels`), and the test
+  checks that from every state the shadow enables the same actions and
+  reaches the same successors. A transition the shadow adds between states
+  TLC reaches anyway shows here, where a count of states would miss it;
+- an exhaustive search at the `.cfg`'s own constants, which must reach as
+  many distinct states as TLC does there: the `[states]` in the spec's guard
+  table. That is a sanity check on the full instance, not a proof that the
+  two agree.
 
 When a package first appears, its manifest entry in `proofs/manifest.toml`
 moves from planned to implemented, naming the package and its tests, in the
@@ -94,13 +101,17 @@ exists.
 Left out: keys, caps and trust tiers beyond one tier; other regions, AWS and
 Azure.
 
-**Times are scaled down,** so that a scenario fits in an hour: a hold lives
-at most 5 minutes instead of 2 h 20 min, with the heartbeat interval, the
-expiry window, the grace and the publish deadline scaled with it. The ratios
-the design rests on are kept: the grace is more than twice the skew
-allowance, and the publish deadline is shorter than the grace less twice the
-skew (§4.5). One run of K1 at the design's real times confirms the scaled
-ones.
+**Times are scaled down for the correctness scenarios only,** so that each
+fits in an hour: K1-K6 and A1-A3 run with holds that live at most 5 minutes
+instead of 2 h 20 min, and the heartbeat interval, the expiry window, the
+grace and the publish deadline scaled with them. The ratios the design rests
+on are kept: the grace is more than twice the skew allowance, and the publish
+deadline is shorter than the grace less twice the skew (§4.5). One run of K1
+at the design's real times confirms the scaled ones.
+
+Scaling changes the load: at a fixed number of open streams, a shorter
+heartbeat interval multiplies the heartbeats. So the measurements, P2, H1, H2
+and A4, run at production's cadence and deadlines.
 
 ## 3. Where it runs
 
@@ -189,7 +200,8 @@ need, not a migration:
   with its pending work, and the timestamp the row-deletion policy reads,
   set once the lease is closed and the pack's work is done;
 - `tr_lease_drain`: §4.5's drain log, keyed by lease, authorization and
-  record ID, ordered by commit timestamp;
+  record ID, ordered by commit timestamp and then record ID, since two
+  independent appends can share a timestamp;
 - `tr_lease_record`: the records the pending work writes, standing for the
   generation and activity records and the disposition records (§4.9);
 - `tr_spike_staged`: the stand-in for staging (§2);
@@ -226,8 +238,11 @@ and what it costs in reservation.
 
 ## 5. Scenarios and probes
 
-**The load,** unless a scenario says otherwise, follows today's traffic,
-read from ClickHouse before the runs:
+**The load,** unless a scenario says otherwise, follows today's traffic. Its
+mix is a fixture of aggregates, `fastpath/testdata/load-mix.json`: shares and
+a histogram, no workspace, key or request. It is made once by a read-only
+ClickHouse query over the analytics tables, as AGENTS.md has request analytics
+done, and committed with the query that made it:
 
 - today's share of streaming requests, with heartbeats at the enclave's
   interval, about three per generation (§6);
@@ -287,8 +302,11 @@ its own assertions:
     closes each once its end condition holds (§4.8). The time from the kill
     to every lease closed is recorded.
 - **K2, a forced exit.** SIGTERM with a short deadline.
-  - A complete hand-off lets the auditor close each lease as soon as the
-    holds it lists have ended.
+  - A complete hand-off spares the auditor only the wait for holds it cannot
+    see. It still closes each lease after its fence tick, with S stored, the
+    records up to it applied and the close's read of the drain log (§4.8),
+    once the holds the hand-off lists have ended, and not after the longest
+    life of an unknown hold.
   - In a second run the owner is killed partway through its hand-off. That
     partial hand-off counts as none, and the leases close by time.
 - **K3, a deploy.** A node marked leaving and a new node joining.
@@ -297,13 +315,15 @@ its own assertions:
   - New admissions go to the new owner.
   - Old leases close after their holds end. The overlap in reservation and
     in capacity is recorded (§4.2).
-- **K4, a partition.** A front door cut off from one owner, then from
-  several.
-  - Cut off from one, its terminals go to a peer front door, then to the
-    drain log, and its heartbeats get `retry`. Revocations stay within their
-    rate limits.
-  - Cut off from several, it withdraws, and after that sends no terminal of
-    a reachable owner's lease to the drain log.
+- **K4, partitions.** Three cuts, each with its own assertions (§4.3):
+  - One front door cut off from one owner that its peers still reach. Its
+    terminals reach the owner through a peer, and its heartbeats too, within
+    their sub-second cap. Nothing goes to the drain log, and no stream stops.
+  - An owner cut off from every front door. Terminals go to the drain log
+    and heartbeats get `retry`, so streams stop and settle there.
+    Revocations stay within their rate limits.
+  - One front door cut off from several owners. It withdraws, and after
+    that sends no terminal of a reachable owner's lease to the drain log.
 - **K5, publishes failing.** The owner's publishes fail for a while.
   - It admits nothing new under the lease and answers terminals with an
     error, which `loadgen` retries.
@@ -364,8 +384,11 @@ A trace has to say enough to put every step in an order the specs can check.
   sender's event identity, and the receiver records it. So a renewal's
   answer follows its request, and a front door's append follows the failed
   call that caused it.
-- **Spanner gives a total order** to its writes: each records its commit
-  timestamp, and each read its read timestamp.
+- **Spanner orders its writes,** as far as their timestamps do: each write
+  records its commit timestamp, and each read its read timestamp.
+  Independent transactions can commit at the same timestamp. The drain log
+  breaks that tie by record ID, as §4.5 does; any other tie is left
+  unordered, and counts as missing evidence if the order matters.
 - **Pub/Sub's order is observed:** a publisher records each message's ID and
   the event that published it; a subscriber records the order in which it
   was given each key's messages.
