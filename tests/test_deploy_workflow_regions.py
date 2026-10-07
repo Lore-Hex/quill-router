@@ -289,13 +289,26 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
     assert "staged_traffic.sh us-east4" not in deploy
     assert "staged_traffic.sh southamerica-east1" not in deploy
     assert "ramp_secondary" not in deploy
-    assert "timeout-minutes: 25" in deploy
+    assert "timeout-minutes: 55" in deploy
     assert "deploy_mutex.sh release" not in deploy
     finalization = yaml.safe_load(workflow)["jobs"]["finalize-cloud"]
     assert "always()" in finalization["if"]
     assert "deploy" in finalization["needs"]
     assert "rollout-secondaries" in finalization["needs"]
     assert 'export TR_DEPLOY_OUTCOME=failure' in str(finalization)
+
+
+def test_primary_job_budget_covers_gates_and_bounded_cleanup() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    primary = workflow["jobs"]["deploy"]
+    steps = primary["steps"]
+    canary = next(step for step in steps if step.get("id") == "canary_us")
+    assert "--duration-min 3 --rollback-after 2" in canary["run"]
+    # Cold warmup, staged ramp, unchanged canary, shared warm join, cleanup.
+    assert 15 + 15 + 3 + 15 + 5 <= primary["timeout-minutes"] <= 60
+    collector = next(step for step in steps if step.get("id") == "wait_secondary_warms")["run"]
+    assert collector.count("poll_deadline=$((SECONDS + 900))") == 1
+    assert collector.index("poll_deadline=$((SECONDS + 900))") < collector.index("while IFS=")
 
 
 def test_secondaries_ramp_serially() -> None:

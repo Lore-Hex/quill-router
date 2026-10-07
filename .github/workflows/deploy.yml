@@ -459,7 +459,9 @@ jobs:
       us_east4_revision: ${{ steps.wait_secondary_warms.outputs.us_east4_revision }}
       southamerica_east1_revision: ${{ steps.wait_secondary_warms.outputs.southamerica_east1_revision }}
     # The outer six-hour reservation spans schema, regions, and public checks.
-    timeout-minutes: 25
+    # Cold warmup + staged ramp + the unchanged canary can exceed 25 minutes.
+    # Leave time for the bounded secondary join and failure cleanup as well.
+    timeout-minutes: 55
     env:
       TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
       TR_DEPLOY_MUTEX_GENERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_GENERATION }}
@@ -812,6 +814,8 @@ jobs:
           fi
 
           failed=0
+          # All secondary warms started together; share one bounded join budget.
+          poll_deadline=$((SECONDS + 900))
           while IFS=$'\t' read -r region pid log_file status_file revision_file; do
             # Background processes persist across steps on the same runner,
             # but they are no longer children of this shell. Wait by polling
@@ -821,7 +825,6 @@ jobs:
             # (or whose PID was recycled by an unrelated process, defeating
             # kill -0) must become a named per-region failure here, not a
             # generic job timeout with the mutex still held.
-            poll_deadline=$((SECONDS + 900))
             while [ ! -s "${status_file}" ]; do
               if ! kill -0 "${pid}" 2>/dev/null; then
                 # kill -0 losing a race with the status write is benign:
