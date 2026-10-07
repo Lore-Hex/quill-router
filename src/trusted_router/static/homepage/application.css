@@ -407,3 +407,8 @@ footer{background:#070a08;border-top:1px solid #33403a}
 .trc .fl .cnt{min-width:24ch;text-align:right;white-space:nowrap}
 @media(max-width:1000px){.trc .fl{flex-wrap:wrap}.trc .fl .cnt{flex-basis:100%;min-width:0;margin:0;text-align:left}}
 @media(min-width:881px){.trc table{table-layout:fixed}.trc th:nth-child(2){width:22%}.trc th:nth-child(3),.trc th:nth-child(4){width:140px}.trc th:nth-child(5){width:100px}}
+
+/* No grey dot: when status is unknown or really delayed the dot hides and the Status link stays. */
+.homepage-status[data-state="unknown"] .homepage-status-dot {
+  display: none;
+}

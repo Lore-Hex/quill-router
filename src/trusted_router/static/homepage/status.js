@@ -7,6 +7,10 @@
     trust_degraded: 'Trust degraded', down: 'Major outage', unknown: 'Status unavailable'
   };
   let snapshot = null, receivedAt = 0, pending = false;
+  // A check older than this is "really delayed": the dot hides and the link
+  // explains. Inside it the last result stands, even past the server's own
+  // short freshness window, so routine probe lag never greys the dot.
+  const DELAYED_AFTER_SECONDS = 30 * 60;
 
   function render() {
     let state = 'unknown', label = 'Status unavailable';
@@ -21,7 +25,7 @@
       // Cached responses and suspended tabs must never keep an old green badge.
       const age = Math.max((Date.now() - sampleAt) / 1000,
         reportedAge + (Date.now() - receivedAt) / 1000);
-      if (freshness.is_stale || age > ttl) {
+      if (age > DELAYED_AFTER_SECONDS) {
         label = 'Status delayed';
       } else if (Object.hasOwn(labels, snapshot.overall_status)) {
         const status = snapshot.overall_status;

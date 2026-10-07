@@ -163,6 +163,11 @@
   background: var(--tr-color-status-unknown);
 }
 
+/* No grey dot: when status is unknown or really delayed the dot hides and the Status link stays. */
+.homepage-status[data-state="unknown"] .homepage-status-dot {
+  display: none;
+}
+
 .homepage-status[data-state="up"] .homepage-status-dot {
   background: var(--tr-color-status-up);
   box-shadow:
