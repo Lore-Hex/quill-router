@@ -95,13 +95,15 @@ func TestConstantValuesReadsSetsOfModelValues(t *testing.T) {
 // members once, a comment is no value, a model value may start with a digit,
 // and what TLC's configuration grammar refuses is refused.
 func TestConstantValuesReadsWhatTLCDoes(t *testing.T) {
-	k, err := ConstantValues("CONSTANTS \\* names\n  X = \"a  b\" (* a (* nested *) comment *)\n" +
-		"  S = {a1, a1, 1a}\n  N = -2\nINVARIANT TypeOK\nCONSTANT\n  L = TRUE\n")
+	k, err := ConstantValues("CONSTANTS(* a comment against the keyword *)\\* names\n" +
+		"  X = \"a  b\" (* a (* nested *) comment *)\n  E = \"a\\nb\"\n" +
+		"  S = {a1, a1, 1a}\n  N = 2\nINVARIANT TypeOK\nCONSTANT\n  L = TRUE\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]Value{
-		"X": "a  b", "S": Set{ModelValue("a1"), ModelValue("1a")}, "N": int64(-2), "L": true,
+		// TLC's configuration reader keeps a backslash in a string as text.
+		"X": "a  b", "E": `a\nb`, "S": Set{ModelValue("a1"), ModelValue("1a")}, "N": int64(2), "L": true,
 	}
 	if len(k) != len(want) {
 		t.Fatalf("read %v", k)
@@ -119,6 +121,8 @@ func TestConstantValuesReadsWhatTLCDoes(t *testing.T) {
 		"CONSTANTS\n  X = 1\n  X = 2\n",
 		"CONSTANTS\n  X = \"never closed\n",
 		"CONSTANTS\n  X = 1 (* never closed\n",
+		"CONSTANTS\n  X = -2\n",
+		"CONSTANTS\n  X = 1(* between *)2\n",
 	} {
 		if _, err := ConstantValues(bad); err == nil {
 			t.Errorf("%q is read", bad)
@@ -186,6 +190,23 @@ func TestReadDotReadsStatesStepsAndTheInitialState(t *testing.T) {
 		if _, err := ReadDot(path); err == nil {
 			t.Errorf("%s is skipped, not refused", name)
 		}
+	}
+}
+
+func TestCompareRefusesALimitBelowOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.dot")
+	dot := "strict digraph DiskGraph {\n-1 [label=\"/\\\\ x = 0\",style = filled]\n}\n"
+	if err := os.WriteFile(path, []byte(dot), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := func(r Record) (int64, error) { return r["x"].(int64), nil }
+	shadow := Shadow[int64]{Init: 0, Next: func(int64) []Step[int64] { return nil }}
+	if _, err := Compare(path, read, shadow, 0); err == nil {
+		t.Fatal("a limit of 0, which would report no difference, is accepted")
+	}
+	got, err := Compare(path, read, shadow, 1)
+	if err != nil || got.States != 1 || len(got.Diffs) != 0 {
+		t.Fatalf("the one-state graph compares as %+v, %v", got, err)
 	}
 }
 

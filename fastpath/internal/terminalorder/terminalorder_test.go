@@ -2,6 +2,7 @@ package terminalorder
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -235,6 +236,10 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 		return -1
 	}
 	perAuth := func(v tlc.Value, read func(tlc.Value, int8)) {
+		// TLC prints a function on no authorizations as the empty sequence.
+		if seq, isSeq := v.(tlc.Seq); isSeq && len(seq) == 0 && len(c.Auths) == 0 {
+			return
+		}
 		f, ok := v.(tlc.Func)
 		if !ok || len(f) != len(c.Auths) {
 			fail("not a function on the authorizations: %v", v)
@@ -395,6 +400,13 @@ func TestUndefinedWhereTLCHasNoValue(t *testing.T) {
 	if !undefined(func() bool { return oneStream.AdoptionKeepsTheWinner(adopted) }) {
 		t.Error("AdoptionKeepsTheWinner takes the least of an empty set of rows")
 	}
+	beyond := oneStream.Init()
+	beyond.Outbox[0] = Rec{0, Reap, 0}
+	beyond.OutboxLen, beyond.OwnerApplied = 1, 2
+	beyond.Winner[0] = Winner{Owner, 1}
+	if !undefined(func() bool { return oneStream.WinnerIsFirstInOrder(beyond) }) {
+		t.Error("WinnerIsFirstInOrder builds OwnerTerms past the end of the outbox and answers")
+	}
 	if undefined(func() bool { return oneStream.TypeOK(oneStream.Init()) }) {
 		t.Error("TypeOK has no value on Init")
 	}
@@ -497,6 +509,11 @@ func TestValidateRefusesWhatTheSpecAssumesAway(t *testing.T) {
 	fits.MaxAppends = MaxDrain - 1
 	if err := fits.Validate(); err != nil {
 		t.Errorf("one authorization and %d appends fit, and are refused: %v", fits.MaxAppends, err)
+	}
+	huge := oneStream
+	huge.MaxAppends = math.MaxInt
+	if huge.Validate() == nil {
+		t.Error("appends whose sum with the authorizations overflows are accepted")
 	}
 	none := Config{}
 	if err := none.Validate(); err != nil {

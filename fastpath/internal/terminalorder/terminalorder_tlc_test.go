@@ -15,7 +15,13 @@ import (
 // TestTransitionsMatchTLC holds every step of the shadow against TLC's state
 // graphs of the two small instances.
 func TestTransitionsMatchTLC(t *testing.T) {
-	for name, c := range map[string]Config{"one stream": oneStream, "two plain": twoPlain, "two appends": twoAppends} {
+	instances := map[string]Config{
+		"one stream": oneStream, "two plain": twoPlain, "two appends": twoAppends,
+		// No authorizations, which the spec allows: TLC prints the functions
+		// on them as the empty sequence.
+		"none": {},
+	}
+	for name, c := range instances {
 		got := compareWithTLC(t, c, c.Next)
 		if len(got.Diffs) > 0 {
 			t.Errorf("%s: differences from TLC, the first: %v", name, got.Diffs)

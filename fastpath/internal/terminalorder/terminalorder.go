@@ -41,7 +41,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("%d authorizations, more than %d", n, MaxAuths)
 	case len(c.Stream) != n || len(c.Declared) != n:
 		return fmt.Errorf("Stream and Declared must say something of each authorization")
-	case c.MaxAppends < 0 || c.MaxAppends+n > MaxDrain:
+	case c.MaxAppends < 0 || c.MaxAppends > MaxDrain-n:
 		return fmt.Errorf("MaxAppends %d and %d authorizations make more drain rows than %d", c.MaxAppends, n, MaxDrain)
 	}
 	names := map[string]bool{}
@@ -225,8 +225,13 @@ func (c Config) HbDurable(s *State, a int8) bool {
 	return s.S != c.NoS() && s.hbIn(a, s.S)
 }
 
-// firstOwnerTerm is Min(OwnerTerms(a, n)), or 0 when there is none.
+// firstOwnerTerm is Min(OwnerTerms(a, n)), or 0 when there is none. OwnerTerms
+// is a set built from all of outbox[1..n], so it has no value when n passes
+// the outbox's end, whatever comes first.
 func (s *State) firstOwnerTerm(a, n int8) int8 {
+	if n > s.OutboxLen {
+		panic(Undefined{fmt.Sprintf("OwnerTerms over outbox[1..%d] of %d records", n, s.OutboxLen)})
+	}
 	for i := int8(1); i <= n; i++ {
 		if r := s.outbox(i); r.Auth == a && terminal(r.Kind) {
 			return i

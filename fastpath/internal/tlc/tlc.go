@@ -252,6 +252,9 @@ type triple struct {
 // states fits in memory.
 func Compare[S comparable](path string, read func(Record) (S, error), shadow Shadow[S], limit int) (Comparison, error) {
 	var out Comparison
+	if limit < 1 {
+		return out, fmt.Errorf("a limit of %d differences would report none", limit)
+	}
 	byFP := map[int64]S{}
 	byState := map[S]int64{}
 	var inits []int64
@@ -743,7 +746,7 @@ func ConstantValues(cfgText string) (map[string]Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &parser{toks: tokenize(text)}
+	p := &parser{toks: tokenizeConfig(text)}
 	consts := map[string]Value{}
 	in := false
 	for !p.done() {
@@ -789,24 +792,23 @@ func withoutComments(text string) (string, error) {
 	for i := 0; i < len(text); i++ {
 		switch {
 		case depth == 0 && text[i] == '"':
-			j := i + 1
-			for j < len(text) && text[j] != '"' {
-				if text[j] == '\\' {
-					j++
-				}
-				j++
-			}
-			if j >= len(text) {
+			// As in TLC's configuration reader, a string ends at the next
+			// quote: a backslash in it is text.
+			j := strings.IndexByte(text[i+1:], '"')
+			if j < 0 {
 				return "", errors.New("a string that never closes")
 			}
-			b.WriteString(text[i : j+1])
-			i = j
+			b.WriteString(text[i : i+j+2])
+			i += j + 1
 		case strings.HasPrefix(text[i:], "(*"):
 			depth++
 			i++
 		case depth > 0 && strings.HasPrefix(text[i:], "*)"):
 			depth--
 			i++
+			if depth == 0 {
+				b.WriteByte(' ')
+			}
 		case depth > 0:
 		case strings.HasPrefix(text[i:], `\*`):
 			for i < len(text) && text[i] != '\n' {
@@ -852,10 +854,68 @@ func (p *parser) configValue() (Value, error) {
 			}
 		}
 	}
-	if t == "<<" || t == "[" || t == "(" || cfgKeywords[t] {
-		return nil, fmt.Errorf("a .cfg gives no value that starts %q", t)
+	p.next()
+	switch {
+	case t == "TRUE":
+		return true, nil
+	case t == "FALSE":
+		return false, nil
+	case strings.HasPrefix(t, `"`):
+		// TLC's configuration reader keeps a string's text as written,
+		// a backslash included.
+		return t[1 : len(t)-1], nil
+	case unsigned.MatchString(t):
+		n, err := strconv.ParseInt(t, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return n, nil
+	case identifier.MatchString(t) && !cfgKeywords[t]:
+		return ModelValue(t), nil
 	}
-	return p.value()
+	return nil, fmt.Errorf("a .cfg gives no value %q", t)
+}
+
+var unsigned = regexp.MustCompile(`^[0-9]+$`)
+
+// tokenizeConfig splits a configuration's text as TLC's configuration reader
+// does where it differs from the dump's: a string ends at the next quote,
+// with no escapes, and a sign is a token of its own, which no value starts
+// with.
+func tokenizeConfig(s string) []string {
+	var toks []string
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\n' || c == '\t' || c == '\r':
+			i++
+		case c == '"':
+			j := strings.IndexByte(s[i+1:], '"')
+			if j < 0 {
+				toks = append(toks, s[i:])
+				return toks
+			}
+			toks = append(toks, s[i:i+j+2])
+			i += j + 2
+		case strings.ContainsRune("{}[](),=-", rune(c)):
+			toks = append(toks, string(c))
+			i++
+		case strings.HasPrefix(s[i:], "<<") || strings.HasPrefix(s[i:], ">>") || strings.HasPrefix(s[i:], "<-"):
+			toks = append(toks, s[i:i+2])
+			i += 2
+		default:
+			j := i
+			for j < len(s) && (s[j] == '_' || s[j] >= '0' && s[j] <= '9' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= 'A' && s[j] <= 'Z') {
+				j++
+			}
+			if j == i {
+				j = i + 1
+			}
+			toks = append(toks, s[i:j])
+			i = j
+		}
+	}
+	return toks
 }
 
 var statesLine = regexp.MustCompile(`^"([^"]+)" = (\d+)$`)
