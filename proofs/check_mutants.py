@@ -79,6 +79,9 @@ _KEYWORDS = frozenset({
 })
 # What the guard table may say a removed guard breaks, besides a claim.
 BREAKS_NOTHING, BREAKS_EVALUATION = "nothing", "evaluation"
+# What a guard that breaks nothing says besides: whether the spec reaches a
+# state without it that it does not reach with it.
+NO_NEW_STATE, NEW_STATES = "no new state", "new states"
 # The claim that states only a model's types and bounds, in every spec here.
 # A guard that breaks nothing else keeps the model inside its own shape, which
 # is a reason of a different kind from holding up a property, so its row says
@@ -488,6 +491,12 @@ def claim_problems(entry: dict, cfg_text: str) -> list[str]:
     return [f"no mutant breaks {claim}" for claim in sorted(claims - broken)]
 
 
+def config_file(name: str, variant: str) -> str:
+    """The file a configuration is read from: <Spec>.cfg, or <Spec>.<variant>.cfg."""
+
+    return f"{name}.{variant}.cfg" if variant else f"{name}.cfg"
+
+
 def load_configs(name: str, root: Path = PROOFS) -> tuple[dict[str, str], list[str]]:
     """A spec's configurations by variant name ("" is the main one), and what is wrong."""
 
@@ -672,6 +681,8 @@ class _Parse:
         # and the actions being read.
         self.assigns: dict[str, frozenset[str]] = {}
         self.reading: set[str] = set()
+        # The calls to actions the walk followed.
+        self.followed: set[ET.Element] = set()
 
     # --- reading a node
 
@@ -883,6 +894,55 @@ class _Parse:
         raise SystemExit(f"error: {formula} has `{self._text(node)}` beside its [][Next]_vars, at "
                          f"{self._where(node)}: only an initial condition and fairness may stand there")
 
+    def used_otherwise(self, formula: str) -> str | None:
+        """An action the walk read that the specification also uses other than as a step, if there is one.
+
+        Read after the walk. A use is a reference anywhere in the formula the
+        configurations check, or in a definition it names: the initial
+        condition as much as the relation. Fairness is not read: it changes
+        which behaviors count, not which states are reached. Nor is the place
+        a LET defines an action.
+        """
+
+        followed = {node.find("operator")[0] for node in self.followed}  # type: ignore[index]
+        top = [node for node in self.entries.values()
+               if node.tag == "UserDefinedOpKind" and node.findtext("uniquename") == formula
+               and self._defined_here(node) and node.find("body") is not None]
+        seen: set[str] = set()
+        bodies = [top[0].find("body")] if len(top) == 1 else []
+        while bodies:
+            for reference in self._references(bodies.pop()):  # type: ignore[arg-type]
+                uid = str(reference.findtext("UID"))
+                if uid in self.assigns and reference not in followed:
+                    return str(self.entries[uid].findtext("uniquename"))
+                if uid not in seen:
+                    seen.add(uid)
+                    # A definition's expression is its body. A named theorem's
+                    # or assumption's is the node itself, which a guard can
+                    # name as it names a definition.
+                    entry = self.entries[uid]
+                    definition = entry.find("body") if entry.tag == "UserDefinedOpKind" else entry
+                    if definition is not None:
+                        bodies.append(definition)
+        return None
+
+    # What an expression can name that has an expression of its own.
+    _NAMED = ("UserDefinedOpKindRef", "TheoremDefRef", "AssumeDefRef")
+
+    def _references(self, node: ET.Element) -> list[ET.Element]:
+        """The definitions, theorems and assumptions an expression names, outside fairness and a LET's definition sites."""
+
+        found, stack = [], [node]
+        while stack:
+            current = stack.pop()
+            if current.tag == "OpApplNode" and self._operator(current).findtext("uniquename") in ("$WF", "$SF"):
+                continue
+            if current.tag in self._NAMED:
+                found.append(current)
+                continue
+            stack += [child for child in current if not (current.tag == "LetInNode" and child.tag == "opDefs")]
+        return found
+
     # --- the guards
 
     def _conditions(self, node: ET.Element, action: str) -> None:
@@ -927,6 +987,7 @@ class _Parse:
         if operator.tag == "UserDefinedOpKind" and self._level(operator) >= 2 and self._defined_here(operator):
             if any(self._level(operand) >= 2 for operand in operands):
                 raise SystemExit(f"error: {action} hands something primed to the action {kind}, at {self._where(node)}")
+            self.followed.add(node)
             uid = str(node.find("operator")[0].findtext("UID"))  # type: ignore[index]
             if uid in self.reading:
                 # What it gives a value is not known until it has been read,
@@ -1057,6 +1118,21 @@ def _walked(spec_text: str, formula: str) -> _Parse:
     return parse
 
 
+def action_used_otherwise(spec_text: str, formula: str) -> str | None:
+    """An action of the next-state relation that the specification also uses other than as a step, if there is one.
+
+    The walk follows an action only where weakening it weakens the whole: a
+    conjunction, a disjunction, a quantifier, an IF's branches, a LET's body
+    and a call. So removing a guard adds steps and takes none away, and every
+    state the spec reached is reached without it, unless the specification
+    also uses an action some other way: under ENABLED, in an IF's condition,
+    inside a value, or in the initial condition. `~ENABLED A` loses a step,
+    or an initial state, when a guard of A goes.
+    """
+
+    return _walked(spec_text, formula).used_otherwise(formula)
+
+
 def without_guard(spec_text: str, guard: Guard, formula: str) -> str:
     """The spec with that one guard replaced by TRUE, and nothing else touched.
 
@@ -1184,6 +1260,10 @@ def guard_problems(
     table = tomllib.loads(table_text)
     if table.get("inputs_sha256") != inputs_digest(spec_text, configs):
         return [f"its guard table was swept against another spec or configuration: {sweep}"]
+    states = table.get("states")
+    if not isinstance(states, dict) or sorted(states) != sorted(config_file(name, variant) for variant in configs) \
+            or any(type(count) is not int or count < 1 for count in states.values()):
+        return [f"its guard table does not give the distinct states each configuration reaches (`[states]`): {sweep}"]
     # The table is of the spec's own text. A configuration that names its own
     # relation, restricts the behaviors checked, or replaces a definition
     # would have TLC check something the table does not follow.
@@ -1227,6 +1307,10 @@ def guard_problems(
         if breaks in (BREAKS_NOTHING, BREAKS_EVALUATION, TYPE_INVARIANT):
             if len(str(row.get("why", "")).split()) < 4:
                 problems.append(f"guard {label}: breaks {breaks} and gives no reason (`why`)")
+        if breaks == BREAKS_NOTHING and row.get("reaches") not in (NO_NEW_STATE, NEW_STATES):
+            problems.append(f"guard {label}: breaks nothing and does not say whether it reaches a new state (`reaches`)")
+        if breaks != BREAKS_NOTHING and "reaches" in row:
+            problems.append(f"guard {label}: `reaches` is only for a guard that breaks nothing")
         # A row names the variant that shows what its guard breaks when the
         # main configuration does not: a claim, or an expression left with no
         # value. A guard that breaks nothing names none.
@@ -1433,6 +1517,25 @@ _OTHER_WAYS = [
     ("a formula whose own box is unused, with the one TLC runs in a definition it names", _FORMULA,
      "Actual == x = 0 /\\ z = 0 /\\ [][Other]_<< x, z >>\nSpec == LET Ignored == [][Next]_<< x, z >> IN Actual\n",
      [_FOUR[3]]),
+]
+# An action used other than as a step, which a count of states has to know
+# of: (what, the text replaced, by what, the action named).
+_USES = [
+    ("a guard that reads whether an action is enabled", _OTHER,
+     "Other ==\n    /\\ ENABLED Act(1)\n    /\\ x' = 0\n    /\\ UNCHANGED z\n", "Act"),
+    ("a guard that reads, through a definition, whether an action is enabled", _OTHER,
+     "Ready == ENABLED Through(1)\nOther ==\n    /\\ Ready\n    /\\ x' = 0\n    /\\ UNCHANGED z\n", "Through"),
+    ("an action in an IF's condition", _OTHER,
+     "Other ==\n    /\\ x > 0\n    /\\ IF Act(1) THEN x' = 0 ELSE x' = 1\n    /\\ UNCHANGED z\n", "Act"),
+    ("an action inside the value an effect gives", _OTHER,
+     "Other ==\n    /\\ x > 0\n    /\\ x' = IF Act(1) THEN 0 ELSE 1\n    /\\ UNCHANGED z\n", "Act"),
+    ("an initial condition that reads whether an action is enabled", _FORMULA,
+     "Spec == x = 0 /\\ z = 0 /\\ ~ENABLED Act(1) /\\ [][Next]_<< x, z >> /\\ \\A a \\in Range : WF_<< x, z >>(Act(a))\n",
+     "Act"),
+    ("a guard that names a theorem that reads whether an action is enabled", _OTHER,
+     "THEOREM NotReady == ~ENABLED Act(1)\nOther ==\n    /\\ NotReady\n    /\\ x' = 0\n    /\\ UNCHANGED z\n", "Act"),
+    ("an action a LET defines and the relation takes as a step", _NEXT,
+     "Next == LET Hop == x = 3 /\\ x' = 0 /\\ UNCHANGED z IN \\E a \\in Range : Either(a) \\/ Hop\n", None),
 ]
 # What stops the listing: (what, the text replaced, by what, how the refusal
 # starts).
@@ -1866,6 +1969,13 @@ def self_test() -> bool:
         refused = str(exit_.code)
     ok = _report("a guard narrower than TRUE with more after it on its line is not removed by guessing",
                  refused.startswith("error: Other's guard `/\\ w` is narrower than TRUE"), refused or "removed") and ok
+    used = action_used_otherwise(_GUARD_SPEC, "Spec")
+    ok = _report("the relation uses each action only as a step", used is None, str(used)) and ok
+    for label, old, new, wanted_use in _USES:
+        used = action_used_otherwise(mutate(_GUARD_SPEC, {"old": old, "new": new}, label), "Spec")
+        ok = _report(f"{label}: " + (f"{wanted_use} is used other than as a step" if wanted_use
+                                     else "each action is used only as a step"),
+                     used == wanted_use, str(used)) and ok
     for label, old, new, wanted_guards in _OTHER_WAYS:
         other_way = [(guard.action, guard.text) for guard in guards(mutate(_GUARD_SPEC, {"old": old, "new": new}, label), "Spec")]
         ok = _report(f"{label} is read", other_way == wanted_guards,
@@ -1976,14 +2086,16 @@ def self_test() -> bool:
     guard_cfgs = {"": main_cfg, "wide": more_cfg}
     digest = inputs_digest(_GUARD_SPEC, guard_cfgs)
 
-    def table(rows: list[str], head: str = digest) -> str:
-        return f'inputs_sha256 = "{head}"\n' + "".join(
+    every_state = '[states]\n"Tiny.cfg" = 1\n"Tiny.wide.cfg" = 1\n'
+
+    def table(rows: list[str], head: str = digest, states: str = every_state) -> str:
+        return f'inputs_sha256 = "{head}"\n' + states + "".join(
             f"[[guard]]\naction = \"{guard.action}\"\ntext = \'\'\'{guard.text}\'\'\'\n{row}\n"
             for guard, row in zip(found, rows, strict=False)
         )
 
     kills = 'breaks = "Small"'
-    explained = 'breaks = "nothing"\nwhy = "it only enables the action"'
+    explained = 'breaks = "nothing"\nreaches = "no new state"\nwhy = "it only enables the action"'
     table_cases: list[tuple[str, dict, str | None, str]] = [
         ("a spec with no guard table is refused", {}, None, "it has no Tiny.guards.toml"),
         ("a spec that says why it is unswept is accepted", {"unswept": "predates the table"}, None, ""),
@@ -1994,8 +2106,25 @@ def self_test() -> bool:
          {}, table([kills] * 4, "0" * 64), "its guard table was swept against another spec"),
         ("a table that misses a guard is refused",
          {}, table([kills] * 3), "its guard table does not list the spec's guards"),
+        ("a table that does not give the states each configuration reaches is refused",
+         {}, table([kills] * 4, states=""), "does not give the distinct states each configuration reaches"),
+        ("a table that gives the states of one configuration and not the other is refused",
+         {}, table([kills] * 4, states='[states]\n"Tiny.cfg" = 1\n'),
+         "does not give the distinct states each configuration reaches"),
+        ("a table that gives a configuration no states is refused",
+         {}, table([kills] * 4, states='[states]\n"Tiny.cfg" = 0\n"Tiny.wide.cfg" = 1\n'),
+         "does not give the distinct states each configuration reaches"),
         ("a guard that breaks nothing and says no why is refused",
-         {}, table([kills, 'breaks = "nothing"', kills, kills]), "breaks nothing and gives no reason"),
+         {}, table([kills, 'breaks = "nothing"\nreaches = "new states"', kills, kills]), "breaks nothing and gives no reason"),
+        ("a guard that breaks nothing and does not say what it reaches is refused",
+         {}, table([kills, 'breaks = "nothing"\nwhy = "it only enables the action"', kills, kills]),
+         "does not say whether it reaches a new state"),
+        ("a guard that breaks nothing and says something else of what it reaches is refused",
+         {}, table([kills, 'breaks = "nothing"\nreaches = "some"\nwhy = "it only enables the action"', kills, kills]),
+         "does not say whether it reaches a new state"),
+        ("a guard that breaks a claim and says what it reaches is refused",
+         {}, table([kills, 'breaks = "Small"\nreaches = "new states"', kills, kills]),
+         "`reaches` is only for a guard that breaks nothing"),
         ("a guard said to break something that is not a claim is refused",
          {}, table([kills, 'breaks = "Limit"', kills, kills]), "Limit is not a claim its configuration checks"),
         ("a guard that breaks a claim only a variant checks must name the variant",

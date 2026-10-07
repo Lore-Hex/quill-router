@@ -3,6 +3,10 @@
 
 inputs_sha256 = "2fb7759b3fa4ef0b7346ec0c7f7726f38b7854bf3277385a1edb2c4f308f6f1c"
 
+# The distinct states each configuration reaches with every guard in place.
+[states]
+"LeaseLifecycle.cfg" = 522054
+
 [[guard]]
 action = "OwnerRenew"
 text = '''/\ now <= LastRenew'''
@@ -15,6 +19,7 @@ LastRenew is a bound of the model: renewals stop so that the lease can close ins
 action = "OwnerRenew"
 text = '''/\ answer = NoAnswer'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 One renewal out at a time is a bound of the model. Without it a second write replaces the answer still on its way, which is that answer lost, so it reaches no new state.
 '''
@@ -33,6 +38,7 @@ breaks = "RevocationBoundsAdmission"
 action = "OwnerRenew"
 text = '''/\ lease.epoch = epoch'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 Without it a later process on the node renews a lease it does not hold. It learns nothing from the answer (RenewAnswer asks for `has`), so the lease lives a window longer and no claim notices. The condition is Spanner's second check of A4, for a process that held a lease it was not granted, which no behavior here has. Removed with RenewAnswer's `has` and Admit's `has`, a later process renews the lease, takes the answer and admits under it (SingleWriter): A4 widened, as in the mutant a-later-process-takes-up-the-lease.
 '''
@@ -46,6 +52,7 @@ breaks = "CutoffBeforeDrain"
 action = "RenewAnswer"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 By itself the answer only sets `known`, and a process that has let the lease go could have had the answer first: the two orders reach the same states. What the condition stands for is A4, that an answer never brings a lease back, and the mutant an-answer-brings-the-lease-back shows what rests on that. Removed with OwnerRenew's epoch and Admit's `has`, a later process takes an answer to its own renewal and admits (SingleWriter).
 '''
@@ -54,6 +61,7 @@ By itself the answer only sets `known`, and a process that has let the lease go 
 action = "AnswerLost"
 text = '''/\ answer # NoAnswer'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 With no answer on its way the action changes nothing.
 '''
@@ -80,6 +88,7 @@ breaks = "RevokedExpiryStays"
 action = "ReplayedRenew"
 text = '''/\ lease.expiry < now + Window'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A replay that would not move the expiry changes nothing. The condition keeps it from being a step.
 '''
@@ -88,6 +97,7 @@ A replay that would not move the expiry changes nothing. The condition keeps it 
 action = "Revoke"
 text = '''/\ ~lease.revoked'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A second revocation starts the count of the window again, and reaches only states a first revocation at that moment reaches. RevocationBoundsAdmission would then count from the later one, so it says less; the expiry still cannot move after the first, which RevokedExpiryStays checks.
 '''
@@ -96,6 +106,7 @@ A second revocation starts the count of the window again, and reaches only state
 action = "Pause"
 text = '''/\ ~paused'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 One pause is a bound of the model. A second would start the count of its age again, and PauseBoundsAdmission would then measure from the later one.
 '''
@@ -104,6 +115,7 @@ One pause is a bound of the model. A second would start the count of its age aga
 action = "RefreshView"
 text = '''/\ paused'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 Without it a process sees a pause that has not happened and stops admitting: fewer admissions, never more.
 '''
@@ -112,6 +124,7 @@ Without it a process sees a pause that has not happened and stops admitting: few
 action = "RefreshView"
 text = '''/\ ~view.paused'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A process that has seen the pause and looks again sees it again, as it would have by looking later the first time.
 '''
@@ -120,6 +133,7 @@ A process that has seen the pause and looks again sees it again, as it would hav
 action = "Admit"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A process without the lease in memory has just started and knows no expiry, or has marked the lease draining and is stopped, or dropped it. A dropped lease was not open, and its owner past its cutoff (CutoffBeforeDrain), or it was revoked, and the same admission a moment before the drop was allowed. So this reaches no new state alone: it is the second of two defenses. Removed with OwnerDrains' `handoff = "complete"`, an owner that marked its lease draining before it stopped goes on admitting under it (AdmittedOnlyUnderOpenLease). Removed with OwnerRenew's epoch and RenewAnswer's `has`, a later process admits (SingleWriter).
 '''
@@ -133,6 +147,7 @@ breaks = "NoOpenHoldOnClosedLease"
 action = "Admit"
 text = '''/\ Open # HoldIds'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 MaxHolds is above LeaseSize, and only one process ever admits, so a slot is always free. It keeps `Min` defined when a second process admits, in the mutants that widen A4.
 '''
@@ -161,6 +176,7 @@ breaks = "PauseBoundsAdmission"
 action = "HoldEnds"
 text = '''/\ holds[h].open'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Ending a hold that is not open changes nothing.
 '''
@@ -169,6 +185,7 @@ Ending a hold that is not open changes nothing.
 action = "OwnerStop"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 `stopped` is read only of a process that holds the lease: by Admit, and by FinalCheckpoint, which asks for `has` itself. Removed with FinalCheckpoint's `has`, a later process stops and publishes the lease's last record, which lists none of its predecessor's holds, and the lease closes over them: mutant a-later-process-publishes-the-last-record.
 '''
@@ -177,6 +194,7 @@ why = '''
 action = "OwnerStop"
 text = '''/\ ~stopped'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Stopping twice changes nothing.
 '''
@@ -185,6 +203,7 @@ Stopping twice changes nothing.
 action = "FinalCheckpoint"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A stopped process that has let the lease go could have published its last record first: the two orders reach the same states. A process that has just started is not stopped, and cannot stop without the lease. Removed with OwnerStop's `has`, it can: mutant a-later-process-publishes-the-last-record. Removed with ForcedExitStart's `has`, it can by starting a hand-off.
 '''
@@ -198,6 +217,7 @@ breaks = "NoOpenHoldOnClosedLease"
 action = "FinalCheckpoint"
 text = '''/\ Own = {}'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 The record lists the holds still open, so one published early is a complete hand-off of them, which a forced exit's manifest also gives. The design's rule, to publish it once none is open, is not what keeps a close from coming over an open hold: the list is.
 '''
@@ -206,6 +226,7 @@ The record lists the holds still open, so one published early is a complete hand
 action = "ForcedExitStart"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 Chunks from a process that does not hold the lease are a partial hand-off, which counts for nothing until its manifest, and only a process that holds the lease publishes one (ForcedExitManifest). Removed with FinalCheckpoint's `has`, a later process starts a hand-off, which stops it, then publishes a last record that lists none of its predecessor's holds, and the lease closes over them (NoOpenHoldOnClosedLease).
 '''
@@ -214,6 +235,7 @@ Chunks from a process that does not hold the lease are a partial hand-off, which
 action = "ForcedExitStart"
 text = '''/\ handoff = "none"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 Starting again makes a complete hand-off partial until its manifest, so a close on the list waits longer, never less. A real auditor does not forget a manifest it has: this is the model's one variable for the hand-off.
 '''
@@ -232,6 +254,7 @@ breaks = "NoOpenHoldOnClosedLease"
 action = "OwnerDrains"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A process that let the lease go after its last record could have marked it draining first: the two orders reach the same states.
 '''
@@ -240,6 +263,7 @@ A process that let the lease go after its last record could have marked it drain
 action = "OwnerDrains"
 text = '''/\ handoff = "complete"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 Marking a lease draining without its last record is safe by itself: the close then waits on time alone, and the owner, which lets the lease go, admits nothing more. The record is what lets the close come sooner. Removed with Admit's `has`, an owner that has not stopped marks its lease draining and goes on admitting under it (AdmittedOnlyUnderOpenLease).
 '''
@@ -253,6 +277,7 @@ breaks = "LeaseMovesOneWay"
 action = "OwnerDrains"
 text = '''/\ lease.epoch = epoch'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A process that holds the lease is the one it was granted to (A4), so this never refuses. It is Spanner's second check of A4.
 '''
@@ -261,6 +286,7 @@ A process that holds the lease is the one it was granted to (A4), so this never 
 action = "OwnerDrops"
 text = '''/\ has'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Letting go of a lease it does not hold changes nothing.
 '''
@@ -269,6 +295,7 @@ Letting go of a lease it does not hold changes nothing.
 action = "OwnerDrops"
 text = '''/\ lease.state # "open" \/ lease.revoked'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 Letting go of a lease that is open and not revoked is safe: the auditor finishes it on time alone. The condition is when the design has the owner do it.
 '''
@@ -285,6 +312,7 @@ MaxRestarts is a bound of the model.
 action = "AuditorRead"
 text = '''/\ lease.state = "open"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 A read of a lease that is not open leads to a write that changes no row (AuditorMarkRefused).
 '''
@@ -293,6 +321,7 @@ A read of a lease that is not open leads to a write that changes no row (Auditor
 action = "AuditorRead"
 text = '''/\ audRead = NoRead'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Reading again before the write replaces the expiry read by the lease's expiry now, which is what a refused write and a new read give.
 '''
@@ -306,6 +335,7 @@ breaks = "CutoffBeforeDrain"
 action = "AuditorMark"
 text = '''/\ audRead # NoRead'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 NoRead is no lease's expiry, so with no read outstanding the condition on the expiry read fails by itself.
 '''
@@ -324,6 +354,7 @@ breaks = "CutoffBeforeDrain"
 action = "AuditorMarkRefused"
 text = '''/\ audRead # NoRead'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 With no read outstanding the action changes nothing.
 '''

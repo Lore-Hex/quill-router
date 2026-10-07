@@ -133,7 +133,13 @@ is removed.
     does, each checked alone;
   - `TypeOK`, only when a search past it (with `TypeOK` as a constraint)
     finishes and finds no other invariant broken;
-  - `nothing`;
+  - `nothing`, with `reaches`: `no new state` when every configuration
+    reaches as many distinct states as the table's `[states]` says it does
+    with every guard in place, and `new states` when one reaches more.
+    Removing a guard only adds steps, so the same count is the same states.
+    That needs the specification to use each action of its relation only as
+    a step: a spec that puts one under `ENABLED`, in an `IF`'s condition,
+    inside a value or in its initial condition is refused;
   - `evaluation`, when the spec, or its other invariants past `TypeOK`,
     can no longer be evaluated.
 
@@ -151,11 +157,15 @@ is removed.
 - `check_mutants.py` checks on every run that the table lists exactly the
   spec's guards and was swept against the spec and configurations as they
   are. It does not repeat the sweep.
-- `guard_sweep.py --verify` runs every row again. The `Proofs guard tables`
-  workflow does that when `proofs/` changes.
+- `guard_sweep.py --verify` runs every row again, and checks each table's
+  `[states]` once, in one of its parts. The `Proofs guard tables` workflow
+  does that when `proofs/` changes.
 - An entry with no table says why: `unswept = "..."`.
 
-When a row says `nothing`, first ask whether a claim is missing. Three of
+When a row says `nothing`, first ask whether a claim is missing, starting
+with the rows that say `new states`: those guards change what the model does
+and no claim minds. `no new state` means idle within the model's bounds, which
+is less than idle. Three of
 `TerminalOrder`'s did break something once two claims said what the design
 meant: the cutoff on reaps, releases and adoptions was held up by nothing
 until the claim about acknowledged settles covered every terminal the owner
