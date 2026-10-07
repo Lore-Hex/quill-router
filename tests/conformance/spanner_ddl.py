@@ -7,7 +7,7 @@ Do not remove emulator-incompatible DDL; provisioning must report it.
 SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523ab7d21dd0ad4efbe679d2f5c5e92ef4',
  'scripts/deploy/migrate_analytics_outbox.sh': 'ae244118bf4d3266e286e663f99e4907289be8e24dea76d05f4bc0814fd4167a',
  'scripts/deploy/migrate_async_settle_admission.sh': '1fac3e0df16cfa720f4d385a4018e2b350c08a346d4951cf53ca6d8e863aeb1b',
- 'scripts/deploy/migrate_async_settle_drain_health.sh': 'd0f11537be5bc7d3942b80492381f55ea15a343cd8396d372fcdb432ec91f96b',
+ 'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
@@ -179,7 +179,7 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'ALTER TABLE tr_settle_outbox ADD COLUMN snapshot_hash STRING(64)',
  'ALTER TABLE tr_settle_outbox ADD COLUMN payload_hash STRING(64)',
  "ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP AS (IF(status IN ('pending', "
- "'dead'), created_at, NULL)) STORED",
+ "'dead'), COALESCE(created_at, TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED",
  'ALTER TABLE tr_entities ADD COLUMN ephemeral_expires_at TIMESTAMP AS (CASE WHEN kind = '
  "'rate_limit' THEN SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '$.expires_at') AS "
  'INT64)) END) STORED',

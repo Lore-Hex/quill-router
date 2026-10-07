@@ -39,7 +39,8 @@ def test_health_index_in_migrations_block():
 def test_health_ddl_is_sparse_and_covering():
     from tests.conformance.spanner_ddl import DDL
     assert ("ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP "
-            "AS (IF(status IN ('pending', 'dead'), created_at, NULL)) STORED") in DDL
+            "AS (IF(status IN ('pending', 'dead'), "
+            "COALESCE(created_at, TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED") in DDL
     assert ("CREATE NULL_FILTERED INDEX tr_settle_outbox_unresolved ON tr_settle_outbox "
             "(unresolved_at) STORING (actual_cost_micro, status)") in DDL
     assert not any('tr_settle_outbox_health' in sql for sql in DDL)

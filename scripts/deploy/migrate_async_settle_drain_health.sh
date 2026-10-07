@@ -21,7 +21,7 @@ apply_ddl() {
   gcloud spanner databases ddl update "$DATABASE" --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$1"
 }
 if ! column_exists; then
-  apply_ddl "ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP AS (IF(status IN ('pending', 'dead'), created_at, NULL)) STORED"
+  apply_ddl "ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP AS (IF(status IN ('pending', 'dead'), COALESCE(created_at, TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED"
   echo "added unresolved_at"
 else
   echo "unresolved_at exists; skipped"

@@ -44,9 +44,10 @@ class _ObservedOutbox(SpannerSettleOutbox):
 
 
 def _apply_slot(outbox: SpannerSettleOutbox, shard: int, lease: int,
-                deadline: float) -> tuple[int, str, int]:
+                deadline: float, stop: threading.Event | None = None) -> tuple[int, str, int]:
     # The slot has already started. There is no claimed executor queue tail.
-    if time.monotonic() >= deadline:
+    # Stop prevents new claims; work claimed before stop still resolves normally.
+    if (stop is not None and stop.is_set()) or time.monotonic() >= deadline:
         return 0, "", 0
     rows = outbox.claim_shard(shard=shard, lease_seconds=lease)
     if not rows:
@@ -85,7 +86,8 @@ def _apply_slot(outbox: SpannerSettleOutbox, shard: int, lease: int,
     return 1, outcome, int(row.actual_cost_micro) if outcome == ApplyOutcome.SETTLED_NOW else 0
 
 
-def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0) -> dict[str, Any]:
+def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0,
+               stop: threading.Event | None = None) -> dict[str, Any]:
     if not settings.settle_outbox_fast_drain_enabled:
         return drain.drain_settle_outbox(limit,
             reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled)
@@ -103,10 +105,11 @@ def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0) -> dict[
     outcomes: Counter[str] = Counter()
     shard = start_shard % 16
     with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="settle-drain") as pool:
-        while claimed < limit and time.monotonic() < deadline and empty < 16:
+        while (claimed < limit and time.monotonic() < deadline and empty < 16
+               and not (stop is not None and stop.is_set())):
             # At most one row per running slot, even when claim_batch is large.
             width = min(concurrency, limit - claimed)
-            futures = [pool.submit(_apply_slot, outbox, (shard + i) % 16, lease, deadline)
+            futures = [pool.submit(_apply_slot, outbox, (shard + i) % 16, lease, deadline, stop)
                        for i in range(width)]
             shard = (shard + width) % 16
             for future in futures:
@@ -148,7 +151,7 @@ def run_worker(settings: Settings, stop: threading.Event, *, limit: int = 500) -
     shard = 0
     while not stop.is_set():
         try:
-            drain_pass(limit, settings=settings, start_shard=shard)
+            drain_pass(limit, settings=settings, start_shard=shard, stop=stop)
         except Exception:
             logger.warning("async_drain.pass_failed")
         shard = (shard + 1) % 16

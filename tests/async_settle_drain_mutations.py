@@ -15,6 +15,10 @@ DRAIN = 'src/trusted_router/services/settle_outbox_worker.py'
 HEALTH = 'src/trusted_router/services/async_settle.py'
 TEST = 'tests/test_async_settle_drain.py::'
 MUTATIONS = [
+    ('done-insert-nonnull-unresolved', 'scripts/deploy/migrate_async_settle_drain_health.sh',
+     [("TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED",
+       "TIMESTAMP '1970-01-01T00:00:00Z'), created_at)) STORED")],
+     TEST + 'test_inserted_done_has_no_unresolved_index_entry'),
     ('publish-health-every-pass', DRAIN,
      [('if claim_health_publish(outbox._database, settings.settle_outbox_health_publish_interval_seconds):',
        'if True:')], TEST + 'test_health_publish_cadence_across_workers'),

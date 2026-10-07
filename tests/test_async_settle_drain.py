@@ -52,7 +52,8 @@ def seed(store, count=8):
 def healthy(**overrides):
     return dict(dict(v=1, authority='local', observed_at=100., worker_heartbeat=100.,
                      complete=True, p95_age_seconds=1., backlog_count=1,
-                     sample_count=1, frozen_micro=7), **overrides)
+                     sample_count=1, frozen_micro=7, dead_count=0,
+                     p50_age_seconds=.5, oldest_unresolved_age_seconds=2.), **overrides)
 
 
 @pytest.mark.parametrize('state', ['fresh', 'stale', 'missing'])
@@ -61,7 +62,8 @@ def healthy(**overrides):
 def test_health_freshness_matrix(state, empty, heartbeat):
     value = healthy()
     if empty:
-        value.update(backlog_count=0, sample_count=0, frozen_micro=0, p95_age_seconds=0.)
+        value.update(backlog_count=0, sample_count=0, frozen_micro=0, p95_age_seconds=0.,
+                     p50_age_seconds=0., oldest_unresolved_age_seconds=0.)
     if not heartbeat:
         value.pop('worker_heartbeat')
     if state == 'stale':
@@ -404,3 +406,196 @@ def test_admission_read_emits_no_workspace_diagnostic(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG):
         assert read_admission(db, 'private-workspace-id') == Admission(42, 2)
     assert caplog.records == []
+
+
+@pytest.mark.parametrize('status', ['pending', 'dead'])
+def test_null_created_at_is_visible_and_unhealthy(fake_store, status):
+    store, db = fake_store
+    seed(store, 1)
+    row = db.settle_outbox[('fast-0', 'settle')]
+    row.update(created_at=None, status=status)
+    value = publish_health(db)
+    assert value['sample_count'] == value['backlog_count'] == 1
+    assert value['frozen_micro'] == 777777
+    assert value['dead_count'] == (status == 'dead')
+    assert value['oldest_unresolved_age_seconds'] >= value['observed_at']
+    assert value['complete'] is False
+    assert decode_health(read_health(db), now=time.monotonic(), wall=time.time()) is None
+
+
+def test_inserted_done_has_no_unresolved_index_entry(fake_store):
+    store, db = fake_store
+    from trusted_router.storage_gcp_settle_outbox import intent_insert_statements
+    box = _outbox(store)
+    statements = intent_insert_statements(box._pt, _row(_bare_authorization('inline-done')),
+        now=dt.datetime.now(dt.UTC).isoformat(), next_attempt_at=None, resolved=True)
+    def insert(transaction):
+        for sql, params, types in statements:
+            transaction.execute_update(sql, params=params, param_types=types)
+    db.run_in_transaction(insert)
+    assert db.settle_outbox[('inline-done', 'settle')]['status'] == 'done'
+    sql, params, types = unresolved_statement()
+    with db.snapshot() as snapshot:
+        assert list(snapshot.execute_sql(sql, params=params, param_types=types)) == []
+    value = publish_health(db)
+    assert value['backlog_count'] == value['sample_count'] == value['frozen_micro'] == 0
+    assert decode_health(value, now=time.monotonic(), wall=time.time()) is not None
+
+
+@pytest.mark.parametrize('concurrency', [1, 4])
+def test_shutdown_stops_new_claims_and_finishes_inflight(fake_store, monkeypatch, concurrency):
+    store, db = fake_store
+    seed(store, 16)
+    # Ensure the first slot has work; the other 15 records must remain byte-identical.
+    for i, row in enumerate(db.settle_outbox.values()):
+        row['queue_shard'] = i
+    before = {key: dict(row) for key, row in db.settle_outbox.items()}
+    stop = threading.Event()
+    original = SpannerSettleOutbox.claim_shard
+    original_slot = worker._apply_slot
+    def slot(outbox, shard, lease, deadline, event):
+        # Hold other slots at their entry until the first claim sets stop.
+        if shard != 0:
+            assert stop.wait(2)
+        return original_slot(outbox, shard, lease, deadline, event)
+    monkeypatch.setattr(worker, '_apply_slot', slot)
+    claims, applies = [], []
+    def claim(self, **kw):
+        assert not stop.is_set()
+        result = original(self, **kw)
+        claims.extend(result)
+        stop.set()
+        return result
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
+    monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: applies.append(row) or ApplyOutcome.SETTLED_NOW)
+    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
+    monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
+    started = time.monotonic()
+    worker.run_worker(settings(settle_outbox_worker_concurrency=concurrency), stop)
+    assert time.monotonic() - started < 2
+    assert len(claims) == len(applies) == 1
+    assert db.settle_outbox[('fast-0', 'settle')]['status'] == 'done'
+    assert {key: row for key, row in db.settle_outbox.items() if key != ('fast-0', 'settle')} == {
+        key: row for key, row in before.items() if key != ('fast-0', 'settle')}
+
+
+# Exercise the direct decoder AND the durable reader/cache boundary.
+_BAD_HEALTH = [
+    ('incomplete', {'complete': False}),
+    ('stale-heartbeat', {'worker_heartbeat': 94.}),
+    ('observed-after-heartbeat', {'worker_heartbeat': 99.}),
+    ('over-p95', {'p95_age_seconds': 5.0001, 'oldest_unresolved_age_seconds': 6.}),
+    ('empty-with-money', {'backlog_count': 0, 'sample_count': 0}),
+    ('count-mismatch', {'sample_count': 0}),
+    ('dead-over-backlog', {'dead_count': 2}),
+    ('percentile-order', {'p50_age_seconds': 1.5}),
+    ('oldest-order', {'oldest_unresolved_age_seconds': .9}),
+    ('wrong-authority', {'authority': 'remote'}),
+    ('extra-key', {'extra': 0}),
+    ('huge-json', {'authority': 'x' * 5000}),
+    ('huge-integer-json', {'frozen_micro': 10 ** 4100}),
+    ('wrong-version', {'v': 2}),
+    ('bool-version', {'v': True}),
+    ('wrong-complete', {'complete': 1}),
+]
+for _field in ('sample_count', 'backlog_count', 'dead_count', 'frozen_micro'):
+    for _label, _bad in [('negative', -1), ('bool', True), ('float', 1.), ('string', '1'), ('null', None)]:
+        _BAD_HEALTH.append((f'{_field}-{_label}', {_field: _bad}))
+for _field in ('observed_at', 'worker_heartbeat', 'p50_age_seconds', 'p95_age_seconds',
+               'oldest_unresolved_age_seconds'):
+    for _label, _bad in [('negative', -1.), ('nan', float('nan')), ('inf', float('inf')),
+                         ('negative-inf', float('-inf')), ('bool', True), ('string', '1'), ('null', None)]:
+        _BAD_HEALTH.append((f'{_field}-{_label}', {_field: _bad}))
+
+
+@pytest.mark.parametrize('case,overrides', _BAD_HEALTH, ids=[case for case, _ in _BAD_HEALTH])
+def test_adversarial_health_is_ineligible(fake_store, case, overrides):
+    db = fake_store[1]
+    publish_health(db)
+    value = healthy(**overrides)
+    db.rows[(HEALTH_KIND, HEALTH_ID)].body = json.dumps(value)
+    assert decode_health(value, now=40., wall=100.) is None
+    assert decode_health(read_health(db), now=40., wall=100.) is None
+    cache = AdmissionCache(lambda ws: Admission(0, 2), clock=lambda: 40.,
+                           wall_clock=lambda: 100., health_read=lambda: read_health(db))
+    assert not cache.eligible('ws', 0)
+
+
+@pytest.mark.parametrize('field', list(healthy()))
+def test_every_health_field_is_required(fake_store, field):
+    db = fake_store[1]
+    publish_health(db)
+    value = healthy()
+    del value[field]
+    db.rows[(HEALTH_KIND, HEALTH_ID)].body = json.dumps(value)
+    assert read_health(db) is None
+    assert decode_health(value, now=40., wall=100.) is None
+
+
+@pytest.mark.parametrize('case', ['wrong-kind', 'wrong-id', 'missing', 'huge-json', 'broken-json', 'duplicate-key'])
+def test_health_wire_evidence_fails_closed(fake_store, case):
+    db = fake_store[1]
+    publish_health(db)
+    row = db.rows.pop((HEALTH_KIND, HEALTH_ID))
+    if case == 'wrong-kind':
+        db.rows[('wrong-kind', HEALTH_ID)] = row
+    elif case == 'wrong-id':
+        db.rows[(HEALTH_KIND, 'wrong-id')] = row
+    elif case != 'missing':
+        row.body = {'huge-json': ' ' * 5000 + json.dumps(healthy()), 'broken-json': '{',
+                    'duplicate-key': json.dumps(healthy())[:-1] + ', "v": 1}'}[case]
+        db.rows[(HEALTH_KIND, HEALTH_ID)] = row
+    assert read_health(db) is None
+    assert decode_health(read_health(db), now=40., wall=100.) is None
+
+
+@pytest.mark.parametrize('column,bad', [('status', 'done'), ('status', None), ('actual_cost_micro', True),
+    ('actual_cost_micro', -1), ('actual_cost_micro', float('nan')), ('created_at', None),
+    ('created_at', 'bad'), ('created_at', '2999-01-01T00:00:00Z')])
+def test_publisher_rejects_invalid_observation(fake_store, monkeypatch, column, bad):
+    record = dict(created_at=dt.datetime.now(dt.UTC), actual_cost_micro=7, status='pending')
+    record[column] = bad
+    original = _FakeSnapshot.execute_sql
+    def query(self, sql, **kwargs):
+        if 'FORCE_INDEX=tr_settle_outbox_unresolved' in sql:
+            return [[record[k] for k in ('created_at', 'actual_cost_micro', 'status')]]
+        return original(self, sql, **kwargs)
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', query)
+    value = publish_health(fake_store[1])
+    assert value['complete'] is False
+    assert decode_health(value, now=time.monotonic(), wall=time.time()) is None
+
+
+@pytest.mark.parametrize('overrides', [dict(authority='remote'), dict(extra=0), dict(dead_count=2),
+    dict(p50_age_seconds=3.), dict(complete=1), dict(sample_count=0), dict(frozen_micro=-1), dict(v=True)])
+def test_publisher_validates_previous_health(fake_store, monkeypatch, overrides):
+    db = fake_store[1]
+    publish_health(db)
+    # Malformed future records must not pin publication via their timestamps.
+    previous = healthy(observed_at=1001., worker_heartbeat=1001., **overrides)
+    db.rows[(HEALTH_KIND, HEALTH_ID)].body = json.dumps(previous)
+    monkeypatch.setattr(time, 'time', lambda: 1000.)
+    value = publish_health(db)
+    assert read_health(db) == value
+
+
+def test_shutdown_finishes_all_four_inflight_applies(fake_store, monkeypatch):
+    store, db = fake_store
+    seed(store, 16)
+    for i, row in enumerate(db.settle_outbox.values()):
+        row['queue_shard'] = i
+    stop = threading.Event()
+    ready = threading.Barrier(4)
+    applied = []
+    def apply(row):
+        ready.wait(timeout=3)
+        stop.set()
+        applied.append(row.authorization_id)
+        return ApplyOutcome.SETTLED_NOW
+    monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
+    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
+    monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
+    worker.run_worker(settings(settle_outbox_worker_concurrency=4), stop)
+    assert set(applied) == {f'fast-{i}' for i in range(4)}
+    assert sum(row['status'] == 'done' for row in db.settle_outbox.values()) == 4
+    assert all(row['lease_owner'] is None for row in list(db.settle_outbox.values())[4:])

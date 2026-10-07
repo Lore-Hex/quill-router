@@ -1017,6 +1017,9 @@ admission rollback, through the same frozen-money apply and resolution helpers.
 
 Rollout pins all seven defaults explicitly, never copying ambient/live settings.
 `run_worker(settings, stop)` exposes the warm loop without installing a schedule.
+It passes `stop` into `drain_pass` and every executor slot. The wave loop and
+slots check it before starting claims; claims already in flight and their
+applies resolve normally. Stop also interrupts the inter-pass polling wait.
 Each executor slot claims at most one row after starting, using a rotating
 existing queue shard. There is no queue of claimed executor tasks. A slow claim
 that consumes the lease or pass budget leaves the row untouched for fenced
@@ -1030,30 +1033,63 @@ a per-request counter. It requires no new table. Its JSON fields are `v`,
 after the observation), `complete`, `sample_count`, `backlog_count`,
 `frozen_micro`, `p50_age_seconds`, `p95_age_seconds`,
 `oldest_unresolved_age_seconds`, and `dead_count`.
+The exact schema is shared by publisher output, its previous-record reader,
+and the admission reader/decoder:
+
+| Field(s) | Validation |
+|---|---|
+| `v` | Exact int, equal to 1 (bool rejected) |
+| `authority` | Exact str, equal to `local` |
+| `complete` | Exact bool; only true is eligible |
+| `sample_count`, `backlog_count`, `frozen_micro`, `dead_count` | Exact ints, non-negative; sample equals backlog; dead ≤ backlog |
+| `observed_at`, `worker_heartbeat` | Exact int/float, finite and non-negative; observed ≤ heartbeat; eligibility requires both ages in [0, 5) seconds |
+| `p50_age_seconds`, `p95_age_seconds`, `oldest_unresolved_age_seconds` | Exact int/float, finite, 0 ≤ p50 ≤ p95 ≤ oldest; eligibility requires p95 ≤ 5 |
+
+No missing or extra keys, coercions, duplicate JSON keys, or non-finite numbers
+are accepted. JSON is bounded to 4,096 UTF-8 bytes before parsing (and after
+serialization for direct dict callers). Empty backlog requires zero frozen
+micro and all three ages zero. Missing/wrong-kind/wrong-id records fail closed
+through the exact primary-key lookup. Invalid raw observation timestamps,
+amounts or statuses make the publication incomplete; sample and backlog counts
+still match and partial amounts are never eligible. A malformed previous
+record is ignored rather than trusted for newest-observation ordering.
 
 Health uses this sparse covering index, including active leases and legacy
 rows without workspace ownership:
 
 ```sql
 ALTER TABLE tr_settle_outbox ADD COLUMN unresolved_at TIMESTAMP
-AS (IF(status IN ('pending', 'dead'), created_at, NULL)) STORED;
+AS (IF(status IN ('pending', 'dead'), COALESCE(created_at, TIMESTAMP '1970-01-01T00:00:00Z'), NULL)) STORED;
 CREATE NULL_FILTERED INDEX tr_settle_outbox_unresolved
 ON tr_settle_outbox (unresolved_at) STORING (actual_cost_micro, status);
 ```
 
 [Spanner supports partial indexes using generated columns](https://docs.cloud.google.com/spanner/docs/generated-column/how-to).
-The incremental secondary-index cost model is explicit: done rows pay nothing
-(no index entry or secondary-index write for an inline done insert or a write
-that remains done). Pending/dead rows pay one index write on insert and one
-index maintenance write on status change, including removal on becoming done;
-they already incur this kind of maintenance on the due index. The STORED
-expression is still evaluated when its dependencies change; “nothing” here
-refers specifically to secondary-index writes, not zero expression CPU. No
-money-path INSERT or resolution statement is changed. Both schema additions
-are independently idempotent and fail closed on migration errors. The existing
+The incremental logical index-operation cost is:
+
+| Operation | New unresolved index maintenance |
+|---|---|
+| Inline already-done INSERT | 0 |
+| Pending INSERT | +1 entry |
+| Lease-only update | 0 |
+| Retry / park | 0 |
+| Pending → dead | Stored-status update |
+| Pending → done | Delete 1 entry |
+| Dead INSERT | +1 entry |
+
+This maintenance applies even with fast mode off. The existing due index
+already pays comparable maintenance on these transitions. “Done rows pay
+nothing” applies only to the inline already-done INSERT, not a drain's
+pending-to-done mark. The STORED expression is evaluated when its dependencies
+change; zero index operations does not imply zero expression CPU. No money-path
+INSERT or resolution statement is changed. Both schema additions are
+independently idempotent and fail closed on migration errors. The existing
 sparse due index cannot observe dead rows: their `next_attempt_at` is NULL.
-Valid outbox writers supply `created_at`; a NULL timestamp produces no index
-entry. The exact covering observation statement is:
+Membership depends only on status. NULL `created_at` maps to the epoch sentinel,
+so pending/dead rows remain counted, contribute frozen micro and sort oldest.
+The publisher marks epoch-or-earlier timestamps incomplete, making admission
+UNHEALTHY even when the unknown-age row is below the p95 sample rank.
+The exact covering observation statement is:
 
 ```sql
 SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL ORDER BY unresolved_at LIMIT @limit

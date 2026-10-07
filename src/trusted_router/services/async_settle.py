@@ -5,6 +5,7 @@ is never evidence of fleet health.
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import threading
@@ -107,26 +108,71 @@ class AdmissionCache:
             self.lock.release()
 
 
+HEALTH_JSON_MAX_BYTES = 4096
+HEALTH_INT_FIELDS = ("sample_count", "backlog_count", "frozen_micro", "dead_count")
+HEALTH_NUMBER_FIELDS = ("observed_at", "worker_heartbeat", "p50_age_seconds",
+                        "p95_age_seconds", "oldest_unresolved_age_seconds")
+HEALTH_KEYS = frozenset(("v", "authority", "complete", *HEALTH_INT_FIELDS, *HEALTH_NUMBER_FIELDS))
+
+
+def valid_health_record(value: Any) -> bool:
+    """Exact bounded wire schema, shared by the publisher and admission reader.
+
+    Incomplete observations are valid records but never eligible evidence.
+    JSON numbers accept exact int/float types, never bool or coercible strings.
+    """
+    try:
+        if type(value) is not dict or value.keys() != HEALTH_KEYS:
+            return False
+        if (type(value["v"]) is not int or value["v"] != 1
+                or type(value["authority"]) is not str or value["authority"] != "local"
+                or type(value["complete"]) is not bool):
+            return False
+        if any(type(value[k]) is not int or value[k] < 0 for k in HEALTH_INT_FIELDS):
+            return False
+        if any(type(value[k]) not in (int, float) or not math.isfinite(value[k]) or value[k] < 0
+               for k in HEALTH_NUMBER_FIELDS):
+            return False
+        if not (value["observed_at"] <= value["worker_heartbeat"]
+                and 0 <= value["p50_age_seconds"] <= value["p95_age_seconds"]
+                <= value["oldest_unresolved_age_seconds"]
+                and value["dead_count"] <= value["backlog_count"] == value["sample_count"]):
+            return False
+        if value["backlog_count"] == 0 and any(value[k] != 0 for k in (
+                "frozen_micro", "p50_age_seconds", "p95_age_seconds", "oldest_unresolved_age_seconds")):
+            return False
+        return len(json.dumps(value, allow_nan=False).encode("utf-8")) <= HEALTH_JSON_MAX_BYTES
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def parse_health_record(body: Any) -> dict[str, Any] | None:
+    """Bound JSON before parsing; reject duplicate keys as ambiguous evidence."""
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise ValueError("duplicate health keys")
+        return value
+
+    try:
+        if type(body) is not str or len(body.encode("utf-8")) > HEALTH_JSON_MAX_BYTES:
+            return None
+        value = json.loads(body, object_pairs_hook=unique_pairs)
+        return value if valid_health_record(value) else None
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return None
+
+
 def decode_health(value: dict[str, Any] | None, *, now: float, wall: float) -> DrainHealth | None:
     """Translate durable wall time to monotonic evidence time without rejuvenation."""
-    if value is None or value.get("v") != 1 or value.get("complete") is not True:
+    if not valid_health_record(value) or value is None or not value["complete"]:
         return None
-    try:
-        observed, heartbeat = value["observed_at"], value["worker_heartbeat"]
-        p95 = value["p95_age_seconds"]
-        if any(type(n) not in (int, float) or not math.isfinite(n) for n in (observed, heartbeat, p95)):
-            return None
-        if not (0 <= wall - observed < CACHE_SECONDS and 0 <= wall - heartbeat < CACHE_SECONDS
-                and observed <= heartbeat and 0 <= p95 <= 5):
-            return None
-        count, samples, micro = value["backlog_count"], value["sample_count"], value["frozen_micro"]
-        if any(type(n) is not int or n < 0 for n in (count, samples, micro)) or count != samples:
-            return None
-        if count == 0 and (micro != 0 or p95 != 0):
-            return None
-        return DrainHealth(now - (wall - observed), p95)
-    except (KeyError, TypeError, ValueError):
+    observed, heartbeat = value["observed_at"], value["worker_heartbeat"]
+    if (not all(type(n) in (int, float) and math.isfinite(n) and n >= 0 for n in (now, wall))
+            or not (0 <= wall - observed < CACHE_SECONDS and 0 <= wall - heartbeat < CACHE_SECONDS)
+            or value["p95_age_seconds"] > 5):
         return None
+    return DrainHealth(now - (wall - observed), value["p95_age_seconds"])
 
 
 @dataclass
