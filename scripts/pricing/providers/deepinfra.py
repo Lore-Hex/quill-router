@@ -20,6 +20,7 @@ as full-rate input.
 """
 from __future__ import annotations
 
+import logging
 import os
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
@@ -42,6 +43,8 @@ from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "deepinfra"
 URL = "https://api.deepinfra.com/v1/openai/models"
+MODELS_LIST_URL = "https://api.deepinfra.com/models/list"
+logger = logging.getLogger(__name__)
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -90,6 +93,36 @@ _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _MICRODOLLARS_PER_DOLLAR = Decimal(1_000_000)
 
 
+def _model_features(client: httpx.Client) -> dict[str, list[str]] | None:
+    """The public list declares capabilities absent from the priced API feed."""
+    try:
+        response = client.get(
+            MODELS_LIST_URL,
+            headers={"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"},
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not isinstance(rows, list):
+            raise ValueError("expected a model list")
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("DeepInfra %s capability fetch failed: %s", MODELS_LIST_URL, exc)
+        return None
+    labels = {
+        "tools": "tools",
+        "structured-output": "structured-outputs",
+        "json": "json-mode",
+        "reasoning": "reasoning",
+    }
+    return {
+        row["model_name"]: [
+            label for tag, label in labels.items()
+            if isinstance(row.get("tags"), list) and tag in row["tags"]
+        ]
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("model_name"), str)
+    }
+
+
 def _price_micro_per_m(value: Any) -> int | None:
     try:
         price = Decimal(str(value))
@@ -121,6 +154,7 @@ def fetch() -> ProviderPricingResult:
         response = client.get(URL, headers=headers)
         response.raise_for_status()
         payload = response.json()
+        features = _model_features(client)
     rows = payload.get("data") or []
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
@@ -159,6 +193,8 @@ def fetch() -> ProviderPricingResult:
             "display_name": str(row.get("name") or native_id),
             "endpoints": ["chat/completions"],
         }
+        if features is not None:
+            discovered_row["supported_features"] = features.get(native_id, [])
         context_length = positive_int(
             meta.get("context_length") or row.get("context_length")
         )

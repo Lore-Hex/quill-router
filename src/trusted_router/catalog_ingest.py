@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -736,13 +736,19 @@ def _context_window(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def _native_endpoint_capabilities() -> dict[tuple[str, str], tuple[str, ...]]:
+@dataclass(frozen=True)
+class _NativeEndpointCapabilities:
+    parameters: tuple[str, ...]
+    exhaustive: bool
+
+
+def _native_endpoint_capabilities() -> dict[tuple[str, str], _NativeEndpointCapabilities]:
     """Explicit native parameter declarations outrank a reseller's endpoint feed.
 
     Feature-only manifests are partial evidence, not exhaustive declarations,
-    so they do not replace snapshot capabilities.
+    so they add to, rather than replace, snapshot capabilities.
     """
-    capabilities: dict[tuple[str, str], tuple[str, ...]] = {}
+    capabilities: dict[tuple[str, str], _NativeEndpointCapabilities] = {}
     for path in _PROVIDER_MODELS_DIR.glob("*.json"):
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -759,11 +765,17 @@ def _native_endpoint_capabilities() -> dict[tuple[str, str], tuple[str, ...]]:
             if row.get("routable") is False:
                 continue
             parameters = row.get("supported_parameters")
-            if (
+            exhaustive = bool(
                 isinstance(parameters, list) and parameters
                 and all(isinstance(p, str) and p.strip() for p in parameters)
-            ):
-                capabilities[(raw["provider"], row["id"])] = manifest_supported_parameters(row)
+            )
+            # Without an exhaustive array, retain only positive declarations;
+            # the route builder supplies its own chat/embedding defaults.
+            declared = manifest_supported_parameters(row, supports_chat=exhaustive)
+            if declared:
+                capabilities[(raw["provider"], row["id"])] = _NativeEndpointCapabilities(
+                    declared, exhaustive=exhaustive,
+                )
     return capabilities
 
 
@@ -814,9 +826,16 @@ def _ingested_models_and_endpoints(
     native_capabilities = _native_endpoint_capabilities()
     api_windows = _api_reported_context_windows()
 
-    def endpoint_capabilities(slug: str, model_id: str, row: dict[str, Any]) -> tuple[str, ...]:
+    def endpoint_capabilities(
+        slug: str, model_id: str, row: dict[str, Any], *, include_partial: bool = True,
+    ) -> tuple[str, ...]:
         native = native_capabilities.get((slug, model_id))
-        return native if native is not None else manifest_supported_parameters(row)
+        if native is not None and native.exhaustive:
+            return native.parameters
+        return union_supported_parameters(
+            manifest_supported_parameters(row),
+            native.parameters if native is not None and include_partial else (),
+        )
 
     for raw_model in raw_models:
         model_id = raw_model.get("id")
@@ -922,9 +941,13 @@ def _ingested_models_and_endpoints(
         architecture = raw_model.get("architecture")
         if not isinstance(architecture, dict):
             architecture = {}
+        # _build_endpoints also uses this model to seed publisher routes absent
+        # from either feed. Do not leak a host's partial native declarations to
+        # those synthetic routes. They belong on that host's endpoints below;
+        # public model discovery unions the actual routes when publishing.
         supported_parameters = union_supported_parameters(
             *(
-                endpoint_capabilities(slug, model_id, raw_ep)
+                endpoint_capabilities(slug, model_id, raw_ep, include_partial=False)
                 for _p, _c, _t, slug, raw_ep in per_endpoint_prices
             )
         )

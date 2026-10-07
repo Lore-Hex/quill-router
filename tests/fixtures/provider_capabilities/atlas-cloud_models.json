@@ -1,0 +1,49 @@
+{
+  "data": [
+    {
+      "id": "deepseek-ai/DeepSeek-V3.2-Exp",
+      "pricing": {
+        "prompt": "0.00000026",
+        "completion": "0.00000038",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000013"
+      },
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "google/gemini-2.5-flash",
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000025",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000003"
+      },
+      "output_modalities": [
+        "text"
+      ]
+    }
+  ]
+}

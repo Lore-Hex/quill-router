@@ -89,6 +89,18 @@ def _discovered_manifest_row(
     model_id: str, native_id: str, source_row: dict[str, Any]
 ) -> dict[str, Any]:
     row: dict[str, Any] = {"id": model_id, "upstream_id": native_id}
+    functionality = source_row.get("functionality")
+    functionality = functionality if isinstance(functionality, dict) else {}
+    row["supported_features"] = [
+        label for field, label in (
+            ("tool_call", "tools"),
+            ("tool_choice", "tool-choice"),
+            ("parallel_tool_call", "parallel-tool-calls"),
+            ("structured_output", "structured-outputs"),
+        ) if functionality.get(field) is True
+    ]
+    if source_row.get("reasoning") is True:
+        row["supported_features"].append("reasoning")
     display_name = source_row.get("display_name") or source_row.get("name")
     if isinstance(display_name, str) and display_name:
         row["display_name"] = display_name
