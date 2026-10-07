@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import builtins
+import functools
+import gc
 import hashlib
 import importlib
 import importlib.abc
 import importlib.util
 import json
+import logging
 import sys
 import tarfile
 import tempfile
@@ -90,101 +93,235 @@ def fake_store():
                    generation_records_enabled=True, analytics_outbox_enabled=True)
 
 
-def reject_live_references():
-    """Also reject dormant/cached live aliases, even if a C cache skips its body.
+def _owner(value):
+    owner = (value.__name__ if isinstance(value, ModuleType)
+             else getattr(value, '__module__', type(value).__module__))
+    return owner if isinstance(owner, str) else getattr(owner, '__name__', '')
 
-    Inspect snapshot-owned globals, definitions, defaults and closures, never a
-    list of approved modules/functions. External runtime internals remain external.
+
+def _in_namespace(name, namespace):
+    return name == namespace or name.startswith(namespace + '.')
+
+
+def _live_source(filename):
+    return '/src/trusted_router/' in filename and not filename.startswith(str(ROOT) + '/')
+
+
+def _references(roots, *, namespaces):
+    """Walk data/captures, not the entire interpreter via external module globals.
+
+    External functions' captures are inspected too. Harness function globals used
+    by bytecode are followed. External module globals and logging registries
+    are boundaries (see the appendix); class definitions and bases are inspected.
     """
-    visited = set()
-    def visit(value):
+    pending, visited = list(roots), set()
+    while pending:
+        value = pending.pop()
         if id(value) in visited:
-            return
+            continue
         visited.add(id(value))
-        owner = (value.__name__ if isinstance(value, ModuleType)
-                 else getattr(value, '__module__', type(value).__module__))
-        if not isinstance(owner, str):
-            owner = getattr(owner, '__name__', '')
-        assert owner != 'trusted_router' and not owner.startswith('trusted_router.'), (
-            'live reference in frozen namespace: '
-            + owner + ':' + getattr(value, '__qualname__', type(value).__qualname__))
+        if value is None or type(value) in (str, bytes, int, float, bool, complex):
+            continue
+        yield value
+        owner = _owner(value)
+        owned = any(_in_namespace(owner, ns) for ns in namespaces)
+        if isinstance(value, ModuleType):
+            if owned:
+                pending.extend(v for k, v in list(vars(value).items())
+                               if k not in {'__builtins__', '__loader__', '__spec__'})
+            continue
+        # Loggers are process-wide registries, not IO/callback inputs. Following
+        # their manager walks every live application logger/formatter in Python.
+        # Executed formatter code is still covered by the call profiler.
+        if isinstance(value, logging.Logger):
+            continue
         if isinstance(value, dict):
-            for key, item in list(value.items()):
-                visit(key)
-                visit(item)
+            pending.extend(list(value.keys()))
+            pending.extend(list(value.values()))
         elif isinstance(value, (list, tuple, set, frozenset)):
-            for item in value:
-                visit(item)
+            pending.extend(value)
+        elif isinstance(value, functools.partial):
+            pending.extend((value.func, value.args, value.keywords))
         elif isinstance(value, MethodType):
-            visit(value.__func__)
-            visit(value.__self__)
-        elif isinstance(value, FunctionType) and owner.startswith(ALIAS + '.'):
-            visit(value.__defaults__)
-            visit(value.__kwdefaults__)
+            pending.extend((value.__func__, value.__self__))
+        elif isinstance(value, FunctionType):
+            pending.extend((value.__defaults__, value.__kwdefaults__))
             for cell in value.__closure__ or ():
                 try:
-                    visit(cell.cell_contents)
-                except ValueError:  # empty closure cell
+                    pending.append(cell.cell_contents)
+                except ValueError:
                     pass
+            # The frozen modules are already roots. Only callbacks/fake IO need
+            # global-name resolution; walking all test globals would include the
+            # deliberately live comparison leg and pytest's process registries.
+            if owner.startswith('tests.'):
+                pending.extend(value.__globals__[name] for name in value.__code__.co_names
+                               if name in value.__globals__ and name != '__builtins__')
         elif isinstance(value, (staticmethod, classmethod)):
-            visit(value.__func__)
+            pending.append(value.__func__)
         elif isinstance(value, property):
-            visit(value.fget)
-            visit(value.fset)
-            visit(value.fdel)
-        elif owner == ALIAS or owner.startswith(ALIAS + '.'):
-            if hasattr(value, '__dict__'):
-                for item in list(vars(value).values()):
-                    visit(item)
-            if hasattr(value, '__wrapped__'):
-                visit(value.__wrapped__)
-    for name, loaded in list(sys.modules.items()):
-        if name == ALIAS or name.startswith(ALIAS + '.'):
-            visit(loaded)
+            pending.extend((value.fget, value.fset, value.fdel))
+        # Includes C bound methods/method-wrappers (dict.get, cached.__call__).
+        try:
+            pending.append(object.__getattribute__(value, '__self__'))
+        except (AttributeError, TypeError):
+            pass
+        if isinstance(value, functools._lru_cache_wrapper):
+            # CPython exposes keys/results as GC referents even though the cache
+            # has no public item iterator. Inspect before clearing its state.
+            pending.extend(gc.get_referents(value))
+        if isinstance(value, type):
+            pending.extend(vars(value).values())
+            pending.extend(value.__bases__)
+            continue
+        try:
+            attributes = object.__getattribute__(value, '__dict__')
+        except (AttributeError, TypeError):
+            attributes = None
+        if attributes is not None:
+            pending.append(attributes)
+        # Field uses slots, as do several callback-bearing wrappers.
+        for cls in type(value).__mro__:
+            slots = vars(cls).get('__slots__', ())
+            for slot in (slots,) if isinstance(slots, str) else slots:
+                if slot in {'__dict__', '__weakref__'}:
+                    continue
+                try:
+                    pending.append(object.__getattribute__(value, slot))
+                except (AttributeError, TypeError):
+                    pass
+        pending.append(type(value))
+
+
+def _namespace_roots(*namespaces):
+    return [loaded for name, loaded in list(sys.modules.items())
+            if any(_in_namespace(name, ns) for ns in namespaces)]
+
+
+def reject_live_references(*harness):
+    """Reject live definitions in frozen globals and explicitly supplied IO roots."""
+    from tests.fakes import spanner
+
+    roots = [*_namespace_roots(ALIAS), spanner, *harness]
+    for value in _references(roots, namespaces=(ALIAS, 'tests.fakes.spanner')):
+        owner = _owner(value)
+        code = value.__code__ if isinstance(value, FunctionType) else None
+        assert not (_in_namespace(owner, 'trusted_router')
+                    or code is not None and _live_source(code.co_filename)), (
+            'live reference in frozen namespace: '
+            + owner + ':' + getattr(value, '__qualname__', type(value).__qualname__))
+
+
+def clear_functools_caches(*harness, external_only=False):
+    roots = [*_namespace_roots(ALIAS, 'trusted_router', 'tests.fakes.spanner'), *harness]
+    # Materialize before clearing so nested caches in keys/results are included.
+    caches = [value for value in _references(
+        roots, namespaces=(ALIAS, 'trusted_router', 'tests.fakes.spanner'))
+        if isinstance(value, functools._lru_cache_wrapper)]
+    for cache in caches:
+        if not external_only or not any(_in_namespace(_owner(cache), ns)
+                                        for ns in (ALIAS, 'trusted_router', 'tests')):
+            cache.cache_clear()
+    return caches
+
+
+def reject_existing_workers():
+    """3.11 cannot install a profiler in an existing thread: fail closed instead."""
+    current = threading.get_ident()
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    foreign = []
+    for ident, frame in sys._current_frames().items():
+        if ident == current:
+            continue
+        stack = []
+        while frame:
+            stack.append((frame.f_globals.get('__name__'), frame.f_code.co_name))
+            frame = frame.f_back
+        # xdist transport and pytest's timeout watchdog cannot execute the frozen
+        # leg. Do not exempt executor/AnyIO workers or rely on thread names.
+        if ('execnet.gateway_base', '_thread_receiver') in stack:
+            continue
+        thread = next((t for t in threading.enumerate() if t.ident == ident), None)
+        target = getattr(thread, 'function', None)
+        if isinstance(thread, threading.Timer) and _owner(target) == 'pytest_timeout':
+            continue
+        foreign.append((names.get(ident, str(ident)), stack))
+    assert not foreign, ('pre-existing worker threads; create and join the frozen executor '
+                         'inside execution_guard: ' + repr(foreign))
 
 
 @contextmanager
-def execution_guard():
-    """Audit every Python/C call in this thread and new HTTP worker threads.
+def execution_guard(*harness):
+    """Audit Python/C calls; refuse pre-existing workers and inspect harness roots.
 
     Record the first live call even if application exception handling swallows it.
     There are no production-module or omitted-definition exemptions. Module globals
     catch generated dataclass methods (<string>) as well as ordinary source code.
     """
-    reject_live_references()
     first = []
     seen = set()
+    recorded = set()
+    provenance = {}
     def profile(frame, event, arg):
         if event == 'call':
             name = frame.f_globals.get('__name__', '')
-            qualname = frame.f_code.co_qualname
             filename = frame.f_code.co_filename
-            # dataclasses compile methods with a generic code qualname. Retain
-            # the owning class so distinct generated constructors do not collapse.
-            if filename == '<string>' and 'self' in frame.f_locals:
-                qualname = type(frame.f_locals['self']).__qualname__ + '.' + frame.f_code.co_name
         elif event == 'c_call':
             name = getattr(arg, '__module__', '') or ''
-            qualname = getattr(arg, '__qualname__', type(arg).__qualname__)
             filename = ''
         else:
             return
         if not isinstance(name, str):
             name = getattr(name, '__name__', '')
-        if name == 'trusted_router' or name.startswith('trusted_router.') or '/src/trusted_router/' in filename and not filename.startswith(str(ROOT)):
-            if not first:
-                first.append(f'{name}:{qualname}')
-        if name == ALIAS or name.startswith(ALIAS + '.'):
+        # Module label and code filename are both part of the key: changing
+        # either is rechecked. This memoizes provenance, never callable results.
+        key = (name, filename)
+        flags = provenance.get(key)
+        if flags is None:
+            flags = (_in_namespace(name, 'trusted_router') or _live_source(filename),
+                     _in_namespace(name, ALIAS))
+            provenance[key] = flags
+        live, frozen = flags
+        # External runtime calls still undergo both provenance checks. Avoid
+        # building inventory keys/qualnames for millions of irrelevant events.
+        if not live and not frozen:
+            return
+        qualname = (frame.f_code.co_qualname if event == 'call'
+                    else getattr(arg, '__qualname__', type(arg).__qualname__))
+        # Dataclasses compile generic qualnames; preserve the owning class.
+        if filename == '<string>' and 'self' in frame.f_locals:
+            qualname = type(frame.f_locals['self']).__qualname__ + '.' + frame.f_code.co_name
+        if live and not first:
+            first.append(f'{name}:{qualname}')
+        identity = (name, qualname, frame.f_code.co_firstlineno)
+        if frozen and identity not in recorded:
+            recorded.add(identity)
             source = sys.modules[name].__file__
             relative = str(Path(source).relative_to(ROOT))
             seen.add((name.replace(ALIAS, 'trusted_router', 1), qualname, frame.f_code.co_firstlineno, relative, PINS[relative]))
     previous, previous_thread = sys.getprofile(), threading.getprofile()
-    sys.setprofile(profile)
+    # Install the new-thread default before inspecting existing frames, closing
+    # the start-between-check-and-install window. Existing workers still fail.
     threading.setprofile(profile)
+    entered = False
     try:
+        reject_existing_workers()
+        # Shared runtime caches (notably typing.Annotated) retain schemas from
+        # the preceding live leg. Purge them first, without exempting their
+        # wrapped functions/captures from the reference scan. Preserve router
+        # and harness cache state for inspection, then clear every collected
+        # cache, including nested caches disconnected by the initial purge.
+        caches = clear_functools_caches(*harness, external_only=True)
+        reject_live_references(*harness)
+        for cache in caches:
+            cache.cache_clear()
+        entered = True
+        sys.setprofile(profile)
         yield seen
+        reject_existing_workers()  # all workers must be joined within the scope
     finally:
         sys.setprofile(previous)
         threading.setprofile(previous_thread)
         assert not first, 'live callable reached by frozen leg: ' + ', '.join(first)
-        reject_live_references()
+        if entered:
+            reject_live_references(*harness)

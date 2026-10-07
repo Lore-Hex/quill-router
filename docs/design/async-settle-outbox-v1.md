@@ -1307,20 +1307,71 @@ with no fallback to the live package. Settings, enums, schemas, dataclasses,
 feature stores, captured IO callbacks, gateway, middleware and the HTTP app are
 constructed independently in that namespace. No live production globals seed it.
 
-`execution_guard` profiles every Python call by its module globals and source
-path and every exposed C-call event, in the test and newly created HTTP worker
-threads. Any executed live `trusted_router` function fails the test, reporting
-the first **module:qualname**, even when that frame returned before a SQL call
-or application exception handling swallowed its error. There is no module list
-or omitted-function exemption. A snapshot-reference scan at guard entry and exit
-also rejects dormant or warmed cached live aliases in globals, defaults and
-closures, even when a C cache would skip its Python body. Generated dataclass methods are detected through
-their module globals even when the filename is `<string>`. Guarded phases cover
-frozen setup, HTTP dispatch, background response tasks, drain and durable-state
-capture. Negative controls exercise pre-captured finalization, both omitted
-Round-3 helpers, a previously unlisted module, a generated constructor, a
-worker-thread callback and a warmed cached alias.
+`execution_guard(*harness)` profiles Python calls by module globals and source
+path and exposed C-call events in the calling thread and new threads. It installs
+`threading.setprofile` before checking `sys._current_frames()` and
+`threading.enumerate()`: **pre-existing application workers refuse the frozen leg**
+because Python 3.11 cannot install their profiler retroactively. Frozen executors
+must start and join inside the guarded scope; the exit check rejects leaked
+workers. The only infrastructure exceptions are xdist's active execnet receiver
+stack and pytest-timeout's Timer target, not application thread names. Live calls
+are recorded even if application error handling swallows an exception.
 
+At entry and exit the reference walk starts at every loaded frozen module's
+globals, the shared fake Spanner module and the explicit store/database/HTTP client
+roots supplied by the harness. It follows containers, instance dictionaries and
+slots, partial function/arguments/keywords, Python and C bound-method receivers,
+function defaults/keyword defaults/closures, properties, wrapped functions,
+dataclass fields/default factories, and CPython `functools` cache GC referents
+(including cached results). Function code filenames detect disguised module
+labels. Test callback global names used in bytecode are followed as well. Before
+a frozen leg runs, all reachable `functools.cache`/`lru_cache` wrappers from **both**
+router namespaces and the harness are cleared, including nested cache results.
+The shared lock recorder's installation metadata is separate from its runtime
+recording state, so fake Spanner callbacks no longer capture live Postgres hooks.
+Settings cross the setup boundary as plain data; the protected-header frozen
+client runs the same signing/admission fixture factories with snapshot classes
+and literal key inputs, so neither its runtime nor callbacks come from the live
+leg. No production code or snapshot bytes change.
+
+The broad class walk also reaches `typing.Annotated._class_getitem_inner`.
+A consecutive-case probe showed that its shared functools cache retained the
+live HTTP app's `Credit` schema. External runtime functools caches are therefore
+purged before reference rejection; their wrapped functions/captures are still
+inspected. Router and harness caches retain their state for the reference check,
+then **every** collected cache is cleared before execution, including nested
+caches disconnected by the first purge. A regression witness warms that exact
+typing cache between legs and requires it to be empty in the guarded body.
+
+The guard covers these Python reference/call boundaries; it is not an arbitrary
+Python sandbox. **Deliberate harness bridges through external module registries,
+dynamically computed callback global lookups,
+or opaque native extension state are out of scope**: traversing all interpreter
+registries reaches the intentionally live comparison leg, and opaque C state has
+no general Python reference API. In particular, attempting full logger traversal
+reached live `trusted_router.main._ApplicationConsoleFormatter` through the shared
+logging manager. Logger registries are therefore a reference boundary (executed
+Python formatter calls remain profiled), not a blanket permission to inject
+callbacks there. Third-party classes/modules remain shared runtime machinery;
+class definitions/bases, supplied object state and function captures are inspected. CPython's
+`functools` wrappers are explicitly supported, unlike arbitrary native caches.
+The test harness itself, the profiler hooks and the pytest/xdist infrastructure
+are trusted; malicious changes disabling the guard are not an independence proof.
+
+All eleven reviewer wrapper/thread/callback cases have detecting witnesses; none
+of those eleven is scoped out. Additional witnesses cover partial arguments and
+keywords, bound-method receivers, cached results, explicit fake IO roots, disguised
+module labels, and clearing nested caches. The pre-existing-worker witness uses
+the reviewer's actual native cost **2 → 3** change. Both that bridge and the warmed
+native-cost cache bridge also run as failing complete-oracle mutations.
+
+`test_production_import_fence` statically scans imports in **every** live Python
+module, including imports inside functions and literal dynamic imports, banning
+`tests` (and all children) and `frozen_f83bbaac`. A fresh interpreter separately
+checks that importing `trusted_router` does not load the snapshot loader/alias.
+The reviewer's copied-module reverse import is rejected by the same scanner and
+is retained as a C-table mutation. Computed dynamic import strings are outside
+the static fence; the fresh-import check covers only the package import path.
 Only external library machinery remains shared: Python builtins/stdlib
 (including dataclass generation, enum, decimal, JSON, datetime, threading),
 FastAPI/Starlette/AnyIO/httpx for in-process HTTP, Pydantic for schemas/settings,
@@ -1531,16 +1582,18 @@ remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
 | Retention clearing / generation TTL | D `retention-body-clear`, `generation-future-terminal-at` |
 | Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
 
-The executable tables contain B **10**, C **35**, and D **14** mutations
-(**59 total**, including all 56 Round-3 rows). Round 4 adds both ordinary-cost
+The executable tables contain B **10**, C **48**, and D **14** mutations
+(**72 total**, retaining all 59 Round-4 rows). Round 5 incorporates the ten
+independent seed-4 reviewer edits, both money-changing thread/cache bridges,
+and the production-import witness. Round 4 added both ordinary-cost
 helper corruptions, witnessed by
 `test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]`,
 and the wrong-model intent, witnessed by
 `test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
 The generation/finalization builder and handler output corruptions remain.
 Collection/import errors never count as kills. See the
-[Round-4 verification report](../async-settle-pr-f1-round4.md) for exact commands,
-results, failure contents and the model-identity assertion matrix.
+[Round-5 verification report](../async-settle-pr-f1-round5.md) for current results
+and the reviewer witness matrix; the Round-4 model-identity assertions remain.
 
 The fake now explicitly requires the claim's `NOT EXISTS`, the atomic
 reservation's `settled=false` (existing check retained), the enabled immutable

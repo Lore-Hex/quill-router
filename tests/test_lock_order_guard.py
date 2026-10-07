@@ -315,7 +315,7 @@ def test_non_counter_buffered_mutations_are_not_counter_locks():
 def test_install_verifies_callable_identity(monkeypatch):
     lock_order.install()
     assert lock_order.recorder.installed
-    for owner, name, wrapper in lock_order.recorder.hooks:
+    for owner, name, wrapper in lock_order._hooks:
         assert getattr(owner, name) is wrapper
         assert wrapper._lock_order_hook
     clean = SqlitePostgresConn.execute.__wrapped__
