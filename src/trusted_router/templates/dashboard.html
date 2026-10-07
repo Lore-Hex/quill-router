@@ -37,7 +37,6 @@
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
   <script defer src="/static/site-chrome.js?v={{ static_version|default('local') }}"></script>
-  <script defer src="/static/homepage/status.js?v={{ static_version|default('local') }}"></script>
 </head>
 <body>
   {% include "public/_nav.html" %}
