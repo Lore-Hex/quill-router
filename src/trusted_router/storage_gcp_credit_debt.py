@@ -154,6 +154,26 @@ def write_credit_rows(
             raise CreditRowsChanged(f"the debt mark did not reach every credit row of {workspace_id}")
 
 
+def settle_credit_rows(
+    transaction: Any, param_types: Any, workspace_id: str, *, now: Any,
+    shard_count: int | None = None,
+) -> tuple[CreditRows, credit_debt.Squared]:
+    """Square the workspace's rows, and return them as read and what they became.
+
+    If the signed sum is negative, every row is marked. Otherwise every
+    negative row is covered from the others and the mark is cleared. The rows
+    must be shards 0 to n-1, and n must be `shard_count` if given.
+    """
+
+    rows = read_credit_rows(transaction, param_types, workspace_id, shard_count=shard_count)
+    result = credit_debt.square(rows.headroom)
+    write_credit_rows(
+        transaction, param_types, workspace_id,
+        before=rows, headroom=result.headroom, marked=result.marked, now=now,
+    )
+    return rows, result
+
+
 def cover_or_mark(transaction: Any, param_types: Any, workspace_id: str, *, now: Any) -> credit_debt.Squared:
     """After a write that took money out and may have left a row negative.
 
@@ -161,13 +181,7 @@ def cover_or_mark(transaction: Any, param_types: Any, workspace_id: str, *, now:
     negative row is covered from the others and the mark is cleared.
     """
 
-    rows = read_credit_rows(transaction, param_types, workspace_id)
-    result = credit_debt.square(rows.headroom)
-    write_credit_rows(
-        transaction, param_types, workspace_id,
-        before=rows, headroom=result.headroom, marked=result.marked, now=now,
-    )
-    return result
+    return settle_credit_rows(transaction, param_types, workspace_id, now=now)[1]
 
 
 @dataclass(frozen=True)
