@@ -115,6 +115,25 @@ MUTATIONS = [
     ('second-cleanup-budget', [('src/trusted_router/storage_gcp_io.py', [
         ('if getattr(transaction, "_tr_async_cleanup_attempted", False):', 'if False:'),
     ])], 'test_late_batch_cleanup_chain_has_one_budget[True]'),
+    ('insert-uniqueness-fake', [('tests/fakes/spanner.py', [
+        ('raise FakeAlreadyExists(str(pk))  # duplicate PK', 'pass  # duplicate PK mutant'),
+    ])], 'tests/test_async_settle_proof_faults.py::test_insert_uniqueness_and_preserve_existing'),
+    ('preserve-existing', [('src/trusted_router/storage_gcp_settle_outbox.py', [
+        ('if preserve_existing:', 'if False:'),
+    ])], 'tests/test_async_settle_proof_faults.py::test_insert_uniqueness_and_preserve_existing'),
+    ('claim-not-exists', [('src/trusted_router/storage_gcp_counter_dml.py', [
+        (' AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox a ', ' AND EXISTS (SELECT 1 FROM tr_settle_outbox a '),
+    ])], 'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[claim_not_exists]'),
+    ('atomic-settled-predicate', [('src/trusted_router/storage_gcp_async_settle.py', [
+        ('authorization_id=@aid AND settled=false', 'authorization_id=@aid'),
+    ])], 'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[atomic_settled]'),
+    ('admission-sentinel', [('src/trusted_router/storage_gcp_async_admission.py', [
+        ('LIMIT 1001', 'LIMIT 1000'),
+    ])], 'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sentinel]'),
+    ('reaper-guard', [('src/trusted_router/storage_gcp_settle_outbox.py', [
+        ('GUARD_STATUSES = ("pending", "dead")', 'GUARD_STATUSES = ("dead",)'),
+    ])], 'test_enqueue_wins_reaper_and_legacy_fence'),
+
 ]
 
 

@@ -221,15 +221,15 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
     "candidates": [
       {
         "endpoint_id": "openai/billing-v1@openai/prepaid",
-        "model_id": "openai/billing-v1",
         "provider": "openai",
+        "model_id": "openai/billing-v1",
         "usage_type": "Credits",
         "price_history_version": 1,
         "rates": {
           "input_micro_per_million": 500000,
-          "output_micro_per_million": 500000,
-          "cached_input_micro_per_million": 0,
-          "cache_creation_micro_per_million": 0
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 625000,
+          "output_micro_per_million": 500000
         },
         "tiers": [],
         "request_fee_micro": 0,
@@ -244,7 +244,7 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
     "tier_boundary": "inclusive",
     "tier_fallback": "last_tier"
   },
-  "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6ImFzeW5jLXYxLWZpeHR1cmUiLCJ0eXAiOiJ0ci1hc3luYy1zZXR0bGUtdjEifQ.eyJhc3luY19lbGlnaWJsZSI6dHJ1ZSwiYXVkIjoicm91dGVyLXNldHRsZW1lbnQiLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxMjQ1MTAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjM5NTI2YzdmZGU1ZjMyZDEzMzM1OGI5ZTYxZWYwZmZmMTdlMDA2ZjZjN2Y4N2ZjNWVjNmRkMjExMjA2YzUwZWUiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.ghFdyi8nXmEDGVemPaaExEoR7zKg01E7Nw0MCtOZgSKDD3k3tdDYR9E-sFAtA2vH19pkfUPm3ws05k9HDbuLCA",
+  "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6ImFzeW5jLXYxLWZpeHR1cmUiLCJ0eXAiOiJ0ci1hc3luYy1zZXR0bGUtdjEifQ.eyJhc3luY19lbGlnaWJsZSI6dHJ1ZSwiYXVkIjoicm91dGVyLXNldHRsZW1lbnQiLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxMjQ1MTAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImNiOGZlYWYwOGRhMzgxZjBkMzU2ZGNkOGVkNGM2NTc3ZjFkNDRhMTMwZTdmM2I4MDI5NjQ3ZmEzODE0ODcyYjQiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.zbBwIsn5jCD25enkaRK9idg0oVaoBROE8jTK3FxAxrj1iDns3HhYp_KyDjzLsIdhVkJJKhjGQU_s3F8Vm97QDA",
   "raw_usage": {
     "input_tokens": 1,
     "output_tokens": 1,
@@ -254,7 +254,6 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
   },
   "observed": {},
   "terminal": {
-    "v": 1,
     "authorization_id": "auth-v1",
     "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
     "workspace_id": "ws-v1",
@@ -264,11 +263,12 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
     "journal_region": "us-central1",
     "epoch": 1,
     "snapshot_version": 1,
-    "terminal_kind": "settle",
+    "snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4",
     "route_type": "chat.completions",
     "streamed": false,
+    "v": 1,
+    "terminal_kind": "settle",
     "selected_endpoint": "openai/billing-v1@openai/prepaid",
-    "snapshot_hash": "39526c7fde5f32d133358b9e61ef0fff17e006f6c7f87fc5ec6dd211206c50ee",
     "usage": {
       "uncached_input_tokens": 1,
       "total_prompt_tokens": 1,
@@ -318,7 +318,7 @@ Proposed **HTTP 202**, only after the acceptance transaction commits:
   "data": {
     "acceptance": {
       "status": "accepted",
-      "payload_hash": "9965b739ebab44a1ab6ec7a947ce66cbf764da5dc11d5dd2d49f77f1e9d02386",
+      "payload_hash": "f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32",
       "settlement_status": "pending"
     },
     "trusted_router_settlement": {
@@ -328,6 +328,48 @@ Proposed **HTTP 202**, only after the acceptance transaction commits:
       "cost_microdollars": 2,
       "status_url": "/v1/settlements/auth-v1.settle",
       "poll_after_ms": 1000
+    }
+  }
+}
+```
+
+A snapshot-bearing request with `X-TR-Settlement-Mode: sync` returns HTTP 200 after confirmed finalization, acceptance `duplicate`, settlement status `settled` or `refunded`, and `poll_after_ms:null`; a refund **that loses to a settled charge** adds `review_required:true` (a successful zero-charge refund does not).
+
+```json
+{
+  "data": {
+    "acceptance": {
+      "status": "duplicate",
+      "payload_hash": "f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32",
+      "settlement_status": "settled"
+    },
+    "trusted_router_settlement": {
+      "v": 1,
+      "settlement_id": "auth-v1.settle",
+      "settlement_status": "settled",
+      "cost_microdollars": 2,
+      "status_url": "/v1/settlements/auth-v1.settle",
+      "poll_after_ms": null
+    }
+  }
+}
+```
+
+```json
+{
+  "data": {
+    "acceptance": {
+      "status": "duplicate",
+      "payload_hash": "b39848e23c2c264ee89f23ab757ebf8db3b209bb5ab1235facda8924c6f89dd7",
+      "settlement_status": "refunded"
+    },
+    "trusted_router_settlement": {
+      "v": 1,
+      "settlement_id": "auth-v1.refund",
+      "settlement_status": "refunded",
+      "cost_microdollars": 0,
+      "status_url": "/v1/settlements/auth-v1.refund",
+      "poll_after_ms": null
     }
   }
 }
@@ -447,7 +489,7 @@ PRs B/C/E copy these literals into a versioned `async_settlement` wire fixture
 in both repositories and pin exact bytes/hash as the speculation fixture does.
 They add literal variants for duplicate pending/done, refund races, expiry,
 wrong identity, disabled mode and all reasons. Do not generate expected money
-with the evaluator under test. The present pass creates no fixture files.
+with the evaluator under test. PR F1 pins every JSON literal in this section to a fixture.
 
 ### 3.4 Identity, duplicates and status
 
@@ -483,7 +525,10 @@ knowledge of the ID as access. Proposed successful responses:
         "settlement_status": "pending",
         "cost_microdollars": 2,
         "status_url": "/v1/settlements/auth-v1.settle",
-        "poll_after_ms": 1000
+        "poll_after_ms": 1000,
+        "created_at": "2026-10-06T00:00:00Z",
+        "updated_at": "2026-10-06T00:00:00Z",
+        "terminal_at": null
       }
     }
   },
@@ -495,7 +540,10 @@ knowledge of the ID as access. Proposed successful responses:
         "settlement_status": "settled",
         "cost_microdollars": 2,
         "status_url": "/v1/settlements/auth-v1.settle",
-        "poll_after_ms": null
+        "poll_after_ms": null,
+        "created_at": "2026-10-06T00:00:00Z",
+        "updated_at": "2026-10-06T00:00:00Z",
+        "terminal_at": "2026-10-06T00:00:00Z"
       }
     }
   },
@@ -507,7 +555,10 @@ knowledge of the ID as access. Proposed successful responses:
         "settlement_status": "refunded",
         "cost_microdollars": 0,
         "status_url": "/v1/settlements/auth-v1.refund",
-        "poll_after_ms": null
+        "poll_after_ms": null,
+        "created_at": "2026-10-06T00:00:00Z",
+        "updated_at": "2026-10-06T00:00:00Z",
+        "terminal_at": "2026-10-06T00:00:00Z"
       }
     }
   }
@@ -1192,3 +1243,472 @@ fixture. A due-index observation cannot establish fleet health because it omits
 dead rows. The current five-minute cadence/300-second lease still cannot support
 the proposed 5/60-second objective. Cached admission remains a lag guard, not a
 strict exposure cap; PR D does not resolve the policy questions in §6/§10.
+
+### PR F proof set, D3 propagation audit and cap semantics
+
+This is **F1**, based on main `f83bbaac`. F2 owns the shadow comparator and
+seven-day traffic report. This appendix is local correctness evidence, not
+permission to activate async admission, a production measurement, or an
+assertion that F/G's rollout gates have passed. Production code, schemas and
+routes are unchanged. No git writes or deployments are part of F1.
+
+#### Findings and literal corrections
+
+- **F1-001 (four strict xfails: both records × settle/refund):** fresh snapshot-bearing sync
+  fallback applies through the frozen outbox finalizer, which defers retention,
+  but inserts no outbox row. Both reservation and authorization remain `terminal_at=NULL` after
+  successful finalization. `finish()` calls `_resolve_row()` on the ephemeral
+  row, so there is no durable mark to complete retention. Reproducer:
+  `test_fresh_snapshot_sync_completes_retention`. Money is booked once; the
+  missing retention completion needs a separate reviewed production fix.
+- **F1-002 (two strict xfails):** foreign-key revalidation has a 900-second soft
+  TTL and an 86,400-second hard TTL. This predates A–D and is outside the local
+  async cohort, but contradicts a router-wide reading of the D3 ≤300-second
+  requirement. No TTL is changed. Reproducer: `test_federation_d3_ttl_bound`.
+- The actual settle sync JSONResponse bytes, compacted with the literal's
+  original key order, match the enclave #472 copy exactly, including
+  `payload_hash=f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32`.
+  The pretty-printed fixture has formatting whitespace; the test separately
+  compares parsed JSON, canonical bytes, and unsorted compact wire bytes.
+- A successful refund has `settlement_status=refunded`, amount 0, and **no**
+  `review_required`. That flag is true only when a refund loses to an already
+  settled charge (`async_settle_handler.py:174`). Adding it unconditionally to
+  the literal would misdescribe the actual router. The two sync fixtures were
+  generated by real HTTP handler calls with `auth-v1`/`res-v1`/`key-v1` seed
+  identities, without rewriting responses.
+- §3.2 now uses `request_v1.json`: cache-read/cache-creation rates
+  250000/625000, builder-signed ticket and `cb8feaf0…` snapshot hash. §3.3's
+  pending payload hash is `f5a869…`; it includes both sync reply literals.
+  §3.4 includes the fixture's `created_at`, `updated_at`, `terminal_at`.
+  `test_all_section_three_json_literals` parses **every** JSON fence in §3
+  and compares the ordered collection to named fixtures/subobjects. The error
+  envelope fixture preserves the existing design envelopes. Neither
+  `authorize_v1.json` nor `billing_v1.json` was changed.
+
+#### Frozen-main coverage
+
+`tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry` executes
+both frozen and live route registrations, dispatch and settlement using actual
+Spanner fake transactions. Sources are frozen from `git show f83bbaac:<path>`;
+only frozen files have interpreter-stable `_ast_sha256` pins. Their code
+compiles under `tests/fakes/async_proof_*_main.txt`, preserving coverage honesty.
+The selected gateway/store entry functions and complete counter, finalizer,
+outbox, apply, drain, async handler and route modules retain their original algorithms.
+External catalog inputs, wall time and lease identity are deterministic.
+
+| Entry path | Flags: admission/protection | Oracle evidence |
+|---|---|---|
+| `/settle` and `/refund`, no negotiation header | false/false | F1 `complete_entry[*-no_header_off-*]` |
+| Both routes, `async-v1` header and ordinary legacy body | false/false | F1 `complete_entry[*-header_off-*]` |
+| Both routes, no header | false/true | F1 `complete_entry[*-no_header_protected-*]` |
+| Snapshot header with protection on, admission off | false/true | F1 `test_f83bbaac_protected_header_rejection` (both routes), plus PR C `test_snapshot_dispatch_after_admission_rollback`; recovery/rejection is not legacy entry |
+| Pre-C claim/refresh/enqueue and unresolved finalize | false/false | `test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace` (c2c8f606) |
+| Dormant scheduler/error/park/dead/clamp/budget | off | `test_async_settle_drain_oracle.py::test_flag_off_frozen_drain_sql_state_response` (ecb79459) |
+| Authorize/reserve and one-commit finalize | off | `test_async_settle_authorize_oracle.py`, `test_settle_c1_oracle.py` |
+
+F1 has 28 positive cases × 2 routes × 3 flag/header states × 2 commit paths =
+**336 full-path differentials**, plus two protected-header rejection differentials. Inline mode includes the atomic done INSERT. Repair mode
+crashes after durable enqueue, advances the clock beyond the existing 60-second
+initial delay, then drains through real finalize and retention. Comparisons
+include response (excluding timing), intermediate and final durable dictionaries,
+SQL **bytes**, parameters, types, batch boundaries, mutations and RPC deltas.
+No expected billing algorithm is substituted for frozen behavior.
+
+#### Four-path pricing evidence
+
+| Paths | Compared fields | Scenario coverage |
+|---|---|---|
+| legacy sync; async enqueue+drain; duplicate same body then drain; fresh snapshot-sync | credit total_usage; key usage; both released holds; reservation actual/settled; authorization settled/cost/outcome/generation ID; generation amount | All 28 positive vectors, including zero usage/rates, cache conventions, tier boundaries and last-tier fallback |
+| Same four paths | async payload/snapshot hash exactness; absence of hashes on legacy rows; done/body clearing/terminal_at; no outbox row for fresh snapshot-sync | Same 28 vectors; F1-001 separately records fresh-sync reservation retention failure |
+| Same four paths | Same fields and window usage/negative balance where applicable | Five independent axes: catalog change, endpoint removal, debt, deleted key, day/week/month rollover |
+
+There are **33 four-path runs / 132 path executions**. Catalog-change axis:
+legacy books 5 microdollars and the three snapshot paths book 2. Removal axis:
+legacy returns HTTP 400 with unchanged durable state; snapshot paths book 2.
+These are deliberate exact divergences, not forced equality. Fresh snapshot
+sync creates no durable intent; legacy rows have no snapshot/payload metadata.
+The deleted-key case removes the typed key row and key entity after authorize;
+settlement still releases credit and finalizes the committed invocation.
+The rollover axis ages all three key spend windows while retaining the held
+credit reservation; the credit ledger itself is cumulative, without a period
+reset. Existing C1 clock-boundary tests cover a rollover during a transaction.
+
+#### §7 boundary map
+
+Test IDs without a filename are in `test_async_settle_handler.py`, unless
+prefixed F1 (`test_async_settle_proof_faults.py`). Existing evidence is referenced
+rather than duplicated.
+
+| §7 row | Test ID / limit of evidence |
+|---|---|
+| Crash before INSERT commit | F1 `test_transaction_fault_retry_identity[before_commit]` |
+| Crash after commit before response | F1 `test_transaction_fault_retry_identity[after_commit]`; same-key replay |
+| Lost commit response / unknown outcome | F1 `test_transaction_fault_retry_identity[lost_commit]`; `test_unknown_commit_retry_same_identity`; retry INSERT then original-state point-read |
+| Enclave crash after pending | F1 fault test drains with no client continuation; `test_drain_and_status_ownership`; actual enclave process kill belongs to E/G |
+| Enclave crash before handoff | Outside router durability; no INSERT means no router responsibility. E/G must prove client redelivery; F1 makes no durability claim |
+| Duplicate same body | F1 four-path `duplicate`; `test_duplicate_conflict_expired_and_immutable` |
+| Corrected/different payload | `test_duplicate_conflict_expired_and_immutable`, `test_accepted_amount_survives_evaluator_disagreement` |
+| Sync fallback overlaps accepted | `test_sync_reconciles_accepted_intent_before_evaluation`, `test_sync_fallback_does_not_impersonate_worker_lease` |
+| Reaper or sync before insertion | PR C `test_interleaving_sweep`, `test_concurrent_enqueue_vs_terminal`; native `test_native_overlapping_async_transactions` |
+| INSERT before reaper | `test_enqueue_wins_reaper_and_legacy_fence`; native overlapping test |
+| Drain crash before finalize | PR D `test_concurrent_claims_and_owner_crash_fences`; lease remains pending; stale owner cannot mark/park |
+| Drain crash after finalize before mark | F1 `test_finalize_commit_crash_before_mark`: committed counters survive lease expiry; new worker repairs body clearing/retention without another charge |
+| Lease expiry / old worker | PR D `test_concurrent_claims_and_owner_crash_fences` (strict `<`, equality cannot reclaim); `test_batch_tail_expired_claim_never_applied` |
+| Backlog/SLO | F1 `test_two_replica_stale_cap`; PR D health freshness and adversarial health matrices; no measured SLO claimed |
+| Pause / latch / key deletion | D3 table below; F1 deleted-key settlement axis; no claim that an already executed invocation is revoked |
+| Refund / sibling winner | F1 `test_concurrent_sibling_refund_full_money`; native `test_native_sibling_refund_first_claimant`; PR C `test_sibling_refund_reports_charge_winner` |
+| Typed store unavailable / deterministic error | F1 `test_typed_unavailable_holds_and_recovers`; `test_settle_outbox_drain.py::test_deterministic_apply_error_parks_without_burning_attempts`; frozen drain error/park/dead matrix |
+| Ticket lifetime / expired lookup (additional §9) | `test_async_settle_ticket.py::test_ticket_lifetime_above_300s_is_rejected_at_signing_and_verification`; `test_expiry`; PR C expired duplicate and expired snapshot-sync tests |
+| Done-body clearing (additional §9) | F1 four-path matrix; retention mutation below |
+
+The fake sibling race overlaps completed money transactions immediately before commit. A barrier inside a partial DML batch can expose the fake's lazy reads of previously unread counters, producing an artificial row-count miss; that is not proof of a production defect or real Spanner serialization.
+
+The native sibling test starts both read-write transactions before either
+claim, retries Spanner aborts, and verifies the single reservation winner and
+actual amount. Its fake counterpart checks full ledger release and final
+outbox polarity. The native test uses `native_emulator_resources`, skips without
+an emulator, and must run in CI. A fake serialization model alone is not
+native-Spanner evidence.
+
+#### D3 propagation audit
+
+Paths below are relative to `src/trusted_router`; line references refer to the
+unchanged f83bbaac production sources. Bounds start **after the relevant write
+commits**, and concern subsequent decisions, not requests already in flight.
+
+| Cache or visibility boundary | TTL / lag | Pin / evidence | Bound or qualification |
+|---|---|---|---|
+| Local folded key/workspace lookup, `storage_gcp.py:2564`, gateway `:804`, `:812`, `:848` | No positive process cache; strong snapshot | Existing folded authorize operations tests; frozen authorize oracle | Next new strong read sees committed deletion/rotation/pause; an older in-flight read may finish |
+| Credit reserve and pause predicate, `storage_gcp_authorize.py:605–637`, `:726` | Transactional authoritative counters; no balance cache | C1/authorize differentials; conformance | Serializes against counter writes; pause predicate follows the existing trust setting |
+| Exhausted-key negative LRU, `storage_gcp_authorize.py:200`, `:236` | No time expiry; hit rechecks authoritative state | Existing key lifetime precheck tests | No cached positive authorization; cannot extend revoked access |
+| Credit shard-count cache, `storage_gcp_credit_shards.py:19`, `:55`, `:138` | `DEFAULT_CACHE_TTL_SECONDS=60` | F1 `test_local_ttl_pins` | Layout only, not cached credit/trust values; old prefix can cause conservative denial |
+| Workspace pending/trust/pause/latch admission, `services/async_settle.py:35`, `:83–105`; query `storage_gcp_async_admission.py:14–28` | `CACHE_SECONDS=5`, timestamp at read start | F1 local TTL / two-replica stale-cap tests; B freshness tests | Accepting old eligibility for strictly less than 5 s is intentional; stale/failed refresh is false |
+| Fleet publish claim, worker settings and `storage_gcp_async_admission.py:97` | Default ≤2 s between claim opportunities | F1 local TTL pin; PR D fleet cadence tests | A scheduling interval is not a successful-publication latency guarantee |
+| Fleet consume, `services/async_settle.py:71`; decode `:179` | At most one refresh per second; source timestamps expire at 5 s | F1 `test_auxiliary_cache_and_health_cadence_pins`; PR D non-rejuvenation tests | Healthy nominal publish+consume lag ≤3 s plus IO; failed/slow publication instead becomes ineligible at source age 5 s |
+| Ticket validity, `async_settle_ticket.py` | `MAX_TTL_SECONDS=300` | F1 local TTL pin; existing signer/verifier lifetime tests | Not a revocation cache: expired lookup can identify existing work, never admit a new async intent |
+| Legacy/fast worker lease, `services/settle_outbox_drain.py:38`, Settings | Default 300 s | F1 local TTL pin; PR D equality/takeover test | Recovery delay, not authorize visibility; current defaults do not prove the 60 s SLO |
+| Outbox absence capability cache, `storage_gcp_authorize.py:1087` | Negative 5 s, positive until process restart | F1 auxiliary pin | Schema availability only; no customer authorization facts cached |
+| Broadcast-empty cache, gateway `:302`, `:2699` | 60 s | F1 auxiliary pin; existing broadcast TTL tests | Notification side effect only; not authorization eligibility |
+| Foreign-key metadata, `services/federation.py:55`, `:58`, gateway `:3102–3167` | Soft 900 s; hard 86400 s during home failure | F1-002 strict xfail pins | **Exceeds 300 s**; foreign key disabled/deleted/rotated or home workspace pause can remain unseen |
+| Federation negative lookup, `services/federation.py:62`, `:213` | 60 s | F1 auxiliary pin | Can delay recognizing a newly valid key; cannot authorize a revoked one |
+| Spanner commit → new strong snapshot / transaction | Commit visibility; no application replication TTL | Code uses `snapshot()` without stale-read options; native conformance | Not a local wall-clock RPC/outage bound; prior in-flight snapshots may predate commit |
+| Serving regional replicas of one authority | Independent process caches, same strong authority database | F1 two-cache disagreement model | Cache ages are per process, not a fleet cap or coordinated invalidation |
+| Independent regional/cloud authority instances | No common credit ledger; federation metadata revalidation above | Standalone-deployment decision record | No invented global visibility guarantee; PR G regional fault measurements required |
+| Mounted ticket trust/signing config and feature settings | Loaded into application runtime; rollout/restart propagation | B load-runtime and rollout pins | Not an API-key revocation TTL; no bounded fleet rollout time proven locally |
+
+For the **local async cohort**, new key/workspace authorization has no positive
+cache lag after a strong read; cached async eligibility/health can remain true
+for **<5 seconds**. A conservative inventory bound including shard-layout and
+negative-discovery delays is **60 seconds**, not a sum: those caches do not
+serially refresh one another's positive authorization evidence. Healthy health
+publication plus consumption is nominally 2+1 seconds, but source-age rejection,
+not an IO latency assumption, provides the five-second fail-closed rule.
+
+There is **no proven router-wide ≤300-second D3 bound**: federation permits
+86,400 seconds, configuration rollout has no local fleet bound, and local tests
+cannot measure regional partitions, scheduler stalls or process convergence.
+The actual serving configuration must be checked by PR G. Key deletion does
+not cancel already accepted/executed billing; async settle verifies the bound
+ticket and current admission evidence, not a fresh customer-key lookup. An
+abuse latch changes trust/async eligibility; it is not necessarily a ban on
+ordinary synchronous inference. The audit must not conflate these decisions.
+
+#### Cap semantics and pins
+
+`services/async_settle.py::TIER_CAPS` is exactly
+`{2: 25_000_000, 3: 100_000_000}`. Tier 1 is ineligible. The effective threshold
+is **`pilot_cap or TIER_CAPS[tier]`**, not `min(pilot_cap, tier_cap)`: zero selects
+the tier threshold; any nonzero configured pilot threshold overrides it,
+including an override above the tier value. Admission is **inclusive** at the
+threshold (`pending_micro <= threshold`); the next microdollar is rejected.
+`admission_reason` reports `not_eligible` for tier 1 and `cap_exceeded` above
+that same threshold. F1 `test_cap_semantics` pins 3 tiers × 3 overrides × 3
+boundary values = 27 cases, including a $200 override.
+
+The query counts workspace-owned pending and dead rows, including active
+leases, legacy rows with workspace ownership and NULL-created rows. It does
+not count done rows or rows with NULL/different workspace ownership. Its inner
+`LIMIT 1001` is a fail-closed sentinel above `ROW_LIMIT=1000`; it is not a
+partial sum accepted as complete. F1's fake-backed count test and native
+`test_native_admission_counts_leased_and_dead_excludes_terminal_and_null` pin
+these facts. Five-second-old cache entries cannot authorize from stale facts;
+a successful fresh read may re-enable eligibility. Read failures remain false.
+
+As §6 states, **`pending <= C + sum(actual_i for i in I)` is an admission/lag
+guard, not a linearizable cap**. Multiple serving caches and already-issued
+work can exceed C by many requests. No numeric C-only exposure bound follows.
+The $5 pilot versus $25/$100 tier policy, and guard versus coordinated hard cap,
+remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
+
+
+#### Mutation results
+
+All 51 selected production/fake mutation runs returned normal pytest failure
+(code 1 with the selected test ID); collection/import errors are not counted.
+Unmutated targets are covered by the requested regression run. The INSERT
+uniqueness row deliberately mutates the fake's duplicate-PK enforcement; native
+Spanner INSERT/claim serialization is separately exercised by conformance.
+
+| Required class | Mutation witness |
+|---|---|
+| INSERT uniqueness | C `insert-uniqueness-fake`; native overlapping INSERT test |
+| Preserve-existing | C `preserve-existing` |
+| Payload equality | C `refresh-conflicting-payload`, `drop-hash-comparisons` |
+| Signature/binding | B `skip-jws-purpose`, `drop-key-id-binding` |
+| Exact amount | C `amount-comparison-removal` |
+| Admission predicate | C `skip-admission-recheck`, `atomic-settled-predicate` |
+| Lease fence | D `remove-claim-lease-fence`; PR D owner-conditioned mark/park checks |
+| Reaper guard | C `reaper-guard`, `claim-not-exists` |
+| Retention clearing | D `retention-body-clear` |
+| Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
+
+The fake now explicitly requires the claim's `NOT EXISTS`, the atomic
+reservation's `settled=false` (existing check retained), the enabled immutable
+refresh fence, the sparse `unresolved_at IS NOT NULL` predicate (existing check
+retained), both control primary-key predicates, and the admission `LIMIT 1001`
+sentinel. `test_fake_rejects_dropped_predicate` executes the real builder output
+first, then deletes one predicate at a time and requires the fake to reject it.
+The refresh expectation is explicit on the test database, so historical
+flag-off frozen SQL remains valid.
+
+| Table / mutation row | Mutant result | Target test ID |
+|---|---|---|
+| B `skip-jws-purpose` | RED (killed) | `tests/test_async_settle_ticket.py::test_shadow_grant_as_ticket_rejected` |
+| B `drop-key-id-binding` | RED (killed) | `tests/test_async_settle_ticket.py::test_every_claim_is_bound[key_id]` |
+| B `accept-expired-ticket` | RED (killed) | `tests/test_async_settle_ticket.py::test_expiry` |
+| B `accept-long-ttl` | RED (killed) | `tests/test_async_settle_ticket.py::test_ticket_lifetime_above_300s_is_rejected_at_signing_and_verification` |
+| B `ticket-for-excluded-cohort` | RED (killed) | `tests/test_async_settle_admission.py::test_each_contract_exclusion` |
+| B `skip-cache-freshness` | RED (killed) | `tests/test_async_settle_admission.py::test_cache_freshness_failed_reads_concurrency_and_slow_reads` |
+| B `failed-read-eligible` | RED (killed) | `tests/test_async_settle_admission.py::test_admission_read_failure_is_ineligible` |
+| B `inherit-key-file` | RED (killed) | `tests/test_async_settle_ticket.py::test_rollout_never_inherits_key_file` |
+| B `cap-arithmetic-exclusive` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_cap_semantics` |
+| B `pilot-min-instead-of-override` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_cap_semantics` |
+| C `gate-recovery-dispatch-on-admission` | RED (killed) | `tests/test_async_settle_handler.py::test_snapshot_dispatch_after_admission_rollback[sync-fresh-rollback]` |
+| C `remove-atomic-check` | RED (killed) | `tests/test_async_settle_handler.py::test_admission_miss_rolls_back` |
+| C `accept-zero-admission` | RED (killed) | `tests/test_async_settle_handler.py::test_admission_miss_rolls_back` |
+| C `refresh-conflicting-payload` | RED (killed) | `tests/test_async_settle_handler.py::test_duplicate_conflict_expired_and_immutable` |
+| C `drop-hash-comparisons` | RED (killed) | `tests/test_async_settle_handler.py::test_handler_matrix[hash-400-None]` |
+| C `skip-admission-recheck` | RED (killed) | `tests/test_async_settle_handler.py::test_handler_matrix[health-200-drain_unhealthy]` |
+| C `credit-release-in-enqueue` | RED (killed) | `tests/test_async_settle_handler.py::test_enqueue_batch_no_money` |
+| C `silently-extend-handoff` | RED (killed) | `tests/test_async_settle_handler.py::test_budget_includes_admission_and_retries` |
+| C `skip-status-owner-check` | RED (killed) | `tests/test_async_settle_handler.py::test_drain_and_status_ownership[settle]` |
+| C `refresh-fence` | RED (killed) | `tests/test_async_settle_handler.py::test_duplicate_conflict_expired_and_immutable` |
+| C `lookup-audience` | RED (killed) | `tests/test_async_settle_handler.py::test_lookup_ticket_rejects_other_audience` |
+| C `status-key` | RED (killed) | `tests/test_async_settle_handler.py::test_drain_and_status_ownership[settle]` |
+| C `fence-when-protection-off` | RED (killed) | `tests/test_async_settle_handler.py::test_claim_sql_protection_pin[False]` |
+| C `drop-fence-when-protection-on` | RED (killed) | `tests/test_async_settle_handler.py::test_claim_sql_protection_pin[True]` |
+| C `oracle-ungated-claim` | RED (killed) | `tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[False-True-ordinary]` |
+| C `oracle-ungated-reconciliation` | RED (killed) | `tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[False-False-unresolved]` |
+| C `oracle-ungated-refresh` | RED (killed) | `tests/test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace[True-True-refresh]` |
+| C `amount-comparison-removal` | RED (killed) | `tests/test_async_settle_handler.py::test_handler_matrix[charge-409-None]` |
+| C `late-confirmation-acceptance` | RED (killed) | `tests/test_async_settle_handler.py::test_commit_handoff_boundary[0.501]` |
+| C `dead-as-failed-status` | RED (killed) | `tests/test_async_settle_handler.py::test_mark_park_never_rewrites_async_metadata` |
+| C `protection-follows-admission` | RED (killed) | `tests/test_async_settle_handler.py::test_legacy_retry_preserves_accepted_amount[settle-False-False]` |
+| C `second-cleanup-budget` | RED (killed) | `tests/test_async_settle_handler.py::test_late_batch_cleanup_chain_has_one_budget[True]` |
+| C `insert-uniqueness-fake` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_insert_uniqueness_and_preserve_existing` |
+| C `preserve-existing` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_insert_uniqueness_and_preserve_existing` |
+| C `claim-not-exists` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[claim_not_exists]` |
+| C `atomic-settled-predicate` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[atomic_settled]` |
+| C `admission-sentinel` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sentinel]` |
+| C `reaper-guard` | RED (killed) | `tests/test_async_settle_handler.py::test_enqueue_wins_reaper_and_legacy_fence` |
+| D `done-insert-nonnull-unresolved` | RED (killed) | `tests/test_async_settle_drain.py::test_inserted_done_has_no_unresolved_index_entry` |
+| D `publish-health-every-pass` | RED (killed) | `tests/test_async_settle_drain.py::test_health_publish_cadence_across_workers` |
+| D `remove-claim-lease-fence` | RED (killed) | `tests/test_async_settle_drain.py::test_concurrent_claims_and_owner_crash_fences` |
+| D `housekeeping-every-poll` | RED (killed) | `tests/test_async_settle_drain.py::test_housekeeping_cadence_over_fast_polls` |
+| D `publish-without-heartbeat` | RED (killed) | `tests/test_async_settle_drain.py::test_publish_empty_has_heartbeat` |
+| D `stale-health-is-fresh` | RED (killed) | `tests/test_async_settle_drain.py::test_health_freshness_matrix` |
+| D `claim-over-concurrency-bound` | RED (killed) | `tests/test_async_settle_drain.py::test_claims_never_exceed_running_slots` |
+| D `consumer-read-with-admission-off` | RED (killed) | `tests/test_async_settle_drain.py::test_consumer_off_no_rpc_and_on_bounded_refresh` |
+| D `drop-batch-tail-rule` | RED (killed) | `tests/test_async_settle_drain.py::test_batch_tail_expired_claim_never_applied` |
+| D `retention-body-clear` | RED (killed) | `tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]` |
+| D `sparse-predicate` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sparse]` |
+| D `control-kind` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[control_kind]` |
+| D `control-id` | RED (killed) | `tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[control_id]` |
+
+
+#### Files and verification
+
+| Changed files | Purpose |
+|---|---|
+| `tests/test_async_settle_proof.py` | Handler-generated wire fixtures, all §3 literals, four-path billing, retention finding |
+| `tests/test_async_settle_proof_faults.py` | Deterministic transaction faults, admission/cap/TTL/predicate pins and concurrent sibling completion |
+| `tests/test_async_settle_proof_oracle.py` | Frozen-main route-to-retention differential and provenance |
+| `tests/fakes/async_proof_{apply,counter,drain,finalize,gateway,handler,outbox,route,store}_main.txt` | Nine frozen f83bbaac sources; no live AST pins |
+| `tests/fakes/spanner.py` | Require real SQL predicates and interpret bounded admission reads |
+| `tests/conformance/test_async_settle_native.py` | Native overlapping sibling-claim serialization test |
+| `tests/async_settle{,_handler,_drain}_mutations.py` | Expanded 10/28/13-row mutation tables |
+| `tests/async_settle_proof_assertions.py` | Reproducible disposable-copy assertion sensitivity sweep |
+| `tests/fixtures/async_settlement/{snapshot_sync_v1,snapshot_sync_refund_v1,error_envelopes_v1}.json` | Two actual sync wire replies and existing design error envelopes |
+| `docs/design/async-settle-outbox-v1.md` | §3 fixture literals and this F1 report |
+
+All commands used `UV_CACHE_DIR=/tmp/uv RUFF_CACHE_DIR=/tmp/ruff
+MYPY_CACHE_DIR=/tmp/mypy`; tests also used `PYTHONDONTWRITEBYTECODE=1`.
+No full-repository pytest run, git write, production edit or deployment was performed.
+The requested regression command was:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 uv run pytest -q -p no:cacheprovider -n 6 \
+  tests/test_async_settle_proof.py tests/test_async_settle_proof_faults.py \
+  tests/test_async_settle_proof_oracle.py \
+  tests/test_async_settle_handler.py tests/test_async_settle_oracle.py \
+  tests/test_async_settle_drain.py tests/test_async_settle_drain_oracle.py \
+  tests/test_async_settle_ticket.py tests/test_async_settle_admission.py \
+  tests/test_settle_c1.py tests/test_settle_c1_oracle.py \
+  tests/test_billing_snapshot_settle.py tests/test_settle_outbox_drain.py \
+  tests/conformance
+```
+
+```text
+3850 passed, 1196 skipped, 17 xfailed, 5784 warnings in 960.00s (0:16:00)
+uv run ruff check .
+All checks passed!
+uv run mypy
+Success: no issues found in 402 source files
+python -m tests.async_settle_mutations
+10/10 mutants RED; harness GREEN (exit 0)
+python -m tests.async_settle_handler_mutations
+28/28 mutants RED; harness GREEN (exit 0)
+python -m tests.async_settle_drain_mutations
+13/13 mutants RED; harness GREEN (exit 0)
+python -m tests.async_settle_proof_assertions
+103/103 local assertion witnesses; harness GREEN (exit 0)
+```
+
+Mutation modules used the uv-created repository Python environment. Six of the
+17 xfails are the new strict findings above; the remaining 11 predate F1.
+A final focused rerun after adding the snapshot-sync reply hash assertion passed
+`36 passed, 4 xfailed` (`/tmp/f1-proof-final.log`).
+The final regression log is `/tmp/f1-verify-final.log`; mutation artifacts are
+`/tmp/pr-{b,c,d}-mutations.json`. These are local run artifacts, not committed
+fixtures. An earlier regression exposed an invalid placement of the fake's
+concurrency barrier; moving it to the completed-transaction commit hook fixed
+the test. No production change was made to obtain the green run.
+
+Full-suite coverage remains a CI gate, as requested. Emulator-dependent tests
+skip cleanly without their services; local green does **not** prove native
+serialization. In particular the two assertions in
+`test_native_sibling_refund_first_claimant` have no local red mutation witness;
+they require the CI emulator. This is an explicit remaining verification item,
+not counted in the 103 local assertions. Regional propagation, load, recovery
+SLOs and rollout/config timing belong to PR G; the shadow comparator and
+seven-day report belong to F2. No activation or deployment readiness is claimed.
+
+#### Assertion sensitivity evidence
+
+`python -m tests.async_settle_proof_assertions` creates disposable copies and
+negates one physical assertion at a time. It checks for that assertion's exact
+failure marker, not merely a nonzero pytest exit. The sweep uses one positive
+billing vector plus all scenario branches; the regression above runs all 28.
+101 assertions fail when negated. Two physical assertions are already false
+under `--runxfail` (the six parametrized F1 findings) and have their original
+failing witnesses recorded. There are no unproven local assertions. Frozen
+source assertions are historical oracle code, not new proof assertions.
+The full expression, witness test and result for every row are in the local
+`/tmp/f1-assertions-final.json`; the following table preserves all results here.
+`R` means inverted expectation RED; `F` means original finding already RED.
+
+| Proof module | Assertion line | Test/helper | Result |
+|---|---:|---|---|
+| `proof` | 98 | `test_snapshot_sync_wire` | R |
+| `proof` | 101 | `test_snapshot_sync_wire` | R |
+| `proof` | 102 | `test_snapshot_sync_wire` | R |
+| `proof` | 104 | `test_snapshot_sync_wire` | R |
+| `proof` | 176 | `run_four_paths` | R |
+| `proof` | 199 | `run_four_paths` | R |
+| `proof` | 200 | `run_four_paths` | R |
+| `proof` | 201 | `run_four_paths` | R |
+| `proof` | 203 | `run_four_paths` | R |
+| `proof` | 146 | `run_four_paths` | R |
+| `proof` | 183 | `run_four_paths` | R |
+| `proof` | 185 | `run_four_paths` | R |
+| `proof` | 186 | `run_four_paths` | R |
+| `proof` | 193 | `run_four_paths` | R |
+| `proof` | 195 | `run_four_paths` | R |
+| `proof` | 197 | `run_four_paths` | R |
+| `proof` | 142 | `run_four_paths` | R |
+| `proof` | 143 | `run_four_paths` | R |
+| `proof` | 149 | `run_four_paths` | R |
+| `proof` | 150 | `run_four_paths` | R |
+| `proof` | 153 | `run_four_paths` | R |
+| `proof` | 158 | `run_four_paths` | R |
+| `proof` | 188 | `run_four_paths` | R |
+| `proof` | 189 | `run_four_paths` | R |
+| `proof` | 191 | `run_four_paths` | R |
+| `proof` | 156 | `run_four_paths` | R |
+| `proof` | 157 | `run_four_paths` | R |
+| `proof` | 216 | `test_fresh_snapshot_sync_completes_retention` | R |
+| `proof` | 217 | `test_fresh_snapshot_sync_completes_retention` | R |
+| `proof` | 218 | `test_fresh_snapshot_sync_completes_retention` | R |
+| `proof` | 221 | `test_fresh_snapshot_sync_completes_retention` | F |
+| `proof` | 246 | `test_all_section_three_json_literals` | R |
+| `proof` | 247 | `test_all_section_three_json_literals` | R |
+| `proof_faults` | 37 | `test_cap_semantics` | R |
+| `proof_faults` | 43 | `test_cap_semantics` | R |
+| `proof_faults` | 40 | `test_cap_semantics` | R |
+| `proof_faults` | 42 | `test_cap_semantics` | R |
+| `proof_faults` | 53 | `test_two_replica_stale_cap` | R |
+| `proof_faults` | 56 | `test_two_replica_stale_cap` | R |
+| `proof_faults` | 57 | `test_two_replica_stale_cap` | R |
+| `proof_faults` | 60 | `test_two_replica_stale_cap` | R |
+| `proof_faults` | 100 | `test_fake_rejects_dropped_predicate` | R |
+| `proof_faults` | 124 | `test_admission_fake_counts_all_unresolved` | R |
+| `proof_faults` | 174 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 175 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 177 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 179 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 180 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 181 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 182 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 183 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 184 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 172 | `test_transaction_fault_retry_identity` | R |
+| `proof_faults` | 190 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 197 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 198 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 200 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 202 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 203 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 204 | `test_typed_unavailable_holds_and_recovers` | R |
+| `proof_faults` | 211 | `test_local_ttl_pins` | R |
+| `proof_faults` | 212 | `test_local_ttl_pins` | R |
+| `proof_faults` | 213 | `test_local_ttl_pins` | R |
+| `proof_faults` | 214 | `test_local_ttl_pins` | R |
+| `proof_faults` | 216 | `test_local_ttl_pins` | R |
+| `proof_faults` | 217 | `test_local_ttl_pins` | R |
+| `proof_faults` | 218 | `test_local_ttl_pins` | R |
+| `proof_faults` | 225 | `test_federation_d3_ttl_bound` | F |
+| `proof_faults` | 242 | `test_insert_uniqueness_and_preserve_existing` | R |
+| `proof_faults` | 247 | `test_insert_uniqueness_and_preserve_existing` | R |
+| `proof_faults` | 248 | `test_insert_uniqueness_and_preserve_existing` | R |
+| `proof_faults` | 257 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 258 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 278 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 280 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 281 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 282 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 284 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 287 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 288 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 289 | `test_concurrent_sibling_refund_full_money` | R |
+| `proof_faults` | 298 | `test_auxiliary_cache_and_health_cadence_pins` | R |
+| `proof_faults` | 299 | `test_auxiliary_cache_and_health_cadence_pins` | R |
+| `proof_faults` | 300 | `test_auxiliary_cache_and_health_cadence_pins` | R |
+| `proof_faults` | 305 | `test_auxiliary_cache_and_health_cadence_pins` | R |
+| `proof_faults` | 308 | `test_auxiliary_cache_and_health_cadence_pins` | R |
+| `proof_faults` | 310 | `test_auxiliary_cache_and_health_cadence_pins` | R |
+| `proof_faults` | 316 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_faults` | 324 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_faults` | 326 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_faults` | 327 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_faults` | 331 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_faults` | 332 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_faults` | 334 | `test_finalize_commit_crash_before_mark` | R |
+| `proof_oracle` | 42 | `test_f83bbaac_provenance` | R |
+| `proof_oracle` | 44 | `test_f83bbaac_provenance` | R |
+| `proof_oracle` | 135 | `test_f83bbaac_complete_entry` | R |
+| `proof_oracle` | 136 | `test_f83bbaac_complete_entry` | R |
+| `proof_oracle` | 116 | `test_f83bbaac_complete_entry` | R |
+| `proof_oracle` | 132 | `test_f83bbaac_complete_entry` | R |
+| `proof_oracle` | 155 | `test_f83bbaac_protected_header_rejection` | R |
+| `proof_oracle` | 156 | `test_f83bbaac_protected_header_rejection` | R |
+| `proof_oracle` | 157 | `test_f83bbaac_protected_header_rejection` | R |

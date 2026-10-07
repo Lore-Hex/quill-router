@@ -207,3 +207,60 @@ def test_native_null_created_at_is_indexed_and_unhealthy(native_emulator_resourc
     finally:
         with database.batch() as batch:
             batch.delete('tr_settle_outbox', KeySet(keys=keys))
+
+
+@pytest.mark.parametrize('backend', ['spanner-emulator'])
+def test_native_sibling_refund_first_claimant(native_emulator_resources, backend):
+    """Two accepted kinds overlap their claim transactions on one reservation."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from google.cloud.spanner_v1 import KeySet, param_types
+
+    from trusted_router.async_settle_fence import APPLY_PAYLOAD
+    from trusted_router.storage_gcp_counter_dml import claim_reservation_statement
+
+    database, _ = native_emulator_resources
+    suffix = uuid4().hex
+    aid, rid = 'f1-auth-'+suffix, 'f1-res-'+suffix
+    with database.batch() as batch:
+        batch.insert('tr_reservation',
+                     columns=('reservation_id', 'workspace_id', 'authorization_id', 'settled',
+                              'credit_reserved_micro', 'key_reserved_micro'),
+                     values=[(rid, suffix, aid, False, 3, 3)])
+        batch.insert('tr_settle_outbox',
+                     columns=('authorization_id', 'intent_kind', 'settle_origin', 'reservation_id',
+                              'actual_cost_micro', 'async_version', 'payload_hash', 'status'),
+                     values=[(aid, kind, 'typed', rid, amount, 1, kind+'-hash', 'pending')
+                             for kind, amount in [('settle', 2), ('refund', 0)]])
+    barrier = Barrier(2)
+    def attempt(kind, amount):
+        first = True
+        def transaction(tx):
+            nonlocal first
+            if first:
+                first = False
+                tx._begin_transaction()
+                barrier.wait(timeout=20)
+            token = APPLY_PAYLOAD.set((kind+'-hash', kind))
+            try:
+                sql, params, types = claim_reservation_statement(param_types, rid,
+                    actual_micro=amount, settled_usage_type='Credits', defer_retention=True,
+                    async_fence=True)
+                return tx.execute_update(sql, params=params, param_types=types)
+            finally:
+                APPLY_PAYLOAD.reset(token)
+        return database.run_in_transaction(transaction)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            settle = pool.submit(attempt, 'settle', 2)
+            refund = pool.submit(attempt, 'refund', 0)
+            counts = (settle.result(timeout=45), refund.result(timeout=45))
+        assert counts in ((1, 0), (0, 1))
+        with database.snapshot() as snapshot:
+            values = list(snapshot.read('tr_reservation', ('settled', 'actual_micro'), KeySet(keys=[[rid]])))
+        assert values == [[True, 2 if counts[0] else 0]]
+    finally:
+        with database.batch() as batch:
+            batch.delete('tr_reservation', KeySet(keys=[[rid]]))
+            batch.delete('tr_settle_outbox', KeySet(keys=[[aid, 'settle'], [aid, 'refund']]))

@@ -1514,6 +1514,8 @@ class _FakeTransaction:
             ):
                 return 0  # missing or already-claimed (replay)
             if "async_hash" in p:
+                _require_pred(sql, "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox a "
+                              "WHERE a.authorization_id = tr_reservation.authorization_id", "async-claim-not-exists")
                 _require_pred(sql, "AND a.status IN ('pending', 'dead') "
                               "AND a.async_version=1 AND (@async_hash IS NULL OR "
                               "(a.intent_kind=@async_kind AND "
@@ -1904,6 +1906,8 @@ class _FakeTransaction:
                 sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh"
             )
             _require_pred(sql, "status='pending'", "refresh")
+            if getattr(self.db, "expect_async_refresh_fence", False):
+                _require_pred(sql, "AND async_version IS NULL", "async-refresh-fence")
             async_fence = "async_version IS NULL" in sql
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "refresh")
             pk = (p["authorization_id"], p["intent_kind"])
@@ -2731,6 +2735,20 @@ def _execute_sql(
 ) -> list[list[str]]:
     _validate_json_arguments(sql)
     kind = params.get("kind", "")
+    if kind == "settle_drain_control":
+        _require_pred(sql, "WHERE kind=@kind AND id=@id", "control-primary-key")
+    if sql.startswith("SELECT pending.n, pending.amount, trust.trust_tier"):
+        _require_pred(sql, "WHERE workspace_id=@ws AND status IN ('pending', 'dead') LIMIT 1001",
+                      "admission-sentinel")
+        _require_pred(sql, "WHERE workspace_id=@ws AND shard=0 AND trust_latched_at IS NULL",
+                      "admission-trust")
+        _require_pred(sql, "AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0)=0", "admission-pause")
+        trust = db.typed.get("tr_credit_balance", {}).get((params["ws"], 0))
+        if trust is None or trust.get("trust_latched_at") is not None or trust.get("billing_pause_causes"):
+            return []
+        rows = [r for r in db.settle_outbox.values() if r.get("workspace_id") == params["ws"]
+                and r.get("status") in ("pending", "dead")][:1001]
+        return [[len(rows), sum(r["actual_cost_micro"] for r in rows), trust.get("trust_tier")]]
 
     def _typed_rows(table: str) -> list[dict[str, Any]]:
         keys = set(db.typed.get(table, {}))

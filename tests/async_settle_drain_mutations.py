@@ -48,6 +48,19 @@ MUTATIONS = [
      [("if (time.monotonic() >= deadline or row.leased_until is None\n"
        "            or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):", 'if False:')],
      TEST + 'test_batch_tail_expired_claim_never_applied'),
+    ('retention-body-clear', 'src/trusted_router/storage_gcp_settle_outbox.py',
+     [('terminal_at=@now, settle_body=NULL', 'terminal_at=@now, settle_body=settle_body')],
+     'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
+    ('sparse-predicate', 'src/trusted_router/storage_gcp_async_admission.py',
+     [('WHERE unresolved_at IS NOT NULL ORDER BY', 'WHERE TRUE ORDER BY')],
+     'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sparse]'),
+    ('control-kind', 'src/trusted_router/storage_gcp_async_admission.py',
+     [('WHERE kind=@kind AND id=@id', 'WHERE id=@id')],
+     'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[control_kind]'),
+    ('control-id', 'src/trusted_router/storage_gcp_async_admission.py',
+     [('WHERE kind=@kind AND id=@id', 'WHERE kind=@kind')],
+     'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[control_id]'),
+
 ]
 
 

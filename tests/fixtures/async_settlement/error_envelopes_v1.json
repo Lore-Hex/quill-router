@@ -1,0 +1,47 @@
+{
+  "fixture_version": 1,
+  "cases": {
+    "invalid_snapshot": {
+      "path": "/internal/gateway/settle",
+      "status": 400,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":400,\"message\":\"Invalid async settlement snapshot\",\"type\":\"bad_request\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "invalid_signature": {
+      "path": "/internal/gateway/settle",
+      "status": 401,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":401,\"message\":\"Invalid settlement ticket\",\"type\":\"unauthorized\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "charge_mismatch": {
+      "path": "/internal/gateway/settle",
+      "status": 409,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":409,\"message\":\"Async settlement amount mismatch\",\"type\":\"conflict\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "payload_conflict": {
+      "path": "/internal/gateway/settle",
+      "status": 409,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":409,\"message\":\"Settlement intent already exists with a different payload\",\"type\":\"conflict\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "storage_unavailable": {
+      "path": "/internal/gateway/settle",
+      "status": 503,
+      "content_type": "application/json",
+      "retry_after": "1",
+      "body_exact": "{\"error\":{\"code\":503,\"message\":\"Persistent storage is temporarily unavailable; retry.\",\"type\":\"service_unavailable\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    },
+    "not_found": {
+      "path": "/v1/settlements/auth-v1.settle",
+      "status": 404,
+      "content_type": "application/json",
+      "retry_after": null,
+      "body_exact": "{\"error\":{\"code\":404,\"message\":\"Settlement not found\",\"type\":\"not_found\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+    }
+  }
+}
