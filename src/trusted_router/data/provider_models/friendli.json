@@ -118,6 +118,7 @@
     {
       "id": "minimax/minimax-m2.5",
       "upstream_id": "MiniMaxAI/MiniMax-M2.5",
+      "retirement_at": "2026-10-22T00:00:00Z",
       "display_name": "MiniMaxAI/MiniMax-M2.5",
       "title": "MiniMaxAI/MiniMax-M2.5",
       "context_length": 196608,
