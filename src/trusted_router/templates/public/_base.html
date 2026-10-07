@@ -5,15 +5,6 @@
   {% set meta_description = description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script nonce="{{ csp_nonce() }}">
-    (function () {
-      try {
-        if (localStorage.getItem("tr-theme") === "light") {
-          document.documentElement.dataset.theme = "light";
-        }
-      } catch (e) { /* Dark remains the default when storage is unavailable. */ }
-    })();
-  </script>
   <title>{{ meta_title }}</title>
   <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
@@ -37,16 +28,17 @@
   <meta name="twitter:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing') }}">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
   <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
-  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/tokens.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/site-chrome.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
 </head>
 <body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
-  <main class="wrap public-wrap">
+  <main id="main" class="wrap public-wrap">
     {% block hero %}
     <section class="public-hero marketing-hero">
       <div>
@@ -85,6 +77,8 @@
   {% include "public/_signin.html" %}
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
+  <script defer src="/static/site-chrome.js?v={{ static_version|default('local') }}"></script>
+  <script defer src="/static/homepage/status.js?v={{ static_version|default('local') }}"></script>
   {% block body_scripts %}{% endblock %}
 </body>
 </html>

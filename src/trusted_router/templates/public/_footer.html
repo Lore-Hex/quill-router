@@ -1,87 +1,74 @@
-<footer class="site-footer" aria-label="{{ brand_name|default('TrustedRouter') }}">
-  <div class="site-footer-lead">
-    <div>
-      <a class="brand" href="/">{% include "_brand.html" %}</a>
-      <p>Your prompts and outputs stay ephemeral. <em>Private, by design.</em></p>
-    </div>
-    <div class="footer-cta">
-      <button class="btn primary" type="button" data-action="open-signin">Get API key</button>
-      <a class="btn ghost" href="/docs/migrate-from-openrouter">Migrate from OpenRouter <span aria-hidden="true">→</span></a>
-    </div>
-  </div>
-  <div class="site-footer-cols">
-    <div class="footer-col">
-      <h3>Product</h3>
-      <a href="/choose">Choose a model</a>
-      <a href="/models">Models</a>
-      <a href="/compare/models">Model comparisons</a>
-      <a href="/compare">Gateway comparisons</a>
-      <a href="/providers">Providers</a>
-      <a href="/providers/marketplace">Provider marketplace</a>
-      <a href="/token-exchange">Enterprise token exchange</a>
-      <a href="https://thetokenexchange.com/">The Token Exchange</a>
-      <a href="/green-tokens">Green tokens</a>
-      <a href="/us-ai-models">US AI models</a>
-      <a href="/eu-ai-models">EU AI models</a>
-      <a href="/eu">EU routing</a>
-      <a href="/synth">Synth</a>
-      <a href="/pricing">Pricing</a>
-      <a href="https://lightningrouter.ai">LightningRouter</a>
-      <a href="/bedrock-group-buy">Bedrock group buy</a>
-      <a href="/leaderboard">Leaderboard</a>
-      <a href="/benchmarks/reports">Monthly reports</a>
-      <a href="/leaderboard/video">Video leaderboard</a>
-    </div>
-    <div class="footer-col">
-      <h3>Trust</h3>
-      <a href="/security">Security</a>
-      <a href="/status">Status</a>
-      <a href="/trust">Attestation</a>
-      <a href="/badge">Confidential AI badge</a>
-      <a href="/privacy">Privacy</a>
-      <a href="/legal/dpa">DPA</a>
-      <a href="/legal/baa">BAA</a>
-      <a href="/legal/subprocessors">Subprocessors</a>
-    </div>
-    <div class="footer-col">
-      <h3>Developers</h3>
-      <a href="/docs">Documentation</a>
-      <a href="/vibe-coders">Vibe coder quickstart</a>
-      <a href="/for-developers">60-second quickstart</a>
-      <a href="/openrouter-alternative">OpenRouter alternatives</a>
-      <a href="/docs/migrate-from-openrouter">Migration guide</a>
-      <a href="/docs/prompt-caching">Prompt caching</a>
-      <a href="/performance-routing">Performance routing</a>
-      <a href="/spend-controls">Spend controls</a>
-      <a href="/model-precision">Model precision</a>
-      <a href="/docs/batch">Batch API</a>
-      <a href="/docs/decide">Decision models</a>
-      <a href="/docs/agent-setup#codex-skill">Agent skill</a>
-      <a href="/docs/mcp">MCP server</a>
-      <a href="/docs/video">Video generation</a>
-      <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
-      <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a>
-      <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a>
-      <a href="/docs/llms.txt">llms.txt</a>
-    </div>
-    <div class="footer-col">
-      <h3>Company</h3>
-      <a href="/about">About</a>
-      <a href="/media-kit">Media kit</a>
-      <a href="/contact">Contact</a>
-      <a href="/blog">Blog</a>
-      <a href="/customers/robot-robot-human">Customer story</a>
-      <a href="/resources">Resources</a>
-      <a href="/careers">Careers</a>
-      <a href="/support">Support</a>
-      <a href="/support?category=feature#support-inquiry">Feature request</a>
-      <a href="https://discord.gg/FREVts9KAG" target="_blank" rel="noopener noreferrer">Discord community</a>
-      <a href="/legal">Legal</a>
-      <a href="/terms">Terms</a>
-    </div>
-  </div>
-  <div class="site-footer-base">
-    <span>© 2026 Lore Hex Corp.</span>
-    <span class="footer-evidence">Open source · Attested · Fails closed</span>
-  </div>
-</footer>
+{# Shared site footer. Same structure and styles as the homepage footer
+   (homepage/footer.html, static/site-chrome.css); the link groups are the
+   ones these pages already carried. #}
+<footer class="site-footer" aria-label="{{ brand_name|default('TrustedRouter') }}"><div class="trft">
+ <div class="cols">
+  <div class="brand"><a class="brand-link" href="/"><img class="brand-mark" src="/static/homepage/mark.svg" width="30" height="30" alt="{{ brand_name|default('TrustedRouter') }}"><span class="brand-word">{{ brand_name|default("TrustedRouter") }}</span></a></div>
+  <details class="mobile-disclosure col footer-disclosure" id="footer-group-1" data-mobile-disclosure open><summary><h3>Product</h3><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="footer-links">
+   <a href="/choose">Choose a model</a>
+   <a class="hot" href="/models">Models</a>
+   <a href="/compare/models">Model comparisons</a>
+   <a href="/compare">Gateway comparisons</a>
+   <a href="/providers">Providers</a>
+   <a href="/providers/marketplace">Provider marketplace</a>
+   <a href="/token-exchange">Enterprise token exchange</a>
+   <a href="https://thetokenexchange.com/">The Token Exchange</a>
+   <a href="/green-tokens">Green tokens</a>
+   <a href="/us-ai-models">US AI models</a>
+   <a href="/eu-ai-models">EU AI models</a>
+   <a href="/eu">EU routing</a>
+   <a href="/synth">Synth</a>
+   <a class="hot" href="/pricing">Pricing</a>
+   <a href="https://lightningrouter.ai">LightningRouter</a>
+   <a href="/bedrock-group-buy">Bedrock group buy</a>
+   <a href="/leaderboard">Leaderboard</a>
+   <a href="/benchmarks/reports">Monthly reports</a>
+   <a href="/leaderboard/video">Video leaderboard</a>
+  </div></div></details>
+  <details class="mobile-disclosure col footer-disclosure" id="footer-group-2" data-mobile-disclosure open><summary><h3>Trust</h3><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="footer-links">
+   <a href="/security">Security</a>
+   <a href="/status">Status</a>
+   <a href="/trust">Attestation</a>
+   <a href="/badge">Confidential AI badge</a>
+   <a href="/privacy">Privacy</a>
+   <a href="/legal/dpa">DPA</a>
+   <a href="/legal/baa">BAA</a>
+   <a href="/legal/subprocessors">Subprocessors</a>
+  </div></div></details>
+  <details class="mobile-disclosure col footer-disclosure" id="footer-group-3" data-mobile-disclosure open><summary><h3>Developers</h3><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="footer-links">
+   <a class="hot" href="/docs">Documentation</a>
+   <a class="hot" href="/vibe-coders">Vibe coder quickstart</a>
+   <a href="/for-developers">60-second quickstart</a>
+   <a href="/openrouter-alternative">OpenRouter alternatives</a>
+   <a href="/docs/migrate-from-openrouter">Migration guide</a>
+   <a href="/docs/prompt-caching">Prompt caching</a>
+   <a href="/performance-routing">Performance routing</a>
+   <a href="/spend-controls">Spend controls</a>
+   <a href="/model-precision">Model precision</a>
+   <a href="/docs/batch">Batch API</a>
+   <a href="/docs/decide">Decision models</a>
+   <a href="/docs/agent-setup#codex-skill">Agent skill</a>
+   <a href="/docs/mcp">MCP server</a>
+   <a href="/docs/video">Video generation</a>
+   <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
+   <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a>
+   <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a>
+   <a href="/docs/llms.txt">llms.txt</a>
+  </div></div></details>
+  <details class="mobile-disclosure col footer-disclosure" id="footer-group-4" data-mobile-disclosure open><summary><h3>Company</h3><span class="disclosure-indicator" aria-hidden="true">+</span></summary><div class="disclosure-body"><div class="footer-links">
+   <a href="/about">About</a>
+   <a href="/media-kit">Media kit</a>
+   <a href="/contact">Contact</a>
+   <a class="hot" href="/blog">Blog</a>
+   <a href="/customers/robot-robot-human">Customer story</a>
+   <a href="/resources">Resources</a>
+   <a href="/careers">Careers</a>
+   <a href="/support">Support</a>
+   <a href="/support?category=feature#support-inquiry">Feature request</a>
+   <a href="https://discord.gg/FREVts9KAG" target="_blank" rel="noopener noreferrer">Discord community</a>
+   <a href="/legal">Legal</a>
+   <a href="/terms">Terms</a>
+  </div></div></details>
+ </div>
+ <div class="base"><span>© 2026 Lore Hex Corp. · Open source · Attested · Fails closed</span><span class="r"><a class="back-top-control" title="Back to top" href="#main" aria-label="Back to top of page"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 10 6-6 6 6M12 4v16"/></svg></a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="https://github.com/Lore-Hex/quill-router">GitHub</a></span></div>
+</div></footer>

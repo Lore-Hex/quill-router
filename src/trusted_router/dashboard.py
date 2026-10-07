@@ -2313,6 +2313,12 @@ def _env() -> Environment:
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
+    # Shared header: live catalog size and lab icons for the model search.
+    # Lazy import: trusted_router.homepage imports this module at call time.
+    from trusted_router.homepage import live_model_count, publisher_icons
+
+    env.globals["live_model_count"] = live_model_count
+    env.globals["publisher_icons"] = publisher_icons
     return env
 
 

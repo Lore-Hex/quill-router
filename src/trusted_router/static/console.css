@@ -9,8 +9,8 @@ body.console {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--top);
-  border-bottom: 1px solid var(--line);
+  background: var(--tr-color-surface-bg);
+  border-bottom: 1px solid var(--tr-color-line-rule-soft);
   display: flex;
   /* Wrap at any width: at full desktop nothing wraps; at intermediate widths
      the workspace selector / user cluster drop to a second row instead of
@@ -18,8 +18,9 @@ body.console {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 24px;
+  min-height: var(--tr-space-header-height);
   padding: 12px 24px;
-  backdrop-filter: blur(12px);
+  font-family: var(--tr-font-family-sans);
 }
 
 .console-topbar .brand {
@@ -28,14 +29,20 @@ body.console {
 
 .console-topnav {
   display: flex;
-  gap: 18px;
-  font-size: 14px;
+  gap: 22px;
+  font-size: 15px;
+  font-weight: 500;
   color: var(--muted);
   margin-right: auto;
 }
 
 .console-topnav a {
-  color: var(--ink);
+  color: var(--tr-color-text-secondary);
+  text-decoration: none;
+}
+
+.console-topnav a:hover {
+  color: var(--tr-color-text-primary);
 }
 
 .console-user {
@@ -1673,3 +1680,38 @@ body.console {
   font-weight: 400;
 }
 .field-help .mono { font-size: 11.5px; }
+
+/* Adyen drop-in draws the card form with its own stylesheet; these variables
+   are Adyen's theming hooks, set to the brand tokens so the form matches the
+   page. Custom properties inherit, so the drop-in root is enough. */
+#adyen-dropin {
+  --adyen-sdk-color-background-primary: var(--tr-color-surface-panel);
+  --adyen-sdk-color-background-primary-hover: var(--tr-color-surface-hover);
+  --adyen-sdk-color-background-secondary: var(--tr-color-surface-panel-inset);
+  --adyen-sdk-color-background-secondary-hover: var(--tr-color-surface-hover);
+  --adyen-sdk-color-background-secondary-active: var(--tr-color-surface-selected);
+  --adyen-sdk-color-background-tertiary: var(--tr-color-surface-control);
+  --adyen-sdk-color-background-quaternary: var(--tr-color-surface-bg);
+  --adyen-sdk-color-background-inverse-primary: var(--tr-color-accent-base);
+  --adyen-sdk-color-background-inverse-primary-hover: var(--tr-color-accent-hover);
+  --adyen-sdk-color-label-primary: var(--tr-color-text-primary);
+  --adyen-sdk-color-label-secondary: var(--tr-color-text-secondary);
+  --adyen-sdk-color-label-tertiary: var(--tr-color-text-tertiary);
+  --adyen-sdk-color-label-on-color: var(--tr-color-accent-ink);
+  --adyen-sdk-color-label-highlight: var(--tr-color-link-base);
+  --adyen-sdk-color-label-critical: var(--tr-color-error);
+  --adyen-sdk-color-label-success: var(--tr-color-status-up);
+  --adyen-sdk-color-outline-primary: var(--tr-color-line-control);
+  --adyen-sdk-color-outline-primary-hover: var(--tr-color-line-strong);
+  --adyen-sdk-color-outline-primary-active: var(--tr-color-accent-base);
+  --adyen-sdk-color-outline-secondary: var(--tr-color-line-rule);
+  --adyen-sdk-color-outline-tertiary: var(--tr-color-line-rule-soft);
+  --adyen-sdk-color-outline-critical: var(--tr-color-error);
+  --adyen-sdk-color-separator-primary: var(--tr-color-line-rule);
+  --adyen-sdk-color-separator-secondary: var(--tr-color-line-rule-soft);
+  --adyen-sdk-focus-ring-color: var(--tr-color-focus);
+  --adyen-sdk-border-radius-xs: var(--tr-radius-panel);
+  --adyen-sdk-border-radius-s: var(--tr-radius-panel);
+  --adyen-sdk-border-radius-m: var(--tr-radius-control);
+  --adyen-sdk-border-radius-l: var(--tr-radius-control);
+}

@@ -33,6 +33,21 @@ def _content() -> dict[str, Any]:
     return json.loads((_ROOT / "templates/homepage/content.json").read_text())
 
 
+def publisher_icons() -> dict[str, str]:
+    """Lab icon per model publisher, shared by the homepage and the site header search."""
+    return {
+        publisher: f"/static/homepage/provider-{asset}.png"
+        for publisher, asset in _PUBLISHERS.items()
+    }
+
+
+def live_model_count() -> int:
+    """Public catalog size for the header search label; reads the cached catalog payload."""
+    from trusted_router.routes.catalog import _current_catalog_payload
+
+    return len(_current_catalog_payload().shapes)
+
+
 def homepage_context(api_base_url: str) -> dict[str, Any]:
     # Lazy imports avoid the dashboard renderer's import cycle. Reuse its exact
     # Credits-only pricing/provider aggregation instead of duplicating it here.
@@ -42,10 +57,7 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
     content = _content()
     catalog = _current_catalog_payload()
     public_ids = {shape["id"] for shape in catalog.shapes}
-    icons = {
-        publisher: f"/static/homepage/provider-{asset}.png"
-        for publisher, asset in _PUBLISHERS.items()
-    }
+    icons = publisher_icons()
     views: dict[str, dict[str, Any]] = {}
     lists: dict[str, list[dict[str, Any]]] = {}
     for key, selected in content["catalog"]["lists"].items():

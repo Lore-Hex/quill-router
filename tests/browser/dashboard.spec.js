@@ -39,12 +39,9 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
       getComputedStyle(document.querySelector(".charter-pillar-number")).color,
       getComputedStyle(document.body).backgroundColor,
     );
-    const dark = measure();
-    document.documentElement.dataset.theme = "light";
-    return { dark, light: measure() };
+    return { dark: measure() };
   });
   expect(faintTextContrast.dark).toBeGreaterThanOrEqual(4.5);
-  expect(faintTextContrast.light).toBeGreaterThanOrEqual(4.5);
   await expect(page.locator(".hero-sdk-swap")).toBeVisible();
   await expect(page.locator(".hero-sdk-code-line.removed")).toContainText("api.openai.com/v1");
   await expect(page.locator(".hero-sdk-code-line.added")).toContainText("api.trustedrouter.com/v1");
@@ -444,7 +441,7 @@ test("prompt caching guide and public 404 remain useful on mobile", async ({ pag
 test("Charter design remains shared and responsive across public surfaces", async ({ page }) => {
   for (const path of ["/", "/models", "/security", "/status", "/blog"]) {
     await page.goto(path);
-    await expect(page.locator(".brand-mark").first()).toBeVisible();
+    await expect(page.locator(".trnav .brand-link").first()).toBeVisible();
     const theme = await page.evaluate(() => {
       const body = getComputedStyle(document.body);
       const heading = document.querySelector("h1");
@@ -456,8 +453,8 @@ test("Charter design remains shared and responsive across public surfaces", asyn
       };
     });
     expect(theme.bodyFont).toContain("Archivo");
-    expect(theme.headingFont).toContain("Spectral");
-    expect(theme.background).toBe("rgb(10, 14, 11)");
+    expect(theme.headingFont).toContain("Archivo");
+    expect(theme.background).toBe("rgb(5, 7, 6)");
     expect(theme.overflow).toBeLessThanOrEqual(2);
   }
 });
