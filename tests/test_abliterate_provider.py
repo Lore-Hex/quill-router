@@ -98,7 +98,10 @@ def test_reviewed_estimated_routes_require_successful_canary(monkeypatch, tmp_pa
 def test_registration_privacy_secret_and_reviewed_live_routes():
     from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
     from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
-    from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
+    from trusted_router.catalog_data import (
+        GATEWAY_PREPAID_PROVIDER_SLUGS,
+        model_origin_for_model_id,
+    )
     from trusted_router.provider_manifest_policy import EXPIRING_PROVIDER_MANIFEST_SLUGS
     from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS
     from trusted_router.sentry_config import SENSITIVE_STRING_FRAGMENTS
@@ -108,6 +111,10 @@ def test_registration_privacy_secret_and_reviewed_live_routes():
     assert provider.supports_prepaid
     assert not provider.provider_zero_data_retention
     assert not provider.provider_confidential_compute
+    origin = model_origin_for_model_id("abliterate/abliterate-0.3-fast")
+    assert origin is not None
+    assert origin.country is None
+    assert "not verified" in origin.note
     assert "abliterate" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert "abliterate" in EXPIRING_PROVIDER_MANIFEST_SLUGS
     assert any(row[0] == "abliterate" for row in _DISCOVERABLE_MANIFEST_PROVIDERS)
