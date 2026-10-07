@@ -17,6 +17,7 @@ def fixture_rows() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]
         "workspace_id": "ws", "shard": i, "total_credits": 18_750,
         "total_usage": 1000, "reserved": 0,
         **{name: None for name in CREDIT_BALANCE_TRUST_COLUMNS},
+        "in_debt": False,
     } for i in range(16)]
     return workspace, credit, rows
 
