@@ -25,8 +25,15 @@ only the leases it was granted, takes a new epoch each time it starts, and
 is never given a lease back by a late answer; a forced exit stops admitting
 before it lists its holds; and the owner's draining write is conditional.
 
-The first two specs, `TerminalOrder` and `LeaseLifecycle`, and the tools that
-check every spec's mutants and guards are written (#1515 and #1533).
+v43 changes no rule. It fits two documents that landed on 2026-10-06 into
+§4.13: the async settle design (#1545), which shortens the synchronous
+path's settle and leaves leased requests out, and the frozen billing
+snapshot (#1390), a pricing contract the compiled service can share with
+Python and the enclave.
+
+The first three specs, `TerminalOrder`, `LeaseLifecycle` and `CreditDebt`,
+and the tools that check every spec's mutants and guards are written
+(#1515, #1533 and #1549).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -1568,6 +1575,57 @@ which §4.11 now lists.
     for two publishes in its own region, its full record's and then its own
     (§4.9, §4.5). One that goes to the drain log still waits for a Spanner
     append.
+- **Async settle on the settle outbox**
+  (`docs/design/async-settle-outbox-v1.md`, #1545). Joseph approved its
+  direction on 2026-10-06, and the design merged that day. Nothing of it is
+  built; it is to ship behind a flag and a client's opt-in. For a narrow
+  cohort, Python's settle answers `pending`, with the exact charge, once one
+  commit has stored a durable intent and checked that the reservation is
+  still open. The outbox drain books the intent later, through today's
+  finalize. Authorize's answer gains a frozen billing snapshot (#1390,
+  below), its hash, a signed settlement ticket and `async_eligible`.
+  - **It takes no request the fast path takes.** Its cohort leaves out
+    requests under leases, as #1390's eligibility does. It changes the
+    synchronous path, which this design keeps for the synchronous cohort
+    (§4.11) and as the comparator's reference (§8).
+  - **It moves latency, not load.** A settle's answer stops waiting for the
+    booking: #1545's sketch measured the synchronous settle's p50 at 103 to
+    703 ms, by region. But a drained settle commits five times: its intent,
+    then, on today's drain, the claim of it, the booking, the benchmark row
+    and the mark, one transaction each (`drain_settle_outbox`). The benchmark
+    row has an outbox of its own, which production runs
+    (`TR_ANALYTICS_OUTBOX_ENABLED`); the one-commit settle above puts it in
+    its booking's transaction, and commits once. So for the requests async
+    takes, the path's 2.3 commits per generation rise by about four.
+  - **An overrun reaches Spanner when the drain books it.** The intent keeps
+    its reservation held and does not write the credit row. So an async
+    settle that overruns opens a window of the kind the fast path's own
+    overruns do (below): until the drain books it, grants and Python's
+    reservations read headroom too high by the overrun. #1545 proposes 95%
+    booked within 5 seconds and all within 60; today's drain runs every
+    five minutes, with 300-second leases. The lease allowance's bound does
+    not change: the intent's hold stays in `reserved`, outside every lease.
+  - **The debt mark comes with the booking.** The drain books through
+    `typed_finalize_atomic`, the transaction `CreditDebt`'s `money`
+    configuration models as Python's settle (§5.1). Once step 4 puts the
+    mark in that transaction (§8), a drained settle sets it as a synchronous
+    one does, and not before the drain books it.
+  - **Its `pending` is not the fast path's settled.** Async answers
+    `pending` until the drain has booked the charge, since a booking it
+    accepted can still fail, visibly. A settle the owner takes is answered
+    as settled once its publish is acknowledged before the owner's cutoff
+    (§4.5): the lease's order then makes that record the winner, and the
+    auditor books it (`TerminalOrder` checks that what the owner told a
+    gateway is what gets booked, `AckedOwnerTerminalWins`). One acknowledged
+    later is answered `recorded`. The two never answer the same request. But
+    async also adds `GET /v1/settlements/{id}`, read from Spanner's rows,
+    and a fast-path authorization has none until the auditor books it. If
+    clients come to read the settlement object, the fast path needs a way to
+    answer it (§9).
+  - In shadow, Python's answers can carry async's fields, and its 202, where
+    the owner's cannot, since Python offers async only outside leases. The
+    comparator leaves the fields out, and compares such a request by its
+    booked outcome (§8).
 - **Prices are the authorization's** (#1521, merged 2026-10-04; the
   enclave's half, quill-cloud-proxy #459, is open). Joseph decided on
   2026-10-03 that a request is billed at the prices in effect when it was
@@ -1612,8 +1670,10 @@ which §4.11 now lists.
     is the one a settle outside the predicate prices at. A request
     authorized across a scheduled tariff change is therefore held at one
     price and billed at the other. The envelope has one reading. Python
-    should too: a standalone change (§8). Until it lands the comparator
-    counts that case apart as well.
+    should too: a standalone change (§8), which #1542 makes by storing the
+    pricing instant as the authorization's `created_at` on both of
+    authorize's paths. Until it lands the comparator counts that case apart
+    as well.
   - The compiled service sends `candidate_cost_reporting` by Python's
     predicate. Where it is true, its charge has to equal the enclave's own
     figure to the microdollar. Python generates and checks golden vectors
@@ -1628,6 +1688,37 @@ which §4.11 now lists.
     today's enclave can send. On either path the first terminal in order
     wins (§4.5), so such a refund loses to a settle that was recorded, and
     wins over one that was not.
+- **A frozen billing snapshot** (`billing_snapshot.py` and
+  `docs/async-settlement-billing-v1.md`, #1390, merged 2026-10-06). It is
+  dormant: nothing calls it yet. `build_snapshot` freezes an authorization's
+  effective prices, `evaluate` prices final usage from them with no catalog
+  read, and a canonical hash names the snapshot. Its arithmetic is the
+  charge Python commits today, each component rounded half up and the last
+  tier taken when none matches, and 759 cases pin it. The enclave's Go
+  evaluator (quill-cloud-proxy #393, merged the same day and dormant too)
+  checks the same cases, from a byte-identical copy of the file.
+  - **It is a pricing contract the compiled service can share.** The fast
+    path prices every charge from the envelope (§4.4). For a request in
+    v1's cohort, the envelope's prices can be a v1 snapshot and the owner's
+    charge v1's `evaluate`, with the compiled service passing v1's cases as
+    well as `usage_cost_vectors.json` (above). The owner, Python and the
+    enclave then share one arithmetic and one test of it.
+  - **Its cohort is narrower than the fast path's.** v1 takes the OpenAI and
+    Anthropic adapters on `chat.completions` and `responses`, with ordinary
+    catalog markup in the rates, no request fee, receipt, or app or custom
+    markup, and only the default service tier. The fast path also takes
+    requests with a receipt fee, and standard routes through other adapters
+    (§4.11). Their envelopes carry what v1 cannot express yet, and the owner
+    prices them by Python's rules, which `usage_cost_vectors.json` and the
+    comparator check.
+  - **v1 refuses requests under leases.** For pricing, that exclusion is
+    about who settles, not the arithmetic. A version for the fast path
+    changes its eligibility, not its sums. Which version the envelope
+    carries is decided with the envelope's prices (§9).
+  - **#1545 freezes its cohort's prices at authorize, streamed or not.** If
+    it ships, Python itself prices an opted-in request that does not stream
+    from the authorization's prices: the basis this design proposes for the
+    fast path (§9).
 - **How far a request can outrun its hold.** The hold is the estimate: the
   estimated input at the input rate, plus the caller's `max_tokens`, or 512
   tokens without one, at the output rate (`outputTokenEstimate` in the
@@ -1904,6 +1995,22 @@ What the table's short names hide:
   must break the first claim; an owner that skips its write, which must
   break only the second; and an owner's raise that lands after the lease
   has closed, which must break §4.7's identity.
+- `CreditDebt` is written (#1549), with 20 mutants and a guard table.
+  Beyond the plan above:
+  - the larger-of write (§4.2) is a claim of its own, a property of steps:
+    the stored shortfall total never falls. The second claim cannot show
+    it. While an owner's write is in flight it counts the owner's own total
+    as not yet landed, so a late write that lowered the total could pass it;
+  - each of four configurations beside the main one is there for a hazard
+    the main bounds leave out: `silent`, the owner that never writes;
+    `refund`, a third hold, for room that comes back only once its record
+    is stored; `money`, Python's synchronous path and a payment, for the
+    debt mark; and `two`, a second lease, for the trust allowance;
+  - an owner process that has died, and still admits after its lease's
+    boundary, breaks the first claim. Two checks of `Admit` stop it, that
+    the lease is open and that the owner is reachable, and either alone is
+    enough, so neither looks needed until both are removed. That pair is
+    one of nine in its guard table.
 - In `LeaseLifecycle` a pause stands for every stop that reaches owners
   through the state cache: the debt mark, a trust downgrade and a switch out
   of fast mode travel the same way. Its mutants are an owner that admits on
@@ -1977,7 +2084,12 @@ What the table's short names hide:
   - that a boot which declared the stream-open heartbeat has reached the
     owner with it, or given up, by the time the first-heartbeat allowance
     elapses (§4.5). An allowance that elapses sooner must release a live
-    request.
+    request;
+  - that the log stores a lease's records in the order its owner decided
+    them, under one ordering key (§4.2). A log that stores a later record
+    without an earlier one must break §4.2's first claim;
+  - that a reap charges at most its hold, since a heartbeat's running charge
+    is capped at the hold (§4.8). A reap above it must break the same claim.
 - **The manifest ties each spec to its code.** A spec's shadow is a pure
   module with property tests that drive it through the spec's actions and
   check its invariants. The manifest gives each spec a state, which the
@@ -2176,6 +2288,11 @@ leases, and was retired on 2026-09-27.
      catalog entry that was replaced after authorize, or across a scheduled
      tariff change that fell between its two clock readings, is counted
      apart (§4.13).
+   - Async settle's fields in authorize's answer (#1545) are left out of the
+     comparison: Python offers async only to a request outside leases
+     (§4.13). A request Python settles through async is compared by its
+     booked outcome, the charge and the winner, once the drain has booked
+     it: its 202 answer has no counterpart on the fast path.
    - It also records each settle against its hold, by endpoint, and how
      often a lease would have had no room for one. Nothing is gated on it.
      The first figure shows where pricing a hold differently would pay, and
@@ -2248,7 +2365,14 @@ leases, and was retired on 2026-09-27.
   catalog,** Joseph's call: requests that do not stream, and those with a
   receipt fee (§4.13). This design proposes the envelope's prices for them
   too, which extends the decision of 2026-10-03. The alternative keeps
-  them on the catalog as it stands at settle.
+  them on the catalog as it stands at settle. If #1545 ships, Python prices
+  its own opted-in cohort, streamed or not, from the authorization's prices
+  (§4.13).
+- **Whether fast-path requests answer async settle's settlement object**
+  (#1545), if clients come to read it. The owner answers as settled a
+  settle whose publish was acknowledged before its cutoff, and the status
+  endpoint reads Spanner, which has no row for a fast-path authorization
+  until the auditor books it (§4.13).
 - **Where request records live at 100T:** ClickHouse rather than Spanner
   (§6).
 - **The trust tier that allows leases.** It is 3 at first (§4.11). Lowering
@@ -3281,3 +3405,20 @@ record.
 
   §5.1 says what `LeaseLifecycle` can and cannot show of Invariants 6 and 7,
   and that a guard's survival is now a row in a table that CI checks.
+- **v43.** No rule changes. Two documents that landed on 2026-10-06, and
+  how they fit (§4.13):
+  - async settle on the settle outbox (#1545) shortens the synchronous
+    path's settle and leaves leased requests out. A drained settle commits
+    five times where today's commits once, an async overrun reaches Spanner
+    when the drain books it, and its `pending` is not the fast path's
+    settled. Whether fast-path requests answer its settlement object is
+    added to §9, and the comparator leaves its fields out and compares an
+    async request by its booked outcome (§8);
+  - the frozen billing snapshot (#1390) is a pricing contract the compiled
+    service can share with Python and the enclave, for the cohort it
+    covers. It refuses requests under leases, which concerns who settles,
+    not the arithmetic.
+
+  Also: Python's second clock reading is #1542 (§4.13), and §5.1 says what
+  writing `CreditDebt` added: the larger-of write as a claim of its own,
+  four configurations, and two assumptions.
