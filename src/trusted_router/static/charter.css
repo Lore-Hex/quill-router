@@ -3050,3 +3050,24 @@ body.auth.auth-shell {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Text size floor on the public pages: paragraphs and list items never go
+ * below the kit's body size (16px), small print never below body-sm (15px),
+ * and the opening paragraph under an H1 uses the kit's lede. Colour stays
+ * text.secondary; only the size changes. */
+.public-wrap :is(p, li) {
+  font-size: max(1em, 16px);
+  line-height: 1.6;
+}
+
+.public-wrap :is(.model-catalog-note, .model-explorer-empty, .catalog-privacy-legend, .cc-platform-note, .attestation-record-foot, .provider-scope-note, .model-card-footer, .badge-option-meta) :is(p, li),
+.public-wrap :is(p, li):is(.model-explorer-empty, .catalog-privacy-legend, .cc-platform-note, .provider-scope-note, .model-card-footer) {
+  font-size: max(1em, 15px);
+}
+
+.public-wrap .lead,
+.public-wrap .cc-hero-lead {
+  max-width: 530px;
+  font-size: 20px;
+  line-height: 1.6;
+}

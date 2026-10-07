@@ -461,7 +461,7 @@
 
 .trft .cols {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 24px 28px;
   padding: 32px 0 28px;
 }
