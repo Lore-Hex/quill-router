@@ -31,9 +31,17 @@ path's settle and leaves leased requests out, and the frozen billing
 snapshot (#1390), a pricing contract the compiled service can share with
 Python and the enclave.
 
-The first three specs, `TerminalOrder`, `LeaseLifecycle` and `CreditDebt`,
-and the tools that check every spec's mutants and guards are written
-(#1515, #1533 and #1549).
+v44 states the rule that writing `AuditorCommit` showed §4.8 needs, once:
+everything a member writes for a lease, its commit, a reap, the close, a
+gap's stop and an audit's alert, is conditional on the commit version it
+read, and a refusal of any of them means it drops what it applied and
+re-reads. With many leases
+in one transaction, a statement that matched no row is that lease's
+refusal.
+
+All five specs, `TerminalOrder`, `LeaseLifecycle`, `CreditDebt`,
+`AuditorCommit` and `KeyCapFence`, and the tools that check every spec's
+mutants and guards are written (#1515, #1533, #1549, #1560 and #1561).
 
 This is the plan for reaching 100T tokens a month without spending the routing
 margin on the billing database, and for taking the control plane out of request
@@ -1040,6 +1048,23 @@ synchronous holds, through `settle_atomic`.
   work, since its commit fails and it re-reads. Within that, a member
   recognizes a duplicate terminal from the winners it has loaded.
 - Only then does it acknowledge the records.
+- **One guard on every write.** Everything a member writes for a lease is
+  conditional on the commit version it read: its commit, a reap row, the
+  close, the stop a gap makes, and an audit's alert and revocation, which
+  it raises with the commit that stores the checkpoint. Pub/Sub can give a
+  lease back to a member that lost it after another member committed, and
+  nothing it redelivers brings that member's memory up to date. A write
+  from that memory acts on what the member no longer knows: it reaps at an
+  older snapshot than the one stored, stops the lease for a gap the log
+  does not have, or alerts on a checkpoint above S that it never learned to
+  ignore.
+  - When the version refuses any of these writes, the member re-reads. It
+    drops everything it applied and has not committed, with its place in
+    the lease's records and in the drain log, loads the lease as a member
+    taking over does, and applies again from there: the records Pub/Sub
+    redelivers, and a draining lease's drain log from its start. Keeping its
+    place would skip what it had applied and lost, and its close would then
+    leave that unbooked.
 - **Taking over a lease.** A member loads the progress and the open holds
   first, extending the records' acknowledgement deadlines while it loads.
   - It skips a redelivered owner record at or below the stored sequence
@@ -1056,7 +1081,16 @@ synchronous holds, through `settle_atomic`.
   alerts. Numbers are given at decision (§4.2), so this is the backstop for
   the lease's order: a later record stored without an earlier one shows as
   a gap, and is not booked.
+  - Declaring a gap is one of the writes the commit version guards (above):
+    a member another member overtook would compare a record with progress
+    the stored row has passed.
+  - A member commits what it applied before it declares a gap. The gap
+    stops every later commit, so a fault it found in a checkpoint before
+    the gap would otherwise never be raised.
 - One transaction can carry many leases, each its own conditional statement.
+  A statement that matches no row is that lease's failed commit, whatever the
+  others did: the member re-reads that lease and acknowledges none of its
+  records.
 - Winners are stored packed, one row per lease per commit. A row-deletion
   policy removes them once the lease is closed, their pending work is done,
   and 7 days have passed. Spanner's policies delete on a timestamp column, so
@@ -1076,7 +1110,8 @@ synchronous holds, through `settle_atomic`.
   republished duplicate counts once. Adopted terminals are owner records, so
   they are audited the same way; their drain-log copies are recognized by
   record ID when the drain log is applied.
-- A difference is a fault. The auditor alerts and revokes the lease.
+- A difference is a fault. The auditor alerts and revokes the lease, with
+  the commit that stores the checkpoint (one guard on every write, above).
 - The audit proves the owner's accounting consistent, not its prices right: an
   owner that priced every record wrongly, but consistently, would pass it.
   A heartbeat's running charge, and so a reap's, is capped at its hold; a
@@ -1154,6 +1189,10 @@ by the first-terminal rule.
   inserting a reap row, in a read-write transaction that first reads the
   hold's drain-log rows. A concurrent append for the same hold conflicts with
   that read, and one of the two retries. A terminal already there wins.
+  - The reap is one of the writes the commit version guards (above): a
+    member the lease came back to after another member committed and
+    acknowledged a newer heartbeat would otherwise reap at the older
+    snapshot.
 - It books a draining lease's winners in that order: owner records, then the
   drain log.
 
@@ -1945,6 +1984,33 @@ What the table's short names hide:
   committed in between: a hold's winning terminal is the one stored, a refund
   included, and a hold the log showed with an accepted snapshot and no other
   terminal is reaped at that snapshot by the time its lease closes.
+- `AuditorCommit` is written (#1560), with 27 mutants and a guard table.
+  Writing it showed §4.8's one guard on every write, one hole at a time: a
+  reap without the commit version charges an older snapshot than the one
+  stored; a member refused with nothing to commit that does not re-read
+  leaves the lease unable to close; a gap declared without the version stops
+  the lease for a gap the log does not have; an alert raised outside the
+  commit may be on a checkpoint above S; and a gap declared before the
+  member commits what it applied hides a fault it found. It also states what
+  §4.8 left implicit about a transaction that carries several leases: a
+  statement that matched no row is that lease's refusal, and its records
+  stay unacknowledged.
+  - It models the boundary S: an owner record stored after the fence tick is
+    above S, or a duplicate of one at or below it, and either way is
+    ignored; its claims are about the records at or below S, and it checks
+    that S is stored before any reap or drain-log decision. The log's order
+    is not assumed: a record stored ahead of an earlier one shows as a gap,
+    and the gap rule is what keeps the earlier one from being skipped.
+  - Its audit holds at each checkpoint, raised with the commit that stores
+    it (Invariant 2); a fault a member finds while its version is current
+    is raised, even on a lease that never drains or that a gap stops; and
+    a draining lease closes while the members keep working, unless a gap
+    stopped it for an operator.
+- `KeyCapFence` is written (#1561), with 8 mutants and a guard table.
+  Each condition of Python's enabling rule holds Invariant 8 up alone: the
+  grant's version in admission, a checkpoint that applies the change, one
+  that shows none of the key's holds open, one the auditor has booked, and
+  the draining leases among those that could hold the key.
 
 - `CreditDebt` checks that repayment clears the mark: once a workspace's
   signed sum is no longer negative, no row of it stays marked (§4.7).
@@ -1995,7 +2061,17 @@ What the table's short names hide:
   must break the first claim; an owner that skips its write, which must
   break only the second; and an owner's raise that lands after the lease
   has closed, which must break §4.7's identity.
-- `CreditDebt` is written (#1549), with 20 mutants and a guard table.
+- `CreditDebt` is written (#1549), with 36 mutants and a guard table.
+  Codex's reviews of it added claims for eight sentences of the design:
+  money coming in repays debt first, the lowest shard first and each at
+  most to zero; a marked row refuses reservations and grants; an owner's
+  shortfall is the lease's deficit, its total rising by exactly what the
+  allocation lacks; it lands within two of the owner's writes; the stored
+  shortfall total is never more than the owner's; each landing, and each
+  terminal the auditor applies, stores exactly the larger of that total
+  and the one it carried; a lease's allocation is its grant plus every
+  raise, less the returns applied; and a shard's usage is the charges
+  booked against it (§4.2, §4.7).
   Beyond the plan above:
   - the larger-of write (§4.2) is a claim of its own, a property of steps:
     the stored shortfall total never falls. The second claim cannot show
@@ -2089,7 +2165,13 @@ What the table's short names hide:
     them, under one ordering key (§4.2). A log that stores a later record
     without an earlier one must break §4.2's first claim;
   - that a reap charges at most its hold, since a heartbeat's running charge
-    is capped at the hold (§4.8). A reap above it must break the same claim.
+    is capped at the hold (§4.8). A reap above it must break the same claim;
+  - that Pub/Sub gives a member every record of a lease not acknowledged, in
+    the order stored (§4.8). Redelivery that skips one must break Invariant
+    4;
+  - that a checkpoint shows the cache version its owner applies and the
+    key's holds open in its books (§4.6). A checkpoint ahead of its owner's
+    cache must break Invariant 8.
 - **The manifest ties each spec to its code.** A spec's shadow is a pure
   module with property tests that drive it through the spec's actions and
   check its invariants. The manifest gives each spec a state, which the
@@ -3422,3 +3504,27 @@ record.
   Also: Python's second clock reading is #1542 (§4.13), and §5.1 says what
   writing `CreditDebt` added: the larger-of write as a claim of its own,
   four configurations, and two assumptions.
+- **v44.** One rule for §4.8, which writing `AuditorCommit` showed it
+  needs: everything a member writes for a lease, its commit, a reap row,
+  the close, a gap's stop and an audit's alert and revocation, is
+  conditional on the commit version it read; the alert is raised with the
+  commit that stores the checkpoint. Pub/Sub can give a lease back to a
+  member whose memory another member's commit overtook. A reap from that
+  memory would charge an older snapshot, a gap declared from it would stop
+  the lease for a gap the log does not have, and an alert from it may be on
+  a checkpoint above S. When the version refuses any of these writes, the member
+  re-reads: it drops what it applied and has not committed, with its place
+  in the records and the drain log, and applies again from a fresh load.
+  Keeping its place would let it close with a drain-log row unbooked. With
+  many leases in one transaction, a statement that matched no row is that
+  lease's refusal, and the member acknowledges none of its records.
+
+  The rule was found one write at a time: the reap while writing the spec,
+  re-reading by Codex's review of v44, the gap and the alert by Codex's
+  second and third reviews of the spec. It is stated once so the code
+  guards every write the same way. A member also commits what it applied
+  before it declares a gap, or a fault it found before the gap is never
+  raised (Codex's fourth review of the spec).
+
+  §5.1 says what `AuditorCommit` and `KeyCapFence` show, the claims Codex's
+  reviews added to `CreditDebt`, and the two assumptions the new specs add.
