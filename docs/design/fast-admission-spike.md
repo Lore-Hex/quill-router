@@ -55,9 +55,11 @@ Each has two kinds of test:
   reaches the same successors. A transition the shadow adds between states
   TLC reaches anyway shows here, where a count of states would miss it;
 - an exhaustive search at the `.cfg`'s own constants, which must reach as
-  many distinct states as TLC does there: the `[states]` in the spec's guard
-  table. That is a sanity check on the full instance, not a proof that the
-  two agree.
+  many distinct states as TLC does there with the pinned jar. The guard
+  tables record that count as `[states]` once the pull request that adds
+  their `reaches` field lands (branch `proofs/guard-reaches-2`); until then
+  the test reads it from a TLC run of the same configuration. That is a
+  sanity check on the full instance, not a proof that the two agree.
 
 When a package first appears, its manifest entry in `proofs/manifest.toml`
 moves from planned to implemented, naming the package and its tests, in the
