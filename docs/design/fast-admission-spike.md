@@ -44,22 +44,23 @@ runs auditor members as separate processes so that they can be stopped alone.
 Each is a transition function over the spec's variables with one function per
 action, and its invariants as functions. The runtime calls the shadow's
 transitions, so the code and the checker share one model of each protocol.
-Each has two kinds of test:
+Each has three kinds of test:
 
 - property tests that drive random sequences of actions, with larger bounds
   than the spec's, and check every invariant after each;
-- an exact comparison with TLC on a small instance of the spec, with
-  constants smaller than its `.cfg`'s. TLC writes the instance's whole state
-  graph with its actions' names (`-dump dot,actionlabels`), and the test
-  checks that from every state the shadow enables the same actions and
-  reaches the same successors. A transition the shadow adds between states
-  TLC reaches anyway shows here, where a count of states would miss it;
-- an exhaustive search at the `.cfg`'s own constants, which must reach as
-  many distinct states as TLC does there with the pinned jar. The guard
-  tables record that count as `[states]` once the pull request that adds
-  their `reaches` field lands (branch `proofs/guard-reaches-2`); until then
-  the test reads it from a TLC run of the same configuration. That is a
-  sanity check on the full instance, not a proof that the two agree.
+- exact comparisons with TLC. TLC writes an instance's whole state graph
+  with its actions' names (`-dump dot,actionlabels`), and the test checks
+  that from every state the shadow enables the same actions and reaches the
+  same successors. A transition the shadow adds between states TLC reaches
+  anyway shows here, where a count of states would miss it. The tests
+  compare small instances and every configuration `proofs/` checks, whose
+  graphs reach some 800,000 states and are read as they stream;
+- the binding of each configuration a test declares to its `.cfg`. TLC
+  reads the file as it is and evaluates the declaration as an assumption,
+  and the shadow must reach as many distinct states as the guard table
+  records (`[states]`, #1582). Without the binding, a declaration one
+  constant off can reach the same count: LeaseLifecycle with `MaxHolds` 2
+  does.
 
 When a package first appears, its manifest entry in `proofs/manifest.toml`
 moves from planned to implemented, naming the package and its tests, in the
@@ -412,7 +413,8 @@ process per run. TLC is not fed traces (§5.1).
 Each step is a pull request, with its tests, reviewed before the next.
 
 - **S1.** The Go module, `fastpath/go.mod` at Go 1.24 as the enclave's, a CI
-  job (`gofmt`, `go vet`, `go test -race`), and
+  job (`gofmt`, `go vet`, `go test -race`, and `go test` for the whole-graph
+  comparisons, too slow under the race detector), and
   `fastpath/internal/leaselifecycle` with its tests. `LeaseLifecycle` becomes
   implemented in the same pull request.
 - **S2.** `fastpath/internal/terminalorder`; `TerminalOrder` becomes
