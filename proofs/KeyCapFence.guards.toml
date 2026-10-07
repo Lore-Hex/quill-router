@@ -3,6 +3,10 @@
 
 inputs_sha256 = "c9d6fa93f2bc252da3879d0ae3d2e4740dbb6b64a2bf3151e355e03637baf433"
 
+# The distinct states each configuration reaches with every guard in place.
+[states]
+"KeyCapFence.cfg" = 206626
+
 [[guard]]
 action = "Grant"
 text = '''/\ lst[l] = "none"'''
@@ -12,6 +16,7 @@ breaks = "CapAfterBooking"
 action = "Refresh"
 text = '''/\ lst[l] # "none"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 An owner's cache belongs to its process, not to a lease, and may be refreshed before the lease is granted: new states, none a claim reads differently. A newer cache only makes the owner stop admitting the key sooner, and Admit's check of the grant's version reads it the same way.
 '''
@@ -20,6 +25,7 @@ An owner's cache belongs to its process, not to a lease, and may be refreshed be
 action = "Refresh"
 text = '''/\ cache[l] < kv'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A refresh that reads the version the cache already holds changes nothing: without the guard it is a step to the same state, and no new state is reached.
 '''
@@ -59,6 +65,7 @@ An enabling condition: a terminal ends one of the key's open holds. Without it t
 action = "Checkpoint"
 text = '''/\ lst[l] = "open"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 A checkpoint is true whenever its owner publishes it (A1): the version it applies and the key's holds open in its books. When an owner may still publish is LeaseLifecycle's. Later checkpoints reach new states, and one clears its lease only if it applies the change and shows none of the key's holds open, which is what the claim rests on.
 '''
@@ -83,6 +90,7 @@ The auditor books a record the log holds. Without the guard the next record's in
 action = "Drain"
 text = '''/\ lst[l] = "open"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 A lease that drains from another state still has to close, or clear, before the cap is enabled, and Admit asks for an open lease. The new states this reaches only narrow what its owner may do.
 '''
@@ -91,6 +99,7 @@ A lease that drains from another state still has to close, or clear, before the 
 action = "Close"
 text = '''/\ lst[l] = "draining"'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 From open, draining and then closing reaches the state a direct close would: Drain changes nothing else, and a lease may drain at any moment here. No new state is reached.
 '''
@@ -122,6 +131,7 @@ breaks = "CapAfterBooking"
 action = "EnableCap"
 text = '''/\ ~capOn'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Enabling a cap that is already enabled changes nothing: the step goes to the same state, and no new state is reached.
 '''
