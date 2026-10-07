@@ -46,4 +46,7 @@ The whole-graph comparisons are in files built only without the race
 detector (`//go:build !race`): they are single-threaded and some ten times
 slower under it. CI runs `go test -race ./...` without them and `go test
 ./...` with them. A large instance's graph is read as it streams
-(`tlc.Compare`), and TLC runs with a 1 GB heap.
+(`tlc.Compare`), and TLC runs with a 1 GB heap. AuditorCommit's take about
+five minutes on a laptop and longer on a CI runner, past Go's default timeout
+of ten minutes for a package's tests, so CI passes `-timeout 30m`, as a slower
+machine should too.
