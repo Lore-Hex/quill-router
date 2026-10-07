@@ -225,8 +225,11 @@ func TestBindConfigurationRefusesWhatChangesTheModel(t *testing.T) {
 	bind := func(dir string, constants []string) error {
 		return BindConfiguration(dir, "LeaseLifecycle", "LeaseLifecycle.cfg", constants, "MaxHolds = 3")
 	}
-	if err := bind(copyWith(""), leaseLifecycleConstants); err != nil {
-		t.Fatal(err)
+	// The file as it is, and with settings that change no graph.
+	for _, more := range []string{"", "\nCHECK_DEADLOCK FALSE\n", "\nINVARIANT TypeOK\n"} {
+		if err := bind(copyWith(more), leaseLifecycleConstants); err != nil {
+			t.Fatalf("with %q: %v", more, err)
+		}
 	}
 	// Each refusal must name what it refuses, or a copy refused for another
 	// reason, such as one TLC cannot parse, would pass here too.
@@ -245,6 +248,7 @@ func TestBindConfigurationRefusesWhatChangesTheModel(t *testing.T) {
 		"\nSYMMETRY TypeOK\n":                 "symmetry TypeOK",
 		"\nVIEW TypeOK\n":                     "view TypeOK",
 		"\nINIT Init\n":                       "init Init",
+		"\n_POSSIBLE TypeOK\n":                "possible TypeOK",
 	} {
 		refused(copyWith(more), leaseLifecycleConstants, want)
 	}

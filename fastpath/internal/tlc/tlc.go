@@ -708,8 +708,10 @@ func (p *parser) record() (Value, error) {
 // (ConfigFacts.java). It must name SPECIFICATION Spec, and assign exactly
 // the constants named, none with parameters; a name assigned that is not a
 // constant overrides a definition. Invariants and properties, which change no
-// graph, may be anything. Every other setting is refused: a substitution
-// (<-), a constraint, a symmetry, a view, or anything else TLC reads. Then
+// graph, may be anything, and so may CHECK_DEADLOCK. Every other setting is
+// refused: a substitution (<-), a constraint, a symmetry, a view, or
+// anything else TLC reads, a keyword ConfigFacts.java does not know included.
+// Then
 // TLC judges declaration, a formula over the constants, against the file
 // (checkAssumption). For proofs/'s own files, dir is ProofsDir.
 func BindConfiguration(dir, spec, cfgFile string, constants []string, declaration string) error {
@@ -738,6 +740,7 @@ func BindConfiguration(dir, spec, cfgFile string, constants []string, declaratio
 			problems = append(problems, f[1]+" is assigned, and is no constant the test declares: it overrides a definition")
 		case len(f) == 2 && (f[0] == "modconstants" || f[0] == "modoverrides") && f[1] == "0":
 		case len(f) == 2 && (f[0] == "invariant" || f[0] == "property"):
+		case len(f) == 2 && f[0] == "checkdeadlock" && (f[1] == "true" || f[1] == "false"):
 		default:
 			problems = append(problems, strings.Join(f, " "))
 		}
