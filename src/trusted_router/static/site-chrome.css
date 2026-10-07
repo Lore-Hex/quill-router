@@ -269,11 +269,11 @@
     margin-left: 0;
   }
 
-  html.no-js .trnav .tbar { flex-wrap: wrap; height: auto; padding-bottom: 10px; row-gap: 6px; }
-  html.no-js .trnav nav { display: flex; position: static; flex-direction: row; flex-wrap: wrap; flex-basis: 100%; gap: 4px 18px; padding: 0; border: 0; background: transparent; }
-  html.no-js .trnav nav a { min-height: 40px; padding: 8px 0; }
-  html.no-js .trnav .menu { display: none; }
-  html.no-js .trnav .drawer-signin { display: inline-flex; align-items: center; }
+  html.js-off .trnav .tbar { flex-wrap: wrap; height: auto; padding-bottom: 10px; row-gap: 6px; }
+  html.js-off .trnav nav { display: flex; position: static; flex-direction: row; flex-wrap: wrap; flex-basis: 100%; gap: 4px 18px; padding: 0; border: 0; background: transparent; }
+  html.js-off .trnav nav a { min-height: 40px; padding: 8px 0; }
+  html.js-off .trnav .menu { display: none; }
+  html.js-off .trnav .drawer-signin { display: inline-flex; align-items: center; }
 }
 
 @media (max-width: 600px) {

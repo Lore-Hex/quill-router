@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en" class="no-js">
+<html lang="en" class="js-off">
 <head>
   {% set meta_title = title|seo_title %}
   {% set meta_description = description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script nonce="{{ csp_nonce() }}">document.documentElement.classList.remove("no-js");</script>
+  <script nonce="{{ csp_nonce() }}">document.documentElement.classList.remove("js-off");</script>
   <title>{{ meta_title }}</title>
   <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
