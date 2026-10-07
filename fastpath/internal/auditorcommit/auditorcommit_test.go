@@ -48,10 +48,10 @@ var (
 )
 
 // cfgInstances are the instances proofs/AuditorCommit*.cfg check, their
-// constants written out here rather than read from the files. A change to a
-// file's constants changes its guard table count, which fails
-// TestStateCountMatchesTLC until this is changed to match. In each file m1 is
-// the member named first, so it holds the lease at the start.
+// constants written out here rather than read from the files.
+// TestStateCountMatchesTLC has TLC check that each file's constants are these
+// (declares), and fails until a change to a file is made here too. In each
+// file m1 is the member named first, so it holds the lease at the start.
 var cfgInstances = map[string]Config{
 	"AuditorCommit.cfg": {
 		Auths: []string{"a1"}, Members: []string{"m1", "m2"}, MaxSeq: 2, MaxSnap: 2, MaxLate: 1, MaxAssign: 1,
@@ -120,6 +120,21 @@ INVARIANTS
     TypeOK
 `, strings.Join(members, ", "), strings.Join(c.Auths, ", "), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead,
 		c.MaxLate, c.MaxRaise, c.MaxAssign, c.MaxCrash, c.MaxAppend, strings.ToUpper(fmt.Sprint(c.Lying)), c.Grant)
+}
+
+// declares is the formula that a configuration has c's constants, up to the
+// names of its model values, which the spec treats alike but for the holder
+// CHOOSE picks, the same up to renaming too.
+func declares(c Config) string {
+	lying := "FALSE"
+	if c.Lying {
+		lying = "TRUE"
+	}
+	return fmt.Sprintf("Cardinality(Auths) = %d /\\ Cardinality(Members) = %d /\\ Auths \\cap Members = {} /\\ "+
+		"MaxSeq = %d /\\ MaxSnap = %d /\\ MaxDup = %d /\\ MaxAhead = %d /\\ MaxLate = %d /\\ MaxRaise = %d /\\ "+
+		"MaxAssign = %d /\\ MaxCrash = %d /\\ MaxAppend = %d /\\ Lying = %s /\\ Grant = %d",
+		len(c.Auths), len(c.Members), c.MaxSeq, c.MaxSnap, c.MaxDup, c.MaxAhead, c.MaxLate, c.MaxRaise,
+		c.MaxAssign, c.MaxCrash, c.MaxAppend, lying, c.Grant)
 }
 
 type step struct {

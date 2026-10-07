@@ -106,15 +106,19 @@ func TestComparisonSeesADifference(t *testing.T) {
 	}
 }
 
-// TestWholeConfigurationsMatchTLC compares the whole state graphs of three of
-// the configurations proofs/ checks, read as they stream. TLC runs each from
-// its declared constants (cfgInstances), checking TypeOK alone. Between them
-// they have three records per owner, two authorizations, a lying owner, a
-// record stored twice, a crash, a late record and two members; the other two
-// configurations, `again` and `ahead`, are too large to write out and are
-// counted below.
+// TestWholeConfigurationsMatchTLC compares the whole state graphs of all five
+// configurations proofs/ checks, up to 822,229 states, with the shadow's, step
+// for step, read as they stream. TLC runs each from its declaration in
+// cfgInstances, which TestStateCountMatchesTLC binds to its file, checking
+// TypeOK alone. So on every configuration TLC checks, the shadow is the spec:
+// a spurious step in a state only those configurations reach would show.
 func TestWholeConfigurationsMatchTLC(t *testing.T) {
-	for _, file := range []string{"AuditorCommit.cfg", "AuditorCommit.lying.cfg", "AuditorCommit.two.cfg"} {
+	files := make([]string, 0, len(cfgInstances))
+	for file := range cfgInstances {
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	for _, file := range files {
 		c := cfgInstances[file]
 		got := compareWithTLC(t, c, c.Next)
 		if len(got.Diffs) > 0 {
@@ -162,6 +166,9 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
+		if err := tlc.CheckAssumption("AuditorCommit", file, declares(c)); err != nil {
+			t.Fatal(err)
+		}
 		want, ok := counts[file]
 		if !ok {
 			t.Fatalf("the guard table gives no count for %s: %v", file, counts)
@@ -170,5 +177,15 @@ func TestStateCountMatchesTLC(t *testing.T) {
 		if len(seen) != want {
 			t.Errorf("%s: the shadow reaches %d distinct states, TLC %d", file, len(seen), want)
 		}
+	}
+}
+
+// TestDeclarationsAreBoundToTheirFiles: a declaration that differs from its
+// .cfg is refused by TLC reading the file.
+func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
+	wrong := cfgInstances["AuditorCommit.again.cfg"]
+	wrong.Lying = false
+	if err := tlc.CheckAssumption("AuditorCommit", "AuditorCommit.again.cfg", declares(wrong)); err == nil {
+		t.Fatal("a declaration with an honest owner is taken for AuditorCommit.again.cfg's")
 	}
 }
