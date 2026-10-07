@@ -12,9 +12,13 @@ every shard, or clears a mark the balance no longer bears out.
 Run it once every serving revision has the debt rules, and again after a
 rollback and roll forward. It is idempotent.
 
-Read-only by default: one low-priority read of every credit row, then a report.
-Pass ``--apply`` to write, one transaction per workspace, each of which reads
-the workspace's rows again before it writes.
+Read-only by default: one low-priority read of every credit row, a read of
+each candidate workspace's credit account by its complete key (a workspace
+whose rows are not exactly its configured shards is reported and skipped), and
+a report. Pass ``--apply`` to write, one transaction per workspace, each of
+which reads the workspace's rows again, checks them against the configured
+count, and writes only what they still need; the summary counts what the
+transactions committed.
 
 Examples:
   uv run python scripts/settle_negative_shards.py
@@ -38,7 +42,8 @@ os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 from trusted_router import credit_debt
 from trusted_router.config import Settings
 from trusted_router.storage import create_store
-from trusted_router.storage_gcp_credit_debt import cover_or_mark
+from trusted_router.storage_gcp_counters import credit_shard_count
+from trusted_router.storage_gcp_credit_debt import CreditRowsIncomplete, settle_credit_rows
 
 # Every credit row, about eighteen thousand of them: small enough to read whole
 # at low priority, and filtered here rather than by an expression in SQL.
@@ -47,28 +52,39 @@ _ROWS_SQL = (
     "COALESCE(in_debt, FALSE) FROM tr_credit_balance"
 )
 _READ_OPTIONS: dict[str, Any] = {"request_options": {"priority": "PRIORITY_LOW"}}
+ACTIONS = ("cover", "mark", "clear")
+
+
+def action_for(headroom: tuple[int, ...], marks: tuple[bool, ...]) -> str:
+    """What squaring these rows does: cover, mark, clear, or keep them as they are."""
+
+    squared = credit_debt.square(headroom)
+    if squared.marked:
+        return "keep" if all(marks) else "mark"
+    if squared.headroom != headroom:
+        return "cover"
+    return "clear" if any(marks) else "keep"
 
 
 @dataclass(frozen=True)
 class Workspace:
-    """A workspace whose rows break the rules: its headroom per shard, and its mark."""
+    """A workspace whose rows break the rules: each shard's headroom and mark."""
 
     workspace_id: str
     headroom: tuple[int, ...]
-    marked: bool
+    marks: tuple[bool, ...]
 
     @property
     def action(self) -> str:
-        squared = credit_debt.square(self.headroom)
-        if squared.marked:
-            return "mark" if not self.marked else "keep"
-        if squared.headroom != self.headroom:
-            return "cover"
-        return "clear" if self.marked else "keep"
+        return action_for(self.headroom, self.marks)
 
 
 def find_workspaces(store: Any) -> list[Workspace]:
-    """The workspaces with a negative shard or a mark that the rules would change."""
+    """The workspaces with a negative shard or a mark that the rules would change.
+
+    A workspace whose rows are not exactly the shards its credit account
+    configures, read by its complete key, is reported and skipped.
+    """
 
     rows: dict[str, dict[int, tuple[int, bool]]] = defaultdict(dict)
     with store._database.snapshot() as snapshot:
@@ -77,38 +93,62 @@ def find_workspaces(store: Any) -> list[Workspace]:
     found = []
     for workspace_id in sorted(rows):
         shards = rows[workspace_id]
-        if sorted(shards) != list(range(len(shards))):
-            print(f"SKIP: {workspace_id} has an incomplete shard set {sorted(shards)}")
+        if min(value for value, _marked in shards.values()) >= 0 and not any(
+            marked for _value, marked in shards.values()
+        ):
             continue
-        headroom = tuple(shards[shard][0] for shard in range(len(shards)))
-        marked = any(shards[shard][1] for shard in range(len(shards)))
-        if min(headroom) >= 0 and not marked:
+        account = store.get_credit_account(workspace_id)
+        if account is None:
+            print(f"SKIP: {workspace_id} has credit rows but no credit account")
             continue
-        workspace = Workspace(workspace_id, headroom, marked)
+        count = credit_shard_count(account)
+        if sorted(shards) != list(range(count)):
+            print(f"SKIP: {workspace_id} has shards {sorted(shards)}, configured {count}")
+            continue
+        workspace = Workspace(
+            workspace_id,
+            tuple(shards[shard][0] for shard in range(count)),
+            tuple(shards[shard][1] for shard in range(count)),
+        )
         if workspace.action != "keep":
             found.append(workspace)
     return found
 
 
 def run(store: Any, *, apply: bool = False) -> dict[str, int]:
-    """Report every workspace the rules would change; with apply, change them."""
+    """Report every workspace the rules would change; with apply, change them.
 
-    workspaces = find_workspaces(store)
+    A dry run returns the actions it selected. An apply returns what the
+    transactions committed: each reads the rows again, so a workspace that
+    money repaired since the read is counted as unchanged.
+    """
+
     counts: dict[str, int] = defaultdict(int)
-    for workspace in workspaces:
-        counts[workspace.action] += 1
+    for workspace in find_workspaces(store):
         print(
             f"{'APPLY' if apply else 'DRY-RUN'}: {workspace.action} {workspace.workspace_id} "
             f"headroom={list(workspace.headroom)} sum={sum(workspace.headroom)} "
-            f"marked={workspace.marked}"
+            f"marks={list(workspace.marks)}"
         )
-        if apply:
-            store._run_in_transaction(
-                lambda transaction, workspace_id=workspace.workspace_id, now=datetime.now(UTC): (
-                    cover_or_mark(transaction, store._param_types, workspace_id, now=now)
+        if not apply:
+            counts[workspace.action] += 1
+            continue
+        try:
+            before, _after = store._run_in_transaction(
+                lambda transaction, workspace=workspace, now=datetime.now(UTC): settle_credit_rows(
+                    transaction, store._param_types, workspace.workspace_id,
+                    now=now, shard_count=len(workspace.headroom),
                 )
             )
-    summary = {action: counts[action] for action in ("cover", "mark", "clear")}
+        except CreditRowsIncomplete:
+            print(f"SKIP: {workspace.workspace_id}'s shard set changed since it was read")
+            continue
+        committed = action_for(before.headroom, before.marks)
+        counts[committed if committed != "keep" else "unchanged"] += 1
+        print(f"  committed: {committed if committed != 'keep' else 'nothing, already settled'}")
+    summary = {action: counts[action] for action in ACTIONS}
+    if apply:
+        summary["unchanged"] = counts["unchanged"]
     print(
         f"{'APPLIED' if apply else 'WOULD APPLY'}: "
         + " ".join(f"{action}={count}" for action, count in summary.items())
