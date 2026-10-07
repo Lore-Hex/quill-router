@@ -104,6 +104,58 @@ def test_snapshot_sync_wire(env, kind):
     assert response.content == json.dumps(expected, separators=(',', ':')).encode()
 
 
+ERROR_CASES = ('invalid_snapshot', 'invalid_signature', 'charge_mismatch',
+               'payload_conflict', 'storage_unavailable', 'not_found')
+
+
+def error_envelope(env, monkeypatch, case):
+    """Generate the literal through HTTP, freezing only response timing."""
+    from trusted_router import gateway_timing
+    from trusted_router.auth import require_inference_key
+    from trusted_router.services import async_settle_handler
+    from trusted_router.storage_errors import StoreUnavailable
+
+    monkeypatch.setattr(gateway_timing, 'perf_counter', lambda: 1.0)
+    body, _, _ = prepare(env)
+    if case == 'invalid_snapshot':
+        body['billing_snapshot'] = {}
+    elif case == 'invalid_signature':
+        body['settlement_ticket'] = 'invalid'
+    elif case == 'charge_mismatch':
+        body['terminal']['charge_micro'] += 1
+    client = _client(env[3])
+    client.app.state.async_settle = env[2]
+    headers = {'X-TR-Settlement-Mode': 'async-v1'}
+    path = '/v1/internal/gateway/settle'
+    if case == 'payload_conflict':
+        first = client.post(path, json=body, headers=headers)
+        assert first.status_code == 202, first.text
+        body['raw_usage']['input_tokens'] = 2
+        body['terminal']['usage'].update(uncached_input_tokens=2, total_prompt_tokens=2)
+    elif case == 'storage_unavailable':
+        def unavailable():
+            raise StoreUnavailable('F1 injected outage')
+        monkeypatch.setattr(async_settle_handler, 'spanner_settle_outbox', unavailable)
+    if case == 'not_found':
+        client.app.dependency_overrides[require_inference_key] = lambda: SimpleNamespace(
+            workspace=SimpleNamespace(id='ws-v1'), api_key=SimpleNamespace(hash='key-v1'))
+        path = '/v1/settlements/auth-v1.settle'
+        response = client.get(path)
+    else:
+        response = client.post(path, json=body, headers=headers)
+    client.close()
+    return dict(path=path, status=response.status_code,
+                content_type=response.headers.get('content-type'),
+                retry_after=response.headers.get('retry-after'), body_exact=response.text)
+
+
+@pytest.mark.parametrize('case', ERROR_CASES)
+def test_error_envelopes_real_http(env, monkeypatch, case):
+    expected = json.loads((ROOT/'error_envelopes_v1.json').read_text())
+    assert set(expected['cases']) == set(ERROR_CASES)
+    assert error_envelope(env, monkeypatch, case) == expected['cases'][case]
+
+
 @pytest.mark.parametrize('case', SUPPORTED, ids=lambda c: c['name'])
 def test_four_path_billing_state(env, monkeypatch, case):
     run_four_paths(env, monkeypatch, case)

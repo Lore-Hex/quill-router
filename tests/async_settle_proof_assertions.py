@@ -56,6 +56,8 @@ def run() -> None:
                 if not isinstance(function, ast.FunctionDef):
                     continue
                 names = [function.name]
+                if function.name == 'error_envelope':
+                    names = ['test_error_envelopes_real_http']
                 if function.name == 'run_four_paths':
                     names = ['test_four_path_scenario_axes', 'test_four_path_billing_state']
                 for assertion in ast.walk(function):

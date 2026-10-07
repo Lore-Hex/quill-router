@@ -15,6 +15,9 @@ HANDLER = 'src/trusted_router/services/async_settle_handler.py'
 STORAGE = 'src/trusted_router/storage_gcp_async_settle.py'
 TEST = 'tests/test_async_settle_handler.py::'
 MUTATIONS = [
+    ('error-envelope-message', [(HANDLER, [
+        ('Invalid async settlement snapshot', 'Changed async settlement snapshot'),
+    ])], 'tests/test_async_settle_proof.py::test_error_envelopes_real_http[invalid_snapshot]'),
     ('gate-recovery-dispatch-on-admission', [('src/trusted_router/routes/settlements.py', [
         ('if not settings.async_settle_protection or modes not in',
          'if not settings.async_settle_admission_enabled or modes not in'),

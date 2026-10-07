@@ -1364,3 +1364,50 @@ def _select_authorized_endpoint(
         return None
     model = MODELS.get(selected_model_id)
     return default_endpoint_for_model(model) if model is not None else None
+
+def _refund_benchmark_sample_safely(
+    body: GatewaySettleRequest,
+    authorization: GatewayAuthorization,
+    *,
+    model: Any,
+    selected_endpoint: ModelEndpoint,
+    input_tokens: int,
+    selected_usage_type: UsageType,
+) -> ProviderBenchmarkSample | None:
+    """The provider-error benchmark a refund records, or None if it cannot be built."""
+    try:
+        return ProviderBenchmarkSample.from_provider_error(
+            model=model,
+            provider_name=PROVIDERS[selected_endpoint.provider].name,
+            input_tokens=input_tokens,
+            elapsed_seconds=float(body.elapsed_seconds or 0.001),
+            streamed=body.streamed,
+            usage_type=selected_usage_type,
+            error_status=body.error_status or 502,
+            error_type=body.error_type or "provider_error",
+            region=authorization.region,
+            provider=selected_endpoint.provider,
+            workspace_id=authorization.workspace_id,
+        )
+    except Exception:
+        logger.warning(
+            "provider benchmark write failed after refund finalize authorization_id=%s",
+            authorization.id,
+            exc_info=True,
+        )
+        return None
+
+
+def _record_refund_benchmark_safely(
+    sample: ProviderBenchmarkSample, authorization_id: str,
+) -> None:
+    try:
+        STORE.record_provider_benchmark(sample)
+    except Exception:
+        # Money is already committed. Observability cannot change the response
+        # or stop later background tasks. Storage retains its RPC deadlines.
+        logger.warning(
+            "provider benchmark write failed after refund finalize authorization_id=%s",
+            authorization_id,
+            exc_info=True,
+        )

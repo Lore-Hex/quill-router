@@ -51,6 +51,11 @@ MUTATIONS = [
     ('retention-body-clear', 'src/trusted_router/storage_gcp_settle_outbox.py',
      [('terminal_at=@now, settle_body=NULL', 'terminal_at=@now, settle_body=settle_body')],
      'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
+    ('generation-future-terminal-at', 'src/trusted_router/storage_gcp_generation_records.py',
+     [(') -> DmlStatement:\n    return (\n        "INSERT INTO tr_generation ("',
+       ') -> DmlStatement:\n    terminal_at = dt.datetime(2099, 1, 1, tzinfo=dt.UTC)\n'
+       '    return (\n        "INSERT INTO tr_generation ("')],
+     'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('sparse-predicate', 'src/trusted_router/storage_gcp_async_admission.py',
      [('WHERE unresolved_at IS NOT NULL ORDER BY', 'WHERE TRUE ORDER BY')],
      'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sparse]'),

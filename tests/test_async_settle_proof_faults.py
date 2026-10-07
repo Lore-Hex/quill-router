@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -218,11 +219,35 @@ def test_local_ttl_pins():
     assert cfg.settle_outbox_health_publish_interval_seconds == 2
 
 
-@pytest.mark.xfail(strict=True, reason='F1-002: federation revocation caches exceed D3; excluded from local async cohort')
-@pytest.mark.parametrize('name', ['SOFT_TTL_SECONDS', 'HARD_TTL_SECONDS'])
-def test_federation_d3_ttl_bound(name):
-    from trusted_router.services import federation
-    assert getattr(federation, name) <= 300
+@pytest.mark.parametrize('authority', ['federated', 'deferred_home'])
+@pytest.mark.parametrize('kind', ['settle', 'refund'])
+def test_federation_excluded_from_async(env, authority, kind):
+    from tests.test_async_settle_proof import save
+    from tests.test_settle_outbox_drain import _client
+    from trusted_router import billing_snapshot as billing
+    from trusted_router.services.async_settle import snapshot_projection
+
+    body, auth, _ = prepare(env, kind=kind)
+    snapshot = billing.parse_snapshot(json.dumps(body['billing_snapshot']))
+    for auth_authority, observed_authority in ((authority, 'local'), ('local', authority)):
+        auth.settlement = auth_authority
+        projection = snapshot_projection(
+            authorization=auth, snapshot=snapshot,
+            requested=billing.Eligibility(authority=observed_authority),
+            runtime=env[2], settings=env[3])
+        assert projection == {'async_eligible': False}  # No ticket can be issued.
+    # Even an otherwise valid local ticket cannot accept a federated request.
+    body['observed']['authority'] = authority
+    before = save(env[1])
+    client = _client(env[3])
+    client.app.state.async_settle = env[2]
+    response = client.post('/v1/internal/gateway/' + kind, json=body,
+                           headers={'X-TR-Settlement-Mode': 'async-v1'})
+    client.close()
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['acceptance']['status'] == 'sync_required'
+    assert response.json()['data']['reason'] == 'unsupported_cohort'
+    assert save(env[1]) == before
 
 
 def test_insert_uniqueness_and_preserve_existing(env):

@@ -372,3 +372,113 @@ def reap_expired_reservations_result(
 
 def get_generation(self, generation_id: str) -> Generation | None:
     return self.generation_store.get(generation_id)
+
+def _list_entities(
+    self,
+    kind: str,
+    *,
+    cls: type[T],
+    prefix: str | None = None,
+    suffix: str | None = None,
+    limit: int | None = None,
+) -> list[T]:
+    where = "kind=@kind"
+    params: dict[str, Any] = {"kind": kind}
+    param_types: dict[str, Any] = {"kind": self._param_types.STRING}
+    if prefix is not None:
+        where += " AND STARTS_WITH(id, @prefix)"
+        params["prefix"] = prefix
+        param_types["prefix"] = self._param_types.STRING
+    if suffix is not None:
+        where += " AND ENDS_WITH(id, @suffix)"
+        params["suffix"] = suffix
+        param_types["suffix"] = self._param_types.STRING
+    suffix_sql = " ORDER BY id"
+    if limit is not None:
+        suffix_sql += " LIMIT @limit"
+        params["limit"] = int(limit)
+        param_types["limit"] = self._param_types.INT64
+    # Membership and provider-access checks share this generic list helper;
+    # a blanket stale policy here could preserve revoked authorization.
+    with self._database.snapshot() as snapshot:
+        rows = snapshot.execute_sql(
+            f"SELECT body FROM tr_entities WHERE {where}{suffix_sql}",  # noqa: S608 - where/suffix are built from fixed predicates; values are bound params.
+            params=params,
+            param_types=param_types,
+        )
+        return [cls(**json.loads(row[0])) for row in rows]
+
+def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
+    # This generic helper serves membership, key, and workspace authorization
+    # reads as well as display reads, so weakening it globally is unsafe.
+    with self._database.snapshot() as snapshot:
+        return self._read_entity_from(snapshot, kind, entity_id, cls)
+
+
+def _read_entity_tx(
+    self, transaction: Any, kind: str, entity_id: str, cls: type[T]
+) -> T | None:
+    return self._read_entity_from(transaction, kind, entity_id, cls)
+
+
+def _read_entity_from(self, reader: Any, kind: str, entity_id: str, cls: type[T]) -> T | None:
+    rows = list(
+        reader.execute_sql(
+            "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
+            params={"kind": kind, "id": entity_id},
+            param_types={
+                "kind": self._param_types.STRING,
+                "id": self._param_types.STRING,
+            },
+        )
+    )
+    if not rows:
+        return None
+    data = json.loads(rows[0][0])
+    if cls is dict:
+        return data
+    if dataclasses.is_dataclass(cls):
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = data.keys() - known
+        if unknown:
+            # Forward/back-compat: newer releases may persist fields this
+            # class does not know yet; drop extras instead of 500ing.
+            data = {key: value for key, value in data.items() if key in known}
+        return cls(**data)
+    return cls(**data)
+
+
+def _write_entity(self, kind: str, entity_id: str, value: Any) -> None:
+    with self._database.batch() as batch:
+        self._write_entity_batch(batch, kind, entity_id, value)
+
+
+def _write_entity_batch(self, batch: Any, kind: str, entity_id: str, value: Any) -> None:
+    batch.insert_or_update(
+        table=self.entity_table,
+        columns=("kind", "id", "body", "updated_at"),
+        values=[(kind, entity_id, _json_body(value), self._spanner.COMMIT_TIMESTAMP)],
+    )
+
+
+def _write_entity_tx(self, transaction: Any, kind: str, entity_id: str, value: Any) -> None:
+    transaction.insert_or_update(
+        table=self.entity_table,
+        columns=("kind", "id", "body", "updated_at"),
+        values=[(kind, entity_id, _json_body(value), self._spanner.COMMIT_TIMESTAMP)],
+    )
+
+
+def _delete_entities(self, kind: str, entity_ids: list[str]) -> None:
+    with self._database.batch() as batch:
+        batch.delete(
+            self.entity_table,
+            self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
+        )
+
+
+def _delete_entities_tx(self, transaction: Any, kind: str, entity_ids: list[str]) -> None:
+    transaction.delete(
+        self.entity_table,
+        self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
+    )
