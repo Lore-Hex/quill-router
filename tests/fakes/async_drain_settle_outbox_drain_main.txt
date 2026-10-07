@@ -7,7 +7,6 @@ import time
 from collections import Counter
 from typing import Any, cast
 
-from trusted_router.config import Settings
 from trusted_router.services.settle_outbox_apply import (
     _ACTIVITY_PARK_NOTE,
     ApplyOutcome,
@@ -69,11 +68,7 @@ def drain_settle_outbox(
     limit: int,
     *,
     reap_snapshot_booking_enabled: bool = False,
-    settings: Settings | None = None,
 ) -> dict[str, Any]:
-    if settings is not None and settings.settle_outbox_fast_drain_enabled:
-        from trusted_router.services.settle_outbox_worker import drain_pass
-        return drain_pass(limit, settings=settings)
     limit = max(1, min(int(limit), 500))
     outbox = spanner_settle_outbox()
     rows = outbox.claim(limit=limit, lease_seconds=_DRAIN_LEASE_SECONDS)
@@ -524,61 +519,3 @@ def _request_id(row: SettleOutboxRow) -> str | None:
     if not isinstance(body, dict) or body.get("request_id") is None:
         return None
     return str(body["request_id"])
-
-
-def housekeeping(outbox: SpannerSettleOutbox, *, reap_snapshot_booking_enabled: bool) -> tuple[int, int]:
-    purged = outbox.purge_done()
-    # §3/§4: free-release only expired settled=false holds whose authorization
-    # has no pending/dead outbox row. Running after row resolution means a just-
-    # recovered charge is already settled; the claim gate makes that ordering a
-    # latency nicety, while the Increment-2 guard is the lost-charge interlock.
-    # Limit 200 drains the ~2.6k wiring-time backlog in about an hour of 5-min
-    # ticks without a tr_credit_balance write burst; steady state is far lower.
-    # Operationally, INFO logs ship to Axiom via the scoped `trusted_router`
-    # package logger (`TR_AXIOM_LOG_LEVEL`, default INFO), but Cloud Logging
-    # still only has request logs. The durable health signals are request-log
-    # tick latency plus the response's reaped/outcomes fields. See
-    # docs/runbook.md#settle-outbox.
-    reap_now = dt.datetime.now(dt.UTC)
-    rich_reaper = getattr(STORE, "reap_expired_reservations_result", None)
-    if callable(rich_reaper):
-        reap_result = cast(
-            ReapPassResult,
-            rich_reaper(
-                now=reap_now,
-                limit=200,
-                snapshot_booking_enabled=reap_snapshot_booking_enabled,
-            ),
-        )
-    else:
-        reaped_count = cast(Any, STORE).reap_expired_reservations(
-            now=reap_now,
-            limit=200,
-        )
-        reap_result = ReapPassResult(count=int(reaped_count))
-    logger.info(
-        "gateway.reaped count=%s released_hold_micro=%s started_marker_share=%.6f "
-        "snapshot_bookings=%s out_of_cohort_share=%.6f not_eligible=%s guarded=%s "
-        "guard_lost=%s errors=%s refunded=%s",
-        reap_result.count,
-        reap_result.released_hold_micro,
-        reap_result.started_marker_share,
-        reap_result.snapshot_bookings,
-        reap_result.out_of_cohort_share,
-        reap_result.not_eligible,
-        reap_result.guarded,
-        reap_result.guard_lost,
-        reap_result.errors,
-        reap_result.refunded,
-    )
-    if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
-        ops_alert(
-            "ALERT gateway reaper burst "
-            f"count={reap_result.count} "
-            f"released_hold_micro={reap_result.released_hold_micro} "
-            f"snapshot_bookings={reap_result.snapshot_bookings}",
-            fingerprint=["gateway", "reaped-burst"],
-            tags={"reaped_count": str(reap_result.count)},
-        )
-
-    return purged, reap_result.count

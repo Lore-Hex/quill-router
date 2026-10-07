@@ -1,13 +1,10 @@
 """Authorize-only async v1 projection and fail-closed, bounded admission cache.
 
-Fleet health comes from a complete durable observation; a local empty queue
-is never evidence of fleet health.
+PR D must publish fleet-wide drain health; no local empty queue is evidence of
+fleet health. This module adds no settlement writer, worker, or status handler.
 """
 from __future__ import annotations
 
-import json
-import logging
-import math
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -51,15 +48,11 @@ class DrainHealth:
 
 class AdmissionCache:
     def __init__(self, read: Callable[[str], Admission], *,
-                 clock: Callable[[], float] = time.monotonic,
-                 health_read: Callable[[], dict[str, Any] | None] | None = None,
-                 wall_clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.read, self.clock = read, clock
         self.lock = threading.Lock()
         self.entries: dict[str, tuple[float, Admission | None]] = {}
         self.health: DrainHealth | None = None
-        self.health_read, self.wall_clock = health_read, wall_clock
-        self.health_read_at = float("-inf")
 
     def eligible(self, workspace_id: str, pilot_cap: int) -> bool:
         # Lock coalesces concurrent misses, including failures. Timestamp at
@@ -68,18 +61,6 @@ class AdmissionCache:
             return False
         try:
             now = self.clock()
-            if self.health_read is not None and not 0 <= now - self.health_read_at < 1:
-                self.health_read_at = now
-                self.health = None
-                try:
-                    self.health = decode_health(self.health_read(), now=self.clock(), wall=self.wall_clock())
-                except Exception:
-                    self.health = None
-                logging.getLogger(__name__).info(
-                    "async_drain.admission health_available=%s data_age_seconds=%s",
-                    self.health is not None,
-                    self.clock() - self.health.observed_at if self.health is not None else None,
-                )
             cached = self.entries.get(workspace_id)
             if cached is None or not 0 <= now - cached[0] < CACHE_SECONDS:
                 if workspace_id not in self.entries and len(self.entries) >= 4096:
@@ -106,73 +87,6 @@ class AdmissionCache:
             )
         finally:
             self.lock.release()
-
-
-HEALTH_JSON_MAX_BYTES = 4096
-HEALTH_INT_FIELDS = ("sample_count", "backlog_count", "frozen_micro", "dead_count")
-HEALTH_NUMBER_FIELDS = ("observed_at", "worker_heartbeat", "p50_age_seconds",
-                        "p95_age_seconds", "oldest_unresolved_age_seconds")
-HEALTH_KEYS = frozenset(("v", "authority", "complete", *HEALTH_INT_FIELDS, *HEALTH_NUMBER_FIELDS))
-
-
-def valid_health_record(value: Any) -> bool:
-    """Exact bounded wire schema, shared by the publisher and admission reader.
-
-    Incomplete observations are valid records but never eligible evidence.
-    JSON numbers accept exact int/float types, never bool or coercible strings.
-    """
-    try:
-        if type(value) is not dict or value.keys() != HEALTH_KEYS:
-            return False
-        if (type(value["v"]) is not int or value["v"] != 1
-                or type(value["authority"]) is not str or value["authority"] != "local"
-                or type(value["complete"]) is not bool):
-            return False
-        if any(type(value[k]) is not int or value[k] < 0 for k in HEALTH_INT_FIELDS):
-            return False
-        if any(type(value[k]) not in (int, float) or not math.isfinite(value[k]) or value[k] < 0
-               for k in HEALTH_NUMBER_FIELDS):
-            return False
-        if not (value["observed_at"] <= value["worker_heartbeat"]
-                and 0 <= value["p50_age_seconds"] <= value["p95_age_seconds"]
-                <= value["oldest_unresolved_age_seconds"]
-                and value["dead_count"] <= value["backlog_count"] == value["sample_count"]):
-            return False
-        if value["backlog_count"] == 0 and any(value[k] != 0 for k in (
-                "frozen_micro", "p50_age_seconds", "p95_age_seconds", "oldest_unresolved_age_seconds")):
-            return False
-        return len(json.dumps(value, allow_nan=False).encode("utf-8")) <= HEALTH_JSON_MAX_BYTES
-    except (TypeError, ValueError, OverflowError):
-        return False
-
-
-def parse_health_record(body: Any) -> dict[str, Any] | None:
-    """Bound JSON before parsing; reject duplicate keys as ambiguous evidence."""
-    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        value = dict(pairs)
-        if len(value) != len(pairs):
-            raise ValueError("duplicate health keys")
-        return value
-
-    try:
-        if type(body) is not str or len(body.encode("utf-8")) > HEALTH_JSON_MAX_BYTES:
-            return None
-        value = json.loads(body, object_pairs_hook=unique_pairs)
-        return value if valid_health_record(value) else None
-    except (TypeError, ValueError, OverflowError, RecursionError):
-        return None
-
-
-def decode_health(value: dict[str, Any] | None, *, now: float, wall: float) -> DrainHealth | None:
-    """Translate durable wall time to monotonic evidence time without rejuvenation."""
-    if not valid_health_record(value) or value is None or not value["complete"]:
-        return None
-    observed, heartbeat = value["observed_at"], value["worker_heartbeat"]
-    if (not all(type(n) in (int, float) and math.isfinite(n) and n >= 0 for n in (now, wall))
-            or not (0 <= wall - observed < CACHE_SECONDS and 0 <= wall - heartbeat < CACHE_SECONDS)
-            or value["p95_age_seconds"] > 5):
-        return None
-    return DrainHealth(now - (wall - observed), value["p95_age_seconds"])
 
 
 @dataclass
@@ -210,13 +124,7 @@ def load_runtime(settings: Settings, backend: Any) -> Runtime:
     admission = None
     if backend is not None and hasattr(backend, "_database"):
         from trusted_router.storage_gcp_async_admission import read_admission
-        health_read: Callable[[], dict[str, Any] | None] | None = None
-        if settings.async_settle_admission_enabled:
-            from trusted_router.storage_gcp_async_admission import read_health
-            # Recheck at use, so disabling admission also stops health RPCs.
-            def health_read() -> dict[str, Any] | None:
-                return read_health(backend._database) if settings.async_settle_admission_enabled else None
-        admission = AdmissionCache(lambda ws: read_admission(backend._database, ws), health_read=health_read)
+        admission = AdmissionCache(lambda ws: read_admission(backend._database, ws))
     return Runtime(signer, admission, settings.primary_region, settings.async_settle_authority_epoch)
 
 

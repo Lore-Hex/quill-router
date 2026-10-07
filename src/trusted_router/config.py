@@ -972,6 +972,13 @@ class Settings(BaseSettings):
     # lost so the reaper never releases a completed request for free. Enabling is
     # a billing prod-behavior change — flip deliberately, per the design's
     # rollout section, after the shadow metrics are clean.
+    settle_outbox_fast_drain_enabled: bool = False
+    settle_outbox_poll_interval_seconds: float = Field(default=300, gt=0, le=300)
+    settle_outbox_health_publish_interval_seconds: float = Field(default=2, gt=0, le=5)
+    settle_outbox_claim_batch: int = Field(default=500, ge=1, le=500)
+    settle_outbox_worker_concurrency: int = Field(default=1, ge=1, le=32)
+    settle_outbox_lease_seconds: int = Field(default=300, ge=2, le=300)
+    settle_outbox_pass_budget_seconds: float = Field(default=240, gt=0, le=240)
     settle_outbox_enabled: bool = False
     # Expand/contract switch for per-request Spanner records. ``legacy`` keeps
     # writing gateway authorizations and generation repair rows to tr_entities
@@ -1274,6 +1281,13 @@ class Settings(BaseSettings):
         if mode not in {"off", "observe", "act"}:
             raise ValueError("TR_REMEDIATOR_MODE must be one of: off, observe, act")
         return mode
+
+    @model_validator(mode="after")
+    def drain_budget_within_lease(self) -> Settings:
+        if (self.settle_outbox_fast_drain_enabled
+                and self.settle_outbox_pass_budget_seconds >= self.settle_outbox_lease_seconds):
+            raise ValueError("fast drain pass budget must be below its lease")
+        return self
 
     @property
     def async_settle_admission_enabled(self) -> bool:

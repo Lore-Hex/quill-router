@@ -523,6 +523,13 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
+  "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false"
+  "TR_SETTLE_OUTBOX_POLL_INTERVAL_SECONDS=300"
+  "TR_SETTLE_OUTBOX_HEALTH_PUBLISH_INTERVAL_SECONDS=2"
+  "TR_SETTLE_OUTBOX_CLAIM_BATCH=500"
+  "TR_SETTLE_OUTBOX_WORKER_CONCURRENCY=1"
+  "TR_SETTLE_OUTBOX_LEASE_SECONDS=300"
+  "TR_SETTLE_OUTBOX_PASS_BUDGET_SECONDS=240"
   # Stage D decision 70 books snapshot usage of reaped authorizations instead
   # of discarding it. This waited for the usage heartbeat in all three GCP
   # regions: live as of 2026-09-09 21:35Z (proxy #317 + #325), heartbeat_seq = 1

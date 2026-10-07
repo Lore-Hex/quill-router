@@ -167,3 +167,43 @@ def test_native_overlapping_async_transactions(native_emulator_resources, backen
     else:
         assert row is None
         assert reservations == [[True, 7]]
+
+
+@pytest.mark.parametrize('backend', ['spanner-emulator'])
+def test_native_null_created_at_is_indexed_and_unhealthy(native_emulator_resources, backend):
+    """Real GoogleSQL checks the typed literal, generated value and sparse membership."""
+    import time
+
+    from google.cloud.spanner_v1 import KeySet, param_types
+
+    from trusted_router.services.async_settle import decode_health
+    from trusted_router.storage_gcp_async_admission import publish_health, read_health
+
+    database, _ = native_emulator_resources
+    suffix = uuid4().hex
+    statuses = ('pending', 'dead', 'done', 'release_approved')
+    keys = [[f'null-age-{status}-{suffix}', 'settle'] for status in statuses]
+    try:
+        with database.batch() as batch:
+            batch.insert('tr_settle_outbox',
+                columns=('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro', 'status', 'created_at'),
+                values=[(*key, 'typed', 7, status, None) for key, status in zip(keys, statuses, strict=True)])
+        for key, status in zip(keys, statuses, strict=True):
+            # One single-use snapshot per query: the emulator client refuses reuse.
+            with database.snapshot() as snapshot:
+                rows = list(snapshot.execute_sql(
+                    'SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox'
+                    '@{FORCE_INDEX=tr_settle_outbox_unresolved} '
+                    'WHERE authorization_id=@aid AND intent_kind=@kind AND unresolved_at IS NOT NULL',
+                    params={'aid': key[0], 'kind': key[1]},
+                    param_types={'aid': param_types.STRING, 'kind': param_types.STRING}))
+                assert rows == ([[datetime(1970, 1, 1, tzinfo=UTC), 7, status]]
+                                if status in ('pending', 'dead') else [])
+        value = publish_health(database)
+        assert value['backlog_count'] >= 2 and value['frozen_micro'] >= 14
+        assert value['oldest_unresolved_age_seconds'] >= value['observed_at']
+        assert value['complete'] is False
+        assert decode_health(read_health(database), now=time.monotonic(), wall=time.time()) is None
+    finally:
+        with database.batch() as batch:
+            batch.delete('tr_settle_outbox', KeySet(keys=keys))

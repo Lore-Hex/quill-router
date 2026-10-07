@@ -8,6 +8,8 @@ import sqlite3
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
 from typing import Any
 
 from google.api_core.exceptions import Aborted, GoogleAPICallError
@@ -19,6 +21,21 @@ from trusted_router.storage_gcp_settle_outbox import (
     GUARD_STATUSES,
     OUTBOX_COLUMNS,
 )
+
+
+@cache
+def _unresolved_expression() -> str:
+    """Interpret the migration's actual generated expression, not separate membership.
+
+    SQLite supplies SQL NULL/IN/COALESCE semantics. Only GoogleSQL IF and the
+    typed timestamp literal need translation; unsupported SQL fails the test.
+    """
+    source = (Path(__file__).resolve().parents[2] /
+              "scripts/deploy/migrate_async_settle_drain_health.sh").read_text()
+    matches = re.findall(r"ADD COLUMN unresolved_at TIMESTAMP AS \((.*?)\) STORED", source)
+    assert len(matches) == 1
+    expression = re.sub(r"\bIF\(", "IIF(", matches[0])
+    return re.sub(r"TIMESTAMP ('[^']*')", r"\1", expression)
 
 
 class _ParamTypes:
@@ -531,7 +548,12 @@ class _FakeTransaction:
         *,
         params: dict[str, Any] | None = None,
         param_types: Any = None,
+        **rpc_options: Any,
     ) -> list[list[str]]:
+        if rpc_options:
+            assert 0 < rpc_options["timeout"] <= 0.2
+            assert rpc_options["retry"] is None
+            assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self.db.transaction_execute_sql_calls += 1
         if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
             if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
@@ -2191,7 +2213,12 @@ class _FakeSnapshot:
         *,
         params: dict[str, Any] | None = None,
         param_types: Any = None,
+        **rpc_options: Any,
     ) -> list[list[str]]:
+        if rpc_options:
+            assert 0 < rpc_options["timeout"] <= 0.2
+            assert rpc_options["retry"] is None
+            assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self._reads += 1
         if not self._multi_use and self._reads > 1:
             raise ValueError(
@@ -2566,6 +2593,24 @@ def _execute_settle_outbox_sql(
         if sql.startswith("SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"):
             values.append(rec.get("reservation_id"))
         return [values]
+    if "FORCE_INDEX=tr_settle_outbox_unresolved" in sql:
+        _require_pred(sql, "SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox",
+                      "fleet-health-generated-value")
+        _require_pred(sql, "unresolved_at IS NOT NULL", "fleet-health-unresolved")
+        _require_pred(sql, "ORDER BY unresolved_at", "fleet-health-order")
+        _require_pred(sql, "LIMIT @limit", "fleet-health-bound")
+        # Membership, ordering AND the selected value come from the DDL.
+        with sqlite3.connect(":memory:") as connection:
+            rows = []
+            for record in db.settle_outbox.values():
+                [unresolved] = connection.execute(
+                    "SELECT " + _unresolved_expression() + " FROM (SELECT ? AS status, ? AS created_at)",  # noqa: S608 - repository DDL; bound row values
+                    (record.get("status"), record.get("created_at")),
+                ).fetchone()
+                if unresolved is not None:
+                    rows.append([unresolved, record.get("actual_cost_micro"), record.get("status")])
+        rows.sort(key=lambda row: row[0])
+        return rows[:p['limit']]
     if "next_attempt_at <= @now" in sql and "ORDER BY next_attempt_at" in sql:
         _require_pred(
             sql,
@@ -2585,6 +2630,11 @@ def _execute_settle_outbox_sql(
             and rec.get("next_attempt_at") is not None
             and rec["next_attempt_at"] <= now
         ]
+        if 'shard' in p:
+            _require_pred(sql, "queue_shard=@shard", "fast-due-shard")
+            _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "fast-due-lease")
+            rows = [r for r in rows if r['queue_shard'] == p['shard']
+                    and (r.get('leased_until') is None or r['leased_until'] < now)]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql and "intent_kind != @kind" in sql:

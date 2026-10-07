@@ -637,21 +637,6 @@ class SpannerSettleOutbox:
                 claimed.append(candidate)
         return claimed
 
-    def claim_shard(self, *, shard: int, lease_seconds: int) -> list[SettleOutboxRow]:
-        """Fast mode: only one row for an already-running worker slot."""
-        sql, params, types = shard_due_statement(self._pt, shard, _iso_now())
-        with self._database.snapshot() as snapshot:
-            candidates = list(snapshot.execute_sql(sql, params=params, param_types=types,
-                timeout=0.2, retry=None, request_options={"priority": "PRIORITY_LOW"}))
-        for values in candidates:
-            row = _row_from_tuple(values)
-            owner = f"soworker_{uuid.uuid4().hex}"
-            lease_until = _iso_after_seconds(lease_seconds)
-            if self._claim_one(row, owner=owner, lease_until=lease_until):
-                row.lease_owner, row.leased_until = owner, lease_until
-                return [row]
-        return []
-
     def _claim_one(self, row: SettleOutboxRow, *, owner: str, lease_until: str) -> bool:
         now = _iso_now()
 
@@ -1149,16 +1134,3 @@ def _is_already_exists(exc: Exception) -> bool:
     except Exception:  # pragma: no cover - google libs always present in prod/tests
         return False
     return isinstance(exc, AlreadyExists)
-
-
-def shard_due_statement(pt: Any, shard: int, now: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    return (
-        f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox"  # noqa: S608
-        "@{FORCE_INDEX=tr_settle_outbox_due_v2} "
-        "WHERE queue_shard IS NOT NULL AND queue_shard=@shard "
-        "AND next_attempt_at IS NOT NULL AND status='pending' AND next_attempt_at <= @now "
-        "AND (leased_until IS NULL OR leased_until < @now) "
-        "ORDER BY next_attempt_at LIMIT @limit",
-        {"shard": shard, "now": now, "limit": 2},
-        {"shard": pt.INT64, "now": pt.TIMESTAMP, "limit": pt.INT64},
-    )
