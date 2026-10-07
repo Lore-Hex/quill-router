@@ -8,6 +8,7 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
+from tests.homepage_copy import LANDSCAPE_MULTICLOUD_HEADING
 from trusted_router import dashboard
 from trusted_router.catalog import MODELS, Model
 from trusted_router.config import Settings
@@ -34,6 +35,8 @@ def test_landscape_root_integrates_catalog_assets_csp_and_signin(
     page = BeautifulSoup(response.text, "html.parser")
     for section in ("top", "request", "models", "migrate", "verify", "pricing", "customers", "faq"):
         assert page.select_one(f"section#{section}")
+    # The production smoke test checks this heading on the live homepage.
+    assert LANDSCAPE_MULTICLOUD_HEADING in page.select_one("section#verify").get_text()
     assert len(page.select("[data-mobile-disclosure][open]")) == 7
     assert page.select_one("#signinModal")
     assert page.select_one('a[href="/console/api-keys"]')
