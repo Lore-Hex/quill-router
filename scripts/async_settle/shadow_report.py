@@ -249,7 +249,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 for bucket in counter["counts"])
             outcomes_total = sum(bucket[k] for bucket in counter["counts"]
                 for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
-            if outcomes_total > counter["comparison_attempts"]:
+            if outcomes_total != counter["comparison_attempts"]:
                 gap(identity+":comparison_outcome_gap", day)
             if counter["comparison_attempts"] > verified:
                 gap(identity+":comparison_observation_gap", day)
@@ -262,9 +262,16 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                         or observed != bucket["settle_attempts"] + bucket["refund_attempts"]
                         or bucket["authorize_attempts"] != bucket["authorize_fresh"] + bucket["authorize_replay"]
                         or bucket["evaluable"] != bucket["exact"] + bucket["explained"]
-                        or bucket["envelope_present"] > observed
+                        or bucket["envelope_present"] != observed
                         or bucket["header_absent"] > bucket["authorize_attempts"]):
                     gap(identity+":observed_partition_gap", day)
+                authorize_exclusions = sum(row["count"] for row in counter["exclusions"]
+                    if row["phase"] == "authorize"
+                    and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed")))
+                if (bucket["authorize_attempts"] != bucket["snapshot_sent"] + authorize_exclusions
+                        or bucket["snapshot_sent"] != bucket["requested_eligible"]
+                        or bucket["requested_eligible"] > bucket["authorize_fresh"]):
+                    gap(identity+":authorize_coverage_gap", day)
                 exclusions = sum(row["count"] for row in counter["exclusions"]
                     if row["phase"] in {"settle", "refund"} and row["reason"] in COHORT_EXCLUSIONS
                     and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed")))
@@ -277,9 +284,20 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                     for row in counter[group] if row["phase"] != "authorize"
                     and row["reason"] not in COHORT_EXCLUSIONS
                     and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed")))
-                accounted = max(0, outcomes - bucket["observed_ineligible"]) + failures
-                if bucket["observed_eligible"] != accounted + counter["booking_pending"] + counter["booking_unknown"]:
+                # Clean coverage is a closed partition, not a budget into which
+                # unrelated failures or writer-wide booking counts can be put.
+                # Exclusions are verified unevaluable comparisons (a subset of
+                # outcomes), never an alternative to running the comparator.
+                if exclusions > bucket["unevaluable"]:
+                    gap(identity+":exclusion_outcome_gap", day)
+                accounted = outcomes - exclusions
+                if bucket["observed_eligible"] != accounted:
                     gap(identity+":eligible_coverage_gap", day)
+                if observed != outcomes or failures:
+                    gap(identity+":terminal_coverage_gap", day)
+                if (bucket["unevaluable"] != exclusions or bucket["requires_review"]
+                        or bucket["mismatch"]):
+                    gap(identity+":nonclean_outcome_gap", day)
             if (not counter["closed"] or counter["first_gap_at_us"] is not None or counter["counter_overflow"]
                     or counter["dimension_overflow"] or counter["comparison_dropped"] or counter["booking_pending"] or counter["booking_unknown"]
                     or any(counter["admission_observer"][key] for key in ("prediction_unknown", "read_failures", "missed_ticks"))
@@ -307,12 +325,19 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
     high = int(dt.datetime.combine(dt.date.fromisoformat(requested[-1])+dt.timedelta(days=1), dt.time(), dt.UTC).timestamp()*1e6)
     samples = sorted((row for row in samples if low <= row["observed_at_us"] < high), key=lambda row: row["observed_at_us"])
     inserted: Counter[tuple[str, str]] = Counter()
+    sample_counts: Counter[tuple[str, str, str, bool | None, str]] = Counter()
     for row in samples:
         observation_day = dt.datetime.fromtimestamp(row["observed_at_us"]/1e6, dt.UTC).date().isoformat()
         manifest = manifests.get(observation_day)
         deployment = row["deployment"]
         inserted[observation_day, deployment["instance"]] += 1
-        writer = counters.get(observation_day + "/" + deployment["instance"])
+        writer_id = observation_day + "/" + deployment["instance"]
+        writer = counters.get(writer_id)
+        category = {"explained-by-catalog-change": "explained", "hash": "mismatch", "identity": "mismatch",
+                    "normalization": "mismatch", "evaluator_disagreement": "mismatch"}.get(row["classification"], row["classification"])
+        eligibility = {True: "observed_eligible", False: "observed_ineligible", None: "observed_unknown"}[row["eligibility"]["observed"]]
+        for field in (category, eligibility, row["booking"]["attempted_kind"] + "_attempts"):
+            sample_counts[writer_id, row["adapter"], row["route_type"], row["streamed"], field] += 1
         if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):
             gap(row["authorization_id"]+":writer_interval_gap", observation_day)
         if (manifest is None or deployment["instance"] not in manifest["instance_boot_ids"]
@@ -327,6 +352,13 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         day, boot = identity.split("/")
         if day in requested and counter["samples_inserted"] != inserted[day, boot]:
             gap(identity+":sample_count_gap", day)
+        if day in requested:
+            for bucket in counter["counts"]:
+                for field in (*("exact", "explained", "mismatch", "requires_review", "unevaluable"),
+                              "observed_eligible", "observed_ineligible", "observed_unknown", "settle_attempts", "refund_attempts"):
+                    durable = sample_counts[identity, bucket["adapter"], bucket["route_type"], bucket["streamed"], field]
+                    if durable > bucket[field]:
+                        gap(identity+":sample_classification_gap", day)
     # A closed, fully covered later day can restore coverage after an earlier
     # gap. Correctness resets additionally need an explicit reviewed resolution
     # in the proof manifest; a restart or mere revision change is insufficient.

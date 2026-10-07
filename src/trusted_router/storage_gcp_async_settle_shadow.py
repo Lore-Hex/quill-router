@@ -140,7 +140,15 @@ class EvidenceStore:
                         body["payload_hash"] is None and previous["classification"] != body["classification"]):
                     return "conflict"
                 return "duplicate"
-            self.write(tx, SAMPLE, identity, body)
+            # Serialize before reading the clock. Retention and updated_at use
+            # the SAME observation, inside the transaction after the point read;
+            # a midnight crossed during lookup/serialization cannot revive a day.
+            encoded = canonical(body).decode()
+            observed_at = dt.datetime.now(dt.UTC)
+            if dt.date.fromisoformat(body["authorization_day"]) < observed_at.date() - dt.timedelta(days=30):
+                raise ValueError("proof_expired")
+            tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
+                                values=[(SAMPLE, identity, encoded, observed_at)])
             return "inserted"
         return str(self.transaction(run, deadline))
 

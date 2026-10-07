@@ -80,5 +80,5 @@ def test_expired_replay_cannot_repopulate_deleted_authorization_day(monkeypatch,
     counter = json.loads(db.rows[COUNTER, day_at(now) + '/' + rt.counters.instance])
     assert counter['comparison_attempts'] == counter['comparison_dropped'] == 1
     assert counter['samples_inserted'] == 0
-    assert any(r['reason'] == 'proof_expired' and r['count'] == 1 for r in counter['rejections'])
+    assert [(r['reason'], r['count']) for r in counter['rejections']] == [('base64' if malformed else 'proof_expired', 1)]
     assert counter['first_gap_at_us'] == now*1000000

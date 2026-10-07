@@ -42,6 +42,16 @@ class Capture:
     dropped: bool = False
 
 
+# Transport/parse precedes proof and retention; comparator semantic failures
+# follow. Only the first matching reason is a primary rejection. All remaining
+# reasons stay in Comparison.reasons / sample.reason_codes as diagnostics.
+REJECTION_PRECEDENCE = (
+    "header_duplicate", "header_size", "base64", "json_encoding", "json_duplicate",
+    "json_shape", "integer", "snapshot_size", "proof_signature", "proof_expired",
+    "hash", "identity", "raw_usage", "go_failure",
+)
+
+
 _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar("async_shadow_capture", default=None)
 
 
@@ -323,18 +333,20 @@ class Runtime:
             compared = compare(headers, ctx, [self.signer.trusted] if self.signer else [])
             comparator_us = (time.thread_time_ns()-cpu_started)//1000
             self.counters.outcome(dims, compared)
-            for reason in sorted(compared.reasons):
-                if reason != "catalog_change":
-                    self.counters.reason(dims, capture.kind, reason,
-                        "rejections" if reason in {"header_duplicate", "header_size", "base64", "json_encoding", "json_duplicate", "json_shape", "integer", "proof_signature", "proof_expired", "hash", "identity", "raw_usage", "go_failure"} else "exclusions")
-            # Expired observations are counters only, on the receipt day. Check
-            # server-owned age as well: a malformed proof can fail before expiry
-            # verification, and queued work must not recreate a retired partition.
+            # Use one clock value for this observation's retention and permit
+            # day. The write boundary checks again after potentially slow work.
+            observed_now = time.time()
             created_at = dt.datetime.fromisoformat(auth.created_at.replace("Z", "+00:00")).timestamp()
-            retired = day_at(created_at) < day_at(time.time() - 30*86400)
+            retired = day_at(created_at) < day_at(observed_now - 30*86400)
+            if retired:
+                compared.reasons.add("proof_expired")
+            primary = next((reason for reason in REJECTION_PRECEDENCE if reason in compared.reasons), None)
+            if primary is not None:
+                self.counters.reason(dims, capture.kind, primary, "rejections")
+            for reason in sorted(compared.reasons - set(REJECTION_PRECEDENCE)):
+                if reason != "catalog_change":
+                    self.counters.reason(dims, capture.kind, reason, "exclusions")
             if "proof_expired" in compared.reasons or retired:
-                if "proof_expired" not in compared.reasons:
-                    self.counters.reason(dims, capture.kind, "proof_expired", "rejections")
                 return
             if not booking.confirmed:
                 field = "booking_pending" if booking.outcome == "pending" else "booking_unknown"
@@ -354,6 +366,15 @@ class Runtime:
                          revision=self.counters.revision, admission=admission)
             started = time.monotonic()
             failure_reason = "store_unavailable"
+            observed_now = time.time()
+            if row["authorization_day"] < day_at(observed_now - 30*86400):
+                compared.reasons.add("proof_expired")
+                if primary is None:
+                    self.counters.reason(dims, capture.kind, "proof_expired", "rejections")
+                return
+            if day_at(observed_now) != self.permit_day:
+                self.counters.reason(dims, "worker", "daily_cap")
+                return
             outcome = self.store.insert_sample(row["authorization_day"]+"/"+auth.id, row, deadline)
             failure_reason = "worker_error"
             self.counters.histogram("evidence_write_hist", int((time.monotonic()-started)*1e6))

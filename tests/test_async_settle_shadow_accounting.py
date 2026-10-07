@@ -158,7 +158,7 @@ def synthetic_window():
         counter = Counters('us-central1','a'*40,clock=lambda start=start:start)
         dims = dimensions('openai','chat.completions',False)
         if day == days[0]:
-            for name in ('settle_attempts','observed_attempts','observed_eligible','evaluable','exact'):
+            for name in ('settle_attempts','envelope_present','observed_attempts','observed_eligible','evaluable','exact'):
                 counter.increment(dims,name)
             counter.increment(dims,'samples_inserted')
             counter.increment(dims,'comparison_attempts')
@@ -224,7 +224,7 @@ def test_report_restarts_only_after_restored_coverage_and_reviewed_fix():
     rows[2]['body']['samples_inserted'] = rows[2]['body']['comparison_attempts'] = 1
     rows[2]['body']['admission_observer']['prediction_yes'] = 1
     bucket = next(b for b in rows[2]['body']['counts'] if (b['adapter'], b['route_type'], b['streamed']) == ('openai', 'chat.completions', False))
-    for field in ('settle_attempts', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
+    for field in ('settle_attempts', 'envelope_present', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
         bucket[field] = 1
     for row in rows:
         if row['kind'] == COUNTER and row['id'].split('/')[0] != days[0]:
@@ -416,7 +416,7 @@ def test_writer_union_counts_overlapping_and_adjacent_intervals_once(overlap_us)
     second['body'].update(instance=boot, started_at_us=split-overlap_us,
                           samples_inserted=0, comparison_attempts=0)
     for bucket in second['body']['counts']:
-        for field in ('settle_attempts', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
+        for field in ('settle_attempts', 'envelope_present', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
             bucket[field] = 0
     rows.append(second)
     proof['instance_boot_ids_by_day'][days[0]].append(boot)
@@ -479,7 +479,7 @@ def test_report_reviewer_bidirectional_accounting(probe):
     assert any(g.endswith(suffix) for g in result['gaps'])
 
 
-def test_report_accepts_fully_accounted_ineligible_zero_sample_writer():
+def test_report_rejects_unverified_ineligible_zero_sample_writer():
     rows, days, proof = synthetic_window()
     counter = rows[2]['body']
     bucket = counter['counts'][0]
@@ -487,7 +487,7 @@ def test_report_accepts_fully_accounted_ineligible_zero_sample_writer():
     counter['exclusions'] = [dict(phase='settle', reason='service_tier', count=99,
         **{key: bucket[key] for key in ('adapter', 'route_type', 'streamed')})]
     result = report(rows, days, proof)
-    assert result['status'] == 'PASS' and not result['gaps']
+    assert result['status'] == 'BLOCKED' and any(g.endswith(':exclusion_outcome_gap') for g in result['gaps'])
 
 
 def test_evidence_storage_call_contract():

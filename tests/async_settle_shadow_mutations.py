@@ -50,7 +50,7 @@ MUTATIONS = [
     ('missing-coverage-clean',REPORT,[('start = candidates[0]["observed_at_us"] if candidates and not unresolved else None',
         'start = samples[0]["observed_at_us"] if samples else 0')],
         'tests/test_async_settle_shadow_accounting.py::test_report_cannot_start_from_empty_counter_or_null_samples'),
-    ('eligible-coverage-removed',REPORT,[('if bucket["observed_eligible"] != accounted + counter["booking_pending"] + counter["booking_unknown"]:', 'if False:')],
+    ('eligible-coverage-removed',REPORT,[('if bucket["observed_eligible"] != accounted:', 'if False:')],
         'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_unaccounted_eligible_probe'),
     ('writer-interval-removed',REPORT,[('if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):', 'if False:')],
         'tests/test_async_settle_shadow_accounting.py::test_report_reviewer_counter_time_probe[after_close]'),
@@ -108,6 +108,21 @@ MUTATIONS = [
         ('    subject = body.api_key_lookup_hash or body.api_key_hash',
          '    if request.app.state.async_settle.signer is not None and not settings.async_settle_shadow_workspace_ids and request.headers.get("X-TR-Settlement-Mode") == "!":\n        return {"data": {"review_mutant": True}}\n    subject = body.api_key_lookup_hash or body.api_key_hash')],
         'tests/test_async_settle_shadow_http.py::test_flag_off_authorize_http_identity[True--False-True-bad]'),
+    ('comparison-outcomes-unreconciled', REPORT, [
+        ('if outcomes_total != counter["comparison_attempts"]:', 'if False:')],
+        'tests/test_async_settle_shadow_counter_false_pass.py::test_phantom_comparisons_have_an_explicit_gap'),
+    ('exclusion-outcomes-unreconciled', REPORT, [
+        ('if exclusions > bucket["unevaluable"]:', 'if False:')],
+        'tests/test_async_settle_shadow_accounting.py::test_report_rejects_unverified_ineligible_zero_sample_writer'),
+    ('sample-classifications-unreconciled', REPORT, [
+        ('if durable > bucket[field]:', 'if False:')],
+        'tests/test_async_settle_shadow_counter_false_pass.py::test_durable_samples_cannot_borrow_another_bucket_or_class[eligibility]'),
+    ('write-boundary-retention-removed', STORAGE, [
+        ('if dt.date.fromisoformat(body["authorization_day"]) < observed_at.date() - dt.timedelta(days=30):', 'if False:')],
+        'tests/test_async_settle_shadow_retention_midnight.py::test_insert_rechecks_clock_after_point_read'),
+    ('retention-counted-as-second-primary', RUNTIME, [
+        ('if primary is not None:', 'if "proof_expired" in compared.reasons and primary != "proof_expired":\n                self.counters.reason(dims, capture.kind, "proof_expired", "rejections")\n            if primary is not None:')],
+        'tests/test_async_settle_shadow_primary_rejection.py::test_one_primary_rejection_per_old_malformed_attempt'),
 ]
 
 
