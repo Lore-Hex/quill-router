@@ -1773,7 +1773,6 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         "/models/google/gemini-3-pro-image/performance": (
             "/models/google/gemini-3.1-flash-image-preview"
         ),
-        "/models/meta/muse-spark-1.1/performance": "/models?filter=open",
     }
     for path, target in redirects.items():
         response = client.get(path, follow_redirects=False)

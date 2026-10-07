@@ -200,10 +200,6 @@ STATUS_SNAPSHOT_CACHE_SECONDS = 15
 LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     "deepseek/deepseek-chat-v3.1": "/models/deepseek/deepseek-v3.1",
     "google/gemini-3-pro-image": "/models/google/gemini-3.1-flash-image-preview",
-    # Muse Spark was removed after the only configured route failed every
-    # health probe. There is no like-for-like successor, so retain the old
-    # backlink by sending readers to the current open-weight catalog.
-    "meta/muse-spark-1.1": "/models?filter=open",
 }
 LEGACY_MODEL_SECTION_REDIRECTS: dict[tuple[str, str], str] = {
     # This one-route model answers its only pricing question on the overview.

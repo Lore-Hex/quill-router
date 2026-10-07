@@ -1,22 +1,76 @@
 {
-  "_about": "Meta Muse Spark served through OpenRouter. This is not a direct Meta, ZDR, confidential-compute, or downstream-attested route.",
+  "_about": "Direct Meta Model API Standard-tier chat models. Contributor variants are excluded. No-training is not a ZDR or confidential-compute guarantee.",
   "provider": "meta",
-  "source": "https://openrouter.ai/api/v1/models/meta/muse-spark-1.1/endpoints",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "source": "https://api.meta.ai/v1/models",
+  "generated_at": "2026-10-06T14:11:35Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 1,
+  "model_count": 3,
   "models": [
     {
       "id": "meta/muse-spark-1.1",
-      "upstream_id": "meta/muse-spark-1.1",
-      "display_name": "Meta Muse Spark 1.1 via OpenRouter",
+      "upstream_id": "muse-spark-1.1",
+      "display_name": "muse-spark-1.1",
       "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 4250000,
+      "cached_input_token_price_per_m": 150000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "display_name": "muse-spark-1.2",
+      "title": "muse-spark-1.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta/muse-spark-1.2",
+      "upstream_id": "muse-spark-1.2",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4250000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "muse-spark-1.3",
+      "title": "muse-spark-1.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta/muse-spark-1.3",
+      "upstream_id": "muse-spark-1.3",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4250000,
       "cached_input_token_price_per_m": 150000
     }
-  ]
+  ],
+  "pricing_source": "https://dev.meta.ai/docs/pricing-rate-limits"
 }

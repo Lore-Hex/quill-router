@@ -508,7 +508,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "meta": Provider(
         slug="meta",
-        name="Meta via OpenRouter",
+        name="Meta",
         supports_prepaid=True,
         supports_byok=False,
         stores_content=True,
@@ -517,11 +517,12 @@ PROVIDERS: dict[str, Provider] = {
         provider_e2ee=False,
         provider_policy=(
             "TrustedRouter sends requests through its attested gateway to "
-            "OpenRouter, which routes them to Meta. This downstream route is "
-            "not marked zero-retention, confidential-compute, or end-to-end "
-            "encrypted."
+            "Meta Model API directly. Only Standard-tier Muse Spark models are "
+            "offered; Meta states these prompts and completions are not used for "
+            "training. No-training is not zero retention. This route is not "
+            "marked ZDR, confidential-compute, or end-to-end encrypted."
         ),
-        provider_policy_url="https://openrouter.ai/docs/features/privacy-and-logging",
+        provider_policy_url="https://dev.meta.ai/docs/pricing-rate-limits",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "anthropic": Provider(
@@ -2343,9 +2344,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "voyage",
         # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1).
         "xiaomi",
-        # Meta-hosted Muse is currently exposed through OpenRouter's standard
-        # inference API. The public provider label says "Meta via OpenRouter"
-        # and the privacy posture remains standard/non-ZDR.
+        # Direct Meta Model API, Standard tier only. No ZDR claim.
         "meta",
         # OpenRouter as a transport in its own right: prepaid credits only,
         # no provider-direct key. Models are added as routes are enabled.
@@ -3816,6 +3815,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "home, not the location of every team that worked on a model."
         ),
     ),
+    "meta": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Meta",
+        source_url="https://www.sec.gov/Archives/edgar/data/1326801/000162828026003942/meta-20251231.htm",
+        note=(
+            "Meta Platforms, Inc.'s 2025 Form 10-K gives principal executive "
+            "offices in Menlo Park, California. This records the model maker's "
+            "home, not an inference serving region or a data-retention guarantee."
+        ),
+    ),
     "meta-llama": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="Meta",
@@ -4148,8 +4157,7 @@ def model_origin_for_model_id(model_id: str) -> ModelOrigin | None:
 #
 # An author is listed here only when a PROVIDERS entry is its maker's own API.
 # Hosts and resellers are not, including a multi-lab hosting catalog that a
-# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry) and "Meta via
-# OpenRouter", which is OpenRouter reselling Meta. A TrustedRouter orchestration
+# maker's own company runs (NVIDIA NIM, Microsoft Azure AI Foundry). A TrustedRouter orchestration
 # is published by TrustedRouter, not by its internal selector host.
 MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
     # The maker's API under the author's own name.
@@ -4163,6 +4171,8 @@ MAKER_PROVIDER_BY_AUTHOR: dict[str, str] = {
     "inception": "inception",
     "kling": "kling",
     "krea": "krea",
+    "meta": "meta",
+    "meta-llama": "meta",
     "minimax": "minimax",
     "mistral": "mistral",
     "morph": "morph",
@@ -4239,11 +4249,9 @@ def maker_provider_slug(model_id: str) -> str | None:
 
 # Hosts a model maker's company runs besides the API above. They deliver a
 # prompt to the vendor as surely as its own API does: Google runs Vertex AI,
-# Microsoft runs Azure AI Foundry, NVIDIA runs NIM, and Meta via OpenRouter is
-# Meta's Llama API.
+# Microsoft runs Azure AI Foundry and NVIDIA runs NIM.
 MAKER_OPERATED_HOSTS_BY_AUTHOR: dict[str, frozenset[str]] = {
     "google": frozenset({"google-vertex"}),
-    "meta-llama": frozenset({"meta"}),
     "microsoft": frozenset({"azure"}),
     "nvidia": frozenset({"nvidia-nim"}),
 }

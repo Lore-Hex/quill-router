@@ -975,7 +975,7 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
 
 def provider_is_routable(provider: Provider) -> bool:
     """Return whether the public catalog currently exposes a route for a provider."""
-    if provider.slug in {"trustedrouter", "meta"}:
+    if provider.slug == "trustedrouter":
         return provider.supports_prepaid or provider.supports_byok
     return any(endpoint.provider == provider.slug for endpoint in MODEL_ENDPOINTS.values())
 
