@@ -188,8 +188,9 @@ def test_native_null_created_at_is_indexed_and_unhealthy(native_emulator_resourc
             batch.insert('tr_settle_outbox',
                 columns=('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro', 'status', 'created_at'),
                 values=[(*key, 'typed', 7, status, None) for key, status in zip(keys, statuses, strict=True)])
-        with database.snapshot() as snapshot:
-            for key, status in zip(keys, statuses, strict=True):
+        for key, status in zip(keys, statuses, strict=True):
+            # One single-use snapshot per query: the emulator client refuses reuse.
+            with database.snapshot() as snapshot:
                 rows = list(snapshot.execute_sql(
                     'SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox'
                     '@{FORCE_INDEX=tr_settle_outbox_unresolved} '
