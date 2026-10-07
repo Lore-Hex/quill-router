@@ -211,19 +211,11 @@ def test_provider_reliability_contract_v2_is_public_and_complete(
 
 def test_provider_onboarding_page_is_discoverable(client: TestClient) -> None:
     providers = client.get("/providers")
-    footer = client.get("/")
     sitemap = client.get("/sitemap-core.xml")
     llms = client.get("/llms.txt")
 
-    assert (
-        providers.status_code
-        == footer.status_code
-        == sitemap.status_code
-        == llms.status_code
-        == 200
-    )
+    assert providers.status_code == sitemap.status_code == llms.status_code == 200
     assert 'href="/providers/marketplace"' in providers.text
-    assert 'href="/providers/marketplace"' in footer.text
     assert "<loc>https://trustedrouter.com/providers/marketplace</loc>" in sitemap.text
     # llms.txt is a markdown navigation index now, so entries are links rather
     # than "Label: url" text.

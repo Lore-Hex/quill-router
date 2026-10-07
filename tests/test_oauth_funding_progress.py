@@ -73,9 +73,11 @@ def test_consent_styles_are_versioned_by_content(consent_page: tuple[BeautifulSo
     page, _ = consent_page
     static_dir = Path(views.__file__).parent / "static"
     expected = hashlib.sha256(
-        (static_dir / "auth.css").read_bytes() + (static_dir / "charter.css").read_bytes()
+        b"".join(
+            (static_dir / name).read_bytes() for name in ("tokens.css", "auth.css", "charter.css")
+        )
     ).hexdigest()[:16]
-    for stylesheet in ("auth.css", "charter.css"):
+    for stylesheet in ("tokens.css", "auth.css", "charter.css"):
         href = str(_element(page, f'link[href^="/static/{stylesheet}"]')["href"])
         assert parse_qs(urlsplit(href).query) == {"v": [expected]}
 

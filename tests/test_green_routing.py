@@ -126,7 +126,10 @@ def test_green_page_has_sources_code_and_a_working_share_image(client):
     assert 'href="https://trustedrouter.com/green-tokens"' in response.text
     assert client.get("/static/green-tokens-hero.webp").status_code == 200
     assert client.get("/static/og/green-tokens.png").status_code == 200
-    assert "/green-tokens" in client.get("/").text
+    assert (
+        "<loc>https://trustedrouter.com/green-tokens</loc>" in client.get("/sitemap-core.xml").text
+    )
+    assert "https://trustedrouter.com/green-tokens" in client.get("/docs/llms-full.txt").text
 
 
 @pytest.mark.usefixtures("green_pool")

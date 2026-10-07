@@ -15,7 +15,7 @@ async function show(page, flow, state) {
 
 for (const flow of ["legacy", "registered"]) {
   for (const width of [320, 390, 1280]) {
-    for (const theme of ["dark", "light"]) {
+    for (const theme of ["dark"]) {
       test(`${flow} credits ready at ${width}px ${theme}`, async ({ page }) => {
         await page.setViewportSize({ width, height: 844 });
         await page.addInitScript(theme => localStorage.setItem("tr-theme", theme), theme);

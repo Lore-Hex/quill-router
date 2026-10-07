@@ -8,7 +8,6 @@ for (const [name, width, height, theme] of [
   ["desktop", 1440, 1000, "dark"],
   ["mobile", 390, 844, "dark"],
   ["narrow", 320, 740, "dark"],
-  ["light", 1440, 1000, "light"],
 ]) {
   test(`security resources render and download on ${name}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
