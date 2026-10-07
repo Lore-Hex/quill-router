@@ -417,6 +417,36 @@ jobs:
   # runaway guard, not a target. If the job nears it, tighten a spec's
   # constants rather than dropping the job: an unchecked spec is worse than
   # no spec, because it reads as evidence.
+  # The Go service of the fast-admission design (docs/design/fast-admission-
+  # spike.md). Its shadows are held to their TLA+ specs here: each test runs
+  # the pinned TLC from proofs/ on a small instance and compares every step,
+  # so this job needs Java as well as Go.
+  fastpath:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: fastpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: fastpath/go.mod
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Check the TLA+ tools jar
+        working-directory: proofs
+        run: sha256sum -c tla2tools.jar.sha256
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -race -count=1 ./...
+
   proofs:
     runs-on: ubuntu-latest
     timeout-minutes: 30

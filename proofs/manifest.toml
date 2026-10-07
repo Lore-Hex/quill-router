@@ -506,9 +506,12 @@ AddCap ==
 
 [LeaseLifecycle]
 # docs/design/fast-admission-and-batched-settlement.md, sections 4.2, 4.3,
-# 4.7 and 4.8. Its shadow is a package of its own in the Go service.
-state = "planned"
+# 4.7 and 4.8. Its shadow is a package of its own in the Go service, whose
+# tests compare every step with TLC's state graph of a small instance and
+# count the states of this .cfg's.
+state = "implemented"
 code = ["fastpath/internal/leaselifecycle"]
+tests = ["fastpath/internal/leaselifecycle/leaselifecycle_test.go"]
 
 # Assumption A1, bounded skew, and what rests on it: the owner's cutoff and
 # the auditor's two conditions on the expiry.
