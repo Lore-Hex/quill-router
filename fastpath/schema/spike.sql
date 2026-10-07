@@ -152,8 +152,10 @@ CREATE TABLE tr_lease_hold (
   INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
 
 -- The winners (§4.8), one pack per lease per commit, each winner with its
--- pending work, refunds and zero charges included. A pack may be deleted
--- seven days after its lease has closed and its work is done.
+-- pending work, refunds and zero charges included. A pack goes only with its
+-- lease's row, which is kept seven days after the lease has closed with no
+-- pack's work pending: so while the row is kept, every pack is, and an
+-- authorization none of them names had no winner (§4.9).
 CREATE TABLE tr_lease_winners (
   workspace_id STRING(64) NOT NULL,
   lease_id STRING(32) NOT NULL,
@@ -161,11 +163,8 @@ CREATE TABLE tr_lease_winners (
   pack BYTES(MAX) NOT NULL,
   winner_count INT64 NOT NULL,
   work_done_at TIMESTAMP,
-  deletable_at TIMESTAMP,
-  CONSTRAINT tr_lease_winners_done CHECK (deletable_at IS NULL OR work_done_at IS NOT NULL),
 ) PRIMARY KEY (workspace_id, lease_id, commit_version),
-  INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE,
-  ROW DELETION POLICY (OLDER_THAN(deletable_at, INTERVAL 7 DAY));
+  INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
 
 -- Packs with work pending, for the sweep over closed leases.
 CREATE INDEX tr_lease_winners_by_work ON tr_lease_winners (work_done_at);

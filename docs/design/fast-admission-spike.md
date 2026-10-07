@@ -211,8 +211,8 @@ need, not a migration:
   rows and deletes a hold's row in the commit that stores its winner. If row
   writes dominate A4, a packed row per lease is measured against it;
 - `tr_lease_winners`: §4.8's packs, one row per lease per commit, each winner
-  with its pending work, and the timestamp the row-deletion policy reads,
-  set once the lease is closed and the pack's work is done;
+  with its pending work, and when that work was done. A pack goes only with
+  its lease's row, so while the row is kept every pack is;
 - `tr_lease_drain`: §4.5's drain log, keyed by lease, authorization and
   record ID, ordered by commit timestamp and then record ID, since two
   independent appends can share a timestamp;

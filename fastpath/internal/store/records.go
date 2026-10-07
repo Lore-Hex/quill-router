@@ -149,11 +149,14 @@ var outcomes = map[string]string{"settle": "settled", "refund": "refunded", "rea
 // Disposition answers for an authorization: from its stored winner while
 // the winner is kept, then from its written records, then, for a lease the
 // auditor closed with no winner for it, released, since the close released
-// its hold uncharged; a lease an operator closed answers pending, since the
-// request may have run. An authorization the store cannot place answers
-// pending, never released: a missing record is never read as a refund. The
-// lease comes from the authorization's ID (tr_lease_by_id), and its packs
-// from the lease, so the lookup is bounded.
+// its hold uncharged. That answer rests on the packs going only with their
+// lease's row: a kept row has every pack the lease stored, so none naming
+// the authorization means no winner was stored, not one deleted whose
+// record awaits rebuilding. A lease an operator closed answers pending,
+// since the request may have run. An authorization the store cannot place
+// answers pending, never released: a missing record is never read as a
+// refund. The lease comes from the authorization's ID (tr_lease_by_id), and
+// its packs from the lease, so the lookup is bounded.
 func (s *Store) Disposition(ctx context.Context, authorization string) (Disposition, error) {
 	pending := Disposition{Outcome: "pending", From: "nowhere"}
 	ro := s.client.ReadOnlyTransaction()

@@ -86,10 +86,11 @@ func TestAReapIsGuardedAsEveryWriteIs(t *testing.T) {
 	if r, _, err := s.Reap(ctx, ref, version, reapOf("a1", 3)); err != nil || r != RefusedTerminal {
 		t.Fatalf("a second reap: %q %v", r, err)
 	}
-	if ok, _, err := s.StopForGap(ctx, ref, version, 9); err != nil || !ok {
-		t.Fatal(err)
+	// A gap is stored only before S, and stops the lease's later writes.
+	if ok, _, err := s.StopForGap(ctx, noS, 0, 9); err != nil || !ok {
+		t.Fatalf("the gap: %v %v", ok, err)
 	}
-	if r, _, err := s.Reap(ctx, ref, version, reapOf("a2", 1)); err != nil || r != RefusedGap {
+	if r, _, err := s.Reap(ctx, noS, 0, reapOf("a2", 1)); err != nil || r != RefusedGap {
 		t.Fatalf("a reap of a stopped lease: %q %v", r, err)
 	}
 }
@@ -124,7 +125,7 @@ func TestCloseRefusesWhatTheDesignRefuses(t *testing.T) {
 		t.Fatalf("a close with a hold open: %q", r)
 	}
 	commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: version, AppliedSeq: 2, Money: []MoneyOp{Book(4, 0)},
-		Winners: []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 4, RecordID: "o3"}}, DropHolds: []string{"a1"}})
+		Winners: []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 4, RecordID: "o3"}}})
 	version++
 	if r := close(version-1, future, future); r != RefusedVersion {
 		t.Fatalf("a close from a stale member: %q", r)
@@ -154,7 +155,7 @@ func TestCloseReleasesWhatTheLeaseHolds(t *testing.T) {
 	listed := int64(2)
 	got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: version, AppliedSeq: 2, HoldsListedSeq: &listed,
 		Money: []MoneyOp{Book(4, 0)}, Winners: []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 4, RecordID: "o3"}},
-		DropHolds: []string{"a1"}})
+	})
 	_, read, err := s.ReadDrainSince(ctx, ref, time.Time{})
 	if err != nil {
 		t.Fatal(err)
@@ -179,10 +180,14 @@ func TestCloseReleasesWhatTheLeaseHolds(t *testing.T) {
 	}
 }
 
-func TestAPackIsDeletableOnceItsLeaseClosedAndItsWorkIsDone(t *testing.T) {
+// TestTheLeaseGoesOnceClosedWithNoWorkPending: the lease's row may go only
+// once it is closed and no pack's work is pending, in either order, and its
+// packs only with it, so a pack whose work is done stays while another's is
+// pending.
+func TestTheLeaseGoesOnceClosedWithNoWorkPending(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
-	retention := func(ref LeaseRef) (bool, []bool) {
+	retiring := func(ref LeaseRef) bool {
 		t.Helper()
 		var retire spanner.NullTime
 		row, err := shared.Single().ReadRow(ctx, "tr_lease", ref.key(), []string{"retire_at"})
@@ -192,37 +197,24 @@ func TestAPackIsDeletableOnceItsLeaseClosedAndItsWorkIsDone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var deletable []bool
-		err = shared.Single().Query(ctx, spanner.Statement{
-			SQL:    `SELECT deletable_at IS NOT NULL FROM tr_lease_winners WHERE workspace_id = @w AND lease_id = @l ORDER BY commit_version`,
-			Params: ref.params(),
-		}).Do(func(r *spanner.Row) error {
-			var d bool
-			deletable = append(deletable, false)
-			if err := r.Column(0, &d); err != nil {
-				return err
-			}
-			deletable[len(deletable)-1] = d
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
+		return retire.Valid
+	}
+	mark := func(ref LeaseRef, v int64) {
+		t.Helper()
+		if ok, err := s.MarkPackDone(ctx, ref, v); err != nil || !ok {
+			t.Fatalf("mark %d: %v %v", v, ok, err)
 		}
-		return retire.Valid, deletable
 	}
 	listed := int64(2)
 	for _, doneFirst := range []bool{true, false} {
 		ref, version := drained(t, s, 100)
 		got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: version, AppliedSeq: 2, HoldsListedSeq: &listed,
-			Winners: []Winner{{AuthorizationID: "a1", Kind: "refund", RecordID: "o3"}}, DropHolds: []string{"a1"}})
+			Winners: []Winner{{AuthorizationID: "a1", Kind: "refund", RecordID: "o3"}}})
 		if doneFirst {
-			for _, v := range []int64{1, 2} {
-				if ok, err := s.MarkPackDone(ctx, ref, v); err != nil || !ok {
-					t.Fatalf("mark %d: %v %v", v, ok, err)
-				}
-			}
-			if retire, deletable := retention(ref); retire || slices.Contains(deletable, true) {
-				t.Fatal("an open lease's packs are deletable")
+			mark(ref, 1)
+			mark(ref, 2)
+			if retiring(ref) {
+				t.Fatal("an open lease's row may go")
 			}
 		}
 		_, read, _ := s.ReadDrainSince(ctx, ref, time.Time{})
@@ -230,20 +222,70 @@ func TestAPackIsDeletableOnceItsLeaseClosedAndItsWorkIsDone(t *testing.T) {
 			t.Fatalf("close: %+v %v", c, err)
 		}
 		if !doneFirst {
-			if retire, deletable := retention(ref); retire || slices.Contains(deletable, true) {
-				t.Fatalf("packs with work pending: retire %v, deletable %v", retire, deletable)
+			mark(ref, 1)
+			if retiring(ref) {
+				t.Fatal("the row may go while a pack's work is pending")
 			}
-			for _, v := range []int64{1, 2} {
-				if ok, err := s.MarkPackDone(ctx, ref, v); err != nil || !ok {
-					t.Fatalf("mark %d: %v %v", v, ok, err)
-				}
-			}
+			mark(ref, 2)
 		}
-		if retire, deletable := retention(ref); !retire || !slices.Equal(deletable, []bool{true, true}) {
-			t.Fatalf("done first %v: retire %v, deletable %v", doneFirst, retire, deletable)
+		if !retiring(ref) {
+			t.Fatalf("done first %v: a closed lease with no work pending is kept", doneFirst)
 		}
 		if ok, err := s.MarkPackDone(ctx, ref, 1); err != nil || ok {
 			t.Fatalf("a pack marked twice: %v %v", ok, err)
 		}
+	}
+}
+
+// indebted grants 20 from shards holding 10, 10 and 15, so the lease's
+// donors are shards 0 and 1, then puts shard 2 at -15 with every row marked,
+// drains the lease and stores S, with the holds listed.
+func indebted(t *testing.T, s *Store) (LeaseRef, int64) {
+	t.Helper()
+	ctx := context.Background()
+	ref := grantLease(t, s, 20, 10, 10, 15)
+	setRow(t, ref.Workspace, 2, map[string]any{"total_usage": int64(30)})
+	setRows(t, ref.Workspace, map[string]any{"in_debt": true})
+	if ok, _, err := s.OwnerMarkDraining(ctx, owner, ref); err != nil || !ok {
+		t.Fatalf("drain: %v %v", ok, err)
+	}
+	listed := int64(2)
+	got := commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 2, Boundary: &Boundary{S: 2, T: time.Now().UTC()},
+		HoldsListedSeq: &listed})
+	if got.Refused != "" {
+		t.Fatalf("storing S: %+v", got)
+	}
+	if h := headrooms(readRows(t, ref.Workspace)); !slices.Equal(h, []int64{0, 0, -15}) {
+		t.Fatalf("headroom before: %v", h)
+	}
+	identityHolds(t, s, ref.Workspace)
+	return ref, got.NewVersion
+}
+
+// TestCloseUsesTheSameDonorOrderAsReturn: a close returns the remainder as a
+// commit's return does, from the last donor first (§4.2), so a workspace in
+// debt is repaid the same way by either.
+func TestCloseUsesTheSameDonorOrderAsReturn(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	closed, version := indebted(t, s)
+	_, read, err := s.ReadDrainSince(ctx, closed, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.CloseLease(ctx, closed, version, read, time.Now()); err != nil || c.Refused != "" || c.Released != 20 {
+		t.Fatalf("the close: %+v %v", c, err)
+	}
+	returned, version := indebted(t, s)
+	if got := commitOne(t, s, CommitRequest{Ref: returned, ReadVersion: version, AppliedSeq: 2,
+		Money: []MoneyOp{Return(20)}}); got.Refused != "" {
+		t.Fatalf("the return: %+v", got)
+	}
+	for _, ref := range []LeaseRef{closed, returned} {
+		rows := readRows(t, ref.Workspace)
+		if h := headrooms(rows); !slices.Equal(h, []int64{5, 0, 0}) || rows[0].marked {
+			t.Fatalf("after %v: headroom %v, rows %+v", ref, h, rows)
+		}
+		identityHolds(t, s, ref.Workspace)
 	}
 }

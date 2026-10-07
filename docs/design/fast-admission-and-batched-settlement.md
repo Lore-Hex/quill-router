@@ -1091,11 +1091,17 @@ synchronous holds, through `settle_atomic`.
   A statement that matches no row is that lease's failed commit, whatever the
   others did: the member re-reads that lease and acknowledges none of its
   records.
-- Winners are stored packed, one row per lease per commit. A row-deletion
-  policy removes them once the lease is closed, their pending work is done,
-  and 7 days have passed. Spanner's policies delete on a timestamp column, so
-  each pack's is set when both have happened, and a pack whose work never
-  completes keeps it unset and stays.
+- Winners are stored packed, one row per lease per commit, interleaved in
+  the lease's row and deleted only with it. A row-deletion policy removes
+  the row, and its packs with it, 7 days after the lease has closed with no
+  pack's work pending. Spanner's policies delete on a timestamp column, so
+  the row's is set when both have happened, and a lease with a pack whose
+  work never completes keeps it unset and stays.
+  - No pack goes before its lease's row. So while the row is kept, every
+    winner the lease stored is, and a lease the auditor closed with no
+    winner for `A` stored none: the `released` answer (§4.5) rests on that.
+    A pack that went alone would turn a charged winner whose record awaits
+    rebuilding into a false `released`.
   - That pending work leaves every winner a written record: a charged winner
     its generation and activity records, a refund or a release a compact
     disposition record with its boot binding (§4.9).

@@ -23,11 +23,12 @@ type CloseResult struct {
 // timestamp of the member's last read of it, which the member must apply
 // first: so no acknowledged append is left behind. The holds must all have
 // ended: an applied list named them all, or now, the auditor's clock, is
-// past the expiry plus Config.MaxLife plus Config.Grace. The close releases
-// each donor's remaining allocation as a return, repaying debt first, sets
-// the packs whose work is done to be deleted, and lets the lease's row go
-// once no pack's work is pending. Appends read the state the close writes,
-// so one that races the close is refused or lands before it.
+// past the expiry plus Config.MaxLife plus Config.Grace. The close returns
+// the remaining allocation as a commit's return does (applyMoney), from the
+// last donor first, each part freed on its shard, repaying debt first, and
+// lets the lease's row go, its packs with it, once no pack's work is
+// pending. Appends read the state the close writes, so one that races the
+// close is refused or lands before it.
 func (s *Store) CloseLease(ctx context.Context, ref LeaseRef, readVersion int64, drainRead, now time.Time) (CloseResult, error) {
 	var out CloseResult
 	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
@@ -75,15 +76,24 @@ func (s *Store) CloseLease(ctx context.Context, ref LeaseRef, readVersion int64,
 			return nil
 		}
 		for _, d := range money.Donors {
-			left := d.Allocation - d.Consumed
-			if left <= 0 {
+			if left := d.Allocation - d.Consumed; left > 0 {
+				if out.Released, err = plus(out.Released, left); err != nil {
+					return err
+				}
+			}
+		}
+		eff, err := applyMoney(money, []MoneyOp{Return(out.Released)})
+		if err != nil {
+			return err
+		}
+		for i, d := range eff.After.Donors {
+			if d == money.Donors[i] {
 				continue
 			}
-			out.Released += left
 			p := ref.params()
-			p["shard"], p["consumed"] = d.Shard, d.Consumed
+			p["shard"], p["allocation"] = d.Shard, d.Allocation
 			n, err := txn.UpdateWithOptions(ctx, spanner.Statement{
-				SQL: `UPDATE tr_lease_donor SET allocation = @consumed
+				SQL: `UPDATE tr_lease_donor SET allocation = @allocation
 				       WHERE workspace_id = @w AND lease_id = @l AND credit_shard = @shard`,
 				Params: p,
 			}, spanner.QueryOptions{RequestTag: tag("close")})
@@ -117,18 +127,9 @@ func (s *Store) CloseLease(ctx context.Context, ref LeaseRef, readVersion int64,
 		if rows != 1 {
 			return fmt.Errorf("store: lease %v changed inside its close", ref)
 		}
-		if _, err := txn.UpdateWithOptions(ctx, spanner.Statement{
-			SQL: `UPDATE tr_lease_winners SET deletable_at = CURRENT_TIMESTAMP()
-			       WHERE workspace_id = @w AND lease_id = @l AND work_done_at IS NOT NULL AND deletable_at IS NULL`,
-			Params: ref.params(),
-		}, spanner.QueryOptions{RequestTag: tag("close")}); err != nil {
-			return err
-		}
-		for _, d := range money.Donors {
-			if left := d.Allocation - d.Consumed; left > 0 {
-				if err := release(ctx, txn, ref.Workspace, d.Shard, left, "close"); err != nil {
-					return err
-				}
+		for _, r := range eff.Releases {
+			if err := release(ctx, txn, ref.Workspace, r.Shard, r.Amount, "close"); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -143,10 +144,10 @@ func (s *Store) CloseLease(ctx context.Context, ref LeaseRef, readVersion int64,
 }
 
 // MarkPackDone records that a pack's pending work is done (§4.8, §4.9): its
-// records are written and its outcome published. If the lease has closed,
-// the pack may then be deleted, and the lease's row may go once this was its
-// last pending pack. It reads the lease's state, which a close writes, so
-// the two settle in either order. It reports whether this call marked it.
+// records are written and its outcome published. If the lease has closed and
+// this was its last pending pack, the lease's row may then go, its packs
+// with it. It reads the lease's state, which a close writes, so the two
+// settle in either order. It reports whether this call marked it.
 func (s *Store) MarkPackDone(ctx context.Context, ref LeaseRef, version int64) (bool, error) {
 	var marked bool
 	_, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
@@ -160,10 +161,9 @@ func (s *Store) MarkPackDone(ctx context.Context, ref LeaseRef, version int64) (
 			return err
 		}
 		params := ref.params()
-		params["v"], params["closed"] = version, state == "closed"
+		params["v"] = version
 		n, err := txn.UpdateWithOptions(ctx, spanner.Statement{
-			SQL: `UPDATE tr_lease_winners
-			         SET work_done_at = CURRENT_TIMESTAMP(), deletable_at = IF(@closed, CURRENT_TIMESTAMP(), NULL)
+			SQL: `UPDATE tr_lease_winners SET work_done_at = CURRENT_TIMESTAMP()
 			       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @v AND work_done_at IS NULL`,
 			Params: params,
 		}, spanner.QueryOptions{RequestTag: tag("mark-pack-done")})
