@@ -1692,6 +1692,8 @@ body.console {
   --adyen-sdk-color-background-secondary-active: var(--tr-color-surface-selected);
   --adyen-sdk-color-background-tertiary: var(--tr-color-surface-control);
   --adyen-sdk-color-background-quaternary: var(--tr-color-surface-bg);
+  --adyen-sdk-color-background-always-dark: var(--tr-color-accent-base);
+  --adyen-sdk-color-background-always-dark-active: var(--tr-color-accent-hover);
   --adyen-sdk-color-background-inverse-primary: var(--tr-color-accent-base);
   --adyen-sdk-color-background-inverse-primary-hover: var(--tr-color-accent-hover);
   --adyen-sdk-color-label-primary: var(--tr-color-text-primary);
@@ -1700,6 +1702,8 @@ body.console {
   --adyen-sdk-color-label-on-color: var(--tr-color-accent-ink);
   --adyen-sdk-color-label-highlight: var(--tr-color-link-base);
   --adyen-sdk-color-label-critical: var(--tr-color-error);
+  --adyen-sdk-color-label-disabled: var(--tr-color-text-quaternary);
+  --adyen-sdk-button-tertiary-color: var(--tr-color-link-base);
   --adyen-sdk-color-label-success: var(--tr-color-status-up);
   --adyen-sdk-color-outline-primary: var(--tr-color-line-control);
   --adyen-sdk-color-outline-primary-hover: var(--tr-color-line-strong);
