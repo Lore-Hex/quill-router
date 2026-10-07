@@ -12,18 +12,24 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   `AuditorCommit` gets a package of its own (`internal/auditorcommit`) when it
   is written; `proofs/manifest.toml` names each spec's package and tests.
 - `internal/tlc`: for tests only. It runs the pinned TLC from `proofs/`, reads
-  the state graph TLC writes with `-dump dot,actionlabels`, and reads a
-  spec's `.cfg` and the `[states]` of its guard table.
+  the state graph TLC writes with `-dump dot,actionlabels` as it streams, has
+  TLC judge whether a `.cfg` has the constants a test declares, and reads the
+  `[states]` of a guard table.
 
 ## How a shadow is held to its spec
 
-- On a small instance, TLC writes its whole state graph, and the test checks
-  that from every state the shadow takes the same actions to the same states.
-- On the instance the spec's `.cfg` checks, the shadow must reach as many
-  distinct states as TLC counted (`[states]` in `proofs/<Spec>.guards.toml`).
+- TLC writes the whole state graph of an instance, and the test checks that
+  from every state the shadow takes the same actions to the same states. The
+  tests do this for small instances and for every configuration `proofs/`
+  checks.
+- The tests declare each configuration in Go rather than read its `.cfg`.
+  TLC binds a declaration to its file (`tlc.CheckAssumption`): it reads the
+  file as it is and evaluates the declaration as an assumption. The shadow
+  must also reach the count of distinct states in the spec's guard table
+  (`[states]` in `proofs/<Spec>.guards.toml`).
 - Random walks on a larger instance check every invariant and step property.
-- A test changes the shadow by one step and checks that the comparison
-  notices.
+- Controls: a test changes the shadow by one step and checks that the
+  comparison notices, and a declaration one constant off is refused.
 
 ## Running the tests
 
