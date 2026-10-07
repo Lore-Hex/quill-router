@@ -10,7 +10,7 @@
 .green-hero { isolation: isolate; position: relative; overflow: hidden; background: #0b2119; /* matches the hero artwork's own background */ color: var(--text-display); text-align: center; }
 .green-art { position: absolute; z-index: -1; bottom: -130px; left: 50%; transform: translateX(-50%); width: 1536px; max-width: none; height: 1024px; object-fit: contain; }
 .green-hero-copy { padding-top: 52px; padding-bottom: 330px; }
-.green-hero h1 { color: var(--text-display); }
+.green-hero h1 { color: var(--text-display); margin-inline: auto; /* the shared h1 max-width would otherwise sit left of a centred hero */ }
 .green-hero p { margin-inline: auto; }
 .green-hero .green-eyebrow { color: var(--text-accent); }
 .green-hero .green-lead { font-size: 24px; line-height: 1.4; margin-block: 18px; }

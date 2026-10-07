@@ -13,7 +13,7 @@
 .tm-hero-art { position: absolute; z-index: -1; bottom: -140px; left: 50%; transform: translateX(-50%); width: max(100%, 760px); max-width: 1440px; height: auto; }
 .tm-hero-copy { padding-top: 82px; padding-bottom: 340px; }
 .tm-hero .tm-eyebrow { color: var(--text-accent); }
-.tm-hero h1 { color: var(--text-display); }
+.tm-hero h1 { color: var(--text-display); margin-inline: auto; /* the shared h1 max-width would otherwise sit left of a centred hero */ }
 .tm-hero .tm-lead { color: var(--text-body); font-size: 19px; line-height: 1.6; margin: 22px auto 26px; max-width: 660px; }
 .tm-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .tm-button { display: inline-flex; align-items: center; justify-content: center; gap: 22px; border: 1px solid transparent; border-radius: 3px; min-height: 50px; padding: 12px 22px; font: 500 16px/1.4 "Archivo", sans-serif; cursor: pointer; text-decoration: none; transition: background-color 150ms, transform 150ms; box-sizing: border-box; }
