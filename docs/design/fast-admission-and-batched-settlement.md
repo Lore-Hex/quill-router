@@ -2328,7 +2328,11 @@ leases, and was retired on 2026-09-27.
    - the debt mark on every shard, and covering a negative shard at once
      (§4.7), which closes a gap on today's path, with a one-time pass over
      workspaces that already have a negative shard. This rewrites the live
-     credit primitives, so it lands after `CreditDebt` passes;
+     credit primitives, so it lands after `CreditDebt` passes.
+     - Done: the debt rules are #1574, deployed on GCP and AWS on
+       2026-10-07, and the one-time pass is #1575. Azure's control plane
+       gets them when its blocked deploy is recovered. Applying the pass
+       writes production money rows, so it waits on Joseph;
    - **a shard count that follows the balance**, Joseph's decision, which the
      convoy incident deferred: new workspaces on one shard, splitting as they
      grow, with a one-time consolidation.
@@ -2341,8 +2345,8 @@ leases, and was retired on 2026-09-27.
        less created since that day, one workspace a run
        (`scripts/consolidate_starter_credit.py`). Small workspaces created
        between #703 (2026-08-21), which made sixteen the default, and #1529
-       keep their sixteen shards. Covering is not built (§4.7). Once it is,
-       it would run on their routine overruns until they are consolidated;
+       keep their sixteen shards. Covering (§4.7, #1574) runs on their
+       routine overruns until they are consolidated;
    - 503 instead of 402 when a balance's headroom sits in leases, in the
      reserve and in the insufficient-credit precheck (§4.4);
    - the fast-path fact in the speculation issuer's snapshot (§4.13);
