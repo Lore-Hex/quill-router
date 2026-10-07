@@ -894,22 +894,26 @@ class _Parse:
         raise SystemExit(f"error: {formula} has `{self._text(node)}` beside its [][Next]_vars, at "
                          f"{self._where(node)}: only an initial condition and fairness may stand there")
 
-    def used_otherwise(self, relation: ET.Element) -> str | None:
-        """An action the walk read that the relation also uses other than as a step, if there is one.
+    def used_otherwise(self, formula: str) -> str | None:
+        """An action the walk read that the specification also uses other than as a step, if there is one.
 
-        Read after the walk. A use is a reference anywhere in the relation or
-        in a definition it names; the place a LET defines an action is not one.
+        Read after the walk. A use is a reference anywhere in the formula the
+        configurations check, or in a definition it names: the initial
+        condition as much as the relation. Fairness is not read: it changes
+        which behaviors count, not which states are reached. Nor is the place
+        a LET defines an action.
         """
 
         followed = {node.find("operator")[0] for node in self.followed}  # type: ignore[index]
+        top = [node for node in self.entries.values()
+               if node.tag == "UserDefinedOpKind" and node.findtext("uniquename") == formula
+               and self._defined_here(node) and node.find("body") is not None]
         seen: set[str] = set()
-        bodies = [relation]
+        bodies = [top[0].find("body")] if len(top) == 1 else []
         while bodies:
-            body = bodies.pop()
-            defined = {reference for let in body.iter("LetInNode") for reference in let.iterfind("opDefs/*")}
-            for reference in body.iter("UserDefinedOpKindRef"):
+            for reference in self._references(bodies.pop()):  # type: ignore[arg-type]
                 uid = str(reference.findtext("UID"))
-                if uid in self.assigns and reference not in followed and reference not in defined:
+                if uid in self.assigns and reference not in followed:
                     return str(self.entries[uid].findtext("uniquename"))
                 if uid not in seen:
                     seen.add(uid)
@@ -917,6 +921,20 @@ class _Parse:
                     if definition is not None:
                         bodies.append(definition)
         return None
+
+    def _references(self, node: ET.Element) -> list[ET.Element]:
+        """The definitions an expression names, outside fairness and outside a LET's definition sites."""
+
+        found, stack = [], [node]
+        while stack:
+            current = stack.pop()
+            if current.tag == "OpApplNode" and self._operator(current).findtext("uniquename") in ("$WF", "$SF"):
+                continue
+            if current.tag == "UserDefinedOpKindRef":
+                found.append(current)
+                continue
+            stack += [child for child in current if not (current.tag == "LetInNode" and child.tag == "opDefs")]
+        return found
 
     # --- the guards
 
@@ -1094,18 +1112,18 @@ def _walked(spec_text: str, formula: str) -> _Parse:
 
 
 def action_used_otherwise(spec_text: str, formula: str) -> str | None:
-    """An action of the next-state relation that the relation also uses other than as a step, if there is one.
+    """An action of the next-state relation that the specification also uses other than as a step, if there is one.
 
     The walk follows an action only where weakening it weakens the whole: a
     conjunction, a disjunction, a quantifier, an IF's branches, a LET's body
     and a call. So removing a guard adds steps and takes none away, and every
-    state the spec reached is reached without it, unless the relation also
-    uses an action some other way: under ENABLED, in an IF's condition, or
-    inside a value. `~ENABLED A` loses a step when a guard of A goes.
+    state the spec reached is reached without it, unless the specification
+    also uses an action some other way: under ENABLED, in an IF's condition,
+    inside a value, or in the initial condition. `~ENABLED A` loses a step,
+    or an initial state, when a guard of A goes.
     """
 
-    parse = _walked(spec_text, formula)
-    return parse.used_otherwise(parse.relation(formula))
+    return _walked(spec_text, formula).used_otherwise(formula)
 
 
 def without_guard(spec_text: str, guard: Guard, formula: str) -> str:
@@ -1504,6 +1522,9 @@ _USES = [
      "Other ==\n    /\\ x > 0\n    /\\ IF Act(1) THEN x' = 0 ELSE x' = 1\n    /\\ UNCHANGED z\n", "Act"),
     ("an action inside the value an effect gives", _OTHER,
      "Other ==\n    /\\ x > 0\n    /\\ x' = IF Act(1) THEN 0 ELSE 1\n    /\\ UNCHANGED z\n", "Act"),
+    ("an initial condition that reads whether an action is enabled", _FORMULA,
+     "Spec == x = 0 /\\ z = 0 /\\ ~ENABLED Act(1) /\\ [][Next]_<< x, z >> /\\ \\A a \\in Range : WF_<< x, z >>(Act(a))\n",
+     "Act"),
     ("an action a LET defines and the relation takes as a step", _NEXT,
      "Next == LET Hop == x = 3 /\\ x' = 0 /\\ UNCHANGED z IN \\E a \\in Range : Either(a) \\/ Hop\n", None),
 ]

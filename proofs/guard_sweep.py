@@ -22,9 +22,10 @@ turn, runs TLC, and records in <Spec>.guards.toml what removing it breaks:
                          it does with every guard in place, "new states" if
                          one reaches more and no claim minds. Counting is
                          enough because removing a guard only adds steps,
-                         where the relation uses each action only as a step
-                         and not under ENABLED, in an IF's condition or in
-                         a value; a spec that does is refused
+                         where the specification uses each action of its
+                         relation only as a step, and not under ENABLED, in
+                         an IF's condition, in a value or in the initial
+                         condition; a spec that does is refused
   breaks = "evaluation"  the spec no longer evaluates, or its other
                          invariants do not on the first state outside
                          TypeOK: the guard kept some expression defined
@@ -99,8 +100,8 @@ def distinct_states(output: str) -> int:
 def reached(states: dict[str, int], base: dict[str, int]) -> str:
     """Whether a spec with a guard removed, which broke nothing, reaches a state the spec does not.
 
-    Removing a guard adds steps and takes none away, where the relation uses
-    each action only as a step (base_states checks that). Every state the
+    Removing a guard adds steps and takes none away, where the specification
+    uses each action of its relation only as a step (base_states checks that). Every state the
     spec reaches is then still reached, and the same number of distinct
     states in each configuration is the same states.
     """
@@ -178,9 +179,9 @@ def base_states(name: str, spec_text: str, configs: dict[str, str]) -> dict[str,
 
     used = cm.action_used_otherwise(spec_text, cm.specification_of(configs))
     if used is not None:
-        raise Inconclusive(f"{name}'s next-state relation uses {used} other than as a step: removing a guard "
-                           "could take a state away as well as add one, and a count of states would not say "
-                           "whether it reaches a new one")
+        raise Inconclusive(f"{name}'s specification uses {used}, an action of its next-state relation, other "
+                           "than as a step: removing a guard could take a state away as well as add one, and a "
+                           "count of states would not say whether it reaches a new one")
     breaks, _, states = outcome(name, spec_text, configs)
     if breaks != cm.BREAKS_NOTHING:
         raise Inconclusive(f"{name} does not pass as it stands")
@@ -464,7 +465,17 @@ def self_test() -> bool:
     except Inconclusive as undecided:
         refused = str(undecided)
     ok = cm._report("a relation that asks whether an action is enabled is not measured by counting states",
-                    "uses Pop other than as a step" in refused, refused or "measured") and ok
+                    "uses Pop, an action of its next-state relation, other than as a step" in refused,
+                    refused or "measured") and ok
+    init_reads = _SELF_TEST_SPEC.replace("Spec == Init /\\ ", "Spec == Init /\\ ~ENABLED Bump /\\ ")
+    try:
+        base_states("Tiny", init_reads, _SELF_TEST_CONFIGS)
+        refused = "" if init_reads != _SELF_TEST_SPEC else "the spec was not changed"
+    except Inconclusive as undecided:
+        refused = str(undecided)
+    ok = cm._report("an initial condition that asks whether an action is enabled is not measured by counting states",
+                    "uses Bump, an action of its next-state relation, other than as a step" in refused,
+                    refused or "measured") and ok
     for guard, row in zip(found, _SELF_TEST_ROWS, strict=False):
         mutated = cm.without_guard(_SELF_TEST_SPEC, guard, "Spec")
         seen = swept("Tiny", mutated, _SELF_TEST_CONFIGS, base)

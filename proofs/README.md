@@ -137,9 +137,9 @@ is removed.
     reaches as many distinct states as the table's `[states]` says it does
     with every guard in place, and `new states` when one reaches more.
     Removing a guard only adds steps, so the same count is the same states.
-    That needs the relation to use each action only as a step: a spec that
-    puts one under `ENABLED`, in an `IF`'s condition or inside a value is
-    refused;
+    That needs the specification to use each action of its relation only as
+    a step: a spec that puts one under `ENABLED`, in an `IF`'s condition,
+    inside a value or in its initial condition is refused;
   - `evaluation`, when the spec, or its other invariants past `TypeOK`,
     can no longer be evaluated.
 
