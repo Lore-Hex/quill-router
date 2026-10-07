@@ -1039,8 +1039,9 @@ new = '''
 # Its shadow is a package of its own in the Go service, written in the spike
 # (section 8). Each planned spec names its own package, so they can become
 # implemented one at a time.
-state = "planned"
+state = "implemented"
 code = ["fastpath/internal/terminalorder"]
+tests = ["fastpath/internal/terminalorder/terminalorder_test.go"]
 
 # Assumption A1 and the owner's cutoff: no acknowledged owner record falls
 # beyond the boundary.

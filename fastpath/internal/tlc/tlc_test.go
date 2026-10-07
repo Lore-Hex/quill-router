@@ -46,8 +46,32 @@ func TestEqualTellsValuesApart(t *testing.T) {
 	}
 }
 
+func TestParseValueReadsFunctionsAndModelValues(t *testing.T) {
+	v, err := ParseValue(`(a1 :> [src |-> "none", idx |-> 0] @@ a2 :> "open")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := v.(Func)
+	if !ok || len(f) != 2 {
+		t.Fatalf("read %s", Key(v))
+	}
+	if got, ok := f.At(ModelValue("a2")); !ok || got != "open" {
+		t.Fatalf("f[a2] is %v", got)
+	}
+	if _, ok := f.At("a2"); ok {
+		t.Fatal("the string \"a2\" is taken for the model value a2")
+	}
+	reordered, err := ParseValue(`(a2 :> "open" @@ a1 :> [idx |-> 0, src |-> "none"])`)
+	if err != nil || !Equal(v, reordered) {
+		t.Fatalf("one function printed in another order reads as another: %v", err)
+	}
+	if Equal(ModelValue("a1"), "a1") {
+		t.Fatal("a model value equals the string of its name")
+	}
+}
+
 func TestParseValueRefusesWhatItCannotRead(t *testing.T) {
-	for _, text := range []string{"(1 :> 2 @@ 2 :> 3)", "[a |-> 1", "{1, 2", "<< 1 >> 2", "x"} {
+	for _, text := range []string{"(1 :> 2 @@ 1 :> 3)", "(1 :> 2", "(1 2)", "[a |-> 1", "{1, 2", "<< 1 >> 2", "%"} {
 		if _, err := ParseValue(text); err == nil {
 			t.Errorf("%q is read", text)
 		}
@@ -106,17 +130,20 @@ func TestReadDotReadsStatesStepsAndTheInitialState(t *testing.T) {
 	}
 }
 
-func TestConstantsReadsACfg(t *testing.T) {
-	cfg := "\\* a comment\nSPECIFICATION Spec\nCONSTANTS\n    A = 3   \\* three\n    B = 0\nINVARIANTS\n    TypeOK\n"
-	k, err := Constants(cfg)
-	if err != nil {
+func TestCompareRefusesALimitBelowOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.dot")
+	dot := "strict digraph DiskGraph {\n-1 [label=\"/\\\\ x = 0\",style = filled]\n}\n"
+	if err := os.WriteFile(path, []byte(dot), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if len(k) != 2 || k["A"] != 3 || k["B"] != 0 {
-		t.Fatalf("read %v", k)
+	read := func(r Record) (int64, error) { return r["x"].(int64), nil }
+	shadow := Shadow[int64]{Init: 0, Next: func(int64) []Step[int64] { return nil }}
+	if _, err := Compare(path, read, shadow, 0); err == nil {
+		t.Fatal("a limit of 0, which would report no difference, is accepted")
 	}
-	if _, err := Constants("CONSTANTS\n    A <- B\n"); err == nil {
-		t.Fatal("a replacement is read as a constant")
+	got, err := Compare(path, read, shadow, 1)
+	if err != nil || got.States != 1 || len(got.Diffs) != 0 {
+		t.Fatalf("the one-state graph compares as %+v, %v", got, err)
 	}
 }
 
@@ -130,5 +157,40 @@ func TestGuardTableStatesReadsTheRepositorysTables(t *testing.T) {
 	}
 	if _, err := GuardTableStates("NoSuchSpec"); err == nil {
 		t.Fatal("a missing table is read")
+	}
+}
+
+// TestCheckAssumptionTakesOnlyWhatTLCFindsTrue: TLC judges the assumption
+// against the files as they are, whatever follows the spec's module, and
+// anything it does not find true is refused.
+func TestCheckAssumptionTakesOnlyWhatTLCFindsTrue(t *testing.T) {
+	proofs, err := ProofsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A copy of LeaseLifecycle with a second ==== line after its module's,
+	// past which TLC does not read.
+	dir := t.TempDir()
+	for name, more := range map[string]string{"LeaseLifecycle.tla": "\n====\n", "LeaseLifecycle.cfg": ""} {
+		text, err := os.ReadFile(filepath.Join(proofs, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), append(text, more...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(assumption string) error {
+		return checkAssumption(proofs, dir, "LeaseLifecycle", "LeaseLifecycle.cfg", assumption)
+	}
+	for _, assumption := range []string{"MaxHolds = 3", `MaxHolds = 3 \* with a comment`} {
+		if err := check(assumption); err != nil {
+			t.Errorf("%q: %v", assumption, err)
+		}
+	}
+	for _, assumption := range []string{"MaxHolds = 2", "MaxHolds", "MaxHolds =", "NoSuchName = 1"} {
+		if err := check(assumption); err == nil {
+			t.Errorf("%q is taken", assumption)
+		}
 	}
 }
