@@ -17,6 +17,7 @@ from typing import Any
 from trusted_router.catalog import MODELS
 
 logger = logging.getLogger(__name__)
+_model_count_failure_logged = False
 
 
 _ROOT = Path(__file__).parent
@@ -51,13 +52,19 @@ def live_model_count() -> int:
     Every public page renders this, so a catalog that cannot be built must not
     take the page down: the label falls back to "Search models" on 0.
     """
+    global _model_count_failure_logged
     from trusted_router.routes.catalog import _current_catalog_payload
 
     try:
-        return len(_current_catalog_payload().shapes)
+        count = len(_current_catalog_payload().shapes)
     except Exception:  # noqa: BLE001 - the header label is not worth a 500 on /status
-        logger.exception("header model count unavailable")
+        # Every public page calls this, so log the traceback once per outage, not per request.
+        if not _model_count_failure_logged:
+            logger.exception("header model count unavailable")
+            _model_count_failure_logged = True
         return 0
+    _model_count_failure_logged = False
+    return count
 
 
 def homepage_context(api_base_url: str) -> dict[str, Any]:

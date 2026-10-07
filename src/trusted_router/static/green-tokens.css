@@ -52,7 +52,6 @@
 
 @media (max-width: 700px) {
   .green-inner { padding-inline: 22px; }
-  .green-tokens .charter-nav { flex-direction: row; align-items: center; }
   .green-tokens h1 { font-size: 48px; }
   .green-tokens h2 { font-size: 34px; }
   .green-hero-copy { padding-top: 34px; padding-bottom: 200px; }

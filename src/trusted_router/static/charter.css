@@ -59,7 +59,7 @@
   --status-verified: var(--tr-color-accent-base);
   --status-pending: var(--tr-color-privacy-zdr-text);
   --status-failed: var(--tr-color-error);
-  --focus-ring: none;
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--tr-color-focus) 25%, transparent);
   --font-display: var(--tr-font-family-sans);
   --font-ui: var(--tr-font-family-sans);
   --font-mono: var(--tr-font-family-mono);
@@ -210,10 +210,12 @@ textarea {
 .console-topbar {
   background: var(--top);
   border-bottom: 1px solid var(--border-hairline);
+}
+
+.top {
   backdrop-filter: blur(12px);
 }
 
-.nav,
 .brand {
   display: inline-flex;
   align-items: center;
@@ -2043,7 +2045,6 @@ body.auth.auth-shell {
 }
 
 @media (max-width: 780px) {
-  .nav,
   .charter-home-hero {
     padding: 60px 20px 44px;
   }

@@ -97,7 +97,6 @@
 }
 
 @media (max-width: 640px) {
-  .token-exchange .charter-nav { flex-direction: row; align-items: center; gap: 16px; }
   .tm-inner { padding-inline: 22px; }
   .token-exchange h1 { font-size: 38px; }
   .token-exchange h2 { font-size: 34px; }
