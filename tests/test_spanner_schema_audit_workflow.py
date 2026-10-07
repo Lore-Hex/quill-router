@@ -18,6 +18,7 @@ KNOWN_WIF_ALLOWLIST_EXCEPTIONS = {
 # actions need review here; these do not authenticate to the GCP WIF provider.
 KNOWN_NON_GCP_AUTH_ACTIONS = {
     "actions/checkout": "Checks out source using GitHub credentials.",
+    "actions/setup-go": "Installs the Go toolchain.",
     "actions/setup-java": "Installs the Java toolchain.",
     "actions/setup-node": "Installs the Node.js toolchain.",
     "actions/setup-python": "Installs the Python toolchain.",
