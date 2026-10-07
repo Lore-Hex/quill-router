@@ -191,6 +191,6 @@ dialog{padding:28px;border:1px solid #526859;border-radius:12px;width:min(560px,
  }
 }
 /* A desktop ribbon belongs inside the composition, away from the screen edge. */
-@media(min-width:1001px){
+@media(min-width:601px){
  :root:not(.hero-landscape) .trh .hero .labs{margin-bottom:clamp(32px,calc(var(--hero-vh,1svh) * 8),88px)}
 }
