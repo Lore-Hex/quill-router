@@ -5,6 +5,20 @@ import (
 	"fmt"
 )
 
+// errMoneyRange refuses a commit whose money would pass int64's range. No
+// lease's real figures come near it, and a sum that wrapped would read as
+// credit (§4.7), so the whole commit is refused instead.
+var errMoneyRange = errors.New("store: a commit's money passes int64's range")
+
+// plus is a + b, or errMoneyRange where that passes int64's range.
+func plus(a, b int64) (int64, error) {
+	c := a + b
+	if (c > a) != (b > 0) {
+		return 0, errMoneyRange
+	}
+	return c, nil
+}
+
 // MoneyOp is one money record an auditor's commit applies, in the lease's
 // log order: a terminal's booking, or a return of allocation.
 type MoneyOp struct {
@@ -87,10 +101,17 @@ func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 	m := before
 	m.Donors = append([]donorMoney(nil), before.Donors...)
 	eff := moneyEffect{Shards: map[int64]shardMoney{}}
-	add := func(shard, reserved, usage int64) {
+	// Every sum is checked: the first to pass int64's range is the error.
+	var err error
+	add := func(to *int64, v int64) {
+		if err == nil {
+			*to, err = plus(*to, v)
+		}
+	}
+	addShard := func(shard, reserved, usage int64) {
 		s := eff.Shards[shard]
-		s.Reserved += reserved
-		s.Usage += usage
+		add(&s.Reserved, reserved)
+		add(&s.Usage, usage)
 		eff.Shards[shard] = s
 	}
 	for _, op := range ops {
@@ -106,9 +127,12 @@ func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 				}
 				m.Donors[i].Allocation -= z
 				m.Allocation -= z
-				m.Returned += z
+				add(&m.Returned, z)
 				eff.Releases = append(eff.Releases, creditRelease{m.Donors[i].Shard, z})
 				left -= z
+			}
+			if err != nil {
+				return moneyEffect{}, err
 			}
 			if left > 0 {
 				return moneyEffect{}, fmt.Errorf("store: a return of %d is %d more than the lease holds", op.Amount, left)
@@ -120,9 +144,9 @@ func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 		}
 		if rise := op.ShortfallTotal - m.ShortfallTotal; rise > 0 {
 			m.ShortfallTotal = op.ShortfallTotal
-			m.Allocation += rise
-			m.Donors[0].Allocation += rise
-			add(m.Donors[0].Shard, rise, 0)
+			add(&m.Allocation, rise)
+			add(&m.Donors[0].Allocation, rise)
+			addShard(m.Donors[0].Shard, rise, 0)
 		}
 		left := op.Charge
 		for i := range m.Donors {
@@ -131,14 +155,17 @@ func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 				continue
 			}
 			m.Donors[i].Consumed += x
-			m.Consumed += x
-			add(m.Donors[i].Shard, -x, x)
+			add(&m.Consumed, x)
+			addShard(m.Donors[i].Shard, -x, x)
 			left -= x
 		}
 		if left > 0 {
-			m.FaultUsage += left
-			add(m.Donors[0].Shard, 0, left)
+			add(&m.FaultUsage, left)
+			addShard(m.Donors[0].Shard, 0, left)
 			eff.Faults = append(eff.Faults, left)
+		}
+		if err != nil {
+			return moneyEffect{}, err
 		}
 	}
 	eff.After = m

@@ -19,7 +19,7 @@ import (
 const (
 	RefusedVersion  Refusal = "another member has committed since this one read the lease"
 	RefusedGap      Refusal = "the lease is stopped at a gap"
-	RefusedBoundary Refusal = "the lease's stored boundary S is another"
+	RefusedBoundary Refusal = "the lease's progress is held at its stored boundary S"
 )
 
 // HoldRow is a stored open hold (§4.8): its estimate and deadline, its
@@ -74,11 +74,11 @@ type Boundary struct {
 
 // CommitRequest is one lease's part of an auditor's commit (§4.8): the
 // version the member read, its progress, the money its records book or
-// return in log order, the holds to store and those whose rows go with
-// their winners, the winners, and, optionally, S and T, the sequence number
-// of an applied final checkpoint or complete hand-off that listed the open
-// holds, and the sequence number of a checkpoint whose audit failed, which
-// stores the alert and revokes the lease with the commit.
+// return in log order, the holds to store, the winners, whose holds go with
+// them, and, optionally, S and T, the sequence number of an applied final
+// checkpoint or complete hand-off that listed the open holds, and the
+// sequence number of a checkpoint whose audit failed, which stores the alert
+// and revokes the lease with the commit.
 type CommitRequest struct {
 	Ref            LeaseRef
 	ReadVersion    int64
@@ -87,7 +87,6 @@ type CommitRequest struct {
 	AuditOsum      int64
 	Money          []MoneyOp
 	PutHolds       []HoldRow
-	DropHolds      []string
 	Winners        []Winner
 	Boundary       *Boundary
 	HoldsListedSeq *int64
@@ -131,26 +130,24 @@ func (r CommitRequest) validate() error {
 		}
 		put[h.AuthorizationID] = true
 	}
-	for _, a := range r.DropHolds {
-		if !won[a] || put[a] {
-			return fmt.Errorf("store: hold %s goes only in the commit that stores its winner", a)
-		}
-	}
 	return nil
 }
 
 // Commit is the auditor's per-lease commit (§4.8): one transaction for
 // many leases. Each lease's part is conditional on the version the member
-// read, on no gap, and on the stored S, if there is one, being the
-// request's; a lease refused writes nothing, and the others commit. For a
-// lease it commits, it advances the version by one, stores the progress,
-// books and returns the money in log order against the row as read in the
-// transaction (applyMoney), so a raise an owner or a front door made since
-// the member loaded the lease is kept, and stores the holds and one pack of
-// the winners. S, once stored, does not change; a winner from the drain log
-// needs it stored, before or by this commit. Then, for each workspace, the
-// credit rows take the bookings and raises in ascending shard order and are
-// squared (§4.7), and each return frees its money, repaying any debt first.
+// read, on no gap, and, once S is stored, on the request's progress being
+// S, since no owner record past S is applied; a lease refused writes
+// nothing, and the others commit. For a lease it commits, it advances the
+// version by one, stores the progress, books and returns the money in log
+// order against the row as read in the transaction (applyMoney), so a raise
+// an owner or a front door made since the member loaded the lease is kept,
+// and stores the holds and one pack of the winners, each of whose holds
+// goes with it. S, once stored, does not change; a winner from the drain
+// log needs it stored, before or by this commit. Then, for each workspace,
+// the credit rows take the bookings and raises in ascending shard order and
+// are squared (§4.7), and each return frees its money, repaying any debt
+// first. Money that would pass int64's range is an error, and nothing is
+// written.
 func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResult, time.Time, error) {
 	leases := map[LeaseRef]bool{}
 	for _, r := range reqs {
@@ -179,7 +176,7 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 				out[i].Refused = RefusedVersion
 			case l.GapSeq.Valid:
 				out[i].Refused = RefusedGap
-			case r.Boundary != nil && l.BoundarySeq.Valid && l.BoundarySeq.Int64 != r.Boundary.S:
+			case l.BoundarySeq.Valid && l.BoundarySeq.Int64 != r.AppliedSeq:
 				out[i].Refused = RefusedBoundary
 			}
 			if out[i].Refused != "" {
@@ -206,16 +203,20 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 			}
 			for shard, d := range eff.Shards {
 				t := shards[r.Ref.Workspace][shard]
-				t.Reserved += d.Reserved
-				t.Usage += d.Usage
+				if t.Reserved, err = plus(t.Reserved, d.Reserved); err != nil {
+					return err
+				}
+				if t.Usage, err = plus(t.Usage, d.Usage); err != nil {
+					return err
+				}
 				shards[r.Ref.Workspace][shard] = t
 			}
 			releases[r.Ref.Workspace] = append(releases[r.Ref.Workspace], eff.Releases...)
 			for _, h := range r.PutHolds {
 				mutations = append(mutations, spanner.InsertOrUpdate("tr_lease_hold", holdColumns, h.values(r.Ref)))
 			}
-			for _, a := range r.DropHolds {
-				mutations = append(mutations, spanner.Delete("tr_lease_hold", spanner.Key{r.Ref.Workspace, r.Ref.LeaseID, a}))
+			for _, w := range r.Winners {
+				mutations = append(mutations, spanner.Delete("tr_lease_hold", spanner.Key{r.Ref.Workspace, r.Ref.LeaseID, w.AuthorizationID}))
 			}
 			body, err := json.Marshal(pack{Version: 1, Winners: append([]Winner{}, r.Winners...)})
 			if err != nil {
@@ -305,7 +306,7 @@ func writeLeaseCommit(ctx context.Context, txn *spanner.ReadWriteTransaction, r 
 		             audit_fault_seq = COALESCE(@fault_seq, audit_fault_seq),
 		             revoked = revoked OR @fault_seq IS NOT NULL
 		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND gap_seq IS NULL
-		         AND (boundary_seq IS NULL OR @s IS NULL OR boundary_seq = @s)
+		         AND (boundary_seq IS NULL OR boundary_seq = @applied)
 		      THEN RETURN state, commit_version`,
 		Params: params,
 	}, spanner.QueryOptions{RequestTag: tag("commit")}).Do(func(row *spanner.Row) error {
@@ -389,16 +390,23 @@ func settleCreditRows(ctx context.Context, txn *spanner.ReadWriteTransaction, wo
 	return nil
 }
 
-// StopForGap stores the gap that stops a lease (§4.8): conditional on the
-// version the member read, so a member another member overtook does not
-// stop the lease for a gap the log does not have, and on no gap stored. It
-// does not advance the version. It reports whether the lease took it.
+// StopForGap stores the gap that stops a lease (§4.8): seq is a record's
+// sequence number beyond the next one after the stored progress. It is
+// conditional on the version the member read, so a member another member
+// overtook does not stop the lease for a gap the log does not have; on no
+// gap stored; and on S not stored, since records past S are not applied
+// and leave no gap. It does not advance the version. It reports whether the
+// lease took it.
 func (s *Store) StopForGap(ctx context.Context, ref LeaseRef, readVersion, seq int64) (bool, time.Time, error) {
+	if seq < 1 {
+		return false, time.Time{}, fmt.Errorf("store: a gap at sequence number %d", seq)
+	}
 	params := ref.params()
 	params["read"], params["seq"] = readVersion, seq
 	return s.conditional(ctx, "stop-for-gap", spanner.Statement{
 		SQL: `UPDATE tr_lease SET gap_seq = @seq
-		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND gap_seq IS NULL`,
+		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND gap_seq IS NULL
+		         AND boundary_seq IS NULL AND applied_seq < @seq - 1`,
 		Params: params,
 	})
 }

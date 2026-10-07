@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -197,25 +199,36 @@ func TestSIsStoredOnceWithItsProgress(t *testing.T) {
 	if got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 4, Money: []MoneyOp{Book(1, 0)}}); got.Refused != "" {
 		t.Fatalf("a commit after S: %+v", got)
 	}
+	// Past S no owner record is applied, whether or not the request names S.
+	late := Winner{AuthorizationID: "a8", Kind: "settle", Charge: 7, RecordID: "o5"}
+	before := readLease(t, s, ref)
+	if got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 2, AppliedSeq: 5, Winners: []Winner{late},
+		Money: []MoneyOp{Book(7, 0)}}); got.Refused != RefusedBoundary || readLease(t, s, ref) != before {
+		t.Fatalf("a record past S: %+v", got)
+	}
 }
 
+// TestHoldsGoWithTheirWinners: the commit that stores a winner deletes its
+// hold's row, so a member that takes the lease over loads no hold that is
+// decided already.
 func TestHoldsGoWithTheirWinners(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
 	ref := grantLease(t, s, 30, 100)
 	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 1, PutHolds: []HoldRow{hold("a1", 10), hold("a2", 5)}})
-	if _, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, ReadVersion: 1, AppliedSeq: 2, DropHolds: []string{"a1"}}}); err == nil {
-		t.Fatal("a hold's row goes without its winner")
-	}
 	snap := hold("a2", 5)
 	snap.SnapshotSeq, snap.RunningCharge = spanner.NullInt64{Int64: 3, Valid: true}, spanner.NullInt64{Int64: 0, Valid: true}
 	commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 2, Money: []MoneyOp{Book(7, 0)},
-		Winners: []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 7, RecordID: "o2"}}, DropHolds: []string{"a1"},
-		PutHolds: []HoldRow{snap}})
+		Winners: []Winner{{AuthorizationID: "a1", Kind: "settle", Charge: 7, RecordID: "o2"}}, PutHolds: []HoldRow{snap}})
 	loaded, err := s.Load(ctx, ref)
 	if err != nil || len(loaded.Holds) != 1 || loaded.Holds[0].AuthorizationID != "a2" ||
 		loaded.Holds[0].RunningCharge != (spanner.NullInt64{Int64: 0, Valid: true}) {
 		t.Fatalf("the holds after a1's winner: %+v %v", loaded.Holds, err)
+	}
+	refund := Winner{AuthorizationID: "a2", Kind: "refund", RecordID: "o3"}
+	if _, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, ReadVersion: 2, AppliedSeq: 3, PutHolds: []HoldRow{hold("a2", 5)},
+		Winners: []Winner{refund}}}); err == nil {
+		t.Fatal("a hold is stored beside its own winner")
 	}
 }
 
@@ -239,6 +252,12 @@ func TestAGapStopsTheLease(t *testing.T) {
 	if ok, _, err := s.StopForGap(ctx, ref, 0, 3); err != nil || ok {
 		t.Fatalf("a gap from a stale member: %v %v", ok, err)
 	}
+	if ok, _, err := s.StopForGap(ctx, ref, 1, 2); err != nil || ok {
+		t.Fatalf("the next record taken for a gap: %v %v", ok, err)
+	}
+	if _, _, err := s.StopForGap(ctx, ref, 1, 0); err == nil {
+		t.Fatal("a gap at no sequence number")
+	}
 	if ok, _, err := s.StopForGap(ctx, ref, 1, 3); err != nil || !ok {
 		t.Fatalf("the gap: %v %v", ok, err)
 	}
@@ -251,6 +270,58 @@ func TestAGapStopsTheLease(t *testing.T) {
 	if ok, _, err := s.StopForGap(ctx, ref, 1, 4); err != nil || ok {
 		t.Fatalf("a second gap: %v %v", ok, err)
 	}
+}
+
+// TestNoGapPastS: once S is stored, owner records past it are not applied,
+// so none of them stops the lease.
+func TestNoGapPastS(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := grantLease(t, s, 30, 100)
+	if ok, _, err := s.OwnerMarkDraining(ctx, owner, ref); err != nil || !ok {
+		t.Fatalf("drain: %v %v", ok, err)
+	}
+	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 4, Boundary: &Boundary{S: 4, T: time.Now().UTC()}})
+	if ok, _, err := s.StopForGap(ctx, ref, 1, 6); err != nil || ok {
+		t.Fatalf("a record past S stops the lease: %v %v", ok, err)
+	}
+	if got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 4}); got.Refused != "" {
+		t.Fatalf("a commit after a record past S: %+v", got)
+	}
+}
+
+// TestACommitsMoneyNeverWraps: money whose sum passes int64's range, here
+// two leases' usage on one shard, is an error, and nothing is written, so no
+// usage that wrapped reads as credit.
+func TestACommitsMoneyNeverWraps(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ws := seedWorkspace(t, 100)
+	var refs []LeaseRef
+	for range 2 {
+		req := grantOf(ws, 30)
+		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+			t.Fatalf("the grant: %+v %v", got, err)
+		}
+		refs = append(refs, LeaseRef{ws, req.LeaseID})
+	}
+	rows := readRows(t, ws)
+	_, _, err := s.Commit(ctx, []CommitRequest{
+		{Ref: refs[0], AppliedSeq: 1, Money: []MoneyOp{Book(math.MaxInt64, 0)}},
+		{Ref: refs[1], AppliedSeq: 1, Money: []MoneyOp{Book(200, 0)}},
+	})
+	if !errors.Is(err, errMoneyRange) {
+		t.Fatalf("a commit whose usage passes int64's range: %v", err)
+	}
+	if after := readRows(t, ws); !slices.Equal(after, rows) {
+		t.Fatalf("the credit rows changed: %+v, then %+v", rows, after)
+	}
+	for _, ref := range refs {
+		if l := readLease(t, s, ref); l.CommitVersion != 0 || l.Consumed != 0 || l.FaultUsage != 0 {
+			t.Fatalf("lease %v changed: %+v", ref, l)
+		}
+	}
+	identityHolds(t, s, ws)
 }
 
 func TestADrainingLeaseLoadsItsWinners(t *testing.T) {

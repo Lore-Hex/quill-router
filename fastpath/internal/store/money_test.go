@@ -1,6 +1,8 @@
 package store
 
 import (
+	"errors"
+	"math"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -81,6 +83,25 @@ func TestApplyMoneyRefusesWhatIsNoRecord(t *testing.T) {
 	}
 	if _, err := applyMoney(leaseMoney{}, []MoneyOp{Book(1, 0)}); err == nil {
 		t.Error("a lease without donors is booked")
+	}
+}
+
+// TestApplyMoneyRefusesSumsPastInt64: a sum that would pass int64's range
+// is an error, never a figure that wrapped.
+func TestApplyMoneyRefusesSumsPastInt64(t *testing.T) {
+	for name, c := range map[string]struct {
+		before leaseMoney
+		ops    []MoneyOp
+	}{
+		"a shard's usage":               {lease(donorMoney{0, 30, 0}), []MoneyOp{Book(math.MaxInt64, 0), Book(1, 0)}},
+		"the lease's faults":            {lease(donorMoney{0, 30, 0}), []MoneyOp{Book(math.MaxInt64, 0), Book(200, 0)}},
+		"a rise":                        {lease(donorMoney{0, 30, 0}), []MoneyOp{Book(0, math.MaxInt64)}},
+		"what is returned":              {leaseMoney{Allocation: 30, Returned: math.MaxInt64, Donors: []donorMoney{{0, 30, 0}}}, []MoneyOp{Return(1)}},
+		"a rise past a full allocation": {lease(donorMoney{0, math.MaxInt64, 0}), []MoneyOp{Book(math.MaxInt64, 0), Book(0, math.MaxInt64)}},
+	} {
+		if got, err := applyMoney(c.before, c.ops); !errors.Is(err, errMoneyRange) {
+			t.Errorf("%s: %+v %v", name, got, err)
+		}
 	}
 }
 
