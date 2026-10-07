@@ -301,6 +301,41 @@ This pass creates neither fixture. The test-only signing seed is 32 bytes of
 flag compact JWS literals; F2b regenerates it deterministically (kid
 `shadow-v1-fixture`, typ `tr-async-settle-shadow-v1`, the claims listed in §2.1 with
 iat 1791244800 and exp 1791417600) and pins the exact file bytes by the SHA-256 below.
+
+The complete decoded protected header and claims of the elided token (plain
+JSON; sign the canonical serialization of these claims under the test seed to
+reproduce the exact token):
+
+```json
+{
+  "claims": {
+    "async_eligible": false,
+    "aud": "router-shadow",
+    "authorization_id": "auth-v1",
+    "billing_authority": "local",
+    "epoch": 1,
+    "exp": 1791417600,
+    "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
+    "iat": 1791244800,
+    "invocation_nonce": "nonce-v1",
+    "iss": "router-fixture",
+    "journal_region": "us-central1",
+    "key_id": "key-v1",
+    "reservation_id": "res-v1",
+    "route_type": "chat.completions",
+    "settle_origin": "typed",
+    "snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4",
+    "snapshot_version": 1,
+    "streamed": false,
+    "workspace_id": "ws-v1"
+  },
+  "protected": {
+    "alg": "EdDSA",
+    "kid": "shadow-v1-fixture",
+    "typ": "tr-async-settle-shadow-v1"
+  }
+}
+```
 The snapshot uses the existing builder literal, with 250,000/625,000 cache
 rates (`docs/design/async-settle-outbox-v1.md:123`).
 
