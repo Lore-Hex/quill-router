@@ -1227,12 +1227,15 @@ def guard_problems(
         if breaks in (BREAKS_NOTHING, BREAKS_EVALUATION, TYPE_INVARIANT):
             if len(str(row.get("why", "")).split()) < 4:
                 problems.append(f"guard {label}: breaks {breaks} and gives no reason (`why`)")
-        if breaks in (BREAKS_NOTHING, BREAKS_EVALUATION):
+        # A row names the variant that shows what its guard breaks when the
+        # main configuration does not: a claim, or an expression left with no
+        # value. A guard that breaks nothing names none.
+        if breaks == BREAKS_NOTHING:
             if "cfg" in row:
-                problems.append(f"guard {label}: `cfg` is only for a guard that breaks a claim")
+                problems.append(f"guard {label}: `cfg` is not for a guard that breaks nothing")
         elif variant not in configs:
             problems.append(f"guard {label}: the variant {variant} has no .cfg")
-        elif breaks not in _claims(configs[variant]):
+        elif breaks != BREAKS_EVALUATION and breaks not in _claims(configs[variant]):
             problems.append(f"guard {label}: {breaks} is not a claim its configuration checks")
     return problems
 
@@ -2001,6 +2004,16 @@ def self_test() -> bool:
          {}, table([kills, 'breaks = "Small"\ncfg = "narrow"', kills, kills]), "the variant narrow has no .cfg"),
         ("a guard that breaks only TypeOK and says no why is refused",
          {}, table([kills, 'breaks = "TypeOK"', kills, kills]), "breaks TypeOK and gives no reason"),
+        ("a guard that breaks nothing and names a variant is refused",
+         {}, table([kills, explained + '\ncfg = "wide"', kills, kills]),
+         "`cfg` is not for a guard that breaks nothing"),
+        ("a guard that leaves an expression undefined only in a variant names it",
+         {}, table([kills, explained, 'breaks = "NonNegative"\ncfg = "wide"',
+                    'breaks = "evaluation"\ncfg = "wide"\nwhy = "it keeps Head defined"']), ""),
+        ("a guard that leaves an expression undefined in a variant that has no .cfg is refused",
+         {}, table([kills, explained, 'breaks = "NonNegative"\ncfg = "wide"',
+                    'breaks = "evaluation"\ncfg = "narrow"\nwhy = "it keeps Head defined"']),
+         "the variant narrow has no .cfg"),
         ("a complete table is accepted",
          {}, table([kills, explained, 'breaks = "NonNegative"\ncfg = "wide"',
                     'breaks = "evaluation"\nwhy = "it keeps Head defined"']), ""),
