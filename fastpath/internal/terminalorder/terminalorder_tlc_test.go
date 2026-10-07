@@ -109,6 +109,21 @@ func TestStateCountMatchesTLC(t *testing.T) {
 	}
 }
 
+// TestWholeConfigurationsMatchTLC compares the whole state graphs of the
+// configurations proofs/ checks, 674,936 and 3,564 states, with the shadow's,
+// step for step, read as they stream. TLC runs them from cfgInstances, which
+// TestStateCountMatchesTLC binds to the files. So on every configuration TLC
+// checks, the shadow is the spec: a spurious step anywhere in them would show.
+func TestWholeConfigurationsMatchTLC(t *testing.T) {
+	for file, c := range cfgInstances {
+		got := compareWithTLC(t, c, c.Next)
+		if len(got.Diffs) > 0 {
+			t.Errorf("%s: differences from TLC, the first: %v", file, got.Diffs)
+		}
+		t.Logf("%s: %d states and %d steps, as TLC has them", file, got.States, got.Steps)
+	}
+}
+
 // TestDeclarationsAreBoundToTheirFiles: a declaration that differs from its
 // .cfg is refused by TLC reading the file.
 func TestDeclarationsAreBoundToTheirFiles(t *testing.T) {
