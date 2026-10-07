@@ -178,14 +178,15 @@ def rebalance_credit_for_estimate(
 
         needed = estimate - target_available
         moved = 0
-        # Largest donor first. Section 4.7 asks the cold paths for ascending
-        # shard order, the lock order of its multi-row writers; this one keeps
-        # its own. Its first write is the target's, so no donor order makes it
-        # ascending, and a rebalance that crosses a covering write is aborted
-        # by wound-wait and retried. Taking from the largest donor leaves the
-        # other shards whole for the requests whose first candidate they are,
-        # which the guarded debit's repair, a transaction apart from its
-        # debit, relies on (tests/test_credit_rebalance_contention.py).
+        # Largest donor first, as before. Section 4.7 asks the cold paths for
+        # ascending shard order, the lock order of its multi-row writers; this
+        # one keeps its allocation instead: each step debits a donor, then
+        # credits the target, so its rows are not taken in ascending order
+        # either way, and when it crosses a covering write Spanner's wound-wait
+        # aborts one of the two, which retries. Ascending donors would change
+        # which shards a top-up drains, and the guarded debit, whose repair is
+        # a transaction apart from its debit, would then lose the schedule
+        # tests/test_credit_rebalance_contention.py checks.
         donors = sorted(
             (
                 (available, shard)

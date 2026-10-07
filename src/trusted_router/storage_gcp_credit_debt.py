@@ -55,10 +55,19 @@ class CreditRowsIncomplete(RuntimeError):
 
 @dataclass(frozen=True)
 class CreditRows:
-    """A workspace's credit rows: each row's headroom in shard order, and the mark."""
+    """A workspace's credit rows: each row's headroom and mark, in shard order.
+
+    `marked` is whether any row is marked. Every write sets one mark on all of
+    them, but a row recreated without the column's value (federated booking's
+    zero-credit row) can differ, and the next write makes them agree.
+    """
 
     headroom: tuple[int, ...]
-    marked: bool
+    marks: tuple[bool, ...]
+
+    @property
+    def marked(self) -> bool:
+        return any(self.marks)
 
 
 def read_credit_rows(
@@ -84,11 +93,9 @@ def read_credit_rows(
         expected = shard_count if shard_count is not None else len(shards) + 1
         missing = next((shard for shard in range(expected) if shard not in present), None)
         raise CreditRowsIncomplete(missing)
-    # Every row carries the same mark, as every write sets it on all of them.
-    # Read conservatively all the same: one marked row marks the workspace.
     return CreditRows(
         headroom=tuple(int(row[1]) for row in rows),
-        marked=any(bool(row[2]) for row in rows),
+        marks=tuple(bool(row[2]) for row in rows),
     )
 
 
@@ -131,7 +138,7 @@ def write_credit_rows(
         )
         if count != 1:
             raise CreditRowsChanged(f"credit row {workspace_id}/{shard} is not what was read")
-    if marked != before.marked:
+    if any(mark != marked for mark in before.marks):
         shard_count = len(before.headroom)
         count = transaction.execute_update(
             _MARK_SQL,

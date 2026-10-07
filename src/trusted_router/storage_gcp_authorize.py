@@ -314,13 +314,18 @@ def credit_exhaustion_precheck(
     failure defers to the transaction (HEADROOM or DEFER). Like
     the key lifetime-cap precheck this may pass a request the transaction refuses
     (which re-records the workspace) but must never refuse one it would accept.
+
+    A workspace marked in debt (section 4.7) whose signed sum is negative is
+    EXHAUSTED whatever one shard holds: every marked row refuses. A mark the
+    sum no longer bears out is HEADROOM, so the transaction refuses and
+    recover_credit heals it.
     """
     pt = param_types
     try:
         with database.snapshot(multi_use=True) as snapshot:
             rows = list(
                 snapshot.execute_sql(
-                    "SELECT shard, total_credits, total_usage, reserved "
+                    "SELECT shard, total_credits, total_usage, reserved, COALESCE(in_debt, FALSE) "
                     "FROM tr_credit_balance WHERE workspace_id=@pk ORDER BY shard",
                     params={"pk": workspace_id},
                     param_types={"pk": pt.STRING},
@@ -332,9 +337,12 @@ def credit_exhaustion_precheck(
                 return HEADROOM
             available = [
                 int(total_credits) - int(total_usage) - int(reserved)
-                for _, total_credits, total_usage, reserved in rows
+                for _, total_credits, total_usage, reserved, _marked in rows
             ]
-            if max(available) >= estimate or sum(available) >= estimate:
+            if any(bool(row[4]) for row in rows):
+                if sum(available) >= 0:
+                    return HEADROOM
+            elif max(available) >= estimate or sum(available) >= estimate:
                 return HEADROOM
             if idempotency_scope is not None:
                 existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)

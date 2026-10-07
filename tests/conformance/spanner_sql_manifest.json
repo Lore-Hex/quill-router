@@ -3795,7 +3795,7 @@
       ]
     },
     "storage_gcp_authorize:credit_exhaustion_precheck:1": {
-      "fingerprint": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50",
+      "fingerprint": "bb08ce1cf8b8bf81a7db4487ec13fff5656d75ea7cb911c1325fc1770c5ef740",
       "scenarios": [
         {
           "bindings": {},
@@ -4398,7 +4398,7 @@
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:reap_expired_reservations_result": "792c0c08242dcd713034dd26eb9821673662536d20a3af9b1a2308dfe186a7d1",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:credit_exhaustion_precheck": "2d005ac4817ef9dff2e8481daedb53a1dafcf758ba22790222190d51fd1d3e50",
+    "storage_gcp_authorize:credit_exhaustion_precheck": "bb08ce1cf8b8bf81a7db4487ec13fff5656d75ea7cb911c1325fc1770c5ef740",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "cf57850af170dd898ca10dc42d13165830d8cc4cccac5d56c4dbc803196c2842",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "0bda4a3f3d5c05e15b319f7bcc94bdc26944c12bea92efa9001398f96841b998",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
@@ -4517,8 +4517,8 @@
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
     "storage_gcp:SpannerStore._heal_stale_debt_mark": "c6e3e52d7699599f2d21d7aba9a5cdd13238e87e6251e66f6bb653b0829e3b85",
-    "storage_gcp_credit_debt:read_credit_rows": "bf6dc753a5cfa926c74e210d5d581cf8902304f0a5c114f6a2b666bc0d508bd1",
-    "storage_gcp_credit_debt:write_credit_rows": "591470d4559b79c7b94176caeea140a8eb88f4fbf5dba98b6e0d02e45b8c182b"
+    "storage_gcp_credit_debt:read_credit_rows": "265eb91cc06b8f0d0148cf74f25dd27002f71f6113fe5627a484bc655a6c6305",
+    "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
