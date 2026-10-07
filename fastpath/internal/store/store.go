@@ -70,9 +70,10 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	// would be cut short, and the window or the fence with it. No lease's
 	// setting is near a week, and bounding them there keeps every sum of
 	// them, and every time they are added to, in range.
-	for _, d := range []time.Duration{cfg.Window, cfg.Skew, cfg.PublishDeadline} {
+	for _, d := range []time.Duration{cfg.Window, cfg.Skew, cfg.PublishDeadline, cfg.MaxLife, cfg.Grace} {
 		if d%time.Microsecond != 0 || d > MaxSetting {
-			return nil, errors.New("store: Window, Skew and PublishDeadline must be whole microseconds, at most MaxSetting")
+			return nil, errors.New("store: Window, Skew, PublishDeadline, MaxLife and Grace must be whole microseconds, " +
+				"at most MaxSetting")
 		}
 	}
 	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {

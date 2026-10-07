@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -116,6 +117,31 @@ func TestAReapWaitsForItsDeadlinePlusGrace(t *testing.T) {
 	}
 	if r, _, err := s.Reap(ctx, ref, version, at, reapOf("a1", 3)); err != nil || r != "" {
 		t.Fatalf("a reap at the deadline plus the grace: %q %v", r, err)
+	}
+}
+
+// TestMaxLifeAndGraceAreBounded: a close adds MaxLife and Grace to the
+// expiry, and a reap Grace to a deadline, so New bounds both as it does the
+// other durations, and no sum of them overflows.
+func TestMaxLifeAndGraceAreBounded(t *testing.T) {
+	spikeStore(t)
+	for name, change := range map[string]func(*Config){
+		"MaxLife past a week": func(c *Config) { c.MaxLife = MaxSetting + time.Microsecond },
+		"Grace past a week":   func(c *Config) { c.Grace = MaxSetting + time.Microsecond },
+		"a sum that overflows": func(c *Config) {
+			c.MaxLife, c.Grace = time.Duration(math.MaxInt64/2+1), time.Duration(math.MaxInt64/2+1)
+		},
+	} {
+		cfg := testConfig()
+		change(&cfg)
+		if _, err := New(shared, cfg); err == nil {
+			t.Errorf("%s is taken", name)
+		}
+	}
+	cfg := testConfig()
+	cfg.MaxLife, cfg.Grace = MaxSetting, MaxSetting
+	if _, err := New(shared, cfg); err != nil {
+		t.Fatalf("a week each is refused: %v", err)
 	}
 }
 
