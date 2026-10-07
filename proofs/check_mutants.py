@@ -917,20 +917,27 @@ class _Parse:
                     return str(self.entries[uid].findtext("uniquename"))
                 if uid not in seen:
                     seen.add(uid)
-                    definition = self.entries[uid].find("body")
+                    # A definition's expression is its body. A named theorem's
+                    # or assumption's is the node itself, which a guard can
+                    # name as it names a definition.
+                    entry = self.entries[uid]
+                    definition = entry.find("body") if entry.tag == "UserDefinedOpKind" else entry
                     if definition is not None:
                         bodies.append(definition)
         return None
 
+    # What an expression can name that has an expression of its own.
+    _NAMED = ("UserDefinedOpKindRef", "TheoremDefRef", "AssumeDefRef")
+
     def _references(self, node: ET.Element) -> list[ET.Element]:
-        """The definitions an expression names, outside fairness and outside a LET's definition sites."""
+        """The definitions, theorems and assumptions an expression names, outside fairness and a LET's definition sites."""
 
         found, stack = [], [node]
         while stack:
             current = stack.pop()
             if current.tag == "OpApplNode" and self._operator(current).findtext("uniquename") in ("$WF", "$SF"):
                 continue
-            if current.tag == "UserDefinedOpKindRef":
+            if current.tag in self._NAMED:
                 found.append(current)
                 continue
             stack += [child for child in current if not (current.tag == "LetInNode" and child.tag == "opDefs")]
@@ -1525,6 +1532,8 @@ _USES = [
     ("an initial condition that reads whether an action is enabled", _FORMULA,
      "Spec == x = 0 /\\ z = 0 /\\ ~ENABLED Act(1) /\\ [][Next]_<< x, z >> /\\ \\A a \\in Range : WF_<< x, z >>(Act(a))\n",
      "Act"),
+    ("a guard that names a theorem that reads whether an action is enabled", _OTHER,
+     "THEOREM NotReady == ~ENABLED Act(1)\nOther ==\n    /\\ NotReady\n    /\\ x' = 0\n    /\\ UNCHANGED z\n", "Act"),
     ("an action a LET defines and the relation takes as a step", _NEXT,
      "Next == LET Hop == x = 3 /\\ x' = 0 /\\ UNCHANGED z IN \\E a \\in Range : Either(a) \\/ Hop\n", None),
 ]

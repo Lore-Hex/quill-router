@@ -473,6 +473,11 @@ def self_test() -> bool:
         refused = "" if init_reads != _SELF_TEST_SPEC else "the spec was not changed"
     except Inconclusive as undecided:
         refused = str(undecided)
+    more_in_a_variant = {**base, "tight": base["tight"] + 1}
+    ok = cm._report("a removal that reaches more states in a variant alone reaches new states",
+                    reached(more_in_a_variant, base) == cm.NEW_STATES, reached(more_in_a_variant, base)) and ok
+    ok = cm._report("a removal that reaches as many states in every configuration reaches no new state",
+                    reached(dict(base), base) == cm.NO_NEW_STATE, reached(dict(base), base)) and ok
     ok = cm._report("an initial condition that asks whether an action is enabled is not measured by counting states",
                     "uses Bump, an action of its next-state relation, other than as a step" in refused,
                     refused or "measured") and ok
@@ -605,6 +610,21 @@ def self_test() -> bool:
         ok = cm._report("the same table with its reasons verifies", verify([], (0, 1), root) == 0, "holds") and ok
         ok = cm._report("each part of four verifies, and together they cover every row",
                         all(verify([], (part, 4), root) == 0 for part in range(4)), "holds") and ok
+        # The spec's [states] is checked by one part only: the one its index
+        # names, here part 0 of four.
+        checked: list[int] = []
+        measure = globals()["base_states"]
+        try:
+            for part in range(4):
+                def counted(name: str, spec_text: str, configs: dict[str, str], part: int = part) -> dict[str, int]:
+                    checked.append(part)
+                    return measure(name, spec_text, configs)
+                globals()["base_states"] = counted
+                verify([], (part, 4), root)
+        finally:
+            globals()["base_states"] = measure
+        ok = cm._report("the spec's [states] is checked once, by the part its index names",
+                        checked == [0], str(checked)) and ok
         rows[1]["breaks"], rows[1]["reaches"] = "Small", ""
         rewrite(rows)
         ok = cm._report("a table with one false row does not verify", verify([], (0, 1), root) == 1, "refused") and ok
