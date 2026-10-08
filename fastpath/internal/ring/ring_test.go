@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -148,6 +150,57 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("%s did not happen within a second", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+const ringFrame = "github.com/Lore-Hex/quill-router/fastpath/internal/ring."
+
+// blockedIn reports whether a goroutine is blocked for reason, as the
+// runtime names the wait ("chan receive", "sync.Mutex.Lock"), with fn (such
+// as "(*Watcher).Stop") the first frame of this package on its stack.
+func blockedIn(fn, reason string) bool {
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		header, frames, _ := strings.Cut(g, "\n")
+		if !strings.Contains(header, " ["+reason+"]") && !strings.Contains(header, " ["+reason+",") {
+			continue
+		}
+		for _, line := range strings.Split(frames, "\n") {
+			if strings.HasPrefix(line, ringFrame) {
+				if strings.HasPrefix(line, ringFrame+fn+"(") {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
+// waitUntilBlocked waits until a goroutine is seen blocked in fn for
+// reason, and fails if returned closes first. Its stack is the evidence
+// that the wait has begun, however late a notice that it ended would come.
+func waitUntilBlocked(t *testing.T, returned <-chan struct{}, fn, reason string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !blockedIn(fn, reason) {
+		select {
+		case <-returned:
+			t.Fatalf("%s returned, and it was never seen waiting (%s)", fn, reason)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s was not seen waiting (%s) within five seconds", fn, reason)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -607,11 +660,9 @@ func TestStopCancelsAReadUnderWay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Stop did not cancel the read under way")
 	}
-	select {
-	case <-stopped:
-		t.Fatal("Stop returned while the read it cancelled had not")
-	case <-time.After(50 * time.Millisecond):
-	}
+	// The read is held until Stop is seen waiting for the loop that made
+	// it, at its receive from done.
+	waitUntilBlocked(t, stopped, "(*Watcher).Stop", "chan receive")
 	close(g.release)
 	select {
 	case <-stopped:
@@ -847,11 +898,9 @@ func TestStopEndsAWriteUnderWay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Stop did not cancel the write under way")
 	}
-	select {
-	case <-stopped:
-		t.Fatal("Stop returned while the write it cancelled had not")
-	case <-time.After(50 * time.Millisecond):
-	}
+	// The write is held until Stop is seen waiting for the state change
+	// that made it, at the node's lock.
+	waitUntilBlocked(t, stopped, "(*Node).Stop", "sync.Mutex.Lock")
 	close(b.release)
 	select {
 	case <-stopped:
