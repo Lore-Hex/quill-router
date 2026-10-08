@@ -17,6 +17,7 @@ from trusted_router.async_settle_shadow_evidence import (
     KINDS,
     SAMPLE,
     retired_day,
+    retry_classification,
     validate_manifest,
     validate_sample,
 )
@@ -183,14 +184,7 @@ class EvidenceStore:
             if rows:
                 previous = json.loads(rows[0][0])
                 validate_sample(previous, identity)
-                if previous["booking"]["attempted_kind"] != body["booking"]["attempted_kind"]:
-                    return "winner_polarity"
-                # A verified terminal identifies the attempt. A later diagnostic
-                # classification cannot rewrite the first durable observation.
-                if previous["payload_hash"] != body["payload_hash"] or (
-                        body["payload_hash"] is None and previous["classification"] != body["classification"]):
-                    return "conflict"
-                return "duplicate"
+                return retry_classification(previous, body)
             try:
                 self.write(tx, SAMPLE, identity, body, deadline)
             except RetirementBoundary:

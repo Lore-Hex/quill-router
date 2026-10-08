@@ -17,6 +17,19 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('retry-null-hash-original-accepted', REPORT, [
+        ('if retry_classification(row, row) != "duplicate":', 'if False:')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_exact_retry_cannot_borrow_an_excluded_original'),
+    ('retry-null-hashes-equal', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('original["payload_hash"] is None or retry["payload_hash"] is None', 'False')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_requires_verified_hash_not_diagnostic_equality[both-null-settle]'),
+    ('retry-differing-hash-accepted', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('or original["payload_hash"] != retry["payload_hash"]', '')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_adapter_retry_original_class[verified-different-settle]'),
+    ('retry-diagnostic-change-conflicts', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('or original["payload_hash"] != retry["payload_hash"]',
+         'or original["payload_hash"] != retry["payload_hash"] or original["classification"] != retry["classification"]')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_requires_verified_hash_not_diagnostic_equality[diagnostic-change-settle]'),
     ('retry-original-reconciliation-removed', REPORT, [
         ('if not has_original:', 'if False:')],
         'tests/test_async_settle_shadow_r7_retry_original.py::test_last_day_duplicate_refund_requires_original'),

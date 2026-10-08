@@ -60,6 +60,24 @@ def dimensions(adapter: str | None, route: str | None, streamed: bool | None) ->
             route if route in ROUTES else "other" if route else "unknown", streamed)
 
 
+def retry_classification(original: dict[str, Any], retry: dict[str, Any]) -> str:
+    """Classify two validated observations at the same durable sample key.
+
+    Only a verified terminal hash identifies a reproducible payload. Diagnostic
+    classifications may change on replay without changing that payload. Missing
+    hashes cannot prove equality, even when both observations are unevaluable.
+    """
+    if original["booking"]["attempted_kind"] != retry["booking"]["attempted_kind"]:
+        return "winner_polarity"
+    if (original["payload_hash"] is None or retry["payload_hash"] is None
+            or not original["provenance"]["binding_verified"]
+            or not retry["provenance"]["binding_verified"]
+            or original["deployment"]["region"] != retry["deployment"]["region"]
+            or original["payload_hash"] != retry["payload_hash"]):
+        return "conflict"
+    return "duplicate"
+
+
 def sample(ctx: Context, comparison: Comparison, *, observed_us: int, router_us: int,
            comparator_us: int, booking_us: int | None, instance: str,
            revision: str, admission: dict[str, Any] | None = None) -> dict[str, Any]:

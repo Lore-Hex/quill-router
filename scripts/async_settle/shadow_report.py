@@ -22,6 +22,7 @@ from trusted_router.async_settle_shadow_evidence import (
     DIMENSIONS,
     PHASE_FIELDS,
     SAMPLE,
+    retry_classification,
     validate_manifest,
     validate_sample,
 )
@@ -217,13 +218,19 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 raise ValueError("invalid cap row")
         else:
             raise ValueError("unknown evidence kind")
-    # Retry counters have no authorization IDs. At minimum, each phase must
-    # have a possible retained original of that kind in this authority/region.
+    # Retry counters have no authorization IDs or payload hashes. At minimum,
+    # each phase needs a retained, verified original that the adapter could
+    # duplicate. A different non-null retry hash could conflict with that same
+    # original. Null/unverified originals prove neither possibility; their
+    # retries must be counted as conflicts (which reset correctness) or block.
+    # This is an existence check, not reconstruction of discarded retry hashes.
     # Index ALL supplied rows (including lookback days), independently of the
     # original writer and requested-window metrics. One original can support
     # many retries; an opposite-kind row can only yield winner_polarity.
     originals: dict[tuple[str, str, str], list[int]] = {}
     for row in samples:
+        if retry_classification(row, row) != "duplicate":
+            continue
         key = (row["booking"]["attempted_kind"], row["deployment"]["region"], row["authorization_day"])
         originals.setdefault(key, []).append(row["observed_at_us"])
     for times in originals.values():
