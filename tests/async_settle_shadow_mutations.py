@@ -17,6 +17,17 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('retry-original-reconciliation-removed', REPORT, [
+        ('if not has_original:', 'if False:')],
+        'tests/test_async_settle_shadow_r7_retry_original.py::test_last_day_duplicate_refund_requires_original'),
+    ('sample-stream-from-legacy-body', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('ctx.body.route_type, comparison.verified_streamed)', 'ctx.body.route_type, ctx.body.streamed)')],
+        'tests/test_async_settle_shadow_r7_refund_dimensions.py::test_actual_nonstream_refund_retains_signed_stream_dimensions[True-sample]'),
+    ('counter-stream-from-legacy-body', RUNTIME, [
+        ('verified_dims = (dims[0], dims[1], compared.verified_streamed)',
+         'verified_dims = (dims[0], dims[1], capture.body.streamed)')],
+        'tests/test_async_settle_shadow_r7_refund_dimensions.py::test_actual_nonstream_refund_retains_signed_stream_dimensions[True-counter]'),
+
     ('refund-placeholder-compared', COMPARE, [
         ('expected["streamed"] = claims.streamed', 'expected["streamed"] = body.streamed')],
         'tests/test_async_settle_shadow_r6_legacy_refund.py::test_legacy_refund_placeholder_is_not_authorize_stream_identity[False]'),

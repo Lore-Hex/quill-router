@@ -193,7 +193,7 @@ class Runtime:
         if auth is None or not self.opted(auth.workspace_id):
             return
         dims = dimensions(capture.endpoint.provider if capture.endpoint else auth.provider,
-                          capture.body.route_type, capture.body.streamed)
+                          capture.body.route_type, None)
         with self.counters.lock:
             self.counters.increment(dims, capture.kind + "_attempts")
             self.counters.increment(dims, "observed_attempts")
@@ -315,13 +315,13 @@ class Runtime:
                 return
             data = result.get("data", {}) if isinstance(result, dict) else {}
             finalized = bool(data.get("settled") or data.get("already_settled") or data.get("finalization_outcome") == "refunded")
+            booking_failed = False
             try:
                 booking = self.store.booking(auth.id, deadline) if finalized else Booking(outcome="pending")
             except Exception:
                 outcome = data.get("finalization_outcome")
                 booking = Booking(None, outcome if outcome in {"settled", "refunded"} else "unknown", finalized)
-                self.counters.increment(dims, "booking_unknown")
-                self.counters.reason(dims, capture.kind, "store_unavailable")
+                booking_failed = True
             booking_us = int((time.monotonic()-capture.started)*1e6) if booking.confirmed else None
             def rebuild() -> BillingSnapshot:
                 if capture.endpoints is None:
@@ -339,7 +339,21 @@ class Runtime:
             cpu_started = time.thread_time_ns()
             compared = compare(headers, ctx, [self.signer.trusted] if self.signer else [])
             comparator_us = (time.thread_time_ns()-cpu_started)//1000
-            self.counters.outcome(dims, compared)
+            # Admission/drop accounting starts unknown: no proof is verified on
+            # the HTTP path. Move this attempt atomically once the worker has a
+            # signed stream fact; never use the legacy refund placeholder.
+            verified_dims = (dims[0], dims[1], compared.verified_streamed)
+            with self.counters.lock:
+                if verified_dims != dims:
+                    for field in (capture.kind + "_attempts", "observed_attempts",
+                                  "observed_unknown", "envelope_present", "comparison_attempts"):
+                        self.counters.increment(dims, field, -1)
+                        self.counters.increment(verified_dims, field)
+                    dims = verified_dims
+                self.counters.outcome(dims, compared)
+            if booking_failed:
+                self.counters.increment(dims, "booking_unknown")
+                self.counters.reason(dims, capture.kind, "store_unavailable")
             # Use one clock value for this observation's retention and permit
             # day. The write boundary checks again after potentially slow work.
             observed_now = time.time()

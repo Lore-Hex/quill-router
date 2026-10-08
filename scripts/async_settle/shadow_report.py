@@ -8,6 +8,7 @@ import json
 import math
 import re
 import time
+from bisect import bisect_right
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -216,6 +217,17 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 raise ValueError("invalid cap row")
         else:
             raise ValueError("unknown evidence kind")
+    # Retry counters have no authorization IDs. At minimum, each phase must
+    # have a possible retained original of that kind in this authority/region.
+    # Index ALL supplied rows (including lookback days), independently of the
+    # original writer and requested-window metrics. One original can support
+    # many retries; an opposite-kind row can only yield winner_polarity.
+    originals: dict[tuple[str, str, str], list[int]] = {}
+    for row in samples:
+        key = (row["booking"]["attempted_kind"], row["deployment"]["region"], row["authorization_day"])
+        originals.setdefault(key, []).append(row["observed_at_us"])
+    for times in originals.values():
+        times.sort()
     proof_hash = hashlib.sha256(canonical(proof)).hexdigest()
     gates = {name: isinstance(proof.get(name), str) and re.fullmatch(r"[0-9a-f]{64}", proof[name]) is not None for name in EXTERNAL_GATES}
     if proof.get("fixture_sha256") != FIXTURE_SHA256 or not all(gates.values()):
@@ -412,6 +424,19 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                     durable = sample_counts[identity, bucket["adapter"], bucket["route_type"], bucket["streamed"], field]
                     if durable > bucket[field]:
                         gap(identity+":sample_classification_gap", day)
+            for terminal in counter["terminal_counts"]:
+                phase = terminal["phase"]
+                key = (identity, terminal["adapter"], terminal["route_type"], terminal["streamed"], phase)
+                if terminal["samples_inserted"] != phase_samples[(*key, "samples_inserted")]:
+                    gap(identity+":"+phase+":sample_phase_gap", day)
+                if terminal["duplicate_samples"] or terminal["conflicting_samples"]:
+                    oldest = (dt.date.fromisoformat(day) - dt.timedelta(days=30)).isoformat()
+                    has_original = any(
+                        kind == phase and region == counter["region"] and oldest <= auth_day <= day
+                        and bisect_right(times, counter["flushed_at_us"]) > 0
+                        for (kind, region, auth_day), times in originals.items())
+                    if not has_original:
+                        gap(identity+":"+phase+":retry_original_gap", day)
             for key, durable in phase_samples.items():
                 writer_id, adapter, route, streamed, phase, field = key
                 if writer_id != identity:

@@ -71,7 +71,7 @@ def sample(ctx: Context, comparison: Comparison, *, observed_us: int, router_us:
         "go_usage", "legacy_usage", "python_micro", "go_micro", "booked_micro", "rebuilt_micro",
         "legacy_frozen_micro", "python_minus_go", "booked_minus_frozen", "rebuilt_minus_frozen",
         "booked_minus_rebuilt", "classification")}
-    adapter, route, streamed = dimensions(comparison.adapter or auth.provider, ctx.body.route_type, ctx.body.streamed)
+    adapter, route, streamed = dimensions(comparison.adapter or auth.provider, ctx.body.route_type, comparison.verified_streamed)
     body.update(v=1, policy_version="shadow-v1", authorization_id=auth.id,
                 authorization_day=created.date().isoformat(), observed_at_us=observed_us,
                 authorize_at_us=int(created.timestamp() * 1e6),

@@ -64,6 +64,7 @@ class Comparison:
     booked_minus_frozen: int | None = None
     rebuilt_minus_frozen: int | None = None
     booked_minus_rebuilt: int | None = None
+    verified_streamed: bool | None = None
     binding_verified: bool = False
     raw_matches_body: bool = False
     snapshot_transport: str = "unknown"
@@ -176,6 +177,9 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
         # Preserve attempt identity even if this writer cannot reconstruct S0;
         # the first durable observation still owns this identical retry.
         out.payload_hash = envelope.payload_hash
+    # Export only a verified proof bound to this authorization and terminal.
+    # Failure to evaluate usage must not erase the signed stream fact.
+    out.verified_streamed = claims.streamed
     snapshot = envelope.snapshot
     rebuilt = None
     out.snapshot_transport = "full" if snapshot is not None else "hash_only"

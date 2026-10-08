@@ -215,7 +215,7 @@ def test_failed_legacy_attempt_is_counted_without_lost_background_queue(env,monk
     assert db.typed == before and (shadow.pending,shadow.queued_bytes) == (0,0)
     counter = shadow.counters.snapshot()[0][1]
     assert counter['booking_unknown'] == 1
-    assert counter['exclusions'] == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=False,reason='booking_unknown',count=1)]
+    assert counter['exclusions'] == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=None,reason='booking_unknown',count=1)]
     shadow.executor.shutdown()
 
 

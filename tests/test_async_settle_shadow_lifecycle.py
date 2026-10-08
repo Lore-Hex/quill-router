@@ -131,9 +131,11 @@ def test_rate_admission_precedes_real_comparator_and_refills(monkeypatch):
     submit()
     assert calls == [wire()]*12
     body = rt.counters.snapshot()[0][1]
-    assert [row for row in body['drops'] if row['reason']=='rate_limit'] == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=False,reason='rate_limit',count=3)]
+    assert [row for row in body['drops'] if row['reason']=='rate_limit'] == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=None,reason='rate_limit',count=3)]
     bucket = next(row for row in body['counts'] if (row['adapter'],row['route_type'],row['streamed']) == ('openai','chat.completions',False))
-    assert (bucket['observed_attempts'],bucket['observed_eligible'],bucket['observed_unknown']) == (15,12,3)
+    assert (bucket['observed_attempts'],bucket['observed_eligible'],bucket['observed_unknown']) == (12,12,0)
+    unknown = next(row for row in body['counts'] if (row['adapter'],row['route_type'],row['streamed']) == ('openai','chat.completions',None))
+    assert (unknown['observed_attempts'], unknown['observed_unknown']) == (3, 3)
     rt.executor.shutdown()
 
 
@@ -249,14 +251,14 @@ def test_local_worker_failure_and_storage_failure_keep_distinct_reasons(monkeypa
         def fail(*args, error=error, **kwargs):
             raise error
         monkeypatch.setattr(module,'sample',fail)
-        dims = dimensions('openai','chat.completions',False)
+        dims = dimensions('openai','chat.completions',None)
         with rt.counters.day(NOW):
             for field in ('settle_attempts','observed_attempts','observed_unknown'):
                 rt.counters.increment(dims,field)
         ctx = context()
         rt.process(Capture(rt,ctx.body,'settle',NOW,0,ctx.authorization),wire(),{'data':{'settled':True}},1,dims)
         drops = rt.counters.snapshot()[0][1]['drops']
-        assert drops == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=False,reason=reason,count=1)]
+        assert drops == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=None,reason=reason,count=1)]
         rt.executor.shutdown()
     assert captured == []
 
