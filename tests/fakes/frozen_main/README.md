@@ -152,4 +152,44 @@ a frozen frame with a hostile module `__file__` property and check native string
 module-owner and worker-code handling. Their mutations restore ordinary module
 attribute access, dictionary lookup on hostile keys, string subclass hashing,
 code-constant hashing, the unsafe builtin qualname getter and missing static
-builtin attribution.
+builtin attribution. A raw-filename cache mutation also verifies that the
+tracer exclusion still rejects hashing initiated by the guard.
+
+## Per-event operation inventory
+
+Locations below are in `tests/fakes/frozen_package.py`.
+
+| Operation | Native primitive / invariant | File:line |
+| --- | --- | --- |
+| Python/C event selection | CPython-supplied exact string event; literal comparison | `tests/fakes/frozen_package.py:535` |
+| Frame and code fields | Sealed `FrameType` / `CodeType` native fields; no locals reads | `tests/fakes/frozen_package.py:536` |
+| Globals name lookup | `dict.items` and `_metadata`'s native `str.__eq__`, never key hashing/equality dispatch | `tests/fakes/frozen_package.py:536`, helper `:173` |
+| Module-valued owner | `ModuleType.__dict__` slot `__get__`, native dict items, native string comparison | `tests/fakes/frozen_package.py:226` |
+| String metadata normalization | `type`, native `issubclass(..., str)`, `str.__str__` produce exact strings or empty string | `tests/fakes/frozen_package.py:221` |
+| Builtin identity / admission | `id(arg)` lookup in native integer-key dict; `is`; `id(frame.f_code)` membership in integer set | `tests/fakes/frozen_package.py:539` |
+| Builtin module and qualname | Native builtin subtype admission; native `__module__` descriptor; qualname assembled from native `__name__`, `__self__` and type `__qualname__` slots (not builtin `__qualname__`); exact base builtin GC edges recover hidden static owners | `tests/fakes/frozen_package.py:543`, `:561`; descriptors `:236`, qualname helper `:241` |
+| Hidden static builtin owner | Captured native `gc.get_referents` on exact `BuiltinFunctionType`; native list indexing/pop; trailing module edge removed with `is` | `tests/fakes/frozen_package.py:250` |
+| Provenance cache | Exact tuple of normalized strings in guard-owned dict; flags are native booleans | `tests/fakes/frozen_package.py:550` |
+| Namespace / live filename classification | `str.__eq__`, `str.startswith`, `str.__contains__`; precomputed exact root prefix | `tests/fakes/frozen_package.py:212`, `:216`, `:553` |
+| Python qualname | Sealed code field then `str.__str__` normalization | `tests/fakes/frozen_package.py:561` |
+| Generated attribution | Integer code-id lookup; registry retains strong code references and exact native qualnames | `tests/fakes/frozen_package.py:564`, registration `:139` |
+| Live-call record | Captured native `_thread.get_ident`; integer-key `dict.setdefault`; exact-string formatting | `tests/fakes/frozen_package.py:568` |
+| Inventory deduplication | Guard-owned set of exact strings and native line-number integer | `tests/fakes/frozen_package.py:569` |
+| Current module registry | Native module namespace descriptor on `sys`; native dict items; native dict type admission | `tests/fakes/frozen_package.py:574` |
+| Frozen module lookup | Native dict items plus native string equality, followed by native ModuleType admission | `tests/fakes/frozen_package.py:576` |
+| Frozen module filename | Native module namespace descriptor, native dict items/equality, exact-string normalization | `tests/fakes/frozen_package.py:578` |
+| Snapshot relative path | Native `str.startswith`, `str.__getitem__`, `slice`, `len`; no `Path` or `__fspath__` dispatch | `tests/fakes/frozen_package.py:579` |
+| Inventory output / pin lookup | Exact-string `replace`; exact relative-string lookup in JSON-derived native pin dict; native set insertion | `tests/fakes/frozen_package.py:581` |
+| Monitoring thread / frame admission | Captured native `_thread.get_ident` and `sys._getframe`; native builtin subtype check; native boolean/integer comparison | `tests/fakes/frozen_package.py:589`, `:593` |
+
+The metadata witness attributes every protocol call to its immediate Python
+caller. Calls from `tests/fakes/frozen_package.py` (the callback or any helper)
+are failures. A third-party C tracer can hash and compare a resumed frame's
+raw `co_filename` when that frame resumes. Coverage 7.13.5 uses
+CTracer on CPython 3.12 with this repository's branch-coverage configuration;
+requesting its sys.monitoring core falls back because that core cannot measure
+branches on 3.12. These C calls have the resumed owner or test as their immediate
+Python caller, without a guard caller frame. They are outside the guard's
+no-user-protocol contract. The witness permits only filename hash/equality
+calls from those two exact code identities and still requires zero
+calls attributed to the guard, plus the original inventory assertions.

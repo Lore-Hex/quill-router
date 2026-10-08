@@ -2104,51 +2104,61 @@ def test_guard_resumed_module_file_property_is_not_called():
 def test_guard_event_metadata_uses_native_protocols(field):
     from types import ModuleType
 
+    from tests.fakes import frozen_package
+
     if guard_unavailable():
         return
     calls = []
+    test_code = sys._getframe().f_code
+
+    def record(protocol):
+        # One helper frame and one protocol frame separate us from its caller.
+        # Keep code identity; do not hash the hostile co_filename to attribute it.
+        caller = sys._getframe(2)
+        calls.append((protocol, caller.f_code, caller.f_lineno))
+
     class Label(str):
         def __hash__(self):
-            calls.append('hash')
+            record('hash')
             return str.__hash__(self)
         def __eq__(self, other):
-            calls.append('eq')
+            record('eq')
             return str.__eq__(self, other)
         def __str__(self):
-            calls.append('str')
+            record('str')
             return str.__str__(self)
         def __bool__(self):
-            calls.append('bool')
+            record('bool')
             return True
         def startswith(self, *args):
-            calls.append('startswith')
+            record('startswith')
             return str.startswith(self, *args)
         def replace(self, *args):
-            calls.append('replace')
+            record('replace')
             return str.replace(self, *args)
         def __fspath__(self):
-            calls.append('fspath')
+            record('fspath')
             return str.__str__(self)
 
     class HostileModule(ModuleType):
         @property
         def __name__(self):
-            calls.append('module name')
+            record('module name')
             return 'trusted_router.money'
 
     class InvalidOwner:
         def __bool__(self):
-            calls.append('invalid bool')
+            record('invalid bool')
             return True
         @property
         def __name__(self):
-            calls.append('invalid name')
+            record('invalid name')
             return 'trusted_router.money'
 
     class Meta(type):
         def __getattribute__(self, name):
             if name == '__qualname__':
-                calls.append('builtin class qualname')
+                record('builtin class qualname')
             return type.__getattribute__(self, name)
 
     class Carrier(list, metaclass=Meta):
@@ -2205,7 +2215,15 @@ def test_guard_event_metadata_uses_native_protocols(field):
                     next(owner)
                     assert any(row[:4] == ('trusted_router.storage_errors', 'generate', 1,
                                           'src/trusted_router/storage_errors.py') for row in seen)
-                assert calls == []
+                # A C tracer can hash co_filename with the resumed owner (or
+                # this test) as its immediate Python caller. Attribute every
+                # call before excluding only those filename hash/eq operations.
+                guard_calls = [call for call in calls
+                               if str.__eq__(call[1].co_filename, frozen_package.__file__) is True]
+                assert guard_calls == []
+                assert all(field == 'filename' and protocol in ('hash', 'eq')
+                           and (code is function.__code__ or code is test_code)
+                           for protocol, code, _ in calls), calls
             finally:
                 if field == 'globals_key':
                     namespace.pop(key)

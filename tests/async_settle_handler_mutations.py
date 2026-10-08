@@ -475,6 +475,15 @@ MUTATIONS += [
 ] if sys.version_info >= (3, 12) else []
 
 
+# Round 16: tracer exclusion must still catch guard-owned raw filename hashing.
+MUTATIONS += [
+    ('profile-raw-filename-cache-key', [('tests/fakes/frozen_package.py', [
+        ('filename = _event_text(frame.f_code.co_filename)',
+         'filename = frame.f_code.co_filename'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_event_metadata_uses_native_protocols[filename]'),
+] if sys.version_info >= (3, 12) else []
+
+
 def main() -> None:
     results = []
     evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
