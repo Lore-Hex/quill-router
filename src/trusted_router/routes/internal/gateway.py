@@ -1084,7 +1084,12 @@ def _authorize_gateway_sync_impl(
                 else _required_privacy_postures(effective_route_preferences)
             ),
             video_replay=catalog_video_request,
-            input_modalities=effective_route_preferences.input_modalities,
+            input_modalities=(
+                # Video replay uses its frozen execution envelope before live
+                # routing preferences exist, just like its privacy decision.
+                frozenset() if catalog_video_request
+                else effective_route_preferences.input_modalities
+            ),
         )
         byok_configs = _byok_configs_for_candidates(
             existing_candidates, workspace.id, folded_rows=folded_byok,
