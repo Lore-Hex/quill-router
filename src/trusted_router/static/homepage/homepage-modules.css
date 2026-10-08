@@ -203,11 +203,10 @@ details.was[open] summary{margin-bottom:12px}
   .trft .cols{grid-template-columns:repeat(3,1fr);padding-inline:24px}
   .trft .brand{grid-column:1/-1}
   .trft .base{padding-inline:24px}
-  
-  
+
 }
 @media (max-width:880px){
-  
+
   .trh h2{font-size:40px}
   .trc .chd{flex-direction:column;align-items:flex-start}
   .trc table{display:block;overflow-x:auto}

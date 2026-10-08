@@ -135,7 +135,6 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
             "migration": migration,
             "tooltips": content["tooltips"],
             "catalog_total": len(public_ids),
-            "publisher_icons": icons,
         },
     }
 

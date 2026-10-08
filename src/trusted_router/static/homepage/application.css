@@ -9,7 +9,6 @@
 .signin-github span[aria-hidden]{background:#24292f}
 .signin-metamask span[aria-hidden]{background:linear-gradient(135deg,#e2761b,#cd6116)}
 
-
 /* Copy-led marketing sections and a consistent, readable supporting scale. */
 .proof-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px}
 .proof-point{min-width:0;border:1px solid #33403a;padding:24px 28px;background:#0f1411}
@@ -248,10 +247,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .closing-cta .closing-landscape{object-position:60% 70%}
 }
 
-/* The model search lives in the header row at every width. Narrow screens trade the wordmark and button labels for it. */
-
-/* Small phones: the hero's primary action opens the same sign-in dialog, so the header keeps search and moves Sign in into the drawer. */
-
 /* Phones: the logo ticker follows the hero actions instead of being pinned to the viewport bottom.
    Tablets keep the desktop placement at the hero's bottom; the hero's short-window rules cover low heights at every width. */
 @media(max-width:600px){
@@ -259,8 +254,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
 }
 
 /* Live status dot: saturated, glowing, and pulsing while the probe is fresh. */
-
-@keyframes status-pulse{0%,100%{box-shadow:0 0 0 2px #2ee59d40,0 0 8px #2ee59d99}50%{box-shadow:0 0 0 6px #2ee59d00,0 0 14px #2ee59dcc}}
 
 @media(max-width:600px){#top .cta{gap:16px}}
 

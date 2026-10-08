@@ -1,9 +1,6 @@
-/* Shared site chrome: header, model search dialog and footer for every page
- * that extends public/_base.html, plus the console and auth layouts.
- * It mirrors the homepage header and footer (templates/homepage/top.html and
- * footer.html). The homepage keeps its own copy of these rules under
- * static/homepage/ until the sheets are consolidated. Colours, type and
- * spacing come from tokens.css. */
+/* Shared site chrome: header, model search dialog and footer for every page,
+ * the homepage included (templates/public/_nav.html), plus the console and
+ * auth layouts. Colours, type and spacing come from tokens.css. */
 
 .skip-link {
   position: absolute;
@@ -90,6 +87,16 @@
   color: var(--tr-color-text-tertiary);
 }
 
+/* The full label stays in the accessibility tree while the visible words shrink on phones. */
+.trnav .search .search-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .trnav .search kbd {
   margin-left: auto;
   padding: 3px 5px;
@@ -123,7 +130,6 @@
 .trnav .signin {
   flex: none;
   white-space: nowrap;
-  font-size: 15px;
 }
 
 .trnav .menu {
@@ -249,7 +255,7 @@
   }
 
   .trnav .search { max-width: none; }
-  .trnav .signin { margin-left: 0; font-size: 13px; }
+  .trnav .signin { margin-left: 0; }
 
   .trnav .menu {
     display: inline-flex;
