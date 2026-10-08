@@ -102,8 +102,11 @@ type Config struct {
 	// later records are acknowledged without reading it again.
 	ForgetAfter time.Duration
 	// Grace is the reaper's grace (the store's Config.Grace): a hold is
-	// reaped at a tick past its deadline plus it (§4.8).
-	Grace time.Duration
+	// reaped at a tick past its deadline plus it (§4.8). MaxLife is a
+	// hold's longest life (the store's Config.MaxLife): holds no list named
+	// end by the lease's expiry plus it plus the grace.
+	Grace   time.Duration
+	MaxLife time.Duration
 	// Records takes the full records of the reaps the runtime makes, and
 	// Wait bounds how long one's publish is waited for.
 	Records RecordLog
@@ -164,9 +167,9 @@ type handled struct {
 // New is a runtime with its configuration.
 func New(cfg Config) (*Runtime, error) {
 	if cfg.Store == nil || cfg.Skew < 0 || cfg.CommitEvery <= 0 || cfg.MaxBatch < 1 || cfg.Retry <= 0 ||
-		cfg.ForgetAfter < 0 || cfg.Grace < 0 || cfg.Records == nil || cfg.Wait <= 0 {
+		cfg.ForgetAfter < 0 || cfg.Grace < 0 || cfg.MaxLife <= 0 || cfg.Records == nil || cfg.Wait <= 0 {
 		return nil, errors.New("auditor: a runtime needs a store, a skew allowance, a commit interval, a batch size, " +
-			"a retry wait, a grace, the record topic and a publish wait")
+			"a retry wait, a grace, a hold's maximum life, the record topic and a publish wait")
 	}
 	if cfg.Alert == nil {
 		cfg.Alert = func(string, string) {}
@@ -378,6 +381,10 @@ func (rt *Runtime) load(ctx context.Context, h *held) bool {
 			return false
 		case err == nil:
 			if h.lease, err = Load(h.ref, loaded, rt.cfg.Skew); err == nil {
+				// A member read again reads the drain log from the first
+				// row, and sees the end afresh: what the one dropped
+				// applied of it was never committed.
+				h.cursor, h.endSince = time.Time{}, time.Time{}
 				rt.told(h, loaded.Lease)
 				return true
 			}
@@ -507,12 +514,16 @@ func (rt *Runtime) reap(ctx context.Context, h *held, hold store.HoldRow, at tim
 // time has run out.
 func (rt *Runtime) closeAt(ctx context.Context, h *held, at time.Time) {
 	l := h.lease
-	if len(l.holds) > 0 || l.Dirty() {
+	now := rt.cfg.Clock()
+	if len(l.holds) > 0 || l.Dirty() || (!l.listed && now.Before(l.expiry.Add(rt.cfg.MaxLife+rt.cfg.Grace))) {
+		// Not the end: a hold the member knows is open, or holds no list
+		// named, which end only by the expiry plus their maximum life
+		// plus the grace (§4.8).
 		h.endSince = time.Time{}
 		return
 	}
 	if h.endSince.IsZero() {
-		h.endSince = rt.cfg.Clock()
+		h.endSince = now
 		return
 	}
 	if at.Before(h.endSince.Add(rt.cfg.Skew)) {

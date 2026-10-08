@@ -60,7 +60,10 @@ type Lease struct {
 	version  int64
 	draining bool
 	fence    time.Time // F, known once the lease drains and the member loaded it so
-	applied  int64     // the highest owner sequence number applied
+	// expiry is the lease's, as the member last read its row: a draining
+	// lease's is its last.
+	expiry   time.Time
+	applied  int64 // the highest owner sequence number applied
 	lastTick int64
 	osum     int64 // what the owner's terminals applied charge, the checkpoint audit's sum
 	s        int64 // the boundary S, once stored or applied
@@ -131,7 +134,8 @@ func Load(ref store.LeaseRef, l store.Loaded, skew time.Duration) (*Lease, error
 	}
 	out := &Lease{ref: ref, skew: skew, version: l.Lease.CommitVersion, draining: l.Lease.State == "draining",
 		applied: l.Lease.AppliedSeq, lastTick: l.Lease.LastTick, osum: l.Lease.AuditOsum,
-		listed: l.Lease.HoldsListedSeq.Valid, faulted: l.Lease.AuditFaultSeq.Valid, holds: map[string]*hold{},
+		listed: l.Lease.HoldsListedSeq.Valid, faulted: l.Lease.AuditFaultSeq.Valid, expiry: l.Lease.Expiry,
+		holds:   map[string]*hold{},
 		winners: map[string]bool{}, shortfall: l.Lease.ShortfallTotal, put: map[string]bool{},
 		chunks: map[int64][]record.HeldHold{}}
 	if l.Lease.FenceTime.Valid {
@@ -164,7 +168,7 @@ func (l *Lease) Drained(lease store.Lease) error {
 	if !lease.FenceTime.Valid {
 		return errors.New("auditor: the lease has no fence: it is still open")
 	}
-	l.draining, l.fence = true, lease.FenceTime.Time
+	l.draining, l.fence, l.expiry = true, lease.FenceTime.Time, lease.Expiry
 	return nil
 }
 

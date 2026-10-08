@@ -263,7 +263,7 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 func (f *runtimeFixture) runtime(changes ...func(*Config)) *Runtime {
 	f.t.Helper()
 	cfg := Config{Store: f.store, Skew: 2 * time.Second, CommitEvery: time.Hour, MaxBatch: 10, Retry: time.Millisecond,
-		ForgetAfter: time.Hour, Grace: time.Minute, Records: f.records, Wait: time.Second,
+		ForgetAfter: time.Hour, Grace: time.Minute, MaxLife: 5 * time.Minute, Records: f.records, Wait: time.Second,
 		Alert: func(lease, what string) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -938,9 +938,19 @@ func TestADrainedLeaseIsBookedReapedAndClosed(t *testing.T) {
 	}
 	late = late.Add(time.Hour)
 	clock = late
+	f.records.mu.Lock()
+	f.records.failing = 1
+	f.records.mu.Unlock()
+	tickAt(late) // a's full record is not published: no reap
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 0 {
+		t.Fatalf("a reap whose full record the topic refused: %+v %v", rows, err)
+	}
 	tickAt(late) // a reaped
 	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
 		t.Fatalf("the record topic: %v", got)
+	}
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 1 || rows[0].RecordID != "reap-a" {
+		t.Fatalf("the reap's row: %+v %v", rows, err)
 	}
 	round(rt)
 	tickAt(late.Add(time.Second)) // the reap's row applied: a's winner
@@ -1041,5 +1051,95 @@ func TestTheTickerDrainsAndTicks(t *testing.T) {
 	tk.round(ctx)
 	if len(log.ticks[f.ref.LeaseID]) != 1 || len(log.ticks[other.LeaseID]) != 1 {
 		t.Fatalf("ticks a page at a time: %d and %d", len(log.ticks[f.ref.LeaseID]), len(log.ticks[other.LeaseID]))
+	}
+}
+
+// TestAMemberReadAgainReadsTheDrainLogFromItsFirstRow: rows a dropped
+// member applied and never committed are applied again by the member read
+// in its place, the first for an authorization winning still.
+func TestAMemberReadAgainReadsTheDrainLogFromItsFirstRow(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, settle(1, "b", 40, 0)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	round(rt)
+	appendRow := func(id string, charge int64) {
+		t.Helper()
+		if got, err := f.s.Append(ctx, store.DrainTerminal{Ref: f.ref, AuthorizationID: "a", RecordID: id,
+			Kind: "settle", Charge: charge, Estimate: 10, Digest: sum(id), Money: []byte(`{}`),
+			Cause: "past_cutoff"}); err != nil || got.Refused != "" {
+			t.Fatalf("the append of %s: %+v %v", id, got, err)
+		}
+	}
+	appendRow("d7", 7)
+	tickAt(row.FenceTime.Time.Add(3 * time.Second)) // d7 applied
+	f.store.mu.Lock()
+	f.store.failCommit = 1
+	f.store.mu.Unlock()
+	round(rt) // the commit fails: the member is read again
+	appendRow("d11", 11)
+	tickAt(row.FenceTime.Time.Add(4 * time.Second))
+	round(rt)
+	won := map[string]store.Winner{}
+	for _, p := range f.loaded().Packs {
+		for _, w := range p.Winners {
+			won[w.AuthorizationID] = w
+		}
+	}
+	if w := won["a"]; w.RecordID != "d7" || w.Charge != 7 {
+		t.Fatalf("a's winner: %+v", w)
+	}
+}
+
+// TestAnUnlistedLeaseClosesOnlyOnceItsHoldsCouldHaveEnded: a lease whose
+// holds no list named ends no sooner than its expiry plus their maximum
+// life plus the grace, and closes at a tick published the skew allowance
+// after the member saw that.
+func TestAnUnlistedLeaseClosesOnlyOnceItsHoldsCouldHaveEnded(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	handleAll(rt, on(t, f.ref, settle(1, "b", 40, 0)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		clock = at
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+		round(rt)
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	end := row.Expiry.Add(5*time.Minute + time.Minute)
+	for _, at := range []time.Time{end.Add(-time.Minute), end, end.Add(2*time.Second - time.Microsecond)} {
+		tickAt(at)
+		if l := f.loaded(); l.Lease.State != "draining" {
+			t.Fatalf("closed at %v, its holds' end %v: %+v", at, end, l.Lease)
+		}
+	}
+	tickAt(end.Add(2 * time.Second))
+	if l := f.loaded(); l.Lease.State != "closed" {
+		t.Fatalf("not closed the skew allowance after its holds' end: %+v", l.Lease)
 	}
 }
