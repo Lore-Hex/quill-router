@@ -24,14 +24,14 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 	if ctx.Err() != nil {
 		return HeartbeatAnswer{}, false
 	}
-	f.failedHere(env.Owner)
+	failed := f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
 		pctx, cancel := context.WithTimeout(ctx, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Heartbeat(pctx, peer, env.Owner, req)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
-			f.unreachedHere(env.Owner)
+			f.unreachedHere(env.Owner, failed)
 			return got, true
 		}
 		if ctx.Err() != nil {
@@ -56,14 +56,14 @@ func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTermi
 	if ctx.Err() != nil {
 		return OwnerTerminalAnswer{}, false
 	}
-	f.failedHere(env.Owner)
+	failed := f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
 		pctx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 		got, err = f.cfg.Peers.Terminal(pctx, peer, env.Owner, req)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
-			f.unreachedHere(env.Owner)
+			f.unreachedHere(env.Owner, failed)
 			return got, true
 		}
 		if ctx.Err() != nil {
@@ -99,9 +99,7 @@ func (f *FrontDoor) RelayHeartbeat(ctx context.Context, owner string, req OwnerH
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 	defer cancel()
 	got, err := f.cfg.Owners.Heartbeat(octx, owner, req)
-	if err == nil {
-		f.reached(owner)
-	}
+	f.relayed(ctx, owner, err)
 	return got, err
 }
 
@@ -111,10 +109,19 @@ func (f *FrontDoor) RelayTerminal(ctx context.Context, owner string, req OwnerTe
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 	defer cancel()
 	got, err := f.cfg.Owners.Terminal(octx, owner, req)
-	if err == nil {
-		f.reached(owner)
-	}
+	f.relayed(ctx, owner, err)
 	return got, err
+}
+
+// relayed keeps what a relay's call to the owner showed: a reach, or a
+// call that failed here, unless the relay's request ended first.
+func (f *FrontDoor) relayed(ctx context.Context, owner string, err error) {
+	switch {
+	case err == nil:
+		f.reached(owner)
+	case ctx.Err() == nil:
+		f.failedHere(owner)
+	}
 }
 
 // DirectPeers reaches the front doors in this process, by address.
@@ -168,12 +175,14 @@ func (f *FrontDoor) reached(owner string) {
 }
 
 // failedHere: a call to the owner failed here, whatever a peer then
-// answers. A probe forgets an owner only if no call to it has failed here
-// since the probe began.
-func (f *FrontDoor) failedHere(owner string) {
+// answers; it returns when. A probe forgets an owner only if no call to it
+// has failed here since the probe began.
+func (f *FrontDoor) failedHere(owner string) seen {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.here[owner] = f.see()
+	at := f.see()
+	f.here[owner] = at
+	return at
 }
 
 // see numbers what the front door sees now, under its lock: the clock is
@@ -183,22 +192,29 @@ func (f *FrontDoor) see() seen {
 	return seen{f.cfg.Clock(), f.seq}
 }
 
-// unreachedHere: a call to the owner failed here while a peer reached it.
-// Two or more such owners within WithdrawWithin withdraw the front door,
-// whose ring row Run then writes.
-func (f *FrontDoor) unreachedHere(owner string) {
+// unreachedHere: a call to the owner failed here, at failed, while a peer
+// reached it. Two or more such owners whose failures here fall within
+// WithdrawWithin of one another withdraw the front door, whose ring row Run
+// then writes. The window is measured between the failures, not the peers'
+// answers, which come later.
+func (f *FrontDoor) unreachedHere(owner string, failed seen) {
 	if f.cfg.Node == nil {
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.unreached[owner] = f.see()
-	now := f.unreached[owner].at
+	if last, ok := f.unreached[owner]; !ok || last.seq < failed.seq {
+		f.unreached[owner] = failed
+	}
 	n := 0
 	for o, at := range f.unreached {
-		if now.Sub(at.at) <= f.cfg.WithdrawWithin {
+		apart := failed.at.Sub(at.at)
+		if apart < 0 {
+			apart = -apart
+		}
+		if apart <= f.cfg.WithdrawWithin {
 			n++
-		} else if !f.withdrawn {
+		} else if !f.withdrawn && at.at.Before(failed.at) {
 			delete(f.unreached, o)
 		}
 	}
@@ -343,9 +359,10 @@ func (f *FrontDoor) due(now time.Time) (store.LeaseRef, bool) {
 
 // probe tries the owners a withdrawn front door could not reach. An owner
 // no longer a live member is forgotten; one that answers is forgotten too,
-// unless a call failed here again after the probe began. The front door
-// serves again once no owner is left: one a request finds unreachable
-// during the probe keeps it withdrawn for the next.
+// unless a call to it failed here after the probe began, which the probe
+// reads once every ping is done, under one lock with its decision. The
+// front door serves again once no owner is left: one a request finds
+// unreachable during the probe keeps it withdrawn for the next.
 func (f *FrontDoor) probe(ctx context.Context) {
 	f.mu.Lock()
 	if !f.withdrawn || f.cfg.Node == nil {
@@ -359,39 +376,43 @@ func (f *FrontDoor) probe(ctx context.Context) {
 			live[m.Address] = true
 		}
 	}
-	tried := map[string]uint64{}
+	var owners []string
 	for o := range f.unreached {
 		if live[o] {
-			tried[o] = f.here[o].seq
+			owners = append(owners, o)
 		} else {
 			delete(f.unreached, o)
 		}
 	}
+	began := f.seq
 	f.mu.Unlock()
-	for o, seq := range tried {
+	var answered []string
+	for _, o := range owners {
 		pctx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 		err := f.cfg.Owners.Ping(pctx, o)
 		cancel()
-		if err != nil {
-			continue
+		if err == nil {
+			f.reached(o)
+			answered = append(answered, o)
 		}
-		f.reached(o)
-		f.mu.Lock()
-		if f.here[o].seq == seq {
-			delete(f.unreached, o)
-		}
-		f.mu.Unlock()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, o := range answered {
+		if f.here[o].seq <= began {
+			delete(f.unreached, o)
+		}
+	}
 	if f.withdrawn && len(f.unreached) == 0 {
 		f.withdrawn, f.want = false, store.Serving
 	}
 }
 
 // forget drops what the front door kept of leases and owners an hour old: a
-// lease lives at most its maximum life, far less. A revoked lease stays
-// revoked while its calls go on failing, so it is revoked once.
+// lease lives at most its maximum life, far less. It keeps the leases it
+// revoked, each revoked once while the front door runs: at most one
+// revocation begins a RevokeEvery, so they number at most its time running
+// over RevokeEvery, a day's at one a minute some 1,440.
 func (f *FrontDoor) forget() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -399,11 +420,6 @@ func (f *FrontDoor) forget() {
 	for ref, fl := range f.failing {
 		if now.Sub(fl.last.at) > time.Hour {
 			delete(f.failing, ref)
-		}
-	}
-	for ref := range f.revoked {
-		if _, failing := f.failing[ref]; !failing {
-			delete(f.revoked, ref)
 		}
 	}
 	for _, m := range []map[string]seen{f.reachedAt, f.here} {

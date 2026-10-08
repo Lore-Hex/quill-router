@@ -24,10 +24,15 @@ type fakePeers struct {
 	holding     bool
 	heartbeat   HeartbeatAnswer
 	terminal    OwnerTerminalAnswer
+	// onCall, when set, runs at each call, as the time it takes.
+	onCall func()
 }
 
 func (f *fakePeers) Heartbeat(ctx context.Context, peer, owner string, _ OwnerHeartbeat) (HeartbeatAnswer, error) {
 	f.ev.add("peer %s heartbeat to %s", peer, owner)
+	if f.onCall != nil {
+		f.onCall()
+	}
 	if f.holding {
 		<-ctx.Done()
 		return HeartbeatAnswer{}, ctx.Err()
@@ -40,6 +45,9 @@ func (f *fakePeers) Heartbeat(ctx context.Context, peer, owner string, _ OwnerHe
 
 func (f *fakePeers) Terminal(_ context.Context, peer, owner string, _ OwnerTerminal) (OwnerTerminalAnswer, error) {
 	f.ev.add("peer %s %s", peer, owner)
+	if f.onCall != nil {
+		f.onCall()
+	}
 	if f.unreachable[owner] {
 		return OwnerTerminalAnswer{}, ErrUnreachable
 	}
@@ -792,6 +800,76 @@ func TestAProbeKeepsAnOwnerThatFailedHereAgain(t *testing.T) {
 	if !f.door.Withdrawn() {
 		t.Fatalf("served again with %s's call failing here during its probe", first)
 	}
+
+	// An owner that answered its ping, then failed here, at the peer too,
+	// or in a relay for a peer, while another's ping was under way.
+	for name, fail := range map[string]func(g *peersFixture, owner string){
+		"a request": func(g *peersFixture, owner string) {
+			g.owners.unreachable[owner], g.peers.unreachable[owner] = true, true
+			g.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, owner, "lease-y", "gwa-y"), Money: []byte("{}")})
+			g.owners.unreachable[owner], g.peers.unreachable[owner] = false, false
+		},
+		"a relay": func(g *peersFixture, owner string) {
+			g.owners.unreachable[owner] = true
+			if _, err := g.door.RelayTerminal(ctx, owner, OwnerTerminal{}); err == nil {
+				t.Fatal("a relay to an owner not reached answered")
+			}
+			g.owners.unreachable[owner] = false
+		},
+	} {
+		g := newPeers(t)
+		g.withdrawn(t)
+		g.owners.unreachable["node-b"], g.owners.unreachable["node-c"] = false, false
+		g.owners.pinging, g.owners.pingGate = make(chan string), make(chan struct{})
+		probed := make(chan struct{})
+		go func() {
+			g.door.probe(ctx)
+			close(probed)
+		}()
+		answered := <-g.owners.pinging
+		g.owners.pingGate <- struct{}{}
+		<-g.owners.pinging // the other's ping under way
+		fail(g, answered)
+		g.owners.pingGate <- struct{}{}
+		<-probed
+		if !g.door.Withdrawn() {
+			t.Fatalf("%s: served again with %s failing here after it answered its ping", name, answered)
+		}
+	}
+}
+
+// TestTheWindowIsBetweenTheFailuresHere: two owners withdraw the front door
+// when their calls failed here within the window of one another, however
+// long their peers then took to answer.
+func TestTheWindowIsBetweenTheFailuresHere(t *testing.T) {
+	ctx := context.Background()
+	for name, c := range map[string]struct {
+		slowFirst, slowSecond bool
+		apart                 time.Duration
+		withdraws             bool
+	}{
+		"5.05 seconds apart, the first's peer slow":   {true, false, 5050 * time.Millisecond, false},
+		"4.95 seconds apart, the second's peer slow":  {false, true, 4950 * time.Millisecond, true},
+		"exactly the window apart, both peers prompt": {false, false, 5 * time.Second, true},
+	} {
+		f := newPeers(t)
+		f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
+		f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = true, true
+		refund := func(owner string, slow bool) {
+			if slow {
+				f.peers.onCall = func() { f.advance(100 * time.Millisecond) }
+			}
+			f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, owner, "lease-"+owner, "gwa-"+owner), Money: []byte("{}")})
+			f.peers.onCall = nil
+		}
+		began := f.clock()
+		refund("node-b", c.slowFirst)
+		f.advance(began.Add(c.apart).Sub(f.clock()))
+		refund("node-c", c.slowSecond)
+		if f.door.Withdrawn() != c.withdraws {
+			t.Fatalf("%s: withdrawn %v", name, f.door.Withdrawn())
+		}
+	}
 }
 
 // TestALeaseIsRevokedOnce: a revoked lease whose calls go on failing past
@@ -814,6 +892,31 @@ func TestALeaseIsRevokedOnce(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("l1 revoked %d times over four hours of failures", n)
+	}
+
+	// Nor once its calls have stopped for hours, and come again.
+	g := newPeers(t)
+	g.owners.unreachable["node-b"], g.peers.unreachable["node-b"] = true, true
+	fail := func() {
+		g.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", "l1", "gwa-l1"), Money: []byte("{}")})
+		g.door.write(ctx)
+	}
+	fail()
+	g.advance(10 * time.Second)
+	fail()
+	g.advance(2 * time.Hour)
+	g.door.forget()
+	fail()
+	g.advance(10 * time.Second)
+	fail()
+	n = 0
+	for _, e := range g.ev.all() {
+		if e == "revoke l1" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("l1 revoked %d times, its calls failing again after two quiet hours", n)
 	}
 }
 
