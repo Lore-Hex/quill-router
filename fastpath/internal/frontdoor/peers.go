@@ -24,14 +24,14 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 	if ctx.Err() != nil {
 		return HeartbeatAnswer{}, false
 	}
-	failed := f.failedHere(env.Owner)
+	f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
 		pctx, cancel := context.WithTimeout(ctx, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Heartbeat(pctx, peer, env.Owner, req)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
-			f.unreachedHere(env.Owner, failed)
+			f.unreachedHere(env.Owner)
 			return got, true
 		}
 		if ctx.Err() != nil {
@@ -56,14 +56,14 @@ func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTermi
 	if ctx.Err() != nil {
 		return OwnerTerminalAnswer{}, false
 	}
-	failed := f.failedHere(env.Owner)
+	f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
 		pctx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 		got, err = f.cfg.Peers.Terminal(pctx, peer, env.Owner, req)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
-			f.unreachedHere(env.Owner, failed)
+			f.unreachedHere(env.Owner)
 			return got, true
 		}
 		if ctx.Err() != nil {
@@ -175,14 +175,12 @@ func (f *FrontDoor) reached(owner string) {
 }
 
 // failedHere: a call to the owner failed here, whatever a peer then
-// answers; it returns when. A probe forgets an owner only if no call to it
-// has failed here since the probe began.
-func (f *FrontDoor) failedHere(owner string) seen {
+// answers. A probe forgets an owner only if no call to it has failed here
+// since the probe began.
+func (f *FrontDoor) failedHere(owner string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	at := f.see()
-	f.here[owner] = at
-	return at
+	f.here[owner] = f.see()
 }
 
 // see numbers what the front door sees now, under its lock: the clock is
@@ -192,29 +190,26 @@ func (f *FrontDoor) see() seen {
 	return seen{f.cfg.Clock(), f.seq}
 }
 
-// unreachedHere: a call to the owner failed here, at failed, while a peer
-// reached it. Two or more such owners whose failures here fall within
-// WithdrawWithin of one another withdraw the front door, whose ring row Run
-// then writes. The window is measured between the failures, not the peers'
-// answers, which come later.
-func (f *FrontDoor) unreachedHere(owner string, failed seen) {
+// unreachedHere: a call to the owner failed here and a peer then reached
+// it, which is evidence against this front door, complete when the peer
+// answers and dated then. Evidence for two or more owners within
+// WithdrawWithin of one another withdraws the front door, whose ring row
+// Run then writes. The front door learns evidence in the order of its
+// dates, so the window does not depend on the order in which the peers'
+// answers come: a failure here is no evidence until one does.
+func (f *FrontDoor) unreachedHere(owner string) {
 	if f.cfg.Node == nil {
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if last, ok := f.unreached[owner]; !ok || last.seq < failed.seq {
-		f.unreached[owner] = failed
-	}
+	now := f.see()
+	f.unreached[owner] = now
 	n := 0
 	for o, at := range f.unreached {
-		apart := failed.at.Sub(at.at)
-		if apart < 0 {
-			apart = -apart
-		}
-		if apart <= f.cfg.WithdrawWithin {
+		if now.at.Sub(at.at) <= f.cfg.WithdrawWithin {
 			n++
-		} else if !f.withdrawn && at.at.Before(failed.at) {
+		} else if !f.withdrawn {
 			delete(f.unreached, o)
 		}
 	}
@@ -227,7 +222,10 @@ func (f *FrontDoor) unreachedHere(owner string, failed seen) {
 // unreachedAnywhere: no owner answered, here or at a peer. The lease's
 // failures are kept, from the first since its owner last answered to the
 // last; once they span RevokeAfter, Run may revoke it (due), so no request
-// waits for the write.
+// waits for the write. A request for a hold past its end of life, which its
+// envelope states, is no evidence: every hold of a lease revoked ends
+// within HoldLife of the revocation, so no request can make a lease the
+// front door has forgotten it revoked due again.
 func (f *FrontDoor) unreachedAnywhere(env Envelope) {
 	if f.cfg.RevokeAfter == 0 {
 		return
@@ -236,6 +234,9 @@ func (f *FrontDoor) unreachedAnywhere(env Envelope) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	at := f.see()
+	if !at.at.Before(env.EndOfLife) {
+		return
+	}
 	fl, ok := f.failing[ref]
 	if !ok || f.reachedAt[env.Owner].seq > fl.first.seq {
 		fl = failure{owner: env.Owner, first: at}
@@ -409,16 +410,23 @@ func (f *FrontDoor) probe(ctx context.Context) {
 }
 
 // forget drops what the front door kept of leases and owners an hour old: a
-// lease lives at most its maximum life, far less. It keeps the leases it
-// revoked, each revoked once while the front door runs: at most one
-// revocation begins a RevokeEvery, so they number at most its time running
-// over RevokeEvery, a day's at one a minute some 1,440.
+// lease lives at most its maximum life, far less. A revoked lease's mark
+// stays HoldLife, and then goes with the failures kept for it: by then
+// each of its holds has ended, so no request is evidence against it again
+// (unreachedAnywhere), and the marks number at most HoldLife over
+// RevokeEvery.
 func (f *FrontDoor) forget() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := f.cfg.Clock()
 	for ref, fl := range f.failing {
 		if now.Sub(fl.last.at) > time.Hour {
+			delete(f.failing, ref)
+		}
+	}
+	for ref, at := range f.revoked {
+		if now.Sub(at) > f.cfg.HoldLife {
+			delete(f.revoked, ref)
 			delete(f.failing, ref)
 		}
 	}

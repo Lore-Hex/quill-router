@@ -140,7 +140,8 @@ func newPeers(t *testing.T) *peersFixture {
 	door, err := New(Config{Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
 		Shards: func(string) int64 { return 1 }, OwnerWait: time.Second, PublishWait: time.Second,
 		Self: "node-a", Peers: f.peers, PeerWait: 50 * time.Millisecond, Node: f.node, WithdrawWithin: 5 * time.Second,
-		ProbeEvery: time.Hour, RevokeAfter: 10 * time.Second, RevokeEvery: time.Minute, Clock: f.clock})
+		ProbeEvery: time.Hour, RevokeAfter: 10 * time.Second, RevokeEvery: time.Minute, HoldLife: 3 * time.Hour,
+		Clock: f.clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +149,18 @@ func newPeers(t *testing.T) *peersFixture {
 	return f
 }
 
-// sealedAt is a sealed envelope of a hold under lease at owner.
+// sealedAt is a sealed envelope of a hold under lease at owner, whose life
+// ends an hour after the test's start.
 func sealedAt(t *testing.T, owner, lease, auth string) string {
 	t.Helper()
+	return sealedUntil(t, owner, lease, auth, start.Add(time.Hour))
+}
+
+// sealedUntil is sealedAt with the hold's end of life.
+func sealedUntil(t *testing.T, owner, lease, auth string, eol time.Time) string {
+	t.Helper()
 	sealed, err := Seal(key, Envelope{Auth: auth, Workspace: "ws-1", Lease: lease, Owner: owner, Estimate: 40,
-		Stream: true, EndOfLife: start.Add(time.Hour)})
+		Stream: true, EndOfLife: eol})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,27 +846,28 @@ func TestAProbeKeepsAnOwnerThatFailedHereAgain(t *testing.T) {
 	}
 }
 
-// TestTheWindowIsBetweenTheFailuresHere: two owners withdraw the front door
-// when their calls failed here within the window of one another, however
-// long their peers then took to answer.
-func TestTheWindowIsBetweenTheFailuresHere(t *testing.T) {
+// TestTheWindowIsBetweenThePeersAnswers: a failure here is evidence
+// against the front door once a peer answers, and is dated then; evidence
+// for two owners within the window of one another withdraws it, however
+// far apart the failures here were.
+func TestTheWindowIsBetweenThePeersAnswers(t *testing.T) {
 	ctx := context.Background()
 	for name, c := range map[string]struct {
-		slowFirst, slowSecond bool
+		slowFirst, slowSecond time.Duration
 		apart                 time.Duration
 		withdraws             bool
 	}{
-		"5.05 seconds apart, the first's peer slow":   {true, false, 5050 * time.Millisecond, false},
-		"4.95 seconds apart, the second's peer slow":  {false, true, 4950 * time.Millisecond, true},
-		"exactly the window apart, both peers prompt": {false, false, 5 * time.Second, true},
+		"failures 5.05 seconds apart, answers 4.95":     {100 * time.Millisecond, 0, 5050 * time.Millisecond, true},
+		"failures 4.95 seconds apart, answers 5.05":     {0, 100 * time.Millisecond, 4950 * time.Millisecond, false},
+		"answers exactly the window apart":              {0, 0, 5 * time.Second, true},
+		"failures 9.8 seconds apart, answers 4.9":       {4900 * time.Millisecond, 0, 9800 * time.Millisecond, true},
+		"failures 4.9 seconds apart, answers 9.8 apart": {0, 4900 * time.Millisecond, 4900 * time.Millisecond, false},
 	} {
 		f := newPeers(t)
 		f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
 		f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = true, true
-		refund := func(owner string, slow bool) {
-			if slow {
-				f.peers.onCall = func() { f.advance(100 * time.Millisecond) }
-			}
+		refund := func(owner string, slow time.Duration) {
+			f.peers.onCall = func() { f.advance(slow) }
 			f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, owner, "lease-"+owner, "gwa-"+owner), Money: []byte("{}")})
 			f.peers.onCall = nil
 		}
@@ -872,14 +881,85 @@ func TestTheWindowIsBetweenTheFailuresHere(t *testing.T) {
 	}
 }
 
+// TestAnAuthorizeThatFailsHereCounts: an authorize whose owner a call here
+// does not reach is a failure here, as a probe reads it; one whose request
+// ended is not.
+func TestAnAuthorizeThatFailsHereCounts(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	owner, _ := f.view.Owner(ring.ShardKey("ws-1", 0))
+	f.owners.unreachable[owner.Address] = true
+	ended, cancel := context.WithCancel(ctx)
+	cancel()
+	authorize := func(ctx context.Context) {
+		f.door.Authorize(ctx, AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 1, Boot: []byte("b")})
+	}
+	here := func() uint64 {
+		f.door.mu.Lock()
+		defer f.door.mu.Unlock()
+		return f.door.here[owner.Address].seq
+	}
+	authorize(ended)
+	if got := here(); got != 0 {
+		t.Fatalf("an ended authorize counted as a failure here: %d", got)
+	}
+	authorize(ctx)
+	if got := here(); got == 0 {
+		t.Fatal("an authorize whose owner failed here did not count")
+	}
+}
+
+// TestAnEndedHoldIsNoEvidence: a request for a hold past its end of life,
+// as its envelope states, makes its lease no closer to revocation; and the
+// marks of leases revoked go once their holds have all ended.
+func TestAnEndedHoldIsNoEvidence(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	fail := func(lease string, eol time.Time) {
+		f.door.Refund(ctx, RefundOf{Envelope: sealedUntil(t, "node-b", lease, "gwa-"+lease, eol), Money: []byte("{}")})
+		f.door.write(ctx)
+	}
+	ended := start.Add(-time.Second)
+	fail("l1", ended)
+	f.advance(10 * time.Second)
+	fail("l1", ended)
+	if slices.Contains(f.ev.all(), "revoke l1") {
+		t.Fatalf("a lease revoked on ended holds' failures: %q", f.ev.all())
+	}
+	fail("l2", start.Add(time.Hour))
+	f.advance(10 * time.Second)
+	fail("l2", start.Add(time.Hour))
+	if !slices.Contains(f.ev.all(), "revoke l2") {
+		t.Fatalf("l2 not revoked: %q", f.ev.all())
+	}
+	f.advance(3*time.Hour - time.Second)
+	f.door.forget()
+	f.door.mu.Lock()
+	kept := len(f.door.revoked)
+	f.door.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("%d revoked leases kept within their holds' life", kept)
+	}
+	f.advance(2 * time.Second)
+	f.door.forget()
+	f.door.mu.Lock()
+	kept = len(f.door.revoked)
+	f.door.mu.Unlock()
+	if kept != 0 {
+		t.Fatalf("%d revoked leases kept past their holds' life", kept)
+	}
+}
+
 // TestALeaseIsRevokedOnce: a revoked lease whose calls go on failing past
 // the hour the front door keeps what it saw is not revoked again.
 func TestALeaseIsRevokedOnce(t *testing.T) {
 	ctx := context.Background()
 	f := newPeers(t)
 	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	eol := start.Add(3 * time.Hour) // within HoldLife of the revocation, as every hold of l1 is
 	for range 13 {
-		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", "l1", "gwa-l1"), Money: []byte("{}")})
+		f.door.Refund(ctx, RefundOf{Envelope: sealedUntil(t, "node-b", "l1", "gwa-l1", eol), Money: []byte("{}")})
 		f.door.write(ctx)
 		f.door.forget()
 		f.advance(20 * time.Minute)
@@ -898,7 +978,7 @@ func TestALeaseIsRevokedOnce(t *testing.T) {
 	g := newPeers(t)
 	g.owners.unreachable["node-b"], g.peers.unreachable["node-b"] = true, true
 	fail := func() {
-		g.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", "l1", "gwa-l1"), Money: []byte("{}")})
+		g.door.Refund(ctx, RefundOf{Envelope: sealedUntil(t, "node-b", "l1", "gwa-l1", eol), Money: []byte("{}")})
 		g.door.write(ctx)
 	}
 	fail()

@@ -92,9 +92,12 @@ type Config struct {
 	// A lease whose owner neither this front door nor its peer has reached
 	// for RevokeAfter is revoked, at most one lease a RevokeEvery; a
 	// withdrawn front door revokes none (§4.3). Zero RevokeAfter revokes
-	// none.
+	// none. HoldLife is the longest a hold lives after its lease's last
+	// renewal, its life and the lease's expiry window: every hold of a
+	// lease revoked ends within it.
 	RevokeAfter time.Duration
 	RevokeEvery time.Duration
+	HoldLife    time.Duration
 	Clock       func() time.Time
 }
 
@@ -154,9 +157,9 @@ func New(cfg Config) (*FrontDoor, error) {
 	}
 	if (cfg.Peers != nil && (cfg.Self == "" || cfg.PeerWait <= 0)) ||
 		(cfg.Node != nil && (cfg.WithdrawWithin <= 0 || cfg.ProbeEvery <= 0)) || cfg.RevokeAfter < 0 ||
-		(cfg.RevokeAfter > 0 && cfg.RevokeEvery <= 0) {
+		(cfg.RevokeAfter > 0 && (cfg.RevokeEvery <= 0 || cfg.HoldLife <= 0)) {
 		return nil, errors.New("frontdoor: peers need this node's address and a wait, withdrawing a window and " +
-			"a probe interval, and revoking an interval")
+			"a probe interval, and revoking an interval and the holds' life")
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
@@ -211,8 +214,11 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
 			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot})
 		cancel()
-		if err == nil {
+		switch {
+		case err == nil:
 			f.reached(m.Address)
+		case ctx.Err() == nil:
+			f.failedHere(m.Address)
 		}
 		switch {
 		case err != nil, got.Status == Busy:
