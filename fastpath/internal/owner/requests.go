@@ -343,7 +343,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	if h == nil {
 		return nil, ErrUnknownHold
 	}
-	if !l.withinCutoff(l.o.cfg.Clock()) || l.handedOff {
+	if !l.withinCutoff(l.o.cfg.Clock()) {
 		return nil, ErrPastCutoff
 	}
 	if l.unadopted && t.drain == "" {
@@ -437,7 +437,7 @@ func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	if len(data) > maxRecord {
 		return nil, fmt.Errorf("%w: %d bytes", ErrTooLarge, len(data))
 	}
-	if !l.withinCutoff(l.o.cfg.Clock()) {
+	if !l.withinCutoff(l.o.cfg.Clock()) || l.handedOff {
 		return nil, ErrPastCutoff
 	}
 	l.nextSeq++
