@@ -364,6 +364,25 @@ func (r *Records) Stop() {
 // library to ask for its outstanding records again.
 var shutdownTimeout = 10 * time.Second
 
+// beforeKeeping, when a test sets it, runs as each delivery's callback
+// begins, before the delivery is kept: as when the client library, stopping,
+// stopped waiting for a callback that had not yet run.
+var beforeKeeping func()
+
+// ackExtension is how long the log holds a record for a member at a time:
+// each extension of its deadline the client library asks for, and the
+// deadline of each record the log sends on the member's stream, the one the
+// stream opens with and any the library sends it later. A record the log
+// sends and the member never receives is held that long: as when the client
+// library, stopping, asks for the member's records again and the log sends
+// one straight back on the member's stream before that stream is closed.
+// Once the deadline passes the log may deliver the record again, as the
+// subscription's retry policy allows. Unset, the library asks for a minute,
+// and on a subscription with exactly-once delivery for a minute at least
+// once it learns of it, and the record's lease waits behind the hold; so
+// both the least and the most each extension may be are set to it.
+const ackExtension = 10 * time.Second
+
 // Subscription is the auditor's subscription to a region's settle log,
 // which must have message ordering on. It runs one Receive at a time.
 type Subscription struct {
@@ -377,10 +396,14 @@ type Subscription struct {
 // Subscribe opens it. maxOutstanding bounds the records delivered and not
 // yet acknowledged; a negative one is no bound. When Receive ends, the
 // records it delivered and was not asked to acknowledge are asked for again
-// at once, so another member gets them (assumption A1).
+// at once, so another member can get them (assumption A1). One the log sends
+// back on this member's closing stream is held until its deadline,
+// ackExtension, has passed, and may then be delivered again.
 func Subscribe(client *pubsub.Client, subscription string, maxOutstanding int) *Subscription {
 	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
+	sub.ReceiveSettings.MinDurationPerAckExtension = ackExtension
+	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
 	return &Subscription{sub: sub, active: map[string]bool{}, outstanding: map[*pubsub.Message]bool{}}
@@ -442,10 +465,17 @@ func (s *Subscription) settle(m *pubsub.Message, ack bool) {
 // to an hour. So when Receive returns it asks for every such record again
 // itself.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
+	// done is set, under s.mu, once Receive has asked again for what it
+	// held: a callback the library left running past its return keeps
+	// nothing, and asks for its record again too.
+	done := false
 	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		if beforeKeeping != nil {
+			beforeKeeping()
+		}
 		lease := m.OrderingKey
 		s.mu.Lock()
-		if ctx.Err() != nil || cctx.Err() != nil || s.active[lease] {
+		if done || ctx.Err() != nil || cctx.Err() != nil || s.active[lease] {
 			s.mu.Unlock()
 			m.Nack()
 			return
@@ -462,6 +492,7 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 			PublishTime: m.PublishTime, Attempt: m.DeliveryAttempt, msg: m, sub: s})
 	})
 	s.mu.Lock()
+	done = true
 	left := s.outstanding
 	s.outstanding = map[*pubsub.Message]bool{}
 	s.mu.Unlock()
@@ -476,6 +507,9 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 // acknowledged by its handler once staged.
 type RecordSubscription struct {
 	sub *pubsub.Subscriber
+
+	mu          sync.Mutex
+	outstanding map[*pubsub.Message]bool
 }
 
 // SubscribeRecords opens it. maxOutstanding bounds the messages delivered
@@ -483,9 +517,11 @@ type RecordSubscription struct {
 func SubscribeRecords(client *pubsub.Client, subscription string, maxOutstanding int) *RecordSubscription {
 	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
+	sub.ReceiveSettings.MinDurationPerAckExtension = ackExtension
+	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
-	return &RecordSubscription{sub: sub}
+	return &RecordSubscription{sub: sub, outstanding: map[*pubsub.Message]bool{}}
 }
 
 // RecordDelivery is one message of the record topic as it was delivered:
@@ -498,21 +534,67 @@ type RecordDelivery struct {
 	PublishTime   time.Time
 
 	msg *pubsub.Message
+	sub *RecordSubscription
 }
 
 // Ack acknowledges the message once it is staged: it is not delivered
 // again.
-func (d *RecordDelivery) Ack() { d.msg.Ack() }
+func (d *RecordDelivery) Ack() { d.sub.settle(d.msg, true) }
 
 // Nack asks for the message again.
-func (d *RecordDelivery) Nack() { d.msg.Nack() }
+func (d *RecordDelivery) Nack() { d.sub.settle(d.msg, false) }
+
+// settle acknowledges a delivered message, or asks for it again, once, as
+// Subscription's does: one its consumer's stop has asked for again already
+// stays so.
+func (s *RecordSubscription) settle(m *pubsub.Message, ack bool) {
+	s.mu.Lock()
+	out := s.outstanding[m]
+	delete(s.outstanding, m)
+	s.mu.Unlock()
+	switch {
+	case !out:
+	case ack:
+		m.Ack()
+	default:
+		m.Nack()
+	}
+}
 
 // Receive delivers messages until ctx ends or the subscription fails, many
 // at once. handle settles each: Ack once it is staged, Nack to have it
-// again.
+// again. A message whose handler returns without settling it, as the
+// service's does for one that comes once it is stopping, or whose handler
+// still runs when Receive returns, the client library can go on holding,
+// extending its deadline for up to an hour, as Subscription's Receive
+// says; so when Receive returns it asks for each such message again itself.
 func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Context, *RecordDelivery)) error {
-	return s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+	// done is as Subscription's Receive keeps it: a callback the library
+	// left running past Receive's return keeps nothing, and asks for its
+	// message again, as one that begins once ctx has ended does.
+	done := false
+	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		if beforeKeeping != nil {
+			beforeKeeping()
+		}
+		s.mu.Lock()
+		if done || ctx.Err() != nil || cctx.Err() != nil {
+			s.mu.Unlock()
+			m.Nack()
+			return
+		}
+		s.outstanding[m] = true
+		s.mu.Unlock()
 		handle(cctx, &RecordDelivery{Authorization: m.Attributes[AuthorizationAttr], Kind: m.Attributes[KindAttr],
-			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m})
+			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m, sub: s})
 	})
+	s.mu.Lock()
+	done = true
+	left := s.outstanding
+	s.outstanding = map[*pubsub.Message]bool{}
+	s.mu.Unlock()
+	for m := range left {
+		m.Nack()
+	}
+	return err
 }

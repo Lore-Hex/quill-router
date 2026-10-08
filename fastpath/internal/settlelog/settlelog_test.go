@@ -3,7 +3,9 @@ package settlelog
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,13 +84,14 @@ type fakeLog struct {
 	reactor *failing
 }
 
-func newFakeLog(t *testing.T, ordered bool) *fakeLog {
+func newFakeLog(t *testing.T, ordered bool, opts ...grpc.DialOption) *fakeLog {
 	t.Helper()
 	ctx := context.Background()
 	reactor := &failing{seen: map[string]bool{}}
 	srv := pstest.NewServer(pstest.ServerReactorOption{FuncName: "Publish", Reactor: reactor})
 	t.Cleanup(func() { _ = srv.Close() })
-	conn, err := grpc.NewClient(srv.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(srv.Addr, append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,5 +417,409 @@ func TestTheRecordTopicIsDeliveredWithItsAttributes(t *testing.T) {
 	}
 	if most < 2 || !nacked {
 		t.Fatalf("at most %d handled at once; asked again %v", most, nacked)
+	}
+}
+
+// losing is a dial option whose streams lose the first delivery of the
+// message with data data, as a stream does that the log sends a message on
+// as its member closes it: the log holds the message for that member, and
+// the member never receives it. The loss reports it, and keeps each stream
+// ack deadline the streams asked for. With updated, only a stream whose
+// deadline the client library has updated since the stream opened loses it.
+func losing(data string) (grpc.DialOption, *loss) { return losingOn(data, false) }
+
+func losingOn(data string, updated bool) (grpc.DialOption, *loss) {
+	l := &loss{data: data, onUpdated: updated}
+	return grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn,
+		method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		s, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil || method != "/google.pubsub.v1.Subscriber/StreamingPull" {
+			return s, err
+		}
+		return &losingStream{ClientStream: s, l: l}, nil
+	}), l
+}
+
+type loss struct {
+	data      string
+	onUpdated bool
+	lost      atomic.Bool
+	mu        sync.Mutex
+	// asked are the stream ack deadlines, in seconds, the requests on the
+	// streams asked for: each stream's first, and any the client library
+	// sent it later; updates counts those later ones.
+	asked   []int32
+	updates int
+}
+
+// updated reports whether some stream's deadline was updated after it
+// opened.
+func (l *loss) updated() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.updates > 0
+}
+
+func (l *loss) deadlines() []int32 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]int32(nil), l.asked...)
+}
+
+type losingStream struct {
+	grpc.ClientStream
+	l *loss
+	// opened is set by the stream's first deadline, and updated by one
+	// after it; both under l.mu.
+	opened, updated bool
+}
+
+// RecvMsg passes on each response but the lost message; a response that
+// held only that one is not passed on at all.
+func (s *losingStream) RecvMsg(m any) error {
+	for {
+		if err := s.ClientStream.RecvMsg(m); err != nil {
+			return err
+		}
+		resp := m.(*pubsubpb.StreamingPullResponse)
+		var kept []*pubsubpb.ReceivedMessage
+		s.l.mu.Lock()
+		eligible := !s.l.onUpdated || s.updated
+		s.l.mu.Unlock()
+		for _, rm := range resp.ReceivedMessages {
+			if eligible && string(rm.GetMessage().GetData()) == s.l.data && s.l.lost.CompareAndSwap(false, true) {
+				continue
+			}
+			kept = append(kept, rm)
+		}
+		if len(kept) > 0 || len(resp.ReceivedMessages) == 0 {
+			resp.ReceivedMessages = kept
+			return nil
+		}
+	}
+}
+
+// SendMsg keeps the stream ack deadline a request asks for, and tells the
+// stream's opening deadline from an update of it.
+func (s *losingStream) SendMsg(m any) error {
+	if r, ok := m.(*pubsubpb.StreamingPullRequest); ok && r.GetStreamAckDeadlineSeconds() > 0 {
+		s.l.mu.Lock()
+		s.l.asked = append(s.l.asked, r.GetStreamAckDeadlineSeconds())
+		if s.opened {
+			s.updated = true
+			s.l.updates++
+		}
+		s.opened = true
+		s.l.mu.Unlock()
+	}
+	return s.ClientStream.SendMsg(m)
+}
+
+// afterAPing: a member of a subscription with exactly-once delivery gets a
+// first message, and runs on until the client library has told its stream,
+// after the stream opened, the ack deadline it wants for such a
+// subscription, which it does at its first ping, half a minute in; a
+// reconnection's opening deadline is no such update. The log's delivery of
+// a second message on a stream so updated is lost, and the member stops; a
+// second member must get the second message within three times
+// ackExtension, and no stream may have asked for a longer deadline.
+// publish publishes a message, and receive runs a member until ctx ends,
+// handing it each message it gets, settled.
+func afterAPing(t *testing.T, ordered bool, publish func(f *fakeLog, data string),
+	receive func(ctx context.Context, f *fakeLog, sub string, got func(data string)) error) {
+	t.Helper()
+	opt, l := losingOn("second", true)
+	f := newFakeLog(t, ordered, opt)
+	sub := f.sub + "-once"
+	if _, err := f.client.SubscriptionAdminClient.CreateSubscription(context.Background(), &pubsubpb.Subscription{
+		Name: sub, Topic: f.topic, EnableMessageOrdering: ordered, EnableExactlyOnceDelivery: true,
+		AckDeadlineSeconds: 10}); err != nil {
+		t.Fatal(err)
+	}
+	publish(f, "first")
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	first := make(chan string, 4)
+	done := make(chan error, 1)
+	go func() { done <- receive(ctx, f, sub, func(data string) { first <- data }) }()
+	select {
+	case data := <-first:
+		if data != "first" {
+			t.Fatalf("the first member got %q", data)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first message was never delivered")
+	}
+	for deadline := time.Now().Add(time.Minute); !l.updated(); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the stream was never told a new deadline: %v", l.deadlines())
+		}
+	}
+	publish(f, "second")
+	for deadline := time.Now().Add(10 * time.Second); !l.lost.Load(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the second message was never sent on the stream")
+		}
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	ctx2, cancel := context.WithTimeout(context.Background(), 3*ackExtension)
+	defer cancel()
+	var mu sync.Mutex
+	var got []string
+	if err := receive(ctx2, f, sub, func(data string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if got = append(got, data); data == "second" {
+			cancel()
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(got, []string{"second"}) {
+		t.Fatalf("the second member got %v; the deadlines asked %v", got, l.deadlines())
+	}
+	for _, d := range l.deadlines() {
+		if time.Duration(d)*time.Second > ackExtension {
+			t.Fatalf("a stream asked for a deadline of %ds: %v", d, l.deadlines())
+		}
+	}
+}
+
+// TestAStoppedRecordConsumerLetsGoOfItsMessages: once the record topic's
+// consumer's Receive returns, it holds none of the messages its handlers had
+// and did not settle. The consumer has one place: the first message's
+// handler takes it, runs past the stop and returns without settling, while
+// the second waits for the place, so the client library's stream is not
+// what the stop ends, and its renewals would go on. The first message is
+// not extended after the stop, and the next consumer gets it.
+func TestAStoppedRecordConsumerLetsGoOfItsMessages(t *testing.T) {
+	was := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	defer func() { shutdownTimeout = was }()
+	f := newFakeLog(t, false)
+	r, err := OpenRecords(f.client, f.topic, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	for i := range 2 {
+		if err := wait(t, r.Publish(fmt.Sprint("gwa-", i), FullRecord, []byte(fmt.Sprint("record-", i)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	held := make(chan string, 2)
+	received := make(chan error, 1)
+	go func() {
+		received <- SubscribeRecords(f.client, f.sub, 1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+			held <- string(d.Data)
+			<-release
+		})
+	}()
+	var first string
+	select {
+	case first = <-held:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no handler ran")
+	}
+	receivedBoth(t, f)
+	cancel()
+	if err := <-received; err != nil {
+		t.Fatal(err)
+	}
+	stopped := time.Now()
+	close(release)
+	time.Sleep(6 * time.Second) // the library extends a held message's deadline every few seconds
+	for _, m := range f.srv.Messages() {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 && a.ReceivedAt.After(stopped) {
+				t.Fatalf("%s's deadline was extended %v after the consumer stopped", m.Data, a.ReceivedAt.Sub(stopped))
+			}
+		}
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	got := false
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx2, func(_ context.Context, d *RecordDelivery) {
+		d.Ack()
+		if string(d.Data) == first {
+			got = true
+			cancel2()
+		}
+	})
+	if err != nil || !got {
+		t.Fatalf("the next consumer did not get %s: %v", first, err)
+	}
+}
+
+// receivedBoth waits until the client has received both of the topic's
+// messages, as its receipt's deadline change shows each: the second waits
+// for the consumer's one place, and the library's stream, not blocked
+// receiving, is not what a stop ends.
+func receivedBoth(t *testing.T, f *fakeLog) {
+	t.Helper()
+	// Messages gives the server's own messages, Modacks copied under its
+	// lock: only that field is read, not the message whole.
+	receipt := func(m *pstest.Message) bool {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 {
+				return true
+			}
+		}
+		return false
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if m := f.srv.Messages(); len(m) == 2 && receipt(m[0]) && receipt(m[1]) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the consumer did not receive both messages")
+		}
+	}
+}
+
+// TestALateCallbackKeepsNothing: a callback the client library stopped
+// waiting for as the record topic's consumer stopped, and which begins only
+// once Receive has returned, keeps nothing: it asks for its message again,
+// the message is not extended after the stop, and the next consumer gets it.
+// The consumer has one place, which the paused callback's message takes,
+// while the other message waits for it.
+func TestALateCallbackKeepsNothing(t *testing.T) {
+	was := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	paused, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	beforeKeeping = func() {
+		once.Do(func() {
+			close(paused)
+			<-release
+		})
+	}
+	defer func() { shutdownTimeout, beforeKeeping = was, nil }()
+	f := newFakeLog(t, false)
+	r, err := OpenRecords(f.client, f.topic, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	for i := range 2 {
+		if err := wait(t, r.Publish(fmt.Sprint("gwa-", i), FullRecord, []byte(fmt.Sprint("record-", i)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	var handled []string
+	received := make(chan error, 1)
+	go func() {
+		received <- SubscribeRecords(f.client, f.sub, 1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+			mu.Lock()
+			defer mu.Unlock()
+			handled = append(handled, string(d.Data)) // returns, settling nothing
+		})
+	}()
+	select {
+	case <-paused:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no callback ran")
+	}
+	receivedBoth(t, f)
+	cancel()
+	if err := <-received; err != nil {
+		t.Fatal(err)
+	}
+	stopped := time.Now()
+	close(release)
+	time.Sleep(6 * time.Second) // the library extends a held message's deadline every few seconds
+	for _, m := range f.srv.Messages() {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 && a.ReceivedAt.After(stopped) {
+				t.Fatalf("%s's deadline was extended %v after the consumer stopped", m.Data, a.ReceivedAt.Sub(stopped))
+			}
+		}
+	}
+	mu.Lock()
+	if len(handled) != 0 {
+		t.Fatalf("handled after the consumer stopped: %v", handled)
+	}
+	mu.Unlock()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	got := map[string]bool{}
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx2, func(_ context.Context, d *RecordDelivery) {
+		d.Ack()
+		if got[string(d.Data)] = true; len(got) == 2 {
+			cancel2()
+		}
+	})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("the next consumer got %v: %v", got, err)
+	}
+}
+
+// TestARecordMessageNeverReceivedAfterAPingComesBackSoon is afterAPing for
+// the record topic's consumer.
+func TestARecordMessageNeverReceivedAfterAPingComesBackSoon(t *testing.T) {
+	t.Parallel()
+	var r *Records
+	t.Cleanup(func() {
+		if r != nil {
+			r.Stop()
+		}
+	})
+	afterAPing(t, false, func(f *fakeLog, data string) {
+		if r == nil {
+			var err error
+			if r, err = OpenRecords(f.client, f.topic, settings); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := wait(t, r.Publish("gwa-"+data, FullRecord, []byte(data))); err != nil {
+			t.Fatal(err)
+		}
+	}, func(ctx context.Context, f *fakeLog, sub string, got func(string)) error {
+		return SubscribeRecords(f.client, sub, -1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+			d.Ack()
+			got(string(d.Data))
+		})
+	})
+}
+
+// TestARecordMessageNeverReceivedComesBackSoon: a message of the record
+// topic the log sent on the staging consumer's stream, and the consumer
+// never received, is held for no longer than ackExtension, and then comes
+// back, not after the client library's default minute.
+func TestARecordMessageNeverReceivedComesBackSoon(t *testing.T) {
+	t.Parallel()
+	opt, lost := losing("record-0")
+	f := newFakeLog(t, false, opt)
+	r, err := OpenRecords(f.client, f.topic, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	if err := wait(t, r.Publish("gwa-0", FullRecord, []byte("record-0"))); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*ackExtension)
+	defer cancel()
+	began := time.Now()
+	var took time.Duration
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+		took = time.Since(began)
+		d.Ack()
+		cancel()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lost.lost.Load() || took == 0 {
+		t.Fatalf("lost %v; delivered after %v", lost.lost.Load(), took)
 	}
 }
