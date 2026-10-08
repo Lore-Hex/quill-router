@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -32,9 +33,25 @@ func (o *Owner) who() store.Owner { return store.Owner{Node: o.cfg.Node, Epoch: 
 
 func (l *Lease) ref() store.LeaseRef { return store.LeaseRef{Workspace: l.workspace, LeaseID: l.id} }
 
-// Run renews the owner's leases every RenewEvery until ctx ends. A round
-// that fails renews nothing, and the next tries again.
+// Run renews the owner's leases every RenewEvery until ctx ends or the
+// owner stops, and, given the record topic, runs its reaper as often,
+// apart, so neither waits for the other. A round or a pass that fails is
+// tried again at the next.
 func (o *Owner) Run(ctx context.Context) {
+	var reaper sync.WaitGroup
+	defer reaper.Wait()
+	if o.cfg.Records != nil {
+		reaper.Add(1)
+		go func() {
+			defer reaper.Done()
+			o.every(ctx, func() { _ = o.Reap(ctx) })
+		}()
+	}
+	o.every(ctx, func() { _ = o.Renew(ctx) })
+}
+
+// every runs f every RenewEvery until ctx ends or the owner stops.
+func (o *Owner) every(ctx context.Context, f func()) {
 	ticker := time.NewTicker(o.cfg.RenewEvery)
 	defer ticker.Stop()
 	for {
@@ -45,7 +62,7 @@ func (o *Owner) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		_ = o.Renew(ctx)
+		f()
 	}
 }
 
@@ -115,7 +132,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 	}
 	now = o.cfg.Clock()
 	for _, l := range leases {
-		o.adoptAndReap(ctx, l, now)
+		o.adoptDrain(ctx, l)
 		l.closeIfDone(now, o.cfg.TopUps)
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)

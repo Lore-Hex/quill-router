@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"sync"
@@ -23,14 +24,26 @@ type fakeRecords struct {
 	failing int
 	auths   []string
 	data    [][]byte
+	// hold, when set, holds each acknowledgement until it closes.
+	hold chan struct{}
 }
 
 type recordAnswer struct {
-	id  string
-	err error
+	id   string
+	err  error
+	hold chan struct{}
 }
 
-func (a recordAnswer) Wait(context.Context) (string, error) { return a.id, a.err }
+func (a recordAnswer) Wait(ctx context.Context) (string, error) {
+	if a.hold != nil {
+		select {
+		case <-a.hold:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	return a.id, a.err
+}
 
 func (r *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
 	r.mu.Lock()
@@ -41,7 +54,7 @@ func (r *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
 	}
 	r.auths = append(r.auths, authorization+"/"+kind)
 	r.data = append(r.data, slices.Clone(data))
-	return recordAnswer{id: fmt.Sprintf("m%d", len(r.auths))}
+	return recordAnswer{id: fmt.Sprintf("m%d", len(r.auths)), hold: r.hold}
 }
 
 func (r *fakeRecords) published() ([]string, [][]byte) {
@@ -89,6 +102,15 @@ func lastTerminal(t *testing.T, f *fixture) record.Record {
 func renew(t *testing.T, f *fixture) {
 	t.Helper()
 	if err := f.owner.Renew(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// renewAndReap is a renewal round, then a pass of the reaper.
+func renewAndReap(t *testing.T, f *fixture) {
+	t.Helper()
+	renew(t, f)
+	if err := f.owner.Reap(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -189,12 +211,12 @@ func TestTheReaperReapsAtTheLastSnapshot(t *testing.T) {
 	}
 	hb := f.log.records(t, "lease-1")[1]
 	f.clock.advance(granted.Add(time.Minute - time.Microsecond).Sub(start.Add(10 * time.Second)))
-	renew(t, f)
+	renewAndReap(t, f)
 	if got, _ := rec.published(); len(got) != 0 || len(terminals(t, f)) != 0 {
 		t.Fatalf("a reap before its hold was due: %v", got)
 	}
 	f.clock.advance(time.Microsecond)
-	renew(t, f)
+	renewAndReap(t, f)
 	got, data := rec.published()
 	if !slices.Equal(got, []string{a + "/record"}) {
 		t.Fatalf("the record topic: %v", got)
@@ -233,7 +255,7 @@ func TestTheReaperAdoptsTheHoldsRowFirst(t *testing.T) {
 		Digest: sum("d1")}, start.Add(time.Second))
 	f.lease.adopted = start.Add(time.Hour) // the renewal's read is past the row
 	f.clock.advance(5 * time.Minute)
-	renew(t, f)
+	renewAndReap(t, f)
 	if got, _ := rec.published(); len(got) != 0 {
 		t.Fatalf("a full record for a hold the drain log decided: %v", got)
 	}
@@ -254,11 +276,11 @@ func TestAReapWaitsForItsFullRecord(t *testing.T) {
 	}
 	rec.failing = 1
 	f.clock.advance(5 * time.Minute)
-	renew(t, f)
+	renewAndReap(t, f)
 	if ts := terminals(t, f); len(ts) != 0 {
 		t.Fatalf("a reap whose full record failed: %+v", ts)
 	}
-	renew(t, f)
+	renewAndReap(t, f)
 	if r := lastTerminal(t, f); r.Kind != record.Reap || r.Auth != a {
 		t.Fatalf("the reap at the next round: %+v", r)
 	}
@@ -271,7 +293,7 @@ func TestAHoldWithNoHeartbeatIsNotReaped(t *testing.T) {
 	f.admit(t, 10, true)
 	f.admit(t, 10, false)
 	f.clock.advance(5 * time.Minute)
-	renew(t, f)
+	renewAndReap(t, f)
 	if got, _ := rec.published(); len(got) != 0 || len(terminals(t, f)) != 0 {
 		t.Fatalf("a reap of a hold with no heartbeat: %v", got)
 	}
@@ -415,5 +437,212 @@ func TestStoppingEndsARenewalRound(t *testing.T) {
 	}
 	if err := f.owner.Renew(context.Background()); err == nil {
 		t.Fatal("a round after Stop")
+	}
+}
+
+// TestAReaperPassHoldsUpNoRenewal: a reap waiting on the record topic holds
+// up no renewal round, which runs apart; once acknowledged, it is decided.
+func TestAReaperPassHoldsUpNoRenewal(t *testing.T) {
+	f, sp, rec := adoptFixture(t)
+	ctx := context.Background()
+	a := f.admit(t, 100, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(5 * time.Minute)
+	renew(t, f) // renewed past its cutoff: the round adopts, and the lease decides again
+	rec.mu.Lock()
+	rec.hold = make(chan struct{})
+	rec.mu.Unlock()
+	reaped := make(chan error, 1)
+	go func() { reaped <- f.owner.Reap(ctx) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if got, _ := rec.published(); len(got) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the reaper published no full record")
+		}
+	}
+	began := time.Now()
+	renew(t, f)
+	renew(t, f)
+	if took := time.Since(began); took > 500*time.Millisecond {
+		t.Fatalf("two renewal rounds took %v beside a reap held on the record topic", took)
+	}
+	sp.mu.Lock()
+	rounds := len(sp.rounds)
+	sp.mu.Unlock()
+	if rounds != 3 {
+		t.Fatalf("%d renewal rounds", rounds)
+	}
+	close(rec.hold)
+	if err := <-reaped; err != nil {
+		t.Fatal(err)
+	}
+	if r := lastTerminal(t, f); r.Kind != record.Reap || r.Auth != a {
+		t.Fatalf("the reap once acknowledged: %+v", r)
+	}
+}
+
+// TestARaiseTheAllocationCannotHoldIsNotAdopted: a drain-log row whose
+// raise would take the lease's allocation past what an int64 holds is not
+// adopted: the hold stays open, the allocation and the cursor as they were.
+func TestARaiseTheAllocationCannotHoldIsNotAdopted(t *testing.T) {
+	f, sp, _ := adoptFixture(t)
+	ctx := context.Background()
+	a, b, c := f.admit(t, 1, false), f.admit(t, 998, false), f.admit(t, 1, false)
+	if _, err := f.lease.Settle(ctx, a, math.MaxInt64-999, sum("a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.lease.Refund(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	before := f.lease.Books()
+	if before.Allocation != math.MaxInt64 {
+		t.Fatalf("the allocation after the settle: %+v", before)
+	}
+	sp.appendRow("lease-1", store.DrainRow{AuthorizationID: c, RecordID: "d1", Kind: "settle", Charge: 2, Estimate: 1,
+		DoorRaise: 1, Digest: sum("d1")}, start.Add(time.Second))
+	n := len(terminals(t, f))
+	renew(t, f)
+	renew(t, f)
+	got := f.lease.Books()
+	got.NextSeq = before.NextSeq // the rounds' checkpoints
+	if got != before || len(terminals(t, f)) != n {
+		t.Fatalf("a raise past an int64: books %+v, before %+v; %d records, %d before", got, before,
+			len(terminals(t, f)), n)
+	}
+	sp.mu.Lock()
+	cursors := slices.Clone(sp.cursors)
+	sp.mu.Unlock()
+	if len(cursors) != 2 || !cursors[1].IsZero() {
+		t.Fatalf("the reads' cursors: %v", cursors)
+	}
+}
+
+// TestTheReaperSkipsALeaseThatDecidesNothing: a lease past its cutoff, or
+// one a renewal found past its cutoff whose drain log is not yet adopted,
+// is not reaped: its due hold's full record is not even published.
+func TestTheReaperSkipsALeaseThatDecidesNothing(t *testing.T) {
+	ctx := context.Background()
+	dueHold := func(f *fixture) {
+		t.Helper()
+		a := f.admit(t, 100, true)
+		if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+			Basis: []byte("terms")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, _, rec := adoptFixture(t)
+	dueHold(f)
+	f.clock.advance(5 * time.Minute) // past the deadline and grace, and the lease's cutoff
+	if err := f.owner.Reap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := rec.published(); len(got) != 0 || len(terminals(t, f)) != 0 {
+		t.Fatalf("a lease past its cutoff reaped: %v", got)
+	}
+
+	f, sp, rec := adoptFixture(t)
+	dueHold(f)
+	f.clock.advance(5 * time.Minute)
+	sp.failReads = 1
+	renew(t, f) // renewed past its cutoff; its drain log's read fails
+	if err := f.owner.Reap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := rec.published(); len(got) != 0 || len(terminals(t, f)) != 0 {
+		t.Fatalf("a lease whose drain log is not adopted reaped: %v", got)
+	}
+	renewAndReap(t, f)
+	if r := lastTerminal(t, f); r.Kind != record.Reap {
+		t.Fatalf("the reap once the drain log is adopted: %+v", r)
+	}
+}
+
+// TestReaperPassesRunOneAtATime: a pass waits for the one under way, so a
+// hold due once is published once.
+func TestReaperPassesRunOneAtATime(t *testing.T) {
+	f, _, rec := adoptFixture(t)
+	ctx := context.Background()
+	a := f.admit(t, 100, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(5 * time.Minute)
+	renew(t, f)
+	rec.mu.Lock()
+	rec.hold = make(chan struct{})
+	rec.mu.Unlock()
+	done := make(chan error, 2)
+	go func() { done <- f.owner.Reap(ctx) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if got, _ := rec.published(); len(got) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first pass published nothing")
+		}
+	}
+	go func() { done <- f.owner.Reap(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	if got, _ := rec.published(); len(got) != 1 {
+		t.Fatalf("two passes at once published %v", got)
+	}
+	close(rec.hold)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := rec.published(); len(got) != 1 {
+		t.Fatalf("a hold due once published %v", got)
+	}
+}
+
+// TestStoppingEndsAReaperPass: Stop ends a pass waiting on the record topic
+// at once, though its wait is long, and returns once the pass has.
+func TestStoppingEndsAReaperPass(t *testing.T) {
+	f, _, rec := adoptFixture(t)
+	f.owner.cfg.AnswerWait = time.Hour
+	ctx := context.Background()
+	a := f.admit(t, 100, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(5 * time.Minute)
+	renew(t, f)
+	rec.mu.Lock()
+	rec.hold = make(chan struct{})
+	rec.mu.Unlock()
+	defer close(rec.hold)
+	reaped := make(chan error, 1)
+	go func() { reaped <- f.owner.Reap(ctx) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if got, _ := rec.published(); len(got) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pass published nothing")
+		}
+	}
+	stopped := make(chan struct{})
+	go func() {
+		f.owner.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop waited on a pass held on the record topic")
+	}
+	select {
+	case <-reaped:
+	default:
+		t.Fatal("Stop returned while a pass ran")
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -36,13 +38,11 @@ func (r recordLog) Publish(authorization, kind string, data []byte) Waiter {
 	return r.r.Publish(authorization, kind, data)
 }
 
-// adoptAndReap is a lease's adoption and reaper, at a renewal round (§4.5):
-// the drain-log rows committed since the last read are adopted, and a lease
-// a renewal found past its cutoff admits and decides again; then each open
-// hold whose last heartbeat's deadline plus the grace has passed is reaped,
-// unless the drain log has a terminal for it, which is adopted instead.
-// What Spanner or the record topic fails is tried at the next round.
-func (o *Owner) adoptAndReap(ctx context.Context, l *Lease, now time.Time) {
+// adoptDrain is a lease's adoption, at a renewal round (§4.5): the
+// drain-log rows committed since the last read are adopted, and a lease a
+// renewal found past its cutoff admits and decides again. What Spanner
+// fails is tried at the next round.
+func (o *Owner) adoptDrain(ctx context.Context, l *Lease) {
 	if !l.adoptable() {
 		return
 	}
@@ -59,38 +59,91 @@ func (o *Owner) adoptAndReap(ctx context.Context, l *Lease, now time.Time) {
 	l.mu.Lock()
 	l.unadopted = false
 	l.mu.Unlock()
-	if o.cfg.Records == nil {
-		return
-	}
-	for _, d := range l.due(now, o.cfg.Grace) {
-		rows, _, err := o.cfg.Spanner.ReadHoldDrainRows(ctx, l.ref(), d.Auth)
-		switch {
-		case err != nil:
-			continue
-		case len(rows) > 0:
-			_ = l.adopt(rows[0])
-			continue
-		}
-		full, err := json.Marshal(d)
-		if err != nil {
-			continue
-		}
-		wctx, cancel := context.WithTimeout(ctx, o.cfg.AnswerWait)
-		_, err = o.cfg.Records.Publish(d.Auth, settlelog.FullRecord, full).Wait(wctx)
-		cancel()
-		if err != nil {
-			continue
-		}
-		digest := sha256.Sum256(full)
-		_ = l.reap(d, digest[:])
-	}
 }
 
-// adoptable: the lease is held, within its cutoff, and deciding.
+// adoptable: the lease is held and within its cutoff.
 func (l *Lease) adoptable() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return !l.let && l.withinCutoff(l.o.cfg.Clock())
+}
+
+// Reap is one pass of the owner's reaper (§4.5, §4.9), apart from the
+// renewal rounds, so a record topic that is slow holds up no renewal: each
+// open hold whose last heartbeat's deadline plus the grace has passed is
+// reaped, unless the drain log has a terminal for it, which is adopted
+// instead. A lease past its cutoff, or whose drain log a renewal left to
+// adopt, is not reaped. Passes run one at a time, and each ends with ctx or
+// the owner, which waits for it to end when it stops. What Spanner or the
+// record topic fails is tried at the next pass.
+func (o *Owner) Reap(ctx context.Context) error {
+	if o.cfg.Spanner == nil || o.cfg.Records == nil {
+		return errors.New("owner: no store or record topic to reap with")
+	}
+	o.mu.Lock()
+	if o.stopped {
+		o.mu.Unlock()
+		return errors.New("owner: stopped")
+	}
+	o.rounds.Add(1)
+	o.mu.Unlock()
+	defer o.rounds.Done()
+	o.reaping.Lock()
+	defer o.reaping.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(o.ctx, cancel)()
+	o.mu.Lock()
+	leases := make([]*Lease, 0, len(o.leases))
+	for _, l := range o.leases {
+		leases = append(leases, l)
+	}
+	o.mu.Unlock()
+	slices.SortFunc(leases, func(a, b *Lease) int { return strings.Compare(a.id, b.id) })
+	now := o.cfg.Clock()
+	for _, l := range leases {
+		if !l.reapable() {
+			continue
+		}
+		for _, d := range l.due(now, o.cfg.Grace) {
+			o.reapOne(ctx, l, d)
+		}
+	}
+	return nil
+}
+
+// reapable: the lease is held, within its cutoff, and its drain log
+// adopted since a renewal found it past its cutoff.
+func (l *Lease) reapable() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return !l.let && !l.unadopted && l.withinCutoff(l.o.cfg.Clock())
+}
+
+// reapOne reaps a due hold: unless the drain log has a terminal for it,
+// whose first row is adopted instead, its full record goes to the record
+// topic, and once that is acknowledged the reap is decided.
+func (o *Owner) reapOne(ctx context.Context, l *Lease, d dueReap) {
+	rows, _, err := o.cfg.Spanner.ReadHoldDrainRows(ctx, l.ref(), d.Auth)
+	switch {
+	case err != nil:
+		return
+	case len(rows) > 0:
+		_ = l.adopt(rows[0])
+		return
+	}
+	full, err := json.Marshal(d)
+	if err != nil {
+		return
+	}
+	wctx, cancel := context.WithTimeout(ctx, o.cfg.AnswerWait)
+	_, err = o.cfg.Records.Publish(d.Auth, settlelog.FullRecord, full).Wait(wctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	digest := sha256.Sum256(full)
+	_ = l.reap(d, digest[:])
 }
 
 // adopt adopts a drain-log row (§4.5): a front door's terminal for a hold
@@ -115,8 +168,12 @@ func (l *Lease) adopt(row store.DrainRow) error {
 	if kind == record.Settle {
 		t.charge, t.digest = row.Charge, row.Digest
 	}
+	raised, ok := add(l.allocation, row.DoorRaise)
+	if !ok {
+		return fmt.Errorf("owner: a raise of %d the lease's allocation cannot hold", row.DoorRaise)
+	}
 	allocation := l.allocation
-	l.allocation += row.DoorRaise
+	l.allocation = raised
 	if _, err := l.decide(row.AuthorizationID, t); err != nil {
 		l.allocation = allocation
 		return err

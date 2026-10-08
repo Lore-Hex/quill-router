@@ -129,13 +129,15 @@ type Owner struct {
 
 	// ctx ends when the owner stops; writers are its shortfall writers,
 	// which outlive the leases they write for. rounds are its renewal
-	// rounds under way, which round lets run one at a time.
+	// rounds and reaper passes under way; round lets one round run at a
+	// time, and reaping one pass.
 	ctx     context.Context
 	cancel  context.CancelFunc
 	writers sync.WaitGroup
 	grants  sync.WaitGroup
 	rounds  sync.WaitGroup
 	round   sync.Mutex
+	reaping sync.Mutex
 
 	mu      sync.Mutex
 	stopped bool
