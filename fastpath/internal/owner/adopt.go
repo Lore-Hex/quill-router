@@ -108,8 +108,36 @@ func (o *Owner) Reap(ctx context.Context) error {
 		for _, d := range l.due(now, o.cfg.Grace) {
 			o.reapOne(ctx, l, d)
 		}
+		l.releaseDue(now, o.cfg.FirstHeartbeat, o.cfg.Grace)
 	}
 	return nil
+}
+
+// releaseDue releases each stream's hold whose boot declares the heartbeat
+// at stream open and for which no heartbeat record was issued by its
+// admission plus the first-heartbeat allowance plus the grace (§4.5,
+// TerminalOrder's OwnerRelease): uncharged, its record naming its boot
+// binding. The test is that none was issued, not acknowledged: one issued
+// and not yet acknowledged may still be stored, so the hold is reaped at
+// its snapshot instead. With no allowance it releases none.
+func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
+	if allowance == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var due []string
+	for _, h := range l.holds {
+		if h.openHeartbeat && !h.heartbeat && !now.Before(h.admitted.Add(allowance+grace)) {
+			due = append(due, h.auth)
+		}
+	}
+	slices.Sort(due)
+	for _, auth := range due {
+		if _, err := l.decide(auth, terminalOf{kind: record.Release}); err != nil {
+			return
+		}
+	}
 }
 
 // reapable: the lease is held, within its cutoff, and its drain log

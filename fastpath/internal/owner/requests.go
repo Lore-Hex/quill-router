@@ -54,6 +54,10 @@ type Admission struct {
 	Estimate int64
 	Stream   bool
 	Boot     []byte
+	// OpenHeartbeat: the boot declares the heartbeat at stream open, so a
+	// stream with none issued by the first-heartbeat allowance is released
+	// (§4.5).
+	OpenHeartbeat bool
 }
 
 func (a Admission) valid() error {
@@ -109,7 +113,8 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	if l.booksLocked().Free() < need {
 		return Admitted{}, ErrNoRoom
 	}
-	h := &hold{auth: auth, estimate: a.Estimate, overrun: over, stream: a.Stream, boot: append([]byte(nil), a.Boot...)}
+	h := &hold{auth: auth, estimate: a.Estimate, overrun: over, stream: a.Stream, boot: append([]byte(nil), a.Boot...),
+		openHeartbeat: a.Stream && a.OpenHeartbeat}
 	l.held += h.estimate
 	l.buffer += h.counted()
 	l.holds[auth] = h
@@ -126,7 +131,7 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		}
 		return Admitted{}, ErrPastCutoff
 	}
-	h.endOfLife = now.Add(l.o.cfg.HoldLife)
+	h.admitted, h.endOfLife = now, now.Add(l.o.cfg.HoldLife)
 	l.lastAdmit = now
 	return Admitted{Auth: auth, Lease: l.id, EndOfLife: h.endOfLife}, nil
 }
@@ -338,7 +343,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	if h == nil {
 		return nil, ErrUnknownHold
 	}
-	if !l.withinCutoff(l.o.cfg.Clock()) {
+	if !l.withinCutoff(l.o.cfg.Clock()) || l.handedOff {
 		return nil, ErrPastCutoff
 	}
 	if l.unadopted && t.drain == "" {
@@ -366,7 +371,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	}
 	r := record.Record{Kind: t.kind, Auth: auth, Estimate: h.estimate, Charge: t.charge, Shortfall: shortfall,
 		Digest: t.digest, Drain: t.drain, SnapshotSeq: t.snapSeq}
-	if t.kind == record.Refund {
+	if t.kind == record.Refund || t.kind == record.Release {
 		r.Boot = h.boot
 	}
 	s, err := l.handOver(r, freed)

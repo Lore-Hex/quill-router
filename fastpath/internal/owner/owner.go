@@ -81,11 +81,16 @@ type Config struct {
 	// full records of its reaps (§4.9); without it the owner reaps nothing.
 	Grace   time.Duration
 	Records RecordLog
+	// FirstHeartbeat is the first-heartbeat allowance (§4.5): a stream's
+	// hold admitted for a boot that declares the heartbeat at stream open,
+	// for which no heartbeat record was issued by its admission plus it
+	// plus Grace, is released uncharged. Zero releases none.
+	FirstHeartbeat time.Duration
 }
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
-		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 {
+		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 || c.FirstHeartbeat < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter and a clock")
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
@@ -287,6 +292,10 @@ type hold struct {
 	endOfLife time.Time
 	stream    bool
 	boot      []byte
+	// admitted is when the hold was admitted, and openHeartbeat whether its
+	// boot declares the heartbeat at stream open (§4.5).
+	admitted      time.Time
+	openHeartbeat bool
 	// The latest valid heartbeat: the gateway's sequence and hash, the
 	// usage, the running charge, the deadline granted and the one it
 	// echoed, and the owner sequence number of its record; heartbeat is
@@ -374,9 +383,12 @@ type Lease struct {
 	// past which the next reads (adopt.go); only the renewal round uses it.
 	// unadopted is set by a renewal that found the lease past its cutoff,
 	// and cleared once its drain log is adopted: until then it admits and
-	// decides nothing and answers each heartbeat retry (§4.2).
+	// decides nothing and answers each heartbeat retry (§4.2). handedOff
+	// is set once a forced exit's manifest is handed over: the lease
+	// decides nothing more (handoff.go).
 	adopted   time.Time
 	unadopted bool
+	handedOff bool
 
 	// workers are the lease's flusher and the finish of its draining, which
 	// Let waits for: stopped is closed once they end.
