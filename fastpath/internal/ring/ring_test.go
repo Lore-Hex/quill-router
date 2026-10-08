@@ -33,7 +33,10 @@ func newFake() *fake {
 		rows: map[string]*store.Member{}, beats: map[string]int{}}
 }
 
-func (f *fake) Join(_ context.Context, address string, roles []string) (int64, time.Time, error) {
+func (f *fake) Join(ctx context.Context, address string, roles []string) (int64, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, time.Time{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
@@ -52,7 +55,10 @@ func (f *fake) Join(_ context.Context, address string, roles []string) (int64, t
 	return epoch, f.now, nil
 }
 
-func (f *fake) Heartbeat(_ context.Context, address string, epoch int64, state string) (bool, time.Time, error) {
+func (f *fake) Heartbeat(ctx context.Context, address string, epoch int64, state string) (bool, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return false, time.Time{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
@@ -71,7 +77,10 @@ func (f *fake) Heartbeat(_ context.Context, address string, epoch int64, state s
 	return true, f.now, nil
 }
 
-func (f *fake) Members(context.Context) ([]store.Member, time.Time, error) {
+func (f *fake) Members(ctx context.Context) ([]store.Member, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, time.Time{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
@@ -379,48 +388,155 @@ func TestAWatcherSeesAMemberGo(t *testing.T) {
 	})
 }
 
+// gated is the fake whose reads each wait for the test to let them go, and
+// report when they end, so a test knows exactly which read made a view.
+type gated struct {
+	*fake
+	next     chan struct{}
+	began    chan struct{}
+	finished chan error
+}
+
+func newGated(f *fake) *gated {
+	return &gated{fake: f, next: make(chan struct{}), began: make(chan struct{}, 100), finished: make(chan error, 100)}
+}
+
+func (g *gated) Members(ctx context.Context) ([]store.Member, time.Time, error) {
+	g.began <- struct{}{}
+	select {
+	case <-g.next:
+	case <-ctx.Done():
+		g.finished <- ctx.Err()
+		return nil, time.Time{}, ctx.Err()
+	}
+	members, at, err := g.fake.Members(ctx)
+	g.finished <- err
+	return members, at, err
+}
+
+// read lets one read go and waits for it to end.
+func (g *gated) read(t *testing.T) error {
+	t.Helper()
+	select {
+	case g.next <- struct{}{}:
+	case <-time.After(time.Second):
+		t.Fatal("no read began")
+	}
+	select {
+	case err := <-g.finished:
+		return err
+	case <-time.After(time.Second):
+		t.Fatal("the read did not end")
+	}
+	return nil
+}
+
 // TestAWatcherKeepsItsLastView: a read that fails leaves the view, and its
-// time, as they were; and the view a caller gets is its own copy.
+// time, exactly as the last successful read left them; and the view a
+// caller gets is its own copy.
 func TestAWatcherKeepsItsLastView(t *testing.T) {
 	f := newFake()
 	ctx := context.Background()
 	if _, _, err := f.Join(ctx, "a:1", []string{OwnerRole}); err != nil {
 		t.Fatal(err)
 	}
-	w, err := Watch(ctx, f, time.Millisecond)
-	if err != nil {
+	g := newGated(f)
+	watched := make(chan *Watcher, 1)
+	go func() {
+		w, err := Watch(ctx, g, time.Millisecond)
+		if err != nil {
+			t.Error(err)
+		}
+		watched <- w
+	}()
+	if err := g.read(t); err != nil {
 		t.Fatal(err)
 	}
-	defer w.Stop()
-	// The baseline, taken before reads begin to fail, built apart from
-	// anything the watcher returned.
+	w := <-watched
+	defer func() {
+		go func() {
+			for range g.began {
+				select {
+				case g.next <- struct{}{}:
+				default:
+				}
+			}
+		}()
+		w.Stop()
+	}()
+	// The baseline: one more successful read, built apart from anything the
+	// watcher returned.
+	if err := g.read(t); err != nil {
+		t.Fatal(err)
+	}
 	members, readAt, err := f.Members(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := View{Members: members, ReadAt: readAt}
-	eventually(t, "a read of the baseline", func() bool {
-		v, _ := w.View()
-		return reflect.DeepEqual(v, want)
-	})
-	_, before := w.View()
-	f.setFail(errors.New("unavailable"))
-	time.Sleep(20 * time.Millisecond)
-	v, after := w.View()
-	if !reflect.DeepEqual(v, want) || after.Before(before) {
-		t.Fatalf("a failed read changed the view: %+v at %v, then %+v at %v", want, before, v, after)
+	v, at := w.View()
+	if !reflect.DeepEqual(v, want) {
+		t.Fatalf("the view after a read: %+v, want %+v", v, want)
 	}
-	// Reads go on failing, so the time stays the last success's.
-	time.Sleep(5 * time.Millisecond)
-	if _, again := w.View(); !again.Equal(after) {
-		t.Fatalf("the view's time moved with no successful read: %v, then %v", after, again)
+	f.setFail(errors.New("unavailable"))
+	for range 3 {
+		if err := g.read(t); err == nil {
+			t.Fatal("a read succeeded while reads fail")
+		}
+		got, gotAt := w.View()
+		if !reflect.DeepEqual(got, want) || !gotAt.Equal(at) {
+			t.Fatalf("a failed read changed the view: %+v at %v, then %+v at %v", want, at, got, gotAt)
+		}
 	}
 	v.Members[0].Roles[0], v.Members[0].Live = "frontdoor", false
 	if again, _ := w.View(); !reflect.DeepEqual(again, want) {
 		t.Fatalf("a caller's change reached the watcher's view: %+v", again)
 	}
+	// Reads still fail, so a new watch has no first read.
 	if _, err := Watch(ctx, f, time.Millisecond); err == nil {
 		t.Fatal("a watch starts with no first read")
+	}
+}
+
+// TestStopCancelsAReadUnderWay: Stop ends a read the store has not answered,
+// well before the read's own deadline, an interval.
+func TestStopCancelsAReadUnderWay(t *testing.T) {
+	f := newFake()
+	ctx := context.Background()
+	g := newGated(f)
+	watched := make(chan *Watcher, 1)
+	go func() {
+		w, err := Watch(ctx, g, 2*time.Second)
+		if err != nil {
+			t.Error(err)
+		}
+		watched <- w
+	}()
+	if err := g.read(t); err != nil {
+		t.Fatal(err)
+	}
+	w := <-watched
+	select {
+	case <-g.began: // the first read's
+	default:
+	}
+	select {
+	case <-g.began: // the next, held, two seconds on
+	case <-time.After(3 * time.Second):
+		t.Fatal("no second read began")
+	}
+	stopped := time.Now()
+	w.Stop()
+	if took := time.Since(stopped); took > 500*time.Millisecond {
+		t.Fatalf("Stop took %v, waiting on the read", took)
+	}
+	select {
+	case err := <-g.finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the read under way ended with %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the read under way did not end")
 	}
 }
 
@@ -525,6 +641,32 @@ func (b *blocking) Heartbeat(ctx context.Context, address string, epoch int64, s
 func TestALeaveThatTimedOutStaysMeant(t *testing.T) {
 	b := &blocking{fake: newFake()}
 	ctx := context.Background()
+	slow, err := Start(ctx, b, "b:1", []string{OwnerRole}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Stop()
+	b.mu.Lock()
+	b.landErr = context.DeadlineExceeded
+	b.mu.Unlock()
+	if err := slow.SetState(ctx, store.Leaving); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the leave: %v", err)
+	}
+	b.mu.Lock()
+	b.landErr = nil
+	b.mu.Unlock()
+	// Before any heartbeat confirms the leave, serving or withdrawing again
+	// is refused by the node itself, and loses nothing.
+	for _, state := range []string{store.Serving, store.Withdrawn} {
+		if err := slow.SetState(ctx, state); err == nil || errors.Is(err, ErrLost) {
+			t.Fatalf("%s right after a leave that timed out: %v", state, err)
+		}
+	}
+	select {
+	case <-slow.Lost():
+		t.Fatal("the unconfirmed leave lost the node")
+	default:
+	}
 	n, err := Start(ctx, b, "a:1", []string{OwnerRole}, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
@@ -595,5 +737,25 @@ func TestStopEndsAWriteUnderWay(t *testing.T) {
 	}
 	if _, err := Start(ctx, b, "", []string{OwnerRole}, time.Second); err == nil {
 		t.Fatal("a node starts with no address")
+	}
+}
+
+// TestTheFakeRefusesCancelledCalls: as the store's calls end with their
+// context, the fake's do, and change nothing.
+func TestTheFakeRefusesCancelledCalls(t *testing.T) {
+	f := newFake()
+	ctx, cancel := context.WithCancel(context.Background())
+	if _, _, err := f.Join(context.Background(), "a:1", []string{OwnerRole}); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, _, err := f.Join(ctx, "b:1", []string{OwnerRole}); err == nil {
+		t.Error("a cancelled join")
+	}
+	if _, _, err := f.Heartbeat(ctx, "a:1", 1, store.Leaving); err == nil || f.row("a:1").State != store.Serving {
+		t.Error("a cancelled heartbeat")
+	}
+	if _, _, err := f.Members(ctx); err == nil {
+		t.Error("a cancelled read")
 	}
 }
