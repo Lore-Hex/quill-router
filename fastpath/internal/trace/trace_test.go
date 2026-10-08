@@ -31,7 +31,8 @@ func TestEventsAreNumberedInTheirProcess(t *testing.T) {
 	wg.Wait()
 	cause := ID{Node: "node-b:8080", Epoch: 1, Seq: 7}
 	commit := time.Date(2026, 10, 8, 12, 0, 0, 1000, time.FixedZone("offset", 30))
-	last := r.Record("append", &cause, Facts{Commit: commit, Detail: "unreachable"})
+	read := commit.Add(-time.Second)
+	last := r.Record("append", &cause, Facts{Commit: commit, Read: read, Detail: "unreachable"})
 	if got := strings.Count(buf.String(), "\n"); got != 51 {
 		t.Fatalf("%d lines in the file before Close", got)
 	}
@@ -62,7 +63,7 @@ func TestEventsAreNumberedInTheirProcess(t *testing.T) {
 		t.Fatalf("the owner sequences stated: %v", seqs)
 	}
 	if e := events[50]; e.Cause == nil || *e.Cause != cause || e.Kind != "append" || e.Detail != "unreachable" ||
-		e.OwnerSeq != nil || !e.Commit.Equal(commit) {
+		e.OwnerSeq != nil || !e.Commit.Equal(commit) || !e.Read.Equal(read) {
 		t.Fatalf("the last event: %+v", e)
 	}
 	n := buf.Len()
@@ -103,6 +104,28 @@ func TestTheClocksAreTheProcesss(t *testing.T) {
 		if e := events[i]; e.Mono != st.elapsed.Nanoseconds() || !e.Wall.Equal(st.wall) || e.Wall.Location() != time.UTC {
 			t.Fatalf("event %d: mono %d, wall %v; want %d and %v", i, e.Mono, e.Wall, st.elapsed.Nanoseconds(), st.wall)
 		}
+	}
+}
+
+// TestTheElapsedClockIsTheRecorders: a recorder as New makes it counts the
+// time since it began, as the monotonic clock does.
+func TestTheElapsedClockIsTheRecorders(t *testing.T) {
+	var buf bytes.Buffer
+	began := time.Now()
+	r, err := New(&buf, "n", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Record("first", nil, Facts{})
+	time.Sleep(20 * time.Millisecond)
+	r.Record("second", nil, Facts{})
+	most := time.Since(began)
+	events, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil || len(events) != 2 {
+		t.Fatalf("%d events, %v", len(events), err)
+	}
+	if apart := time.Duration(events[1].Mono - events[0].Mono); apart < 20*time.Millisecond || events[1].Mono > most.Nanoseconds() {
+		t.Fatalf("the clocks %d and %d, %v apart, after %v", events[0].Mono, events[1].Mono, apart, most)
 	}
 }
 
@@ -226,6 +249,15 @@ func TestReadTakesOnlyEvents(t *testing.T) {
 			`"id":{"node":"n"},"id":{"epoch":1,"seq":1}`, 1) + "\n",
 		"an identity's key twice": strings.Replace(good, `"seq":1}`, `"seq":1,"seq":2}`, 1) + "\n",
 		"a null fact":             strings.Replace(good, `"kind":"x"`, `"kind":"x","lease":null`, 1) + "\n",
+		"a surrogate":             strings.Replace(good, `"kind":"x"`, `"kind":"x","auth":"a\ud800"`, 1) + "\n",
+		"text not UTF-8":          strings.Replace(good, `"kind":"x"`, "\"kind\":\"x\",\"auth\":\"a\xff\"", 1) + "\n",
+		"a time past nanoseconds": strings.Replace(good, `"kind":"x"`, `"kind":"x","commit":"2026-10-08T12:00:00.1234567891Z"`, 1) + "\n",
+		"a time not in UTC":       strings.Replace(good, `"2026-10-08T12:00:00Z"`, `"2026-10-08T12:00:00+00:00"`, 1) + "\n",
+		"an offset past a day":    strings.Replace(good, `"2026-10-08T12:00:00Z"`, `"2026-10-08T12:00:00+24:00"`, 1) + "\n",
+		"the keys out of order":   `{"mono":0,"id":{"node":"n","epoch":1,"seq":1},"wall":"2026-10-08T12:00:00Z","kind":"x"}` + "\n",
+		"a space after":           good + " \n",
+		"an empty kind":           strings.Replace(good, `"kind":"x"`, `"kind":""`, 1) + "\n",
+		"a zero wall":             strings.Replace(good, `"2026-10-08T12:00:00Z"`, `"0001-01-01T00:00:00Z"`, 1) + "\n",
 	} {
 		events, err := Read(strings.NewReader(good + "\n" + file))
 		if err == nil || len(events) != 1 {

@@ -216,11 +216,10 @@ func Cause(ctx context.Context) *ID {
 // Header is the HTTP header a request between nodes carries its cause in.
 const Header = "Fastpath-Cause"
 
-// Read reads a process's events, in the order recorded: each line one JSON
-// object, an event as a recorder writes it, with its identity, its clocks
-// and its kind, and its keys as a recorder writes them (strict). It returns
-// the events before the first line that is not one, as a process killed as
-// it wrote leaves its last, with that line's fault.
+// Read reads a process's events, in the order recorded: each line one
+// event, exactly as a recorder writes it (readEvent). It returns the events
+// before the first line that is not one, as a process killed as it wrote
+// leaves its last, with that line's fault.
 func Read(rd io.Reader) ([]Event, error) {
 	var out []Event
 	sc := bufio.NewScanner(rd)
@@ -238,11 +237,12 @@ func Read(rd io.Reader) ([]Event, error) {
 	return out, nil
 }
 
-// readEvent reads one line as an event.
+// readEvent reads one line as an event: one a recorder writes, with its
+// identity, its clocks and its kind, and the very bytes a recorder writes
+// for it. So nothing that decoding would change passes: a key twice, in
+// another case or null, text that is not UTF-8, a time not in UTC to the
+// nanosecond, or anything after the event.
 func readEvent(line []byte) (Event, error) {
-	if err := strict(line); err != nil {
-		return Event{}, err
-	}
 	var e Event
 	if err := json.Unmarshal(line, &e); err != nil {
 		return Event{}, err
@@ -250,65 +250,8 @@ func readEvent(line []byte) (Event, error) {
 	if !e.ID.valid() || (e.Cause != nil && !e.Cause.valid()) || e.Kind == "" || e.Wall.IsZero() || e.Mono < 0 {
 		return Event{}, errors.New("no event a recorder writes")
 	}
+	if canonical, err := json.Marshal(e); err != nil || !bytes.Equal(canonical, line) {
+		return Event{}, errors.New("not as a recorder writes it")
+	}
 	return e, nil
-}
-
-// eventKeys are an event's keys as a recorder writes them, true for those
-// every event has; id and cause are identities, with idKeys, all of which
-// each has.
-var (
-	eventKeys = map[string]bool{"id": true, "mono": true, "wall": true, "kind": true, "cause": false,
-		"lease": false, "auth": false, "owner_seq": false, "commit": false, "read": false, "message": false,
-		"key": false, "outcome": false, "detail": false}
-	idKeys = map[string]bool{"node": true, "epoch": true, "seq": true}
-)
-
-// strict reads line's first JSON object, whose keys must be as a recorder
-// writes them: each known, in its case, at most once, and none null, which
-// JSON's decoding into a struct would otherwise take, merging duplicates,
-// matching keys in any case and reading a null as a zero. The decoding
-// that follows takes nothing after the object.
-func strict(line []byte) error {
-	return object(json.NewDecoder(bytes.NewReader(line)), eventKeys)
-}
-
-// object reads one JSON object from d with the keys of keys.
-func object(d *json.Decoder, keys map[string]bool) error {
-	if t, err := d.Token(); err != nil || t != json.Delim('{') {
-		return errors.New("not a JSON object")
-	}
-	seen := map[string]bool{}
-	for d.More() {
-		t, err := d.Token()
-		if err != nil {
-			return err
-		}
-		k, _ := t.(string)
-		if _, known := keys[k]; !known || seen[k] {
-			return fmt.Errorf("the key %q, unknown or twice", k)
-		}
-		seen[k] = true
-		if k == "id" || k == "cause" {
-			if err := object(d, idKeys); err != nil {
-				return err
-			}
-			continue
-		}
-		v, err := d.Token()
-		if err != nil {
-			return err
-		}
-		if _, nested := v.(json.Delim); v == nil || nested {
-			return fmt.Errorf("%q is not a string or a number", k)
-		}
-	}
-	if _, err := d.Token(); err != nil {
-		return err
-	}
-	for k, every := range keys {
-		if every && !seen[k] {
-			return fmt.Errorf("no %q", k)
-		}
-	}
-	return nil
 }
