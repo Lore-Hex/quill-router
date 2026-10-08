@@ -419,6 +419,11 @@
   object-fit: contain;
 }
 
+#search-results .model-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 #search-results small {
   display: block;
   color: var(--tr-color-text-tertiary);

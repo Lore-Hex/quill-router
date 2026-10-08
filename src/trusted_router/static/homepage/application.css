@@ -8,7 +8,7 @@
 .signin-google span[aria-hidden]{background:#fff;color:#d2452a;border:1px solid var(--line)}
 .signin-github span[aria-hidden]{background:#24292f}
 .signin-metamask span[aria-hidden]{background:linear-gradient(135deg,#e2761b,#cd6116)}
-#search-retry{padding:10px 14px;border:1px solid #526859;background:#14251c;color:var(--cream);border-radius:6px}
+
 
 /* Copy-led marketing sections and a consistent, readable supporting scale. */
 .proof-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px}
