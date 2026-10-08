@@ -531,10 +531,12 @@ func (rt *Runtime) closeAt(ctx context.Context, h *held, at time.Time) {
 	}
 	got, err := rt.cfg.Store.CloseLease(ctx, h.ref, l.version, h.cursor, at)
 	switch {
-	case err != nil:
-	case got.Refused == "":
+	case err == nil && got.Refused == "":
 		rt.finish(h)
-	case got.Refused == store.RefusedVersion, got.Refused == store.RefusedGap, got.Refused == store.RefusedClosed:
+	case err != nil, got.Refused == store.RefusedVersion, got.Refused == store.RefusedGap, got.Refused == store.RefusedClosed:
+		// Its outcome unknown, or another member wrote the lease or
+		// closed it: the member is read again, by the next round of
+		// commits, and a lease found closed is done.
 		h.lease = nil
 	}
 }
@@ -647,6 +649,14 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 			continue
 		case h.lease != nil:
 			rt.ack(h, len(h.pending))
+		case !h.done && len(h.pending) > 0 && !h.recovering:
+			// A member dropped outside a commit, as by a close another
+			// member's write refused: no record may come that reads it
+			// again, so the round does.
+			h.recovering = true
+			h.mu.Unlock()
+			rt.recover(ctx, h)
+			continue
 		case h.done && len(h.pending) == 0 && time.Since(h.doneAt) >= rt.cfg.ForgetAfter:
 			rt.forget(h)
 		}

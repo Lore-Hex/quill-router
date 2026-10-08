@@ -61,6 +61,7 @@ type flaky struct {
 	mu                             sync.Mutex
 	failFind, failLoad, failCommit int
 	lostCommits, lostStops         int
+	lostCloses                     int
 	failLoadOf                     map[string]int // by lease ID
 	// gone makes ReadLease find no lease.
 	gone    bool
@@ -148,6 +149,14 @@ func (f *flaky) Commit(ctx context.Context, reqs []store.CommitRequest) ([]store
 		return nil, time.Time{}, errInjected
 	}
 	return got, at, err
+}
+
+func (f *flaky) CloseLease(ctx context.Context, ref store.LeaseRef, version int64, drainRead, now time.Time) (store.CloseResult, error) {
+	got, err := f.Store.CloseLease(ctx, ref, version, drainRead, now)
+	if err == nil && f.take(&f.lostCloses) {
+		return store.CloseResult{}, errInjected
+	}
+	return got, err
 }
 
 func (f *flaky) commitCalls() [][]store.CommitRequest {
@@ -1021,6 +1030,101 @@ func TestARejectedTickReapsNothing(t *testing.T) {
 	handleAll(rt, on(t, f.ref, tick(2, deadline.Add(time.Hour))))
 	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
 		t.Fatalf("the record topic at the next tick: %v", got)
+	}
+}
+
+// closing drains the fixture's lease, a settle its one record, to its end:
+// the fence tick and S, then a tick at which the member sees the end. It
+// returns the delivered ticks and the time a tick closes the lease at.
+func closing(t *testing.T, f *runtimeFixture, rt *Runtime, clock *time.Time) ([]*fakeDelivery, time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	handleAll(rt, on(t, f.ref, settle(1, "b", 40, 0)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := row.Expiry.Add(time.Hour) // past the expiry plus MaxLife and the grace: no list is needed
+	*clock = late
+	ds := []*fakeDelivery{on(t, f.ref, tick(1, row.FenceTime.Time.Add(2*time.Second)))} // the fence tick: S
+	handleAll(rt, ds[0])
+	round(rt)
+	ds = append(ds, on(t, f.ref, tick(2, late))) // the end seen
+	handleAll(rt, ds[1])
+	return ds, late.Add(2 * time.Second)
+}
+
+// doneHeld reports whether the runtime holds the lease done, its member
+// dropped.
+func doneHeld(rt *Runtime, id string) bool {
+	rt.mu.Lock()
+	h := rt.leases[id]
+	rt.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.done && h.lease == nil
+}
+
+// TestACloseWhoseAnswerIsLostIsReadAgain: a close that lands but loses its
+// answer drops the member; the next round of commits reads the lease
+// again, finds it closed, and its member done, with no tick to come.
+func TestACloseWhoseAnswerIsLostIsReadAgain(t *testing.T) {
+	f := newRuntimeFixture(t)
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	ds, at := closing(t, f, rt, &clock)
+	f.store.mu.Lock()
+	f.store.lostCloses = 1
+	f.store.mu.Unlock()
+	d := on(t, f.ref, tick(3, at))
+	handleAll(rt, d)
+	if l := f.loaded(); l.Lease.State != "closed" {
+		t.Fatalf("the close did not land: %+v", l.Lease)
+	}
+	round(rt)
+	if !doneHeld(rt, f.ref.LeaseID) {
+		t.Fatal("a lease closed with its answer lost is not done")
+	}
+	for i, d := range append(ds, d) {
+		if d.acked() != 1 {
+			t.Fatalf("tick %d acknowledged %d times", i, d.acked())
+		}
+	}
+}
+
+// TestARefusedCloseIsReadAgainWithNoTick: a close refused since another
+// member closed the lease first drops the member; the next round of commits
+// reads the lease again, with no tick to come, and acknowledges its ticks.
+func TestARefusedCloseIsReadAgainWithNoTick(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	ds, at := closing(t, f, rt, &clock)
+	l := f.loaded()
+	if got, err := f.s.CloseLease(ctx, f.ref, l.Lease.CommitVersion, time.Now(), at); err != nil || got.Refused != "" {
+		t.Fatalf("another member's close: %+v %v", got, err)
+	}
+	d := on(t, f.ref, tick(3, at))
+	handleAll(rt, d)
+	if d.acked() != 0 {
+		t.Fatal("a tick acknowledged at a refused close")
+	}
+	round(rt)
+	if !doneHeld(rt, f.ref.LeaseID) {
+		t.Fatal("a lease another member closed is not done")
+	}
+	for i, d := range append(ds, d) {
+		if d.acked() != 1 {
+			t.Fatalf("tick %d acknowledged %d times", i, d.acked())
+		}
 	}
 }
 
