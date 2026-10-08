@@ -69,7 +69,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 	t.Logf("operations: %v", seen)
 	for _, k := range []string{"grant", "refused grant", "shortfall-write", "booking", "fault", "return", "drain",
 		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
-		"a booking past the first donor", "a return before the last donor"} {
+		"a booking past the first donor", "a return before the last donor", "a batch its order changes"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -156,12 +156,40 @@ func (l *debtLease) gaveBack(amount int64) (beforeLast bool) {
 // room is what the lease holds and has not booked.
 func (l *debtLease) room() int64 { return l.allocation() - l.consumed }
 
+// bookedEach books a commit's bookings one by one, in order, and reports
+// whether a donor after the first took part.
+func (l *debtLease) bookedEach(money []MoneyOp) (pastFirst bool) {
+	for _, op := range money {
+		pastFirst = l.booked(op.Charge, op.ShortfallTotal) || pastFirst
+	}
+	return pastFirst
+}
+
+// copied is the lease's ledger, to book on apart from it.
+func (l *debtLease) copied() *debtLease {
+	c := *l
+	c.donors = slices.Clone(l.donors)
+	return &c
+}
+
+// orderMatters reports whether booking money in reverse order would book
+// other amounts, against the allocation or as faults, than in its order.
+func (l *debtLease) orderMatters(money []MoneyOp) bool {
+	inOrder, reversed := l.copied(), l.copied()
+	inOrder.bookedEach(money)
+	back := slices.Clone(money)
+	slices.Reverse(back)
+	reversed.bookedEach(back)
+	return inOrder.consumed != reversed.consumed || inOrder.fault != reversed.fault
+}
+
 type debtWalk struct {
 	t       *testing.T
 	s       *Store
 	ws      string
 	rng     *rand.Rand
 	probes  *rand.Rand // the refused commits', apart, so they leave the walk's own choices as they were
+	batches *rand.Rand // the bookings after a commit's first, apart for the same reason
 	seed    int64
 	credits int64
 	leases  []*debtLease
@@ -174,7 +202,7 @@ func newDebtWalk(t *testing.T, s *Store, seed int64) *debtWalk {
 	rng := rand.New(rand.NewSource(seed))
 	credits := []int64{int64(rng.Intn(30)), int64(rng.Intn(30)), int64(rng.Intn(30))}
 	d := &debtWalk{t: t, s: s, ws: seedWorkspace(t, credits...), rng: rng, probes: rand.New(rand.NewSource(^seed)),
-		seed: seed, seen: map[string]int{}}
+		batches: rand.New(rand.NewSource(seed ^ 0x5eed)), seed: seed, seen: map[string]int{}}
 	for _, c := range credits {
 		d.credits += c
 	}
@@ -314,27 +342,54 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 }
 
 // book books a charge, carrying a shortfall total that sometimes raises the
-// stored one; a charge past the allocation is a fault.
+// stored one, and in a third of the commits one or two more after it, each
+// carrying a total that sometimes raises the one before; in another third,
+// a charge past the room left and then a raise past the charge after it,
+// whose order shows. A charge past the allocation is a fault. A commit books
+// its charges in its order: one whose reverse would book otherwise is
+// counted.
 func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	d.t.Helper()
 	charge, total := int64(d.rng.Intn(16)), l.shortfall
 	if d.rng.Intn(3) == 0 {
 		total += int64(d.rng.Intn(6))
 	}
-	d.note("book %s %d at %d", l.ref.LeaseID, charge, total)
+	money := []MoneyOp{Book(charge, total)}
+	switch d.batches.Intn(3) {
+	case 1:
+		for range 1 + d.batches.Intn(2) {
+			charge := int64(d.batches.Intn(16))
+			if d.batches.Intn(2) == 0 {
+				total += int64(d.batches.Intn(6))
+			}
+			money = append(money, Book(charge, total))
+		}
+	case 2:
+		// Booked in reverse, the raise would make room for the charge
+		// past the room.
+		after := l.copied()
+		after.bookedEach(money)
+		past := max(after.room(), 0) + 1 + int64(d.batches.Intn(4))
+		raise := 1 + int64(d.batches.Intn(8))
+		money = append(money, Book(past, total), Book(int64(d.batches.Intn(int(raise))), total+raise))
+	}
+	d.note("book %s %v", l.ref.LeaseID, money)
 	if d.probes.Intn(4) == 0 {
 		// A member that read a later version than the lease's: the store
 		// refuses its commit and changes nothing, as the check after
 		// holds every row to the walk's ledger.
 		got, _, err := d.s.Commit(ctx, []CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1, AppliedSeq: l.seq + 1,
-			Money: []MoneyOp{Book(charge, total)}}})
+			Money: money}})
 		if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion {
 			d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
 		}
 		d.seen["refused commit"]++
 	}
-	got := d.commit(ctx, l, []MoneyOp{Book(charge, total)}, false)
-	if l.booked(charge, total) {
+	if l.orderMatters(money) {
+		d.seen["a batch its order changes"]++
+	}
+	got := d.commit(ctx, l, money, false)
+	if l.bookedEach(money) {
 		d.seen["a booking past the first donor"]++
 	}
 	d.seen["booking"]++

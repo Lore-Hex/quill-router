@@ -3,7 +3,9 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"math/rand"
 	"os"
@@ -77,6 +79,22 @@ var (
 	walkTick     = time.Date(2026, 10, 8, 1, 0, 0, 0, time.UTC)
 )
 
+// holdPayload is what a hold's row keeps beside its snapshot's numbers, as
+// the walk writes it for auth's heartbeat at seq: the snapshot's hash and
+// usage, and the reap basis its first heartbeat brought. A reap after a
+// takeover is rebuilt from them.
+func holdPayload(auth string, seq int64) (hash, usage, basis []byte) {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s@%d", auth, seq)))
+	return h[:], []byte(fmt.Sprintf(`{"auth":%q,"seq":%d}`, auth, seq)), []byte("the basis of " + auth)
+}
+
+// payloadIs reports whether a hold row keeps the payload the walk wrote for
+// its heartbeat at seq.
+func payloadIs(h HoldRow, seq int64) bool {
+	hash, usage, basis := holdPayload(h.AuthorizationID, seq)
+	return bytes.Equal(h.SnapshotHash, hash) && bytes.Equal(h.SnapshotUsage, usage) && bytes.Equal(h.ReapBasis, basis)
+}
+
 // TestTheStoreWalksWithAuditorCommit runs FASTPATH_WALKS walks (default 12)
 // from FASTPATH_WALK_SEED (default a fixed seed, so the walks CI runs are
 // the same each time), each with its own grant and credit rows; every store
@@ -121,8 +139,9 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
-		"commit": {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
-		"gap":    {RefusedVersion, RefusedGap, RefusedBoundary, "the record is the next after the stored progress"},
+		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
+		"commit below S": {RefusedBoundary},
+		"gap":            {RefusedVersion, RefusedGap, RefusedBoundary, "the record is the next after the stored progress"},
 		"reap": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTerminal, RefusedNoHold,
 			RefusedNotDue},
 		"close": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTooSoon, RefusedHoldsOpen,
@@ -405,6 +424,9 @@ func (w *walker) load(m int8, to ac.State) {
 	}
 	side := memberSide{}
 	for _, h := range loaded.Holds {
+		if !payloadIs(h, h.SnapshotOwnerSeq.Int64) {
+			w.fatalf("member %s loads a hold row %+v, and the walk wrote another payload for its snapshot", w.c.Members[m], h)
+		}
 		side.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotOwnerSeq.Int64
 	}
 	w.members[m] = side
@@ -510,10 +532,12 @@ func (w *walker) request(m int8, from ac.State) CommitRequest {
 	}
 	for a := range w.c.Auths {
 		if mem.Holds[a] != ac.NoHold {
+			hash, usage, basis := holdPayload(w.c.Auths[a], side.holdSeq[a])
 			req.PutHolds = append(req.PutHolds, HoldRow{AuthorizationID: w.c.Auths[a], Estimate: walkEstimate,
 				Deadline: walkDeadline, SnapshotSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true},
+				SnapshotHash: hash, SnapshotUsage: usage,
 				RunningCharge:    spanner.NullInt64{Int64: int64(mem.Holds[a]), Valid: true},
-				SnapshotOwnerSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true}})
+				SnapshotOwnerSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true}, ReapBasis: basis})
 		}
 	}
 	if mem.S != ac.NoS {
@@ -576,16 +600,17 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 	w.packVers = append(w.packVers, got[0].NewVersion)
 }
 
-// commitPast commits member m's progress one past the stored S, which the
-// store must refuse.
-func (w *walker) commitPast(m int8, from ac.State) {
+// commitOff commits member m's progress off the stored S by off, which the
+// store must refuse: past S no owner record is applied, and below it the
+// progress would go back.
+func (w *walker) commitOff(m int8, from ac.State, off int64) {
 	w.t.Helper()
 	w.seen["commit"]++
 	req := w.request(m, from)
-	req.AppliedSeq, req.Boundary = int64(from.S)+1, nil
+	req.AppliedSeq, req.Boundary = int64(from.S)+off, nil
 	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
 	if err != nil || len(got) != 1 || got[0].Refused != RefusedBoundary {
-		w.fatalf("member %s's commit past S: %+v %v", w.c.Members[m], got, err)
+		w.fatalf("member %s's commit %+d off S: %+v %v", w.c.Members[m], off, got, err)
 	}
 }
 
@@ -628,9 +653,13 @@ func (w *walker) probe() bool {
 		if want := w.commitRefusal(m); want != "" {
 			try("commit", want, func() { w.commit(m, s, s, want) })
 		} else if s.S != ac.NoS {
-			// Past a stored S no owner record is applied: a commit of
-			// progress S + 1 at the member's version is refused.
-			try("commit", RefusedBoundary, func() { w.commitPast(m, s) })
+			// Past a stored S no owner record is applied, and the progress
+			// never goes back below it: a commit of progress S + 1, or of
+			// S - 1, at the member's version is refused.
+			try("commit", RefusedBoundary, func() { w.commitOff(m, s, 1) })
+			if s.S > 0 {
+				try("commit below S", RefusedBoundary, func() { w.commitOff(m, s, -1) })
+			}
 		}
 		// A gap past the member's progress, and the stored progress's next
 		// record, which is no gap.
@@ -950,7 +979,7 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	for _, h := range holds {
 		seq := spanner.NullInt64{Int64: w.holdSeq[index(w.c.Auths, h.AuthorizationID)], Valid: true}
 		if h.SnapshotSeq != seq || h.SnapshotOwnerSeq != seq || h.Estimate != walkEstimate ||
-			!h.Deadline.Equal(walkDeadline) || h.Listed {
+			!h.Deadline.Equal(walkDeadline) || h.Listed || !payloadIs(h, seq.Int64) {
 			w.fatalf("a hold row %+v, and the walk stored its snapshot at %d", h, seq.Int64)
 		}
 	}
