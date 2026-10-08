@@ -91,7 +91,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)
 		}
-		if l.abandoned(now) {
+		if l.letIfAbandoned(now) {
 			o.Let(l.id)
 		}
 	}
@@ -108,12 +108,19 @@ func (l *Lease) renewable(now time.Time) bool {
 	return !l.let && !l.refused && (l.failedAt.IsZero() || now.Sub(l.failedAt) <= l.o.cfg.Window)
 }
 
-// abandoned: the lease is not renewed and is past its cutoff.
-func (l *Lease) abandoned(now time.Time) bool {
+// letIfAbandoned marks the lease let go if it is not renewed and is past its
+// cutoff, in one step under its lock: a renewal's answer that comes after,
+// which a lease let go ignores, cannot bring it back between the check and
+// the letting go.
+func (l *Lease) letIfAbandoned(now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	failing := !l.failedAt.IsZero() && now.Sub(l.failedAt) > l.o.cfg.Window
-	return !l.let && (l.refused || failing) && !l.withinCutoff(now)
+	if l.let || !(l.refused || failing) || l.withinCutoff(now) {
+		return false
+	}
+	l.let = true
+	return true
 }
 
 // refuse takes a renewal Spanner refused: the lease admits nothing more.
@@ -138,7 +145,8 @@ func (l *Lease) Close() {
 // latest end of life; the key-status version; and, once it is closing, its
 // free room, returned, which leaves its allocation as the record is handed
 // over, and, with no hold open, final. It reports the final checkpoint's
-// record once handed over. Past the cutoff it publishes nothing.
+// record once handed over, with the lease's finish counted among its
+// workers. Past the cutoff it publishes nothing.
 func (l *Lease) checkpoint() *sent {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -163,6 +171,7 @@ func (l *Lease) checkpoint() *sent {
 	l.allocation -= c.Return
 	if c.Final {
 		l.final = s
+		l.workers.Add(1)
 		return s
 	}
 	return nil
@@ -172,8 +181,10 @@ func (l *Lease) checkpoint() *sent {
 // is acknowledged, the owner marks the lease draining, conditional on its
 // being open and the owner's, and lets it go. A write that changes no row
 // means the lease is no longer open: the auditor marked it first, or an
-// earlier try landed and its answer was lost.
+// earlier try landed and its answer was lost. It is one of the lease's
+// workers, so it only begins the letting go, which waits for it.
 func (o *Owner) finish(l *Lease, final *sent) {
+	defer l.workers.Done()
 	select {
 	case <-final.done:
 	case <-l.stop:
@@ -193,30 +204,35 @@ func (o *Owner) finish(l *Lease, final *sent) {
 		}
 		backoff = min(2*backoff, lastBackoff)
 	}
-	o.Let(l.id)
+	o.release(l.id)
 }
 
 // writeShortfalls is the lease's one shortfall writer (§4.2). It stores the
 // lease's shortfall total in Spanner as soon as a terminal raises it, one
 // write in flight at a time, each carrying the total as it then stands. It
-// retries a write until it lands, past the cutoff if need be, or until
-// Spanner refuses it: the lease closed, or another process's. Let ends it;
-// the auditor's commit stores any total it did not.
+// retries a write until it lands, past the cutoff if need be and after the
+// lease is let go, or until Spanner refuses it: the lease closed, or
+// another process's. Once the lease is let go with nothing more to store it
+// ends, and the owner's Stop ends it, leaving any total it did not store to
+// the auditor's commit.
 func (l *Lease) writeShortfalls() {
-	ctx, cancel := l.stopContext()
-	defer cancel()
+	ctx := l.o.ctx
 	backoff := firstBackoff
 	for {
 		l.mu.Lock()
-		total, stored := l.shortfall, l.stored
+		total, stored, let := l.shortfall, l.stored, l.let
 		l.mu.Unlock()
 		if total <= stored {
-			select {
-			case <-l.shortKick:
-				continue
-			case <-l.stop:
+			if let {
 				return
 			}
+			select {
+			case <-l.shortKick:
+			case <-l.stop:
+			case <-ctx.Done():
+				return
+			}
+			continue
 		}
 		got, err := l.o.cfg.Spanner.ShortfallWrite(ctx, l.o.who(), l.ref(), total)
 		switch {
@@ -233,7 +249,7 @@ func (l *Lease) writeShortfalls() {
 		}
 		select {
 		case <-time.After(backoff):
-		case <-l.stop:
+		case <-ctx.Done():
 			return
 		}
 		backoff = min(2*backoff, lastBackoff)

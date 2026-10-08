@@ -27,6 +27,11 @@ type fakeSpanner struct {
 	refuseWrites bool
 	gate         chan struct{}
 	drained      []string
+	// drainGate holds a draining write until closed; one cancelled takes
+	// afterCancel to return, and drainReturned is closed once it has.
+	drainGate     chan struct{}
+	afterCancel   time.Duration
+	drainReturned chan struct{}
 }
 
 func newFakeSpanner() *fakeSpanner { return &fakeSpanner{refuse: map[string]bool{}} }
@@ -73,6 +78,18 @@ func (f *fakeSpanner) ShortfallWrite(ctx context.Context, owner store.Owner, ref
 }
 
 func (f *fakeSpanner) OwnerMarkDraining(ctx context.Context, owner store.Owner, ref store.LeaseRef) (bool, time.Time, error) {
+	f.mu.Lock()
+	gate, afterCancel, returned := f.drainGate, f.afterCancel, f.drainReturned
+	f.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			time.Sleep(afterCancel)
+			close(returned)
+			return false, time.Time{}, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.drained = append(f.drained, ref.LeaseID)
@@ -375,4 +392,101 @@ func TestALeaseWhosePublishesRecoverIsRenewed(t *testing.T) {
 	if rounds, _, _, _ := sp.state(); len(rounds) != 1 || !slices.Equal(rounds[0], []string{"lease-1"}) {
 		t.Fatalf("a lease whose publishes recovered is not renewed: %v", rounds)
 	}
+}
+
+// TestAShortfallOutlivesTheLease: the shortfall writer retries until its
+// write lands, though the lease meanwhile finished, was marked draining and
+// let go (§4.2).
+func TestAShortfallOutlivesTheLease(t *testing.T) {
+	f, sp := spannerFixture(t, 100, nil)
+	ctx := context.Background()
+	a := f.admit(t, 100, false)
+	sp.mu.Lock()
+	sp.gate = make(chan struct{})
+	sp.mu.Unlock()
+	if _, err := f.lease.Settle(ctx, a, 150, sum("a")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the write", func() bool {
+		_, writes, _, _ := sp.state()
+		return len(writes) == 1
+	})
+	f.lease.Close()
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the lease let go", func() bool {
+		_, held := f.owner.Lease("lease-1")
+		return !held
+	})
+	sp.mu.Lock()
+	close(sp.gate)
+	sp.gate = nil
+	sp.mu.Unlock()
+	waitFor(t, "the total stored", func() bool {
+		_, _, landed, _ := sp.state()
+		return slices.Equal(landed, []int64{50})
+	})
+}
+
+// TestLettingAnAbandonedLeaseGoIsOneStep: a renewal's answer before the
+// check keeps the lease, and one after it changes nothing.
+func TestLettingAnAbandonedLeaseGoIsOneStep(t *testing.T) {
+	f, _ := spannerFixture(t, 100, nil)
+	f.lease.refuse()
+	f.clock.advance(time.Minute)
+	f.lease.Renewed(start.Add(time.Hour))
+	if f.lease.letIfAbandoned(f.clock.Now()) {
+		t.Fatal("a lease a renewal's answer moved past the cutoff is let go")
+	}
+	f.clock.advance(time.Hour)
+	if !f.lease.letIfAbandoned(f.clock.Now()) {
+		t.Fatal("a refused lease past its cutoff is kept")
+	}
+	f.lease.Renewed(start.Add(5 * time.Hour))
+	f.lease.mu.Lock()
+	expiry := f.lease.expiry
+	f.lease.mu.Unlock()
+	if !expiry.Equal(start.Add(time.Hour)) {
+		t.Fatalf("a renewal's answer after the lease was let go moved its expiry to %v", expiry)
+	}
+}
+
+// TestLetWaitsForTheFinish: the draining write is one of the lease's
+// workers, so Let returns only once it has, though cancelled it takes 150 ms.
+func TestLetWaitsForTheFinish(t *testing.T) {
+	f, sp := spannerFixture(t, 100, nil)
+	sp.mu.Lock()
+	sp.drainGate, sp.afterCancel, sp.drainReturned = make(chan struct{}), 150*time.Millisecond, make(chan struct{})
+	sp.mu.Unlock()
+	f.lease.Close()
+	if err := f.owner.Renew(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // the final checkpoint acknowledged, the draining write held
+	f.owner.Let("lease-1")
+	select {
+	case <-sp.drainReturned:
+	default:
+		t.Fatal("Let returned before the draining write did")
+	}
+}
+
+// TestTheFinalCheckpointIsTheLast: a renewal while the final checkpoint's
+// acknowledgement is held publishes nothing more.
+func TestTheFinalCheckpointIsTheLast(t *testing.T) {
+	f, _ := spannerFixture(t, 100, nil)
+	ctx := context.Background()
+	f.lease.Close()
+	f.log.hold()
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if recs := f.log.records(t, "lease-1"); len(recs) != 1 || !recs[0].Checkpoint.Final {
+		t.Fatalf("the records after the final checkpoint: %+v", recs)
+	}
+	f.log.letGo()
 }

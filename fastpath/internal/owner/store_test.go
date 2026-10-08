@@ -86,7 +86,7 @@ func TestTheOwnerAgainstTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer o.Let(id)
+	defer o.Stop()
 	ref := store.LeaseRef{Workspace: ws, LeaseID: id}
 	a, err := l.Admit(Admission{Estimate: 60, Boot: boot})
 	if err != nil {

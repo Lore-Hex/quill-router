@@ -112,10 +112,16 @@ type Owner struct {
 	cfg Config
 	pub Publisher
 
+	// ctx ends when the owner stops; writers are its shortfall writers,
+	// which outlive the leases they write for.
+	ctx     context.Context
+	cancel  context.CancelFunc
+	writers sync.WaitGroup
+
 	mu     sync.Mutex
 	leases map[string]*Lease
-	// retired are the leases the owner let go, each with its flusher's
-	// end: none is taken again, since a lease's records are numbered once.
+	// retired are the leases the owner let go, each with its workers' end:
+	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
 }
 
@@ -127,7 +133,25 @@ func New(cfg Config, pub Publisher) (*Owner, error) {
 	if pub == nil {
 		return nil, errors.New("owner: no publisher")
 	}
-	return &Owner{cfg: cfg, pub: pub, leases: map[string]*Lease{}, retired: map[string]<-chan struct{}{}}, nil
+	o := &Owner{cfg: cfg, pub: pub, leases: map[string]*Lease{}, retired: map[string]<-chan struct{}{}}
+	o.ctx, o.cancel = context.WithCancel(context.Background())
+	return o, nil
+}
+
+// Stop ends the owner: it lets every lease go, and its shortfall writers end,
+// leaving any total they did not store to the auditor's commits.
+func (o *Owner) Stop() {
+	o.cancel()
+	o.mu.Lock()
+	ids := make([]string, 0, len(o.leases))
+	for id := range o.leases {
+		ids = append(ids, id)
+	}
+	o.mu.Unlock()
+	for _, id := range ids {
+		o.Let(id)
+	}
+	o.writers.Wait()
 }
 
 // Take puts a lease granted to this process under its care, with the
@@ -148,23 +172,25 @@ func (o *Owner) Take(lease, workspace string, allocation int64, expiry time.Time
 		holds: map[string]*hold{}, decided: map[string]*decision{}, kick: make(chan struct{}, 1),
 		shortKick: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{})}
 	o.leases[lease] = l
-	var workers sync.WaitGroup
-	workers.Add(1)
+	l.workers.Add(1)
 	go func() {
-		defer workers.Done()
+		defer l.workers.Done()
 		l.flush()
 	}()
+	go func() {
+		l.workers.Wait()
+		close(l.stopped)
+	}()
 	if o.cfg.Spanner != nil {
-		workers.Add(1)
+		// The shortfall writer outlives the lease: it stops once it has
+		// stored all the owner decided, or Spanner refuses, or the owner
+		// stops (§4.2).
+		o.writers.Add(1)
 		go func() {
-			defer workers.Done()
+			defer o.writers.Done()
 			l.writeShortfalls()
 		}()
 	}
-	go func() {
-		workers.Wait()
-		close(l.stopped)
-	}()
 	return l, nil
 }
 
@@ -177,10 +203,19 @@ func (o *Owner) Lease(id string) (*Lease, bool) {
 }
 
 // Let lets a lease go: the owner holds it no more and never takes it again,
-// its flusher and shortfall writer stop, and a request that reaches it
-// through a handle kept from before is answered as one past its cutoff
-// (§4.3). Every caller returns once they have stopped.
+// its flusher and the finish of its draining stop, and a request that
+// reaches it through a handle kept from before is answered as one past its
+// cutoff (§4.3). Every caller returns once they have stopped. Its shortfall
+// writer goes on until it has stored what the owner decided.
 func (o *Owner) Let(id string) {
+	if stopped := o.release(id); stopped != nil {
+		<-stopped
+	}
+}
+
+// release begins letting a lease go, and returns its workers' end without
+// waiting for it.
+func (o *Owner) release(id string) <-chan struct{} {
 	o.mu.Lock()
 	l, ok := o.leases[id]
 	if ok {
@@ -195,9 +230,7 @@ func (o *Owner) Let(id string) {
 		l.mu.Unlock()
 		close(l.stop)
 	}
-	if stopped != nil {
-		<-stopped
-	}
+	return stopped
 }
 
 // hold is an open hold, with the boot binding its envelope carries, which a
@@ -288,6 +321,9 @@ type Lease struct {
 	final    *sent
 	stored   int64
 
+	// workers are the lease's flusher and the finish of its draining, which
+	// Let waits for: stopped is closed once they end.
+	workers   sync.WaitGroup
 	kick      chan struct{}
 	shortKick chan struct{}
 	stop      chan struct{}

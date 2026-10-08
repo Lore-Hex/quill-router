@@ -212,7 +212,7 @@ func newFixture(t *testing.T, allocation int64, overrun func(int64) int64, chang
 	if f.lease, err = o.Take("lease-1", "ws-1", allocation, start.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { o.Let("lease-1") })
+	t.Cleanup(o.Stop)
 	return f
 }
 
