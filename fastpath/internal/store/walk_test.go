@@ -123,7 +123,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		"reap": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTerminal, RefusedNoHold,
 			RefusedNotDue},
 		"close": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTooSoon, RefusedHoldsOpen,
-			RefusedRowsBeyond},
+			RefusedRowsBeyond, RefusedUndecided},
 		"draining write":  {"the lease is not open"},
 		"shortfall-write": {RefusedClosed},
 		"append":          {RefusedClosed},
@@ -701,6 +701,11 @@ func (w *walker) closeRefusal(m int8) Refusal {
 	}
 	if s.Dpos[m] != s.DrainLen+1 {
 		return RefusedRowsBeyond
+	}
+	for i := range s.DrainLen {
+		if s.Win[s.Drain[i].A] == ac.NoWin {
+			return RefusedUndecided
+		}
 	}
 	return ""
 }
