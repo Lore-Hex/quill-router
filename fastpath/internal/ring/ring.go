@@ -37,6 +37,14 @@ type View struct {
 	ReadAt  time.Time
 }
 
+func (v View) clone() View {
+	out := View{ReadAt: v.ReadAt, Members: slices.Clone(v.Members)}
+	for i := range out.Members {
+		out.Members[i].Roles = slices.Clone(out.Members[i].Roles)
+	}
+	return out
+}
+
 // Owners are the members that take new leases: live, serving, and with the
 // owner role. A leaving member keeps the leases it has and takes none.
 func (v View) Owners() []store.Member {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"sync"
@@ -37,6 +38,9 @@ func (f *fake) Join(_ context.Context, address string, roles []string) (int64, t
 	defer f.mu.Unlock()
 	if f.fail != nil {
 		return 0, time.Time{}, f.fail
+	}
+	if address == "" || len(roles) == 0 {
+		return 0, time.Time{}, errors.New("a member needs an address and roles")
 	}
 	f.now = f.now.Add(time.Millisecond)
 	epoch := int64(1)
@@ -389,13 +393,127 @@ func TestAWatcherKeepsItsLastView(t *testing.T) {
 	defer w.Stop()
 	f.setFail(errors.New("unavailable"))
 	time.Sleep(5 * time.Millisecond) // a read under way when reads began to fail lands first
-	_, before := w.View()
+	kept, before := w.View()
+	if len(kept.Members) != 1 || !kept.Members[0].Live || kept.ReadAt.IsZero() {
+		t.Fatalf("the view before the failures: %+v", kept)
+	}
 	time.Sleep(10 * time.Millisecond)
 	v, after := w.View()
-	if !after.Equal(before) || len(v.Members) != 1 {
-		t.Fatalf("a failed read changed the view: %v then %v, %+v", before, after, v)
+	if !after.Equal(before) || !reflect.DeepEqual(v, kept) {
+		t.Fatalf("a failed read changed the view: %v %+v, then %v %+v", before, kept, after, v)
+	}
+	// The view is the caller's copy: changing it changes nothing kept.
+	v.Members[0].Roles[0], v.Members[0].Live = "frontdoor", false
+	if again, _ := w.View(); !reflect.DeepEqual(again, kept) {
+		t.Fatalf("a caller's change reached the watcher's view: %+v", again)
 	}
 	if _, err := Watch(ctx, f, time.Millisecond); err == nil {
 		t.Fatal("a watch starts with no first read")
+	}
+}
+
+// blocking is the fake whose heartbeats block until released, or fail
+// after landing, as a write that timed out may have.
+type blocking struct {
+	*fake
+	mu      sync.Mutex
+	block   chan struct{}
+	landErr error
+}
+
+func (b *blocking) Heartbeat(ctx context.Context, address string, epoch int64, state string) (bool, time.Time, error) {
+	b.mu.Lock()
+	block, landErr := b.block, b.landErr
+	b.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return false, time.Time{}, ctx.Err()
+		}
+	}
+	written, at, err := b.fake.Heartbeat(ctx, address, epoch, state)
+	if err == nil && landErr != nil {
+		return false, time.Time{}, landErr
+	}
+	return written, at, err
+}
+
+// TestALeaveThatTimedOutStaysMeant: a leaving heartbeat that landed but
+// answered with an error is not followed by a serving one, which the row
+// would refuse, losing the node; the node keeps saying it is leaving.
+func TestALeaveThatTimedOutStaysMeant(t *testing.T) {
+	b := &blocking{fake: newFake()}
+	ctx := context.Background()
+	n, err := Start(ctx, b, "a:1", []string{OwnerRole}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Stop()
+	b.mu.Lock()
+	b.landErr = context.DeadlineExceeded
+	b.mu.Unlock()
+	if err := n.SetState(ctx, store.Leaving); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the leave: %v", err)
+	}
+	b.mu.Lock()
+	b.landErr = nil
+	b.mu.Unlock()
+	before := b.beatCount("a:1")
+	eventually(t, "heartbeats after the leave", func() bool { return b.beatCount("a:1") > before+2 })
+	select {
+	case <-n.Lost():
+		t.Fatal("a leave that timed out lost the node")
+	default:
+	}
+	if b.row("a:1").State != store.Leaving || n.State() != store.Leaving {
+		t.Fatalf("the row says %s and the node %s", b.row("a:1").State, n.State())
+	}
+	if err := n.SetState(ctx, store.Serving); err == nil {
+		t.Fatal("a node that meant to leave serves again")
+	}
+}
+
+// TestStopEndsAWriteUnderWay: a state change stuck in its write does not
+// hold Stop, and once Stop has begun the node writes nothing more.
+func TestStopEndsAWriteUnderWay(t *testing.T) {
+	b := &blocking{fake: newFake()}
+	ctx := context.Background()
+	n, err := Start(ctx, b, "a:1", []string{OwnerRole}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	b.block = make(chan struct{})
+	b.mu.Unlock()
+	result := make(chan error, 1)
+	go func() { result <- n.SetState(context.Background(), store.Withdrawn) }()
+	time.Sleep(5 * time.Millisecond)
+	stopped := make(chan struct{})
+	go func() {
+		n.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop waits on a write stuck under way")
+	}
+	if err := <-result; err == nil {
+		t.Fatal("the stuck write succeeded")
+	}
+	b.mu.Lock()
+	b.block = nil
+	b.mu.Unlock()
+	beats := b.beatCount("a:1")
+	if err := n.SetState(ctx, store.Serving); !errors.Is(err, ErrStopped) {
+		t.Fatalf("a stopped node's state change: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if b.beatCount("a:1") != beats {
+		t.Fatal("a stopped node wrote a heartbeat")
+	}
+	if _, err := Start(ctx, b, "", []string{OwnerRole}, time.Second); err == nil {
+		t.Fatal("a node starts with no address")
 	}
 }

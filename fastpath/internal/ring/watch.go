@@ -37,11 +37,12 @@ func Watch(ctx context.Context, m Membership, interval time.Duration) (*Watcher,
 	return w, nil
 }
 
-// View is the latest view, and the local time of the read that made it.
+// View is the latest view, a copy the caller may keep or change, and the
+// local time of the read that made it.
 func (w *Watcher) View() (View, time.Time) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.view, w.readAt
+	return w.view.clone(), w.readAt
 }
 
 // Stop stops the reads and waits for the last to end.
