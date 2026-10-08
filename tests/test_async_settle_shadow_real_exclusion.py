@@ -17,7 +17,7 @@ from trusted_router.async_settle_shadow_evidence import SAMPLE
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 
 
-def real_exclusion_window(monkeypatch):
+def real_exclusion_window(monkeypatch, phase="settle"):
     rows, days, proof = synthetic_window()
     first = rows[0]['body']
     now = NOW + 1
@@ -28,7 +28,7 @@ def real_exclusion_window(monkeypatch):
     envelope.update(terminal=None, payload_hash=None, go_error='unsupported_observed')
     admission = copy.deepcopy(rows[-1]['body']['admission'])
     store = SimpleNamespace(
-        reserve=lambda *a: 100, booking=lambda *a: Booking(2, 'settled', True),
+        reserve=lambda *a: 100, booking=lambda *a: Booking(2 if phase == 'settle' else 0, 'settled' if phase == 'settle' else 'refunded', True),
         insert_sample=lambda identity, body, deadline: written.append((identity, body)) or 'inserted',
         flush=lambda *a: None)
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40,
@@ -40,7 +40,7 @@ def real_exclusion_window(monkeypatch):
     rt.counters.clock = lambda: now
     monkeypatch.setattr(time, 'time', lambda: now)
     bg = BackgroundTasks()
-    capture = Capture(rt, ctx.body, 'settle', now, time.monotonic(), ctx.authorization, endpoint(), (endpoint(),))
+    capture = Capture(rt, ctx.body, phase, now, time.monotonic(), ctx.authorization, endpoint(), (endpoint(),))
     try:
         rt.submit(capture, SimpleNamespace(headers=Headers({'X-TR-Settlement-Shadow': wire(envelope)[0]})),
             {'data': {'settled': True}}, bg)
@@ -55,8 +55,17 @@ def real_exclusion_window(monkeypatch):
     for key in ('comparison_attempts', 'comparison_dropped', 'samples_inserted', 'duplicate_samples',
                 'conflicting_samples', 'booking_pending', 'booking_unknown'):
         first[key] += actual[key]
-    for key in ('exclusions', 'rejections', 'drops'):
-        first[key].extend(actual[key])
+    for key in ('terminal_counts', 'exclusions', 'rejections', 'drops'):
+        if key == 'terminal_counts':
+            for extra in actual[key]:
+                original = next((r for r in first[key] if all(r[k] == extra[k] for k in ('phase', 'adapter', 'route_type', 'streamed'))), None)
+                if original is None:
+                    first[key].append(extra)
+                else:
+                    for field in extra.keys() - {'phase', 'adapter', 'route_type', 'streamed'}:
+                        original[field] += extra[field]
+        else:
+            first[key].extend(actual[key])
     for key, value in actual['admission_observer'].items():
         first['admission_observer'][key] += value
     rows[-1]['body']['authorization_id'] = 'positive'

@@ -27,6 +27,7 @@ ADAPTERS = ("openai", "anthropic", "other", "unknown")
 ROUTES = ("chat.completions", "responses", "other", "unknown")
 DIMENSIONS = tuple(itertools.product(ADAPTERS, ROUTES, (False, True, None)))
 COUNT_FIELDS = "authorize_attempts authorize_fresh authorize_replay header_absent requested_eligible snapshot_sent settle_attempts refund_attempts envelope_present observed_attempts observed_eligible observed_ineligible observed_unknown evaluable exact explained mismatch requires_review unevaluable".split()
+PHASE_FIELDS = "envelope_present observed_attempts observed_eligible observed_ineligible observed_unknown evaluable exact explained mismatch requires_review unevaluable comparison_attempts comparison_dropped samples_inserted duplicate_samples conflicting_samples booking_pending booking_unknown".split()
 HIST_BOUNDS = (100, 500, 1000, 2000, 5000, 10000, 50000, 200000)
 REASONS = frozenset("""untyped non_credits settlement_authority unsupported_route service_tier app_markup custom_markup receipt_fee request_fee custom_model user_model tool_cost search_cost image_cost video_cost partner liberty native_batch fusion polyphemus private_tier_basis unsupported_adapter unknown_parameters replay header_absent snapshot_unavailable usage_missing usage_estimated malformed_usage arithmetic_overflow booking_pending booking_unknown rebuild_unavailable snapshot_reconstruction_failed catalog_change go_failure configuration_conflict missing_envelope snapshot_size winner_polarity legacy_oracle_unavailable counter_overflow header_duplicate header_size base64 json_encoding json_duplicate json_shape integer proof_signature proof_expired hash identity raw_usage rate_limit queue_full daily_cap store_unavailable evidence_size worker_error""".split())
 COHORT_EXCLUSIONS = frozenset("""untyped non_credits settlement_authority unsupported_route service_tier app_markup custom_markup receipt_fee request_fee custom_model user_model tool_cost search_cost image_cost video_cost partner liberty native_batch fusion polyphemus private_tier_basis unsupported_adapter unknown_parameters replay header_absent""".split())
@@ -44,6 +45,14 @@ OBJECT_FIELDS = {
 
 def day_at(seconds: float) -> str:
     return dt.datetime.fromtimestamp(seconds, dt.UTC).date().isoformat()
+
+
+def retired_day(day: str, observed_at: dt.datetime) -> bool:
+    """All evidence keys retain the current UTC day and the preceding 30 days."""
+    parsed = dt.date.fromisoformat(day)
+    if parsed.isoformat() != day:
+        raise ValueError("shadow day")
+    return parsed < observed_at.date() - dt.timedelta(days=30)
 
 
 def dimensions(adapter: str | None, route: str | None, streamed: bool | None) -> tuple[str, str, bool | None]:
@@ -204,23 +213,24 @@ class Counters:
         self.active: dict[str, int] = {}
         # CPython deque append/popleft are atomic. Bounded immutable messages
         # never acquire the worker lock; overflow permanently disqualifies coverage.
-        self.mailbox: deque[tuple[int, str, float]] = deque(maxlen=128)
+        self.mailbox: deque[tuple[int, str, float, str]] = deque(maxlen=128)
         self.mailbox_sequence = itertools.count()
         self.mailbox_expected = 0
         self.mailbox_overflow = False
         self.retired_through = ""
+        self.phase: contextvars.ContextVar[str] = contextvars.ContextVar("shadow_phase", default="settle")
         self.observation_day: contextvars.ContextVar[str | None] = contextvars.ContextVar("shadow_counter_day", default=None)
 
-    def defer(self, operation: str, observed: float) -> None:
+    def defer(self, operation: str, observed: float, phase: str = "worker") -> None:
         if len(self.mailbox) == self.mailbox.maxlen:
             self.mailbox_overflow = True
-        self.mailbox.append((next(self.mailbox_sequence), operation, observed))
+        self.mailbox.append((next(self.mailbox_sequence), operation, observed, phase))
 
     @contextmanager
-    def request_access(self, observed: float) -> Iterator[bool]:
+    def request_access(self, observed: float, phase: str = "worker") -> Iterator[bool]:
         acquired = self.lock.acquire(blocking=False)
         if not acquired:
-            self.defer("drop", observed)
+            self.defer("drop", observed, phase)
         try:
             yield acquired
         finally:
@@ -239,7 +249,7 @@ class Counters:
     def _drain_mailbox(self) -> None:
         # Called with the worker lock. Never chase concurrent producers forever.
         for _ in range(len(self.mailbox)):
-            sequence, operation, observed = self.mailbox.popleft()
+            sequence, operation, observed, phase = self.mailbox.popleft()
             # Detect eviction even if concurrent producers race the length
             # check. Reordered producers conservatively mark the same gap.
             if sequence != self.mailbox_expected:
@@ -250,10 +260,10 @@ class Counters:
             else:
                 token = self.observation_day.set(day_at(observed))
                 try:
-                    self.reason(dimensions(None, None, None), "worker", "queue_full")
+                    self.reason(dimensions(None, None, None), phase, "queue_full")
                 except ValueError:
                     self.observation_day.set(None)
-                    self.reason(dimensions(None, None, None), "worker", "queue_full")
+                    self.reason(dimensions(None, None, None), phase, "queue_full")
                 finally:
                     self.observation_day.reset(token)
         if self.mailbox_overflow:
@@ -261,13 +271,15 @@ class Counters:
             self._day()["first_gap_at_us"] = int(self.clock() * 1e6)
 
     @contextmanager
-    def day(self, observed: float) -> Iterator[None]:
+    def day(self, observed: float, phase: str = "settle") -> Iterator[None]:
         self.retain(observed)
+        phase_token = self.phase.set(phase)
         token = self.observation_day.set(day_at(observed))
         try:
             yield
         finally:
             self.observation_day.reset(token)
+            self.phase.reset(phase_token)
             self.release(observed)
 
     def retain(self, observed: float) -> None:
@@ -309,7 +321,7 @@ class Counters:
                 router_revision=self.revision, policy_version="shadow-v1", started_at_us=now,
                 flushed_at_us=now, sequence=0, closed=False,
                 counts=[dict(adapter=a, route_type=r, streamed=s, **dict.fromkeys(COUNT_FIELDS, 0)) for a, r, s in DIMENSIONS],
-                exclusions=[], rejections=[], drops=[], dimension_overflow=0, counter_overflow=False,
+                terminal_counts=[], exclusions=[], rejections=[], drops=[], dimension_overflow=0, counter_overflow=False,
                 comparison_attempts=0, comparison_dropped=0, samples_inserted=0, duplicate_samples=0, conflicting_samples=0,
                 booking_pending=0, booking_unknown=0, first_evidence_at_us=None,
                 last_mismatch_at_us=None, first_gap_at_us=None, authorize_shadow_hist=[0]*9,
@@ -325,9 +337,20 @@ class Counters:
             self.days[day]["first_gap_at_us"] = now
         return self.days[day]
 
+    def terminal_bucket(self, day: dict[str, Any], dims: tuple[str, str, bool | None]) -> dict[str, Any]:
+        identity = dict(phase=self.phase.get(), adapter=dims[0], route_type=dims[1], streamed=dims[2])
+        for row in day["terminal_counts"]:
+            if all(row[k] == v for k, v in identity.items()):
+                return row
+        row = dict(**identity, **dict.fromkeys(PHASE_FIELDS, 0))
+        day["terminal_counts"].append(row)
+        return row
+
     def increment(self, dims: tuple[str, str, bool | None], field: str, count: int = 1) -> None:
         with self.lock:
             day = self._day()
+            if field in PHASE_FIELDS:
+                self.add(day, self.terminal_bucket(day, dims), field, count)
             if field in COUNT_FIELDS:
                 self.add(day, day["counts"][DIMENSIONS.index(dims)], field, count)
             else:
@@ -370,13 +393,18 @@ class Counters:
         with self.lock:
             day = self._day()
             bucket = day["counts"][DIMENSIONS.index(dims)]
+            terminal = self.terminal_bucket(day, dims)
             if value.observed_eligible is not None:
+                self.add(day, terminal, "observed_unknown", -1)
+                self.add(day, terminal, "observed_eligible" if value.observed_eligible else "observed_ineligible")
                 self.add(day, bucket, "observed_unknown", -1)
                 self.add(day, bucket, "observed_eligible" if value.observed_eligible else "observed_ineligible")
             clean = value.classification in {"exact", "explained-by-catalog-change"}
+            self.add(day, terminal, "evaluable", int(clean))
             self.add(day, bucket, "evaluable", int(clean))
             category = {"explained-by-catalog-change": "explained", "hash": "mismatch", "identity": "mismatch",
                         "normalization": "mismatch", "evaluator_disagreement": "mismatch"}.get(value.classification, value.classification)
+            self.add(day, terminal, category)
             self.add(day, bucket, category)
             now = int(self.clock()*1e6)
             if category == "mismatch":
@@ -400,7 +428,7 @@ class Counters:
                 # Serialization/deep-copy below own no shared mutable state and
                 # hold no lock needed by request capture.
                 detached = dict(body)
-                for key in ("counts", "exclusions", "rejections", "drops"):
+                for key in ("counts", "terminal_counts", "exclusions", "rejections", "drops"):
                     detached[key] = [dict(row) for row in body[key]]
                 for key in ("authorize_shadow_hist", "evidence_write_hist"):
                     detached[key] = list(body[key])

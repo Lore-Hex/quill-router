@@ -256,7 +256,7 @@ def test_local_worker_failure_and_storage_failure_keep_distinct_reasons(monkeypa
         ctx = context()
         rt.process(Capture(rt,ctx.body,'settle',NOW,0,ctx.authorization),wire(),{'data':{'settled':True}},1,dims)
         drops = rt.counters.snapshot()[0][1]['drops']
-        assert drops == [dict(phase='worker',adapter='openai',route_type='chat.completions',streamed=False,reason=reason,count=1)]
+        assert drops == [dict(phase='settle',adapter='openai',route_type='chat.completions',streamed=False,reason=reason,count=1)]
         rt.executor.shutdown()
     assert captured == []
 

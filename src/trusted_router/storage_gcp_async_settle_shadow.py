@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import time
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -15,6 +16,7 @@ from trusted_router.async_settle_shadow_evidence import (
     COUNTER,
     KINDS,
     SAMPLE,
+    retired_day,
     validate_manifest,
     validate_sample,
 )
@@ -26,6 +28,15 @@ FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microd
 POINT_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
 DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start "
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
+
+# The same bound fences both transaction completion and the final write check.
+WRITE_BUDGET_SECONDS = .2
+RETENTION_FENCE = "retention-v1"
+
+
+class RetirementBoundary(ValueError):
+    """The key retires before the bounded transaction can finish."""
+
 
 Statement = tuple[str, dict[str, Any], dict[str, Any]]
 
@@ -57,6 +68,7 @@ def day_statement(kind: str, day: str, after_id: str = "", page_size: int = 200)
 class EvidenceStore:
     def __init__(self, database: Any) -> None:
         self.database = database
+        self.rejections: Counter[tuple[str, str]] = Counter()
 
     @staticmethod
     def query(reader: Any, statement: Statement, deadline: float) -> list[Any]:
@@ -74,7 +86,7 @@ class EvidenceStore:
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
         if time.monotonic() >= deadline:
             raise TimeoutError("shadow budget")
-        rpc_deadline = min(deadline, time.monotonic() + .2)
+        rpc_deadline = min(deadline, time.monotonic() + WRITE_BUDGET_SECONDS)
         attempted = False
         def once(tx: Any) -> Any:
             nonlocal attempted
@@ -92,10 +104,49 @@ class EvidenceStore:
                 raise TimeoutError("shadow commit budget")
             return result
 
-    @staticmethod
-    def write(tx: Any, kind: str, identity: str, body: dict[str, Any]) -> None:
+    def write(self, tx: Any, kind: str, identity: str, body: dict[str, Any], deadline: float) -> None:
+        # Every insert site, including operator control writes, uses this path.
+        # Serialize first, then validate the key day and stamp updated_at from
+        # one clock observation. Refuse the final transaction-budget interval
+        # before retirement: cleanup must not overtake a buffered old-day insert.
+        encoded = canonical(body).decode()
+        # Cleanup advances this permanent, content-free policy watermark before
+        # scanning even an empty range. A writer reads it in its write transaction:
+        # cleanup either follows that commit and removes it, or invalidates the
+        # writer's read (SDK retries are fenced off). This also covers late/unknown
+        # commits for which a client RPC deadline alone cannot prove absence.
+        rows = self.query(tx, point_statement(CONTROL, RETENTION_FENCE), deadline)
+        cutoff = None
+        if rows:
+            fence = json.loads(rows[0][0])
+            if set(fence) != {"v", "retired_before"} or fence["v"] != 1:
+                raise ValueError("retention fence")
+            cutoff = dt.date.fromisoformat(fence["retired_before"])
+        observed_at = dt.datetime.now(dt.UTC)
+        if kind == CONTROL and identity == RETENTION_FENCE:
+            # The watermark is policy metadata, not a day evidence row. It is
+            # never removed by day cleanup and can only advance to a retired day.
+            if (set(body) != {"v", "retired_before"} or body["v"] != 1
+                    or body["retired_before"] != (observed_at.date() - dt.timedelta(days=30)).isoformat()):
+                raise ValueError("retention fence")
+            if cutoff is not None and cutoff >= dt.date.fromisoformat(body["retired_before"]):
+                return
+        else:
+            self.check_write_day(kind, identity, observed_at, cutoff)
         tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
-                            values=[(kind, identity, canonical(body).decode(), dt.datetime.now(dt.UTC))])
+                            values=[(kind, identity, encoded, observed_at)])
+
+    def check_write_day(self, kind: str, identity: str, observed_at: dt.datetime,
+                        cutoff: dt.date | None) -> None:
+        day = identity.split("/", 1)[0]
+        if kind not in KINDS:
+            raise ValueError("shadow kind")
+        if retired_day(day, observed_at) or cutoff is not None and dt.date.fromisoformat(day) < cutoff:
+            self.rejections[kind, "proof_expired"] += 1
+            raise ValueError("proof_expired")
+        if retired_day(day, observed_at + dt.timedelta(seconds=WRITE_BUDGET_SECONDS)):
+            self.rejections[kind, "proof_expired"] += 1
+            raise RetirementBoundary("proof_expired")
 
     def booking(self, authorization_id: str, deadline: float) -> Booking:
         with self.database.snapshot() as snapshot:
@@ -121,7 +172,7 @@ class EvidenceStore:
             granted = min(100, 100000 - current["reserved"])
             if granted:
                 current.update(reserved=current["reserved"] + granted, updated_at_us=int(time.time()*1e6))
-                self.write(tx, CONTROL, identity, current)
+                self.write(tx, CONTROL, identity, current, deadline)
             return granted
         return int(self.transaction(run, deadline))
 
@@ -140,15 +191,10 @@ class EvidenceStore:
                         body["payload_hash"] is None and previous["classification"] != body["classification"]):
                     return "conflict"
                 return "duplicate"
-            # Serialize before reading the clock. Retention and updated_at use
-            # the SAME observation, inside the transaction after the point read;
-            # a midnight crossed during lookup/serialization cannot revive a day.
-            encoded = canonical(body).decode()
-            observed_at = dt.datetime.now(dt.UTC)
-            if dt.date.fromisoformat(body["authorization_day"]) < observed_at.date() - dt.timedelta(days=30):
-                raise ValueError("proof_expired")
-            tx.insert_or_update(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
-                                values=[(SAMPLE, identity, encoded, observed_at)])
+            try:
+                self.write(tx, SAMPLE, identity, body, deadline)
+            except RetirementBoundary:
+                return "retired"
             return "inserted"
         return str(self.transaction(run, deadline))
 
@@ -159,14 +205,14 @@ class EvidenceStore:
             rows = self.query(tx, point_statement(COUNTER, identity), deadline)
             if rows and json.loads(rows[0][0])["sequence"] >= body["sequence"]:
                 return
-            self.write(tx, COUNTER, identity, body)
+            self.write(tx, COUNTER, identity, body, deadline)
         self.transaction(run, deadline)
 
     def publish_manifest(self, body: dict[str, Any], deadline: float) -> None:
         identity = body["day"] + "/manifest-v1"
         validate_manifest(body, identity)
         def run(tx: Any) -> None:
-            self.write(tx, CONTROL, identity, body)
+            self.write(tx, CONTROL, identity, body, deadline)
         self.transaction(run, deadline)
 
     def day(self, kind: str, day: str) -> list[tuple[str, str]]:
@@ -184,9 +230,15 @@ class EvidenceStore:
 
     def cleanup(self, kind: str, day: str, after_id: str = "") -> str:
         from google.cloud.spanner_v1 import KeySet
-        if dt.date.fromisoformat(day) >= dt.datetime.now(dt.UTC).date() - dt.timedelta(days=30):
+        if not retired_day(day, dt.datetime.now(dt.UTC)):
             raise ValueError("retained day")
+        # Validate the complete bounded range before advancing policy metadata.
+        day_statement(kind, day, after_id)
         deadline, cursor = time.monotonic() + 30, after_id
+        def fence(tx: Any) -> None:
+            body = dict(v=1, retired_before=(dt.datetime.now(dt.UTC).date() - dt.timedelta(days=30)).isoformat())
+            self.write(tx, CONTROL, RETENTION_FENCE, body, deadline)
+        self.transaction(fence, deadline)
         while time.monotonic() < deadline:
             started = time.monotonic()
             with self.database.snapshot() as snapshot:

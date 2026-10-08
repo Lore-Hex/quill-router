@@ -12,7 +12,13 @@ from typing import Any
 
 from trusted_router.async_settle_shadow_binding import LIFETIME, ShadowSigner
 from trusted_router.async_settle_shadow_compare import Booking, Context, compare
-from trusted_router.async_settle_shadow_evidence import Counters, day_at, dimensions, sample
+from trusted_router.async_settle_shadow_evidence import (
+    Counters,
+    day_at,
+    dimensions,
+    retired_day,
+    sample,
+)
 from trusted_router.async_settle_shadow_projection import (
     prewarm_catalog,
     project,
@@ -58,7 +64,7 @@ _CAPTURE: contextvars.ContextVar[Capture | None] = contextvars.ContextVar("async
 def capture_authorization(authorization: GatewayAuthorization) -> None:
     capture = _CAPTURE.get()
     if capture is not None and not capture.dropped and capture.runtime.opted(authorization.workspace_id):
-        with capture.runtime.counters.request_access(capture.received) as acquired:
+        with capture.runtime.counters.request_access(capture.received, capture.kind) as acquired:
             if not acquired:
                 capture.dropped = True
                 return
@@ -113,7 +119,7 @@ class Runtime:
                   header: bool, route: str | None, streamed: bool, endpoints: list[Any]) -> None:
         if not self.opted(authorization.workspace_id):
             return
-        with self.counters.request_access(time.time()) as acquired:
+        with self.counters.request_access(time.time(), "authorize") as acquired:
             if not acquired:
                 return
             self._authorize(authorization, additions, replay=replay, header=header,
@@ -170,14 +176,14 @@ class Runtime:
             return None
 
     def submit(self, capture: Capture, request: Any, result: Any, background: Any) -> None:
-        with self.counters.request_access(capture.received) as acquired:
+        with self.counters.request_access(capture.received, capture.kind) as acquired:
             if not acquired:
                 return
             if not self.lock.acquire(blocking=False):
-                self.counters.defer("drop", capture.received)
+                self.counters.defer("drop", capture.received, capture.kind)
                 return
             try:
-                with self.counters.day(capture.received):
+                with self.counters.day(capture.received, capture.kind):
                     self._submit(capture, request, result, background)
             finally:
                 self.lock.release()
@@ -273,7 +279,7 @@ class Runtime:
             await asyncio.get_running_loop().run_in_executor(
                 self.executor, partial(self.process, capture, headers, result, elapsed, dims))
         except Exception:
-            self.counters.reason(dims, "worker", "worker_error")
+            self.counters.reason(dims, capture.kind, "worker_error")
         finally:
             self.counters.release(capture.received)
             with self.lock:
@@ -282,7 +288,7 @@ class Runtime:
 
     def process(self, capture: Capture, headers: tuple[str, ...], result: Any, elapsed: int,
                 dims: tuple[str, str, bool | None]) -> None:
-        with self.counters.day(capture.received):
+        with self.counters.day(capture.received, capture.kind):
             self._process(capture, headers, result, elapsed, dims)
 
     def _process(self, capture: Capture, headers: tuple[str, ...], result: Any, elapsed: int,
@@ -294,6 +300,7 @@ class Runtime:
         self.counters.increment(dims, "comparison_attempts")
         failure_reason = "store_unavailable"
         persisted = False
+        primary = None
         try:
             if self.store is None:
                 raise ValueError("store_unavailable")
@@ -304,7 +311,7 @@ class Runtime:
                 self.next_allocate = time.monotonic()+5
                 self.permits = self.store.reserve(day, deadline)
             if not self.permits:
-                self.counters.reason(dims, "worker", "daily_cap")
+                self.counters.reason(dims, capture.kind, "daily_cap")
                 return
             data = result.get("data", {}) if isinstance(result, dict) else {}
             finalized = bool(data.get("settled") or data.get("already_settled") or data.get("finalization_outcome") == "refunded")
@@ -314,7 +321,7 @@ class Runtime:
                 outcome = data.get("finalization_outcome")
                 booking = Booking(None, outcome if outcome in {"settled", "refunded"} else "unknown", finalized)
                 self.counters.increment(dims, "booking_unknown")
-                self.counters.reason(dims, "worker", "store_unavailable")
+                self.counters.reason(dims, capture.kind, "store_unavailable")
             booking_us = int((time.monotonic()-capture.started)*1e6) if booking.confirmed else None
             def rebuild() -> BillingSnapshot:
                 if capture.endpoints is None:
@@ -337,7 +344,7 @@ class Runtime:
             # day. The write boundary checks again after potentially slow work.
             observed_now = time.time()
             created_at = dt.datetime.fromisoformat(auth.created_at.replace("Z", "+00:00")).timestamp()
-            retired = day_at(created_at) < day_at(observed_now - 30*86400)
+            retired = retired_day(day_at(created_at), dt.datetime.fromtimestamp(observed_now, dt.UTC))
             if retired:
                 compared.reasons.add("proof_expired")
             primary = next((reason for reason in REJECTION_PRECEDENCE if reason in compared.reasons), None)
@@ -354,7 +361,7 @@ class Runtime:
                 self.counters.reason(dims, capture.kind, field, "exclusions")
                 return
             if day_at(time.time()) != self.permit_day:
-                self.counters.reason(dims, "worker", "daily_cap")
+                self.counters.reason(dims, capture.kind, "daily_cap")
                 return
             self.permits -= 1  # Lost/unknown writes consume permits permanently.
             admission = self.observer.peek(auth.workspace_id) if self.observer else None
@@ -367,15 +374,19 @@ class Runtime:
             started = time.monotonic()
             failure_reason = "store_unavailable"
             observed_now = time.time()
-            if row["authorization_day"] < day_at(observed_now - 30*86400):
+            if retired_day(row["authorization_day"], dt.datetime.fromtimestamp(observed_now, dt.UTC)):
                 compared.reasons.add("proof_expired")
                 if primary is None:
                     self.counters.reason(dims, capture.kind, "proof_expired", "rejections")
                 return
             if day_at(observed_now) != self.permit_day:
-                self.counters.reason(dims, "worker", "daily_cap")
+                self.counters.reason(dims, capture.kind, "daily_cap")
                 return
             outcome = self.store.insert_sample(row["authorization_day"]+"/"+auth.id, row, deadline)
+            if outcome == "retired":
+                if primary is None:
+                    self.counters.reason(dims, capture.kind, "proof_expired", "rejections")
+                return
             failure_reason = "worker_error"
             self.counters.histogram("evidence_write_hist", int((time.monotonic()-started)*1e6))
             if outcome == "inserted" and compared.classification in {"exact", "explained-by-catalog-change"} and admission and admission["prediction"] != "unknown":
@@ -386,16 +397,20 @@ class Runtime:
                 self.counters.increment(dims, {"inserted": "samples_inserted", "duplicate": "duplicate_samples", "conflict": "conflicting_samples"}[outcome])
                 persisted = True
             if outcome == "winner_polarity":
-                self.counters.reason(dims, "worker", "winner_polarity", "exclusions")
+                self.counters.reason(dims, capture.kind, "winner_polarity", "exclusions")
             elif outcome == "conflict":
                 with self.counters.lock:
                     self.counters._day()["last_mismatch_at_us"] = int(time.time()*1e6)
             elif not persisted:
                 raise ValueError("unknown persistence outcome")
         except Exception as error:
+            if isinstance(error, ValueError) and str(error) == "proof_expired":
+                if primary is None:
+                    self.counters.reason(dims, capture.kind, "proof_expired", "rejections")
+                return
             if isinstance(error, ValueError) and str(error) == "evidence_size":
                 failure_reason = "evidence_size"
-            self.counters.reason(dims, "worker", failure_reason)
+            self.counters.reason(dims, capture.kind, failure_reason)
         finally:
             if not persisted:
                 self.counters.increment(dims, "comparison_dropped")

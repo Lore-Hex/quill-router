@@ -156,6 +156,11 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
                     invocation_nonce=auth.invocation_nonce, reservation_id=auth.credit_reservation_id,
                     billing_authority=auth.settlement, journal_region=ctx.region, epoch=ctx.epoch,
                     route_type=body.route_type, streamed=body.streamed)
+    # The pinned legacy refund sender hardcodes streamed=true, including for
+    # non-streaming authorizations. Only the signed authorize fact is authoritative
+    # here; terminal/observed stream facts must still agree with that proof.
+    if ctx.attempted_kind == "refund":
+        expected["streamed"] = claims.streamed
     # A usage-less refund still has the proof's route, but cannot be evaluable.
     if ctx.attempted_kind == "refund" and body.route_type is None:
         expected["route_type"] = claims.route_type
@@ -192,6 +197,9 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
         return out.reject("hash", "hash")
     if terminal is not None:
         out.go_micro, out.go_usage = terminal.charge_micro, terminal.usage.model_dump()
+    # Even a usage-less refund must retain the signed authorize-time facts.
+    if (envelope.observed.route_type != claims.route_type or envelope.observed.streamed != claims.streamed):
+        return out.reject("identity", "identity")
     raw = _raw_body(body)
     if raw is None:
         return out.reject("usage_missing")
@@ -203,8 +211,7 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
         return out.reject("usage_estimated")
     observed_exclusion = b.exclusion(envelope.observed)
     out.observed_eligible = observed_exclusion is None
-    if (envelope.observed.route_type != claims.route_type or envelope.observed.streamed != claims.streamed
-            or body.service_tier not in (None, "default") or body.additional_cost_microdollars):
+    if body.service_tier not in (None, "default") or body.additional_cost_microdollars:
         return out.reject("identity", "identity")
     if observed_exclusion:
         return out.reject(observed_exclusion)

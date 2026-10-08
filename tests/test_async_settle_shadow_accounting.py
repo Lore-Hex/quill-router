@@ -222,6 +222,7 @@ def test_report_restarts_only_after_restored_coverage_and_reviewed_fix():
     later['id'] = later['body']['authorization_day']+'/auth-after-fix'
     rows.append(later)
     rows[2]['body']['samples_inserted'] = rows[2]['body']['comparison_attempts'] = 1
+    rows[2]['body']['terminal_counts'] = copy.deepcopy(rows[0]['body']['terminal_counts'])
     rows[2]['body']['admission_observer']['prediction_yes'] = 1
     bucket = next(b for b in rows[2]['body']['counts'] if (b['adapter'], b['route_type'], b['streamed']) == ('openai', 'chat.completions', False))
     for field in ('settle_attempts', 'envelope_present', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
@@ -350,10 +351,14 @@ def test_report_reviewer_missing_persistence_outcomes(delta):
                  'envelope_present', 'exact', 'evaluable'):
         bucket[name] = 100
     counter['comparison_attempts'] = 100
+    terminal = counter['terminal_counts'][0]
+    for field in ('observed_attempts', 'observed_eligible', 'envelope_present', 'exact', 'evaluable', 'comparison_attempts'):
+        terminal[field] = 100
     result = report(rows, days, proof)
     assert result['status'] == 'BLOCKED'
     assert any(g.endswith(':persistence_count_gap') for g in result['gaps'])
     counter['duplicate_samples'] = 99 + delta
+    terminal['duplicate_samples'] = 99 + delta
     result = report(rows, days, proof)
     assert (result['status'] == 'PASS') is (delta == 0)
     assert any(g.endswith(':persistence_count_gap') for g in result['gaps']) is (delta != 0)
@@ -414,7 +419,7 @@ def test_writer_union_counts_overlapping_and_adjacent_intervals_once(overlap_us)
     first['flushed_at_us'] = split
     second['id'] = days[0]+'/'+boot
     second['body'].update(instance=boot, started_at_us=split-overlap_us,
-                          samples_inserted=0, comparison_attempts=0)
+                          samples_inserted=0, comparison_attempts=0, terminal_counts=[])
     for bucket in second['body']['counts']:
         for field in ('settle_attempts', 'envelope_present', 'observed_attempts', 'observed_eligible', 'evaluable', 'exact'):
             bucket[field] = 0
@@ -495,7 +500,8 @@ def test_evidence_storage_call_contract():
     granted = EvidenceStore(db).reserve('2026-10-06', time.monotonic()+1)
     assert granted == 100
     assert db.transaction_options == [dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})]
-    assert len(db.query_options) == 1
-    timeout, retry, options = db.query_options[0]
-    assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
+    assert len(db.query_options) == 2
+    assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
+    for timeout, retry, options in db.query_options:
+        assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]

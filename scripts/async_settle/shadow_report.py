@@ -19,6 +19,7 @@ from trusted_router.async_settle_shadow_evidence import (
     COUNT_FIELDS,
     COUNTER,
     DIMENSIONS,
+    PHASE_FIELDS,
     SAMPLE,
     validate_manifest,
     validate_sample,
@@ -40,7 +41,7 @@ EXTERNAL_GATES = ("deployment_inventory", "authorization_transport_measurements"
                   "fleet_load_budget", "publisher_poll_freshness", "lifecycle_cpu", "shared_fixtures",
                   "frozen_pricing_crash_mutations", "d2_d3_capacity_slo", "policy_rollback_status", "rare_cases")
 MANIFEST_FIELDS = set("v day instance_boot_ids router_revisions go_revisions configuration_sha256 admission_disabled_from_us admission_disabled_until_us first_evidence_at_us completeness gap_intervals proof_manifest_sha256".split())
-COUNTER_FIELDS = set("v instance region router_revision policy_version started_at_us flushed_at_us sequence closed counts exclusions rejections drops dimension_overflow counter_overflow comparison_attempts comparison_dropped samples_inserted duplicate_samples conflicting_samples booking_pending booking_unknown first_evidence_at_us last_mismatch_at_us first_gap_at_us authorize_shadow_hist evidence_write_hist admission_observer".split())
+COUNTER_FIELDS = set("v instance region router_revision policy_version started_at_us flushed_at_us sequence closed counts terminal_counts exclusions rejections drops dimension_overflow counter_overflow comparison_attempts comparison_dropped samples_inserted duplicate_samples conflicting_samples booking_pending booking_unknown first_evidence_at_us last_mismatch_at_us first_gap_at_us authorize_shadow_hist evidence_write_hist admission_observer".split())
 
 
 def percentiles(values: list[int | None]) -> dict[str, Any]:
@@ -125,6 +126,19 @@ def validate_counter(identity: str, body: dict[str, Any], *, partitions: bool = 
             if key in seen:
                 raise ValueError("duplicate reason")
             seen.add(key)
+    seen_phases = set()
+    if not isinstance(body["terminal_counts"], list) or len(body["terminal_counts"]) > 2 * len(DIMENSIONS):
+        raise ValueError("terminal counter bounds")
+    for row in body["terminal_counts"]:
+        if (set(row) != {"phase", "adapter", "route_type", "streamed", *PHASE_FIELDS}
+                or row["phase"] not in {"settle", "refund"}
+                or (row["adapter"], row["route_type"], row["streamed"]) not in DIMENSIONS
+                or not all(_uint(row[k]) for k in PHASE_FIELDS)):
+            raise ValueError("terminal counter schema")
+        key = (row["phase"], row["adapter"], row["route_type"], row["streamed"])
+        if key in seen_phases:
+            raise ValueError("duplicate terminal counter")
+        seen_phases.add(key)
     for key in ("authorize_shadow_hist", "evidence_write_hist"):
         if len(body[key]) != 9 or not all(_uint(n) for n in body[key]):
             raise ValueError("histogram")
@@ -298,11 +312,43 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 if (bucket["unevaluable"] != exclusions or bucket["requires_review"]
                         or bucket["mismatch"]):
                     gap(identity+":nonclean_outcome_gap", day)
+            # Independent phase partitions must reproduce the aggregate counters.
+            # Never infer a terminal's phase from a reason or from another writer.
+            for bucket in counter["counts"]:
+                phases = [row for row in counter["terminal_counts"]
+                    if all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed"))]
+                for field in set(PHASE_FIELDS) & set(COUNT_FIELDS):
+                    if sum(row[field] for row in phases) != bucket[field]:
+                        gap(identity+":phase_aggregate_gap", day)
+                for phase in ("settle", "refund"):
+                    terminal = next((row for row in phases if row["phase"] == phase), dict.fromkeys(PHASE_FIELDS, 0))
+                    attempts = bucket[phase+"_attempts"]
+                    reasons = {group: [row for row in counter[group] if row["phase"] == phase
+                        and all(row[k] == bucket[k] for k in ("adapter", "route_type", "streamed"))]
+                        for group in ("exclusions", "rejections", "drops")}
+                    excluded = sum(row["count"] for row in reasons["exclusions"] if row["reason"] in COHORT_EXCLUSIONS)
+                    outcomes = sum(terminal[k] for k in ("exact", "explained", "mismatch", "requires_review", "unevaluable"))
+                    if (terminal["observed_attempts"] != attempts
+                            or sum(terminal[k] for k in ("observed_eligible", "observed_ineligible", "observed_unknown")) != attempts
+                            or terminal["envelope_present"] != attempts
+                            or terminal["evaluable"] != terminal["exact"] + terminal["explained"]
+                            or excluded != terminal["observed_ineligible"]
+                            or excluded != terminal["unevaluable"]
+                            or outcomes - excluded != terminal["observed_eligible"]
+                            or outcomes != attempts or outcomes != terminal["comparison_attempts"]
+                            or sum(terminal[k] for k in ("samples_inserted", "duplicate_samples", "conflicting_samples", "comparison_dropped")) != terminal["comparison_attempts"]
+                            or any(row["count"] for group in ("rejections", "drops") for row in reasons[group])
+                            or any(row["count"] for row in reasons["exclusions"] if row["reason"] not in COHORT_EXCLUSIONS)):
+                        gap(identity+":"+phase+":phase_coverage_gap", day)
+            for field in set(PHASE_FIELDS) - set(COUNT_FIELDS):
+                if sum(row[field] for row in counter["terminal_counts"]) != counter[field]:
+                    gap(identity+":phase_writer_gap", day)
             if (not counter["closed"] or counter["first_gap_at_us"] is not None or counter["counter_overflow"]
                     or counter["dimension_overflow"] or counter["comparison_dropped"] or counter["booking_pending"] or counter["booking_unknown"]
                     or any(counter["admission_observer"][key] for key in ("prediction_unknown", "read_failures", "missed_ticks"))
                     or any(row["count"] for key in ("drops", "rejections") for row in counter[key])
-                    or any(row["observed_unknown"] for row in counter["counts"])):
+                    or any(row["observed_unknown"] for row in counter["counts"])
+                    or any(row["count"] for row in counter["exclusions"] if row["phase"] == "worker")):
                 gap(identity+":counter_gap", day)
             if counter["last_mismatch_at_us"] is not None or counter["conflicting_samples"]:
                 resets.append(dict(at_us=counter["last_mismatch_at_us"], revision=counter["router_revision"], reason="counter_mismatch"))
@@ -326,6 +372,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
     samples = sorted((row for row in samples if low <= row["observed_at_us"] < high), key=lambda row: row["observed_at_us"])
     inserted: Counter[tuple[str, str]] = Counter()
     sample_counts: Counter[tuple[str, str, str, bool | None, str]] = Counter()
+    phase_samples: Counter[tuple[Any, ...]] = Counter()
     for row in samples:
         observation_day = dt.datetime.fromtimestamp(row["observed_at_us"]/1e6, dt.UTC).date().isoformat()
         manifest = manifests.get(observation_day)
@@ -338,6 +385,12 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         eligibility = {True: "observed_eligible", False: "observed_ineligible", None: "observed_unknown"}[row["eligibility"]["observed"]]
         for field in (category, eligibility, row["booking"]["attempted_kind"] + "_attempts"):
             sample_counts[writer_id, row["adapter"], row["route_type"], row["streamed"], field] += 1
+        phase_key = (writer_id, row["adapter"], row["route_type"], row["streamed"], row["booking"]["attempted_kind"])
+        for field in (category, eligibility, "samples_inserted"):
+            phase_samples[(*phase_key, field)] += 1
+        if known_exclusion(row):
+            for reason in row["reason_codes"]:
+                phase_samples[(*phase_key, "exclusion:"+reason)] += 1
         if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):
             gap(row["authorization_id"]+":writer_interval_gap", observation_day)
         if (manifest is None or deployment["instance"] not in manifest["instance_boot_ids"]
@@ -359,6 +412,19 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                     durable = sample_counts[identity, bucket["adapter"], bucket["route_type"], bucket["streamed"], field]
                     if durable > bucket[field]:
                         gap(identity+":sample_classification_gap", day)
+            for key, durable in phase_samples.items():
+                writer_id, adapter, route, streamed, phase, field = key
+                if writer_id != identity:
+                    continue
+                def matching(row: dict[str, Any], dims: tuple[Any, ...] = (adapter, route, streamed, phase)) -> bool:
+                    return (row["adapter"], row["route_type"], row["streamed"], row["phase"]) == dims
+                if field.startswith("exclusion:"):
+                    counted = sum(row["count"] for row in counter["exclusions"]
+                        if matching(row) and row["reason"] == field.split(":", 1)[1])
+                else:
+                    counted = sum(row[field] for row in counter["terminal_counts"] if matching(row))
+                if durable > counted or field == "samples_inserted" and durable != counted:
+                    gap(identity+":"+phase+":sample_phase_gap", day)
     # A closed, fully covered later day can restore coverage after an earlier
     # gap. Correctness resets additionally need an explicit reviewed resolution
     # in the proof manifest; a restart or mere revision change is insufficient.

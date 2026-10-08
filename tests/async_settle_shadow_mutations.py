@@ -17,6 +17,19 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('refund-placeholder-compared', COMPARE, [
+        ('expected["streamed"] = claims.streamed', 'expected["streamed"] = body.streamed')],
+        'tests/test_async_settle_shadow_r6_legacy_refund.py::test_legacy_refund_placeholder_is_not_authorize_stream_identity[False]'),
+    ('retention-budget-guard-removed', STORAGE, [
+        ('if retired_day(day, observed_at + dt.timedelta(seconds=WRITE_BUDGET_SECONDS)):', 'if False:')],
+        'tests/test_async_settle_shadow_r6_retention_all.py::test_cleanup_can_finish_before_old_sample_mutation'),
+    ('retention-fence-read-removed', STORAGE, [
+        ('rows = self.query(tx, point_statement(CONTROL, RETENTION_FENCE), deadline)', 'rows = []')],
+        'tests/test_async_settle_shadow_r6_retention_all.py::test_cleanup_fence_aborts_delayed_insert_even_after_empty_scan'),
+    ('terminal-phase-accounting-removed', REPORT, [
+        ('gap(identity+":"+phase+":phase_coverage_gap", day)', 'pass'),
+        ('gap(identity+":"+phase+":sample_phase_gap", day)', 'pass')],
+        'tests/test_async_settle_shadow_r6_counter_phase.py::test_refund_exclusions_require_refund_attempts'),
     ('evidence-before-money-outcome',RUNTIME,[('capture.document = document',
         'capture.document = document\n        capture.runtime.store.reserve(day_at(time.time()), time.monotonic()+1)')],
         'tests/test_async_settle_shadow_integration.py::test_shadow_failure_after_real_money_commit[none-2]'),
@@ -118,7 +131,7 @@ MUTATIONS = [
         ('if durable > bucket[field]:', 'if False:')],
         'tests/test_async_settle_shadow_counter_false_pass.py::test_durable_samples_cannot_borrow_another_bucket_or_class[eligibility]'),
     ('write-boundary-retention-removed', STORAGE, [
-        ('if dt.date.fromisoformat(body["authorization_day"]) < observed_at.date() - dt.timedelta(days=30):', 'if False:')],
+        ('if retired_day(day, observed_at) or cutoff is not None and dt.date.fromisoformat(day) < cutoff:', 'if False:')],
         'tests/test_async_settle_shadow_retention_midnight.py::test_insert_rechecks_clock_after_point_read'),
     ('retention-counted-as-second-primary', RUNTIME, [
         ('if primary is not None:', 'if "proof_expired" in compared.reasons and primary != "proof_expired":\n                self.counters.reason(dims, capture.kind, "proof_expired", "rejections")\n            if primary is not None:')],

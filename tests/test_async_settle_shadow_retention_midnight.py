@@ -135,5 +135,6 @@ def test_retention_and_insert_share_one_timestamp(monkeypatch):
         insert(**kwargs)
     monkeypatch.setattr(db, 'insert_or_update', record)
     outcome = EvidenceStore(db).insert_sample(row['authorization_day']+'/auth-v1', row, time.monotonic()+1)
-    assert outcome == 'inserted'
-    assert calls == inserted_at == [boundary - dt.timedelta(microseconds=1)]
+    assert outcome == 'retired'
+    assert calls == [boundary - dt.timedelta(microseconds=1)]
+    assert inserted_at == []

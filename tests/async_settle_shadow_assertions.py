@@ -58,7 +58,7 @@ def run(case):
         outcome = subprocess.run([sys.executable,'-m','pytest','-q','-p','no:cacheprovider','--tb=short','-x',test],  # noqa: S603
             cwd=target,capture_output=True,text=True,timeout=300,
             env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1','PYTHONPATH':str(target/'src')})
-        killed = outcome.returncode == 1 and bool(re.search(r'\nE\s+(?:assert |AssertionError)',outcome.stdout))
+        killed = outcome.returncode == 1 and bool(re.search(rf'\nE\s+AssertionError: inverted shadow assertion {line}\b', outcome.stdout))
         log = Path(tempfile.gettempdir())/f'f2b-assertion-{Path(relative).stem}-{line}.log'
         log.write_text(outcome.stdout+outcome.stderr)
         row = dict(file=relative,line=line,test=test,killed=killed,exit_code=outcome.returncode,log=str(log))
