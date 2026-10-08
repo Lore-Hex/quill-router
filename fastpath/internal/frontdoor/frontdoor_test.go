@@ -51,11 +51,14 @@ func (e *events) all() []string {
 type fakeOwners struct {
 	ev          *events
 	unreachable map[string]bool
-	admitted    map[int64]OwnerAdmitted
-	heartbeat   HeartbeatAnswer
-	terminal    OwnerTerminalAnswer
-	heartbeats  []OwnerHeartbeat
-	terminals   []OwnerTerminal
+	// pinging, when set, hears of each ping, which then waits for pingGate.
+	pinging    chan string
+	pingGate   chan struct{}
+	admitted   map[int64]OwnerAdmitted
+	heartbeat  HeartbeatAnswer
+	terminal   OwnerTerminalAnswer
+	heartbeats []OwnerHeartbeat
+	terminals  []OwnerTerminal
 }
 
 func (f *fakeOwners) reach(ctx context.Context, address string) error {
@@ -87,6 +90,10 @@ func (f *fakeOwners) Heartbeat(ctx context.Context, address string, req OwnerHea
 
 func (f *fakeOwners) Ping(ctx context.Context, address string) error {
 	f.ev.add("owner %s ping", address)
+	if f.pinging != nil {
+		f.pinging <- address
+		<-f.pingGate
+	}
 	return f.reach(ctx, address)
 }
 

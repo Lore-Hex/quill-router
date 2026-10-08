@@ -126,7 +126,7 @@ func TestARequestWhoseOwnerIsNotReachedGoesThroughAPeer(t *testing.T) {
 	f.owners.unreachable["node-b"] = true
 	f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Settle, Charge: 55}
 	sealed := sealedAt(t, "node-b", "lease-1", "gwa-1")
-	for range 5 {
+	for range 10 {
 		if got := f.door.Settle(ctx, settle(sealed)); got != (TerminalAnswer{Status: Won, Kind: record.Settle, Charge: 55}) {
 			t.Fatalf("a settle through a peer: %+v", got)
 		}
@@ -138,7 +138,7 @@ func TestARequestWhoseOwnerIsNotReachedGoesThroughAPeer(t *testing.T) {
 			peers = append(peers, peer)
 		}
 	}
-	if len(peers) != 5 || peers[0] == "node-a" || peers[0] == "node-b" {
+	if len(peers) != 10 || peers[0] == "node-a" || peers[0] == "node-b" {
 		t.Fatalf("the peers: %v", peers)
 	}
 	for _, p := range peers {
@@ -213,13 +213,11 @@ func TestAFrontDoorCutOffFromTwoOwnersWithdraws(t *testing.T) {
 	refund("node-b")
 	f.advance(6 * time.Second)
 	refund("node-c")
-	f.door.work.Wait()
 	if f.door.Withdrawn() || len(f.node.written()) != 0 {
 		t.Fatalf("two owners six seconds apart: withdrawn %v, %v", f.door.Withdrawn(), f.node.written())
 	}
 	f.advance(time.Second)
 	refund("node-b")
-	f.door.work.Wait()
 	if !f.door.Withdrawn() || !slices.Equal(f.node.written(), []string{store.Withdrawn}) {
 		t.Fatalf("two owners within the window: withdrawn %v, %v", f.door.Withdrawn(), f.node.written())
 	}
@@ -229,7 +227,6 @@ func TestAFrontDoorCutOffFromTwoOwnersWithdraws(t *testing.T) {
 		t.Fatalf("an authorize at a withdrawn front door: %+v, %q", got, f.ev.all()[n:])
 	}
 	f.door.probe(ctx)
-	f.door.work.Wait()
 	if !f.door.Withdrawn() {
 		t.Fatal("served again with its owners still not reached")
 	}
@@ -237,7 +234,6 @@ func TestAFrontDoorCutOffFromTwoOwnersWithdraws(t *testing.T) {
 	f.view.Members = slices.DeleteFunc(f.view.Members, func(m store.Member) bool { return m.Address == "node-c" })
 	f.door.cfg.Members = fakeMembers{f.view}
 	f.door.probe(ctx)
-	f.door.work.Wait()
 	if f.door.Withdrawn() || !slices.Equal(f.node.written(), []string{store.Withdrawn, store.Serving}) {
 		t.Fatalf("its one live owner reached again: withdrawn %v, %v", f.door.Withdrawn(), f.node.written())
 	}
@@ -258,7 +254,6 @@ func TestALeaseWhoseOwnerNoOneReachesIsRevoked(t *testing.T) {
 	fail := func(lease string) {
 		t.Helper()
 		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", lease, "gwa-"+lease), Money: []byte("{}")})
-		f.door.work.Wait()
 	}
 	revoked := func() []string {
 		var out []string
@@ -367,5 +362,159 @@ func TestPeersInTheProcess(t *testing.T) {
 	}
 	if _, err := (DirectPeers{}).Terminal(ctx, "node-y", "node-a", OwnerTerminal{}); !errors.Is(err, ErrUnreachable) {
 		t.Fatalf("a peer not in the process: %v", err)
+	}
+}
+
+// TestAPeersAnswerStartsALeaseOver: a lease whose owner a peer reached is
+// not failing: its time to revocation starts again at its next failure.
+func TestAPeersAnswerStartsALeaseOver(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
+	refund := func() {
+		t.Helper()
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", "l1", "gwa-l1"), Money: []byte("{}")})
+	}
+	refund()
+	f.advance(9 * time.Second)
+	f.peers.unreachable["node-b"] = false
+	refund() // through the peer
+	f.peers.unreachable["node-b"] = true
+	f.advance(time.Second)
+	refund()
+	f.advance(9 * time.Second)
+	refund()
+	for _, e := range f.ev.all() {
+		if strings.HasPrefix(e, "revoke ") {
+			t.Fatalf("revoked nine seconds after a peer reached its owner: %q", f.ev.all())
+		}
+	}
+	f.advance(time.Second)
+	refund()
+	if !slices.Contains(f.ev.all(), "revoke l1") {
+		t.Fatalf("not revoked ten seconds after its last failure began: %q", f.ev.all())
+	}
+}
+
+// TestAStateWriteIsTheLatestWanted: a write held behind another writes the
+// state wanted when it runs, not when it was asked for, so the row ends at
+// the latest.
+func TestAStateWriteIsTheLatestWanted(t *testing.T) {
+	f := newPeers(t)
+	f.door.writing.Lock()
+	f.door.mu.Lock()
+	f.door.want = store.Withdrawn
+	f.door.mu.Unlock()
+	wrote := make(chan struct{})
+	go func() {
+		f.door.writeState()
+		close(wrote)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	f.door.mu.Lock()
+	f.door.want = store.Serving
+	f.door.mu.Unlock()
+	f.door.writing.Unlock()
+	<-wrote
+	if got := f.node.written(); !slices.Equal(got, []string{store.Serving}) {
+		t.Fatalf("the row's writes: %v", got)
+	}
+}
+
+// TestAProbeKeepsWhatItDidNotTry: an owner a request finds unreachable here
+// while a probe runs, or finds so again, keeps the front door withdrawn
+// until a later probe reaches it; an owner no longer a member is forgotten,
+// though another does not answer.
+func TestAProbeKeepsWhatItDidNotTry(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
+	refund := func(owner string) {
+		t.Helper()
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, owner, "lease-"+owner, "gwa-"+owner), Money: []byte("{}")})
+	}
+	f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = true, true
+	refund("node-b")
+	refund("node-c")
+	if !f.door.Withdrawn() {
+		t.Fatal("not withdrawn")
+	}
+	f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = false, false
+	f.owners.pinging, f.owners.pingGate = make(chan string), make(chan struct{})
+	probed := make(chan struct{})
+	go func() {
+		f.door.probe(ctx)
+		close(probed)
+	}()
+	<-f.owners.pinging // the first owner's ping is under way
+	f.owners.unreachable["node-d"] = true
+	refund("node-d") // found unreachable here during the probe
+	close(f.owners.pingGate)
+	go func() {
+		for range f.owners.pinging {
+		}
+	}()
+	<-probed
+	if !f.door.Withdrawn() {
+		t.Fatal("served again with an owner found unreachable during the probe")
+	}
+	f.owners.unreachable["node-d"] = false
+	f.door.probe(ctx)
+	if f.door.Withdrawn() {
+		t.Fatal("still withdrawn with every owner answering")
+	}
+
+	g := newPeers(t)
+	g.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
+	g.owners.unreachable["node-b"], g.owners.unreachable["node-c"] = true, true
+	for _, o := range []string{"node-b", "node-c"} {
+		g.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, o, "lease-"+o, "gwa-"+o), Money: []byte("{}")})
+	}
+	g.view.Members = slices.DeleteFunc(g.view.Members, func(m store.Member) bool { return m.Address == "node-c" })
+	g.door.cfg.Members = fakeMembers{g.view}
+	g.door.probe(ctx) // node-b still does not answer
+	g.door.mu.Lock()
+	_, kept := g.door.unreached["node-c"]
+	g.door.mu.Unlock()
+	if kept || !g.door.Withdrawn() {
+		t.Fatalf("a departed owner kept %v; withdrawn %v", kept, g.door.Withdrawn())
+	}
+}
+
+// TestAnEndedRequestIsNoEvidence: a request that ended before its owner
+// answered tries no peer and counts toward neither withdrawing nor
+// revoking.
+func TestAnEndedRequestIsNoEvidence(t *testing.T) {
+	f := newPeers(t)
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, o := range []string{"node-b", "node-c", "node-b"} {
+		f.door.Refund(ended, RefundOf{Envelope: sealedAt(t, o, "lease-"+o, "gwa-"+o), Money: []byte("{}")})
+		f.door.Heartbeat(ended, HeartbeatOf{Envelope: sealedAt(t, o, "lease-"+o, "gwa-"+o), GatewaySeq: 1})
+		f.advance(11 * time.Second)
+	}
+	for _, e := range f.ev.all() {
+		if strings.HasPrefix(e, "peer ") || strings.HasPrefix(e, "revoke ") {
+			t.Fatalf("an ended request taken as evidence: %q", f.ev.all())
+		}
+	}
+	if f.door.Withdrawn() {
+		t.Fatal("withdrawn on ended requests")
+	}
+}
+
+// TestAFrontDoorWhoseOwnersNoOneReachesServes: owners that fail here and
+// at the peer too are their own failure, not this front door's: it stays
+// serving.
+func TestAFrontDoorWhoseOwnersNoOneReachesServes(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	for _, o := range []string{"node-b", "node-c"} {
+		f.owners.unreachable[o], f.peers.unreachable[o] = true, true
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, o, "lease-"+o, "gwa-"+o), Money: []byte("{}")})
+	}
+	if f.door.Withdrawn() || len(f.node.written()) != 0 {
+		t.Fatalf("withdrawn %v, %v", f.door.Withdrawn(), f.node.written())
 	}
 }

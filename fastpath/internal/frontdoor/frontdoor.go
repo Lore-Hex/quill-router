@@ -108,19 +108,21 @@ type FrontDoor struct {
 	cfg Config
 
 	mu sync.Mutex
-	// withdrawn is set while the front door is withdrawn. unreached are the
-	// owners whose calls last failed here while a peer reached them, with
-	// when; failing, each lease whose owner no one reached since a call
-	// first failed, with when; revoked, the leases revoked, with when, and
-	// lastRevoke the last of those.
+	// withdrawn is set while the front door is withdrawn, and want is the
+	// state its ring row should say. unreached are the owners whose calls
+	// last failed here while a peer reached them, with when; failing, each
+	// lease whose owner no one reached since a call first failed, with
+	// when; revoked, the leases revoked, with when, and lastRevoke the last
+	// of those.
 	withdrawn  bool
+	want       string
 	unreached  map[string]time.Time
 	failing    map[store.LeaseRef]time.Time
 	revoked    map[store.LeaseRef]time.Time
 	lastRevoke time.Time
-	// work are its revocations and state writes under way, which Run waits
-	// for when it returns.
-	work sync.WaitGroup
+	// writing lets one state write run at a time, each the state wanted
+	// when it runs, so the row ends at the latest.
+	writing sync.Mutex
 }
 
 // New is a front door with its configuration.
