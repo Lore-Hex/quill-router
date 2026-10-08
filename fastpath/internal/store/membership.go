@@ -65,7 +65,7 @@ func (s *Store) Join(ctx context.Context, address string, roles []string) (int64
 	if err != nil {
 		return 0, time.Time{}, err
 	}
-	return epoch, resp.CommitTs, nil
+	return epoch, resp.CommitTs.UTC(), nil
 }
 
 // Heartbeat writes a node's heartbeat at Spanner's commit time, and its
@@ -92,7 +92,7 @@ func (s *Store) Heartbeat(ctx context.Context, address string, epoch int64, stat
 	if err != nil {
 		return false, time.Time{}, err
 	}
-	return written == 1, resp.CommitTs, nil
+	return written == 1, resp.CommitTs.UTC(), nil
 }
 
 // Members reads every member's row in one strong read, and marks each live
@@ -117,7 +117,7 @@ func (s *Store) Members(ctx context.Context) ([]Member, time.Time, error) {
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	read, err := ro.Timestamp()
+	read, err := readTimestamp(ro)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
