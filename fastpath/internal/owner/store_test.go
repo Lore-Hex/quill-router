@@ -2,6 +2,7 @@ package owner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -135,5 +136,68 @@ func TestTheOwnerAgainstTheStore(t *testing.T) {
 	last := recs[len(recs)-1]
 	if last.Kind != record.Checkpoint || !last.Checkpoint.Final || last.Checkpoint.Consumed != 130 {
 		t.Fatalf("the lease's last record: %+v %+v", last, last.Checkpoint)
+	}
+}
+
+// TestARevokedLeaseIsDropped: once its renewal is revoked in Spanner, the
+// owner's next round finds it refused and stops using it: a heartbeat under
+// it gets retry and a settle past_cutoff, for the front door's drain log.
+func TestARevokedLeaseIsDropped(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	s, err := store.New(shared, store.Config{LiveFor: time.Hour, Window: 30 * time.Second, Skew: 2 * time.Second,
+		PublishDeadline: 5 * time.Second, MaxLife: 5 * time.Minute, Grace: time.Minute, Allowance: 1_000_000,
+		RequiredTier: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := storetest.UniqueID("ws")
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	who := store.Owner{Node: "owner-1", Epoch: 5}
+	id := store.NewLeaseID()
+	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: id, Region: "us-central1", Owner: who,
+		Amount: 100, KeyStatusVersion: 7})
+	if err != nil || granted.Refused != "" {
+		t.Fatalf("the grant: %+v %v", granted, err)
+	}
+	log := newFakeLog()
+	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
+		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Stop()
+	l, err := o.Take(id, ws, 100, granted.Expiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := l.Admit(Admission{Estimate: 60, Stream: true, Boot: boot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took, _, err := s.Revoke(ctx, store.LeaseRef{Workspace: ws, LeaseID: id}); err != nil || !took {
+		t.Fatalf("the revocation: %v %v", took, err)
+	}
+	if err := o.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, held := o.Lease(id); held {
+		t.Fatal("a revoked lease is still held")
+	}
+	if _, err := l.Heartbeat(ctx, stream.Auth, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat under a revoked lease: %v", err)
+	}
+	if _, err := l.Settle(ctx, stream.Auth, 10, sum("s")); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a settle under a revoked lease: %v", err)
+	}
+	if n := len(log.records(t, id)); n != 0 {
+		t.Fatalf("%d records under a revoked lease", n)
 	}
 }

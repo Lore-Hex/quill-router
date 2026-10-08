@@ -248,37 +248,49 @@ func TestAFinalCheckpointWaitsForItsAcknowledgement(t *testing.T) {
 	})
 }
 
-// TestARefusedRenewalClosesTheLease: a lease that takes no renewal is
-// draining, revoked or another process's: it admits nothing more and is not
-// renewed again, and once past its cutoff the owner lets it go.
-func TestARefusedRenewalClosesTheLease(t *testing.T) {
+// TestARefusedRenewalDropsTheLease: a lease that takes no renewal is
+// draining, revoked or another process's, and the owner stops using it at
+// once (LeaseLifecycle's OwnerDrops): it holds it no more, publishes nothing
+// for it, renews it no more, and answers a terminal under it past_cutoff and
+// a heartbeat retry.
+func TestARefusedRenewalDropsTheLease(t *testing.T) {
 	f, sp := spannerFixture(t, 1000, nil)
 	ctx := context.Background()
-	f.admit(t, 100, false)
+	a, s := f.admit(t, 100, false), f.admit(t, 100, true)
 	sp.mu.Lock()
 	sp.refuse["lease-1"] = true
 	sp.mu.Unlock()
 	if err := f.owner.Renew(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
-		t.Fatalf("an admission after a refused renewal: %v", err)
-	}
-	if err := f.owner.Renew(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, held := f.owner.Lease("lease-1"); !held {
-		t.Fatal("a lease let go before its cutoff")
-	}
-	f.clock.advance(time.Minute)
-	if err := f.owner.Renew(ctx); err != nil {
-		t.Fatal(err)
-	}
 	if _, held := f.owner.Lease("lease-1"); held {
-		t.Fatal("a lease refused and past its cutoff is still held")
+		t.Fatal("a lease whose renewal was refused is still held")
+	}
+	if _, err := f.lease.Settle(ctx, a, 10, sum("a")); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a settle under a dropped lease: %v", err)
+	}
+	if _, err := f.lease.Heartbeat(ctx, s, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat under a dropped lease: %v", err)
+	}
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if rounds, _, _, _ := sp.state(); len(rounds) != 1 {
-		t.Fatalf("a refused lease renewed again: %v", rounds)
+		t.Fatalf("a dropped lease renewed again: %v", rounds)
+	}
+	if n := len(f.log.records(t, "lease-1")); n != 0 {
+		t.Fatalf("%d records under a dropped lease", n)
+	}
+}
+
+// TestAStoppedOwnerTakesNoLease: Stop lets every lease go, and a Take after
+// it, its writer cancelled, is refused.
+func TestAStoppedOwnerTakesNoLease(t *testing.T) {
+	f, _ := spannerFixture(t, 1000, nil)
+	f.owner.Stop()
+	if _, err := f.owner.Take("lease-2", "ws-1", 100, start.Add(time.Minute)); err == nil {
+		t.Fatal("a stopped owner took a lease")
 	}
 }
 
@@ -419,7 +431,9 @@ func TestAShortfallOutlivesTheLease(t *testing.T) {
 		_, held := f.owner.Lease("lease-1")
 		return !held
 	})
+	// The held write fails after the lease is let go; the writer retries it.
 	sp.mu.Lock()
+	sp.failWrites = 1
 	close(sp.gate)
 	sp.gate = nil
 	sp.mu.Unlock()
@@ -427,13 +441,18 @@ func TestAShortfallOutlivesTheLease(t *testing.T) {
 		_, _, landed, _ := sp.state()
 		return slices.Equal(landed, []int64{50})
 	})
+	if _, writes, _, _ := sp.state(); !slices.Equal(writes, []int64{50, 50}) {
+		t.Fatalf("the writes: %v", writes)
+	}
 }
 
 // TestLettingAnAbandonedLeaseGoIsOneStep: a renewal's answer before the
 // check keeps the lease, and one after it changes nothing.
 func TestLettingAnAbandonedLeaseGoIsOneStep(t *testing.T) {
 	f, _ := spannerFixture(t, 100, nil)
-	f.lease.refuse()
+	f.lease.mu.Lock()
+	f.lease.failedAt = start // its publishes failing since: past the window a minute on
+	f.lease.mu.Unlock()
 	f.clock.advance(time.Minute)
 	f.lease.Renewed(start.Add(time.Hour))
 	if f.lease.letIfAbandoned(f.clock.Now()) {
@@ -441,7 +460,7 @@ func TestLettingAnAbandonedLeaseGoIsOneStep(t *testing.T) {
 	}
 	f.clock.advance(time.Hour)
 	if !f.lease.letIfAbandoned(f.clock.Now()) {
-		t.Fatal("a refused lease past its cutoff is kept")
+		t.Fatal("a lease no longer renewed and past its cutoff is kept")
 	}
 	f.lease.Renewed(start.Add(5 * time.Hour))
 	f.lease.mu.Lock()

@@ -47,10 +47,12 @@ func (o *Owner) Run(ctx context.Context) {
 // Renew is one round of renewals (§4.2): one batch, a conditional statement
 // for each lease the owner holds and still renews. A lease takes its new
 // expiry from Spanner's answer, and only while the owner holds it; one that
-// takes no renewal is draining, revoked or another process's, and admits
-// nothing more. With each round every lease publishes a checkpoint record.
-// A lease that is not renewed and is past its cutoff can publish nothing
-// more, and the owner lets it go; the auditor finishes it.
+// takes no renewal is draining, revoked or another process's, and the owner
+// stops using it at once, as LeaseLifecycle's OwnerDrops does: it lets it
+// go, and answers what names it as an owner past its cutoff does. With each
+// round every lease publishes a checkpoint record. A lease the owner no
+// longer renews, its publishes failing, is let go once past its cutoff. The
+// auditor finishes a lease let go so.
 func (o *Owner) Renew(ctx context.Context) error {
 	if o.cfg.Spanner == nil {
 		return errors.New("owner: no store to renew in")
@@ -82,7 +84,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 			if r.Renewed {
 				renewing[i].Renewed(r.Expiry)
 			} else {
-				renewing[i].refuse()
+				o.Let(renewing[i].id)
 			}
 		}
 	}
@@ -98,36 +100,31 @@ func (o *Owner) Renew(ctx context.Context) error {
 	return nil
 }
 
-// renewable: the owner renews a lease it holds whose renewal Spanner has not
-// refused, unless its publishes have failed for longer than the expiry
-// window (§4.2). That lease then expires and drains, and a hold whose
-// records were never stored ends at its close.
+// renewable: the owner renews a lease it holds, unless its publishes have
+// failed for longer than the expiry window (§4.2). That lease then expires
+// and drains, and a hold whose records were never stored ends at its close.
 func (l *Lease) renewable(now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return !l.let && !l.refused && (l.failedAt.IsZero() || now.Sub(l.failedAt) <= l.o.cfg.Window)
+	return !l.let && !l.failingTooLong(now)
 }
 
-// letIfAbandoned marks the lease let go if it is not renewed and is past its
-// cutoff, in one step under its lock: a renewal's answer that comes after,
-// which a lease let go ignores, cannot bring it back between the check and
-// the letting go.
+func (l *Lease) failingTooLong(now time.Time) bool {
+	return !l.failedAt.IsZero() && now.Sub(l.failedAt) > l.o.cfg.Window
+}
+
+// letIfAbandoned marks the lease let go if it is no longer renewed and is
+// past its cutoff, in one step under its lock: a renewal's answer that comes
+// after, which a lease let go ignores, cannot bring it back between the
+// check and the letting go.
 func (l *Lease) letIfAbandoned(now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	failing := !l.failedAt.IsZero() && now.Sub(l.failedAt) > l.o.cfg.Window
-	if l.let || !(l.refused || failing) || l.withinCutoff(now) {
+	if l.let || !l.failingTooLong(now) || l.withinCutoff(now) {
 		return false
 	}
 	l.let = true
 	return true
-}
-
-// refuse takes a renewal Spanner refused: the lease admits nothing more.
-func (l *Lease) refuse() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.refused, l.closing = true, true
 }
 
 // Close stops admitting under the lease (§4.2): it went idle, reached its

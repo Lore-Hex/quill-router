@@ -118,8 +118,9 @@ type Owner struct {
 	cancel  context.CancelFunc
 	writers sync.WaitGroup
 
-	mu     sync.Mutex
-	leases map[string]*Lease
+	mu      sync.Mutex
+	stopped bool
+	leases  map[string]*Lease
 	// retired are the leases the owner let go, each with its workers' end:
 	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
@@ -143,6 +144,7 @@ func New(cfg Config, pub Publisher) (*Owner, error) {
 func (o *Owner) Stop() {
 	o.cancel()
 	o.mu.Lock()
+	o.stopped = true
 	ids := make([]string, 0, len(o.leases))
 	for id := range o.leases {
 		ids = append(ids, id)
@@ -162,6 +164,9 @@ func (o *Owner) Take(lease, workspace string, allocation int64, expiry time.Time
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.stopped {
+		return nil, errors.New("owner: stopped")
+	}
 	if _, ok := o.leases[lease]; ok {
 		return nil, fmt.Errorf("owner: lease %s is held already", lease)
 	}
@@ -311,13 +316,11 @@ type Lease struct {
 	failed   bool
 	let      bool
 	// failedAt is when the lease's publishes began failing, zero while they
-	// succeed. closing is set once the lease admits nothing more, refused
-	// once Spanner refused its renewal, and final is its final checkpoint's
-	// record once handed over. stored is the shortfall total Spanner has
-	// from the owner's writes.
+	// succeed. closing is set once the lease admits nothing more, and final
+	// is its final checkpoint's record once handed over. stored is the
+	// shortfall total Spanner has from the owner's writes.
 	failedAt time.Time
 	closing  bool
-	refused  bool
 	final    *sent
 	stored   int64
 
