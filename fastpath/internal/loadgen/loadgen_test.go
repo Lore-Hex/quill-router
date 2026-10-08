@@ -508,7 +508,7 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 		return frontdoor.TerminalAnswer{Status: frontdoor.Failed}, nil
 	}
 	cfg := config(lost)
-	cfg.RetryDelays = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond, 15 * time.Millisecond}
+	cfg.RetryDelays = []time.Duration{0, 20 * time.Millisecond, 40 * time.Millisecond}
 	cfg.Mix.RefundShare = 1
 	var log bytes.Buffer
 	cfg.Log = &log
@@ -520,8 +520,12 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 		len(lost.settles) != 0 {
 		t.Fatalf("%d refunds, %+v", n, rep.Outcomes)
 	}
-	if took := lost.at["refund"][3].Sub(lost.at["refund"][0]); took < 30*time.Millisecond {
-		t.Fatalf("the last attempt %v after the first, before the delays' 30ms", took)
+	// Each queued attempt waits its own delay, in order, after the one
+	// before it.
+	for k, d := range cfg.RetryDelays {
+		if gap := lost.at["refund"][k+1].Sub(lost.at["refund"][k]); gap < d {
+			t.Fatalf("attempt %d %v after the one before it, before its delay of %v", k+2, gap, d)
+		}
 	}
 	echoed(t, lost)
 	var g Generation
@@ -1140,6 +1144,63 @@ func TestEachGenerationCarriesItsOwnEnvelope(t *testing.T) {
 		if tries[e] != 2 {
 			t.Fatalf("a generation's envelope refunded %d times, not its send and its retry: %v", tries[e], tries)
 		}
+	}
+}
+
+// TestEachEnclaveRetriesOnItsOwn: generations spread over the enclaves in
+// turn, and each enclave's queue has its own worker, so a queued settle
+// held in one enclave's attempt holds no other enclave's.
+func TestEachEnclaveRetriesOnItsOwn(t *testing.T) {
+	gw := admitting(t)
+	held, other, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	letGo := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(letGo)
+	var mu sync.Mutex
+	sends := map[string]int{}
+	queued := 0
+	gw.settle = func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+		mu.Lock()
+		sends[s.Envelope]++
+		n := sends[s.Envelope]
+		if n > 1 {
+			queued++
+		}
+		q := queued
+		mu.Unlock()
+		switch {
+		case n == 1:
+			// Each generation's own send fails, so it joins its enclave's
+			// queue.
+			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+		case q == 1:
+			// The first queued attempt is held until the other enclave's
+			// has been sent.
+			close(held)
+			<-release
+		default:
+			close(other)
+		}
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
+	}
+	cfg := config(gw)
+	cfg.Rate, cfg.Duration, cfg.Enclaves, cfg.Mix.StreamShare = 2000, time.Millisecond, 2, 0
+	done := make(chan Report, 1)
+	go func() {
+		rep, err := Run(context.Background(), cfg)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- rep
+	}()
+	<-held
+	select {
+	case <-other:
+	case <-time.After(10 * time.Second):
+		t.Fatal("one enclave's held attempt held the other enclave's queue")
+	}
+	letGo()
+	if rep := <-done; rep.Started != 2 || rep.Outcomes["settle won"] != 2 {
+		t.Fatalf("%+v", rep)
 	}
 }
 
