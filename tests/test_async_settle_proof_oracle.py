@@ -1122,6 +1122,156 @@ def test_guard_cache_metadata_cannot_remove_cached_live_result(kind):
     assert cache.cache_info().currsize == 1
 
 
+@pytest.mark.parametrize('kind', ['ref', 'ref_subclass', 'overridden_call', 'weak_value',
+                                 'weak_key', 'weak_set', 'weak_method', 'finalize',
+                                 'proxy', 'callable_proxy'])
+def test_guard_weak_reference_targets(monkeypatch, kind):
+    import functools
+    import gc
+    import weakref
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    held = functools.lru_cache(maxsize=2)(transient_store_error_types.__wrapped__)
+    held()
+    calls = []
+    owner = None
+    finalizer = None
+    if kind == 'ref':
+        root = weakref.ref(held)
+        assert gc.get_referents(root) == []
+    elif kind in {'ref_subclass', 'overridden_call'}:
+        class Ref(weakref.ref):
+            pass
+
+        class OverriddenRef(weakref.ref):
+            def __call__(self):
+                calls.append('__call__')
+                return None
+
+        root = (Ref if kind == 'ref_subclass' else OverriddenRef)(held)
+        assert (type(root).__call__ is weakref.ReferenceType.__call__) == (kind == 'ref_subclass')
+        assert weakref.ReferenceType.__call__(root) is held
+    elif kind == 'weak_value':
+        root = weakref.WeakValueDictionary(cache=held)
+    elif kind == 'weak_key':
+        root = weakref.WeakKeyDictionary({held: None})
+    elif kind == 'weak_set':
+        root = weakref.WeakSet([held])
+    elif kind == 'weak_method':
+        # A real bound live method, with an independent warmed cache retained
+        # only by its instance. GC reaches _func_ref; the native base accessor
+        # reaches the instance despite WeakMethod's Python __call__ override.
+        from trusted_router.storage_models import GatewayAuthorization
+
+        owner = object.__new__(GatewayAuthorization)
+        object.__setattr__(owner, 'review_held_cache', held)
+        root = weakref.WeakMethod(owner.record_finalization)
+        assert weakref.ReferenceType.__call__(root) is owner
+        assert any(type(value) is weakref.ReferenceType for value in gc.get_referents(root))
+    elif kind == 'finalize':
+        # The class registry is an ordinary GC edge, not an external module
+        # dictionary. Never execute the callback; detach it in finally.
+        root = finalizer = weakref.finalize(held, calls.append, 'finalized')
+        finalizer.atexit = False
+    elif kind == 'proxy':
+        class Holder:
+            pass
+
+        owner = Holder()
+        owner.cache = held
+        root = weakref.proxy(owner)
+        assert type(root) is weakref.ProxyType
+        assert gc.get_referents(root) == []
+    else:
+        root = weakref.proxy(held)
+        assert type(root) is weakref.CallableProxyType
+        assert gc.get_referents(root) == []
+
+    # Confirm containers expose their internal native refs via GC alone.
+    # Stop at refs so this check cannot itself resolve the weak target.
+    if kind in {'weak_value', 'weak_key', 'weak_set', 'finalize'}:
+        pending, seen, refs = [root], set(), []
+        while pending:
+            value = pending.pop()
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            if issubclass(type(value), weakref.ReferenceType):
+                refs.append(value)
+            elif type(value) is not type(weakref):
+                pending.extend(gc.get_referents(value))
+        assert any(weakref.ReferenceType.__call__(ref) is held for ref in refs)
+
+    reason = ('weak proxy in frozen reference graph: no safe native target accessor; '
+              'hold the strong object instead' if kind in {'proxy', 'callable_proxy'}
+              else 'live reference.*trusted_router.storage_')
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module('storage_errors'), 'review_weak_root', root, raising=False)
+            with pytest.raises(AssertionError, match=reason):
+                with execution_guard():
+                    pytest.fail('undetected weak reference reached the frozen leg')
+        assert calls == [], 'audit dispatched a weakref override or finalizer'
+        assert held.cache_info().currsize == 1
+        assert held.cache_info().misses == 1
+        assert held.cache_info().hits == 0
+    finally:
+        if finalizer is not None:
+            finalizer.detach()
+
+
+@pytest.mark.parametrize('kind', ['normalized', 'explicit_class', 'explicit_cache',
+                                 'registered', 'owned'])
+def test_guard_shared_abc_weak_cache_normalization(monkeypatch, kind):
+    import _abc
+    import abc
+    import sys
+    from types import ModuleType
+
+    from trusted_router.storage_models import GatewayAuthorization
+
+    shared = ModuleType('proof_shared_abc')
+    shared.abc = abc
+    exec('class Shared(abc.ABC): pass', shared.__dict__)
+    base = shared.Shared
+    if kind == 'owned':
+        base.__module__ = __name__
+    cache = vars(base)['_abc_impl']
+    if kind == 'registered':
+        base.register(GatewayAuthorization)
+    else:
+        assert not issubclass(GatewayAuthorization, base)
+    registry, positive, negative, _ = _abc._get_dump(base)
+    assert any(ref() is GatewayAuthorization for ref in registry | positive | negative)
+    with monkeypatch.context() as patch:
+        patch.setitem(sys.modules, shared.__name__, shared)
+        patch.setattr(module('storage_errors'), 'review_shared_abc', base, raising=False)
+        roots = (base,) if kind == 'explicit_class' else ((cache,) if kind == 'explicit_cache' else ())
+        if kind == 'normalized':
+            with execution_guard(*roots):
+                assert _abc._get_dump(base)[:3] == (set(), set(), set())
+        else:
+            with pytest.raises(AssertionError, match='live reference.*GatewayAuthorization'):
+                with execution_guard(*roots):
+                    pytest.fail('owned, explicit or registered ABC weak target was discarded')
+
+
+def test_reference_walk_dead_weakref():
+    import weakref
+
+    from tests.fakes.frozen_package import _references
+
+    class Holder:
+        pass
+
+    held = Holder()
+    root = weakref.ref(held)
+    del held
+    assert weakref.ReferenceType.__call__(root) is None
+    assert list(_references([root])) == [root]
+
+
 FRAME_WITNESSES = ('active_frame', 'exception_traceback', 'generator_frame',
                    'coroutine_frame', 'exception_context')
 

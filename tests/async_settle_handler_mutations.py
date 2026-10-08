@@ -365,6 +365,21 @@ MUTATIONS += [
 ]
 
 
+# Round 10: weak targets must be native, and opaque proxies must fail closed.
+MUTATIONS += [
+    ('reference-skip-weakref-targets', [('tests/fakes/frozen_package.py', [
+        ('target = weakref.ReferenceType.__call__(value)', 'target = None'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_weak_reference_targets[ref]'),
+    ('reference-dispatch-overridden-weakref-call', [('tests/fakes/frozen_package.py', [
+        ('target = weakref.ReferenceType.__call__(value)', 'target = value()'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_weak_reference_targets[overridden_call]'),
+    ('reference-accept-weak-proxy', [('tests/fakes/frozen_package.py', [
+        ('if value_type is weakref.ProxyType or value_type is weakref.CallableProxyType:',
+         'if False:'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_weak_reference_targets[callable_proxy]'),
+]
+
+
 def main() -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix='pr-c-mutations-') as directory:

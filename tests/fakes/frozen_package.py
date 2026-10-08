@@ -1,6 +1,7 @@
 """A separate, byte-pinned f83bbaac package; no fallback to live router code."""
 from __future__ import annotations
 
+import _abc
 import _thread
 import builtins
 import functools
@@ -17,6 +18,8 @@ import tempfile
 import threading
 import time
 import typing
+import weakref
+from collections.abc import Sized as _Sized
 from contextlib import contextmanager
 from datetime import datetime as _Datetime
 from datetime import time as _Time
@@ -32,6 +35,7 @@ from types import (
     GeneratorType,
     MemberDescriptorType,
     ModuleType,
+    SimpleNamespace,
     TracebackType,
 )
 
@@ -113,6 +117,7 @@ def fake_store():
 _TYPE_DICT = type.__dict__['__dict__']
 _TYPE_QUALNAME = type.__dict__['__qualname__']
 _MODULE_DICT = ModuleType.__dict__['__dict__']
+_ABC_DATA = type(_TYPE_DICT.__get__(_Sized)['_abc_impl'])
 
 
 def _metadata(items, name):
@@ -174,7 +179,8 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
     No container-kind dispatch: tp_traverse supplies the edges. CPython treats
     code, datetime, time and timezone as atomic despite held Python objects.
     Supplements follow native frame/traceback/exception/generator references,
-    code members, tzinfo and timezone offset/name, without overridden properties.
+    code members, tzinfo, timezone offset/name and weak targets, without overrides.
+    Weak proxies fail closed: Python exposes no safe native target accessor.
     Frames come only from held roots, never an interpreter-stack enumeration.
     """
     pending, visited = list(roots), {}
@@ -217,6 +223,17 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         # Always retain GC edges, including frames. Registry identity boundaries
         # above apply equally to GC and supplemental edges.
         pending.extend(gc.get_referents(value))
+        if value_type is weakref.ProxyType or value_type is weakref.CallableProxyType:
+            raise AssertionError('weak proxy in frozen reference graph: no safe native target '
+                                 'accessor; hold the strong object instead')
+        if issubclass(value_type, weakref.ReferenceType):
+            # Always use the unbound native accessor, including when
+            # type(value).__call__ is not weakref.ReferenceType.__call__.
+            # WeakMethod's instance target is native; GC reaches its function
+            # ref. Never dispatch a subclass override to reconstruct a method.
+            target = weakref.ReferenceType.__call__(value)
+            if target is not None:
+                pending.append(target)
         if value_type is TracebackType:
             pending.extend((value.tb_frame, value.tb_next))
         elif value_type is GeneratorType:
@@ -245,10 +262,34 @@ def _namespace_roots(*namespaces):
             if any(_in_namespace(name, ns) for ns in namespaces)]
 
 
+def _clear_shared_abc_caches(*harness):
+    # ABC isinstance/issubclass memoization in shared dependencies weakly holds
+    # live-leg classes. Reset only these recomputable caches, never virtual
+    # subclass registrations, owned classes, or explicitly supplied roots.
+    explicit = {id(value) for value in harness}
+    for name, loaded in list(sys.modules.items()):
+        if not issubclass(type(loaded), ModuleType) or any(
+                _in_namespace(name, ns) for ns in (ALIAS, 'trusted_router', 'tests')):
+            continue
+        for value in tuple(dict.values(_MODULE_DICT.__get__(loaded))):
+            if not issubclass(type(value), type) or id(value) in explicit:
+                continue
+            members = _TYPE_DICT.__get__(value)
+            owner = _metadata(members.items(), '__module__')
+            if not issubclass(type(owner), str) or str.__eq__(owner, name) is not True:
+                continue
+            cache = _metadata(members.items(), '_abc_impl')
+            if type(cache) is _ABC_DATA and id(cache) not in explicit:
+                # The native reset accesses _abc_impl on this plain carrier,
+                # never via a dependency's metaclass or instance properties.
+                _abc._reset_caches(SimpleNamespace(_abc_impl=cache))
+
+
 def reject_live_references(*harness):
     """Reject live definitions in frozen globals and explicitly supplied IO roots."""
     from tests.fakes import spanner
 
+    _clear_shared_abc_caches(*harness)
     roots = [*_namespace_roots(ALIAS), spanner, *harness]
     owners = {}
     for value in _references(roots, namespaces=(ALIAS, 'tests.fakes.spanner')):

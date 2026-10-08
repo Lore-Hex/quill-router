@@ -1418,8 +1418,28 @@ entering the frozen leg, even if the instance shadows its `cache_clear` method. 
 when a warmed cache would otherwise avoid executing its body. The per-callable
 profiler remains the independent execution layer.
 
-The reference scope is **all Python-visible GC referents plus the native frame
-and atomic fields above from the roots, up to the explicit external-registry boundaries**, with an
+Weak referents are covered by an additive native supplement: the unbound
+`weakref.ReferenceType.__call__` resolves live targets and ignores dead refs.
+It also resolves subclass targets without dispatching overridden `__call__`,
+including the instance side of `WeakMethod`; GC exposes that object's function
+ref. `WeakSet`, `WeakValueDictionary`, `WeakKeyDictionary` and `finalize` expose
+internal refs through GC edges (for `finalize`, through its class registry).
+Resolving these refs also exposes live-leg classes memoized by shared dependency
+ABC `isinstance`/`issubclass` checks. Before reference audits, the harness resets
+only the positive/negative ABC caches of classes registered in external module
+dictionaries, using native `_abc._reset_caches` through a plain carrier to avoid
+metaclass dispatch. Like typing-cache normalization, this removes shared runtime
+memoization rather than skipping graph edges. Virtual subclass registrations,
+router/frozen/test-owned classes and explicitly supplied class/cache roots are
+preserved and inspected. Five controls prove normalization and each preservation
+case. This does not add an exclusion or weaken the object bound.
+Both `ProxyType` and `CallableProxyType` **fail closed** with an explicit guard
+failure: Python has no safe native target accessor, and on gate CPython 3.14.6
+`gc.get_referents` returns no proxy target. A harness that needs a proxy must
+hold the strong object instead. No proxy method or weakref override is executed.
+
+The reference scope is **all Python-visible GC referents plus the native frame,
+atomic fields and weak referents above from the roots, up to the explicit external-registry boundaries**, with an
 asserting object bound. Thread execution is covered by all-thread profiling on
 Python 3.12+, with guarded worker bootstraps and the existing-worker refusal on
 older Python. The worktree venv is Python 3.11; the gate venv is Python 3.14.6.
@@ -1462,6 +1482,14 @@ to isolate the native supplement. The first three use unmodified GC. All four
 require preflight rejection with the independent cache still warm, zero hits
 and no custom mapping protocol calls. Two mutations separately continue past
 frame GC edges and omit proxy keys (values only).
+Round 10 adds ten dormant weak-reference witnesses: an exact ref, a ref subclass
+with inherited native call, an overridden-call subclass, weak value/key
+dictionaries, a weak set, a weak method, a finalizer and both weak proxy types.
+Each attaches only the constructed root to a frozen module and requires preflight
+rejection with the independent cache still warm, zero hits and no override or
+finalizer calls. Container witnesses also verify GC paths to their internal refs;
+a dead-ref control requires no target edge. Three mutations skip weak targets,
+dispatch an overridden weakref call and accept weak proxies.
 The new cache witnesses use
 independent warmed wrappers and remain dormant
 inside the guard, so the reference layer itself must detect them. Mutation rows
