@@ -75,14 +75,28 @@ func (o *Owner) Handoff(ctx context.Context) error {
 				mu.Unlock()
 			}
 			if handed {
-				for ctx.Err() == nil {
-					if _, _, err := o.cfg.Spanner.OwnerMarkDraining(ctx, o.who(), l.ref()); err == nil {
-						break
+				// The draining write runs on its own, a writer Stop waits
+				// for: a call cancelled at the deadline may take time to
+				// unwind, and the lease is let go at the deadline whatever
+				// it does.
+				marked := make(chan struct{})
+				o.writers.Add(1)
+				go func() {
+					defer o.writers.Done()
+					defer close(marked)
+					for ctx.Err() == nil {
+						if _, _, err := o.cfg.Spanner.OwnerMarkDraining(ctx, o.who(), l.ref()); err == nil {
+							return
+						}
+						select {
+						case <-time.After(firstBackoff):
+						case <-ctx.Done():
+						}
 					}
-					select {
-					case <-time.After(firstBackoff):
-					case <-ctx.Done():
-					}
+				}()
+				select {
+				case <-marked:
+				case <-ctx.Done():
 				}
 			}
 			o.Let(l.id)
@@ -120,8 +134,8 @@ func (l *Lease) handedOver(ctx context.Context) (bool, error) {
 // lease's lock, so no hold is admitted after its chunk is cut and no
 // record follows the manifest. It returns the manifest's record, or nil if
 // it handed none over: let go, past the cutoff, or once ctx ended, which it
-// checks between holds and before the manifest; or, with an error, a hold
-// or a record the log cannot take.
+// checks as it orders the holds, between holds and before the manifest; or,
+// with an error, a hold or a record the log cannot take.
 func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -129,8 +143,16 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 	if l.let || l.handedOff {
 		return nil, nil
 	}
-	holds := make([]record.HeldHold, 0, len(l.holds))
-	for _, h := range l.holds {
+	auths, ok := l.sortedAuths(ctx)
+	if !ok {
+		return nil, nil
+	}
+	holds := make([]record.HeldHold, 0, len(auths))
+	for _, auth := range auths {
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		h := l.holds[auth]
 		held := record.HeldHold{Auth: h.auth, Estimate: h.estimate, Deadline: h.endOfLife.UTC(), Boot: h.boot}
 		if h.heartbeat {
 			usage, err := json.Marshal(map[string]int64{"tokens": h.usage})
@@ -144,7 +166,6 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 		}
 		holds = append(holds, held)
 	}
-	slices.SortFunc(holds, func(a, b record.HeldHold) int { return strings.Compare(a.Auth, b.Auth) })
 	// Each hold is encoded once, as the digest takes it. Each chunk is sized
 	// as it is handed over, at the sequence number it takes: its first
 	// hold's record is encoded, and each hold after it adds its own
@@ -191,6 +212,55 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 	}
 	l.handedOff = true
 	return m, nil
+}
+
+// sortedAuths is the lease's holds' authorizations in order, as the digest
+// takes them, or false once ctx has ended, which it checks as it sorts them
+// (sortChecked): a lease of a million holds keeps its lock little past a
+// hand-off's deadline.
+func (l *Lease) sortedAuths(ctx context.Context) ([]string, bool) {
+	auths := make([]string, 0, len(l.holds))
+	for auth := range l.holds {
+		auths = append(auths, auth)
+	}
+	return sortChecked(auths, func() bool { return ctx.Err() != nil })
+}
+
+// sortRun is how many strings sortChecked sorts between its checks.
+const sortRun = 1 << 12
+
+// sortChecked sorts xs, in runs of sortRun sorted alone and then merged in
+// pairs, asking stopped before each run and each merge. It returns the
+// sorted strings, xs or another slice, or false at once when stopped says
+// so.
+func sortChecked(xs []string, stopped func() bool) ([]string, bool) {
+	n := len(xs)
+	for lo := 0; lo < n; lo += sortRun {
+		if stopped() {
+			return nil, false
+		}
+		slices.Sort(xs[lo:min(lo+sortRun, n)])
+	}
+	src, dst := xs, make([]string, n)
+	for width := sortRun; width < n; width *= 2 {
+		for lo := 0; lo < n; lo += 2 * width {
+			if stopped() {
+				return nil, false
+			}
+			mid, hi := min(lo+width, n), min(lo+2*width, n)
+			a, b, out := src[lo:mid], src[mid:hi], dst[lo:hi]
+			i, j := 0, 0
+			for k := range out {
+				if j == len(b) || (i < len(a) && a[i] <= b[j]) {
+					out[k], i = a[i], i+1
+				} else {
+					out[k], j = b[j], j+1
+				}
+			}
+		}
+		src, dst = dst, src
+	}
+	return src, true
 }
 
 // handOverErr is a hand-off record's failure as handoff reports it: none

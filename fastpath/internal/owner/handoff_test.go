@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -690,5 +692,74 @@ func TestEveryHeartbeatedHoldCanBeHandedOff(t *testing.T) {
 	}
 	if _, ok := g.owner.Lease("lease-1"); ok {
 		t.Fatal("the lease held after its hand-off")
+	}
+}
+
+// TestAHandOffLetsGoAtItsDeadline: a hand-off whose time is up lets its
+// lease go at once, though the draining write it began is still unwinding
+// its cancelled call; Stop waits for that write.
+func TestAHandOffLetsGoAtItsDeadline(t *testing.T) {
+	f, sp := releaseFixture(t)
+	f.admit(t, 40, false)
+	sp.mu.Lock()
+	sp.drainGate, sp.afterCancel, sp.drainReturned = make(chan struct{}), 500*time.Millisecond, make(chan struct{})
+	sp.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.owner.Handoff(ctx) }()
+	waitFor(t, "the manifest", func() bool { _, m := handoffRecords(t, f); return m != nil })
+	time.Sleep(50 * time.Millisecond) // the draining write under way
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("a hand-off whose time was up: %v", err)
+		}
+	case <-time.After(400 * time.Millisecond):
+		t.Fatal("the hand-off waited for its cancelled draining write")
+	}
+	if _, ok := f.owner.Lease("lease-1"); ok {
+		t.Fatal("the lease held past the hand-off's deadline")
+	}
+	select {
+	case <-sp.drainReturned:
+		t.Fatal("the draining write unwound before the hand-off ended")
+	default:
+	}
+	f.owner.Stop()
+	select {
+	case <-sp.drainReturned:
+	default:
+		t.Fatal("Stop returned while a draining write ran")
+	}
+}
+
+// TestASortStopsWhenAsked: the hand-off's sort of its holds asks whether to
+// stop before each run it sorts and each merge, and stops at once when
+// told; told nothing, it sorts.
+func TestASortStopsWhenAsked(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	for _, n := range []int{0, 1, 2, sortRun, sortRun + 1, 10*sortRun + 7} {
+		xs := make([]string, n)
+		for i := range xs {
+			xs[i] = fmt.Sprintf("auth-%08x", rng.Uint32())
+		}
+		want := slices.Sorted(slices.Values(xs))
+		checks := (n + sortRun - 1) / sortRun
+		for width := sortRun; width < n; width *= 2 {
+			checks += (n + 2*width - 1) / (2 * width)
+		}
+		calls := 0
+		got, ok := sortChecked(slices.Clone(xs), func() bool { calls++; return false })
+		if !ok || !slices.Equal(got, want) || calls != checks {
+			t.Fatalf("%d strings: sorted %v, %d checks, want %d", n, ok && slices.Equal(got, want), calls, checks)
+		}
+		for k := 1; k <= checks; k++ {
+			calls := 0
+			if _, ok := sortChecked(slices.Clone(xs), func() bool { calls++; return calls == k }); ok || calls != k {
+				t.Fatalf("%d strings told to stop at check %d: done %v after %d checks", n, k, ok, calls)
+			}
+		}
 	}
 }
