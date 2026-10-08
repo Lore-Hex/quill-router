@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,12 +176,13 @@ type walker struct {
 	consumed, faulted int64
 	// What the projection onto the shadow leaves out, the walk keeps from
 	// what it wrote: the gap's sequence number, who marked the lease
-	// draining, each stored hold's snapshot sequence number, each reap row's,
-	// and each pack's version, one pack per commit, in order.
+	// draining, each stored hold's snapshot sequence number, each drain
+	// row as appended or reaped, and each pack's version, one pack per
+	// commit, in order.
 	gapSeq    int64
 	drainedBy string
 	holdSeq   [ac.MaxAuths]int64
-	reapSeq   map[string]int64
+	rows      map[string]DrainRow
 	packVers  []int64
 }
 
@@ -198,7 +200,7 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	first := int64(rng.Intn(c.Grant + 1))
 	ref := grantLease(t, s, int64(c.Grant), first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3)))
 	return &walker{t: t, s: s, c: c, ref: ref, rng: rng, seed: seed, state: c.Init(), seen: map[string]int{},
-		tries: map[string]int{}, reapSeq: map[string]int64{}}
+		tries: map[string]int{}, rows: map[string]DrainRow{}}
 }
 
 func (w *walker) fatalf(format string, args ...any) {
@@ -372,6 +374,10 @@ func (w *walker) appendDoor(a int8, record string, taken bool) {
 	case !taken && got.Refused != RefusedClosed:
 		w.fatalf("an append to a closed lease: %+v", got)
 	}
+	if taken {
+		w.rows[record] = DrainRow{AuthorizationID: w.c.Auths[a], RecordID: record, Kind: "settle",
+			Charge: ac.DoorCharge, Estimate: ac.DoorCharge, Digest: []byte(record), Money: []byte(`{}`), Cause: "walk"}
+	}
 }
 
 func (w *walker) load(m int8, to ac.State) {
@@ -483,7 +489,9 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 		w.fatalf("member %s's reap of %s: %q, want %q, %v", w.c.Members[m], w.c.Auths[a], got, want, err)
 	}
 	if want == "" {
-		w.reapSeq[record] = w.members[m].holdSeq[a]
+		w.rows[record] = DrainRow{AuthorizationID: w.c.Auths[a], RecordID: record, Kind: "reap", Charge: charge,
+			Estimate: walkEstimate, Digest: []byte(record), Money: []byte(`{}`), Cause: "reap",
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: w.members[m].holdSeq[a], Valid: true}}
 	}
 }
 
@@ -609,7 +617,7 @@ func (w *walker) probe() bool {
 	try := func(kind string, reason Refusal, f func()) {
 		if w.quota(kind, reason) {
 			tried = true
-			f()
+			w.unchanged(kind, f)
 		}
 	}
 	for m := range int8(len(w.c.Members)) {
@@ -672,9 +680,43 @@ func (w *walker) quota(kind string, reason Refusal) bool {
 func (w *walker) timed(kind string, reason Refusal, f func()) {
 	w.t.Helper()
 	if w.quota(kind, reason) {
-		f()
+		w.unchanged(kind, f)
 		w.check()
 	}
+}
+
+// unchanged runs a write the store must refuse, and requires the
+// workspace's credit rows and the lease's donors as they were: the lease's
+// row the check after it holds to the shadow.
+func (w *walker) unchanged(kind string, f func()) {
+	w.t.Helper()
+	before := w.credit()
+	f()
+	if after := w.credit(); after != before {
+		w.fatalf("a refused %s changed the credit rows and donors from %s to %s", kind, before, after)
+	}
+}
+
+// credit is the workspace's credit rows and the lease's donors, as text.
+func (w *walker) credit() string {
+	w.t.Helper()
+	out := fmt.Sprintf("%+v", readRows(w.t, w.ref.Workspace))
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL: `SELECT credit_shard, allocation, consumed FROM tr_lease_donor WHERE workspace_id = @w AND lease_id = @l
+		       ORDER BY credit_shard`,
+		Params: w.ref.params(),
+	}).Do(func(r *spanner.Row) error {
+		var shard, allocation, consumed int64
+		if err := r.Columns(&shard, &allocation, &consumed); err != nil {
+			return err
+		}
+		out += fmt.Sprintf(" donor %d: %d of %d", shard, consumed, allocation)
+		return nil
+	})
+	if err != nil {
+		w.fatalf("reading the credit: %v", err)
+	}
+	return out
 }
 
 // commitRefusal is the store's refusal of a commit from member m, in the
@@ -836,16 +878,16 @@ func (w *walker) check() {
 		w.fatalf("consumed %d and fault usage %d; the walk booked %d matched and %d beyond", l.Consumed, l.FaultUsage,
 			w.consumed, w.faulted)
 	}
+	// Every drain row, field by field, is what its append or reap wrote, and
+	// raised nothing.
+	if len(rows) != len(w.rows) {
+		w.fatalf("%d drain rows, and the walk wrote %d", len(rows), len(w.rows))
+	}
 	for _, r := range rows {
-		if r.DoorRaise != 0 {
-			w.fatalf("drain row %s raised %d, and its append raised nothing", r.RecordID, r.DoorRaise)
-		}
-		want := spanner.NullInt64{}
-		if r.Kind == "reap" {
-			want = spanner.NullInt64{Int64: w.reapSeq[r.RecordID], Valid: true}
-		}
-		if r.SnapshotOwnerSeq != want {
-			w.fatalf("drain row %s's snapshot is %v, and the walk's %v", r.RecordID, r.SnapshotOwnerSeq, want)
+		got := r
+		got.CommitTS = time.Time{}
+		if want, ok := w.rows[r.RecordID]; !ok || !reflect.DeepEqual(got, want) {
+			w.fatalf("drain row %+v, and the walk wrote %+v", got, want)
 		}
 	}
 	w.checkUnprojected(l, loaded.Holds, packs)
@@ -866,7 +908,23 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	if closed {
 		closeKind = spanner.NullString{StringVal: "auditor", Valid: true}
 	}
+	// The row may go only once closed with no pack's work pending; the walk
+	// marks none done, and every commit stores a pack.
+	var retire spanner.NullTime
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL:    `SELECT retire_at FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`,
+		Params: w.ref.params(),
+	}).Do(func(r *spanner.Row) error { return r.Column(0, &retire) })
+	if err != nil {
+		w.fatalf("reading retire_at: %v", err)
+	}
+	fence := l.Expiry.Add(w.s.cfg.Skew + w.s.cfg.PublishDeadline)
 	switch {
+	case retire.Valid != (closed && len(w.packVers) == 0):
+		w.fatalf("retire_at %v, the lease %s with %d packs pending", retire, stateName(w.state.St), len(w.packVers))
+	case l.FenceTime.Valid && !l.FenceTime.Time.Equal(fence):
+		w.fatalf("the fence is %v, and the expiry %v with the skew and the publish deadline is %v", l.FenceTime,
+			l.Expiry, fence)
 	case l.GapSeq != (spanner.NullInt64{Int64: w.gapSeq, Valid: w.gapSeq != 0}):
 		w.fatalf("the gap is at %v, and the walk's at %d", l.GapSeq, w.gapSeq)
 	case l.BoundarySeq.Valid != l.BoundaryPublishTime.Valid ||

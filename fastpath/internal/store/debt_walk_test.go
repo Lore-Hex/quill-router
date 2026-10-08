@@ -3,6 +3,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -67,7 +68,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 	}
 	t.Logf("operations: %v", seen)
 	for _, k := range []string{"grant", "refused grant", "shortfall-write", "booking", "fault", "return", "drain",
-		"door raise", "close", "refused close: undecided", "debt", "debt repaid", "a lease of two donors or more",
+		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
 		"a booking past the first donor", "a return before the last donor"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
@@ -160,6 +161,7 @@ type debtWalk struct {
 	s       *Store
 	ws      string
 	rng     *rand.Rand
+	probes  *rand.Rand // the refused commits', apart, so they leave the walk's own choices as they were
 	seed    int64
 	credits int64
 	leases  []*debtLease
@@ -171,7 +173,8 @@ func newDebtWalk(t *testing.T, s *Store, seed int64) *debtWalk {
 	t.Helper()
 	rng := rand.New(rand.NewSource(seed))
 	credits := []int64{int64(rng.Intn(30)), int64(rng.Intn(30)), int64(rng.Intn(30))}
-	d := &debtWalk{t: t, s: s, ws: seedWorkspace(t, credits...), rng: rng, seed: seed, seen: map[string]int{}}
+	d := &debtWalk{t: t, s: s, ws: seedWorkspace(t, credits...), rng: rng, probes: rand.New(rand.NewSource(^seed)),
+		seed: seed, seen: map[string]int{}}
 	for _, c := range credits {
 		d.credits += c
 	}
@@ -319,6 +322,17 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		total += int64(d.rng.Intn(6))
 	}
 	d.note("book %s %d at %d", l.ref.LeaseID, charge, total)
+	if d.probes.Intn(4) == 0 {
+		// A member that read a later version than the lease's: the store
+		// refuses its commit and changes nothing, as the check after
+		// holds every row to the walk's ledger.
+		got, _, err := d.s.Commit(ctx, []CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1, AppliedSeq: l.seq + 1,
+			Money: []MoneyOp{Book(charge, total)}}})
+		if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion {
+			d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
+		}
+		d.seen["refused commit"]++
+	}
 	got := d.commit(ctx, l, []MoneyOp{Book(charge, total)}, false)
 	if l.booked(charge, total) {
 		d.seen["a booking past the first donor"]++
@@ -365,7 +379,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	record := fmt.Sprintf("d%d", l.appends)
 	d.note("door %s +%d", l.ref.LeaseID, raise)
 	t := DrainTerminal{Ref: l.ref, AuthorizationID: "a" + record, RecordID: record, Kind: "settle", Charge: 2 + raise,
-		Estimate: 2, Money: []byte(`{}`), Cause: "debt walk"}
+		Estimate: 2, Digest: []byte(l.ref.LeaseID + record), Money: []byte(`{"walk":"debt"}`), Cause: "debt walk"}
 	got, err := d.s.Append(ctx, t)
 	if err != nil || got.Refused != "" || got.Raise != raise {
 		d.fatalf("the append: %+v %v", got, err)
@@ -394,7 +408,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	var winners []Winner
 	var money []MoneyOp
 	for _, r := range rows {
-		d.checkRow(l, r.RecordID, r.AuthorizationID, r.Kind, r.Charge, r.Estimate, r.DoorRaise)
+		d.checkRow(l, r)
 		if !l.committed[r.RecordID] {
 			winners = append(winners, Winner{AuthorizationID: r.AuthorizationID, Kind: r.Kind, Charge: r.Charge,
 				FromDrain: true, RecordID: r.RecordID})
@@ -437,14 +451,15 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	d.seen["close"]++
 }
 
-// checkRow holds a drain row to what the walk appended.
-func (d *debtWalk) checkRow(l *debtLease, record, auth, kind string, charge, estimate, raise int64) {
+// checkRow holds a drain row, field by field, to what the walk appended.
+func (d *debtWalk) checkRow(l *debtLease, r DrainRow) {
 	d.t.Helper()
-	t, ok := l.rows[record]
-	if !ok || auth != t.AuthorizationID || kind != t.Kind || charge != t.Charge || estimate != t.Estimate ||
-		raise != l.raises[record] {
-		d.fatalf("lease %s's drain row %s is %s %s of %d on %d raising %d, and the walk appended %+v raising %d",
-			l.ref.LeaseID, record, auth, kind, charge, estimate, raise, t, l.raises[record])
+	t, ok := l.rows[r.RecordID]
+	if !ok || r.AuthorizationID != t.AuthorizationID || r.Kind != t.Kind || r.Charge != t.Charge ||
+		r.Estimate != t.Estimate || r.DoorRaise != l.raises[r.RecordID] || !bytes.Equal(r.Digest, t.Digest) ||
+		!bytes.Equal(r.Money, t.Money) || r.Cause != t.Cause || r.SnapshotOwnerSeq.Valid {
+		d.fatalf("lease %s's drain row %+v, and the walk appended %+v raising %d", l.ref.LeaseID, r, t,
+			l.raises[r.RecordID])
 	}
 }
 
@@ -538,17 +553,18 @@ func (d *debtWalk) check(before, after []int64) {
 			leases[l.ref.LeaseID] = l
 		}
 		err = shared.Single().Query(ctx, spanner.Statement{
-			SQL: `SELECT lease_id, record_id, authorization_id, kind, charge, estimate, door_raise FROM tr_lease_drain
-			       WHERE workspace_id = @w`,
+			SQL:    `SELECT lease_id, ` + drainColumns + ` FROM tr_lease_drain WHERE workspace_id = @w`,
 			Params: map[string]any{"w": d.ws},
 		}).Do(func(r *spanner.Row) error {
-			var lease, record, auth, kind string
-			var charge, estimate, raised int64
-			if err := r.Columns(&lease, &record, &auth, &kind, &charge, &estimate, &raised); err != nil {
+			var lease string
+			var row DrainRow
+			if err := r.Columns(&lease, &row.AuthorizationID, &row.RecordID, &row.Kind, &row.Charge, &row.Estimate,
+				&row.DoorRaise, &row.Digest, &row.Money, &row.SnapshotOwnerSeq, &row.Cause, &row.CommitTS); err != nil {
 				return err
 			}
+			record, raised := row.RecordID, row.DoorRaise
 			if l := leases[lease]; l != nil {
-				d.checkRow(l, record, auth, kind, charge, estimate, raised)
+				d.checkRow(l, row)
 			}
 			if m := got[lease]; m != nil {
 				m.appends++
