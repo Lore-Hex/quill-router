@@ -20,6 +20,10 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   from `src/trusted_router/credit_debt.py` and held to its results by
   `testdata/credit_debt_vectors.json`. `scripts/fastpath/credit_debt_vectors.py`
   writes the file, and a Python test fails when it is stale.
+- `internal/service` and `cmd/fastpath`: the spike's one service (spike plan
+  §2). A process runs an admission node's front door and owner, an auditor
+  member, or both, over Spanner and Pub/Sub; its tests run whole processes
+  against the Spanner emulator and Pub/Sub's test server.
 - `internal/tlc`: for tests only. It runs the pinned TLC from `proofs/`, reads
   the state graph TLC writes with `-dump dot,actionlabels` as it streams, has
   TLC judge whether a `.cfg` has the constants a test declares, and reads the
