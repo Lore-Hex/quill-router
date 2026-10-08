@@ -124,7 +124,11 @@ keys and redelivery, and Spanner's runs the store's statements. Neither
 reproduces production's timing, quotas or regional behavior: the per-key
 limit, locational endpoints, redelivery delays and multi-region commit
 latency. Spanner's emulator also serializes read-write transactions over the
-whole database, so it shows nothing about contention.
+whole database, so it shows nothing about contention. The settle log's own
+package tests run on pstest, the Pub/Sub client library's in-process fake,
+which also keeps each ordering key's order and redelivers what is not
+acknowledged, and can fail a chosen publish; the emulator joins for the
+tests that run the spike's processes together.
 
 **Spanner.** Three ways, for Joseph (D1, §8):
 
