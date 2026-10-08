@@ -1,0 +1,506 @@
+package frontdoor
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"cloud.google.com/go/spanner"
+
+	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/settlelog"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
+)
+
+var key = bytes.Repeat([]byte{7}, MinKeySize)
+
+var start = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+
+var errInjected = errors.New("a failure the test injected")
+
+// events is what the fakes did, in order, so a test can hold the front
+// door to an order: "publish <auth>", "owner <address> <what>", "append
+// <record ID> <cause>", "disposition <auth>".
+type events struct {
+	mu   sync.Mutex
+	list []string
+}
+
+func (e *events) add(format string, args ...any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.list = append(e.list, fmt.Sprintf(format, args...))
+}
+
+func (e *events) all() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.list...)
+}
+
+// fakeOwners answers as each address's owner is set to: unreachable, or
+// with the answer set for it (an authorize's by shard).
+type fakeOwners struct {
+	ev          *events
+	unreachable map[string]bool
+	admitted    map[int64]OwnerAdmitted
+	heartbeat   HeartbeatAnswer
+	terminal    OwnerTerminalAnswer
+	heartbeats  []OwnerHeartbeat
+	terminals   []OwnerTerminal
+}
+
+func (f *fakeOwners) reach(ctx context.Context, address string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if f.unreachable[address] {
+		return ErrUnreachable
+	}
+	return nil
+}
+
+func (f *fakeOwners) Authorize(ctx context.Context, address string, req OwnerAuthorize) (OwnerAdmitted, error) {
+	f.ev.add("owner %s authorize %d", address, req.Shard)
+	if err := f.reach(ctx, address); err != nil {
+		return OwnerAdmitted{}, err
+	}
+	return f.admitted[req.Shard], nil
+}
+
+func (f *fakeOwners) Heartbeat(ctx context.Context, address string, req OwnerHeartbeat) (HeartbeatAnswer, error) {
+	f.ev.add("owner %s heartbeat", address)
+	f.heartbeats = append(f.heartbeats, req)
+	if err := f.reach(ctx, address); err != nil {
+		return HeartbeatAnswer{}, err
+	}
+	return f.heartbeat, nil
+}
+
+func (f *fakeOwners) Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error) {
+	f.ev.add("owner %s %s", address, req.Kind)
+	f.terminals = append(f.terminals, req)
+	if err := f.reach(ctx, address); err != nil {
+		return OwnerTerminalAnswer{}, err
+	}
+	return f.terminal, nil
+}
+
+type fakeStore struct {
+	ev          *events
+	appended    []store.DrainTerminal
+	refuse      bool
+	failAppend  bool
+	disposition store.Disposition
+	failDisp    bool
+}
+
+func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.AppendResult, error) {
+	f.ev.add("append %s %s", t.RecordID, t.Cause)
+	if f.failAppend {
+		return store.AppendResult{}, errInjected
+	}
+	f.appended = append(f.appended, t)
+	if f.refuse {
+		return store.AppendResult{Refused: store.RefusedClosed}, nil
+	}
+	return store.AppendResult{CommitTS: start}, nil
+}
+
+func (f *fakeStore) Disposition(_ context.Context, authorization string) (store.Disposition, error) {
+	f.ev.add("disposition %s", authorization)
+	if f.failDisp {
+		return store.Disposition{}, errInjected
+	}
+	return f.disposition, nil
+}
+
+type answered struct{ err error }
+
+func (a answered) Wait(context.Context) (string, error) { return "id", a.err }
+
+type fakeRecords struct {
+	ev        *events
+	fail      bool
+	published [][]byte
+}
+
+func (f *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
+	f.ev.add("publish %s %s", authorization, kind)
+	if f.fail {
+		return answered{errInjected}
+	}
+	f.published = append(f.published, data)
+	return answered{}
+}
+
+type fakeMembers struct{ view ring.View }
+
+func (f fakeMembers) View() (ring.View, time.Time) { return f.view, f.view.ReadAt }
+
+// owners is a view of live serving owners at the addresses.
+func owners(addresses ...string) ring.View {
+	v := ring.View{ReadAt: start}
+	for _, a := range addresses {
+		v.Members = append(v.Members, store.Member{Address: a, Epoch: 1, Roles: []string{ring.OwnerRole},
+			State: store.Serving, Live: true})
+	}
+	return v
+}
+
+type doorFixture struct {
+	ev      *events
+	owners  *fakeOwners
+	store   *fakeStore
+	records *fakeRecords
+	view    ring.View
+	shards  int64
+	door    *FrontDoor
+}
+
+func newDoor(t *testing.T, shards int64) *doorFixture {
+	t.Helper()
+	ev := &events{}
+	f := &doorFixture{ev: ev, owners: &fakeOwners{ev: ev, unreachable: map[string]bool{}, admitted: map[int64]OwnerAdmitted{}},
+		store: &fakeStore{ev: ev}, records: &fakeRecords{ev: ev}, view: owners("node-a", "node-b", "node-c"), shards: shards}
+	door, err := New(Config{Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
+		Shards: func(string) int64 { return f.shards }, OwnerWait: time.Second, PublishWait: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.door = door
+	return f
+}
+
+// envelope is a sealed envelope for a hold at node-b.
+func envelope(t *testing.T) (Envelope, string) {
+	t.Helper()
+	e := Envelope{Auth: "gwa-1", Workspace: "ws-1", Lease: "lease-1", Owner: "node-b", Estimate: 40, Stream: true,
+		EndOfLife: start.Add(time.Hour)}
+	sealed, err := Seal(key, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e, sealed
+}
+
+func (f *doorFixture) ownerOf(shard int64) string {
+	m, ok := f.view.Owner(ring.ShardKey("ws-1", shard))
+	if !ok {
+		panic("no owner")
+	}
+	return m.Address
+}
+
+func checkEvents(t *testing.T, ev *events, want ...string) {
+	t.Helper()
+	if got := ev.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events:\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestAnAuthorizeGoesToItsShardsOwner: a request's own hash picks its
+// workspace's shard, and the shard's owner by rendezvous hashing gets it.
+func TestAnAuthorizeGoesToItsShardsOwner(t *testing.T) {
+	for _, k := range []int64{1, 4} {
+		f := newDoor(t, k)
+		shard := pick("request-1", k)
+		f.owners.admitted[shard] = OwnerAdmitted{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}
+		got := f.door.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "request-1", Estimate: 40,
+			Boot: []byte("boot")})
+		if want := (Authorized{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}); got != want {
+			t.Fatalf("K=%d: %+v, want %+v", k, got, want)
+		}
+		checkEvents(t, f.ev, fmt.Sprintf("owner %s authorize %d", f.ownerOf(shard), shard))
+	}
+	seen := map[int64]bool{}
+	for i := 0; i < 64; i++ {
+		seen[pick(fmt.Sprint("request-", i), 4)] = true
+	}
+	if len(seen) != 4 {
+		t.Fatalf("64 requests picked shards %v of 4", seen)
+	}
+}
+
+// TestAShardWithoutRoomTriesOneOtherShard: a sharded workspace's request
+// that its shard's owner cannot take, having no lease with room or not
+// answering, goes to one other shard's owner, and then is Busy (§4.4).
+func TestAShardWithoutRoomTriesOneOtherShard(t *testing.T) {
+	ctx := context.Background()
+	a := AuthorizeOf{Workspace: "ws-1", Request: "request-1", Estimate: 40, Boot: []byte("boot")}
+	shard := pick(a.Request, 4)
+	other := (shard + 1) % 4
+
+	f := newDoor(t, 4)
+	f.owners.admitted[shard] = OwnerAdmitted{Status: Busy}
+	f.owners.admitted[other] = OwnerAdmitted{Status: Admitted, Envelope: "sealed"}
+	if got := f.door.Authorize(ctx, a); got.Status != Admitted || got.Envelope != "sealed" {
+		t.Fatalf("the other shard's owner admitted it: %+v", got)
+	}
+	checkEvents(t, f.ev, fmt.Sprintf("owner %s authorize %d", f.ownerOf(shard), shard),
+		fmt.Sprintf("owner %s authorize %d", f.ownerOf(other), other))
+
+	f = newDoor(t, 4)
+	f.owners.admitted[shard] = OwnerAdmitted{Status: Busy}
+	f.owners.admitted[other] = OwnerAdmitted{Status: Busy}
+	if got := f.door.Authorize(ctx, a); got.Status != Busy {
+		t.Fatalf("two shards without room: %+v", got)
+	}
+	if n := len(f.ev.all()); n != 2 {
+		t.Fatalf("%d owners asked, want 2: %q", n, f.ev.all())
+	}
+
+	f = newDoor(t, 4)
+	f.owners.unreachable[f.ownerOf(shard)] = true
+	f.owners.admitted[other] = OwnerAdmitted{Status: Admitted, Envelope: "sealed"}
+	if f.ownerOf(shard) == f.ownerOf(other) {
+		t.Fatal("the test needs the two shards at different owners")
+	}
+	if got := f.door.Authorize(ctx, a); got.Status != Admitted {
+		t.Fatalf("an owner not reached, then the other shard's: %+v", got)
+	}
+
+	f = newDoor(t, 1)
+	f.owners.admitted[0] = OwnerAdmitted{Status: Busy}
+	if got := f.door.Authorize(ctx, a); got.Status != Busy {
+		t.Fatalf("an unsharded workspace: %+v", got)
+	}
+	if n := len(f.ev.all()); n != 1 {
+		t.Fatalf("an unsharded workspace asked %d owners: %q", n, f.ev.all())
+	}
+
+	f = newDoor(t, 4)
+	f.owners.admitted[shard] = OwnerAdmitted{Status: Invalid}
+	if got := f.door.Authorize(ctx, a); got.Status != Invalid {
+		t.Fatalf("an authorize its owner cannot take: %+v", got)
+	}
+	if n := len(f.ev.all()); n != 1 {
+		t.Fatalf("an authorize its owner cannot take went to %d owners", n)
+	}
+
+	f = newDoor(t, 4)
+	f.view = ring.View{ReadAt: start}
+	door, err := New(Config{Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
+		Shards: func(string) int64 { return 4 }, OwnerWait: time.Second, PublishWait: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := door.Authorize(ctx, a); got.Status != Busy || len(f.ev.all()) != 0 {
+		t.Fatalf("no owners: %+v, %q", got, f.ev.all())
+	}
+}
+
+// TestAHeartbeatGoesToItsEnvelopesOwner: a heartbeat goes to the owner and
+// lease its envelope names; one whose owner does not answer gets Retry; one
+// whose envelope's seal does not hold goes nowhere.
+func TestAHeartbeatGoesToItsEnvelopesOwner(t *testing.T) {
+	ctx := context.Background()
+	e, sealed := envelope(t)
+	hb := HeartbeatOf{Envelope: sealed, GatewaySeq: 3, Hash: []byte("hash"), Usage: 7, Running: 12,
+		Echoed: start.Add(time.Minute), Basis: []byte("basis")}
+
+	f := newDoor(t, 1)
+	f.owners.heartbeat = HeartbeatAnswer{Status: Accepted, Deadline: start.Add(2 * time.Minute)}
+	if got := f.door.Heartbeat(ctx, hb); got != f.owners.heartbeat {
+		t.Fatalf("the owner's answer: %+v", got)
+	}
+	want := OwnerHeartbeat{Lease: e.Lease, Auth: e.Auth, GatewaySeq: 3, Hash: []byte("hash"), Usage: 7, Running: 12,
+		Echoed: start.Add(time.Minute), Basis: []byte("basis")}
+	if len(f.owners.heartbeats) != 1 || !reflect.DeepEqual(f.owners.heartbeats[0], want) {
+		t.Fatalf("forwarded %+v, want %+v", f.owners.heartbeats, want)
+	}
+	checkEvents(t, f.ev, "owner node-b heartbeat")
+
+	f = newDoor(t, 1)
+	f.owners.unreachable["node-b"] = true
+	if got := f.door.Heartbeat(ctx, hb); got.Status != Retry {
+		t.Fatalf("an owner not reached: %+v", got)
+	}
+
+	f = newDoor(t, 1)
+	bad := hb
+	bad.Envelope = sealed[:len(sealed)-2] + "AA"
+	if got := f.door.Heartbeat(ctx, bad); got.Status != Invalid || len(f.ev.all()) != 0 {
+		t.Fatalf("an envelope whose seal does not hold: %+v, %q", got, f.ev.all())
+	}
+}
+
+// settle is the tests' settle of 55 under the envelope.
+func settle(sealed string) SettleOf {
+	return SettleOf{Envelope: sealed, Charge: 55, Full: []byte(`{"full":"record"}`), Money: []byte(`{"cost":55}`)}
+}
+
+func digestOf(b []byte) []byte {
+	d := sha256.Sum256(b)
+	return d[:]
+}
+
+// TestASettlesFullRecordIsPublishedFirst: a settle's full record goes to
+// the record topic, keyed by its authorization, and only once that is
+// acknowledged does the settle go on, with the record's digest; the owner's
+// winner is the answer. A publish that fails sends nothing on.
+func TestASettlesFullRecordIsPublishedFirst(t *testing.T) {
+	ctx := context.Background()
+	e, sealed := envelope(t)
+	s := settle(sealed)
+
+	f := newDoor(t, 1)
+	f.owners.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Settle, Charge: 55}
+	if got := f.door.Settle(ctx, s); got != (TerminalAnswer{Status: Won, Kind: record.Settle, Charge: 55}) {
+		t.Fatalf("the owner's winner: %+v", got)
+	}
+	checkEvents(t, f.ev, "publish gwa-1 "+settlelog.FullRecord, "owner node-b settle")
+	want := OwnerTerminal{Lease: e.Lease, Auth: e.Auth, Kind: record.Settle, Charge: 55, Digest: digestOf(s.Full)}
+	if !reflect.DeepEqual(f.owners.terminals, []OwnerTerminal{want}) {
+		t.Fatalf("forwarded %+v, want %+v", f.owners.terminals, want)
+	}
+	if !reflect.DeepEqual(f.records.published, [][]byte{s.Full}) {
+		t.Fatalf("published %q", f.records.published)
+	}
+
+	f = newDoor(t, 1)
+	f.records.fail = true
+	if got := f.door.Settle(ctx, s); got.Status != Failed {
+		t.Fatalf("a full record not published: %+v", got)
+	}
+	checkEvents(t, f.ev, "publish gwa-1 "+settlelog.FullRecord)
+
+	for _, bad := range []SettleOf{{Envelope: "v1.x.y", Charge: 1, Full: s.Full, Money: s.Money},
+		{Envelope: sealed, Charge: -1, Full: s.Full, Money: s.Money}, {Envelope: sealed, Charge: 1, Money: s.Money},
+		{Envelope: sealed, Charge: 1, Full: s.Full}} {
+		f = newDoor(t, 1)
+		if got := f.door.Settle(ctx, bad); got.Status != Invalid || len(f.ev.all()) != 0 {
+			t.Fatalf("%+v: %+v, %q", bad, got, f.ev.all())
+		}
+	}
+}
+
+// TestATerminalTheOwnerDoesNotTakeGoesToTheDrainLog: a terminal whose owner
+// cannot be reached, or answers that it may never publish it, is appended
+// to its lease's drain log at once, with the estimate its envelope carries
+// and the cause, and answered Recorded (§4.3, §4.5). The owner's other
+// answers are the answer, and append nothing.
+func TestATerminalTheOwnerDoesNotTakeGoesToTheDrainLog(t *testing.T) {
+	ctx := context.Background()
+	e, sealed := envelope(t)
+	s := settle(sealed)
+	id := "settle-" + hex.EncodeToString(digestOf(s.Full)[:16])
+	row := func(cause string) store.DrainTerminal {
+		return store.DrainTerminal{Ref: store.LeaseRef{Workspace: e.Workspace, LeaseID: e.Lease},
+			AuthorizationID: e.Auth, RecordID: id, Kind: "settle", Charge: 55, Estimate: 40,
+			Digest: digestOf(s.Full), Money: s.Money, Cause: cause}
+	}
+
+	f := newDoor(t, 1)
+	f.owners.unreachable["node-b"] = true
+	if got := f.door.Settle(ctx, s); got.Status != Recorded {
+		t.Fatalf("an owner not reached: %+v", got)
+	}
+	checkEvents(t, f.ev, "publish gwa-1 "+settlelog.FullRecord, "owner node-b settle", "append "+id+" unreachable")
+	if !reflect.DeepEqual(f.store.appended, []store.DrainTerminal{row("unreachable")}) {
+		t.Fatalf("appended %+v, want %+v", f.store.appended, row("unreachable"))
+	}
+
+	f = newDoor(t, 1)
+	f.owners.terminal = OwnerTerminalAnswer{Status: PastCutoff}
+	if got := f.door.Settle(ctx, s); got.Status != Recorded {
+		t.Fatalf("an owner past its cutoff: %+v", got)
+	}
+	if !reflect.DeepEqual(f.store.appended, []store.DrainTerminal{row("past_cutoff")}) {
+		t.Fatalf("appended %+v, want %+v", f.store.appended, row("past_cutoff"))
+	}
+
+	for _, answer := range []Status{Recorded, Failed, Invalid} {
+		f = newDoor(t, 1)
+		f.owners.terminal = OwnerTerminalAnswer{Status: answer}
+		if got := f.door.Settle(ctx, s); got.Status != answer || len(f.store.appended) != 0 {
+			t.Fatalf("the owner's %s: %+v, appended %+v", answer, got, f.store.appended)
+		}
+	}
+
+	// A retry of the settle names the same row, through any front door.
+	f = newDoor(t, 1)
+	f.owners.unreachable["node-b"] = true
+	f.door.Settle(ctx, s)
+	f.door.Settle(ctx, s)
+	if len(f.store.appended) != 2 || f.store.appended[0].RecordID != f.store.appended[1].RecordID {
+		t.Fatalf("a retried settle's rows: %+v", f.store.appended)
+	}
+}
+
+// TestARefundGoesToTheDrainLogWithoutAFullRecord: a refund publishes no full
+// record, and its row is named for its kind.
+func TestARefundGoesToTheDrainLogWithoutAFullRecord(t *testing.T) {
+	ctx := context.Background()
+	e, sealed := envelope(t)
+	f := newDoor(t, 1)
+	f.owners.unreachable["node-b"] = true
+	if got := f.door.Refund(ctx, RefundOf{Envelope: sealed, Money: []byte(`{"cost":0}`)}); got.Status != Recorded {
+		t.Fatalf("a refund whose owner is not reached: %+v", got)
+	}
+	checkEvents(t, f.ev, "owner node-b refund", "append refund unreachable")
+	want := store.DrainTerminal{Ref: store.LeaseRef{Workspace: e.Workspace, LeaseID: e.Lease}, AuthorizationID: e.Auth,
+		RecordID: "refund", Kind: "refund", Estimate: 40, Money: []byte(`{"cost":0}`), Cause: "unreachable"}
+	if !reflect.DeepEqual(f.store.appended, []store.DrainTerminal{want}) {
+		t.Fatalf("appended %+v, want %+v", f.store.appended, want)
+	}
+	if got := f.door.Refund(ctx, RefundOf{Envelope: sealed}); got.Status != Invalid {
+		t.Fatalf("a refund without money fields: %+v", got)
+	}
+}
+
+// TestAClosedLeasesTerminalIsAnsweredFromItsDisposition: the drain log
+// refuses a closed lease's terminal, and the authorization's disposition
+// answers, as today's already_settled does (§4.5). An append or a
+// disposition that fails is an error the gateway retries.
+func TestAClosedLeasesTerminalIsAnsweredFromItsDisposition(t *testing.T) {
+	ctx := context.Background()
+	_, sealed := envelope(t)
+	f := newDoor(t, 1)
+	f.owners.unreachable["node-b"] = true
+	f.store.refuse = true
+	f.store.disposition = store.Disposition{Outcome: "reaped_snapshot", Cost: spanner.NullInt64{Int64: 31, Valid: true},
+		From: "winner"}
+	want := TerminalAnswer{Status: Settled, Outcome: "reaped_snapshot", Cost: 31, CostKnown: true}
+	if got := f.door.Settle(ctx, settle(sealed)); got != want {
+		t.Fatalf("a closed lease: %+v, want %+v", got, want)
+	}
+	if last := f.ev.all()[len(f.ev.all())-1]; last != "disposition gwa-1" {
+		t.Fatalf("last %q", last)
+	}
+	f.store.disposition = store.Disposition{Outcome: "pending", From: "nowhere"}
+	if got := f.door.Settle(ctx, settle(sealed)); got != (TerminalAnswer{Status: Settled, Outcome: "pending"}) {
+		t.Fatalf("a closed lease with no winner known: %+v", got)
+	}
+	f.store.failDisp = true
+	if got := f.door.Settle(ctx, settle(sealed)); got.Status != Failed {
+		t.Fatalf("a disposition that failed: %+v", got)
+	}
+	f.store.failAppend = true
+	if got := f.door.Settle(ctx, settle(sealed)); got.Status != Failed {
+		t.Fatalf("an append that failed: %+v", got)
+	}
+}
+
+// TestAGatewayThatStoppedWaitingAppendsNothing: a terminal whose request
+// ended before its owner answered is not appended; the gateway retries it.
+func TestAGatewayThatStoppedWaitingAppendsNothing(t *testing.T) {
+	_, sealed := envelope(t)
+	f := newDoor(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := f.door.Refund(ctx, RefundOf{Envelope: sealed, Money: []byte(`{}`)}); got.Status != Failed {
+		t.Fatalf("an ended request: %+v", got)
+	}
+	if len(f.store.appended) != 0 {
+		t.Fatalf("appended %+v", f.store.appended)
+	}
+}
