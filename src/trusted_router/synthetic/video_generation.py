@@ -38,7 +38,7 @@ DAILY_VIDEO_PROFILES: tuple[DailyVideoProfile, ...] = (
     DailyVideoProfile("lightricks/ltx-2.3-fast", "ltx", 6, "1080p", 432_000),
     DailyVideoProfile(
         "google/veo-3.1-fast",
-        "google-ai-studio",
+        "google-vertex",
         4,
         "720p",
         480_000,
