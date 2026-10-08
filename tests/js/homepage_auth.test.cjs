@@ -31,16 +31,16 @@ function setup(cookie) {
 }
 test('signed-out homepage keeps sign-in labels and normal navigation fallback', () => {
  const links = setup('');
- assert.equal(links.length, 5);
- assert.deepEqual(links.map(a => a.textContent), ['Sign in', 'Sign in', 'Get your API key', 'Get your API key', 'Get your API key']);
+ assert.equal(links.length, 4);
+ assert.deepEqual(links.map(a => a.textContent), ['Sign in', 'Get your API key', 'Get your API key', 'Get your API key']);
 });
 test('returning visitors get console labels and retain button styles', () => {
  const links = setup('other=1; tr_signed_in=1');
- assert.deepEqual(links.map(a => a.textContent), ['Console', 'Console', 'Open console', 'Open console', 'Open console']);
+ assert.deepEqual(links.map(a => a.textContent), ['Console', 'Open console', 'Open console', 'Open console']);
  links.forEach((a, index) => {
   assert.equal(a.href, '/console/api-keys');
   assert.equal(a.className, links.classes[index]);
-  assert.match(a.className, /button|drawer-signin/);
+  assert.match(a.className, /button/);
   assert.equal(a['data-action'], undefined);
  });
 });
@@ -50,8 +50,8 @@ test('delegated homepage analytics survives auth-aware replacement and excludes 
  const context = vm.createContext({track: (...args) => sent.push(args)});
  vm.runInContext(cta, context);
  links.forEach((link, index) => {
-  link.closest = selector => selector === '#get-started' ? index === 4 : selector === '#migrate' ? index === 3 : null;
-  context.event = {target: {closest: () => link.className.includes('button-primary') ? link : null}};
+  link.closest = selector => selector === '#get-started' ? index === 3 : selector === '#migrate' ? index === 2 : null;
+  context.event = {target: {closest: () => link.className.includes('button-primary') && !link.className.includes('signin') ? link : null}};
   vm.runInContext('trackHomepageCta(event)', context);
  });
  assert.equal(sent.length, 3);
