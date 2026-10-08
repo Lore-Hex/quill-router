@@ -42,10 +42,15 @@ var (
 // carries it in one Publish call with room to spare under Pub/Sub's 10 MB
 // request (§4.1); one larger would fail every publish and hold back the
 // lease's records after it. maxBoot is the longest boot binding an
-// admission takes, so its refund's record always fits.
+// admission takes, so its refund's record always fits. maxHeartbeat is the
+// largest heartbeat record: it leaves room for what a hand-off record of its
+// hold alone adds, the boot binding, the hold's deadline, a later snapshot's
+// and the record's numbers at their longest, so every hold the owner takes a
+// heartbeat for can be handed off (§4.2).
 const (
-	maxRecord = 1 << 20
-	maxBoot   = 1 << 10
+	maxRecord    = 1 << 20
+	maxBoot      = 1 << 10
+	maxHeartbeat = maxRecord - 4<<10
 )
 
 // Admission is an authorize's: the hold's estimate e, whether it is a
@@ -434,7 +439,7 @@ func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxRecord {
+	if len(data) > maxRecord || (r.Kind == record.Heartbeat && len(data) > maxHeartbeat) {
 		return nil, fmt.Errorf("%w: %d bytes", ErrTooLarge, len(data))
 	}
 	if !l.withinCutoff(l.o.cfg.Clock()) || l.handedOff {

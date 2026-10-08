@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"math"
 	"slices"
 	"time"
@@ -363,17 +364,44 @@ func HoldsDigest(holds []HeldHold) ([]byte, error) {
 		}
 		return 0
 	})
-	h := sha256.New()
-	for i, held := range sorted {
-		if err := held.validate(math.MaxInt64); err != nil || (i > 0 && sorted[i-1].Auth == held.Auth) {
-			return nil, fmt.Errorf("record: held hold %+v: %v", held, err)
-		}
-		b, err := json.Marshal(held)
-		if err != nil {
+	d := NewHoldsHasher()
+	for _, held := range sorted {
+		if _, err := d.Add(held); err != nil {
 			return nil, err
 		}
-		h.Write(b)
-		h.Write([]byte{'\n'})
 	}
-	return h.Sum(nil), nil
+	return d.Sum(), nil
 }
+
+// A HoldsHasher takes a hand-off's holds one at a time, in the order of
+// their authorizations, to the digest HoldsDigest gives them, so that an
+// owner encodes each hold once and can stop between holds.
+type HoldsHasher struct {
+	h    hash.Hash
+	last string
+}
+
+// NewHoldsHasher is a HoldsHasher that has taken no hold.
+func NewHoldsHasher() *HoldsHasher { return &HoldsHasher{h: sha256.New()} }
+
+// Add takes the next hold, whose authorization follows every one taken so
+// far, and returns its canonical bytes.
+func (d *HoldsHasher) Add(held HeldHold) ([]byte, error) {
+	if err := held.validate(math.MaxInt64); err != nil {
+		return nil, fmt.Errorf("record: held hold %+v: %v", held, err)
+	}
+	if d.last != "" && held.Auth <= d.last {
+		return nil, fmt.Errorf("record: held hold %s after %s", held.Auth, d.last)
+	}
+	b, err := json.Marshal(held)
+	if err != nil {
+		return nil, err
+	}
+	d.h.Write(b)
+	d.h.Write([]byte{'\n'})
+	d.last = held.Auth
+	return b, nil
+}
+
+// Sum is the digest of the holds taken.
+func (d *HoldsHasher) Sum() []byte { return d.h.Sum(nil) }

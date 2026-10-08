@@ -21,7 +21,7 @@ import (
 // every publish to it fails until Resume. A test can fail publishes, hold
 // acknowledgements back until it releases them, and see every publish
 // attempted, at the time of the test's clock, now. onRepublish runs at
-// each publish of a record published before.
+// each publish of a record published before, onPublish at each publish.
 type fakeLog struct {
 	mu          sync.Mutex
 	stored      map[string][][]byte
@@ -33,6 +33,7 @@ type fakeLog struct {
 	attempts    []attempt
 	published   map[string]int
 	onRepublish func()
+	onPublish   func(data []byte)
 }
 
 type attempt struct {
@@ -84,6 +85,9 @@ func (f *fakeLog) Publish(lease string, data []byte) Waiter {
 	}
 	if f.published[string(data)]++; f.published[string(data)] > 1 && f.onRepublish != nil {
 		f.onRepublish()
+	}
+	if f.onPublish != nil {
+		f.onPublish(data)
 	}
 	if f.paused[lease] {
 		return waiter{err: errPaused}

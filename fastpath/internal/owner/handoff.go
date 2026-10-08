@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -24,8 +25,9 @@ import (
 // the owner runs, and lets it go; with no manifest acknowledged by then it
 // lets it go as it is, and the auditor marks it draining once it expires
 // (§4.8). Leases are handed off at once; Handoff returns once each is let
-// go. A second call waits for the first and reports as it does; Stop ends
-// a hand-off under way.
+// go, and reports ctx's end and each lease whose holds it could not hand
+// over for another reason. A second call waits for the first and reports as
+// it does; Stop ends a hand-off under way.
 func (o *Owner) Handoff(ctx context.Context) error {
 	if o.cfg.Spanner == nil {
 		return errors.New("owner: no store to mark leases draining in")
@@ -60,11 +62,19 @@ func (o *Owner) Handoff(ctx context.Context) error {
 	defer context.AfterFunc(o.ctx, cancel)()
 	slices.SortFunc(leases, func(a, b *Lease) int { return strings.Compare(a.id, b.id) })
 	var all sync.WaitGroup
+	var mu sync.Mutex
+	errs := []error{nil}
 	for _, l := range leases {
 		all.Add(1)
 		go func() {
 			defer all.Done()
-			if l.handedOver(ctx) {
+			handed, err := l.handedOver(ctx)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("owner: lease %s's hand-off: %w", l.id, err))
+				mu.Unlock()
+			}
+			if handed {
 				for ctx.Err() == nil {
 					if _, _, err := o.cfg.Spanner.OwnerMarkDraining(ctx, o.who(), l.ref()); err == nil {
 						break
@@ -79,7 +89,8 @@ func (o *Owner) Handoff(ctx context.Context) error {
 		}()
 	}
 	all.Wait()
-	err := ctx.Err()
+	errs[0] = ctx.Err()
+	err := errors.Join(errs...)
 	o.mu.Lock()
 	o.handoffErr = err
 	o.mu.Unlock()
@@ -89,33 +100,34 @@ func (o *Owner) Handoff(ctx context.Context) error {
 
 // handedOver hands the lease's open holds off (handoff), and reports
 // whether its manifest was acknowledged while ctx lasted and the lease was
-// held.
-func (l *Lease) handedOver(ctx context.Context) bool {
-	m := l.handoff(ctx)
+// held, and why its holds could not be handed over, if not for time.
+func (l *Lease) handedOver(ctx context.Context) (bool, error) {
+	m, err := l.handoff(ctx)
 	if m == nil {
-		return false
+		return false, err
 	}
 	select {
 	case <-m.done: // closed once the manifest is acknowledged, and only then
-		return true
+		return true, nil
 	case <-ctx.Done():
 	case <-l.stop:
 	}
-	return false
+	return false, nil
 }
 
 // handoff stops the lease admitting, hands over its open holds in chunks
 // and then the manifest, and issues no record after it, all under the
 // lease's lock, so no hold is admitted after its chunk is cut and no
-// record follows the manifest. It returns the manifest's record, or nil
-// if it handed none over: past the cutoff, or with a record the log cannot
-// take.
-func (l *Lease) handoff(ctx context.Context) *sent {
+// record follows the manifest. It returns the manifest's record, or nil if
+// it handed none over: let go, past the cutoff, or once ctx ended, which it
+// checks between holds and before the manifest; or, with an error, a hold
+// or a record the log cannot take.
+func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.closing = true
 	if l.let || l.handedOff {
-		return nil
+		return nil, nil
 	}
 	holds := make([]record.HeldHold, 0, len(l.holds))
 	for _, h := range l.holds {
@@ -123,7 +135,7 @@ func (l *Lease) handoff(ctx context.Context) *sent {
 		if h.heartbeat {
 			usage, err := json.Marshal(map[string]int64{"tokens": h.usage})
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			held.Deadline = h.deadline.UTC()
 			held.Snapshot = &record.Snapshot{GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: usage,
@@ -133,27 +145,28 @@ func (l *Lease) handoff(ctx context.Context) *sent {
 		holds = append(holds, held)
 	}
 	slices.SortFunc(holds, func(a, b record.HeldHold) int { return strings.Compare(a.Auth, b.Auth) })
-	digest, err := record.HoldsDigest(holds)
-	if err != nil {
-		return nil
-	}
-	// Each chunk is sized as it is handed over, at the sequence number it
-	// takes: its first hold's record is encoded, and each hold after it adds
-	// its own encoding and a comma, as JSON writes a list, so sizing takes
-	// time in step with the holds. A hand-off whose time is up stops between
-	// chunks, and counts as none.
+	// Each hold is encoded once, as the digest takes it. Each chunk is sized
+	// as it is handed over, at the sequence number it takes: its first
+	// hold's record is encoded, and each hold after it adds its own
+	// encoding and a comma, as JSON writes a list, so sizing takes time in
+	// step with the holds. A hand-off whose time is up stops between holds,
+	// and counts as none.
+	digest := record.NewHoldsHasher()
 	sizes := make([]int, len(holds))
 	for i, h := range holds {
-		data, err := json.Marshal(h)
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		data, err := digest.Add(h)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		sizes[i] = len(data)
 	}
 	var seqs []int64
 	for at := 0; at < len(holds); {
 		if ctx.Err() != nil {
-			return nil
+			return nil, nil
 		}
 		size := l.encodedSize(holds[at : at+1])
 		n := 1
@@ -163,18 +176,30 @@ func (l *Lease) handoff(ctx context.Context) *sent {
 		}
 		s, err := l.handOver(record.Record{Kind: record.Handoff, Holds: holds[at : at+n]}, 0)
 		if err != nil {
-			return nil
+			return nil, handOverErr(err)
 		}
 		seqs = append(seqs, s.seq)
 		at += n
 	}
+	if ctx.Err() != nil {
+		return nil, nil
+	}
 	m, err := l.handOver(record.Record{Kind: record.Manifest, Manifest: &record.ManifestOf{Chunks: len(seqs),
-		HoldsDigest: digest, Seqs: seqs}}, 0)
+		HoldsDigest: digest.Sum(), Seqs: seqs}}, 0)
 	if err != nil {
-		return nil
+		return nil, handOverErr(err)
 	}
 	l.handedOff = true
-	return m
+	return m, nil
+}
+
+// handOverErr is a hand-off record's failure as handoff reports it: none
+// past the cutoff, whose time is up.
+func handOverErr(err error) error {
+	if errors.Is(err, ErrPastCutoff) {
+		return nil
+	}
+	return err
 }
 
 // encodedSize is the size of a hand-off record of the holds, numbered as

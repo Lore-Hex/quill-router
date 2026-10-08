@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -504,28 +505,73 @@ func TestAnExitingOwnerAsksForNoLease(t *testing.T) {
 	}
 }
 
-// TestAHandOffKeepsToItsDeadline: one whose time is up hands nothing over
-// and lets its leases go at once; and many holds are sized in time in step
-// with them.
-func TestAHandOffKeepsToItsDeadline(t *testing.T) {
+// heavyFixture is a lease with n streams, each heartbeated once with a
+// basis of size bytes.
+func heavyFixture(t *testing.T, n, size int) *fixture {
+	t.Helper()
 	f, _ := releaseFixture(t)
 	f.lease.mu.Lock()
 	f.lease.allocation = 1 << 40
 	f.lease.mu.Unlock()
-	for range 8000 {
-		f.admit(t, 1, false)
+	basis := bytes.Repeat([]byte{'b'}, size)
+	for range n {
+		a := f.admit(t, 1, true)
+		if _, err := f.lease.Heartbeat(context.Background(), a, HeartbeatOf{GatewaySeq: 1, Hash: sum(a), Usage: 1,
+			Running: 1, Basis: basis}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	return f
+}
+
+// TestAHandOffKeepsToItsDeadline: one whose time is up hands nothing over,
+// no manifest even with no holds, and lets its leases go at once, however
+// much its holds would take to encode; one whose time runs out as it hands
+// its chunks over hands no more over; and many holds are sized in time in
+// step with them.
+func TestAHandOffKeepsToItsDeadline(t *testing.T) {
 	ended, cancel := context.WithCancel(context.Background())
 	cancel()
-	began := time.Now()
-	if err := f.owner.Handoff(ended); !errors.Is(err, context.Canceled) {
-		t.Fatalf("a hand-off whose time was up: %v", err)
+	for name, f := range map[string]*fixture{
+		"8,000 holds":                       heavyFixture(t, 0, 0),
+		"256 holds of a 128 KiB basis each": heavyFixture(t, 256, 128<<10),
+		"no hold":                           heavyFixture(t, 0, 0),
+	} {
+		if name == "8,000 holds" {
+			for range 8000 {
+				f.admit(t, 1, false)
+			}
+		}
+		began := time.Now()
+		if err := f.owner.Handoff(ended); !errors.Is(err, context.Canceled) {
+			t.Fatalf("%s: a hand-off whose time was up: %v", name, err)
+		}
+		took := time.Since(began)
+		if chunks, m := handoffRecords(t, f); len(chunks) != 0 || m != nil || took > 200*time.Millisecond {
+			t.Fatalf("%s: %d chunks, manifest %v, after %v", name, len(chunks), m != nil, took)
+		}
+		if _, ok := f.owner.Lease("lease-1"); ok {
+			t.Fatalf("%s: the lease held after its hand-off", name)
+		}
 	}
-	if chunks, m := handoffRecords(t, f); len(chunks) != 0 || m != nil || time.Since(began) > 2*time.Second {
-		t.Fatalf("%d chunks, manifest %v, after %v", len(chunks), m != nil, time.Since(began))
+
+	// Time that runs out as the first chunk is handed over hands no more
+	// over.
+	f := heavyFixture(t, 12, 200_000)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.log.mu.Lock()
+	f.log.onPublish = func(data []byte) {
+		if bytes.Contains(data, []byte(`"kind":"handoff"`)) {
+			cancel()
+		}
 	}
-	if _, ok := f.owner.Lease("lease-1"); ok {
-		t.Fatal("the lease held after its hand-off")
+	f.log.mu.Unlock()
+	if err := f.owner.Handoff(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a hand-off whose time ran out: %v", err)
+	}
+	if chunks, m := handoffRecords(t, f); len(chunks) != 1 || m != nil {
+		t.Fatalf("%d chunks, manifest %v", len(chunks), m != nil)
 	}
 
 	g, _ := releaseFixture(t)
@@ -535,11 +581,114 @@ func TestAHandOffKeepsToItsDeadline(t *testing.T) {
 	for range 8000 {
 		g.admit(t, 1, false)
 	}
-	began = time.Now()
+	began := time.Now()
 	if err := g.owner.Handoff(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if chunks, m := handoffRecords(t, g); len(chunks) == 0 || m == nil || time.Since(began) > 2*time.Second {
 		t.Fatalf("8,000 holds handed off in %d chunks, manifest %v, in %v", len(chunks), m != nil, time.Since(began))
+	}
+}
+
+// TestEveryHeartbeatedHoldCanBeHandedOff: the owner takes no heartbeat
+// whose hold, its boot binding at its longest and its later snapshots'
+// numbers at theirs, would not fit a hand-off record alone; so a forced
+// exit hands every hold over, each in a chunk the log takes (§4.2). A hold
+// the log could not take all the same is reported, not passed over.
+func TestEveryHeartbeatedHoldCanBeHandedOff(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 62
+	f.lease.mu.Unlock()
+	ctx := context.Background()
+	longBoot := bytes.Repeat([]byte{0xff}, maxBoot)
+	admit := func() string {
+		t.Helper()
+		a, err := f.lease.Admit(Admission{Estimate: 1 << 55, Stream: true, Boot: longBoot})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.Auth
+	}
+	// The largest basis a first heartbeat may carry, found by halving: a
+	// heartbeat refused changes nothing, and one taken leaves its hold for
+	// the hand-off, so the next try takes a new hold.
+	auth := admit()
+	var taken []string
+	lo, hi := 1, maxRecord
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		_, err := f.lease.Heartbeat(ctx, auth, HeartbeatOf{GatewaySeq: 1, Hash: sum(auth), Usage: 1, Running: 1,
+			Basis: bytes.Repeat([]byte{'b'}, mid)})
+		switch {
+		case err == nil:
+			lo = mid
+			taken = append(taken, auth)
+			auth = admit()
+		case errors.Is(err, ErrRejected):
+			hi = mid
+		default:
+			t.Fatal(err)
+		}
+	}
+	largest := 0
+	for _, r := range f.log.records(t, "lease-1") {
+		if r.Kind == record.Heartbeat {
+			data, err := record.Encode(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			largest = max(largest, len(data))
+		}
+	}
+	if largest > maxHeartbeat || largest < maxHeartbeat-8 {
+		t.Fatalf("the largest heartbeat record taken is %d bytes, and the bound %d", largest, maxHeartbeat)
+	}
+	// Each hold's later snapshot carries every number at its longest.
+	for _, a := range taken {
+		h := f.lease.holds[a]
+		if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: math.MaxInt64, Hash: sum(a + "!"),
+			Usage: math.MaxInt64, Running: 1 << 55, Echoed: h.deadline}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.owner.Handoff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chunks, manifest := handoffRecords(t, f)
+	var listed []string
+	for _, c := range chunks {
+		data, err := record.Encode(c)
+		if err != nil || len(data) > maxRecord {
+			t.Fatalf("a chunk of %d bytes: %v", len(data), err)
+		}
+		for _, h := range c.Holds {
+			listed = append(listed, h.Auth)
+		}
+	}
+	if manifest == nil || len(listed) != len(taken)+1 {
+		t.Fatalf("%d holds handed over in %d chunks, manifest %v; %d heartbeated", len(listed), len(chunks),
+			manifest != nil, len(taken))
+	}
+
+	// A hold the log could not take all the same is reported, and the
+	// hand-off hands nothing over.
+	g, _ := releaseFixture(t)
+	a := g.admit(t, 40, true)
+	if _, err := g.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum(a), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	g.lease.mu.Lock()
+	g.lease.holds[a].basis = bytes.Repeat([]byte{'b'}, maxRecord)
+	g.lease.mu.Unlock()
+	if err := g.owner.Handoff(ctx); !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "lease-1") {
+		t.Fatalf("a hold past the record size: %v", err)
+	}
+	if chunks, m := handoffRecords(t, g); len(chunks) != 0 || m != nil {
+		t.Fatalf("%d chunks, manifest %v", len(chunks), m != nil)
+	}
+	if _, ok := g.owner.Lease("lease-1"); ok {
+		t.Fatal("the lease held after its hand-off")
 	}
 }
