@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -72,6 +73,9 @@ type Config struct {
 	RenewEvery time.Duration
 	Window     time.Duration
 	KeyStatus  int64
+	// TopUps is how the owner keeps its shards' leases (shard.go); zero, it
+	// asks for none, and admits only under the leases it was given.
+	TopUps TopUps
 }
 
 func (c Config) validate() error {
@@ -81,6 +85,12 @@ func (c Config) validate() error {
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
 		return errors.New("owner: a store needs the owner's address, a renewal interval and the expiry window")
+	}
+	if c.TopUps != (TopUps{}) {
+		if c.Spanner == nil {
+			return errors.New("owner: top-ups need a store")
+		}
+		return c.TopUps.validate()
 	}
 	return nil
 }
@@ -124,6 +134,8 @@ type Owner struct {
 	// retired are the leases the owner let go, each with its workers' end:
 	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
+	// shards are the shards the owner admits for, with their leases.
+	shards map[ShardKey]*shard
 }
 
 // New starts an owner with no leases.
@@ -134,7 +146,8 @@ func New(cfg Config, pub Publisher) (*Owner, error) {
 	if pub == nil {
 		return nil, errors.New("owner: no publisher")
 	}
-	o := &Owner{cfg: cfg, pub: pub, leases: map[string]*Lease{}, retired: map[string]<-chan struct{}{}}
+	o := &Owner{cfg: cfg, pub: pub, leases: map[string]*Lease{}, retired: map[string]<-chan struct{}{},
+		shards: map[ShardKey]*shard{}}
 	o.ctx, o.cancel = context.WithCancel(context.Background())
 	return o, nil
 }
@@ -159,9 +172,15 @@ func (o *Owner) Stop() {
 // Take puts a lease granted to this process under its care, with the
 // allocation the grant reserved and the expiry Spanner set.
 func (o *Owner) Take(lease, workspace string, allocation int64, expiry time.Time) (*Lease, error) {
+	return o.take(lease, workspace, allocation, expiry, nil)
+}
+
+// take is Take, the lease joining sh's leases when sh is set.
+func (o *Owner) take(lease, workspace string, allocation int64, expiry time.Time, sh *shard) (*Lease, error) {
 	if !record.ValidLease(lease) || workspace == "" || allocation < 0 {
 		return nil, fmt.Errorf("owner: a lease %q of %q, allocation %d", lease, workspace, allocation)
 	}
+	now := o.cfg.Clock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.stopped {
@@ -175,8 +194,12 @@ func (o *Owner) Take(lease, workspace string, allocation int64, expiry time.Time
 	}
 	l := &Lease{o: o, id: lease, workspace: workspace, allocation: allocation, expiry: expiry, nextSeq: 1,
 		holds: map[string]*hold{}, decided: map[string]*decision{}, kick: make(chan struct{}, 1),
-		shortKick: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{})}
+		shortKick: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{}),
+		shard: sh, takenAt: now, lastAdmit: now}
 	o.leases[lease] = l
+	if sh != nil {
+		sh.leases = append(sh.leases, l)
+	}
 	l.workers.Add(1)
 	go func() {
 		defer l.workers.Done()
@@ -226,6 +249,9 @@ func (o *Owner) release(id string) <-chan struct{} {
 	if ok {
 		delete(o.leases, id)
 		o.retired[id] = l.stopped
+		if l.shard != nil {
+			l.shard.leases = slices.DeleteFunc(l.shard.leases, func(x *Lease) bool { return x == l })
+		}
 	}
 	stopped := o.retired[id]
 	o.mu.Unlock()
@@ -323,6 +349,11 @@ type Lease struct {
 	closing  bool
 	final    *sent
 	stored   int64
+	// shard is the shard whose leases it is among, if any; takenAt and
+	// lastAdmit are when it was taken and last admitted a hold.
+	shard     *shard
+	takenAt   time.Time
+	lastAdmit time.Time
 
 	// workers are the lease's flusher and the finish of its draining, which
 	// Let waits for: stopped is closed once they end.

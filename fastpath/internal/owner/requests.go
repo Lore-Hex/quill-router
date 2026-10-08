@@ -113,6 +113,7 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		return Admitted{}, ErrPastCutoff
 	}
 	h.endOfLife = now.Add(l.o.cfg.HoldLife)
+	l.lastAdmit = now
 	return Admitted{Auth: auth, Lease: l.id, EndOfLife: h.endOfLife}, nil
 }
 
@@ -320,6 +321,9 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		return Outcome{}, err
 	}
 	raised := shortfall > l.shortfall
+	if l.shard != nil {
+		l.shard.charged.Add(charged)
+	}
 	l.held, l.consumed, l.allocation, l.shortfall = held, consumed, allocation, shortfall
 	l.buffer -= h.counted()
 	l.pending += freed

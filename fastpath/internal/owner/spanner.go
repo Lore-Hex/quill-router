@@ -16,9 +16,10 @@ import (
 var ErrClosing = errors.New("owner: the lease admits nothing more")
 
 // Spanner is what an owner writes to the store (§4.2): its leases'
-// renewals, their shortfall totals and its draining writes. *store.Store is
-// one.
+// grants, renewals, their shortfall totals and its draining writes.
+// *store.Store is one.
 type Spanner interface {
+	Grant(ctx context.Context, req store.GrantRequest) (store.GrantResult, error)
 	Renew(ctx context.Context, owner store.Owner, refs []store.LeaseRef) ([]store.RenewResult, time.Time, error)
 	ShortfallWrite(ctx context.Context, owner store.Owner, ref store.LeaseRef, total int64) (store.ShortfallResult, error)
 	OwnerMarkDraining(ctx context.Context, owner store.Owner, ref store.LeaseRef) (bool, time.Time, error)
@@ -96,6 +97,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 	}
 	now = o.cfg.Clock()
 	for _, l := range leases {
+		l.closeIfDone(now, o.cfg.TopUps)
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)
 		}
@@ -103,6 +105,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 			o.Let(l.id)
 		}
 	}
+	o.sampleShards(now)
 	return nil
 }
 
