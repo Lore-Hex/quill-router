@@ -1552,6 +1552,9 @@ _NATIVE_VIDEO_UPSTREAM_IDS = {
 }
 for _model_id, _native_routes in _NATIVE_VIDEO_UPSTREAM_IDS.items():
     for _provider_slug, _upstream_id in _native_routes:
+        # Video routes honor scheduled retirements like every other route.
+        if provider_model_retired(_provider_slug, _model_id, _upstream_id, at=CATALOG_RESOLVED_AT):
+            continue
         _endpoint_id = f"{_model_id}@{_provider_slug}/prepaid"
         MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
             id=_endpoint_id,
@@ -1561,6 +1564,8 @@ for _model_id, _native_routes in _NATIVE_VIDEO_UPSTREAM_IDS.items():
             upstream_id=_upstream_id,
         )
 for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
+    if provider_model_retired("venice", _model_id, _upstream_id, at=CATALOG_RESOLVED_AT):
+        continue
     _endpoint_id = f"{_model_id}@venice/prepaid"
     MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
         id=_endpoint_id,

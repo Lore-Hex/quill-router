@@ -16,6 +16,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.config import Settings
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.routing import video_route_endpoint_candidates
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
@@ -133,7 +134,10 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         hosts = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
         if model_id in NATIVE_VIDEO_PROVIDERS and model_id not in NATIVE_ONLY_VIDEO_MODELS:
             hosts.append("venice")
-        expected = [host for host in hosts if (host, model_id) not in dark]
+        expected = [
+            host for host in hosts
+            if (host, model_id) not in dark and not provider_model_retired(host, model_id)
+        ]
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
         assert all(endpoint.upstream_id for endpoint in endpoints)
