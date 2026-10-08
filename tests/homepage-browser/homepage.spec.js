@@ -13,7 +13,7 @@ test("new homepage searches models and opens the existing sign-in dialog", async
   await page.getByRole("searchbox").press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(search).toBeFocused();
-  await page.locator("#top .button-primary").click();
+  await page.locator("#top .hero .button-primary").click();
   const signin = page.locator("#signinModal");
   await expect(signin).toBeVisible();
   await expect(signin.getByRole("link", { name: "Continue with Google" })).toBeVisible();
@@ -49,7 +49,7 @@ test("returning-user hint restores console labels without replacing authenticati
   await context.addCookies([{ name: "tr_signed_in", value: "1", url: baseURL }]);
   await page.goto("/");
   await expect(page.locator(".trnav .signin")).toHaveText("Console");
-  await expect(page.locator("#top .button-primary")).toHaveText("Open console");
-  await expect(page.locator("#top .button-primary")).toHaveAttribute("href", "/console/api-keys");
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Open console");
+  await expect(page.locator("#top .hero .button-primary")).toHaveAttribute("href", "/console/api-keys");
   await expect(page.locator("#signinModal")).not.toBeVisible();
 });
