@@ -9,7 +9,6 @@
 .icon-button.icon-button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;min-width:44px;min-height:44px;padding:0;border:1px solid #526859;border-radius:4px;background:transparent;color:#c0e1ff;cursor:pointer}
 .icon-button:hover{background:#203c2c;border-color:#cce8d7}
 .icon-button svg{display:block;flex:none}
-@media(max-width:360px){.trnav .signin.button{display:none}}
 
 /* Text actions keep a common rhythm; navigation and inline prose are separate. */
 .page .action-link.action-link{display:inline-block;min-height:44px;padding:11px 0;border:0;background:transparent;border-radius:0;font:550 16px/1.4 var(--sans,system-ui,sans-serif);color:var(--action-secondary-ink);text-decoration:underline;text-decoration-thickness:1px;text-decoration-color:#6f8fa8;text-underline-offset:5px}
