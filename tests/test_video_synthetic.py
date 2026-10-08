@@ -39,7 +39,7 @@ def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost() -> N
         "alibaba",
         "kling",
         "ltx",
-        "google-ai-studio",
+        "google-vertex",
         "atlas-cloud",
         "fal",
     ]
@@ -49,12 +49,12 @@ def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost() -> N
     assert max(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) <= 700_000
     profiles = {profile.provider: profile for profile in DAILY_VIDEO_PROFILES}
     assert profiles["atlas-cloud"].generate_audio is True
-    assert profiles["google-ai-studio"].generate_audio is True
+    assert profiles["google-vertex"].generate_audio is True
     assert profiles["fal"].generate_audio is True
     assert all(
         not profile.generate_audio
         for provider, profile in profiles.items()
-        if provider not in {"atlas-cloud", "google-ai-studio", "fal"}
+        if provider not in {"atlas-cloud", "google-vertex", "fal"}
     )
 
 

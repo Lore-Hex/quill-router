@@ -1537,8 +1537,16 @@ _NATIVE_VIDEO_UPSTREAM_IDS = {
         ("atlas-cloud", "minimax/h3/text-to-video"),
     ),
     "minimax/h3-max": (("fal", "minimax/h3-max/text-to-video"),),
-    "google/veo-3.1": (("google-ai-studio", "veo-3.1-generate-preview"),),
-    "google/veo-3.1-fast": (("google-ai-studio", "veo-3.1-fast-generate-preview"),),
+    # Vertex serves the GA Veo 3.1 models directly. AI Studio's preview ids
+    # retire on 2026-10-22 (provider_lifecycle) and drop out then.
+    "google/veo-3.1": (
+        ("google-vertex", "veo-3.1-generate-001"),
+        ("google-ai-studio", "veo-3.1-generate-preview"),
+    ),
+    "google/veo-3.1-fast": (
+        ("google-vertex", "veo-3.1-fast-generate-001"),
+        ("google-ai-studio", "veo-3.1-fast-generate-preview"),
+    ),
     "alibaba/wan-2.7": (("alibaba", "wan2.7-t2v"),),
     "x-ai/grok-imagine-video": (("grok", "grok-imagine-video"),),
     "runway/gen-4.5": (("runway", "gen4.5"),),
