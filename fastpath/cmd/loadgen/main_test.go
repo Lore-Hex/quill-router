@@ -13,6 +13,18 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 )
 
+// TestHelpIsNoFailure: -h prints the flags and is done, which main takes
+// for success, as the flag package's own handling of it was; an unknown
+// flag is a failure.
+func TestHelpIsNoFailure(t *testing.T) {
+	if err := run([]string{"-h"}, io.Discard); err != nil {
+		t.Fatalf("-h: %v", err)
+	}
+	if err := run([]string{"-no-such-flag"}, io.Discard); err == nil {
+		t.Fatal("an unknown flag was taken")
+	}
+}
+
 // TestTheOpenHeartbeatFlagDeclaresStreams: with -open-heartbeat, each
 // stream's authorize declares the stream-open heartbeat; without it, none
 // does.

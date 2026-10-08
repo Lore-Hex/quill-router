@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -52,6 +53,10 @@ func run(args []string, out io.Writer) error {
 	seed := fs.Uint64("seed", uint64(time.Now().UnixNano()), "the run's seed")
 	logPath := fs.String("log", "", "a file to log each generation to, one JSON object a line")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// -h asked for the flags, which Parse has printed: done.
+			return nil
+		}
 		return err
 	}
 
