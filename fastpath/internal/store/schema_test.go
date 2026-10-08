@@ -40,6 +40,7 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		"tr_lease_hold":      "tr_lease | CASCADE | ",
 		"tr_lease_winners":   "tr_lease | CASCADE | ",
 		"tr_lease_drain":     "tr_lease | CASCADE | ",
+		"tr_lease_handoff":   "tr_lease | CASCADE | ",
 		"tr_lease_record":    " |  | ",
 		"tr_spike_staged":    " |  | ",
 		"tr_fastpath_member": " |  | ",

@@ -35,14 +35,16 @@ type HoldRow struct {
 	RunningCharge    spanner.NullInt64
 	SnapshotOwnerSeq spanner.NullInt64
 	ReapBasis        []byte
+	Boot             []byte
 }
 
 var holdColumns = []string{"workspace_id", "lease_id", "authorization_id", "estimate", "deadline", "listed",
-	"snapshot_seq", "snapshot_hash", "snapshot_usage", "running_charge", "snapshot_owner_seq", "reap_basis"}
+	"snapshot_seq", "snapshot_hash", "snapshot_usage", "running_charge", "snapshot_owner_seq", "reap_basis",
+	"boot_binding"}
 
 func (h HoldRow) values(ref LeaseRef) []any {
 	return []any{ref.Workspace, ref.LeaseID, h.AuthorizationID, h.Estimate, h.Deadline, h.Listed, h.SnapshotSeq,
-		h.SnapshotHash, h.SnapshotUsage, h.RunningCharge, h.SnapshotOwnerSeq, h.ReapBasis}
+		h.SnapshotHash, h.SnapshotUsage, h.RunningCharge, h.SnapshotOwnerSeq, h.ReapBasis, h.Boot}
 }
 
 // Winner is the terminal a commit stores as its authorization's winner, with
@@ -78,7 +80,9 @@ type Boundary struct {
 // them, and, optionally, S and T, the sequence number of an applied final
 // checkpoint or complete hand-off that listed the open holds, and the
 // sequence number of a checkpoint whose audit failed, which stores the alert
-// and revokes the lease with the commit.
+// and revokes the lease with the commit. A hand-off's chunks applied since
+// the last commit are stored (PutChunks) until a later commit ends the
+// hand-off and deletes every chunk stored before it (DropChunks).
 type CommitRequest struct {
 	Ref            LeaseRef
 	ReadVersion    int64
@@ -91,17 +95,29 @@ type CommitRequest struct {
 	Boundary       *Boundary
 	HoldsListedSeq *int64
 	AuditFault     *int64
+	DropChunks     bool
+	PutChunks      []Chunk
+}
+
+// Chunk is a hand-off chunk as tr_lease_handoff stores it: the owner
+// sequence number of its record, and its holds, opaque here.
+type Chunk struct {
+	Seq   int64
+	Holds []byte
 }
 
 // CommitResult is one lease's outcome: refused and why, with nothing
-// written for the lease; or its new version and state, and each fault, the
-// part of a booking beyond the allocation, which the commit booked as usage.
+// written for the lease; or its new version and state, each fault, the
+// part of a booking beyond the allocation, which the commit booked as usage,
+// and the audit fault it stored, the request's or a checkpoint's (the
+// first by sequence number), if it stored one.
 type CommitResult struct {
 	Ref        LeaseRef
 	Refused    Refusal
 	NewVersion int64
 	State      string
 	Faults     []int64
+	AuditFault *int64
 }
 
 // validate checks what a request says of itself.
@@ -129,6 +145,13 @@ func (r CommitRequest) validate() error {
 			return fmt.Errorf("store: hold %s is not one open hold", h.AuthorizationID)
 		}
 		put[h.AuthorizationID] = true
+	}
+	chunks := map[int64]bool{}
+	for _, c := range r.PutChunks {
+		if c.Seq < 1 || c.Seq > r.AppliedSeq || chunks[c.Seq] || len(c.Holds) == 0 {
+			return fmt.Errorf("store: chunk %d is not one applied record's holds", c.Seq)
+		}
+		chunks[c.Seq] = true
 	}
 	return nil
 }
@@ -207,6 +230,14 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 				return err
 			}
 			out[i].Faults = eff.Faults
+			if f := eff.AuditFault; f > 0 && (r.AuditFault == nil || f < *r.AuditFault) {
+				r.AuditFault = &f
+			}
+			if l.AuditFaultSeq.Valid {
+				// The first fault stands, and this commit stores none.
+				r.AuditFault = nil
+			}
+			out[i].AuditFault = r.AuditFault
 			if err := writeLeaseCommit(ctx, txn, r, eff.After, money, &out[i]); err != nil {
 				return err
 			}
@@ -229,6 +260,17 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 			}
 			for _, w := range r.Winners {
 				mutations = append(mutations, spanner.Delete("tr_lease_hold", spanner.Key{r.Ref.Workspace, r.Ref.LeaseID, w.AuthorizationID}))
+			}
+			// A commit's mutations apply in order: the chunks it puts
+			// outlive the ones it drops.
+			if r.DropChunks {
+				mutations = append(mutations, spanner.Delete("tr_lease_handoff",
+					spanner.Key{r.Ref.Workspace, r.Ref.LeaseID}.AsPrefix()))
+			}
+			for _, c := range r.PutChunks {
+				mutations = append(mutations, spanner.InsertOrUpdate("tr_lease_handoff",
+					[]string{"workspace_id", "lease_id", "chunk_seq", "holds"},
+					[]any{r.Ref.Workspace, r.Ref.LeaseID, c.Seq, c.Holds}))
 			}
 			body, err := json.Marshal(pack{Version: 1, Winners: append([]Winner{}, r.Winners...)})
 			if err != nil {
@@ -315,7 +357,7 @@ func writeLeaseCommit(ctx context.Context, txn *spanner.ReadWriteTransaction, r 
 		             boundary_seq = COALESCE(boundary_seq, @s),
 		             boundary_publish_time = COALESCE(boundary_publish_time, @t),
 		             holds_listed_seq = COALESCE(@listed, holds_listed_seq),
-		             audit_fault_seq = COALESCE(@fault_seq, audit_fault_seq),
+		             audit_fault_seq = COALESCE(audit_fault_seq, @fault_seq),
 		             revoked = revoked OR @fault_seq IS NOT NULL
 		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND state != 'closed'
 		         AND gap_seq IS NULL AND (boundary_seq IS NULL OR boundary_seq = @applied)

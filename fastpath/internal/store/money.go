@@ -20,15 +20,23 @@ func plus(a, b int64) (int64, error) {
 }
 
 // MoneyOp is one money record an auditor's commit applies, in the lease's
-// log order: a terminal's booking, or a return of allocation.
+// log order: a terminal's booking, a return of allocation, or a
+// checkpoint's.
 type MoneyOp struct {
 	// Book is a booking of Charge, after the stored shortfall total is
 	// raised to ShortfallTotal, the total the terminal's record carries.
 	Book           bool
 	Charge         int64
 	ShortfallTotal int64
-	// Amount is a return's.
+	// Amount is a return's, or a checkpoint's return.
 	Amount int64
+	// Check is a checkpoint's (§4.2), its sequence number Seq: its return
+	// of Amount, then its audit, that the allocation less the consumption
+	// booked covers OpenSum, its owner's open holds. A return past what the
+	// lease holds, or holds it does not cover, is the checkpoint's fault.
+	Check   bool
+	Seq     int64
+	OpenSum int64
 }
 
 // Book is a terminal's booking: its charge, and the shortfall total its
@@ -40,6 +48,12 @@ func Book(charge, shortfallTotal int64) MoneyOp {
 // Return is a return of amount of a lease's allocation.
 func Return(amount int64) MoneyOp {
 	return MoneyOp{Amount: amount}
+}
+
+// Checkpoint is a checkpoint's money: its return, and the open holds its
+// audit must find covered.
+func Checkpoint(seq, ret, openSum int64) MoneyOp {
+	return MoneyOp{Check: true, Seq: seq, Amount: ret, OpenSum: openSum}
 }
 
 // donorMoney is a donor's allocation and what is booked against it.
@@ -73,13 +87,15 @@ type creditRelease struct {
 }
 
 // moneyEffect is what a commit's money records do: the lease after, each
-// credit shard's change, the returns to release, in order, and each fault,
-// the part of a booking beyond the allocation.
+// credit shard's change, the returns to release, in order, each fault, the
+// part of a booking beyond the allocation, and the sequence number of the
+// first checkpoint whose audit failed, or 0.
 type moneyEffect struct {
-	After    leaseMoney
-	Shards   map[int64]shardMoney
-	Releases []creditRelease
-	Faults   []int64
+	After      leaseMoney
+	Shards     map[int64]shardMoney
+	Releases   []creditRelease
+	Faults     []int64
+	AuditFault int64
 }
 
 // applyMoney runs a commit's money records against the lease as the commit
@@ -94,6 +110,12 @@ type moneyEffect struct {
 //     on the first donor's shard.
 //   - A return takes allocation from the last donor first, never below what
 //     that donor has booked, and frees it on the donor's shard.
+//   - A checkpoint returns as a return does, but one past what the lease
+//     holds returns nothing and is the checkpoint's fault; then, if the
+//     allocation less the consumption booked does not cover its open holds,
+//     that is its fault (§4.2). Each is judged on the row as the commit reads
+//     it, so a raise an owner or a front door made since the member loaded
+//     the lease counts.
 func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 	if len(before.Donors) == 0 {
 		return moneyEffect{}, errors.New("store: a lease has at least one donor")
@@ -114,7 +136,30 @@ func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 		add(&s.Usage, usage)
 		eff.Shards[shard] = s
 	}
+	fault := func(seq int64) {
+		if eff.AuditFault == 0 {
+			eff.AuditFault = seq
+		}
+	}
 	for _, op := range ops {
+		if op.Check {
+			if op.Amount < 0 || op.OpenSum < 0 || op.Seq < 1 {
+				return moneyEffect{}, fmt.Errorf("store: checkpoint %d returning %d with %d open", op.Seq, op.Amount,
+					op.OpenSum)
+			}
+			if op.Amount > m.Allocation-m.Consumed {
+				fault(op.Seq)
+			} else if op.Amount > 0 {
+				m, eff, err = returned(m, eff, op.Amount)
+				if err != nil {
+					return moneyEffect{}, err
+				}
+			}
+			if m.Allocation-m.Consumed < op.OpenSum {
+				fault(op.Seq)
+			}
+			continue
+		}
 		if !op.Book {
 			if op.Amount < 0 {
 				return moneyEffect{}, fmt.Errorf("store: a return of %d", op.Amount)
@@ -170,4 +215,29 @@ func applyMoney(before leaseMoney, ops []MoneyOp) (moneyEffect, error) {
 	}
 	eff.After = m
 	return eff, nil
+}
+
+// returned is a return of amount, which the lease holds, from the last
+// donor first, each down to what it has booked.
+func returned(m leaseMoney, eff moneyEffect, amount int64) (leaseMoney, moneyEffect, error) {
+	left := amount
+	for i := len(m.Donors) - 1; i >= 0 && left > 0; i-- {
+		z := min(m.Donors[i].Allocation-m.Donors[i].Consumed, left)
+		if z <= 0 {
+			continue
+		}
+		m.Donors[i].Allocation -= z
+		m.Allocation -= z
+		r, err := plus(m.Returned, z)
+		if err != nil {
+			return m, eff, err
+		}
+		m.Returned = r
+		eff.Releases = append(eff.Releases, creditRelease{m.Donors[i].Shard, z})
+		left -= z
+	}
+	if left > 0 {
+		return m, eff, fmt.Errorf("store: a return of %d is %d more than the lease's donors hold", amount, left)
+	}
+	return m, eff, nil
 }

@@ -132,7 +132,9 @@ CREATE TABLE tr_lease_donor (
 -- inserts and updates them, and deletes a hold's row in the commit that
 -- stores its winner. reap_basis keeps what a member that takes over needs to
 -- build a reap's full record (§4.9): the first heartbeat record's fields,
--- which Pub/Sub does not deliver again once acknowledged.
+-- which Pub/Sub does not deliver again once acknowledged. boot_binding is a
+-- listed hold's, from its hand-off chunk, which its disposition needs
+-- (§4.9) when it has no heartbeat, and so no basis.
 CREATE TABLE tr_lease_hold (
   workspace_id STRING(64) NOT NULL,
   lease_id STRING(32) NOT NULL,
@@ -147,8 +149,23 @@ CREATE TABLE tr_lease_hold (
   running_charge INT64,
   snapshot_owner_seq INT64,
   reap_basis BYTES(MAX),
+  boot_binding BYTES(MAX),
   CONSTRAINT tr_lease_hold_snapshot CHECK ((snapshot_seq IS NULL) = (running_charge IS NULL)),
 ) PRIMARY KEY (workspace_id, lease_id, authorization_id),
+  INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
+
+-- The chunks of a forced exit's hand-off (§4.2) that the auditor has applied
+-- and whose manifest it has not, each the chunk's holds as its record listed
+-- them (opaque here). A member that takes the lease over mid-hand-off reads
+-- them, so the manifest can still find every chunk it names and check their
+-- digest (§4.8); Pub/Sub does not deliver a record again once acknowledged.
+-- The commit that applies the manifest, or stores S, deletes them.
+CREATE TABLE tr_lease_handoff (
+  workspace_id STRING(64) NOT NULL,
+  lease_id STRING(32) NOT NULL,
+  chunk_seq INT64 NOT NULL,
+  holds BYTES(MAX) NOT NULL,
+) PRIMARY KEY (workspace_id, lease_id, chunk_seq),
   INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
 
 -- The winners (§4.8), one pack per lease per commit, each winner with its

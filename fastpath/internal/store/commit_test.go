@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -251,6 +252,34 @@ func TestAnAuditFaultRevokesWithItsCommit(t *testing.T) {
 	}
 }
 
+// TestACheckpointIsJudgedOnTheRowAsRead: its audit counts a raise made
+// since the member read the lease; one that fails is stored with its
+// commit, which revokes the lease, and so is a return past what the lease
+// holds, which returns nothing. The first fault stands.
+func TestACheckpointIsJudgedOnTheRowAsRead(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := grantLease(t, s, 200, 1000)
+	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 1, Money: []MoneyOp{Book(150, 0)}})
+	if got, err := s.ShortfallWrite(ctx, owner, ref, 50); err != nil || got.Refused != "" {
+		t.Fatalf("the raise: %+v %v", got, err)
+	}
+	got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 2, Money: []MoneyOp{Checkpoint(2, 0, 100)}})
+	if got.AuditFault != nil || readLease(t, s, ref).Revoked {
+		t.Fatalf("a checkpoint covered by a raise since the read: %+v", got)
+	}
+	got = commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 2, AppliedSeq: 3, Money: []MoneyOp{Checkpoint(3, 101, 0)}})
+	l := readLease(t, s, ref)
+	if got.Refused != "" || got.AuditFault == nil || *got.AuditFault != 3 || !l.Revoked ||
+		l.AuditFaultSeq != (spanner.NullInt64{Int64: 3, Valid: true}) || l.Allocation != 250 || l.AppliedSeq != 3 {
+		t.Fatalf("a return past what the lease holds: %+v, the lease %+v", got, l)
+	}
+	got = commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 3, AppliedSeq: 4, AuditFault: ptr(int64(4))})
+	if l := readLease(t, s, ref); got.AuditFault != nil || l.AuditFaultSeq.Int64 != 3 {
+		t.Fatalf("a later fault: %+v, stored %v", got, l.AuditFaultSeq)
+	}
+}
+
 // TestAGapStopsTheLease answers AuditorCommit's mutant
 // a-gap-from-stale-progress.
 func TestAGapStopsTheLease(t *testing.T) {
@@ -433,4 +462,40 @@ func TestTheOwnersWritesRaceTheAuditorsCommits(t *testing.T) {
 			l.Allocation, l.CommitVersion)
 	}
 	identityHolds(t, s, ref.Workspace)
+}
+
+// TestAHandOffsChunksAreStoredUntilItEnds: a commit stores the chunks it
+// applied, a load reads them back in order, and a commit that drops them
+// deletes every one stored before it while keeping those it puts; a chunk
+// is one of the records the commit applied.
+func TestAHandOffsChunksAreStoredUntilItEnds(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := grantLease(t, s, 30, 100)
+	listed := hold("a1", 10)
+	listed.Listed, listed.Boot = true, []byte("boot-a1")
+	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 3, PutChunks: []Chunk{{Seq: 3, Holds: []byte("c3")},
+		{Seq: 1, Holds: []byte("c1")}}, PutHolds: []HoldRow{listed}})
+	loaded, err := s.Load(ctx, ref)
+	if err != nil || !reflect.DeepEqual(loaded.Chunks, []Chunk{{1, []byte("c1")}, {3, []byte("c3")}}) {
+		t.Fatalf("the chunks loaded: %+v %v", loaded.Chunks, err)
+	}
+	if len(loaded.Holds) != 1 || !loaded.Holds[0].Deadline.Equal(listed.Deadline) {
+		t.Fatalf("the listed hold: %+v", loaded.Holds)
+	}
+	loaded.Holds[0].Deadline = listed.Deadline
+	if !reflect.DeepEqual(loaded.Holds[0], listed) {
+		t.Fatalf("the listed hold loads as %+v, stored as %+v", loaded.Holds[0], listed)
+	}
+	commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 5, DropChunks: true,
+		PutChunks: []Chunk{{Seq: 5, Holds: []byte("c5")}}})
+	if loaded, err = s.Load(ctx, ref); err != nil || !reflect.DeepEqual(loaded.Chunks, []Chunk{{5, []byte("c5")}}) {
+		t.Fatalf("the chunks after the drop: %+v %v", loaded.Chunks, err)
+	}
+	for _, c := range [][]Chunk{{{Seq: 7, Holds: []byte("x")}}, {{Seq: 0, Holds: []byte("x")}},
+		{{Seq: 6, Holds: nil}}, {{Seq: 6, Holds: []byte("x")}, {Seq: 6, Holds: []byte("y")}}} {
+		if _, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, ReadVersion: 2, AppliedSeq: 6, PutChunks: c}}); err == nil {
+			t.Errorf("chunks %+v at progress 6", c)
+		}
+	}
 }
