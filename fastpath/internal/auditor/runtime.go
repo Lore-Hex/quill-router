@@ -287,8 +287,19 @@ func (rt *Runtime) apply(ctx context.Context, h *held, x *handled) (Outcome, boo
 			return out, true
 		}
 		lease, _, err := rt.cfg.Store.ReadLease(ctx, h.ref)
+		if err == nil {
+			// The row may hold what another member stored since this one
+			// read the lease: it is told, and a lease closed or stopped at
+			// a gap is done, as a load that reads it so finds.
+			rt.told(h, lease)
+			if lease.State == "closed" || lease.GapSeq.Valid {
+				rt.finish(h)
+				return 0, false
+			}
+		}
 		switch {
 		case errors.Is(err, store.ErrNoLease):
+			rt.cfg.Alert(h.id, "a record of a lease the store does not have")
 			rt.finish(h)
 			return 0, false
 		case err != nil:

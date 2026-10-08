@@ -61,7 +61,9 @@ type flaky struct {
 	failFind, failLoad, failCommit int
 	lostCommits, lostStops         int
 	failLoadOf                     map[string]int // by lease ID
-	commits                        [][]store.CommitRequest
+	// gone makes ReadLease find no lease.
+	gone    bool
+	commits [][]store.CommitRequest
 	// finding, when set, is told of each FindLease, which then waits for
 	// found to close, whatever its context.
 	finding, found chan struct{}
@@ -91,6 +93,16 @@ func (f *flaky) FindLease(ctx context.Context, id string) (store.LeaseRef, error
 		return store.LeaseRef{}, errInjected
 	}
 	return f.Store.FindLease(ctx, id)
+}
+
+func (f *flaky) ReadLease(ctx context.Context, ref store.LeaseRef) (store.Lease, time.Time, error) {
+	f.mu.Lock()
+	gone := f.gone
+	f.mu.Unlock()
+	if gone {
+		return store.Lease{}, time.Time{}, store.ErrNoLease
+	}
+	return f.Store.ReadLease(ctx, ref)
 }
 
 func (f *flaky) Load(ctx context.Context, ref store.LeaseRef) (store.Loaded, error) {
@@ -789,5 +801,56 @@ func TestRunWaitsForItsHandlers(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return once its handler ended")
+	}
+}
+
+// TestABehindReadTellsWhatTheRowHolds: a member that read the lease open
+// and then needs its row, for a tick, tells what another member stored
+// there since, and a lease that member stopped at a gap is done; so is one
+// the store no longer has, which is told.
+func TestABehindReadTellsWhatTheRowHolds(t *testing.T) {
+	f := newRuntimeFixture(t)
+	a, b := f.runtime(), f.runtime()
+	handleAll(a, on(t, f.ref, settle(1, "a", 40, 0)))
+	round(a) // a has the lease, open, at version 1
+	handleAll(b, on(t, f.ref, settle(2, "b", 1500, 0)), on(t, f.ref, ckpt(3, record.CheckpointOf{Consumed: 9,
+		KeyStatus: 7})))
+	round(b)
+	handleAll(b, on(t, f.ref, settle(5, "d", 1, 0))) // the gap: b stops the lease
+	if l := f.loaded().Lease; !l.GapSeq.Valid || !l.AuditFaultSeq.Valid || l.FaultUsage == 0 {
+		t.Fatalf("the row b wrote: %+v", l)
+	}
+	f.mu.Lock()
+	f.alerts = nil
+	f.mu.Unlock()
+	tk := on(t, f.ref, tick(1, start))
+	handleAll(a, tk)
+	got := f.alerted()
+	for _, want := range []string{"a gap in the lease's records stopped it",
+		"an audit fault: the owner's checkpoint disagrees with its records", "a charge past the lease's allocation"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("a's alerts %v lack %q", got, want)
+		}
+	}
+	if tk.acked() != 1 {
+		t.Fatalf("the tick of a lease a found stopped: acknowledged %d", tk.acked())
+	}
+	later := on(t, f.ref, settle(6, "e", 1, 0))
+	handleAll(a, later)
+	if later.acked() != 1 {
+		t.Fatalf("a later record of the lease a found stopped: acknowledged %d", later.acked())
+	}
+
+	f = newRuntimeFixture(t)
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, settle(1, "a", 40, 0)))
+	round(rt)
+	f.store.mu.Lock()
+	f.store.gone = true
+	f.store.mu.Unlock()
+	tk = on(t, f.ref, tick(1, start))
+	handleAll(rt, tk)
+	if tk.acked() != 1 || !slices.Contains(f.alerted(), "a record of a lease the store does not have") {
+		t.Fatalf("a lease the store no longer has: acknowledged %d, alerts %v", tk.acked(), f.alerted())
 	}
 }
