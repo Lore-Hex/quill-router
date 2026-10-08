@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand/v2"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -736,30 +738,34 @@ func TestAHandOffLetsGoAtItsDeadline(t *testing.T) {
 	}
 }
 
-// TestASortStopsWhenAsked: the hand-off's sort of its holds asks whether to
-// stop before each run it sorts and each merge, and stops at once when
-// told; told nothing, it sorts.
+// TestASortStopsWhenAsked: the hand-off's gathering of its holds'
+// authorizations asks whether to stop before every sortRun of them, and its
+// sort before each run it sorts and each merge; each stops at once when
+// told, and told nothing, it sorts.
 func TestASortStopsWhenAsked(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	for _, n := range []int{0, 1, 2, sortRun, sortRun + 1, 10*sortRun + 7} {
-		xs := make([]string, n)
-		for i := range xs {
-			xs[i] = fmt.Sprintf("auth-%08x", rng.Uint32())
+		l := &Lease{holds: map[string]*hold{}}
+		for len(l.holds) < n {
+			auth := fmt.Sprintf("auth-%08x", rng.Uint32())
+			l.holds[auth] = &hold{auth: auth}
 		}
-		want := slices.Sorted(slices.Values(xs))
-		checks := (n + sortRun - 1) / sortRun
+		want := slices.Sorted(maps.Keys(l.holds))
+		gathering := (n + sortRun - 1) / sortRun
+		checks := gathering + (n+sortRun-1)/sortRun
 		for width := sortRun; width < n; width *= 2 {
 			checks += (n + 2*width - 1) / (2 * width)
 		}
 		calls := 0
-		got, ok := sortChecked(slices.Clone(xs), func() bool { calls++; return false })
+		got, ok := l.sortedAuths(func() bool { calls++; return false })
 		if !ok || !slices.Equal(got, want) || calls != checks {
-			t.Fatalf("%d strings: sorted %v, %d checks, want %d", n, ok && slices.Equal(got, want), calls, checks)
+			t.Fatalf("%d holds: sorted %v, %d checks, want %d", n, ok && slices.Equal(got, want), calls, checks)
 		}
 		for k := 1; k <= checks; k++ {
 			calls := 0
-			if _, ok := sortChecked(slices.Clone(xs), func() bool { calls++; return calls == k }); ok || calls != k {
-				t.Fatalf("%d strings told to stop at check %d: done %v after %d checks", n, k, ok, calls)
+			if _, ok := l.sortedAuths(func() bool { calls++; return calls == k }); ok || calls != k {
+				t.Fatalf("%d holds told to stop at check %d of %d (%d gathering): done %v after %d checks", n, k,
+					checks, gathering, ok, calls)
 			}
 		}
 	}
@@ -813,6 +819,68 @@ func TestAHandOffInterruptsTheReleasePass(t *testing.T) {
 	}
 	if released == 0 || released >= holds {
 		t.Fatalf("%d of %d holds released", released, holds)
+	}
+}
+
+// TestAHandOffInterruptsAScan: the reaper's scans of a lease's holds, for
+// those due to be reaped and those due to be released, let the lease's lock
+// go between batches, so a hand-off whose time is up takes it and lets the
+// lease go at once, though 100,000 holds are due to be reaped, or 300,000
+// released (whose scan, lighter, takes about 100 ms unbatched under the
+// race detector); and the scan then stops.
+func TestAHandOffInterruptsAScan(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		holds int
+		make  func(holds int) *fixture
+		scan  func(f *fixture) (left int)
+	}{
+		{"the reap scan", 100_000, func(holds int) *fixture {
+			f := heavyFixture(t, holds, 16)
+			f.clock.advance(5 * time.Minute) // past each heartbeat's deadline and the grace
+			return f
+		}, func(f *fixture) int { return len(f.lease.due(f.clock.Now(), time.Minute)) }},
+		{"the release scan", 300_000, func(holds int) *fixture {
+			f, _ := releaseFixture(t)
+			f.lease.mu.Lock()
+			f.lease.allocation = 1 << 40
+			f.lease.mu.Unlock()
+			for range holds {
+				if _, err := f.lease.Admit(Admission{Estimate: 1, Stream: true, Boot: boot, OpenHeartbeat: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.clock.advance(70 * time.Second) // past the allowance and the grace
+			return f
+		}, func(f *fixture) int {
+			f.lease.releaseDue(f.clock.Now(), 10*time.Second, time.Minute)
+			f.lease.mu.Lock()
+			defer f.lease.mu.Unlock()
+			return len(f.lease.holds)
+		}},
+	} {
+		f := c.make(c.holds)
+		scanned := make(chan int, 1)
+		go func() { scanned <- c.scan(f) }()
+		// The hand-off begins once the scan holds the lease's lock.
+		for f.lease.mu.TryLock() {
+			f.lease.mu.Unlock()
+			runtime.Gosched()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		began := time.Now()
+		err := f.owner.Handoff(ctx)
+		took := time.Since(began)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) || took > 50*time.Millisecond {
+			t.Fatalf("%s: the hand-off let its lease go %v after it began: %v", c.name, took, err)
+		}
+		switch left := <-scanned; {
+		case c.name == "the reap scan" && left >= c.holds:
+			t.Fatalf("%s: the scan found all %d due once the lease was let go", c.name, left)
+		case c.name == "the release scan" && left != c.holds:
+			t.Fatalf("%s: %d of %d holds left once the lease was let go", c.name, left, c.holds)
+		}
 	}
 }
 

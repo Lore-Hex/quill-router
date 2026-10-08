@@ -152,7 +152,7 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 	if l.let || l.handedOff {
 		return nil, nil
 	}
-	auths, ok := l.sortedAuths(ctx)
+	auths, ok := l.sortedAuths(func() bool { return ctx.Err() != nil })
 	if !ok {
 		return nil, nil
 	}
@@ -224,15 +224,18 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 }
 
 // sortedAuths is the lease's holds' authorizations in order, as the digest
-// takes them, or false once ctx has ended, which it checks as it sorts them
-// (sortChecked): a lease of a million holds keeps its lock little past a
-// hand-off's deadline.
-func (l *Lease) sortedAuths(ctx context.Context) ([]string, bool) {
+// takes them, or false once stopped says so, which it asks before every
+// sortRun holds it gathers and as it sorts them (sortChecked): a lease of a
+// million holds keeps its lock little past a hand-off's deadline.
+func (l *Lease) sortedAuths(stopped func() bool) ([]string, bool) {
 	auths := make([]string, 0, len(l.holds))
 	for auth := range l.holds {
+		if len(auths)%sortRun == 0 && stopped() {
+			return nil, false
+		}
 		auths = append(auths, auth)
 	}
-	return sortChecked(auths, func() bool { return ctx.Err() != nil })
+	return sortChecked(auths, stopped)
 }
 
 // sortRun is how many strings sortChecked sorts between its checks.

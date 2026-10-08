@@ -124,14 +124,12 @@ func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
 	if allowance == 0 {
 		return
 	}
-	l.mu.Lock()
 	var due []string
-	for _, h := range l.holds {
+	l.scan(func(h *hold) {
 		if released(h, now, allowance+grace) {
 			due = append(due, h.auth)
 		}
-	}
-	l.mu.Unlock()
+	})
 	slices.Sort(due)
 	for len(due) > 0 {
 		n := min(len(due), releaseBatch)
@@ -145,6 +143,33 @@ func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
 // releaseBatch is how many releases a pass decides under one hold of the
 // lease's lock: between batches a hand-off can take it.
 const releaseBatch = 256
+
+// scanBatch is how many holds a pass over a lease's holds visits under one
+// hold of its lock.
+const scanBatch = 1024
+
+// scan calls f with each of the lease's holds under its lock, which it lets
+// go between batches of scanBatch, so a pass over many holds keeps a
+// hand-off waiting no longer than a batch takes; it stops once the lease is
+// let go or handed off. A map may change while it is ranged over, and here
+// each change comes under the lock, between batches: a hold removed then is
+// not visited after, and one added may be visited or not, so a pass
+// rechecks each hold as it decides it.
+func (l *Lease) scan(f func(h *hold)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, h := range l.holds {
+		if l.let || l.handedOff {
+			return
+		}
+		f(h)
+		if n++; n%scanBatch == 0 {
+			l.mu.Unlock()
+			l.mu.Lock()
+		}
+	}
+}
 
 // released: a hold due for release at now, after the first-heartbeat
 // allowance and the grace.
@@ -256,20 +281,19 @@ type dueReap struct {
 }
 
 // due are the lease's open holds whose last heartbeat's deadline plus the
-// grace has passed, in order of their authorizations. A hold that never
-// heartbeated has no snapshot to reap at.
+// grace has passed, in order of their authorizations, found by a scan and
+// sorted once its lock is let go. A hold that never heartbeated has no
+// snapshot to reap at.
 func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	var out []dueReap
-	for _, h := range l.holds {
+	l.scan(func(h *hold) {
 		if !h.heartbeat || now.Before(h.deadline.Add(grace)) {
-			continue
+			return
 		}
 		out = append(out, dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
 			Deadline: h.deadline.UTC(), GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: h.usage, OwnerSeq: h.snapSeq,
 			Basis: h.basis, Boot: h.boot})
-	}
+	})
 	slices.SortFunc(out, func(a, b dueReap) int { return strings.Compare(a.Auth, b.Auth) })
 	return out
 }
