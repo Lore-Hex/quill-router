@@ -206,7 +206,6 @@ class _Recorder:
         self._n = 0
         self._lock = threading.RLock()
         self.installed = False
-        self.hooks: list[tuple[Any, str, Any]] = []
         self._unproved: set[str] = set()
 
     def reset(self) -> None:
@@ -284,6 +283,9 @@ class _Recorder:
         raise LockOrderError("\n".join(report))
 
 
+# Installation metadata contains live Postgres callables. Keep it separate from
+# the recorder consumed by frozen Spanner IO; recording never needs these hooks.
+_hooks: list[tuple[Any, str, Any]] = []
 recorder = _Recorder()
 _funnel = threading.local()
 
@@ -307,7 +309,7 @@ def _connection_state(conn: Any) -> Any:
 def install() -> None:
     """Attach hooks once; fail closed if an installed callable was replaced."""
     if recorder.installed:
-        for owner, name, wrapper in recorder.hooks:
+        for owner, name, wrapper in _hooks:
             if getattr(owner, name, None) is not wrapper:
                 raise RuntimeError(f"lock-order guard: {owner.__name__}.{name} hook replaced")
         return
@@ -322,7 +324,7 @@ def install() -> None:
         wrapper = factory(getattr(owner, name))
         wrapper._lock_order_hook = True
         setattr(owner, name, wrapper)
-        recorder.hooks.append((owner, name, wrapper))
+        _hooks.append((owner, name, wrapper))
 
     def statement(original: Any) -> Any:
         @functools.wraps(original)

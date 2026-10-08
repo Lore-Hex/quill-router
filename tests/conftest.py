@@ -249,6 +249,18 @@ def inference_headers(inference_key: str) -> dict[str, str]:
     return {"authorization": f"Bearer {inference_key}"}
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_collection_modifyitems(items):
+    # Inspect real pytest markers before -m / pytest-split remove any items.
+    # This runs in every collection, even a shard without test_ci_workflow.py.
+    from tests.proof_oracle_ci import check_proof_oracle_paths
+
+    paths = {item.path for item in items if item.get_closest_marker('proof_oracle')}
+    if paths:
+        check_proof_oracle_paths(paths)
+    yield
+
+
 @pytest.fixture
 def shadow_deadline_clock(monkeypatch):
     """Deterministic budgets for fake shadow I/O, without freezing asyncio.

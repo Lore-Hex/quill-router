@@ -48,11 +48,31 @@ MUTATIONS = [
      [("if (time.monotonic() >= deadline or row.leased_until is None\n"
        "            or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):", 'if False:')],
      TEST + 'test_batch_tail_expired_claim_never_applied'),
+    ('retention-body-clear', 'src/trusted_router/storage_gcp_settle_outbox.py',
+     [('terminal_at=@now, settle_body=NULL', 'terminal_at=@now, settle_body=settle_body')],
+     'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
+    ('generation-future-terminal-at', 'src/trusted_router/storage_gcp_generation_records.py',
+     [(') -> DmlStatement:\n    return (\n        "INSERT INTO tr_generation ("',
+       ') -> DmlStatement:\n    terminal_at = dt.datetime(2099, 1, 1, tzinfo=dt.UTC)\n'
+       '    return (\n        "INSERT INTO tr_generation ("')],
+     'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('sparse-predicate', 'src/trusted_router/storage_gcp_async_admission.py',
+     [('WHERE unresolved_at IS NOT NULL ORDER BY', 'WHERE TRUE ORDER BY')],
+     'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sparse]'),
+    ('control-kind', 'src/trusted_router/storage_gcp_async_admission.py',
+     [('WHERE kind=@kind AND id=@id', 'WHERE id=@id')],
+     'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[control_kind]'),
+    ('control-id', 'src/trusted_router/storage_gcp_async_admission.py',
+     [('WHERE kind=@kind AND id=@id', 'WHERE kind=@kind')],
+     'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[control_id]'),
+
 ]
 
 
 def run() -> None:
     results = []
+    evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
+    evidence.mkdir(parents=True, exist_ok=True)
     # Copies contain the runtime/test dependencies, not an editable install or
     # a Git directory. sys.executable supplies the already-resolved environment.
     with tempfile.TemporaryDirectory(prefix='pr-d-mutations-') as directory:
@@ -64,6 +84,8 @@ def run() -> None:
                 shutil.copytree(ROOT / folder, target / folder,
                                 ignore=shutil.ignore_patterns('__pycache__', '.pytest_cache'))
             shutil.copy2(ROOT / 'pyproject.toml', target / 'pyproject.toml')
+            (target / '.github/workflows').mkdir(parents=True)
+            shutil.copy2(ROOT / '.github/workflows/ci.yml', target / '.github/workflows/ci.yml')
             file = target / relative
             text = file.read_text()
             for old, new in edits:
@@ -73,10 +95,10 @@ def run() -> None:
             env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONPATH': str(target / 'src'),
                    'UV_CACHE_DIR': '/tmp/uv', 'RUFF_CACHE_DIR': '/tmp/ruff', 'MYPY_CACHE_DIR': '/tmp/mypy'}
             completed = subprocess.run(  # noqa: S603 - fixed disposable repository/test args
-                [sys.executable, '-m', 'pytest', '-q', '-n', '6', '-p', 'no:cacheprovider', '--disable-warnings', test],
+                [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--disable-warnings', test],
                 cwd=target, env=env, capture_output=True, text=True, timeout=300,
             )
-            log = Path('/tmp') / f'pr-d-mutation-{name}.log'
+            log = evidence / f'pr-d-mutation-{name}.log'
             log.write_text(completed.stdout + completed.stderr)
             # Collection/import crashes are not killed mutations. Require the
             # selected test's assertion failure and normal pytest failure code.
@@ -85,7 +107,7 @@ def run() -> None:
             results.append(result)
             print(json.dumps(result), flush=True)
             shutil.rmtree(target)
-    Path('/tmp/pr-d-mutations.json').write_text(json.dumps(results, indent=2) + '\n')
+    (evidence / 'pr-d-mutations.json').write_text(json.dumps(results, indent=2) + '\n')
     assert all(row['killed'] for row in results), results
 
 

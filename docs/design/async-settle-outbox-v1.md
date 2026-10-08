@@ -221,15 +221,15 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
     "candidates": [
       {
         "endpoint_id": "openai/billing-v1@openai/prepaid",
-        "model_id": "openai/billing-v1",
         "provider": "openai",
+        "model_id": "openai/billing-v1",
         "usage_type": "Credits",
         "price_history_version": 1,
         "rates": {
           "input_micro_per_million": 500000,
-          "output_micro_per_million": 500000,
-          "cached_input_micro_per_million": 0,
-          "cache_creation_micro_per_million": 0
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 625000,
+          "output_micro_per_million": 500000
         },
         "tiers": [],
         "request_fee_micro": 0,
@@ -244,7 +244,7 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
     "tier_boundary": "inclusive",
     "tier_fallback": "last_tier"
   },
-  "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6ImFzeW5jLXYxLWZpeHR1cmUiLCJ0eXAiOiJ0ci1hc3luYy1zZXR0bGUtdjEifQ.eyJhc3luY19lbGlnaWJsZSI6dHJ1ZSwiYXVkIjoicm91dGVyLXNldHRsZW1lbnQiLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxMjQ1MTAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjM5NTI2YzdmZGU1ZjMyZDEzMzM1OGI5ZTYxZWYwZmZmMTdlMDA2ZjZjN2Y4N2ZjNWVjNmRkMjExMjA2YzUwZWUiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.ghFdyi8nXmEDGVemPaaExEoR7zKg01E7Nw0MCtOZgSKDD3k3tdDYR9E-sFAtA2vH19pkfUPm3ws05k9HDbuLCA",
+  "settlement_ticket": "eyJhbGciOiJFZERTQSIsImtpZCI6ImFzeW5jLXYxLWZpeHR1cmUiLCJ0eXAiOiJ0ci1hc3luYy1zZXR0bGUtdjEifQ.eyJhc3luY19lbGlnaWJsZSI6dHJ1ZSwiYXVkIjoicm91dGVyLXNldHRsZW1lbnQiLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxMjQ1MTAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImNiOGZlYWYwOGRhMzgxZjBkMzU2ZGNkOGVkNGM2NTc3ZjFkNDRhMTMwZTdmM2I4MDI5NjQ3ZmEzODE0ODcyYjQiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.zbBwIsn5jCD25enkaRK9idg0oVaoBROE8jTK3FxAxrj1iDns3HhYp_KyDjzLsIdhVkJJKhjGQU_s3F8Vm97QDA",
   "raw_usage": {
     "input_tokens": 1,
     "output_tokens": 1,
@@ -254,7 +254,6 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
   },
   "observed": {},
   "terminal": {
-    "v": 1,
     "authorization_id": "auth-v1",
     "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
     "workspace_id": "ws-v1",
@@ -264,11 +263,12 @@ Full new request body, rather than the lenient legacy `GatewaySettleRequest`:
     "journal_region": "us-central1",
     "epoch": 1,
     "snapshot_version": 1,
-    "terminal_kind": "settle",
+    "snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4",
     "route_type": "chat.completions",
     "streamed": false,
+    "v": 1,
+    "terminal_kind": "settle",
     "selected_endpoint": "openai/billing-v1@openai/prepaid",
-    "snapshot_hash": "39526c7fde5f32d133358b9e61ef0fff17e006f6c7f87fc5ec6dd211206c50ee",
     "usage": {
       "uncached_input_tokens": 1,
       "total_prompt_tokens": 1,
@@ -318,7 +318,7 @@ Proposed **HTTP 202**, only after the acceptance transaction commits:
   "data": {
     "acceptance": {
       "status": "accepted",
-      "payload_hash": "9965b739ebab44a1ab6ec7a947ce66cbf764da5dc11d5dd2d49f77f1e9d02386",
+      "payload_hash": "f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32",
       "settlement_status": "pending"
     },
     "trusted_router_settlement": {
@@ -328,6 +328,48 @@ Proposed **HTTP 202**, only after the acceptance transaction commits:
       "cost_microdollars": 2,
       "status_url": "/v1/settlements/auth-v1.settle",
       "poll_after_ms": 1000
+    }
+  }
+}
+```
+
+A snapshot-bearing request with `X-TR-Settlement-Mode: sync` returns HTTP 200 after confirmed finalization, acceptance `duplicate`, settlement status `settled` or `refunded`, and `poll_after_ms:null`; a refund **that loses to a settled charge** adds `review_required:true` (a successful zero-charge refund does not).
+
+```json
+{
+  "data": {
+    "acceptance": {
+      "status": "duplicate",
+      "payload_hash": "f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32",
+      "settlement_status": "settled"
+    },
+    "trusted_router_settlement": {
+      "v": 1,
+      "settlement_id": "auth-v1.settle",
+      "settlement_status": "settled",
+      "cost_microdollars": 2,
+      "status_url": "/v1/settlements/auth-v1.settle",
+      "poll_after_ms": null
+    }
+  }
+}
+```
+
+```json
+{
+  "data": {
+    "acceptance": {
+      "status": "duplicate",
+      "payload_hash": "b39848e23c2c264ee89f23ab757ebf8db3b209bb5ab1235facda8924c6f89dd7",
+      "settlement_status": "refunded"
+    },
+    "trusted_router_settlement": {
+      "v": 1,
+      "settlement_id": "auth-v1.refund",
+      "settlement_status": "refunded",
+      "cost_microdollars": 0,
+      "status_url": "/v1/settlements/auth-v1.refund",
+      "poll_after_ms": null
     }
   }
 }
@@ -391,35 +433,35 @@ Literal error fixture in the style of
   "fixture_version": 1,
   "cases": {
     "invalid_snapshot": {
-      "path": "/internal/gateway/settle",
+      "path": "/v1/internal/gateway/settle",
       "status": 400,
       "content_type": "application/json",
       "retry_after": null,
       "body_exact": "{\"error\":{\"code\":400,\"message\":\"Invalid async settlement snapshot\",\"type\":\"bad_request\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
     },
     "invalid_signature": {
-      "path": "/internal/gateway/settle",
+      "path": "/v1/internal/gateway/settle",
       "status": 401,
       "content_type": "application/json",
       "retry_after": null,
       "body_exact": "{\"error\":{\"code\":401,\"message\":\"Invalid settlement ticket\",\"type\":\"unauthorized\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
     },
     "charge_mismatch": {
-      "path": "/internal/gateway/settle",
+      "path": "/v1/internal/gateway/settle",
       "status": 409,
       "content_type": "application/json",
       "retry_after": null,
-      "body_exact": "{\"error\":{\"code\":409,\"message\":\"Async settlement amount mismatch\",\"type\":\"conflict\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
+      "body_exact": "{\"error\":{\"code\":409,\"message\":\"Async settlement amount mismatch\",\"type\":\"conflict\",\"source\":\"router\",\"expected_cost_microdollars\":2,\"claimed_cost_microdollars\":3},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
     },
     "payload_conflict": {
-      "path": "/internal/gateway/settle",
+      "path": "/v1/internal/gateway/settle",
       "status": 409,
       "content_type": "application/json",
       "retry_after": null,
       "body_exact": "{\"error\":{\"code\":409,\"message\":\"Settlement intent already exists with a different payload\",\"type\":\"conflict\",\"source\":\"router\"},\"data\":{\"timing\":{\"total_ms\":0,\"spanner_rpcs\":0,\"key_lookup_ms\":0,\"routing_ms\":0,\"store_ms\":0,\"post_commit_ms\":0}}}"
     },
     "storage_unavailable": {
-      "path": "/internal/gateway/settle",
+      "path": "/v1/internal/gateway/settle",
       "status": 503,
       "content_type": "application/json",
       "retry_after": "1",
@@ -447,7 +489,7 @@ PRs B/C/E copy these literals into a versioned `async_settlement` wire fixture
 in both repositories and pin exact bytes/hash as the speculation fixture does.
 They add literal variants for duplicate pending/done, refund races, expiry,
 wrong identity, disabled mode and all reasons. Do not generate expected money
-with the evaluator under test. The present pass creates no fixture files.
+with the evaluator under test. PR F1 pins every JSON literal in this section to a fixture.
 
 ### 3.4 Identity, duplicates and status
 
@@ -483,7 +525,10 @@ knowledge of the ID as access. Proposed successful responses:
         "settlement_status": "pending",
         "cost_microdollars": 2,
         "status_url": "/v1/settlements/auth-v1.settle",
-        "poll_after_ms": 1000
+        "poll_after_ms": 1000,
+        "created_at": "2026-10-06T00:00:00Z",
+        "updated_at": "2026-10-06T00:00:00Z",
+        "terminal_at": null
       }
     }
   },
@@ -495,7 +540,10 @@ knowledge of the ID as access. Proposed successful responses:
         "settlement_status": "settled",
         "cost_microdollars": 2,
         "status_url": "/v1/settlements/auth-v1.settle",
-        "poll_after_ms": null
+        "poll_after_ms": null,
+        "created_at": "2026-10-06T00:00:00Z",
+        "updated_at": "2026-10-06T00:00:00Z",
+        "terminal_at": "2026-10-06T00:00:00Z"
       }
     }
   },
@@ -507,7 +555,10 @@ knowledge of the ID as access. Proposed successful responses:
         "settlement_status": "refunded",
         "cost_microdollars": 0,
         "status_url": "/v1/settlements/auth-v1.refund",
-        "poll_after_ms": null
+        "poll_after_ms": null,
+        "created_at": "2026-10-06T00:00:00Z",
+        "updated_at": "2026-10-06T00:00:00Z",
+        "terminal_at": "2026-10-06T00:00:00Z"
       }
     }
   }
@@ -1192,3 +1243,576 @@ fixture. A due-index observation cannot establish fleet health because it omits
 dead rows. The current five-minute cadence/300-second lease still cannot support
 the proposed 5/60-second objective. Cached admission remains a lag guard, not a
 strict exposure cap; PR D does not resolve the policy questions in §6/§10.
+
+### PR F proof set, D3 propagation audit and cap semantics
+
+This is **F1**, a golden against **BASE**
+`4701b1a6da9b2b05df93321a6bbd59ea82188c2b` (the main parent merged for Round 12). F2 owns the shadow comparator and
+seven-day traffic report. This appendix is local correctness evidence, not
+permission to activate async admission, a production measurement, or an
+assertion that F/G's rollout gates have passed. Production code, schemas and
+routes are unchanged. No git writes or deployments are part of F1.
+
+#### Findings and literal corrections
+
+- **F1-001 (four strict xfails: both records × settle/refund):** fresh snapshot-bearing sync
+  fallback applies through the frozen outbox finalizer, which defers retention,
+  but inserts no outbox row. Both reservation and authorization remain `terminal_at=NULL` after
+  successful finalization. `finish()` calls `_resolve_row()` on the ephemeral
+  row, so there is no durable mark to complete retention. Reproducer:
+  `test_fresh_snapshot_sync_completes_retention`. Money is booked once; the
+  missing retention completion needs a separate reviewed production fix. TTL
+  cannot expire NULL timestamps; the unsettled-only reaper cannot repair these
+  already-settled rows.
+- The actual settle sync JSONResponse bytes, compacted with the literal's
+  original key order, match the enclave #472 copy exactly, including
+  `payload_hash=f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32`.
+  The pretty-printed fixture has formatting whitespace; the test separately
+  compares parsed JSON, canonical bytes, and unsorted compact wire bytes.
+- A successful refund has `settlement_status=refunded`, amount 0, and **no**
+  `review_required`. That flag is true only when a refund loses to an already
+  settled charge (`async_settle_handler.py:174`). Adding it unconditionally to
+  the literal would misdescribe the actual router. The two sync fixtures were
+  generated by real HTTP handler calls with `auth-v1`/`res-v1`/`key-v1` seed
+  identities, without rewriting responses.
+- §3.2 now uses `request_v1.json`: cache-read/cache-creation rates
+  250000/625000, builder-signed ticket and `cb8feaf0…` snapshot hash. §3.3's
+  pending payload hash is `f5a869…`; it includes both sync reply literals.
+  §3.4 includes the fixture's `created_at`, `updated_at`, `terminal_at`.
+  `test_all_section_three_json_literals` parses **every** JSON fence in §3
+  and compares the ordered collection to named fixtures/subobjects. The error
+  envelope fixture is generated through the real HTTP routes with only
+  `gateway_timing.perf_counter` fixed. `test_error_envelopes_real_http` pins every
+  status, content type, Retry-After header and exact response byte sequence.
+  Charge mismatch includes expected cost 2 and claimed cost 3 microdollars. Neither
+  `authorize_v1.json` nor `billing_v1.json` was changed.
+
+#### Frozen-main coverage
+
+The oracle is a **golden against BASE**, not an assertion that legacy behavior
+never changes. `tests/fakes/frozen_main/BASE` records the full commit. Re-pin with
+`python scripts/async_settle/freeze_reference.py --base <commit>` and paste its
+printed archive digest into `tests/fakes/frozen_package.py`. The script reads only
+Git objects (`ls-tree` and `show`), keeps the existing text-member policy and
+repository paths, sorts tar members and normalizes their metadata and gzip time.
+Regenerate the execution inventory after a re-pin. A PR that intentionally changes
+the legacy path **re-freezes from its own tree in the same PR**; the reviewer reads
+the frozen diff as the intended behavior change. The worktree includes later merged main changes; this tests-only round leaves
+production source and the pinned BASE unchanged.
+
+The local gate runs `python scripts/async_settle/freeze_reference.py --check`,
+which re-derives the archive and pins from BASE and rejects any byte difference.
+CI's shallow checkout cannot run that Git-object check; the hermetic archive,
+per-member pins, import guard and execution guard remain enforced without Git.
+The interpreter matrix is CPython **3.11, 3.12.3 (CI), 3.13 and 3.14.6** for all
+guards and native-reference witnesses. CPython 3.11 asserts explicit unsupported
+execution-proof rejection while retaining independent walker checks; it does not
+claim a frozen execution proof. Mutation tables retain every Round-5–13 row;
+Round 14 results and interpreter-specific rows are recorded in
+[the Round 14 report](../async-settle-pr-f1-round14.md).
+The complete proof files also run on 3.12.3 with CI's post-cutover clock:
+`max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)`.
+Exact versions, counts and limitations are in the [validation report](../validation/async-settle-pr-f1.md).
+
+`tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry` executes
+both frozen and live route registration, dispatch, settlement and drain using
+actual Spanner fake transactions. Round 4 replaces the selected-function copies
+and their exemption list with **one package snapshot** in
+`tests/fakes/frozen_main/package.tar.gz`.
+
+The archive contains every Python module and text resource from the
+`src/trusted_router` subtree at **BASE** (Python, JSON/JSONL, HTML, TXT,
+SQL, CSS and JavaScript). Static binary media are omitted; they are not used by
+these requests. `pins.json` records the SHA-256 of the original bytes of each
+file. `tests/fakes/frozen_package.py` independently pins the archive digest,
+verifies its exact member set and every member digest, and compiles the unchanged
+Python bytes under temporary snapshot paths, never live coverage paths.
+Its importer redirects all absolute `trusted_router` imports into
+`frozen_main`; relative imports stay there. A missing snapshot import fails,
+with no fallback to the live package. Settings, enums, schemas, dataclasses,
+feature stores, captured IO callbacks, gateway, middleware and the HTTP app are
+constructed independently in that namespace. No live production globals seed it.
+
+`execution_guard(*harness)` profiles Python calls by module globals and source
+path and exposed C-call events in **admitted threads, including guarded raw
+`_thread` workers**. On Python 3.13/3.14, entry calls
+`threading.setprofile_all_threads(profile)` for already-running threads and
+`threading.setprofile(profile)` for later `threading.Thread` workers. During the
+scope it wraps `_thread.start_new_thread`, `_thread.start_joinable_thread` and
+`threading._start_joinable_thread` when present, plus the 3.11
+`threading._start_new_thread` alias and `_thread._start_joinable_thread` if present.
+On 3.13+, each bootstrap installs `sys.setprofile` before calling its target.
+On 3.12.3 the guard instead uses interpreter-wide `sys.monitoring` events
+`PY_START`, `PY_RESUME`, `PY_THROW` and builtin `CALL`, reserving tool ID 4
+without displacing an existing client. It unregisters callbacks and frees that
+ID on exit. Monitoring covers the same worker lifetime without passing through
+the unsafe Python-level profile trampoline. The reference
+audit rejects any reachable original native starter by identity, including
+partial func/args/keywords, containers, closures and bound-method captures. It
+also rejects bound `Thread.start` / `Thread._bootstrap` methods held before
+entry. The explicit reason is: "prebound native thread starter reachable from
+frozen roots; profiling cannot be guaranteed for threads it creates". This is
+an admission restriction on accepted harnesses. Ordinary threads created through
+the wrapped attributes inside the guard remain allowed and profiled, including
+partials built there and new `threading.Thread` instances.
+
+The C-call fence also compares the called builtin by identity with the captured
+native starter set, rejecting direct bypasses outside the guarded bootstrap.
+On gate CPython **3.14.6**, a direct native start emits `c_call`, but calling the
+same builtin through `functools.partial` emits **no underlying `c_call`**. Thus
+the reference rejection, not a partial C-call event, guarantees rejection of
+reachable prebound partial starters. Pending/active bootstraps are registered before
+startup; guard exit performs a bounded five-second join while profiling remains
+active, then rejects any unfinished worker. This covers AnyIO shutdown, which
+signals its workers without joining them. Live events are retained by thread ID,
+so a raw worker that finishes before the frame-based exit check is still detected.
+Worker profiling continues through native exception cleanup, including
+`sys.unraisablehook`. Main/default hooks and starter APIs are restored on
+successful and failed guard exits.
+
+Pre-existing application workers still refuse the frozen leg, and frame checks
+reject leaked workers. The only infrastructure exceptions are xdist's active
+execnet receiver stack and pytest-timeout's Timer target, not application thread
+names; profiling still applies to them. The supplied worktree's resolved venv is
+Python **3.12.3**, matching CI. Python **3.11** rejects entry explicitly:
+`unsupported interpreter: frozen execution_guard requires CPython 3.12+; CPython 3.11 profile/trace trampolines materialize unsafe frame locals`.
+This restriction applies only to the frozen execution proof, not production
+Python support. CPython <=3.12's Python profile/trace trampoline synchronizes
+previously materialized fast locals and can run colliding-key equality with
+recursive profiling disabled. Removing explicit callback reads alone is
+insufficient. Direct interpreter probes show two equality calls with a no-op
+legacy callback on 3.11/3.12, versus zero under monitoring on 3.12–3.14 and
+zero under legacy profiling on 3.13/3.14. Live calls are recorded even if
+application error handling swallows an exception.
+
+Neither callback reads `f_locals` on any supported interpreter. Generated
+`<string>` dataclass definitions are attributed by a strong code-identity
+registry, populated from native function qualnames after frozen module
+execution and at guard entry for loaded router modules (including generated
+repr bodies reached through native closure cells). Unknown generated code
+retains `co_qualname`; inventory attribution never controls live-call rejection.
+Callbacks use sealed native frame/code fields and native builtin/module
+namespace descriptors. Dict item iteration and native string comparison avoid
+key protocols; native string normalization removes subclasses before hashing
+or formatting. Module lookup, source prefix/slicing, code attribution and
+integer-identity worker admission invoke no user metadata protocols. Builtin
+qualnames use native name/owner slots and the native type qualname slot; the
+builtin qualname getter can itself invoke a metaclass and is not used. Native
+GC edges on the exact builtin base type retain hidden static owners.
+Callbacks never inspect the Python local `self`, frame locals, or a locals proxy.
+
+At entry and exit the reference walk starts at **every module object** in the
+frozen namespace, the fake Spanner module, explicit harness roots, and the
+frozen leg's supplied call arguments (including the request body). It follows
+`gc.get_referents()` recursively with a strong visited-id map. Cycles terminate;
+the **2,000,000-object bound raises**, never silently truncates a walk. Retaining
+the visited objects prevents identity reuse. There is no user-container protocol
+iteration, overridden property evaluation or `__getstate__` invocation.
+
+`tp_traverse` supplies the edges for dict keys/values, slots, closures, partials,
+bound methods, mapping proxies, class dictionaries, descriptors, dataclass
+fields/defaults and GC-visible C containers. Known atomic references require
+supplements, each demonstrated by a test asserting that raw GC returns no
+referents despite retaining a Python object. Native code member descriptors
+expose `co_consts` and metadata, including string/bytes subclasses with held
+callbacks. Native `datetime`/`time` descriptors expose `tzinfo`; native
+`timezone` methods expose the retained offset and name. These accessors avoid
+subclass properties. The atomic-constants, atomic-metadata and atomic-tzinfo
+tests run on 3.11, 3.12.3, 3.13 and 3.14.6; removal mutations cover every demonstrated field.
+
+Native frame references also need a supplement: CPython 3.11–3.14 can omit a
+running frame's locals from GC, and detached suspended generator frames have
+the same gap. These are held Python objects inside the existing reference scope.
+
+| Reached object | Native traversal |
+|---|---|
+| Frame | Always follow `gc.get_referents(frame)`, including extra-locals dictionary keys and values and exec-supplied locals mappings. Add `f_globals`, `f_back`, `f_code`, and `f_trace`. On CPython 3.13/3.14, when `type(f_locals)` is the sealed native `FrameLocalsProxy`, add both keys and values through native `items()` iteration, without key lookup, copying, or calling user mapping methods. On CPython 3.13+, an exact plain `dict` from a non-optimized running exec/class/module frame is enqueued into the normal bounded native walk; custom mapping types require a demonstrated native GC identity edge from the frame or reject explicitly. On CPython 3.11/3.12, never read `f_locals`: require native locals traversal through an owned finished frame or a reached generator/coroutine owner. Otherwise reject with `opaque frame`; discount any `f_trace` code edge when proving ownership. Honor the locals dictionary's registry identity boundary (module frames can expose globals as locals); explicit module roots override that boundary. The supplement never replaces GC edges or continues past them. Existing module-registry identity boundaries apply to every edge; the strong visited map bounds cycles. |
+| Traceback | Follow `tb_frame` and `tb_next`, in addition to GC edges. Every reached frame receives the frame supplement. |
+| Generator / coroutine / async generator | Follow `gi_frame` / `cr_frame` / `ag_frame`, respectively, in addition to GC edges. The native types cannot override these attributes. |
+| Exception | Follow native `BaseException` descriptors for `__traceback__`, `__context__`, and `__cause__`, in addition to GC edges, without invoking subclass properties. |
+
+The reference walker never enumerates interpreter stacks or calls
+`inspect.currentframe()` / `sys._current_frames()`. A frame must be held by the
+existing frozen-module, fake-IO, harness or call-argument roots (or by another
+reached object/frame). The deliberately live comparison leg is never an audit
+root. The separate worker-refusal/profile checks retain their existing stack
+inspection. Every reached `f_code` gets the same live-filename check as any other
+code object. Frame/traceback/generator skip mutations verify these paths.
+Detached-frame cell/free-variable witnesses additionally pin materialized slots
+without retained nested functions or caller-frame alternate paths.
+The sealed proxy type is discovered from a disposable unstarted generator
+because gate CPython 3.14.6 does not export it from `types`; the walker never
+looks up the current frame. There is no special frame-builtins edge exclusion:
+existing registry identities bound traversal, preserving all prior GC edges.
+The asserting **2,000,000-object** bound is unchanged.
+
+Every reached function **and code object** is checked against the live source
+path using native string comparisons; namespace provenance also rejects live
+generated definitions. Changing a function's module label or overriding a
+filename subclass's comparison methods does not hide its source filename.
+
+Provenance reads use native class/module dictionaries and sealed function/cache
+types. Actual-type checks avoid overridden `__class__` properties, and native
+string comparisons avoid overridden namespace comparisons. This keeps the
+audit from invoking a provenance property that removes a nested held cache
+before the GC walk visits it; a dedicated negative witness and mutation retain
+that previously undetected construction. Native dictionary-item iteration and
+string comparisons prevent metadata-dictionary methods or metadata-key equality
+from removing held references. Class labels are memoized only within one audit
+using identity keys; graph edges and callable results are never memoized.
+
+The graph has explicit **external process-registry boundaries**, represented by
+object identity, not by container kinds: registered external module dictionaries,
+`sys.modules`, the logging registry and its registered logger objects. Frozen and
+fake-Spanner module dictionaries are included. An explicit root overrides a
+registry boundary, including a module dictionary or registered logger supplied
+directly. Synthetic function globals that are not registered external module
+dictionaries are ordinary held state and are traversed. These boundaries are
+necessary in a shared interpreter: even a clean frozen module reaches
+`__builtins__ -> frozen_import -> globals -> sys -> sys.modules -> live modules`.
+The boundary/override regression test documents this limitation; **unrestricted
+reachability across these registries is not claimed**.
+
+Reachable functools cache wrappers (`__wrapped__` and `cache_info`) are identified
+by their sealed native type without attribute lookup, and collected
+before clearing, including nested cache keys/results. Both router namespaces and
+the harness participate in cache clearing. Only caches registered in typing's process-wide cleanup registry, including
+`typing.Annotated`, are purged first because they retain the preceding live
+leg's schemas; wrapped functions and captures remain inspected. On Python 3.14 typing looks up caches through a global registry, so the cleanup
+registry supplies those otherwise unheld cache objects too. An explicitly
+supplied cache root overrides that normalization. All other
+cache state, including externally labelled callback caches, is inspected before
+clearing. Every collected cache is then cleared through the native cache descriptor before
+entering the frozen leg, even if the instance shadows its `cache_clear` method. A live wrapped function is rejected even
+when a warmed cache would otherwise avoid executing its body. The per-callable
+profiler remains the independent execution layer.
+
+Weak referents are covered by an additive native supplement: the unbound
+`weakref.ReferenceType.__call__` resolves live targets and ignores dead refs.
+It also resolves subclass targets without dispatching overridden `__call__`,
+including the instance side of `WeakMethod`; GC exposes that object's function
+ref. `WeakSet`, `WeakValueDictionary`, `WeakKeyDictionary` and `finalize` expose
+internal refs through GC edges (for `finalize`, through its class registry).
+Resolving these refs also exposes live-leg classes memoized by shared dependency
+ABC `isinstance`/`issubclass` checks. Before reference audits, the harness resets
+only the positive/negative ABC caches of classes registered in external module
+dictionaries, using native `_abc._reset_caches` through a plain carrier to avoid
+metaclass dispatch. Like typing-cache normalization, this removes shared runtime
+memoization rather than skipping graph edges. Virtual subclass registrations,
+router/frozen/test-owned classes and explicitly supplied class/cache roots are
+preserved and inspected. Five controls prove normalization and each preservation
+case. This does not add an exclusion or weaken the object bound.
+Both `ProxyType` and `CallableProxyType` **fail closed** with an explicit guard
+failure: Python has no safe native target accessor, and on gate CPython 3.14.6
+`gc.get_referents` returns no proxy target. A harness that needs a proxy must
+hold the strong object instead. No proxy method or weakref override is executed.
+
+The reference scope is **all Python-visible GC referents plus the native frame,
+atomic fields and weak referents above from the roots, up to the explicit external-registry boundaries**, with an
+asserting object bound. Thread execution is covered by all-thread profiling on
+Python 3.12+, guarded worker bootstraps, rejection of reachable prebound native
+starters, and refusal of pre-existing application workers. Older Python uses
+the same admission restrictions and guarded bootstraps without retroactive
+all-thread installation. The worktree and CI venv are Python 3.12.3; the additional matrix covers 3.11, 3.13 and 3.14.6.
+The following exclusions explain the limits of that scope:
+
+| Exclusion | Reason |
+|---|---|
+| `ctypes` / native memory outside Python-visible objects | `tp_traverse` cannot enumerate references an extension does not expose to Python's GC. |
+| External processes and process registries across the boundaries above | Another process has a separate object graph; shared interpreter registries contain the deliberately live comparison leg and pytest infrastructure. Explicit roots override registry boundaries. |
+| Computed lookups that resolve a name only at call time without holding a reference | There is no held object edge to traverse before the lookup executes. |
+
+Python callbacks executed on admitted, profiled threads remain subject to the
+profiler. A native starter acquired through an excluded computed lookup without
+a held reference has no reference-audit guarantee; on CPython 3.14 a partial can
+also suppress its C-call event. The harness and profiler infrastructure are trusted.
+Describe a missed case as an **undetected construction**.
+
+All **44** principal constructions have detecting witnesses: the earlier 14,
+plus a warmed cache inside a nested mapping in a slot, a live cache held in code
+constants, a live cache in a frozen closure, a live callable in a frozen class
+dictionary via a descriptor, and a live cache in a nested tuple inside a
+frozenset inside a dataclass default. Code constants and closures are separate
+cases. A further witness covers an unused live callable retained in a copied
+fixture globals dictionary; the protected-header fixture now passes only its
+required data, SDK key type and frozen classes to its callbacks. Further cases
+require inspection of an external callback's cached live result and a shared
+typing cache supplied as an explicit root, plus warmed live caches in the native
+`tzinfo` fields of datetime and time objects. Seven more cover held caches in
+code filename/name/qualified-name/line-table/exception-table metadata and
+timezone offset/name objects; another covers overridden filename comparisons.
+Another witness holds a live cache behind a provenance property that would
+remove it if evaluated; two more cover metadata dictionaries and keys that would
+remove a cached live result if their methods were invoked. Round 8 adds an
+active frame attached to a frozen module, an exception traceback, a suspended
+generator's `gi_frame`, a coroutine's `cr_frame`, and a traceback retained only
+through exception `__context__`. All five require preflight reference detection.
+Round 9 adds an extra-local key in a detached suspended generator frame, an
+exec frame retaining a dict-subclass locals mapping whose `values()` is empty,
+a live producer used as a key in an ordinary frozen-module global dictionary,
+and a proxy-locals key with that frame's redundant GC edges deliberately omitted
+to isolate the native supplement. The first three use unmodified GC. All four
+require preflight rejection with the independent cache still warm, zero hits
+and no custom mapping protocol calls. Two mutations separately continue past
+frame GC edges and omit proxy keys (values only).
+Round 10 adds ten dormant weak-reference witnesses: an exact ref, a ref subclass
+with inherited native call, an overridden-call subclass, weak value/key
+dictionaries, a weak set, a weak method, a finalizer and both weak proxy types.
+Each attaches only the constructed root to a frozen module and requires preflight
+rejection with the independent cache still warm, zero hits and no override or
+finalizer calls. Container witnesses also verify GC paths to their internal refs;
+a dead-ref control requires no target edge. Three mutations skip weak targets,
+dispatch an overridden weakref call and accept weak proxies.
+The new cache witnesses use
+independent warmed wrappers and remain dormant
+inside the guard, so the reference layer itself must detect them. Mutation rows
+stop individual graph kinds, remove the code supplement/bound/provenance check,
+or remove the relevant thread/execution check, and must make the corresponding
+witness fail. Additional existing tests cover partial arguments/keywords,
+Pydantic validators, cached results, raw joinable APIs and native worker cleanup.
+
+`test_production_import_fence` statically scans imports in **every** live Python
+module, including imports inside functions and literal dynamic imports, banning
+`tests` (and all children) and `frozen_main`. A fresh interpreter separately
+checks that importing `trusted_router` does not load the snapshot loader/alias.
+The reviewer's copied-module reverse import is rejected by the same scanner and
+is retained as a C-table mutation. Computed dynamic import strings are outside
+the static fence; the fresh-import check covers only the package import path.
+Only external library machinery remains shared: Python builtins/stdlib
+(including dataclass generation, enum, decimal, JSON, datetime, threading),
+FastAPI/Starlette/AnyIO/httpx for in-process HTTP, Pydantic for schemas/settings,
+and installed Google/other SDK types. These supply runtime mechanisms, not live
+router billing policy. The fake Spanner IO engine in `tests/fakes/spanner.py`
+remains shared as the deterministic SQL interpreter; **real** SpannerStore and
+feature-store methods all come from the snapshot. Test-owned clocks, lease UUID,
+catalog inputs, crash injections and trace callbacks control both legs equally.
+Fixture seed preparation happens before the comparison. The complete execution
+inventory, per-callable source location and file pin are recorded in
+[the regenerated BASE inventory](../async-settle-frozen-main-inventory.md), with machine-readable
+rows beside it. Inventory records are evidence, never an execution allowlist.
+
+The differential compares response contents, actual SQL parameters and serialized
+payloads, not merely execution labels. Both activity and benchmark outboxes are
+enabled. The generation cost, finalized-input and generation TTL mutations remain
+independent witnesses; Round 4 adds ordinary native-batch cost +1 and ordinary
+partner-free classification mutations. Their frozen legs retain baseline amounts.
+
+| Entry path | Flags: admission/protection | Oracle evidence |
+|---|---|---|
+| `/settle` and `/refund`, no negotiation header | false/false | F1 `complete_entry[*-no_header_off-*]` |
+| Both routes, `async-v1` header and ordinary legacy body | false/false | F1 `complete_entry[*-header_off-*]` |
+| Both routes, no header | false/true | F1 `complete_entry[*-no_header_protected-*]` |
+| Snapshot header with protection on, admission off | false/true | F1 `test_frozen_main_protected_header_rejection` (both routes), plus PR C `test_snapshot_dispatch_after_admission_rollback`; recovery/rejection is not legacy entry |
+| Pre-C claim/refresh/enqueue and unresolved finalize | false/false | `test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace` (c2c8f606) |
+| Dormant scheduler/error/park/dead/clamp/budget | off | `test_async_settle_drain_oracle.py::test_flag_off_frozen_drain_sql_state_response` (ecb79459) |
+| Authorize/reserve and one-commit finalize | off | `test_async_settle_authorize_oracle.py`, `test_settle_c1_oracle.py` |
+
+F1 has 28 positive cases × 2 routes × 3 flag/header states × 2 commit paths =
+**336 full-path differentials**, plus two protected-header rejection differentials. Inline mode includes the atomic done INSERT. Repair mode
+crashes after durable enqueue, advances the clock beyond the existing 60-second
+initial delay, then drains through real finalize and retention. Comparisons
+include response (excluding timing), intermediate and final durable dictionaries,
+SQL **bytes**, parameters, types, batch boundaries, mutations and RPC deltas.
+No expected billing algorithm is substituted for frozen behavior.
+
+#### Four-path pricing evidence
+
+| Paths | Compared fields | Scenario coverage |
+|---|---|---|
+| legacy sync; async enqueue+drain; duplicate same body then drain; fresh snapshot-sync | credit total_usage; key usage; both released holds; reservation actual/settled; authorization settled/cost/outcome/generation ID/finalized model; generation amount/model; intent model/selected endpoint; repair and persisted usage as detailed below | All 28 positive vectors, including zero usage/rates, cache conventions, tier boundaries and last-tier fallback |
+| Same four paths | async payload/snapshot hash exactness; absence of hashes on legacy rows; done/body clearing/terminal_at; no outbox row for fresh snapshot-sync | Same 28 vectors; F1-001 separately records fresh-sync reservation retention failure |
+| Same four paths | Same fields and window usage/negative balance where applicable | Five independent axes: catalog change, endpoint removal, debt, deleted key, day/week/month rollover |
+
+Usage expectations come directly from each vector's `expected_normalized_usage`,
+not from the handler, live normalizer or record builders. The assertion matrix
+applies to all four paths for every positive vector and successful scenario:
+
+| Usage component | Actual repair payload | Persisted generation | Authorization finalization record |
+|---|---|---|---|
+| Input | `actual_input_tokens`: uncached for Anthropic, total prompt otherwise; independently reconstruct both normalized input counts | `tokens_prompt` = normalized total prompt | `finalized_input_tokens` = normalized total prompt |
+| Cached input | `cache_read_input_tokens` = normalized cache-read | `cached_input_tokens` | `finalized_cached_input_tokens` |
+| Cache creation | `cache_creation_input_tokens` = normalized cache-creation; participates in reconstructed total/uncached input | Included in total prompt; no separate cache-creation field exists | Included in finalized input; no separate cache-creation field exists |
+| Output | `actual_output_tokens` = normalized output | `tokens_completion` | `finalized_output_tokens` |
+| Reasoning | `reasoning_tokens` = normalized reasoning | `reasoning_tokens` | `finalized_reasoning_tokens` |
+
+The proof observes actual constructed `SettleOutboxRow` payloads on every path,
+including legacy's inline-done intent and snapshot-sync's transient repair row.
+For enqueue/drain and duplicate/drain it additionally reads the durable JSON
+before completion clears it. Every observed payload is checked; duplicate replay
+must preserve the whole durable state. Generation and authorization assertions
+read back the stored records. Endpoint-removal's rejected legacy leg instead
+requires unchanged state. This tests the existing storage shape without inventing
+separate persisted cache-creation fields.
+
+There are **33 four-path runs / 132 path executions**. Catalog-change axis:
+legacy books 5 microdollars and the three snapshot paths book 2. Removal axis:
+legacy returns HTTP 400 with unchanged durable state; snapshot paths book 2.
+These are deliberate exact divergences, not forced equality. Fresh snapshot
+sync creates no durable intent; legacy rows have no snapshot/payload metadata.
+The deleted-key case removes the typed key row and key entity after authorize;
+settlement still releases credit and finalizes the committed invocation.
+The rollover axis ages all three key spend windows while retaining the held
+credit reservation; the credit ledger itself is cumulative, without a period
+reset. Existing C1 clock-boundary tests cover a rollover during a transaction.
+
+#### §7 boundary map
+
+Test IDs without a filename are in `test_async_settle_handler.py`, unless
+prefixed F1 (`test_async_settle_proof_faults.py`). Existing evidence is referenced
+rather than duplicated.
+
+| §7 row | Test ID / limit of evidence |
+|---|---|
+| Crash before INSERT commit | F1 `test_transaction_fault_retry_identity[before_commit]` |
+| Crash after commit before response | F1 `test_transaction_fault_retry_identity[after_commit]`; same-key replay |
+| Lost commit response / unknown outcome | F1 `test_transaction_fault_retry_identity[lost_commit]`; `test_unknown_commit_retry_same_identity`; retry INSERT then original-state point-read |
+| Enclave crash after pending | F1 fault test drains with no client continuation; `test_drain_and_status_ownership`; actual enclave process kill belongs to E/G |
+| Enclave crash before handoff | Outside router durability; no INSERT means no router responsibility. E/G must prove client redelivery; F1 makes no durability claim |
+| Duplicate same body | F1 four-path `duplicate`; `test_duplicate_conflict_expired_and_immutable` |
+| Corrected/different payload | `test_duplicate_conflict_expired_and_immutable`, `test_accepted_amount_survives_evaluator_disagreement` |
+| Sync fallback overlaps accepted | `test_sync_reconciles_accepted_intent_before_evaluation`, `test_sync_fallback_does_not_impersonate_worker_lease` |
+| Reaper or sync before insertion | PR C `test_interleaving_sweep`, `test_concurrent_enqueue_vs_terminal`; native `test_native_overlapping_async_transactions` |
+| INSERT before reaper | `test_enqueue_wins_reaper_and_legacy_fence`; native overlapping test |
+| Drain crash before finalize | PR D `test_concurrent_claims_and_owner_crash_fences`; lease remains pending; stale owner cannot mark/park |
+| Drain crash after finalize before mark | F1 `test_finalize_commit_crash_before_mark`: committed counters survive lease expiry; new worker repairs body clearing/retention without another charge |
+| Lease expiry / old worker | PR D `test_concurrent_claims_and_owner_crash_fences` (strict `<`, equality cannot reclaim); `test_batch_tail_expired_claim_never_applied` |
+| Backlog/SLO | F1 `test_two_replica_stale_cap`; PR D health freshness and adversarial health matrices; no measured SLO claimed |
+| Pause / latch / key deletion | D3 table below; F1 deleted-key settlement axis; no claim that an already executed invocation is revoked |
+| Refund / sibling winner | F1 `test_concurrent_sibling_refund_full_money`; native `test_native_sibling_refund_first_claimant`; PR C `test_sibling_refund_reports_charge_winner` |
+| Typed store unavailable / deterministic error | F1 `test_typed_unavailable_holds_and_recovers`; `test_settle_outbox_drain.py::test_deterministic_apply_error_parks_without_burning_attempts`; frozen drain error/park/dead matrix |
+| Ticket lifetime / expired lookup (additional §9) | `test_async_settle_ticket.py::test_ticket_lifetime_above_300s_is_rejected_at_signing_and_verification`; `test_expiry`; PR C expired duplicate and expired snapshot-sync tests |
+| Done-body clearing (additional §9) | F1 four-path matrix; retention mutation below |
+
+The fake sibling race overlaps completed money transactions immediately before commit.
+
+The native sibling test starts both read-write transactions before either
+claim, retries Spanner aborts, and verifies the single reservation winner and
+actual amount. Its fake counterpart checks full ledger release and final
+outbox polarity. The native test uses `native_emulator_resources`, skips without
+an emulator, and must run in CI. A fake serialization model alone is not
+native-Spanner evidence.
+
+#### D3 propagation audit
+
+Paths below are relative to `src/trusted_router`; line references refer to the
+original F1 audit at `f83bbaac` (historical source-line citations). Bounds start **after the relevant write
+commits**, and concern subsequent decisions, not requests already in flight.
+
+| Cache or visibility boundary | TTL / lag | Pin / evidence | Bound or qualification |
+|---|---|---|---|
+| Local folded key/workspace lookup, `storage_gcp.py:2564`, gateway `:804`, `:812`, `:848` | No positive process cache; strong snapshot | Existing folded authorize operations tests; frozen authorize oracle | Next new strong read sees committed deletion/rotation/pause; an older in-flight read may finish |
+| Credit reserve and pause predicate, `storage_gcp_authorize.py:605–637`, `:726` | Transactional authoritative counters; no balance cache | C1/authorize differentials; conformance | Serializes against counter writes; pause predicate follows the existing trust setting |
+| Exhausted-key negative LRU, `storage_gcp_authorize.py:200`, `:236` | No time expiry; hit rechecks authoritative state | Existing key lifetime precheck tests | No cached positive authorization; cannot extend revoked access |
+| Credit shard-count cache, `storage_gcp_credit_shards.py:19`, `:55`, `:138` | `DEFAULT_CACHE_TTL_SECONDS=60` | F1 `test_local_ttl_pins` | Layout only, not cached credit/trust values; old prefix can cause conservative denial |
+| Workspace pending/trust/pause/latch admission, `services/async_settle.py:35`, `:83–105`; query `storage_gcp_async_admission.py:14–28` | `CACHE_SECONDS=5`, timestamp at read start | F1 local TTL / two-replica stale-cap tests; B freshness tests | Accepting old eligibility for strictly less than 5 s is intentional; stale/failed refresh is false |
+| Fleet publish claim, worker settings and `storage_gcp_async_admission.py:97` | Default ≤2 s between claim opportunities | F1 local TTL pin; PR D fleet cadence tests | A scheduling interval is not a successful-publication latency guarantee |
+| Fleet consume, `services/async_settle.py:71`; decode `:179` | At most one refresh per second; source timestamps expire at 5 s | F1 `test_auxiliary_cache_and_health_cadence_pins`; PR D non-rejuvenation tests | Healthy nominal publish+consume lag ≤3 s plus IO; failed/slow publication instead becomes ineligible at source age 5 s |
+| Ticket validity, `async_settle_ticket.py` | `MAX_TTL_SECONDS=300` | F1 local TTL pin; existing signer/verifier lifetime tests | Not a revocation cache: expired lookup can identify existing work, never admit a new async intent |
+| Legacy/fast worker lease, `services/settle_outbox_drain.py:38`, Settings | Default 300 s | F1 local TTL pin; PR D equality/takeover test | Recovery delay, not authorize visibility; current defaults do not prove the 60 s SLO |
+| Outbox absence capability cache, `storage_gcp_authorize.py:1087` | Negative 5 s, positive until process restart | F1 auxiliary pin | Schema availability only; no customer authorization facts cached |
+| Broadcast-empty cache, gateway `:302`, `:2699` | 60 s | F1 auxiliary pin; existing broadcast TTL tests | Notification side effect only; not authorization eligibility |
+| Foreign-key metadata, `services/federation.py:55`, `:58`, gateway `:3102–3167` | Soft 900 s; hard 86400 s during home failure | F1 `test_federation_excluded_from_async` | **Outside D3 async scope**: nonlocal authority cannot obtain a ticket or new async acceptance (§2) |
+| Federation negative lookup, `services/federation.py:62`, `:213` | 60 s | F1 auxiliary pin / federation exclusion invariant | **Outside D3 async scope**; can delay recognizing a newly valid foreign key |
+| Spanner commit → new strong snapshot / transaction | Commit visibility; no application replication TTL | Code uses `snapshot()` without stale-read options; native conformance | Not a local wall-clock RPC/outage bound; prior in-flight snapshots may predate commit |
+| Serving regional replicas of one authority | Independent process caches, same strong authority database | F1 two-cache disagreement model | Cache ages are per process, not a fleet cap or coordinated invalidation |
+| Independent regional/cloud authority instances | No common credit ledger; federation metadata revalidation above | Standalone-deployment decision record | No invented global visibility guarantee; PR G regional fault measurements required |
+| Mounted ticket trust/signing config and feature settings | Loaded into application runtime; rollout/restart propagation | B load-runtime and rollout pins | Not an API-key revocation TTL; no bounded fleet rollout time proven locally |
+
+For the **local async cohort**, new key/workspace authorization has no positive
+cache lag after a strong read; cached async eligibility/health can remain true
+for **<5 seconds**. A conservative inventory bound including shard-layout and
+negative-discovery delays is **60 seconds**, not a sum: those caches do not
+serially refresh one another's positive authorization evidence. Healthy health
+publication plus consumption is nominally 2+1 seconds, but source-age rejection,
+not an IO latency assumption, provides the five-second fail-closed rule.
+
+D3 applies to the **local async cohort**, not federation (§2). Both requested
+nonlocal authority and a nonlocal reservation reject ticket issuance; even an
+otherwise valid local ticket presented with federated observed authority cannot
+obtain new async acceptance. Federation's cache TTLs therefore do not violate D3.
+Configuration rollout has no local fleet bound, and local tests cannot measure
+regional partitions, scheduler stalls or process convergence.
+The actual serving configuration must be checked by PR G. Key deletion does
+not cancel already accepted/executed billing; async settle verifies the bound
+ticket and current admission evidence, not a fresh customer-key lookup. An
+abuse latch changes trust/async eligibility; it is not necessarily a ban on
+ordinary synchronous inference. The audit must not conflate these decisions.
+
+#### Cap semantics and pins
+
+`services/async_settle.py::TIER_CAPS` is exactly
+`{2: 25_000_000, 3: 100_000_000}`. Tier 1 is ineligible. The effective threshold
+is **`pilot_cap or TIER_CAPS[tier]`**, not `min(pilot_cap, tier_cap)`: zero selects
+the tier threshold; any nonzero configured pilot threshold overrides it,
+including an override above the tier value. Admission is **inclusive** at the
+threshold (`pending_micro <= threshold`); the next microdollar is rejected.
+`admission_reason` reports `not_eligible` for tier 1 and `cap_exceeded` above
+that same threshold. F1 `test_cap_semantics` pins 3 tiers × 3 overrides × 3
+boundary values = 27 cases, including a $200 override.
+
+The query counts workspace-owned pending and dead rows, including active
+leases, legacy rows with workspace ownership and NULL-created rows. It does
+not count done rows or rows with NULL/different workspace ownership. Its inner
+`LIMIT 1001` is a fail-closed sentinel above `ROW_LIMIT=1000`; it is not a
+partial sum accepted as complete. F1's fake-backed count test and native
+`test_native_admission_counts_leased_and_dead_excludes_terminal_and_null` pin
+these facts. Five-second-old cache entries cannot authorize from stale facts;
+a successful fresh read may re-enable eligibility. Read failures remain false.
+
+As §6 states, **`pending <= C + sum(actual_i for i in I)` is an admission/lag
+guard, not a linearizable cap**. Multiple serving caches and already-issued
+work can exceed C by many requests. No numeric C-only exposure bound follows.
+The $5 pilot versus $25/$100 tier policy, and guard versus coordinated hard cap,
+remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
+
+
+#### Mutation witnesses
+
+| Required class | Mutation witness |
+|---|---|
+| INSERT uniqueness | C `insert-uniqueness-fake`; native overlapping INSERT test |
+| Preserve-existing | C `preserve-existing` |
+| Payload equality | C `refresh-conflicting-payload`, `drop-hash-comparisons` |
+| Signature/binding | B `skip-jws-purpose`, `drop-key-id-binding` |
+| Exact amount | C `amount-comparison-removal` |
+| Ordinary native-batch cost helper | C `oracle-native-cost-plus-one` |
+| Ordinary partner billing classification | C `oracle-ordinary-partner-free` |
+| Persisted selected model identity | C `persist-wrong-model` |
+| Independent generation builder | C `oracle-generation-amount-plus-one` |
+| Independent authorization finalization builder | C `oracle-finalization-input-plus-123` |
+| Finalized output usage | C `handler-zero-output-usage` |
+| Exact HTTP error literal | C `error-envelope-message` |
+| Admission predicate | C `skip-admission-recheck`, `atomic-settled-predicate` |
+| Lease fence | D `remove-claim-lease-fence`; PR D owner-conditioned mark/park checks |
+| Reaper guard | C `reaper-guard`, `claim-not-exists` |
+| Retention clearing / generation TTL | D `retention-body-clear`, `generation-future-terminal-at` |
+| Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
+
+The executable tables contain B **10**, C **112**, and D **14** mutations
+(**136 through Round 12**, retaining all 72 Round-6 rows; Round 13 added five,
+and Round 14 adds interpreter-specific profiling/locals rows). Round 7 added 44 reference and
+execution-guard mutations; Round 8 retained ten reviewer live-side edits and
+added three frame-path mutations. Round 9 adds the two frame-regression rows.
+Round 10 adds three weak-reference rows. Round 11 adds
+`skip-prebound-starter-rejection` and `partial-starter-not-unwrapped`, both
+witnessed by the frozen-module-held partial starter before guard entry.
+Round 5 incorporates the ten
+independent seed-4 reviewer edits, both money-changing thread/cache bridges,
+and the production-import witness. Round 4 added both ordinary-cost
+helper corruptions, witnessed by
+`test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]`,
+and the wrong-model intent, witnessed by
+`test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
+The generation/finalization builder and handler output corruptions remain.
+Collection/import errors never count as detected mutations. See the
+[Round-11 verification report](../async-settle-pr-f1-round11.md) for current results
+and the reviewer witness matrix; the Round-4 model-identity assertions remain.
+
+The fake now explicitly requires the claim's `NOT EXISTS`, the atomic
+reservation's `settled=false` (existing check retained), the enabled immutable
+refresh fence, the sparse `unresolved_at IS NOT NULL` predicate (existing check
+retained), both control primary-key predicates, and the admission `LIMIT 1001`
+sentinel. `test_fake_rejects_dropped_predicate` executes the real builder output
+first, then deletes one predicate at a time and requires the fake to reject it.
+The refresh expectation is explicit on the test database, so historical
+flag-off frozen SQL remains valid.

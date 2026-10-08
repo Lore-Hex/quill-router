@@ -41,11 +41,21 @@ MUTATIONS = [
      [('"TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="',
        '"TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE=${TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE:-}"')],
      'tests/test_async_settle_ticket.py::test_rollout_never_inherits_key_file'),
+    ('cap-arithmetic-exclusive', 'src/trusted_router/services/async_settle.py',
+     [('value.pending_micro <= (pilot_cap or TIER_CAPS[value.tier])',
+       'value.pending_micro < (pilot_cap or TIER_CAPS[value.tier])')],
+     'tests/test_async_settle_proof_faults.py::test_cap_semantics'),
+    ('pilot-min-instead-of-override', 'src/trusted_router/services/async_settle.py',
+     [('(pilot_cap or TIER_CAPS[value.tier])', '(min(pilot_cap, TIER_CAPS[value.tier]) if pilot_cap else TIER_CAPS[value.tier])')],
+     'tests/test_async_settle_proof_faults.py::test_cap_semantics'),
+
 ]
 
 
 def run() -> None:
     results = []
+    evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
+    evidence.mkdir(parents=True, exist_ok=True)
     # Copies contain the runtime/test dependencies, not an editable install or
     # a Git directory. sys.executable supplies the already-resolved environment.
     with tempfile.TemporaryDirectory(prefix='pr-b-mutations-') as directory:
@@ -69,7 +79,7 @@ def run() -> None:
                 [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--disable-warnings', '-x', test],
                 cwd=target, env=env, capture_output=True, text=True, timeout=300,
             )
-            log = Path('/tmp') / f'pr-b-mutation-{name}.log'
+            log = evidence / f'pr-b-mutation-{name}.log'
             log.write_text(completed.stdout + completed.stderr)
             # Collection/import crashes are not killed mutations. Require the
             # selected test's assertion failure and normal pytest failure code.
@@ -78,7 +88,7 @@ def run() -> None:
             results.append(result)
             print(json.dumps(result), flush=True)
             shutil.rmtree(target)
-    Path('/tmp/pr-b-mutations.json').write_text(json.dumps(results, indent=2) + '\n')
+    (evidence / 'pr-b-mutations.json').write_text(json.dumps(results, indent=2) + '\n')
     assert all(row['killed'] for row in results), results
 
 

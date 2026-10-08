@@ -73,6 +73,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
+  "proof_oracle: expensive frozen-main differential; dedicated CI job without coverage",
   "provider_health: time-sensitive external provider/catalog state; monitored separately from release correctness",
   "catalog_as_built: reads the catalog the data built, without the vehicles tests/catalog_vehicles.py put back",
 ]

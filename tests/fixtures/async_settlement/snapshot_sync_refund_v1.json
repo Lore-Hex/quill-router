@@ -1,0 +1,17 @@
+{
+  "data": {
+    "acceptance": {
+      "status": "duplicate",
+      "payload_hash": "b39848e23c2c264ee89f23ab757ebf8db3b209bb5ab1235facda8924c6f89dd7",
+      "settlement_status": "refunded"
+    },
+    "trusted_router_settlement": {
+      "v": 1,
+      "settlement_id": "auth-v1.refund",
+      "settlement_status": "refunded",
+      "cost_microdollars": 0,
+      "status_url": "/v1/settlements/auth-v1.refund",
+      "poll_after_ms": null
+    }
+  }
+}
