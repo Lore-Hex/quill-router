@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,6 +205,13 @@ type HeartbeatOf struct {
 // and hash, is answered as the heartbeat it repeats, without a second
 // publish. Until the lease's drain log is adopted, each is answered retry.
 func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (time.Time, error) {
+	// A basis whose encoding alone passes a heartbeat record's size is
+	// refused before the lease's lock, at a cost that does not grow with
+	// it: encoding it under the lock would keep a hand-off waiting. The
+	// record's own size is checked once it is encoded, as before.
+	if base64.StdEncoding.EncodedLen(len(hb.Basis)) > maxHeartbeat {
+		return time.Time{}, ErrRejected
+	}
 	l.mu.Lock()
 	h := l.holds[auth]
 	if h == nil {

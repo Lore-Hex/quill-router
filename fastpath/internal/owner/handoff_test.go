@@ -1078,6 +1078,37 @@ func TestALetAfterTheLeaseLeftWaitsForItToStop(t *testing.T) {
 	}
 }
 
+// TestAnOversizedBasisIsRefusedBeforeTheLock: a first heartbeat whose
+// basis no heartbeat record can carry is refused without the lease's lock,
+// so encoding it never keeps a hand-off waiting; one whose basis fits is
+// still taken.
+func TestAnOversizedBasisIsRefusedBeforeTheLock(t *testing.T) {
+	f, _ := releaseFixture(t)
+	a := f.admit(t, 10, true)
+	f.lease.mu.Lock()
+	unlock := sync.OnceFunc(f.lease.mu.Unlock)
+	defer unlock()
+	refused := make(chan error, 1)
+	go func() {
+		_, err := f.lease.Heartbeat(context.Background(), a, HeartbeatOf{GatewaySeq: 1, Hash: sum(a), Usage: 1,
+			Running: 1, Basis: make([]byte, 32<<20)})
+		refused <- err
+	}()
+	select {
+	case err := <-refused:
+		if !errors.Is(err, ErrRejected) {
+			t.Fatalf("an oversized basis: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a heartbeat with an oversized basis waited for the lease's lock")
+	}
+	unlock()
+	if _, err := f.lease.Heartbeat(context.Background(), a, HeartbeatOf{GatewaySeq: 1, Hash: sum(a), Usage: 1,
+		Running: 1, Basis: make([]byte, 1<<10)}); err != nil {
+		t.Fatalf("a basis that fits: %v", err)
+	}
+}
+
 // TestAHandOffLetsGoDuringAFinalDrain: a lease whose final checkpoint's
 // draining write is under way is let go at the hand-off's deadline, not once
 // that write has unwound; Stop waits for it.
