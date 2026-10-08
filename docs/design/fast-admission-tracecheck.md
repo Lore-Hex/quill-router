@@ -83,30 +83,31 @@ of event go into the order:
 - **Database points** are where Spanner serialized an operation: a commit at
   its commit timestamp, a read at its read timestamp. A commit's follows its
   call's request, and precedes its response when the call's outcome was
-  confirmed. A read's precedes its response and follows every commit
-  acknowledged before its request, and may come before the request itself: a
-  strong read may be served at the timestamp of the last write it must see. So
-  a read's timestamp says which state it saw, not when it ran; the read's
-  step, what its caller learns, is at the caller's receipt of its result, and
-  what it read is held to the rows as of its timestamp. A point carries no
-  clock reading. A call that timed out or failed may still have committed, and
-  its caller has no timestamp for it. So, when a run is traced, every
-  read-write transaction of the store also writes one row of an operations
-  journal: the attempt's ID, which the caller chose and recorded with its
-  request, and the commit timestamp. A row proves its attempt committed, at
-  the row's timestamp, whatever its caller learned. Its absence proves the
-  attempt did not commit only once nothing can still commit it: the journal is
-  read after every process has exited and every attempt's deadline has passed
-  by a sealing interval, an assumption the run states; an attempt that read
-  cannot settle is pending, and the events that rest on it inconclusive. Each
-  attempt is its own: a retried append that finds its drain row writes only
-  its journal row, and the original raise and timestamp it returns are checked
-  against the row, never taken as its own point. A statement's
-  `CURRENT_TIMESTAMP` is no database point: Spanner does not take it from
-  TrueTime, and it cannot be compared with a commit timestamp. It is a reading
-  of Spanner's clock, a local event of the transaction's, between the call's
-  request and its commit, and within S of true time like any other reading
-  (A1, §5).
+  confirmed. A read's precedes its response and follows every commit to the
+  rows it reads that was acknowledged before its request, and may come before
+  the request itself, and before a commit to other rows acknowledged before
+  it: a strong read may be served at the timestamp of the last write to its
+  rows. So a read's timestamp says which state it saw, not when it ran; the
+  read's step, what its caller learns, is at the caller's receipt of its
+  result, and what it read is held to the rows as of its timestamp. A point
+  carries no clock reading. A call that timed out or failed may still have
+  committed, and its caller has no timestamp for it. So, when a run is traced,
+  every read-write transaction of the store also writes one row of an
+  operations journal: the attempt's ID, which the caller chose and recorded
+  with its request, and the commit timestamp. A row proves its attempt
+  committed, at the row's timestamp, whatever its caller learned. Its absence
+  proves the attempt did not commit only once nothing can still commit it: the
+  journal is read after every process has exited and every attempt's deadline
+  has passed by a sealing interval, an assumption the run states; an attempt
+  that read cannot settle is pending, and the events that rest on it
+  inconclusive. Each attempt is its own: a retried append that finds its drain
+  row writes only its journal row, and the original raise and timestamp it
+  returns are checked against the row, never taken as its own point. A
+  statement's `CURRENT_TIMESTAMP` is no database point: Spanner does not take
+  it from TrueTime, and it cannot be compared with a commit timestamp. It is a
+  reading of Spanner's clock, a local event of the transaction's, between the
+  call's request and its commit, and within S of true time like any other
+  reading (A1, §5).
 - **Added events** are the environment's steps that no process records:
   Pub/Sub storing a message, a key's delivery moving to another member, a
   time boundary passing. `tracecheck` builds them from the whole trace
@@ -120,8 +121,9 @@ The order's edges are the evidence the spike plan's §6 names:
 - a cause precedes what it caused; a call's request precedes its response; a
   commit's request precedes its database point, which precedes its response
   when its caller learned the outcome; and a read's database point precedes
-  its response and follows every commit acknowledged before its request, but
-  need not follow the request (§3);
+  its response and follows every commit to the rows it reads acknowledged
+  before its request, but need not follow the request, nor a commit to other
+  rows (§3);
 - database points are ordered by their timestamps, the drain log's ties
   broken by record ID; a read follows every commit at or before its
   timestamp and precedes every later one, and what it returned is checked
@@ -205,6 +207,13 @@ state counts updated, and its shadow and the shadow's comparisons with it
     (`Discard`), reads the lease again and applies its kept records again,
     whether the write landed or not, skipping what a landed write made
     durable.
+  - Reads, served and received. A member's read of the lease is two steps: it
+    is served at its timestamp, taking the row's version, status and winners
+    as they were there (`ReadServed`), and the member's receipt of it installs
+    what was served in its view (`Load`, or `LoadWinners` for the winners),
+    whatever writes have landed since. So a member can install a version
+    another member's commit has passed, and its next commit, under that
+    version, is refused.
   - Hand-offs. A chunk advances progress and stages its holds, stored with
     the lease's row from the next commit, so a member that takes the lease
     over has them. The manifest installs them only when every chunk it names
@@ -285,9 +294,13 @@ state counts updated, and its shadow and the shadow's comparisons with it
     though the stored lease is still open and its own (`OwnerAbandons`). The
     lease then expires and drains by time.
   - Tickers. Several tickers may read an expired lease before one marks it;
-    each read is its own, and a refused mark ends only its own.
+    each read is its own, served at its timestamp, which takes the expiry
+    there, and received by its ticker later, as a member's is, a renewal
+    perhaps landing between, when the ticker's mark, conditional on the expiry
+    it read, is refused; a refused mark ends only its own.
   - Views. A process refreshes its view of the workspace whether or not a
-    pause came.
+    pause came, its read served at its timestamp and received later, as a
+    ticker's is.
   - Pauses. A workspace's pause clears and may come again, as a debt mark
     is set and repaid: `Unpause` clears it and a later `Pause` starts a new
     cache window, and an admission is held to the pause its view could have
@@ -428,16 +441,17 @@ either way.
   with `Assign`; one that starts again for the same member is a redelivery,
   or the member's crash where it recorded one. Each is placed before its
   run's first delivery and after that member's delivery before it.
-- **Members.** `Load` and `LoadWinners` at the member's receipt of its read's
-  result, what it read held to the rows as of the read's timestamp (§3);
-  applying, skipping, a tick and a drain row at the member's own steps, in
-  memory; a gap and a reap at their conditional writes, a refused one as its
-  refusal; `CommitLands` at a commit's journal row, with the version it read
-  and the one it wrote, and the member's learning at its answer; `Discard`
-  where the runtime drops the member, after a refused commit or one whose
-  answer it never had, and the read that follows as `Load`; each
-  acknowledgement at the member's acknowledgement of that message; `Crash(m)`
-  at the kill; `Close` at the close's commit.
+- **Members.** `ReadServed` at a member's read's timestamp, with what the rows
+  held there, and `Load` and `LoadWinners` at the member's receipt of that
+  read's result, installing what was served (§3, §4.1); applying, skipping, a
+  tick and a drain row at the member's own steps, in memory; a gap and a reap
+  at their conditional writes, a refused one as its refusal; `CommitLands` at
+  a commit's journal row, with the version it read and the one it wrote, and
+  the member's learning at its answer; `Discard` where the runtime drops the
+  member, after a refused commit or one whose answer it never had, and the
+  read that follows as `Load`; each acknowledgement at the member's
+  acknowledgement of that message; `Crash(m)` at the kill; `Close` at the
+  close's commit.
 - **Other writers.** `Raise` at a raise's or a shortfall write's commit,
   and at an append's raise. `MarkDraining` at its commit. An append's row is
   `FrontDoorAppend`, of its kind, at the later of its commit and
@@ -471,10 +485,11 @@ either way.
   process for the node.
 - **Others.** `Revoke` at the revocation's commit; `Pause` at a workspace's
   pause, and a view's refresh at a process's receipt of its read; each
-  ticker's read at its receipt of the result, the expiry it read held to the
-  lease's row as of the read's timestamp, and its conditional mark, a refused
-  one as its refusal; `CloseOnTheList` or `CloseOnTime` at the close's commit,
-  by the kind it records. `Tick` is time passing between steps (§5).
+  ticker's read served at its timestamp, the expiry the lease's row held
+  there, and received at the ticker's receipt of the result, and its
+  conditional mark, a refused one as its refusal; `CloseOnTheList` or
+  `CloseOnTime` at the close's commit, by the kind it records. `Tick` is time
+  passing between steps (§5).
 - Holds are the run's, keyed by authorization, each one unit as the spec
   has them, open until their terminals are booked. That is not the set
   money is held to: `HoldsFitAllocation` is checked on the owner's books
@@ -495,11 +510,11 @@ an unknown true time, and constrains them:
   call's request and its commit;
 - a database point is at its timestamp. Spanner places a commit's after its
   call's request and, for a call whose outcome its caller learned, before its
-  response, and a read's before its response and after every commit
-  acknowledged before its request, though perhaps before the request itself
-  (§3). A point has no reading of its own, so a reply recorded long after its
-  read is no contradiction, and a commit after its caller's timeout is none
-  either.
+  response, and a read's before its response and after every commit to the
+  rows it reads acknowledged before its request, though perhaps before the
+  request itself and before commits to other rows (§3). A point has no reading
+  of its own, so a reply recorded long after its read is no contradiction, and
+  a commit after its caller's timeout is none either.
 
 These are difference constraints. The time check solves them by shortest
 paths over their graph. With no solution, a negative cycle names readings
@@ -621,8 +636,9 @@ by its own rule. The owner's names its hold's last heartbeat record issued
 before it, by owner sequence number, whether or not that record is durable
 yet, and charges that heartbeat's running charge (§4.2): the owner reaps at
 the snapshot it last issued, and may die before that snapshot or the reap is
-durable. The auditor's names its hold's last durable snapshot, the last
-heartbeat record of the hold its member committed before the reap, and charges
+durable. The auditor's names its hold's durable snapshot as the reap's own
+transaction reads the hold's row, whichever member committed it: a member that
+took the lease over reaps at a snapshot another committed. It charges
 `min(running charge, estimate)` of it, or nothing for a hold listed with no
 snapshot, as `store.Reap` books.
 
@@ -687,27 +703,27 @@ fault, which is already set.
   paths); and each direct check is written again, apart from `tracecheck`'s and
   from its definition, over the raw events: the money ledger summed afresh per
   lease, each reap's amount against its snapshot, the owner's last issued and
-  the auditor's last durable (§7), A3 and A4 per request (§5, §4.2), A4's
-  coverage by every delivery against every answer its gateway had by then, every
-  accepted answer against the owner's decision to give it, made again from the
-  facts the owner recorded with it (§5): its reading of the record's
-  acknowledgement before the cutoff of the expiry it knew then and, if the
-  heartbeat echoed a deadline, by it, its drain log adopted, and the deadline
-  granted the one the owner's rule gives, with the publish result held to the
-  publish deadline, the order's cycles by search, the log and its runs by trying
-  every way the acknowledged publishes and the deliveries could come from one.
-  It reports each assumption broken as §8 says, named as `tracecheck` must name
-  it, K6's control both broken and violated, and goes on without it; then pass
-  if every extension is a run, every timed predicate holds for every solution
-  and the money checks hold; violation if a money check fails, no extension is a
-  run, or a timed predicate holds for no solution; inconclusive otherwise, with
-  the first step that fails in each extension. `tracecheck` may be more careful
-  than the oracle, never less: its pass must be the oracle's pass, its violation
-  the oracle's violation at the step it names, each assumption it reports broken
-  the oracle's, and it may call inconclusive a trace the oracle decides, since
-  its independence table is judged over every state a pair could meet, not the
-  states this trace does. The tests count how often it does, so a table grown
-  too careful shows.
+  the auditor's the durable one its transaction read, whichever member committed
+  it (§7), A3 and A4 per request (§5, §4.2), A4's coverage by every delivery
+  against every answer its gateway had by then, every accepted answer against
+  the owner's decision to give it, made again from the facts the owner recorded
+  with it (§5): its reading of the record's acknowledgement before the cutoff of
+  the expiry it knew then and, if the heartbeat echoed a deadline, by it, its
+  drain log adopted, and the deadline granted the one the owner's rule gives,
+  with the publish result held to the publish deadline, the order's cycles by
+  search, the log and its runs by trying every way the acknowledged publishes
+  and the deliveries could come from one. It reports each assumption broken as
+  §8 says, named as `tracecheck` must name it, K6's control both broken and
+  violated, and goes on without it; then pass if every extension is a run, every
+  timed predicate holds for every solution and the money checks hold; violation
+  if a money check fails, no extension is a run, or a timed predicate holds for
+  no solution; inconclusive otherwise, with the first step that fails in each
+  extension. `tracecheck` may be more careful than the oracle, never less: its
+  pass must be the oracle's pass, its violation the oracle's violation at the
+  step it names, each assumption it reports broken the oracle's, and it may call
+  inconclusive a trace the oracle decides, since its independence table is
+  judged over every state a pair could meet, not the states this trace does. The
+  tests count how often it does, so a table grown too careful shows.
 - **Traces from the machines.** Each step of a machine emits the events the
   runtime records for it, with their facts, clock readings within S, and
   evidence, so a random run becomes a trace. Each is checked as it is, with
@@ -720,9 +736,13 @@ fault, which is already set.
   what random runs may seldom reach: an owner that drains its empty closing
   lease well before its cutoff, its draining write's reply delayed in one
   trace and lost in another; a stream's first heartbeat accepted with no
-  deadline echoed, and a retry of it answered the same; and a strong read
-  served at the last write it must see, its timestamp before its request. Each
-  must pass.
+  deadline echoed, and a retry of it answered the same; a strong read served
+  at the last write to its rows, its timestamp before its request and before
+  another lease's commit acknowledged before the request; a member's read
+  served before another member's commit and received after it, installing the
+  older version, its next commit refused; a ticker's read served before a
+  renewal and received after it, its mark refused; and a member that took a
+  lease over reaping at a snapshot another member committed. Each must pass.
 - **The runtime's own traces,** once the roles record events: the service's
   end-to-end tests and the scenarios of the spike plan's §5, each checked,
   K6's negative control reported as both a broken assumption and a
