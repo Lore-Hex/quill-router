@@ -126,16 +126,6 @@
   font-size: 15px;
 }
 
-.trnav .drawer-signin {
-  display: none;
-  width: 100%;
-  border: 0;
-  background: none;
-  text-align: left;
-  font: 500 15px/1 var(--tr-font-family-sans);
-  cursor: pointer;
-}
-
 .trnav .menu {
   display: none;
   height: 44px;
@@ -273,7 +263,6 @@
   html.js-off .trnav nav { display: flex; position: static; flex-direction: row; flex-wrap: wrap; flex-basis: 100%; gap: 4px 18px; padding: 0; border: 0; background: transparent; }
   html.js-off .trnav nav a { min-height: 40px; padding: 8px 0; }
   html.js-off .trnav .menu { display: none; }
-  html.js-off .trnav .drawer-signin { display: inline-flex; align-items: center; }
 }
 
 @media (max-width: 600px) {
@@ -283,19 +272,11 @@
   .brand-link > span { display: none; }
   .trnav .menu { width: 44px; padding: 0; }
   .trnav .menu > span { display: none; }
-  .trnav .signin { padding: 12px; font-size: 13px; }
+  .trnav .signin.button-primary { min-height: 44px; padding: 0 14px; font-size: 14px; }
 }
 
 @media (max-width: 480px) {
-  .trnav .signin.button-secondary { display: none; }
   .trnav .menu { margin-left: 0; }
-
-  .trnav nav.open .drawer-signin {
-    display: block;
-    min-height: 44px;
-    padding: 16px 0;
-    color: var(--tr-color-accent-base);
-  }
 }
 
 @media (max-width: 360px) {
