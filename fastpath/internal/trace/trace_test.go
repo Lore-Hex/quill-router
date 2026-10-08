@@ -74,8 +74,9 @@ func TestEventsAreNumberedInTheirProcess(t *testing.T) {
 	}
 }
 
-// TestTheClocksAreTheProcesss: an event's monotonic clock is the time since
-// its recorder began, and its wall clock the time, in UTC.
+// TestTheClocksAreTheProcesss: an event's monotonic clock is the time
+// since its recorder began, which a step back of the wall clock does not
+// move, and its wall clock the time, in UTC.
 func TestTheClocksAreTheProcesss(t *testing.T) {
 	var buf bytes.Buffer
 	r, err := New(&buf, "n", 1)
@@ -83,19 +84,24 @@ func TestTheClocksAreTheProcesss(t *testing.T) {
 		t.Fatal(err)
 	}
 	began := time.Date(2026, 10, 8, 12, 0, 0, 0, time.FixedZone("offset", 30))
-	now := began
-	r.start, r.clock = began, func() time.Time { return now }
-	for _, d := range []time.Duration{0, 1500, time.Second} {
-		now = began.Add(d)
+	var wall time.Time
+	var elapsed time.Duration
+	r.wall, r.elapsed = func() time.Time { return wall }, func() time.Duration { return elapsed }
+	steps := []struct {
+		wall    time.Time
+		elapsed time.Duration
+	}{{began, 0}, {began.Add(1500), 1500}, {began.Add(-time.Hour), time.Second}} // the wall clock steps back
+	for _, st := range steps {
+		wall, elapsed = st.wall, st.elapsed
 		r.Record("tick", nil, Facts{})
 	}
 	events, err := Read(bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, d := range []time.Duration{0, 1500, time.Second} {
-		if e := events[i]; e.Mono != d.Nanoseconds() || !e.Wall.Equal(began.Add(d)) || e.Wall.Location() != time.UTC {
-			t.Fatalf("event %d: mono %d, wall %v; want %d and %v", i, e.Mono, e.Wall, d.Nanoseconds(), began.Add(d))
+	for i, st := range steps {
+		if e := events[i]; e.Mono != st.elapsed.Nanoseconds() || !e.Wall.Equal(st.wall) || e.Wall.Location() != time.UTC {
+			t.Fatalf("event %d: mono %d, wall %v; want %d and %v", i, e.Mono, e.Wall, st.elapsed.Nanoseconds(), st.wall)
 		}
 	}
 }
@@ -159,6 +165,8 @@ func TestARecorderReportsItsFailure(t *testing.T) {
 	}
 	for name, record := range map[string]func(r *Recorder){
 		"no kind":          func(r *Recorder) { r.Record("", nil, Facts{}) },
+		"text not UTF-8":   func(r *Recorder) { r.Record("x", nil, Facts{Auth: "a\xff"}) },
+		"a kind not UTF-8": func(r *Recorder) { r.Record("x\xfe", nil, Facts{}) },
 		"a cause no event": func(r *Recorder) { r.Record("x", &ID{Node: "a b", Epoch: 1, Seq: 1}, Facts{}) },
 		"too long":         func(r *Recorder) { r.Record("x", nil, Facts{Detail: strings.Repeat("x", maxLine)}) },
 	} {
@@ -209,6 +217,15 @@ func TestReadTakesOnlyEvents(t *testing.T) {
 		"an identity no": strings.Replace(good, `"epoch":1`, `"epoch":0`, 1) + "\n",
 		"a cause no":     strings.Replace(good, `"kind":"x"`, `"kind":"x","cause":{"node":"","epoch":1,"seq":1}`, 1) + "\n",
 		"cut short":      good[:len(good)-5],
+		"no clock":       strings.Replace(good, `"mono":0,`, ``, 1) + "\n",
+		"a null clock":   strings.Replace(good, `"mono":0`, `"mono":null`, 1) + "\n",
+		"a clock twice":  strings.Replace(good, `"mono":0`, `"mono":0,"mono":99`, 1) + "\n",
+		"a key's case":   strings.Replace(good, `"mono":0`, `"Mono":99`, 1) + "\n",
+		"an alias too":   strings.Replace(good, `"mono":0`, `"mono":0,"Mono":99`, 1) + "\n",
+		"an identity in two": strings.Replace(good, `"id":{"node":"n","epoch":1,"seq":1}`,
+			`"id":{"node":"n"},"id":{"epoch":1,"seq":1}`, 1) + "\n",
+		"an identity's key twice": strings.Replace(good, `"seq":1}`, `"seq":1,"seq":2}`, 1) + "\n",
+		"a null fact":             strings.Replace(good, `"kind":"x"`, `"kind":"x","lease":null`, 1) + "\n",
 	} {
 		events, err := Read(strings.NewReader(good + "\n" + file))
 		if err == nil || len(events) != 1 {

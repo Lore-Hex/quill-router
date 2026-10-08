@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // maxLine bounds an event's line, which Read takes whole.
@@ -99,12 +100,14 @@ type Event struct {
 }
 
 // Recorder records a process's events. A nil Recorder records nothing, so
-// code that records runs without one.
+// code that records runs without one. wall reads the wall clock, and
+// elapsed the monotonic time since the recorder began, which the wall
+// clock's steps do not move.
 type Recorder struct {
-	node  string
-	epoch int64
-	start time.Time
-	clock func() time.Time
+	node    string
+	epoch   int64
+	wall    func() time.Time
+	elapsed func() time.Duration
 
 	mu   sync.Mutex
 	seq  int64
@@ -120,14 +123,17 @@ func New(w io.Writer, node string, epoch int64) (*Recorder, error) {
 		return nil, errors.New("trace: a recorder needs somewhere to write, a node whose name is printable " +
 			"ASCII with no space or slash, and an epoch")
 	}
-	return &Recorder{node: node, epoch: epoch, start: time.Now(), clock: time.Now, w: w}, nil
+	start := time.Now()
+	return &Recorder{node: node, epoch: epoch, wall: time.Now, elapsed: func() time.Duration { return time.Since(start) },
+		w: w}, nil
 }
 
 // Record records an event of kind, caused by cause if it has one, and
 // returns its identity, which a message it sends carries. Each event is
 // written whole, in one write, before Record returns, so a process killed
 // after loses none. A recorder whose writer failed, or that was asked for
-// an event Read could not take back, keeps numbering events and reports the
+// an event Read could not take back as it was, such as one with no kind or
+// with text that is not UTF-8, keeps numbering events and reports the
 // failure at Close.
 func (r *Recorder) Record(kind string, cause *ID, f Facts) ID {
 	if r == nil {
@@ -135,18 +141,18 @@ func (r *Recorder) Record(kind string, cause *ID, f Facts) ID {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// The clock is read under the lock, so a later number is never an
-	// earlier time.
-	now := r.clock()
+	// The clocks are read under the lock, so a later number is never an
+	// earlier monotonic time.
+	wall, elapsed := r.wall(), r.elapsed()
 	r.seq++
 	f.Commit, f.Read = utc(f.Commit), utc(f.Read)
-	e := Event{ID: ID{Node: r.node, Epoch: r.epoch, Seq: r.seq}, Mono: now.Sub(r.start).Nanoseconds(),
-		Wall: utc(now), Kind: kind, Cause: cause, Facts: f}
+	e := Event{ID: ID{Node: r.node, Epoch: r.epoch, Seq: r.seq}, Mono: elapsed.Nanoseconds(), Wall: utc(wall),
+		Kind: kind, Cause: cause, Facts: f}
 	if r.done || r.err != nil {
 		return e.ID
 	}
-	if kind == "" || (cause != nil && !cause.valid()) {
-		r.err = fmt.Errorf("trace: event %d has no kind or a cause no recorder gives", r.seq)
+	if kind == "" || (cause != nil && !cause.valid()) || !text(kind, f.Lease, f.Auth, f.Message, f.Key, f.Outcome, f.Detail) {
+		r.err = fmt.Errorf("trace: event %d has no kind, a cause no recorder gives, or text that is not UTF-8", r.seq)
 		return e.ID
 	}
 	line, err := json.Marshal(e)
@@ -161,6 +167,16 @@ func (r *Recorder) Record(kind string, cause *ID, f Facts) ID {
 		}
 	}
 	return e.ID
+}
+
+// text: each string is UTF-8, which JSON keeps exactly.
+func text(ss ...string) bool {
+	for _, s := range ss {
+		if !utf8.ValidString(s) {
+			return false
+		}
+	}
+	return true
 }
 
 // utc is a time as an event states it: in UTC, as JSON keeps it exactly.
@@ -202,9 +218,9 @@ const Header = "Fastpath-Cause"
 
 // Read reads a process's events, in the order recorded: each line one JSON
 // object, an event as a recorder writes it, with its identity, its clocks
-// and its kind. It returns the events before the first line that is not
-// one, as a process killed as it wrote leaves its last, with that line's
-// fault.
+// and its kind, and its keys as a recorder writes them (strict). It returns
+// the events before the first line that is not one, as a process killed as
+// it wrote leaves its last, with that line's fault.
 func Read(rd io.Reader) ([]Event, error) {
 	var out []Event
 	sc := bufio.NewScanner(rd)
@@ -224,17 +240,75 @@ func Read(rd io.Reader) ([]Event, error) {
 
 // readEvent reads one line as an event.
 func readEvent(line []byte) (Event, error) {
-	d := json.NewDecoder(bytes.NewReader(line))
-	d.DisallowUnknownFields()
-	var e Event
-	if err := d.Decode(&e); err != nil {
+	if err := strict(line); err != nil {
 		return Event{}, err
 	}
-	if d.InputOffset() != int64(len(line)) {
-		return Event{}, errors.New("more than one JSON value")
+	var e Event
+	if err := json.Unmarshal(line, &e); err != nil {
+		return Event{}, err
 	}
 	if !e.ID.valid() || (e.Cause != nil && !e.Cause.valid()) || e.Kind == "" || e.Wall.IsZero() || e.Mono < 0 {
 		return Event{}, errors.New("no event a recorder writes")
 	}
 	return e, nil
+}
+
+// eventKeys are an event's keys as a recorder writes them, true for those
+// every event has; id and cause are identities, with idKeys, all of which
+// each has.
+var (
+	eventKeys = map[string]bool{"id": true, "mono": true, "wall": true, "kind": true, "cause": false,
+		"lease": false, "auth": false, "owner_seq": false, "commit": false, "read": false, "message": false,
+		"key": false, "outcome": false, "detail": false}
+	idKeys = map[string]bool{"node": true, "epoch": true, "seq": true}
+)
+
+// strict reads line's first JSON object, whose keys must be as a recorder
+// writes them: each known, in its case, at most once, and none null, which
+// JSON's decoding into a struct would otherwise take, merging duplicates,
+// matching keys in any case and reading a null as a zero. The decoding
+// that follows takes nothing after the object.
+func strict(line []byte) error {
+	return object(json.NewDecoder(bytes.NewReader(line)), eventKeys)
+}
+
+// object reads one JSON object from d with the keys of keys.
+func object(d *json.Decoder, keys map[string]bool) error {
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return errors.New("not a JSON object")
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		t, err := d.Token()
+		if err != nil {
+			return err
+		}
+		k, _ := t.(string)
+		if _, known := keys[k]; !known || seen[k] {
+			return fmt.Errorf("the key %q, unknown or twice", k)
+		}
+		seen[k] = true
+		if k == "id" || k == "cause" {
+			if err := object(d, idKeys); err != nil {
+				return err
+			}
+			continue
+		}
+		v, err := d.Token()
+		if err != nil {
+			return err
+		}
+		if _, nested := v.(json.Delim); v == nil || nested {
+			return fmt.Errorf("%q is not a string or a number", k)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return err
+	}
+	for k, every := range keys {
+		if every && !seen[k] {
+			return fmt.Errorf("no %q", k)
+		}
+	}
+	return nil
 }
