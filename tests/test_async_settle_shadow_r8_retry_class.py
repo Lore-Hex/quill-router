@@ -25,7 +25,7 @@ from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 
 ORIGINAL_CLASSES = (
     "verified-compatible", "verified-different", "null-hash", "other-kind",
-    "other-region", "retired",
+    "other-region", "retired", "other-stream", "other-adapter", "other-route", "expired",
 )
 
 
@@ -65,7 +65,7 @@ def test_exact_retry_cannot_borrow_an_excluded_original(monkeypatch):
     identity = original["authorization_day"] + "/" + original["authorization_id"]
     db.rows[SAMPLE, identity] = json.dumps(original)
     assert EvidenceStore(db).insert_sample(identity, exact, time.monotonic() + 1) == "conflict"
-    counter = add_retry(rows, "refund")
+    counter = add_retry(rows, "refund", day_index=0)
     validate_counter(counter["id"], counter["body"], partitions=True)
     result = report(rows, days, proof)
     assert result["status"] == "BLOCKED"
@@ -73,7 +73,7 @@ def test_exact_retry_cannot_borrow_an_excluded_original(monkeypatch):
     # Truthfully recording the conflict also blocks, with a correctness reset.
     counter["body"]["duplicate_samples"] -= 1
     counter["body"]["conflicting_samples"] += 1
-    terminal = next(b for b in counter["body"]["terminal_counts"] if b["phase"] == "refund")
+    terminal = next(b for b in counter["body"]["terminal_counts"] if b["phase"] == "refund" and b["duplicate_samples"])
     terminal["duplicate_samples"] -= 1
     terminal["conflicting_samples"] += 1
     result = report(rows, days, proof)
@@ -84,8 +84,16 @@ def original_for(phase, original_class):
     original = observation("refund" if phase == "settle" else "settle") if original_class == "other-kind" else observation(
         phase, charge=999 if original_class == "verified-different" else None,
         failure=original_class == "null-hash")
+    if original_class == "null-hash":
+        original["streamed"] = False  # Isolate missing hash from bucket incompatibility.
     if original_class == "other-region":
         original["deployment"]["region"] = "other-region"
+    if original_class == "other-stream":
+        original["streamed"] = True
+    if original_class == "other-adapter":
+        original["adapter"] = "anthropic"
+    if original_class == "other-route":
+        original["route_type"] = "responses"
     return original
 
 
@@ -93,9 +101,12 @@ def original_for(phase, original_class):
 @pytest.mark.parametrize("original_class", ORIGINAL_CLASSES)
 def test_adapter_retry_original_class(phase, original_class):
     original, retry = original_for(phase, original_class), observation(phase)
+    if original_class == "expired":
+        retry["observed_at_us"] += 3 * 86400_000000
     expected = {"verified-compatible": "duplicate", "verified-different": "conflict",
         "null-hash": "conflict", "other-kind": "winner_polarity", "other-region": "conflict",
-        "retired": "duplicate"}[original_class]
+        "retired": "duplicate", "other-stream": "conflict", "other-adapter": "conflict",
+        "other-route": "conflict", "expired": "proof_expired"}[original_class]
     # Retention is a separate report/write boundary, not payload classification.
     if original_class == "retired":
         for row in (original, retry):
@@ -105,7 +116,11 @@ def test_adapter_retry_original_class(phase, original_class):
     db = Database()
     db.rows[SAMPLE, identity] = json.dumps(original)
     assert retry_classification(original, retry) == expected
-    assert EvidenceStore(db).insert_sample(identity, retry, time.monotonic() + 1) == expected
+    if expected == "proof_expired":
+        with pytest.raises(ValueError, match="^proof_expired$"):
+            EvidenceStore(db).insert_sample(identity, retry, time.monotonic() + 1)
+    else:
+        assert EvidenceStore(db).insert_sample(identity, retry, time.monotonic() + 1) == expected
     assert json.loads(db.rows[SAMPLE, identity]) == original
 
 
@@ -126,13 +141,13 @@ def test_retry_damage_original_class(phase, outcome, delta, original_class):
                 for bucket in row["body"]["terminal_counts"]:
                     bucket["phase"] = "refund"
     original = original_for(phase, original_class)
-    prior = "2026-09-01" if original_class == "retired" else "2026-10-05"
+    prior = "2026-09-01" if original_class == "retired" else "2026-10-03" if original_class == "expired" else "2026-10-05"
     original.update(authorization_day=prior, authorization_id="prior-original",
         authorize_at_us=int(dt.datetime.fromisoformat(prior).replace(tzinfo=dt.UTC).timestamp() * 1e6),
-        observed_at_us=(NOW - 86400) * 1000000)
+        observed_at_us=(NOW - (3 if original_class == "expired" else 1) * 86400) * 1000000)
     rows.append(dict(kind=SAMPLE, id=prior + "/prior-original", body=original))
     assert report(rows, days, proof)["status"] == "PASS"
-    counter = add_retry(rows, phase, outcome, delta)
+    counter = add_retry(rows, phase, outcome, delta, day_index=0)
     if delta < 0:
         with pytest.raises(ValueError, match="counter integer"):
             report(rows, days, proof)

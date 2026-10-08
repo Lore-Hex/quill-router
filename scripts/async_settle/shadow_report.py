@@ -22,7 +22,10 @@ from trusted_router.async_settle_shadow_evidence import (
     DIMENSIONS,
     PHASE_FIELDS,
     SAMPLE,
+    RetryIdentity,
+    original_can_back_retry,
     retry_classification,
+    retry_identity,
     validate_manifest,
     validate_sample,
 )
@@ -227,11 +230,11 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
     # Index ALL supplied rows (including lookback days), independently of the
     # original writer and requested-window metrics. One original can support
     # many retries; an opposite-kind row can only yield winner_polarity.
-    originals: dict[tuple[str, str, str], list[int]] = {}
+    originals: dict[RetryIdentity, list[int]] = {}
     for row in samples:
         if retry_classification(row, row) != "duplicate":
             continue
-        key = (row["booking"]["attempted_kind"], row["deployment"]["region"], row["authorization_day"])
+        key = retry_identity(row)
         originals.setdefault(key, []).append(row["observed_at_us"])
     for times in originals.values():
         times.sort()
@@ -438,10 +441,17 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                     gap(identity+":"+phase+":sample_phase_gap", day)
                 if terminal["duplicate_samples"] or terminal["conflicting_samples"]:
                     oldest = (dt.date.fromisoformat(day) - dt.timedelta(days=30)).isoformat()
-                    has_original = any(
-                        kind == phase and region == counter["region"] and oldest <= auth_day <= day
-                        and bisect_right(times, counter["flushed_at_us"]) > 0
-                        for (kind, region, auth_day), times in originals.items())
+                    has_original = False
+                    for original, times in originals.items():
+                        if not oldest <= original.authorization_day <= day:
+                            continue
+                        position = bisect_right(times, counter["flushed_at_us"])
+                        retry = RetryIdentity(phase, counter["region"], original.authorization_day,
+                            terminal["adapter"], terminal["route_type"], terminal["streamed"])
+                        if position and original_can_back_retry(original, times[position - 1], retry,
+                                counter["started_at_us"], counter["flushed_at_us"]):
+                            has_original = True
+                            break
                     if not has_original:
                         gap(identity+":"+phase+":retry_original_gap", day)
             for key, durable in phase_samples.items():

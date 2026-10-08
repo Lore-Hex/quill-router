@@ -103,12 +103,12 @@ def test_balanced_retry_damage_without_same_kind_original(monkeypatch, phase, ou
 )
 def test_retry_original_scope(monkeypatch, placement):
     rows, days, proof, _, _ = real_exclusion_window(monkeypatch)
-    add_retry(rows, "settle", day_index=0 if placement == "same_writer" else -1)
+    add_retry(rows, "settle", day_index=0 if placement == "same_writer" else 1)
     if placement in {"lookback", "future", "retired", "other_region"}:
         # Keep the clean seed and its insertion counters unchanged. Give a
         # refund retry a separate original outside the requested metric window.
         rows, days, proof, _, _ = real_exclusion_window(monkeypatch)
-        add_retry(rows, "refund")
+        add_retry(rows, "refund", day_index=0)
         original = copy.deepcopy(next(r for r in rows if r["kind"] == SAMPLE))
         original["body"]["booking"].update(attempted_kind="refund", outcome="refunded")
         original["body"]["authorization_id"] = "prior-refund"

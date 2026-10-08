@@ -184,7 +184,10 @@ class EvidenceStore:
             if rows:
                 previous = json.loads(rows[0][0])
                 validate_sample(previous, identity)
-                return retry_classification(previous, body)
+                outcome = retry_classification(previous, body)
+                if outcome == "proof_expired":
+                    raise ValueError("proof_expired")
+                return outcome
             try:
                 self.write(tx, SAMPLE, identity, body, deadline)
             except RetirementBoundary:

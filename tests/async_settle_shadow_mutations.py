@@ -17,9 +17,30 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('retry-streamed-compatibility-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('original == retry', 'original._replace(streamed=retry.streamed) == retry')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_damage_original_class[other-stream-1-duplicate_samples-settle]'),
+    ('retry-adapter-compatibility-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('original == retry', 'original._replace(adapter=retry.adapter) == retry')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_damage_original_class[other-adapter-1-duplicate_samples-settle]'),
+    ('retry-route_type-compatibility-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('original == retry', 'original._replace(route_type=retry.route_type) == retry')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_damage_original_class[other-route-1-duplicate_samples-settle]'),
+    ('retry-binding-validity-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('started_at_us - LIFETIME * 1000000 <= observed_at_us <= flushed_at_us',
+         'observed_at_us <= flushed_at_us')],
+        'tests/test_async_settle_shadow_r9_retry_plausibility.py::test_duplicate_cannot_outlive_binding'),
+    ('retry-adapter-validity-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('if not original_can_back_retry(', 'if False and not original_can_back_retry(')],
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_adapter_retry_original_class[expired-settle]'),
+    ('retry-report-shared-predicate-bypassed', REPORT, [
+        ('if position and original_can_back_retry(original, times[position - 1], retry,',
+         'if position or original_can_back_retry(original, times[position - 1], retry,')],
+        'tests/test_async_settle_shadow_r9_retry_plausibility.py::test_duplicate_cannot_change_signed_stream_dimension'),
+
     ('retry-null-hash-original-accepted', REPORT, [
         ('if retry_classification(row, row) != "duplicate":', 'if False:')],
-        'tests/test_async_settle_shadow_r8_retry_class.py::test_exact_retry_cannot_borrow_an_excluded_original'),
+        'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_damage_original_class[null-hash-1-duplicate_samples-settle]'),
     ('retry-null-hashes-equal', 'src/trusted_router/async_settle_shadow_evidence.py', [
         ('original["payload_hash"] is None or retry["payload_hash"] is None', 'False')],
         'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_requires_verified_hash_not_diagnostic_equality[both-null-settle]'),
