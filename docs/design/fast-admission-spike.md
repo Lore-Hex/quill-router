@@ -209,11 +209,15 @@ need, not a migration:
 - `tr_lease_hold`: §4.8's stored open holds, one row per hold the log has
   shown: its estimate, its latest valid snapshot (sequence, hash, usage and
   running charge) and its deadline, and the first heartbeat record's
-  fields. A member that takes over a draining lease builds a reap's full
-  record from those (§4.9), and Pub/Sub does not deliver a record again once
-  it is acknowledged. The auditor's per-lease commit inserts and updates these
-  rows and deletes a hold's row in the commit that stores its winner. If row
-  writes dominate A4, a packed row per lease is measured against it;
+  fields, or, for a hold a hand-off listed, its boot binding. A member that
+  takes over a draining lease builds a reap's full record from those (§4.9),
+  and Pub/Sub does not deliver a record again once it is acknowledged. The
+  auditor's per-lease commit inserts and updates these rows and deletes a
+  hold's row in the commit that stores its winner. If row writes dominate
+  A4, a packed row per lease is measured against it;
+- `tr_lease_handoff`: the chunks of a forced exit's hand-off that the auditor
+  has applied and whose manifest it has not, so a member that takes over
+  mid-hand-off still finds every chunk the manifest names (§4.2, §4.8);
 - `tr_lease_winners`: §4.8's packs, one row per lease per commit, each winner
   with its pending work, and when that work was done. A pack goes only with
   its lease's row, so while the row is kept every pack is;
