@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"math"
 	"slices"
 	"sync"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/spanner"
+
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
 
 var owner = Owner{Node: "node-a", Epoch: 1}
@@ -397,5 +400,20 @@ func TestTheFenceIsKeptToTheMicrosecond(t *testing.T) {
 	cfg.Grace, cfg.Skew, cfg.PublishDeadline = MaxSetting, MaxSetting/8, MaxSetting/2
 	if _, err := New(shared, cfg); err != nil {
 		t.Fatalf("settings near a week are refused: %v", err)
+	}
+}
+
+// TestFindLeaseFindsItsWorkspace: a lease's ID alone finds its row's key;
+// an ID no lease has finds none.
+func TestFindLeaseFindsItsWorkspace(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := grantLease(t, s, 10, 100)
+	grantLease(t, s, 10, 100) // another workspace's lease
+	if got, err := s.FindLease(ctx, ref.LeaseID); err != nil || got != ref {
+		t.Fatalf("finding %s: %+v %v", ref.LeaseID, got, err)
+	}
+	if _, err := s.FindLease(ctx, storetest.UniqueID("l")); !errors.Is(err, ErrNoLease) {
+		t.Fatalf("finding a lease never granted: %v", err)
 	}
 }
