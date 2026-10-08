@@ -127,10 +127,21 @@ type answered struct{ err error }
 
 func (a answered) Wait(context.Context) (string, error) { return "id", a.err }
 
+// fakeRecords is the record topic: it keeps what it is handed, the slice
+// itself, as a publisher does until its publish ends; and fails each, or
+// holds its acknowledgement until the wait for it ends.
 type fakeRecords struct {
 	ev        *events
 	fail      bool
+	holding   bool
 	published [][]byte
+}
+
+type held struct{}
+
+func (held) Wait(ctx context.Context) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
 }
 
 func (f *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
@@ -139,6 +150,9 @@ func (f *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
 		return answered{errInjected}
 	}
 	f.published = append(f.published, data)
+	if f.holding {
+		return held{}
+	}
 	return answered{}
 }
 
@@ -372,6 +386,19 @@ func TestASettlesFullRecordIsPublishedFirst(t *testing.T) {
 		t.Fatalf("a full record not published: %+v", got)
 	}
 	checkEvents(t, f.ev, "publish gwa-1 "+settlelog.FullRecord)
+
+	// A publish that outlives its request publishes what the request
+	// stated, though the caller then reuses its buffer.
+	f = newDoor(t, 1)
+	f.records.holding = true
+	reused := settle(sealed)
+	wctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	got := f.door.Settle(wctx, reused)
+	cancel()
+	copy(reused.Full, "xxxxxxxxxxxxxxxxx")
+	if got.Status != Failed || len(f.records.published) != 1 || string(f.records.published[0]) != `{"full":"record"}` {
+		t.Fatalf("a publish past its wait: %+v, published %q", got, f.records.published)
+	}
 
 	for _, bad := range []SettleOf{{Envelope: "v1.x.y", Charge: 1, Full: s.Full, Money: s.Money},
 		{Envelope: sealed, Charge: -1, Full: s.Full, Money: s.Money}, {Envelope: sealed, Charge: 1, Money: s.Money},

@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -213,9 +214,11 @@ func (f *FrontDoor) Settle(ctx context.Context, s SettleOf) TerminalAnswer {
 	if err != nil || s.Charge < 0 || len(s.Full) == 0 || len(s.Money) == 0 {
 		return TerminalAnswer{Status: Invalid}
 	}
-	digest := sha256.Sum256(s.Full)
+	// The publish may outlive the request: it publishes its own copy.
+	full := slices.Clone(s.Full)
+	digest := sha256.Sum256(full)
 	pctx, cancel := context.WithTimeout(ctx, f.cfg.PublishWait)
-	_, err = f.cfg.Records.Publish(env.Auth, settlelog.FullRecord, s.Full).Wait(pctx)
+	_, err = f.cfg.Records.Publish(env.Auth, settlelog.FullRecord, full).Wait(pctx)
 	cancel()
 	if err != nil {
 		return TerminalAnswer{Status: Failed}
