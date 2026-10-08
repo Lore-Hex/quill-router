@@ -305,7 +305,12 @@ state counts updated, and its shadow and the shadow's comparisons with it
     receipt, so a result that comes late installs a view already aged by its
     wait, as the ring's watcher counts a read's latency in its view's age
     (`ring/watch.go`). `RefreshView` grows so, installing the elapsed age, not
-    zero.
+    zero. And the age is the monotonic clock's, which runs within the drift
+    allowance ρ of true time (§5), not true time as A2 has it: a view whose
+    measured age is within the cache's age is, in true time, within `CacheAge`
+    / (1 − ρ). The spec's view age grows by the process's measure of it, and
+    `PauseBoundsAdmission`'s bound becomes `CacheAge` / (1 − ρ) of true time;
+    a clock that drifts past ρ is the time check's broken assumption (§5).
   - Pauses. A workspace's pause clears and may come again, as a debt mark
     is set and repaid: `Unpause` clears it and a later `Pause` starts a new
     cache window, and an admission is held to the pause its view could have
@@ -534,17 +539,17 @@ the constraints, never by putting a reading where the spec has true time:
   an owner admitted with its reading before the expiry it knew, less S; an
   auditor marked a lease draining with its reading past the expiry plus S.
 - The spec's guard at true time, and each timed fact the spec keeps (an
-  admission within a revocation's window or a pause's cache age, a hold whose
-  life has not run out, an admission before the auditor's mark of its lease
-  draining, which the auditor made with its reading past the expiry plus S),
-  must hold for every solution. A bound on one event is decided by its
-  earliest and latest true times; a bound between two events, by the shortest
-  path between them. A lease its owner marks draining needs no cutoff: the
-  owner may drain its empty closing lease long before the expiry, its write's
-  reply delayed or lost, and the rule §4.1 keeps in `CutoffBeforeDrain`'s
-  place, that the owner admits nothing once the lease is marked draining, is
-  checked on the owner's own events in their order, with no time: no admission
-  after its draining write's request.
+  admission within a revocation's window or a pause's cache age over 1 − ρ
+  (§4.1), a hold whose life has not run out, an admission before the auditor's
+  mark of its lease draining, which the auditor made with its reading past the
+  expiry plus S), must hold for every solution. A bound on one event is
+  decided by its earliest and latest true times; a bound between two events,
+  by the shortest path between them. A lease its owner marks draining needs no
+  cutoff: the owner may drain its empty closing lease long before the expiry,
+  its write's reply delayed or lost, and the rule §4.1 keeps in
+  `CutoffBeforeDrain`'s place, that the owner admits nothing once the lease is
+  marked draining, is checked on the owner's own events in their order, with
+  no time: no admission after its draining write's request.
 - Every request stopped in time (A3). The load generator records each
   request's end, the gateway's own: a stream completed, cut short or given
   up, a request answered or failed. That end, not its last delivery or its
@@ -750,7 +755,11 @@ fault, which is already set.
   over reaping at a snapshot another member committed; and a workspace read
   that found no pause, received after a pause came and longer than the cache's
   age after its request, which must refuse an admission,
-  `PauseBoundsAdmission` holding. Each must pass.
+  `PauseBoundsAdmission` holding; and, with the process's monotonic clock
+  running slow by the drift allowance, a late result's admission at `CacheAge`
+  / (1 − ρ) of true time after the pause, which must pass, and one past it,
+  which must not. The oracle checks the last two too. Each of the others must
+  pass.
 - **The runtime's own traces,** once the roles record events: the service's
   end-to-end tests and the scenarios of the spike plan's §5, each checked,
   K6's negative control reported as both a broken assumption and a
