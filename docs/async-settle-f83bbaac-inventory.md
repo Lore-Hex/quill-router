@@ -27,6 +27,12 @@ ctypes/opaque native state, external registries outside both namespaces and
 harness roots, and computed global lookups. This historical inventory is not an
 arbitrary-harness sandbox guarantee.
 
+Round 8 supplements the GC traversal with native frame, traceback, exception,
+generator, coroutine and async-generator references, including direct iteration
+of frame-local values. The appendix records the exact fields and unchanged
+exclusions. All 40 principal constructions have detecting witnesses; snapshot
+bytes and this historical execution inventory are unchanged.
+
 ## `trusted_router`
 
 Frozen alias: `frozen_f83bbaac`. Member: `src/trusted_router/__init__.py`.

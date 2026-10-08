@@ -1339,8 +1339,8 @@ frozen namespace, the fake Spanner module, explicit harness roots, and the
 frozen leg's supplied call arguments (including the request body). It follows
 `gc.get_referents()` recursively with a strong visited-id map. Cycles terminate;
 the **2,000,000-object bound raises**, never silently truncates a walk. Retaining
-the visited objects prevents identity reuse. There is no container-kind dispatch,
-protocol iteration, property evaluation or `__getstate__` invocation.
+the visited objects prevents identity reuse. There is no user-container protocol
+iteration, overridden property evaluation or `__getstate__` invocation.
 
 `tp_traverse` supplies the edges for dict keys/values, slots, closures, partials,
 bound methods, mapping proxies, class dictionaries, descriptors, dataclass
@@ -1352,6 +1352,26 @@ callbacks. Native `datetime`/`time` descriptors expose `tzinfo`; native
 `timezone` methods expose the retained offset and name. These accessors avoid
 subclass properties. The atomic-constants, atomic-metadata and atomic-tzinfo
 tests run on 3.11 and 3.14; removal mutations cover every demonstrated field.
+
+Native frame references also need a supplement: CPython 3.14 omits a running
+frame's locals from GC, and a detached suspended generator frame has the same
+gap. These are held Python objects inside the existing reference scope.
+
+| Reached object | Native traversal |
+|---|---|
+| Frame | Iterate `f_locals.values()` directly (the 3.13+ `FrameLocalsProxy`, without calling `locals()` or copying the traversal frame); follow `f_globals`, `f_back`, `f_code`, and `f_trace`. Skip `f_builtins`, the interpreter builtins namespace; explicit fields replace generic frame GC edges so that this skip is version independent. Globals retain the existing module-registry boundaries; the strong visited map bounds cycles. |
+| Traceback | Follow `tb_frame` and `tb_next`, in addition to GC edges. Every reached frame receives the frame supplement. |
+| Generator / coroutine / async generator | Follow `gi_frame` / `cr_frame` / `ag_frame`, respectively, in addition to GC edges. The native types cannot override these attributes. |
+| Exception | Follow native `BaseException` descriptors for `__traceback__`, `__context__`, and `__cause__`, in addition to GC edges, without invoking subclass properties. |
+
+The reference walker never enumerates interpreter stacks or calls
+`inspect.currentframe()` / `sys._current_frames()`. A frame must be held by the
+existing frozen-module, fake-IO, harness or call-argument roots (or by another
+reached object/frame). The deliberately live comparison leg is never an audit
+root. The separate worker-refusal/profile checks retain their existing stack
+inspection. Every reached `f_code` gets the same live-filename check as any other
+code object. Frame/traceback/generator skip mutations verify these paths.
+
 Every reached function **and code object** is checked against the live source
 path using native string comparisons; namespace provenance also rejects live
 generated definitions. Changing a function's module label or overriding a
@@ -1393,8 +1413,8 @@ entering the frozen leg, even if the instance shadows its `cache_clear` method. 
 when a warmed cache would otherwise avoid executing its body. The per-callable
 profiler remains the independent execution layer.
 
-The reference scope is **all Python-visible GC referents plus these atomic fields
-from the roots, up to the explicit external-registry boundaries**, with an
+The reference scope is **all Python-visible GC referents plus the native frame
+and atomic fields above from the roots, up to the explicit external-registry boundaries**, with an
 asserting object bound. Thread execution is covered by all-thread profiling on
 Python 3.12+, with guarded worker bootstraps and the existing-worker refusal on
 older Python. The worktree venv is Python 3.11; the gate venv is Python 3.14.6.
@@ -1410,7 +1430,7 @@ Python callbacks executed through these paths remain subject to the profiler in
 the guarded process. The harness and profiler infrastructure are trusted.
 Describe a missed case as an **undetected construction**.
 
-All **35** principal constructions have detecting witnesses: the earlier 14,
+All **40** principal constructions have detecting witnesses: the earlier 14,
 plus a warmed cache inside a nested mapping in a slot, a live cache held in code
 constants, a live cache in a frozen closure, a live callable in a frozen class
 dictionary via a descriptor, and a live cache in a nested tuple inside a
@@ -1425,7 +1445,11 @@ code filename/name/qualified-name/line-table/exception-table metadata and
 timezone offset/name objects; another covers overridden filename comparisons.
 Another witness holds a live cache behind a provenance property that would
 remove it if evaluated; two more cover metadata dictionaries and keys that would
-remove a cached live result if their methods were invoked. The new cache witnesses use
+remove a cached live result if their methods were invoked. Round 8 adds an
+active frame attached to a frozen module, an exception traceback, a suspended
+generator's `gi_frame`, a coroutine's `cr_frame`, and a traceback retained only
+through exception `__context__`. All five require preflight reference detection.
+The new cache witnesses use
 independent warmed wrappers and remain dormant
 inside the guard, so the reference layer itself must detect them. Mutation rows
 stop individual graph kinds, remove the code supplement/bound/provenance check,

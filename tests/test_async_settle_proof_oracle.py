@@ -1120,3 +1120,106 @@ def test_guard_cache_metadata_cannot_remove_cached_live_result(kind):
         with execution_guard(cache):
             pytest.fail('undetected cache-metadata construction reached the frozen leg')
     assert cache.cache_info().currsize == 1
+
+
+FRAME_WITNESSES = ('active_frame', 'exception_traceback', 'generator_frame',
+                   'coroutine_frame', 'exception_context')
+
+
+@pytest.mark.parametrize('kind', FRAME_WITNESSES)
+def test_guard_held_frame_cache(monkeypatch, kind):
+    import functools
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    # Independent of the module's cache: normalization cannot erase this edge.
+    held = functools.lru_cache(maxsize=2)(transient_store_error_types.__wrapped__)
+    held()
+    generator = coroutine = None
+    if kind == 'active_frame':
+        root = inspect.currentframe()
+        frame = root
+    elif kind in ('exception_traceback', 'exception_context'):
+        try:
+            raise ValueError('held traceback')
+        except ValueError as exc:
+            root = exc
+        frame = root.__traceback__.tb_frame
+        if kind == 'exception_context':
+            outer = RuntimeError('context owns the held traceback')
+            outer.__context__ = root
+            root = outer
+            assert root.__traceback__ is None
+    elif kind == 'generator_frame':
+        def suspended(callback):
+            held = callback
+            yield
+            return held
+        generator = suspended(held)
+        next(generator)
+        frame = root = generator.gi_frame
+    else:
+        async def suspended(callback):
+            held = callback
+            return held
+        coroutine = suspended(held)
+        frame = root = coroutine.cr_frame
+    assert frame is not None
+    assert held.cache_info().misses == 1
+    assert held.cache_info().hits == 0
+    frozen = module('storage_errors')
+    try:
+        # Only the frozen module is a root; the cache/frame are not extra roots.
+        with monkeypatch.context() as patch:
+            patch.setattr(frozen, 'review_frame_root', root, raising=False)
+            with pytest.raises(AssertionError, match='live reference'):
+                with execution_guard():
+                    pytest.fail('undetected held frame reached the frozen leg')
+        assert held.cache_info().currsize == 1
+        assert held.cache_info().hits == 0
+    finally:
+        if generator is not None:
+            generator.close()
+        if coroutine is not None:
+            coroutine.close()
+        # Break the active-frame local cycle without clearing a running frame.
+        del root, frame
+
+
+@pytest.mark.parametrize('kind', ['frame', 'traceback', 'generator', 'coroutine', 'async_generator'])
+def test_reference_walk_native_frames(kind):
+    from tests.fakes.frozen_package import _references
+
+    # Synthetic namespaces avoid pytest globals/back-stack alternate paths.
+    # The marker is owned only by frame locals after construction; frame/code
+    # references to a marker in constants or globals cannot mask missing locals.
+    namespace = {'__name__': 'frame_witness'}
+    exec(compile('def generate(held):\n yield\n return held\n'
+                 'async def coro(held):\n return held\n'
+                 'async def agen(held):\n yield held\n',
+                 '<frame-witness>', 'exec'), namespace)
+    marker = object()
+    close = None
+    if kind in ('frame', 'generator'):
+        owner = namespace['generate'](marker)
+        next(owner)
+        close = owner.close
+        root = owner.gi_frame if kind == 'frame' else owner
+    elif kind == 'coroutine':
+        root = namespace['coro'](marker)
+        close = root.close
+    elif kind == 'async_generator':
+        root = namespace['agen'](marker)
+    else:
+        # A native traceback can own a suspended frame without caller locals.
+        from types import TracebackType
+        owner = namespace['generate'](marker)
+        next(owner)
+        close = owner.close
+        root = TracebackType(None, owner.gi_frame, -1, 1)
+    try:
+        assert any(value is marker for value in _references(
+            [root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+    finally:
+        if close is not None:
+            close()

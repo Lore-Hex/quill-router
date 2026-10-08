@@ -22,7 +22,18 @@ from datetime import datetime as _Datetime
 from datetime import time as _Time
 from datetime import timezone as _Timezone
 from pathlib import Path
-from types import BuiltinFunctionType, CodeType, FunctionType, MemberDescriptorType, ModuleType
+from types import (
+    AsyncGeneratorType,
+    BuiltinFunctionType,
+    CodeType,
+    CoroutineType,
+    FrameType,
+    FunctionType,
+    GeneratorType,
+    MemberDescriptorType,
+    ModuleType,
+    TracebackType,
+)
 
 SNAPSHOT = Path(__file__).with_name('frozen_f83bbaac')
 ARCHIVE_SHA256 = 'e68b785ca7d5d62d82e71be5df07c605aa3f2ef83a528769138de6d2eba8d4da'
@@ -157,8 +168,9 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
 
     No container-kind dispatch: tp_traverse supplies the edges. CPython treats
     code, datetime, time and timezone as atomic despite held Python objects.
-    Supplements follow native code members, tzinfo, timezone offset/name; they
-    never evaluate overridden properties. See the atomic-reference witnesses.
+    Supplements follow native frame/traceback/exception/generator references,
+    code members, tzinfo and timezone offset/name, without overridden properties.
+    Frames come only from held roots, never an interpreter-stack enumeration.
     """
     pending, visited = list(roots), {}
     boundaries = {}
@@ -186,8 +198,29 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
             f'frozen reference graph exceeds {max_objects} objects')
         visited[identity] = value  # Strong references prevent visited-id reuse.
         yield value
-        pending.extend(gc.get_referents(value))
         value_type = type(value)
+        if value_type is FrameType:
+            # Running frames omit their locals from GC on CPython 3.14. On
+            # 3.13+ this is a native FrameLocalsProxy: iterate values directly,
+            # never materialize the current traversal frame through locals().
+            pending.extend(value.f_locals.values())
+            pending.extend((value.f_globals, value.f_back, value.f_code, value.f_trace))
+            # Do not follow f_builtins into interpreter infrastructure. Use
+            # explicit native fields instead of GC edges for frames on all versions.
+            continue
+        pending.extend(gc.get_referents(value))
+        if value_type is TracebackType:
+            pending.extend((value.tb_frame, value.tb_next))
+        elif value_type is GeneratorType:
+            pending.append(value.gi_frame)
+        elif value_type is CoroutineType:
+            pending.append(value.cr_frame)
+        elif value_type is AsyncGeneratorType:
+            pending.append(value.ag_frame)
+        elif issubclass(value_type, BaseException):
+            # Exceptions can override properties; read the base C descriptors.
+            pending.extend(BaseException.__dict__[name].__get__(value)
+                           for name in ('__traceback__', '__context__', '__cause__'))
         if value_type is CodeType:
             pending.extend(field.__get__(value) for field in _CODE_MEMBERS)
         elif issubclass(value_type, _Datetime):

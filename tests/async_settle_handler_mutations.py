@@ -305,6 +305,52 @@ MUTATIONS += [
 ]
 
 
+# Round 8: freeze the reviewer's ten seeded live-side projection mutations
+# (seed 156710), then require all three native frame ownership paths.
+MUTATIONS += [
+    ('review-r7-activity_payload-total_cost_microdollars', [('src/trusted_router/storage_operational_analytics.py', [
+        ('"total_cost_microdollars": generation.total_cost_microdollars', '"total_cost_microdollars": ((generation.total_cost_microdollars or 0) + 7)'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-enqueue_statement-payload', [('src/trusted_router/storage_gcp_analytics_outbox.py', [
+        ('"payload": json_body(sample)', '"payload": (json_body(sample) + " ")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-activity_payload-key_id', [('src/trusted_router/storage_operational_analytics.py', [
+        ('"key_id": analytics_surrogate("api-key", generation.key_hash)', '"key_id": (analytics_surrogate("api-key", generation.key_hash) + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-generation_insert_statement-workspace_id', [('src/trusted_router/storage_gcp_generation_records.py', [
+        ('"workspace_id": generation.workspace_id', '"workspace_id": (generation.workspace_id + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-activity_payload-generation_id', [('src/trusted_router/storage_operational_analytics.py', [
+        ('"generation_id": generation.id', '"generation_id": (generation.id + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-generation_insert_statement-key_hash', [('src/trusted_router/storage_gcp_generation_records.py', [
+        ('"key_hash": generation.key_hash', '"key_hash": (generation.key_hash + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-activity_payload-request_id', [('src/trusted_router/storage_operational_analytics.py', [
+        ('"request_id": generation.request_id', '"request_id": (generation.request_id + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-generation_insert_statement-generation_id', [('src/trusted_router/storage_gcp_generation_records.py', [
+        ('"generation_id": generation.id', '"generation_id": (generation.id + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-activity_payload-tenant_id', [('src/trusted_router/storage_operational_analytics.py', [
+        ('"tenant_id": analytics_surrogate("workspace", generation.workspace_id)', '"tenant_id": (analytics_surrogate("workspace", generation.workspace_id) + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-r7-activity_payload-workspace_id', [('src/trusted_router/storage_operational_analytics.py', [
+        ('"workspace_id": generation.workspace_id', '"workspace_id": (generation.workspace_id + "-r7")'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+]
+MUTATIONS += [
+    ('reference-stop-' + name, [('tests/fakes/frozen_package.py', [
+        ('        yield value\n', '        yield value\n        if ' + condition + ':\n            continue\n'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_reference_walk_native_frames[' + kind + ']')
+    for name, condition, kind in [
+        ('frames', 'type(value) is FrameType', 'frame'),
+        ('tracebacks', 'type(value) is TracebackType', 'traceback'),
+        ('generator-frames', 'type(value) is GeneratorType', 'generator'),
+    ]
+]
+
+
 def main() -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix='pr-c-mutations-') as directory:
