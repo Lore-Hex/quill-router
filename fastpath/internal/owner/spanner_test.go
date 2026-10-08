@@ -52,6 +52,8 @@ type fakeSpanner struct {
 	reading   chan struct{}
 	readGate  chan struct{}
 	readsWait bool
+	// readEnded, when set, hears of each such read's end.
+	readEnded chan struct{}
 }
 
 func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.GrantResult, error) {
@@ -114,9 +116,12 @@ func (f *fakeSpanner) ReadDrainSince(ctx context.Context, ref store.LeaseRef, cu
 	if wait {
 		<-ctx.Done()
 		f.mu.Lock()
-		after := f.afterCancel
+		after, ended := f.afterCancel, f.readEnded
 		f.mu.Unlock()
 		time.Sleep(after)
+		if ended != nil {
+			ended <- struct{}{}
+		}
 		return nil, time.Time{}, ctx.Err()
 	}
 	f.mu.Lock()

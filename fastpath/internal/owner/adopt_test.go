@@ -24,21 +24,29 @@ type fakeRecords struct {
 	failing int
 	auths   []string
 	data    [][]byte
-	// hold, when set, holds each acknowledgement until it closes.
-	hold chan struct{}
+	// hold, when set, holds each acknowledgement until it closes, a wait
+	// whose context ends taking lag more; waited, when set, hears of each
+	// held wait's end.
+	hold, waited chan struct{}
+	lag          time.Duration
 }
 
 type recordAnswer struct {
-	id   string
-	err  error
-	hold chan struct{}
+	id           string
+	err          error
+	hold, waited chan struct{}
+	lag          time.Duration
 }
 
 func (a recordAnswer) Wait(ctx context.Context) (string, error) {
 	if a.hold != nil {
+		if a.waited != nil {
+			defer func() { a.waited <- struct{}{} }()
+		}
 		select {
 		case <-a.hold:
 		case <-ctx.Done():
+			time.Sleep(a.lag)
 			return "", ctx.Err()
 		}
 	}
@@ -54,7 +62,7 @@ func (r *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
 	}
 	r.auths = append(r.auths, authorization+"/"+kind)
 	r.data = append(r.data, slices.Clone(data))
-	return recordAnswer{id: fmt.Sprintf("m%d", len(r.auths)), hold: r.hold}
+	return recordAnswer{id: fmt.Sprintf("m%d", len(r.auths)), hold: r.hold, waited: r.waited, lag: r.lag}
 }
 
 func (r *fakeRecords) published() ([]string, [][]byte) {
@@ -460,6 +468,7 @@ func TestRenewalRoundsRunOneAtATime(t *testing.T) {
 func TestStoppingEndsARenewalRound(t *testing.T) {
 	f, sp, _ := adoptFixture(t)
 	sp.reading, sp.readsWait, sp.afterCancel = make(chan struct{}, 1), true, 200*time.Millisecond
+	sp.readEnded = make(chan struct{}, 1)
 	renewed := make(chan error, 1)
 	go func() { renewed <- f.owner.Renew(context.Background()) }()
 	<-sp.reading
@@ -479,9 +488,14 @@ func TestStoppingEndsARenewalRound(t *testing.T) {
 		t.Fatal("Stop did not return")
 	}
 	select {
-	case <-renewed:
+	case <-sp.readEnded:
 	default:
-		t.Fatal("Stop returned while a round ran")
+		t.Fatal("Stop returned while a round's read ran")
+	}
+	select {
+	case <-renewed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the round did not end")
 	}
 	select {
 	case <-ran:
@@ -670,7 +684,7 @@ func TestStoppingEndsAReaperPass(t *testing.T) {
 	f.clock.advance(5 * time.Minute)
 	renew(t, f)
 	rec.mu.Lock()
-	rec.hold = make(chan struct{})
+	rec.hold, rec.waited, rec.lag = make(chan struct{}), make(chan struct{}, 1), 200*time.Millisecond
 	rec.mu.Unlock()
 	defer close(rec.hold)
 	reaped := make(chan error, 1)
@@ -694,9 +708,14 @@ func TestStoppingEndsAReaperPass(t *testing.T) {
 		t.Fatal("Stop waited on a pass held on the record topic")
 	}
 	select {
-	case <-reaped:
+	case <-rec.waited:
 	default:
-		t.Fatal("Stop returned while a pass ran")
+		t.Fatal("Stop returned while a pass waited on the record topic")
+	}
+	select {
+	case <-reaped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pass did not end")
 	}
 }
 
