@@ -445,3 +445,127 @@ func TestANodeWhoseRowIsTakenStops(t *testing.T) {
 		t.Fatal("the node whose row was taken kept running")
 	}
 }
+
+// ownedBy is a new workspace, seeded with credit, whose one shard the node
+// at by owns among the nodes at among, by rendezvous hashing.
+func ownedBy(t *testing.T, by net.Listener, among ...net.Listener) string {
+	t.Helper()
+	for {
+		ws := storetest.UniqueID("ws")
+		key, best := ring.ShardKey(ws, 0), true
+		for _, ln := range among {
+			if ln != by && ring.Score(ln.Addr().String(), key) >= ring.Score(by.Addr().String(), key) {
+				best = false
+			}
+		}
+		if !best {
+			continue
+		}
+		if _, err := shared.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
+			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000),
+				"trust_tier": int64(3)})}); err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+}
+
+func listen(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ln
+}
+
+// admitted authorizes request through gw until the owner at owner admits
+// it, and returns its envelope, sealed and opened.
+func admitted(t *testing.T, gw frontdoor.Gateway, ws, request string, owner net.Listener) (string, frontdoor.Envelope) {
+	t.Helper()
+	var sealed string
+	var e frontdoor.Envelope
+	eventually(t, 20*time.Second, "an admission by "+owner.Addr().String(), func() (bool, error) {
+		got, err := gw.Authorize(context.Background(), frontdoor.AuthorizeOf{Workspace: ws, Request: request,
+			Estimate: 40, Boot: []byte("boot")})
+		if err != nil || got.Status != frontdoor.Admitted {
+			return false, nil
+		}
+		sealed = got.Envelope
+		e, err = frontdoor.Open(key, sealed)
+		return err == nil && e.Owner == owner.Addr().String(), err
+	})
+	return sealed, e
+}
+
+// TestALeaseIsRenewedWhileItsOwnerRuns: the owner renews its lease, every
+// RenewEvery, a window ahead, so it stays open past its first expiry.
+func TestALeaseIsRenewedWhileItsOwnerRuns(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln := listen(t)
+	ws := ownedBy(t, ln)
+	cfg := short(config(ln))
+	cfg.Auditor = false
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + ln.Addr().String()}
+	_, e := admitted(t, gw, ws, "r1", ln)
+	s, err := store.New(shared, cfg.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: e.Lease}
+	first, _, err := s.ReadLease(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 3*cfg.Store.Window, "the lease renewed past its first expiry", func() (bool, error) {
+		l, _, err := s.ReadLease(ctx, ref)
+		return err == nil && l.State == "open" && l.Expiry.After(first.Expiry.Add(cfg.Store.Window)), err
+	})
+}
+
+// TestAnUnreachableOwnersLeaseIsRevoked: three nodes, and a lease whose
+// owner stops. Its settles, coming to another node, reach the owner neither
+// there nor through the third node, a peer, and go to the drain log; once
+// those failures span RevokeAfter, the front door revokes the lease (§4.3).
+func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ps := pubSub(t)
+	a, b, c := listen(t), listen(t), listen(t)
+	ws := ownedBy(t, b, a, b, c)
+	stops := map[net.Listener]func(){}
+	for _, ln := range []net.Listener{a, b, c} {
+		cfg := short(config(ln))
+		cfg.Auditor = false
+		cfg.FrontDoor.RevokeAfter, cfg.FrontDoor.RevokeEvery = time.Second, 100*time.Millisecond
+		stops[ln] = start(t, cfg, Clients{Spanner: shared, PubSub: ps})
+	}
+	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
+	first, e := admitted(t, gw, ws, "r1", b)
+	second, _ := admitted(t, gw, ws, "r2", b)
+	stops[b]()
+	for i, sealed := range []string{first, second} {
+		if i > 0 {
+			time.Sleep(1200 * time.Millisecond)
+		}
+		got, err := gw.Settle(ctx, frontdoor.SettleOf{Envelope: sealed, Charge: 30,
+			Full: []byte(`{"charge":30}`), Money: []byte(`{"cost":30}`)})
+		if err != nil || got.Status != frontdoor.Recorded {
+			t.Fatalf("settle %d with its owner gone: %+v %v", i, got, err)
+		}
+	}
+	s, err := store.New(shared, short(config(a)).Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "the lease revoked", func() (bool, error) {
+		l, _, err := s.ReadLease(ctx, store.LeaseRef{Workspace: ws, LeaseID: e.Lease})
+		return err == nil && l.Revoked, err
+	})
+}
