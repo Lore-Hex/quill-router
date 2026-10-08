@@ -1195,7 +1195,7 @@ def test_same_preference_tier_keeps_catalog_order() -> None:
         ("gpt-4.1", "openai/gpt-4.1"),
         ("gpt-4.1-2025-04-14", "openai/gpt-4.1"),  # dated snapshot
         ("gpt-4.1-mini", "openai/gpt-4.1-mini"),
-        ("gpt-4.1-nano-2025-04-14", "openai/gpt-4.1-nano"),  # bare + dated
+        ("gpt-4.1-mini-2025-04-14", "openai/gpt-4.1-mini"),  # bare + dated
         ("openai/gpt-4.1", "openai/gpt-4.1"),  # canonical id unchanged
     ],
 )

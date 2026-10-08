@@ -27,6 +27,7 @@ PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
+OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -326,6 +327,21 @@ _RETIREMENTS = (
             "gpt-3.5-turbo-instruct", "babbage-002", "davinci-002", "gpt-3.5-turbo-1106",
         }),
         effective_at=OPENAI_SEPTEMBER_28_RETIREMENT_AT,
+    ),
+    # OpenAI's October 8 reminder shuts these exact snapshots down in the API
+    # on 2026-10-23 (date only, so 00:00 UTC). Undated o-series aliases and
+    # newer GPT-4o/4.1 snapshots are not named and stay routable.
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({
+            "openai/gpt-3.5-turbo-0125", "openai/gpt-4-0613", "openai/gpt-4-turbo",
+            "openai/gpt-4.1-nano", "openai/gpt-4o-2024-05-13",
+        }),
+        upstream_ids=frozenset({
+            "gpt-3.5-turbo-0125", "gpt-4-0613", "gpt-4-turbo", "gpt-4.1-nano",
+            "gpt-4o-2024-05-13", "openai/gpt-4o-2024-05-13",
+        }),
+        effective_at=OPENAI_OCTOBER_23_RETIREMENT_AT,
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
