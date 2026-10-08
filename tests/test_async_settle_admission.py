@@ -136,7 +136,7 @@ def body(**changes):
 
 
 @pytest.mark.parametrize('change', ['receipt_zero_fee', 'unknown', 'tools', 'missing_route', 'federated',
-                                   'legacy', 'replay', 'lease', 'missing_nonce', 'missing_reservation'])
+                                   'legacy', 'replay', 'lease', 'missing_nonce', 'missing_reservation', 'image'])
 def test_route_fact_exclusions(change):
     auth = authorization()
     b = body()
@@ -146,6 +146,8 @@ def test_route_fact_exclusions(change):
         b = body(**{'unknown_feature' if change == 'unknown' else 'spend_lease_id': 'x'})
     if change == 'tools':
         b.requested_parameters = ['tools']
+    if change == 'image':
+        b.input_modalities = ['text', 'image']
     if change == 'missing_route':
         b.route_type = None
     if change == 'missing_nonce':

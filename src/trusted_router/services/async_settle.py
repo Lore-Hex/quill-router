@@ -287,6 +287,10 @@ def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthor
         # newer catalog against an older authorization. PR C owns retry storage.
         if replay or body.model_extra or body.route_type not in {"chat.completions", "responses"}:
             return {"async_eligible": False}
+        # Recognizing the enclave's modality field must not expand the
+        # text-only settlement optimization's previous eligibility boundary.
+        if "input_modalities" in body.model_fields_set:
+            return {"async_eligible": False}
         # Unknown adapter features must not silently acquire an exact total.
         ordinary_parameters = {
             "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",

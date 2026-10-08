@@ -375,6 +375,8 @@ class GatewayAuthorizeRequest(_Lenient):
     models: list[str] | None = None
     provider: dict[str, Any] | None = None
     requested_parameters: list[str] | None = None
+    # Derived by the enclave from content, not the model's union capabilities.
+    input_modalities: list[Literal["text", "image", "audio", "video"]] | None = None
     estimated_input_tokens: int = Field(default=1, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=1)
     max_completion_tokens: int | None = Field(default=None, ge=1)
