@@ -1308,15 +1308,29 @@ feature stores, captured IO callbacks, gateway, middleware and the HTTP app are
 constructed independently in that namespace. No live production globals seed it.
 
 `execution_guard(*harness)` profiles Python calls by module globals and source
-path and exposed C-call events in **all threads, including raw `_thread`
-workers**. On Python 3.12+ (verified separately on 3.14), entry calls
+path and exposed C-call events in **admitted threads, including guarded raw
+`_thread` workers**. On Python 3.12+ (verified separately on 3.14), entry calls
 `threading.setprofile_all_threads(profile)` for already-running threads and
 `threading.setprofile(profile)` for later `threading.Thread` workers. During the
 scope it wraps `_thread.start_new_thread`, `_thread.start_joinable_thread` and
 `threading._start_joinable_thread` when present, plus the 3.11
-`threading._start_new_thread` alias. Each bootstrap installs `sys.setprofile`
-before calling its target. A C-call fence rejects prebound raw starter aliases
-that would bypass the bootstrap. Pending/active bootstraps are registered before
+`threading._start_new_thread` alias and `_thread._start_joinable_thread` if present.
+Each bootstrap installs `sys.setprofile` before calling its target. The reference
+audit rejects any reachable original native starter by identity, including
+partial func/args/keywords, containers, closures and bound-method captures. It
+also rejects bound `Thread.start` / `Thread._bootstrap` methods held before
+entry. The explicit reason is: "prebound native thread starter reachable from
+frozen roots; profiling cannot be guaranteed for threads it creates". This is
+an admission restriction on accepted harnesses. Ordinary threads created through
+the wrapped attributes inside the guard remain allowed and profiled, including
+partials built there and new `threading.Thread` instances.
+
+The C-call fence also compares the called builtin by identity with the captured
+native starter set, rejecting direct bypasses outside the guarded bootstrap.
+On gate CPython **3.14.6**, a direct native start emits `c_call`, but calling the
+same builtin through `functools.partial` emits **no underlying `c_call`**. Thus
+the reference rejection, not a partial C-call event, guarantees rejection of
+reachable prebound partial starters. Pending/active bootstraps are registered before
 startup; guard exit performs a bounded five-second join while profiling remains
 active, then rejects any unfinished worker. This covers AnyIO shutdown, which
 signals its workers without joining them. Live events are retained by thread ID,
@@ -1441,8 +1455,10 @@ hold the strong object instead. No proxy method or weakref override is executed.
 The reference scope is **all Python-visible GC referents plus the native frame,
 atomic fields and weak referents above from the roots, up to the explicit external-registry boundaries**, with an
 asserting object bound. Thread execution is covered by all-thread profiling on
-Python 3.12+, with guarded worker bootstraps and the existing-worker refusal on
-older Python. The worktree venv is Python 3.11; the gate venv is Python 3.14.6.
+Python 3.12+, guarded worker bootstraps, rejection of reachable prebound native
+starters, and refusal of pre-existing application workers. Older Python uses
+the same admission restrictions and guarded bootstraps without retroactive
+all-thread installation. The worktree venv is Python 3.11; the gate venv is Python 3.14.6.
 The following exclusions explain the limits of that scope:
 
 | Exclusion | Reason |
@@ -1451,8 +1467,10 @@ The following exclusions explain the limits of that scope:
 | External processes and process registries across the boundaries above | Another process has a separate object graph; shared interpreter registries contain the deliberately live comparison leg and pytest infrastructure. Explicit roots override registry boundaries. |
 | Computed lookups that resolve a name only at call time without holding a reference | There is no held object edge to traverse before the lookup executes. |
 
-Python callbacks executed through these paths remain subject to the profiler in
-the guarded process. The harness and profiler infrastructure are trusted.
+Python callbacks executed on admitted, profiled threads remain subject to the
+profiler. A native starter acquired through an excluded computed lookup without
+a held reference has no reference-audit guarantee; on CPython 3.14 a partial can
+also suppress its C-call event. The harness and profiler infrastructure are trusted.
 Describe a missed case as an **undetected construction**.
 
 All **44** principal constructions have detecting witnesses: the earlier 14,
@@ -1715,10 +1733,13 @@ remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
 | Retention clearing / generation TTL | D `retention-body-clear`, `generation-future-terminal-at` |
 | Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
 
-The executable tables contain B **10**, C **107**, and D **14** mutations
-(**131 total**, retaining all 72 Round-6 rows). Round 7 added 44 reference and
+The executable tables contain B **10**, C **112**, and D **14** mutations
+(**136 total**, retaining all 72 Round-6 rows). Round 7 added 44 reference and
 execution-guard mutations; Round 8 retained ten reviewer live-side edits and
 added three frame-path mutations. Round 9 adds the two frame-regression rows.
+Round 10 adds three weak-reference rows. Round 11 adds
+`skip-prebound-starter-rejection` and `partial-starter-not-unwrapped`, both
+witnessed by the frozen-module-held partial starter before guard entry.
 Round 5 incorporates the ten
 independent seed-4 reviewer edits, both money-changing thread/cache bridges,
 and the production-import witness. Round 4 added both ordinary-cost
@@ -1728,7 +1749,7 @@ and the wrong-model intent, witnessed by
 `test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
 The generation/finalization builder and handler output corruptions remain.
 Collection/import errors never count as detected mutations. See the
-[Round-9 verification report](../async-settle-pr-f1-round9.md) for current results
+[Round-11 verification report](../async-settle-pr-f1-round11.md) for current results
 and the reviewer witness matrix; the Round-4 model-identity assertions remain.
 
 The fake now explicitly requires the claim's `NOT EXISTS`, the atomic

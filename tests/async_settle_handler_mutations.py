@@ -380,6 +380,18 @@ MUTATIONS += [
 ]
 
 
+# Round 11: a prebound partial can start an unprofiled raw worker on CPython.
+MUTATIONS += [
+    ('skip-prebound-starter-rejection', [('tests/fakes/frozen_package.py', [
+        ('raise AssertionError(_PREBOUND_STARTER_REASON)', 'pass'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_rejects_reachable_prebound_starter[partial_func]'),
+    ('partial-starter-not-unwrapped', [('tests/fakes/frozen_package.py', [
+        ('        yield value\n',
+         '        yield value\n        if type(value) is functools.partial:\n            continue\n'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_rejects_reachable_prebound_starter[partial_func]'),
+]
+
+
 def main() -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix='pr-c-mutations-') as directory:

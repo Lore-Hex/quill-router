@@ -34,6 +34,7 @@ from types import (
     FunctionType,
     GeneratorType,
     MemberDescriptorType,
+    MethodType,
     ModuleType,
     SimpleNamespace,
     TracebackType,
@@ -171,6 +172,20 @@ _FRAME_LOCALS_PROXY = (type((item for item in ()).gi_frame.f_locals)
                        if sys.version_info >= (3, 13) else None)
 _CODE_MEMBERS = tuple(field for field in vars(CodeType).values()
                       if isinstance(field, MemberDescriptorType))
+# Capture native identities before execution_guard replaces module attributes.
+# Aliases can denote the same object; keep strong references for identity checks.
+_THREAD_STARTER_ATTRIBUTES = (
+    (_thread, ('start_new_thread', 'start_joinable_thread', '_start_joinable_thread')),
+    (threading, ('_start_new_thread', '_start_joinable_thread')),
+)
+_NATIVE_THREAD_STARTERS = {id(value): value
+                          for namespace, names in _THREAD_STARTER_ATTRIBUTES
+                          for name in names
+                          if (value := getattr(namespace, name, None)) is not None}
+_BOUND_THREAD_STARTERS = (threading.Thread.start, threading.Thread._bootstrap)
+_PREBOUND_STARTER_REASON = (
+    'prebound native thread starter reachable from frozen roots; '
+    'profiling cannot be guaranteed for threads it creates')
 
 
 def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
@@ -293,8 +308,17 @@ def reject_live_references(*harness):
     roots = [*_namespace_roots(ALIAS), spanner, *harness]
     owners = {}
     for value in _references(roots, namespaces=(ALIAS, 'tests.fakes.spanner')):
-        owner = _owner(value, owners)
         value_type = type(value)
+        # GC follows partial func/args/keywords, containers, closures and bound
+        # methods. Reject the native object wherever that walk encounters it:
+        # CPython 3.14 emits no c_call for a builtin invoked through partial.
+        if (value_type is BuiltinFunctionType
+                and _NATIVE_THREAD_STARTERS.get(id(value)) is value
+                or value_type is MethodType
+                and issubclass(type(value.__self__), threading.Thread)
+                and any(value.__func__ is starter for starter in _BOUND_THREAD_STARTERS)):
+            raise AssertionError(_PREBOUND_STARTER_REASON)
+        owner = _owner(value, owners)
         code = (value.__code__ if value_type is FunctionType
                 else value if value_type is CodeType else None)
         if (_in_namespace(owner, 'trusted_router')
@@ -378,14 +402,14 @@ def execution_guard(*harness):
     seen = set()
     recorded = set()
     provenance = {}
-    raw_starters = set()
     start_codes = set()
     def profile(frame, event, arg):
         if event == 'call':
             name = frame.f_globals.get('__name__', '')
             filename = frame.f_code.co_filename
         elif event == 'c_call':
-            if id(arg) in raw_starters and frame.f_code not in start_codes:
+            if (_NATIVE_THREAD_STARTERS.get(id(arg)) is arg
+                    and frame.f_code not in start_codes):
                 first.setdefault(threading.get_ident(), 'unwrapped raw worker creation')
                 raise AssertionError('raw worker must use guarded thread bootstrap')
             name = getattr(arg, '__module__', '') or ''
@@ -450,13 +474,11 @@ def execution_guard(*harness):
         return start
 
     # Cover raw APIs as well as threading's cached aliases on 3.11 and 3.14.
-    for namespace, names in ((_thread, ('start_new_thread', 'start_joinable_thread')),
-                             (threading, ('_start_new_thread', '_start_joinable_thread'))):
+    for namespace, names in _THREAD_STARTER_ATTRIBUTES:
         for name in names:
             if hasattr(namespace, name):
                 original = getattr(namespace, name)
                 starters.append((namespace, name, original))
-                raw_starters.add(id(original))
                 setattr(namespace, name, wrap_start(original))
     # 3.12+ covers every existing Python thread, including raw workers. The
     # 3.11 fallback refuses existing workers; new workers use the bootstraps.

@@ -533,6 +533,134 @@ def test_guard_rejects_prebound_raw_starter():
     assert not ran.is_set()
 
 
+@pytest.mark.parametrize('path', [
+    'direct', 'partial_func', 'partial_args', 'partial_keywords', 'tuple',
+    'dict', 'closure', 'bound_method',
+])
+def test_guard_rejects_reachable_prebound_starter(monkeypatch, path):
+    import _thread
+    import functools
+
+    starter = _thread.start_new_thread
+    if path == 'direct':
+        root = starter
+    elif path == 'partial_func':
+        root = functools.partial(starter)
+    elif path == 'partial_args':
+        root = functools.partial(lambda callback: callback, starter)
+    elif path == 'partial_keywords':
+        root = functools.partial(lambda callback: callback, callback=starter)
+    elif path == 'tuple':
+        root = (starter,)
+    elif path == 'dict':
+        root = {'starter': starter}
+    elif path == 'closure':
+        def root():
+            return starter
+    else:
+        class Holder:
+            def __init__(self, callback):
+                self.callback = callback
+            def call(self):
+                return self.callback
+        root = Holder(starter).call
+    monkeypatch.setattr(module('storage_errors'), 'review_starter', root, raising=False)
+    with pytest.raises(AssertionError, match=(
+            'prebound native thread starter reachable from frozen roots; '
+            'profiling cannot be guaranteed for threads it creates')):
+        with execution_guard():
+            pytest.fail('undetected prebound starter reached the frozen leg')
+
+
+@pytest.mark.parametrize('api', [
+    '_thread.start_new_thread', '_thread.start_joinable_thread',
+    '_thread._start_joinable_thread', 'threading._start_new_thread',
+    'threading._start_joinable_thread', 'Thread.start', 'Thread._bootstrap',
+])
+def test_guard_rejects_each_prebound_starter(api):
+    import _thread
+    import sys
+    import threading
+
+    namespace, name = api.split('.')
+    ran = threading.Event()
+    owner = (threading.Thread(target=ran.set) if namespace == 'Thread'
+             else _thread if namespace == '_thread' else threading)
+    if not hasattr(owner, name):
+        pytest.skip(f'{api} unavailable on Python {sys.version_info[:2]}')
+    # Explicit harness roots obey the same rejection as frozen-module globals.
+    with pytest.raises(AssertionError, match='prebound native thread starter'):
+        with execution_guard(getattr(owner, name)):
+            pytest.fail('undetected prebound starter reached the frozen leg')
+    assert not ran.is_set()
+    if namespace == 'Thread':
+        assert owner.ident is None
+
+
+@pytest.mark.parametrize('api', ['raw', 'joinable', 'thread'])
+@pytest.mark.parametrize('use_partial', [False, True])
+@pytest.mark.parametrize('live_callback', [False, True])
+def test_guard_new_starter_paths_are_profiled(monkeypatch, api, use_partial, live_callback):
+    import _thread
+    import functools
+    import sys
+    import threading
+    import time
+
+    if api == 'joinable' and not hasattr(_thread, 'start_joinable_thread'):
+        pytest.skip('joinable native starter unavailable')
+    frozen = module('storage_errors')
+    # Match the reviewer's detached worker: only the transient held callback
+    # supplies live code, with no computed import or external registry lookup.
+    namespace = {'__name__': 'review_detached_worker', 'getprofile': sys.getprofile}
+    exec('def worker(callback, values, profiles, done):\n'
+         ' profiles.append(getprofile())\n'
+         ' values.append(callback(ValueError()))\n'
+         ' done.set()\n', namespace)
+    monkeypatch.setattr(frozen, 'review_worker', namespace['worker'], raising=False)
+    values, profiles = [], []
+    done = threading.Event()
+    previous, previous_thread = sys.getprofile(), threading.getprofile()
+    original = _thread.start_new_thread
+    expected = pytest.raises(AssertionError, match='live callable') if live_callback else nullcontext()
+    with expected:
+        with execution_guard():
+            frozen.review_live_callback = (importlib.import_module('trusted_router.storage_errors')
+                                          if live_callback else frozen).is_transient_store_error
+            try:
+                args = (frozen.review_live_callback, values, profiles, done)
+                if api == 'raw':
+                    starter = _thread.start_new_thread
+                    if use_partial:
+                        starter = functools.partial(starter)
+                    ident = starter(frozen.review_worker, args)
+                    assert done.wait(10)
+                    deadline = time.monotonic() + 10
+                    while ident in sys._current_frames():
+                        assert time.monotonic() < deadline
+                        time.sleep(.001)
+                elif api == 'joinable':
+                    starter = _thread.start_joinable_thread
+                    if use_partial:
+                        starter = functools.partial(starter)
+                    handle = starter(functools.partial(frozen.review_worker, *args))
+                    handle.join(10)
+                    assert handle.is_done()
+                else:
+                    thread = threading.Thread(target=frozen.review_worker, args=args)
+                    starter = functools.partial(thread.start) if use_partial else thread.start
+                    starter()
+                    thread.join(10)
+                    assert not thread.is_alive()
+            finally:
+                del frozen.review_live_callback
+    assert values == [False]
+    assert len(profiles) == 1 and profiles[0] is not None
+    assert _thread.start_new_thread is original
+    assert sys.getprofile() is previous
+    assert threading.getprofile() is previous_thread
+
+
 @pytest.mark.parametrize('kind', [
     'mapping_key', 'mapping_value', 'sequence', 'set', 'inherited_private_slot',
     'shadowed_slot', 'wrapped_descriptor', 'cached_property', 'getstate',
