@@ -565,6 +565,25 @@ func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
 		cfg.FrontDoor.RevokeAfter, cfg.FrontDoor.RevokeEvery = time.Second, 100*time.Millisecond
 		stops[ln] = start(t, cfg, Clients{Spanner: shared, PubSub: ps})
 	}
+	s, err := store.New(shared, short(config(a)).Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a's view takes c in before b stops: the three members' rows are live,
+	// and then every node's watch has read them, a ring interval each.
+	eventually(t, 10*time.Second, "the three nodes live", func() (bool, error) {
+		members, _, err := s.Members(ctx)
+		live := 0
+		for _, m := range members {
+			for _, ln := range []net.Listener{a, b, c} {
+				if m.Live && m.Address == ln.Addr().String() {
+					live++
+				}
+			}
+		}
+		return live == 3, err
+	})
+	time.Sleep(2 * Defaults().Ring)
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
 	first, e := admitted(t, gw, ws, "r1", b)
 	second, _ := admitted(t, gw, ws, "r2", b)
@@ -583,10 +602,6 @@ func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
 	// reach b either.
 	if n := relays.seen.Load(); n == 0 {
 		t.Fatal("a recorded its terminals without asking the third node to relay them")
-	}
-	s, err := store.New(shared, short(config(a)).Store)
-	if err != nil {
-		t.Fatal(err)
 	}
 	eventually(t, 10*time.Second, "the lease revoked", func() (bool, error) {
 		l, _, err := s.ReadLease(ctx, store.LeaseRef{Workspace: ws, LeaseID: e.Lease})
