@@ -10,8 +10,8 @@ const homepage = fs.readFileSync(path.join(root, 'src/trusted_router/static/home
 const cta = homepage.slice(homepage.indexOf('function trackHomepageCta('), homepage.indexOf("document.addEventListener('click',trackHomepageCta)"));
 function setup(cookie) {
  const links = [];
- for (const name of ['top', 'migrate', 'closing']) {
-  const html = fs.readFileSync(path.join(root, `src/trusted_router/templates/homepage/${name}.html`), 'utf8');
+ for (const name of ['public/_nav', 'homepage/top', 'homepage/migrate', 'homepage/closing']) {
+  const html = fs.readFileSync(path.join(root, `src/trusted_router/templates/${name}.html`), 'utf8');
   for (const match of html.matchAll(/<a\b([^>]*href="\/console\/api-keys"[^>]*)>([^<]+)<\/a>/g)) {
    assert.match(match[1], /data-action="open-signin"/);
    const index = links.length;

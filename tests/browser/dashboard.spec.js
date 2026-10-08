@@ -47,7 +47,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.locator(".hero-sdk-code-line.added")).toContainText("api.trustedrouter.com/v1");
   await expect(page.locator(".charter-home-hero .hero-links")).toHaveCSS("justify-content", "flex-start");
 
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("link", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 

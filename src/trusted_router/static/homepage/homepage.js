@@ -12,29 +12,6 @@ const AGENT=DATA.migration.agent_prompt;
 
 const $ = (selector, root=document) => root.querySelector(selector);
 const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
-// One HTML content tree: collapse supporting examples on phones, expose them on desktop.
-// Without JavaScript these native disclosures start open and still work.
-const compactContent=matchMedia('(max-width:600px)');
-const mobileDisclosures=$$('[data-mobile-disclosure]');
-const mobileOpen=new Map();
-function syncDisclosures(){
- mobileDisclosures.forEach(detail=>{
-  const summary=$('summary',detail);
-  const focused=document.activeElement;
-  detail.open=compactContent.matches?(mobileOpen.get(detail.id)??false):true;
-  summary.tabIndex=compactContent.matches?0:-1;
-  if(compactContent.matches&&!detail.open&&detail.contains(focused))summary.focus({preventScroll:true});
-  if(!compactContent.matches&&focused===summary&&!detail.classList.contains('footer-disclosure')){
-   const content=$('.disclosure-body',detail);content.tabIndex=-1;content.focus({preventScroll:true});
-  }
- });
- document.documentElement.classList.add('disclosures-ready');
-}
-mobileDisclosures.forEach(detail=>detail.addEventListener('toggle',()=>{
- if(compactContent.matches)mobileOpen.set(detail.id,detail.open);
-}));
-compactContent.addEventListener('change',syncDisclosures);
-syncDisclosures();
 // Share the existing first-party acquisition pipeline. Only event names leave
 // the page; search terms, model IDs, clipboard text and properties remain local.
 function track(name, properties={}) {
@@ -113,52 +90,9 @@ $('[data-copycode]').addEventListener('click',async e=>{
  if(await copyText(text,e.currentTarget))track(lang==='agent'?'home.agent_prompt_copied':'home.code_copied',{tab:lang,from:source});
 });
 renderCode();
-const menu=$('.menu'), nav=$('#homepage-nav');
-function closeMenu(){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');}
-menu.addEventListener('click',()=>{const open=menu.getAttribute('aria-expanded')!=='true';nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));});
-nav.addEventListener('click',e=>{if(e.target.closest('a'))closeMenu();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&menu.getAttribute('aria-expanded')==='true'){closeMenu();menu.focus();}});
-const search=$('#model-search'), query=$('#model-query');
-let searchTrigger;
-let searchModels=null, searchLoading=false, searchFailed=false;
-function renderSearch(){
- const results=$('#search-results');results.replaceChildren();
- $('#search-retry').hidden=!searchFailed;
- if(searchLoading){$('#search-count').textContent='Loading the model catalog…';return;}
- if(searchFailed){$('#search-count').textContent='The catalog could not be loaded. Try again or browse all models.';return;}
- const needle=query.value.trim().toLowerCase();
- const models=(searchModels||[]).filter(m=>(m.name+' '+m.id).toLowerCase().includes(needle));
- $('#search-count').textContent=models.length?`${models.length} ${models.length===1?'match':'matches'}${models.length>50?' · showing the first 50':''}`:'No matching models. Try another name or browse all models.';
- for(const model of models.slice(0,50)){
-  const a=document.createElement('a');a.href='/models/'+model.id.split('/').map(encodeURIComponent).join('/');
-  const icon=document.createElement('img');icon.className='model-lab-icon';icon.src=DATA.publisher_icons[model.id.split('/')[0]]||'/static/homepage/mark.svg';icon.alt='';icon.width=30;icon.height=30;
-  const label=document.createElement('span');label.className='model-label';label.textContent=model.name;
-  const id=document.createElement('small');id.textContent=model.id;label.append(id);a.append(icon,label);results.append(a);
- }
-}
-async function loadSearch(){
- if(searchLoading||searchModels)return;
- searchLoading=true;searchFailed=false;renderSearch();
- try{
-  const response=await fetch('/v1/models/picker',{headers:{Accept:'application/json'},signal:AbortSignal.timeout(10000)});
-  if(!response.ok)throw new Error('Catalog unavailable');
-  const payload=await response.json();if(!Array.isArray(payload.data))throw new Error('Invalid catalog');
-  searchModels=payload.data.filter(m=>typeof m.id==='string'&&typeof m.name==='string'&&!m.trustedrouter?.internal_only);
- }catch{searchFailed=true;}finally{searchLoading=false;renderSearch();}
-}
-function openSearch(trigger,preset=''){searchTrigger=trigger;closeMenu();search.showModal();query.value=preset;renderSearch();query.focus();void loadSearch();}
-$$('[data-search-model]').forEach(button=>button.addEventListener('click',()=>openSearch(button,button.dataset.searchModel)));
 const labs=$('.trh .labs');let keyboardInput=false;
 document.addEventListener('keydown',()=>{keyboardInput=true;},true);document.addEventListener('pointerdown',()=>{keyboardInput=false;},true);
 if(labs){labs.addEventListener('focusin',()=>{labs.classList.toggle('paused',keyboardInput);});labs.addEventListener('focusout',()=>{labs.classList.remove('paused');});}
-$('#search-retry').addEventListener('click',()=>void loadSearch());
-$$('[data-open-search]').forEach(button=>button.addEventListener('click',()=>openSearch(button)));
-$('[data-close-search]').addEventListener('click',()=>search.close());
-search.addEventListener('close',()=>{const target=searchTrigger?.getClientRects().length?searchTrigger:menu;target?.focus();});
-search.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();search.close();}});
-search.addEventListener('click',e=>{if(e.target===search){const box=search.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)search.close();}});
-query.addEventListener('input',renderSearch);
-document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openSearch(document.activeElement);}});
 const tooltip=document.createElement('div');tooltip.className='page-tooltip';tooltip.id='page-tooltip';tooltip.role='tooltip';tooltip.hidden=true;document.body.append(tooltip);
 let tipOwner;
 function hideTip(){tooltip.hidden=true;tipOwner?.removeAttribute('aria-describedby');tipOwner=null;}

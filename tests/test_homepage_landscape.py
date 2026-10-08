@@ -94,8 +94,11 @@ def test_homepage_catalog_matches_model_directory() -> None:
                 assert view["zdr_available"]
             if key == "c":
                 assert view["e2e_available"]
-    script = Path("src/trusted_router/static/homepage/homepage.js").read_text()
-    assert "fetch('/v1/models/picker'" in script
+    # The model search lives in the shared header script, which the homepage loads.
+    shell = Path("src/trusted_router/templates/homepage/index.html").read_text()
+    assert 'src="/static/site-chrome.js' in shell
+    script = Path("src/trusted_router/static/site-chrome.js").read_text()
+    assert 'fetch("/v1/models/picker"' in script
     assert "AbortSignal.timeout" in script
 
 
