@@ -6,15 +6,27 @@
 // ordered subscription to the settle log. What the records say is the
 // owner's and the auditor's business: this package carries their bytes and
 // keeps their order.
+//
+// It publishes through Pub/Sub's Publish call, not the client library's
+// publisher: that publisher starts a publish's timeout only when its batch
+// begins sending, after its batching and its key's queue, so a record could
+// be stored long after its deadline, past the fence the auditor sets from
+// it (§4.8); and resuming a paused key can send a record queued behind the
+// failed one before the failed one's republish. Here each record's deadline
+// runs from its hand-over, through its queue and every retry, a record is
+// never sent once its deadline has passed, and a failure fails every record
+// queued behind it before the key can be resumed.
 package settlelog
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
+	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 )
 
 // Endpoint is a region's locational endpoint. Pub/Sub keeps one key's
@@ -24,90 +36,262 @@ import (
 // region's.
 func Endpoint(region string) string { return region + "-pubsub.googleapis.com:443" }
 
-// Settings are a publisher's. Deadline bounds each publish, the request and
-// the client library's own retries together (§4.5): shorter than the
-// reaper's grace less twice the skew allowance, for the settle log. Delay is
-// the longest a publish waits to be sent with others.
+// Errors a publish can end with besides Pub/Sub's own.
+var (
+	// ErrDeadline: the record's deadline passed before it could be sent.
+	ErrDeadline = errors.New("settlelog: the record's publish deadline passed")
+	// ErrPaused: the lease's key is paused by an earlier failure.
+	ErrPaused = errors.New("settlelog: the lease's key is paused by an earlier failure; resume it")
+	// ErrStopped: the publisher is stopped.
+	ErrStopped = errors.New("settlelog: the publisher is stopped")
+)
+
+// Settings are a publisher's. Deadline bounds each publish from its
+// hand-over, through its queue and every retry (§4.5): shorter than the
+// reaper's grace less twice the skew allowance, for the settle log.
 type Settings struct {
 	Deadline time.Duration
-	Delay    time.Duration
 }
 
-func (s Settings) apply(p *pubsub.Publisher) error {
-	if s.Deadline <= 0 || s.Delay <= 0 {
-		return fmt.Errorf("settlelog: a deadline of %v and a delay of %v", s.Deadline, s.Delay)
+// Pub/Sub's limits on one Publish call.
+const (
+	maxBatchMessages = 1000
+	maxBatchBytes    = 9 << 20
+)
+
+// publishFunc is Pub/Sub's Publish call.
+type publishFunc func(ctx context.Context, req *pubsubpb.PublishRequest) (*pubsubpb.PublishResponse, error)
+
+func publisherOf(client *pubsub.Client) publishFunc {
+	return func(ctx context.Context, req *pubsubpb.PublishRequest) (*pubsubpb.PublishResponse, error) {
+		// The call's own retries end with ctx, at the deadline.
+		return client.TopicAdminClient.Publish(ctx, req)
 	}
-	p.PublishSettings.Timeout = s.Deadline
-	p.PublishSettings.DelayThreshold = s.Delay
-	return nil
 }
 
-// Log publishes a region's settle log.
+// Pending is a record handed over and not yet acknowledged.
+type Pending struct {
+	msg      *pubsubpb.PubsubMessage
+	deadline time.Time
+	done     chan struct{}
+	id       string
+	err      error
+}
+
+func newPending(msg *pubsubpb.PubsubMessage, deadline time.Time) *Pending {
+	return &Pending{msg: msg, deadline: deadline, done: make(chan struct{})}
+}
+
+func (p *Pending) finish(id string, err error) {
+	p.id, p.err = id, err
+	close(p.done)
+}
+
+// Wait waits for the record's acknowledgement and returns its message ID,
+// or its failure. A failure on the settle log pauses the lease's key: every
+// record handed to it after this one fails too, until Resume. A Wait that
+// gives up on ctx leaves the publish under way, within its deadline.
+func (p *Pending) Wait(ctx context.Context) (string, error) {
+	select {
+	case <-p.done:
+		return p.id, p.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// Log publishes a region's settle log: one sender per lease key, one
+// Publish call at a time, each carrying every record queued for the key.
 type Log struct {
-	pub *pubsub.Publisher
+	publish  publishFunc
+	topic    string
+	deadline time.Duration
+	clock    func() time.Time
+
+	mu      sync.Mutex
+	keys    map[string]*key
+	stopped bool
+	senders sync.WaitGroup
 }
 
-// OpenLog opens the settle log's topic for publishing, with ordering on.
+// key is a lease's ordering key: the records handed over and not yet sent,
+// whether a sender is at work on it, and whether a failure paused it.
+type key struct {
+	queue   []*Pending
+	sending bool
+	paused  bool
+}
+
+// OpenLog opens the settle log's topic for publishing, through client's
+// endpoint, which is the region's (Endpoint).
 func OpenLog(client *pubsub.Client, topic string, s Settings) (*Log, error) {
-	pub := client.Publisher(topic)
-	pub.EnableMessageOrdering = true
-	if err := s.apply(pub); err != nil {
-		return nil, err
+	return openLog(publisherOf(client), topic, s, time.Now)
+}
+
+func openLog(publish publishFunc, topic string, s Settings, clock func() time.Time) (*Log, error) {
+	if s.Deadline <= 0 || topic == "" {
+		return nil, fmt.Errorf("settlelog: a topic %q and a deadline of %v", topic, s.Deadline)
 	}
-	return &Log{pub: pub}, nil
+	return &Log{publish: publish, topic: topic, deadline: s.Deadline, clock: clock, keys: map[string]*key{}}, nil
 }
 
 // Publish hands a record to its lease's key without waiting. Records handed
 // to one key are stored in the order of the calls, so an owner hands them
 // over under the lease's lock and waits outside it (§4.2).
 func (l *Log) Publish(lease string, data []byte, attrs map[string]string) *Pending {
+	p := newPending(&pubsubpb.PubsubMessage{Data: data, Attributes: attrs, OrderingKey: lease}, l.clock().Add(l.deadline))
 	if lease == "" {
-		return failed(errors.New("settlelog: a record needs its lease's key"))
+		p.finish("", errors.New("settlelog: a record needs its lease's key"))
+		return p
 	}
-	return &Pending{res: l.pub.Publish(context.Background(),
-		&pubsub.Message{Data: data, Attributes: attrs, OrderingKey: lease})}
-}
-
-// Resume lets a lease's paused key take records again. The owner then
-// republishes the records from the first that failed, with their sequence
-// numbers, before anything new (§4.5).
-func (l *Log) Resume(lease string) { l.pub.ResumePublish(lease) }
-
-// Stop sends what was handed over, waits for it, and stops.
-func (l *Log) Stop() { l.pub.Stop() }
-
-// Pending is a record handed over and not yet acknowledged.
-type Pending struct {
-	res *pubsub.PublishResult
-	err error
-}
-
-func failed(err error) *Pending { return &Pending{err: err} }
-
-// Wait waits for the record's acknowledgement and returns its message ID,
-// or its failure. A failure on the settle log pauses the lease's key: every
-// record handed to it after this one fails too, until Resume. A Wait that
-// gives up on ctx leaves the publish under way: it may still be stored, as
-// the auditor's boundary S allows for (§4.5).
-func (p *Pending) Wait(ctx context.Context) (string, error) {
-	if p.err != nil {
-		return "", p.err
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.stopped {
+		p.finish("", ErrStopped)
+		return p
 	}
-	return p.res.Get(ctx)
+	k := l.keys[lease]
+	if k == nil {
+		k = &key{}
+		l.keys[lease] = k
+	}
+	if k.paused {
+		p.finish("", ErrPaused)
+		return p
+	}
+	k.queue = append(k.queue, p)
+	if !k.sending {
+		k.sending = true
+		l.senders.Add(1)
+		go l.send(lease, k)
+	}
+	return p
 }
 
-// Records publishes the record topic.
+// Resume lets a lease's paused key take records again. Every record queued
+// when the key failed has failed already, so the owner's republish, from the
+// first that failed, with its sequence numbers, comes before anything new
+// (§4.5).
+func (l *Log) Resume(lease string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if k := l.keys[lease]; k != nil {
+		k.paused = false
+		if !k.sending && len(k.queue) == 0 {
+			delete(l.keys, lease)
+		}
+	}
+}
+
+// Stop sends what was handed over, waits for it, and takes no more.
+func (l *Log) Stop() {
+	l.mu.Lock()
+	l.stopped = true
+	l.mu.Unlock()
+	l.senders.Wait()
+}
+
+// send is a key's sender: it takes what is queued, a batch at a time, and
+// sends each before its first record's deadline, which is the earliest. A
+// batch whose deadline has passed is not sent. A failure fails the batch
+// and every record queued behind it, and pauses the key.
+func (l *Log) send(lease string, k *key) {
+	defer l.senders.Done()
+	for {
+		l.mu.Lock()
+		if len(k.queue) == 0 {
+			k.sending = false
+			if !k.paused {
+				delete(l.keys, lease)
+			}
+			l.mu.Unlock()
+			return
+		}
+		batch := takeBatch(&k.queue)
+		l.mu.Unlock()
+		err := l.sendBatch(batch)
+		if err == nil {
+			continue
+		}
+		l.mu.Lock()
+		k.paused = true
+		for _, p := range k.queue {
+			p.finish("", ErrPaused)
+		}
+		k.queue = nil
+		k.sending = false
+		l.mu.Unlock()
+		return
+	}
+}
+
+// takeBatch takes records from the front of queue, within Pub/Sub's limits.
+func takeBatch(queue *[]*Pending) []*Pending {
+	n, size := 0, 0
+	for n < len(*queue) && n < maxBatchMessages {
+		size += len((*queue)[n].msg.Data) + 64
+		if n > 0 && size > maxBatchBytes {
+			break
+		}
+		n++
+	}
+	batch := (*queue)[:n:n]
+	*queue = (*queue)[n:]
+	return batch
+}
+
+// sendBatch sends one batch, finishing each record, and returns its error.
+func (l *Log) sendBatch(batch []*Pending) error {
+	deadline := batch[0].deadline
+	if !l.clock().Before(deadline) {
+		for _, p := range batch {
+			p.finish("", ErrDeadline)
+		}
+		return ErrDeadline
+	}
+	msgs := make([]*pubsubpb.PubsubMessage, len(batch))
+	for i, p := range batch {
+		msgs[i] = p.msg
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	resp, err := l.publish(ctx, &pubsubpb.PublishRequest{Topic: l.topic, Messages: msgs})
+	if err == nil && len(resp.GetMessageIds()) != len(batch) {
+		err = fmt.Errorf("settlelog: %d message IDs for %d records", len(resp.GetMessageIds()), len(batch))
+	}
+	for i, p := range batch {
+		if err != nil {
+			p.finish("", err)
+		} else {
+			p.finish(resp.GetMessageIds()[i], nil)
+		}
+	}
+	return err
+}
+
+// Records publishes the record topic, unordered, each record in its own
+// Publish call within its deadline.
 type Records struct {
-	pub *pubsub.Publisher
+	publish  publishFunc
+	topic    string
+	deadline time.Duration
+	clock    func() time.Time
+
+	mu      sync.Mutex
+	stopped bool
+	calls   sync.WaitGroup
 }
 
-// OpenRecords opens the record topic for publishing, unordered.
+// OpenRecords opens the record topic for publishing.
 func OpenRecords(client *pubsub.Client, topic string, s Settings) (*Records, error) {
-	pub := client.Publisher(topic)
-	if err := s.apply(pub); err != nil {
-		return nil, err
+	return openRecords(publisherOf(client), topic, s, time.Now)
+}
+
+func openRecords(publish publishFunc, topic string, s Settings, clock func() time.Time) (*Records, error) {
+	if s.Deadline <= 0 || topic == "" {
+		return nil, fmt.Errorf("settlelog: a topic %q and a deadline of %v", topic, s.Deadline)
 	}
-	return &Records{pub: pub}, nil
+	return &Records{publish: publish, topic: topic, deadline: s.Deadline, clock: clock}, nil
 }
 
 // The record topic's attributes: the authorization a message is keyed by,
@@ -122,15 +306,43 @@ const (
 
 // Publish hands a full record or an outcome to the record topic.
 func (r *Records) Publish(authorization, kind string, data []byte) *Pending {
+	p := newPending(&pubsubpb.PubsubMessage{Data: data,
+		Attributes: map[string]string{AuthorizationAttr: authorization, KindAttr: kind}}, r.clock().Add(r.deadline))
 	if authorization == "" || (kind != FullRecord && kind != Outcome) {
-		return failed(fmt.Errorf("settlelog: a record topic message keyed %q, of kind %q", authorization, kind))
+		p.finish("", fmt.Errorf("settlelog: a record topic message keyed %q, of kind %q", authorization, kind))
+		return p
 	}
-	return &Pending{res: r.pub.Publish(context.Background(), &pubsub.Message{Data: data,
-		Attributes: map[string]string{AuthorizationAttr: authorization, KindAttr: kind}})}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		p.finish("", ErrStopped)
+		return p
+	}
+	r.calls.Add(1)
+	go func() {
+		defer r.calls.Done()
+		ctx, cancel := context.WithDeadline(context.Background(), p.deadline)
+		defer cancel()
+		resp, err := r.publish(ctx, &pubsubpb.PublishRequest{Topic: r.topic, Messages: []*pubsubpb.PubsubMessage{p.msg}})
+		if err == nil && len(resp.GetMessageIds()) != 1 {
+			err = fmt.Errorf("settlelog: %d message IDs for one record", len(resp.GetMessageIds()))
+		}
+		if err != nil {
+			p.finish("", err)
+			return
+		}
+		p.finish(resp.GetMessageIds()[0], nil)
+	}()
+	return p
 }
 
-// Stop sends what was handed over, waits for it, and stops.
-func (r *Records) Stop() { r.pub.Stop() }
+// Stop waits for the records handed over, and takes no more.
+func (r *Records) Stop() {
+	r.mu.Lock()
+	r.stopped = true
+	r.mu.Unlock()
+	r.calls.Wait()
+}
 
 // Subscription is the auditor's subscription to a region's settle log,
 // which must have message ordering on.
@@ -139,10 +351,14 @@ type Subscription struct {
 }
 
 // Subscribe opens it. maxOutstanding bounds the records delivered and not
-// yet acknowledged; a negative one is no bound.
+// yet acknowledged; a negative one is no bound. When Receive ends, the
+// records it delivered and was not asked to acknowledge are asked for again
+// at once, so another member gets them (assumption A1).
 func Subscribe(client *pubsub.Client, subscription string, maxOutstanding int) *Subscription {
 	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
+	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
+		Timeout: 10 * time.Second}
 	return &Subscription{sub: sub}
 }
 
@@ -161,17 +377,17 @@ type Delivery struct {
 }
 
 // Ack acknowledges the record, once what it did is committed (assumption
-// A1, design §4.8): a record not acknowledged is delivered again, and so is
-// every record after it on its lease's key.
+// A1, design §4.8): a record not acknowledged is delivered again.
 func (d *Delivery) Ack() { d.msg.Ack() }
 
-// Nack asks for the record again now, with every record after it on its
-// lease's key.
+// Nack asks for the record again now.
 func (d *Delivery) Nack() { d.msg.Nack() }
 
 // Receive delivers records until ctx ends or the subscription fails: each
 // lease's in the order the log stored them, and one at a time, the next
 // only once handle has returned for the one before; leases concurrently.
+// handle acknowledges a record only by Ack: a record it returns without
+// acknowledging stays outstanding, and comes back if the member stops.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
 	return s.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		handle(ctx, &Delivery{Lease: m.OrderingKey, Data: m.Data, Attrs: m.Attributes, ID: m.ID,

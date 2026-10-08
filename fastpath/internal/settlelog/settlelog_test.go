@@ -24,16 +24,39 @@ import (
 
 // failing fails a publish request that carries a message with the attribute
 // fail: "once" fails it the first time with a code the client does not
-// retry, "always" every time with one it does.
+// retry, "always" every time with one it does, "held" holds it until the
+// gate opens and then fails it, and "slow" holds it until the gate opens.
+// Every message the server is sent is counted, in sent.
 type failing struct {
 	mu   sync.Mutex
 	seen map[string]bool
+	sent []string
+	gate chan struct{}
 }
 
 func (f *failing) React(req any) (bool, any, error) {
 	r, ok := req.(*pubsubpb.PublishRequest)
 	if !ok {
 		return false, nil, nil
+	}
+	f.mu.Lock()
+	for _, m := range r.Messages {
+		f.sent = append(f.sent, string(m.Data))
+	}
+	gate := f.gate
+	f.mu.Unlock()
+	for _, m := range r.Messages {
+		switch m.Attributes["fail"] {
+		case "held":
+			if gate != nil {
+				<-gate
+				return true, nil, status.Error(codes.InvalidArgument, "refused after a wait")
+			}
+		case "slow":
+			if gate != nil {
+				<-gate
+			}
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -52,16 +75,18 @@ func (f *failing) React(req any) (bool, any, error) {
 }
 
 type fakeLog struct {
-	srv    *pstest.Server
-	client *pubsub.Client
-	topic  string
-	sub    string
+	srv     *pstest.Server
+	client  *pubsub.Client
+	topic   string
+	sub     string
+	reactor *failing
 }
 
 func newFakeLog(t *testing.T, ordered bool) *fakeLog {
 	t.Helper()
 	ctx := context.Background()
-	srv := pstest.NewServer(pstest.ServerReactorOption{FuncName: "Publish", Reactor: &failing{seen: map[string]bool{}}})
+	reactor := &failing{seen: map[string]bool{}}
+	srv := pstest.NewServer(pstest.ServerReactorOption{FuncName: "Publish", Reactor: reactor})
 	t.Cleanup(func() { _ = srv.Close() })
 	conn, err := grpc.NewClient(srv.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -74,7 +99,7 @@ func newFakeLog(t *testing.T, ordered bool) *fakeLog {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	f := &fakeLog{srv: srv, client: client, topic: "projects/spike/topics/settle-log",
-		sub: "projects/spike/subscriptions/auditor"}
+		sub: "projects/spike/subscriptions/auditor", reactor: reactor}
 	if _, err := client.TopicAdminClient.CreateTopic(ctx, &pubsubpb.Topic{Name: f.topic}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +110,7 @@ func newFakeLog(t *testing.T, ordered bool) *fakeLog {
 	return f
 }
 
-var settings = Settings{Deadline: 2 * time.Second, Delay: time.Millisecond}
+var settings = Settings{Deadline: 2 * time.Second}
 
 func (f *fakeLog) log(t *testing.T) *Log {
 	t.Helper()
@@ -233,7 +258,7 @@ func TestAFailedPublishPausesOnlyItsLease(t *testing.T) {
 // so no owner publish is still being retried after it.
 func TestTheDeadlineCoversTheClientsRetries(t *testing.T) {
 	f := newFakeLog(t, true)
-	l, err := OpenLog(f.client, f.topic, Settings{Deadline: 300 * time.Millisecond, Delay: time.Millisecond})
+	l, err := OpenLog(f.client, f.topic, Settings{Deadline: 300 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,10 +268,8 @@ func TestTheDeadlineCoversTheClientsRetries(t *testing.T) {
 	if took := time.Since(start); err == nil || took > 3*time.Second {
 		t.Fatalf("a publish retried past its deadline: %v after %v", err, took)
 	}
-	for _, s := range []Settings{{Deadline: 0, Delay: time.Millisecond}, {Deadline: time.Second}} {
-		if _, err := OpenLog(f.client, f.topic, s); err == nil {
-			t.Errorf("a log opens with %+v", s)
-		}
+	if _, err := OpenLog(f.client, f.topic, Settings{}); err == nil {
+		t.Error("a log opens with no deadline")
 	}
 }
 
@@ -264,7 +287,11 @@ func TestARecordNotAcknowledgedIsDeliveredAgain(t *testing.T) {
 	// A nack can reach the server before the client's own receipt of the
 	// message extends its deadline, and then the record comes back only once
 	// that deadline, ten seconds, has passed: assumption A1 says a record not
-	// acknowledged comes back, not when.
+	// acknowledged comes back, not when. pstest delivers a key's next record
+	// only once the one before is acknowledged, so this shows the nacked
+	// record coming back ahead of those after it, not a replay of records
+	// already delivered after it, which real Pub/Sub's ordering also does:
+	// that is the spike's probe P3.
 	nacked := false
 	got := f.receive(t, 4, 40*time.Second, func(_, data string) bool {
 		if data == "la#2" && !nacked {
