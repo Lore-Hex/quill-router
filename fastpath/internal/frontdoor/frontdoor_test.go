@@ -335,6 +335,30 @@ func TestAShardWithoutRoomTriesOneOtherShard(t *testing.T) {
 	if got := f.door.Authorize(ctx, a); got.Status != Busy {
 		t.Fatalf("an unsharded workspace: %+v", got)
 	}
+
+	// A declared stream's request goes to the other shard's owner with its
+	// declaration, after a busy owner and after one not reached.
+	declared := a
+	declared.Stream, declared.OpenHeartbeat = true, true
+	for _, reached := range []bool{true, false} {
+		d := newDoor(t, 4)
+		if reached {
+			d.owners.admitted[shard] = OwnerAdmitted{Status: Busy}
+		} else {
+			d.owners.unreachable[d.ownerOf(shard)] = true
+		}
+		d.owners.admitted[other] = OwnerAdmitted{Status: Admitted, Envelope: "sealed"}
+		if got := d.door.Authorize(ctx, declared); got.Status != Admitted {
+			t.Fatalf("a declared request at the other shard, the first reached %v: %+v", reached, got)
+		}
+		want := []OwnerAuthorize{
+			{Workspace: "ws-1", Shard: shard, Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
+			{Workspace: "ws-1", Shard: other, Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
+		}
+		if !reflect.DeepEqual(d.owners.authorizes, want) {
+			t.Fatalf("the first reached %v: the owners were sent %+v, want %+v", reached, d.owners.authorizes, want)
+		}
+	}
 	if n := len(f.ev.all()); n != 1 {
 		t.Fatalf("an unsharded workspace asked %d owners: %q", n, f.ev.all())
 	}

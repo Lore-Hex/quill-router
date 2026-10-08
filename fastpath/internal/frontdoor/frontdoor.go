@@ -178,8 +178,11 @@ type AuthorizeOf struct {
 	Boot     []byte
 	// OpenHeartbeat: the boot that asked declares the heartbeat at stream
 	// open, so a stream's hold with no heartbeat record issued by the
-	// first-heartbeat allowance is released (§4.5).
-	OpenHeartbeat bool
+	// first-heartbeat allowance is released (§4.5). It is sent only when
+	// set, here and to the owner: a node from before it reads an undeclared
+	// authorize as it did, and refuses a declared one, so owners take it
+	// before front doors send it, and front doors before gateways.
+	OpenHeartbeat bool `json:",omitempty"`
 }
 
 // Authorized is an authorize's answer: Admitted with the sealed envelope and

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -119,16 +120,22 @@ func (o *Owner) Reap(ctx context.Context) error {
 // TerminalOrder's OwnerRelease): uncharged, its record naming its boot
 // binding. The test is that none was issued, not acknowledged: one issued
 // and not yet acknowledged may still be stored, so the hold is reaped at
-// its snapshot instead. With no allowance it releases none.
+// its snapshot instead. With no allowance it releases none, and with an
+// allowance and a grace whose sum is past the longest duration, none
+// before their sum.
 func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
 	if allowance == 0 {
 		return
 	}
-	due := gather(l, func(h *hold) (string, bool) { return h.auth, released(h, now, allowance+grace) })
+	after := allowance + grace
+	if after < allowance {
+		after = math.MaxInt64
+	}
+	due := gather(l, func(h *hold) (string, bool) { return h.auth, released(h, now, after) })
 	slices.Sort(due)
 	for len(due) > 0 {
 		n := min(len(due), releaseBatch)
-		if !l.releaseSome(due[:n], now, allowance+grace) {
+		if !l.releaseSome(due[:n], now, after) {
 			return
 		}
 		due = due[n:]

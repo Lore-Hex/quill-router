@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/settlelog"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
@@ -241,8 +242,9 @@ func TestARequestIsAdmittedSettledAndBooked(t *testing.T) {
 // TestADeclaredStreamWithNoHeartbeatIsReleased: a stream whose boot declares
 // the heartbeat at stream open, admitted through a gateway's authorize and
 // sent no heartbeat, is released by its owner once the default
-// first-heartbeat allowance and the grace have passed, and not before; and
-// the auditor books the release, uncharged.
+// first-heartbeat allowance and the grace have passed, and not before, as
+// the release record's publish time on the settle log shows; and the
+// auditor books the release, uncharged.
 func TestADeclaredStreamWithNoHeartbeatIsReleased(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
@@ -258,7 +260,8 @@ func TestADeclaredStreamWithNoHeartbeatIsReleased(t *testing.T) {
 	// skew, and reap rounds every second, so the release comes soon after
 	// the default allowance.
 	cfg.Store.Grace, cfg.Owner.RenewEvery = 10*time.Second, time.Second
-	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	ps, srv := fakePubSub(t)
+	start(t, cfg, Clients{Spanner: shared, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + ln.Addr().String()}
 	var got frontdoor.Authorized
@@ -284,7 +287,16 @@ func TestADeclaredStreamWithNoHeartbeatIsReleased(t *testing.T) {
 		d, err := s.Disposition(ctx, e.Auth)
 		return err == nil && d.Outcome == "released" && d.Cost.Valid && d.Cost.Int64 == 0, err
 	})
-	if took, least := time.Since(asked), Defaults().Owner.FirstHeartbeat+cfg.Store.Grace; took < least {
+	var released []time.Time
+	for _, m := range srv.Messages() {
+		if r, err := record.Decode(m.Data); err == nil && r.Kind == record.Release && r.Auth == e.Auth {
+			released = append(released, m.PublishTime)
+		}
+	}
+	if len(released) != 1 {
+		t.Fatalf("%d release records of %s on the settle log", len(released), e.Auth)
+	}
+	if took, least := released[0].Sub(asked), Defaults().Owner.FirstHeartbeat+cfg.Store.Grace; took < least {
 		t.Fatalf("released %v after its admission, before its allowance and the grace, %v", took, least)
 	}
 }
