@@ -10,8 +10,8 @@ const homepage = fs.readFileSync(path.join(root, 'src/trusted_router/static/home
 const cta = homepage.slice(homepage.indexOf('function trackHomepageCta('), homepage.indexOf("document.addEventListener('click',trackHomepageCta)"));
 function setup(cookie) {
  const links = [];
- for (const name of ['public/_nav', 'homepage/top', 'homepage/migrate', 'homepage/closing']) {
-  const html = fs.readFileSync(path.join(root, `src/trusted_router/templates/${name}.html`), 'utf8');
+ for (const name of ['top', 'migrate', 'closing']) {
+  const html = fs.readFileSync(path.join(root, `src/trusted_router/templates/homepage/${name}.html`), 'utf8');
   for (const match of html.matchAll(/<a\b([^>]*href="\/console\/api-keys"[^>]*)>([^<]+)<\/a>/g)) {
    assert.match(match[1], /data-action="open-signin"/);
    const index = links.length;
@@ -29,14 +29,14 @@ function setup(cookie) {
  links.classes = classes;
  return links;
 }
-test('signed-out homepage keeps sign-in labels and normal navigation fallback', () => {
+test('signed-out homepage keeps its API key links with a normal navigation fallback', () => {
  const links = setup('');
- assert.equal(links.length, 4);
- assert.deepEqual(links.map(a => a.textContent), ['Sign in', 'Get your API key', 'Get your API key', 'Get your API key']);
+ assert.equal(links.length, 3);
+ assert.deepEqual(links.map(a => a.textContent), ['Get your API key', 'Get your API key', 'Get your API key']);
 });
 test('returning visitors get console labels and retain button styles', () => {
  const links = setup('other=1; tr_signed_in=1');
- assert.deepEqual(links.map(a => a.textContent), ['Console', 'Open console', 'Open console', 'Open console']);
+ assert.deepEqual(links.map(a => a.textContent), ['Open console', 'Open console', 'Open console']);
  links.forEach((a, index) => {
   assert.equal(a.href, '/console/api-keys');
   assert.equal(a.className, links.classes[index]);
@@ -50,7 +50,7 @@ test('delegated homepage analytics survives auth-aware replacement and excludes 
  const context = vm.createContext({track: (...args) => sent.push(args)});
  vm.runInContext(cta, context);
  links.forEach((link, index) => {
-  link.closest = selector => selector === '#get-started' ? index === 3 : selector === '#migrate' ? index === 2 : null;
+  link.closest = selector => selector === '#get-started' ? index === 2 : selector === '#migrate' ? index === 1 : null;
   context.event = {target: {closest: () => link.className.includes('button-primary') && !link.className.includes('signin') ? link : null}};
   vm.runInContext('trackHomepageCta(event)', context);
  });
