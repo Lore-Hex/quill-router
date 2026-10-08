@@ -3,6 +3,7 @@ package settlelog
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -422,23 +423,39 @@ func TestTheRecordTopicIsDeliveredWithItsAttributes(t *testing.T) {
 // losing is a dial option whose streams lose the first delivery of the
 // message with data data, as a stream does that the log sends a message on
 // as its member closes it: the log holds the message for that member, and
-// the member never receives it. The flag reports the loss.
-func losing(data string) (grpc.DialOption, *atomic.Bool) {
-	lost := &atomic.Bool{}
+// the member never receives it. The loss reports it, and keeps each stream
+// ack deadline the streams asked for.
+func losing(data string) (grpc.DialOption, *loss) {
+	l := &loss{data: data}
 	return grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn,
 		method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		s, err := streamer(ctx, desc, cc, method, opts...)
 		if err != nil || method != "/google.pubsub.v1.Subscriber/StreamingPull" {
 			return s, err
 		}
-		return &losingStream{ClientStream: s, data: data, lost: lost}, nil
-	}), lost
+		return &losingStream{ClientStream: s, l: l}, nil
+	}), l
+}
+
+type loss struct {
+	data string
+	lost atomic.Bool
+	mu   sync.Mutex
+	// asked are the stream ack deadlines, in seconds, the requests on the
+	// streams asked for: each stream's first, and any the client library
+	// sent it later.
+	asked []int32
+}
+
+func (l *loss) deadlines() []int32 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]int32(nil), l.asked...)
 }
 
 type losingStream struct {
 	grpc.ClientStream
-	data string
-	lost *atomic.Bool
+	l *loss
 }
 
 // RecvMsg passes on each response but the lost message; a response that
@@ -451,7 +468,7 @@ func (s *losingStream) RecvMsg(m any) error {
 		resp := m.(*pubsubpb.StreamingPullResponse)
 		var kept []*pubsubpb.ReceivedMessage
 		for _, rm := range resp.ReceivedMessages {
-			if string(rm.GetMessage().GetData()) == s.data && s.lost.CompareAndSwap(false, true) {
+			if string(rm.GetMessage().GetData()) == s.l.data && s.l.lost.CompareAndSwap(false, true) {
 				continue
 			}
 			kept = append(kept, rm)
@@ -461,6 +478,117 @@ func (s *losingStream) RecvMsg(m any) error {
 			return nil
 		}
 	}
+}
+
+// SendMsg keeps the stream ack deadline a request asks for.
+func (s *losingStream) SendMsg(m any) error {
+	if r, ok := m.(*pubsubpb.StreamingPullRequest); ok && r.GetStreamAckDeadlineSeconds() > 0 {
+		s.l.mu.Lock()
+		s.l.asked = append(s.l.asked, r.GetStreamAckDeadlineSeconds())
+		s.l.mu.Unlock()
+	}
+	return s.ClientStream.SendMsg(m)
+}
+
+// afterAPing: a member of a subscription with exactly-once delivery gets a
+// first message, and runs on until the client library has told its stream
+// the ack deadline it wants for such a subscription, which it does at its
+// first ping, half a minute in. The log's delivery of a second message on
+// that stream is lost, and the member stops; a second member must get the
+// second message within three times ackExtension, and no stream may have
+// asked for a longer deadline. publish publishes a message, and receive
+// runs a member until ctx ends, handing it each message it gets, settled.
+func afterAPing(t *testing.T, ordered bool, publish func(f *fakeLog, data string),
+	receive func(ctx context.Context, f *fakeLog, sub string, got func(data string)) error) {
+	t.Helper()
+	opt, l := losing("second")
+	f := newFakeLog(t, ordered, opt)
+	sub := f.sub + "-once"
+	if _, err := f.client.SubscriptionAdminClient.CreateSubscription(context.Background(), &pubsubpb.Subscription{
+		Name: sub, Topic: f.topic, EnableMessageOrdering: ordered, EnableExactlyOnceDelivery: true,
+		AckDeadlineSeconds: 10}); err != nil {
+		t.Fatal(err)
+	}
+	publish(f, "first")
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	first := make(chan string, 4)
+	done := make(chan error, 1)
+	go func() { done <- receive(ctx, f, sub, func(data string) { first <- data }) }()
+	select {
+	case data := <-first:
+		if data != "first" {
+			t.Fatalf("the first member got %q", data)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first message was never delivered")
+	}
+	for deadline := time.Now().Add(time.Minute); len(l.deadlines()) < 2; time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the stream was never told a new deadline: %v", l.deadlines())
+		}
+	}
+	publish(f, "second")
+	for deadline := time.Now().Add(10 * time.Second); !l.lost.Load(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the second message was never sent on the stream")
+		}
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	ctx2, cancel := context.WithTimeout(context.Background(), 3*ackExtension)
+	defer cancel()
+	var mu sync.Mutex
+	var got []string
+	if err := receive(ctx2, f, sub, func(data string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if got = append(got, data); data == "second" {
+			cancel()
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(got, []string{"second"}) {
+		t.Fatalf("the second member got %v; the deadlines asked %v", got, l.deadlines())
+	}
+	for _, d := range l.deadlines() {
+		if time.Duration(d)*time.Second > ackExtension {
+			t.Fatalf("a stream asked for a deadline of %ds: %v", d, l.deadlines())
+		}
+	}
+}
+
+// TestARecordMessageNeverReceivedAfterAPingComesBackSoon is afterAPing for
+// the record topic's consumer.
+func TestARecordMessageNeverReceivedAfterAPingComesBackSoon(t *testing.T) {
+	t.Parallel()
+	var r *Records
+	t.Cleanup(func() {
+		if r != nil {
+			r.Stop()
+		}
+	})
+	afterAPing(t, false, func(f *fakeLog, data string) {
+		if r == nil {
+			var err error
+			if r, err = OpenRecords(f.client, f.topic, settings); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := wait(t, r.Publish("gwa-"+data, FullRecord, []byte(data))); err != nil {
+			t.Fatal(err)
+		}
+	}, func(ctx context.Context, f *fakeLog, sub string, got func(string)) error {
+		return SubscribeRecords(f.client, sub, -1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+			d.Ack()
+			got(string(d.Data))
+		})
+	})
 }
 
 // TestARecordMessageNeverReceivedComesBackSoon: a message of the record
@@ -491,7 +619,7 @@ func TestARecordMessageNeverReceivedComesBackSoon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lost.Load() || took == 0 {
-		t.Fatalf("lost %v; delivered after %v", lost.Load(), took)
+	if !lost.lost.Load() || took == 0 {
+		t.Fatalf("lost %v; delivered after %v", lost.lost.Load(), took)
 	}
 }

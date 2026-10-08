@@ -382,9 +382,29 @@ func TestARecordNeverReceivedComesBackSoon(t *testing.T) {
 	if err := wait(t, l.Publish("la", []byte("la#2"), nil)); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.receive(t, 2, 3*ackExtension, nil); !lost.Load() || !equal(got["la"], []string{"la#1", "la#2"}) {
-		t.Fatalf("lost %v; delivered %v", lost.Load(), got)
+	if got := f.receive(t, 2, 3*ackExtension, nil); !lost.lost.Load() || !equal(got["la"], []string{"la#1", "la#2"}) {
+		t.Fatalf("lost %v; delivered %v", lost.lost.Load(), got)
 	}
+}
+
+// TestARecordNeverReceivedAfterAPingComesBackSoon is afterAPing for the
+// settle log's subscription, a lease's records in order.
+func TestARecordNeverReceivedAfterAPingComesBackSoon(t *testing.T) {
+	t.Parallel()
+	var l *Log
+	afterAPing(t, true, func(f *fakeLog, data string) {
+		if l == nil {
+			l = f.log(t)
+		}
+		if err := wait(t, l.Publish("la", []byte(data), nil)); err != nil {
+			t.Fatal(err)
+		}
+	}, func(ctx context.Context, f *fakeLog, sub string, got func(string)) error {
+		return Subscribe(f.client, sub, -1).Receive(ctx, func(_ context.Context, d *Delivery) {
+			d.Ack()
+			got(string(d.Data))
+		})
+	})
 }
 
 // TestAStoppedMemberLetsGoOfItsRecords: once a member's Receive returns, it
