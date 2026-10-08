@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -235,6 +236,12 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		if _, err := Encode(r); err == nil {
 			t.Errorf("%s is encoded", name)
 		}
+		// Written by another writer, as JSON, the record is not read.
+		if raw, err := json.Marshal(r); err == nil {
+			if _, err := Decode(raw); err == nil {
+				t.Errorf("%s is decoded", name)
+			}
+		}
 	}
 	refund, err := Encode(valid[Refund])
 	if err != nil {
@@ -276,10 +283,15 @@ func TestASettleIsAbout250Bytes(t *testing.T) {
 
 func TestHoldsDigestIgnoresTheirOrder(t *testing.T) {
 	holds := one()[Handoff].Holds
-	a, _ := HoldsDigest(holds)
-	b, _ := HoldsDigest([]HeldHold{holds[1], holds[0]})
-	c, _ := HoldsDigest(holds[:1])
-	if !bytes.Equal(a, b) || bytes.Equal(a, c) || len(a) != DigestSize {
+	var digests [][]byte
+	for _, hs := range [][]HeldHold{holds, {holds[1], holds[0]}, holds[:1]} {
+		d, err := HoldsDigest(hs)
+		if err != nil || len(d) != DigestSize {
+			t.Fatalf("the digest of %+v: %x, %v", hs, d, err)
+		}
+		digests = append(digests, d)
+	}
+	if a, b, c := digests[0], digests[1], digests[2]; !bytes.Equal(a, b) || bytes.Equal(a, c) {
 		t.Fatalf("digests %x, %x, %x", a, b, c)
 	}
 	elsewhere := holds[1]
