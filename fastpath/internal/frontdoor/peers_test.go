@@ -385,7 +385,7 @@ func TestALeaseWhoseOwnerNoOneReachesIsRevoked(t *testing.T) {
 	f.door.withdrawn = true
 	f.door.mu.Unlock()
 	fail("l4")
-	f.advance(time.Hour)
+	f.advance(10 * time.Second) // its holds alive still
 	fail("l4")
 	if got := revoked(); len(got) != 0 {
 		t.Fatalf("a withdrawn front door revoked %v", got)
@@ -906,6 +906,39 @@ func TestAnAuthorizeThatFailsHereCounts(t *testing.T) {
 	authorize(ctx)
 	if got := here(); got == 0 {
 		t.Fatal("an authorize whose owner failed here did not count")
+	}
+}
+
+// TestARevokedMarkLastsFromTheRevocationsEnd: a revocation that takes a
+// while marks its lease from its end, since a renewal may land while it is
+// under way, and the lease's holds may live HoldLife from then.
+func TestARevokedMarkLastsFromTheRevocationsEnd(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	eol := start.Add(3*time.Hour + 10*time.Minute) // a hold the last renewal, under the revocation, admitted
+	fail := func() {
+		f.door.Refund(ctx, RefundOf{Envelope: sealedUntil(t, "node-b", "l1", "gwa-l1", eol), Money: []byte("{}")})
+		f.door.write(ctx)
+	}
+	fail()
+	f.advance(10 * time.Second)
+	f.store.onRevoke = func() { f.advance(time.Minute) }
+	fail() // revoked from 10 seconds to 70
+	f.store.onRevoke = nil
+	f.advance(3*time.Hour - 5*time.Second) // past HoldLife from the revocation's start, not its end
+	f.door.forget()
+	fail()
+	f.advance(10 * time.Second)
+	fail()
+	n := 0
+	for _, e := range f.ev.all() {
+		if e == "revoke l1" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("l1 revoked %d times, its hold alive past HoldLife from the revocation's start", n)
 	}
 }
 

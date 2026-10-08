@@ -320,10 +320,14 @@ func (f *FrontDoor) write(ctx context.Context) {
 			cancel()
 			f.mu.Lock()
 			// The next revocation waits a RevokeEvery from this one's
-			// end, however long it took.
+			// end, however long it took; and the lease's mark lasts from
+			// then, since a renewal may land while the revocation is
+			// under way.
 			f.lastRevoke = f.cfg.Clock()
 			if err != nil {
 				delete(f.revoked, ref)
+			} else {
+				f.revoked[ref] = f.lastRevoke
 			}
 			f.mu.Unlock()
 		default:
@@ -411,10 +415,10 @@ func (f *FrontDoor) probe(ctx context.Context) {
 
 // forget drops what the front door kept of leases and owners an hour old: a
 // lease lives at most its maximum life, far less. A revoked lease's mark
-// stays HoldLife, and then goes with the failures kept for it: by then
-// each of its holds has ended, so no request is evidence against it again
-// (unreachedAnywhere), and the marks number at most HoldLife over
-// RevokeEvery.
+// stays HoldLife from the revocation's end, and then goes with the failures
+// kept for it: by then each of its holds has ended, so no request is
+// evidence against it again (unreachedAnywhere), and the marks number at
+// most HoldLife over RevokeEvery.
 func (f *FrontDoor) forget() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
