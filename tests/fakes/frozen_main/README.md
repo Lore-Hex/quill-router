@@ -61,3 +61,39 @@ excluded. Generated dataclass methods belong to the owning class/file; their
 code line is the generated function's line, not a literal source line. Module
 and class bodies and comprehensions are retained. This is evidence, **not an
 allowlist**: any live router call is rejected regardless of the inventory.
+
+## CI selection and frame inspection
+
+`proof_oracle` marks the 336 complete-entry comparisons and the two protected
+header comparisons. CI runs them without coverage in the `proof-oracle` job,
+with four xdist workers and a 45-minute limit, once for each lifecycle clock.
+Its post-cutover clock uses the same computation as `test-post-cutover`.
+Both ordinary shard jobs deselect this marker; guards, witnesses and lock-order
+tests remain in those shards. The dedicated job has only `contents: read`
+permission and does not authenticate to GCP. Collection checks every marked
+item against the files in the parsed workflow before deselection or sharding.
+
+On CPython 3.11/3.12, inspecting `frame.f_locals` can invoke a user key's equality
+method while synchronizing fast locals. Reference inspection never reads it.
+Finished frames expose their locals through native GC traversal. Suspended
+frames require their generator/coroutine/async-generator owner to be reachable
+in the same bounded walk, where native GC exposes those locals. Frames without
+such a native path fail closed with an explicit `opaque frame` reason. Owners
+may appear before or after their frames; unresolved frames are checked at the
+end of the walk. A code object held only by `f_trace` does not prove native
+locals traversal: that independently traversed edge is discounted. No
+interpreter-stack or global owner search is used.
+
+On 3.13+, the sealed native frame-locals proxy supplement remains. Every native
+GC edge and the existing module/process registry identity boundaries remain in
+both implementations. The colliding-key regression checks direct reference
+inspection and the full execution guard, with and without a reachable owner;
+on old CPython its removal and unsafe-materialization mutations must fail.
+
+The scalar fast path applies only to exact `str`, `int`, `float`, `bytes`,
+`bool` and `NoneType` objects. The walk still counts and yields each object and
+retains every `gc.get_referents` edge before skipping inapplicable supplemental
+field checks. Their provenance is always `builtins`; subclasses keep the full
+metadata and reference path. This introduces no cache or state shared between
+cases. Synthetic-edge and subclass controls, with removal mutations, protect
+both boundaries of the shortcut.

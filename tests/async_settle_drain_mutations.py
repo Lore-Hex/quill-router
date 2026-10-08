@@ -84,6 +84,8 @@ def run() -> None:
                 shutil.copytree(ROOT / folder, target / folder,
                                 ignore=shutil.ignore_patterns('__pycache__', '.pytest_cache'))
             shutil.copy2(ROOT / 'pyproject.toml', target / 'pyproject.toml')
+            (target / '.github/workflows').mkdir(parents=True)
+            shutil.copy2(ROOT / '.github/workflows/ci.yml', target / '.github/workflows/ci.yml')
             file = target / relative
             text = file.read_text()
             for old, new in edits:

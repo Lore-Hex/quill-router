@@ -172,10 +172,11 @@ jobs:
           version: "latest"
       - name: Sync
         run: uv sync --frozen
-      # The coverage invocation executes the complete test suite. Running a
+      # The coverage invocation executes the ordinary suite; the frozen-main
+      # differential runs in proof-oracle without coverage tracing. Running a
       # separate plain pytest pass doubled CI time and delayed every guarded
       # production rollout without checking any additional behavior.
-      # -n 4 (pytest-xdist) uses the runner's 4 vCPUs; pytest-cov combines
+      # -n 4 (pytest-xdist) runs four workers; pytest-cov combines
       # worker coverage natively. --dist loadgroup is LOAD-BEARING: the
       # server-backed conformance backends are xdist_group-marked (see
       # tests/conformance/conftest.py) because the Spanner PG emulator rejects
@@ -202,13 +203,13 @@ jobs:
         # count, so a missing entry costs balance, not correctness.
         #
         # --splits/--group (pytest-split) shards the suite across matrix jobs;
-        # -n 4 still uses each runner's 4 vCPUs within a shard. Coverage is
+        # -n 4 runs four workers within each shard. Coverage is
         # collected per shard with NO fail-under: a shard sees only its own
         # slice, so enforcing 70% there would fail on a perfectly covered
         # suite. The `coverage` job below combines them and enforces once.
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
-          -m "not provider_health"
+          -m "not provider_health and not proof_oracle"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --cov=trusted_router --cov-report=
@@ -330,8 +331,49 @@ jobs:
       - name: Tests with every scheduled cutover already past
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
-          -m "not provider_health"
+          -m "not provider_health and not proof_oracle"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration
+
+  # Frozen reference tracing is intentionally separate from coverage tracing.
+  # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
+  proof-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        clock: [default, post-cutover]
+        # Four shards per clock: the matrix alone is ~42 runner-minutes at -n 4
+        # (round-13 measurement), which would otherwise set deploy latency.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Pin the lifecycle clock past the latest scheduled cutover
+        if: matrix.clock == 'post-cutover'
+        run: |
+          uv run python -c '
+          import os
+          from datetime import UTC, datetime, timedelta
+          from trusted_router.provider_lifecycle import latest_scheduled_cutover
+          clock = max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)
+          stamp = clock.strftime("%Y-%m-%dT%H:%M:%SZ")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
+          print(f"lifecycle clock pinned to {stamp}")
+          '
+      - name: Frozen-main proof matrix without coverage
+        run: >-
+          uv run pytest -q -n 4 --dist loadgroup
+          -m proof_oracle tests/test_async_settle_proof_oracle.py
+          --splits 4 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
 
   browser:

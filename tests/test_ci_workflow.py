@@ -62,12 +62,12 @@ def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
     """
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     jobs = yaml.safe_load(workflow)["jobs"]
-    # The native emulator job runs focused server tests, not another full-suite
-    # pass. Keep the duplicate-full-pass guard for every other job, including
-    # future jobs, and verify the focused exception separately below.
+    # The native emulator and proof-oracle jobs run focused tests. Keep the
+    # duplicate-full-pass guard for other jobs, including future additions,
+    # and verify both focused exceptions separately below.
     commands = "\n".join(
         step.get("run", "")
-        for name, job in jobs.items() if name != "spanner-emulator"
+        for name, job in jobs.items() if name not in {"spanner-emulator", "proof-oracle"}
         for step in job.get("steps", [])
     )
 
@@ -106,7 +106,7 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     )
     deploy = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
-    assert ci.count('-m "not provider_health"') == 2
+    assert ci.count('-m "not provider_health and not proof_oracle"') == 2
     # The price refresh validates its catalog like CI does: a provider delisting
     # one model must not stop every other provider's prices from publishing.
     assert refresh.count('-m "not provider_health"') == 1
@@ -118,3 +118,44 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     assert "continue-on-error" not in monitor
     assert "provider-catalog-health.yml" not in deploy
     assert "--workflow ci.yml" in deploy
+
+
+def test_proof_oracle_ci_split(request, tmp_path):
+    import shlex
+
+    import pytest
+
+    from tests.proof_oracle_ci import check_proof_oracle_paths, proof_oracle_command
+
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    job = jobs['proof-oracle']
+    command = proof_oracle_command(job)
+    assert command == ['uv', 'run', 'pytest', '-q', '-n', '4', '--dist', 'loadgroup',
+                       '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
+                       '--splits', '4', '--group', '${{', 'matrix.shard', '}}',
+                       '--splitting-algorithm', 'least_duration']
+    assert job['runs-on'] == 'ubuntu-latest'
+    assert job['timeout-minutes'] == 45
+    assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4]}
+    assert job['strategy']['fail-fast'] is False
+    assert job['permissions'] == {'contents': 'read'}
+    assert 'continue-on-error' not in job
+    assert any(step.get('run') == 'uv sync --frozen' for step in job['steps'])
+    assert all('google-github-actions/auth' not in step.get('uses', '') for step in job['steps'])
+    assert all('continue-on-error' not in step for step in job['steps'])
+    pin = next(step for step in job['steps'] if 'TR_LIFECYCLE_CLOCK_OVERRIDE=' in step.get('run', ''))
+    existing_pin = next(step for step in jobs['test-post-cutover']['steps']
+                        if 'TR_LIFECYCLE_CLOCK_OVERRIDE=' in step.get('run', ''))
+    assert pin['run'] == existing_pin['run']
+    assert pin['if'] == "matrix.clock == 'post-cutover'"
+    for name in ('test', 'test-post-cutover'):
+        commands = [shlex.split(step['run']) for step in jobs[name]['steps']
+                    if 'uv run pytest' in step.get('run', '')]
+        assert len(commands) == 1
+        tokens = commands[0]
+        assert tokens[tokens.index('-m') + 1] == 'not provider_health and not proof_oracle'
+    check_proof_oracle_paths({item.path for item in request.session.items
+                              if item.get_closest_marker('proof_oracle')})
+    # Negative control: moving/adding a marked file cannot silently drop it.
+    with pytest.raises(AssertionError, match='missing from dedicated CI job'):
+        check_proof_oracle_paths({tmp_path / 'test_unrouted_oracle.py'})

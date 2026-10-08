@@ -269,8 +269,9 @@ MUTATIONS += [
 
 MUTATIONS += [
     ('reference-dynamic-provenance-property', [('tests/fakes/frozen_package.py', [
-        ("    value_type = type(value)\n    if issubclass(value_type, ModuleType):",
-         "    owner = (value.__name__ if isinstance(value, ModuleType) else getattr(value, '__module__', type(value).__module__))\n    return owner if isinstance(owner, str) else getattr(owner, '__name__', '')\n    value_type = type(value)\n    if issubclass(value_type, ModuleType):"),
+        ('    """Read provenance without invoking instance/metaclass properties."""',
+         '    """Read provenance without invoking instance/metaclass properties."""\n'
+         "    owner = (value.__name__ if isinstance(value, ModuleType) else getattr(value, '__module__', type(value).__module__))\n    return owner if isinstance(owner, str) else getattr(owner, '__name__', '')"),
     ])], 'tests/test_async_settle_proof_oracle.py::test_guard_provenance_property_cannot_remove_nested_cache'),
     ('reference-dynamic-walk-class-property', [('tests/fakes/frozen_package.py', [
         ('        if value_type is CodeType:', '        if isinstance(value, CodeType):'),
@@ -360,7 +361,8 @@ MUTATIONS += [
          '        pending.extend(gc.get_referents(value))'),
     ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_mapping_edges[exec_mapping]'),
     ('reference-proxy-values-only', [('tests/fakes/frozen_package.py', [
-        ('pending.extend((key, held))', 'pending.append(held)'),
+        (('pending.extend((key, held))', 'pending.append(held)') if sys.version_info >= (3, 13)
+         else ('assert not opaque_frames.keys() - native_frames.keys()', 'assert True')),
     ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_mapping_edges[proxy_locals_key]'),
 ]
 
@@ -392,6 +394,35 @@ MUTATIONS += [
 ]
 
 
+# Round 13: these rules are specific to pre-proxy CPython. Preserve both
+# rejection and zero user protocols, including on an otherwise rejected frame.
+MUTATIONS += [
+    ('reference-accept-opaque-frame', [('tests/fakes/frozen_package.py', [
+        ('assert not opaque_frames.keys() - native_frames.keys()', 'assert True'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_colliding_key[False-references]'),
+    ('reference-trace-code-spoofs-frame-ownership', [('tests/fakes/frozen_package.py', [
+        ('if code_edges <= (value.f_trace is value.f_code):', 'if code_edges == 0:'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_trace_code[False-guard]'),
+    ('reference-materialize-unsafe-frame-locals', [('tests/fakes/frozen_package.py', [
+        ('        if value_type is FrameType:',
+         '        if value_type is FrameType:\n            value.f_locals'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_colliding_key[False-guard]'),
+] if sys.version_info < (3, 13) else []
+
+
+# The scalar fast path must preserve native edges and subclass provenance.
+MUTATIONS += [
+    ('reference-scalar-fast-path-skips-gc', [('tests/fakes/frozen_package.py', [
+        ('        pending.extend(gc.get_referents(value))',
+         '        if value_type is not str:\n            pending.extend(gc.get_referents(value))'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_reference_scalar_fast_path_retains_gc_edges[str]'),
+    ('reference-scalar-subclass-provenance', [('tests/fakes/frozen_package.py', [
+        ('    if (value_type is str or value_type is int or value_type is float',
+         '    if (issubclass(value_type, str) or value_type is int or value_type is float'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_reference_scalar_subclasses_keep_metadata_and_edges[str]'),
+]
+
+
 def main() -> None:
     results = []
     evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
@@ -402,6 +433,8 @@ def main() -> None:
             shutil.copytree(ROOT/folder, target/folder,
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.pytest_cache'))
         shutil.copy2(ROOT/'pyproject.toml', target/'pyproject.toml')
+        (target / '.github/workflows').mkdir(parents=True)
+        shutil.copy2(ROOT / '.github/workflows/ci.yml', target / '.github/workflows/ci.yml')
         for name, files, selection in MUTATIONS:
             selected_test = selection if '::' in selection else TEST + selection
             originals = {}

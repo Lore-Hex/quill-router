@@ -52,6 +52,13 @@ def run() -> None:
             "SUPPORTED = [c for c in CASES if c['expected_exclusion'] is None][:1]"))
         for relative in FILES:
             parsed = ast.parse((ROOT/relative).read_text())
+            # Generated assertion probes run by explicit node id, outside CI's
+            # file inventory. Keep every assertion/parameter, but do not label
+            # these disposable copies as dedicated-job test files.
+            for node in ast.walk(parsed):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    node.decorator_list = [decorator for decorator in node.decorator_list
+                                           if ast.unparse(decorator) != 'pytest.mark.proof_oracle']
             for function in parsed.body:
                 if not isinstance(function, ast.FunctionDef):
                     continue

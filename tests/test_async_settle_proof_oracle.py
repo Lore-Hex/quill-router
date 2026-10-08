@@ -11,6 +11,7 @@ import importlib
 import inspect
 import json
 import os
+import sys
 from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
@@ -154,6 +155,7 @@ def test_guard_rejects_cached_live_alias(monkeypatch):
                 module('storage_errors').transient_store_error_types()
 
 
+@pytest.mark.proof_oracle
 @pytest.mark.parametrize('case', SUPPORTED, ids=lambda c: c['name'])
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 @pytest.mark.parametrize('mode', ['no_header_off', 'header_off', 'no_header_protected'])
@@ -267,6 +269,7 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
     assert db.reservations[auth.credit_reservation_id]['settled']
 
 
+@pytest.mark.proof_oracle
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
     body, _, _ = prepare(env, kind=kind)
@@ -1487,8 +1490,11 @@ def test_guard_frame_mapping_edges(monkeypatch, kind):
     frozen = module('storage_errors')
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(frozen, 'review_mapping_root', root, raising=False)
-            with pytest.raises(AssertionError, match='live reference'):
+            patch.setattr(frozen, 'review_mapping_root',
+                          (root, owner) if kind != 'proxy_locals_key' else root, raising=False)
+            reason = ('opaque frame' if kind == 'proxy_locals_key' and sys.version_info < (3, 13)
+                      else 'live reference')
+            with pytest.raises(AssertionError, match=reason):
                 with execution_guard():
                     pytest.fail('undetected frame mapping reached the frozen leg')
         assert calls == [], 'audit executed a user-container protocol method'
@@ -1546,7 +1552,8 @@ def test_guard_held_frame_cache(monkeypatch, kind):
         # Only the frozen module is a root; the cache/frame are not extra roots.
         with monkeypatch.context() as patch:
             patch.setattr(frozen, 'review_frame_root', root, raising=False)
-            with pytest.raises(AssertionError, match='live reference'):
+            reason = 'opaque frame' if sys.version_info < (3, 13) else 'live reference'
+            with pytest.raises(AssertionError, match=reason):
                 with execution_guard():
                     pytest.fail('undetected held frame reached the frozen leg')
         assert held.cache_info().currsize == 1
@@ -1567,33 +1574,37 @@ def test_reference_walk_native_frames(kind):
     # Synthetic namespaces avoid pytest globals/back-stack alternate paths.
     # The marker is owned only by frame locals after construction; frame/code
     # references to a marker in constants or globals cannot mask missing locals.
-    namespace = {'__name__': 'frame_witness'}
-    exec(compile('def generate(held):\n yield\n return held\n'
+    namespace = {'__name__': 'frame_witness', 'sys': sys}
+    exec(compile('def finished(held): return sys._getframe()\n'
+                 'def capture(held):\n frame = finished(held)\n held = None\n yield frame\n frame = None\n yield\n'
+                 'def generate(held):\n yield\n return held\n'
                  'async def coro(held):\n return held\n'
                  'async def agen(held):\n yield held\n',
                  '<frame-witness>', 'exec'), namespace)
     marker = object()
     close = None
-    if kind in ('frame', 'generator'):
+    owners = []
+    if kind in ('frame', 'traceback'):
+        from types import TracebackType
+        owner = namespace['capture'](marker)
+        frame = next(owner)
+        next(owner)  # The owner must not retain an alternate path to the finished frame.
+        close = owner.close
+        owners = [owner]
+        root = frame if kind == 'frame' else TracebackType(None, frame, -1, 1)
+    elif kind == 'generator':
         owner = namespace['generate'](marker)
         next(owner)
         close = owner.close
-        root = owner.gi_frame if kind == 'frame' else owner
+        root = owner
     elif kind == 'coroutine':
         root = namespace['coro'](marker)
         close = root.close
     elif kind == 'async_generator':
         root = namespace['agen'](marker)
-    else:
-        # A native traceback can own a suspended frame without caller locals.
-        from types import TracebackType
-        owner = namespace['generate'](marker)
-        next(owner)
-        close = owner.close
-        root = TracebackType(None, owner.gi_frame, -1, 1)
     try:
-        assert any(value is marker for value in _references(
-            [root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+        reached = list(_references([*owners, root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+        assert any(value is marker for value in reached)
     finally:
         if close is not None:
             close()
@@ -1619,8 +1630,8 @@ def test_reference_walk_frame_cells(scope):
     assert root.f_back is None
     assert 'held' in (root.f_code.co_cellvars if scope == 'cell' else root.f_code.co_freevars)
     try:
-        assert any(value is marker for value in _references(
-            [root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+        reached = list(_references([owner, root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+        assert any(value is marker for value in reached)
     finally:
         owner.close()
 
@@ -1649,7 +1660,117 @@ def test_reference_walk_frame_registry_boundary(monkeypatch, explicit):
     assert root.f_back is owner.gi_frame and root.f_back.f_back is None
     assert owner.gi_frame.f_locals['namespace'] is None
     try:
-        reached = _references([root, external] if explicit else [root], namespaces=(ALIAS,))
+        reached = list(_references(
+            [owner, root, external] if explicit else [owner, root], namespaces=(ALIAS,)))
         assert any(value is marker for value in reached) is explicit
     finally:
+        owner.close()
+
+
+@pytest.mark.parametrize('inspection', ['references', 'guard'])
+@pytest.mark.parametrize('include_owner', [False, True])
+def test_guard_frame_colliding_key(inspection, include_owner):
+    from tests.fakes.frozen_package import _references
+
+    calls = []
+
+    class Key:
+        def __hash__(self):
+            calls.append('hash')
+            return hash('held')
+
+        def __eq__(self, other):
+            from trusted_router.money import microdollars_to_float
+            calls.append(microdollars_to_float(1_000_000))
+            return False
+
+    namespace = {'__name__': 'detached_frame_witness', '__builtins__': {}}
+    exec('def generate():\n yield\n held = 42\n yield\n', namespace)
+    owner = namespace['generate']()
+    next(owner)
+    root = owner.gi_frame
+    key = Key()
+    root.f_locals[key] = None
+    next(owner)
+    calls.clear()
+    roots = [owner, root] if include_owner else [root]
+    expected = (pytest.raises(AssertionError, match='opaque frame.*no safe native locals')
+                if not include_owner and sys.version_info < (3, 13) else nullcontext())
+    try:
+        with expected:
+            if inspection == 'references':
+                reached = list(_references(roots, namespaces=(ALIAS,)))
+                assert any(value is key for value in reached), 'lost an existing locals-dict key'
+                assert any(type(value) is int and value == 42 for value in reached), 'lost fast local'
+            else:
+                with execution_guard(*roots):
+                    pass
+    finally:
+        assert calls == [], 'frame inspection invoked a user key protocol / live money code'
+        owner.close()
+
+
+@pytest.mark.parametrize('root', ['scalar', 123456, 1.25, b'scalar', True, None],
+                         ids=['str', 'int', 'float', 'bytes', 'bool', 'none'])
+def test_reference_scalar_fast_path_retains_gc_edges(monkeypatch, root):
+    import gc
+
+    from tests.fakes.frozen_package import _owner, _references
+
+    marker = object()
+    native_referents = gc.get_referents
+    # Even these exact scalars must keep every native edge. This synthetic
+    # edge catches accidentally moving the fast path ahead of tp_traverse.
+    monkeypatch.setattr(gc, 'get_referents', lambda value: (
+        [marker] if value is root else native_referents(value)))
+    reached = list(_references([root]))
+    assert any(value is root for value in reached)
+    assert any(value is marker for value in reached)
+    assert _owner(root) == 'builtins'
+
+
+@pytest.mark.parametrize('base, value', [(str, 'scalar'), (int, 123456),
+                                       (float, 1.25), (bytes, b'scalar')],
+                         ids=['str', 'int', 'float', 'bytes'])
+def test_reference_scalar_subclasses_keep_metadata_and_edges(base, value):
+    from tests.fakes.frozen_package import _owner, _references
+
+    label = ALIAS + '.scalar_witness'
+    scalar = type('Scalar', (base,), {'__module__': label})(value)
+    marker = object()
+    scalar.held = marker
+    assert _owner(scalar) == label
+    assert any(value is marker for value in _references([scalar]))
+
+
+@pytest.mark.parametrize('inspection', ['references', 'guard'])
+@pytest.mark.parametrize('owned', [False, True])
+def test_guard_frame_trace_code(inspection, owned):
+    import gc
+
+    from tests.fakes.frozen_package import _references
+
+    namespace = {'__name__': 'detached_trace_witness', '__builtins__': {}, 'sys': sys}
+    exec('def finished(held): return sys._getframe()\n'
+         'def generate(held):\n yield\n return held\n'
+         'def capture(held):\n frame = finished(held)\n held = None\n yield frame\n', namespace)
+    marker = object()
+    owner = namespace['capture' if owned else 'generate'](marker)
+    yielded = next(owner)
+    root = yielded if owned else owner.gi_frame
+    root.f_trace = root.f_code
+    if sys.version_info < (3, 13):
+        assert sum(value is root.f_code for value in gc.get_referents(root)) == (2 if owned else 1)
+    roots = [owner, root] if owned else [root]
+    expected = (pytest.raises(AssertionError, match='opaque frame')
+                if not owned and sys.version_info < (3, 13) else nullcontext())
+    try:
+        with expected:
+            if inspection == 'references':
+                assert any(value is marker for value in list(_references(roots, namespaces=(ALIAS,))))
+            else:
+                with execution_guard(*roots):
+                    pass
+    finally:
+        root.f_trace = None
         owner.close()

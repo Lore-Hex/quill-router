@@ -133,6 +133,11 @@ def _metadata(items, name):
 def _owner(value, owners=None):
     """Read provenance without invoking instance/metaclass properties."""
     value_type = type(value)
+    # Exact immutable builtins cannot carry a user-supplied provenance label.
+    # Subclasses still take the descriptor-based path below.
+    if (value_type is str or value_type is int or value_type is float
+            or value_type is bytes or value_type is bool or value_type is type(None)):
+        return 'builtins'
     if issubclass(value_type, ModuleType):
         owner = _metadata(dict.items(_MODULE_DICT.__get__(value)), '__name__')
     elif value_type is FunctionType or value_type is BuiltinFunctionType:
@@ -197,9 +202,12 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
     code members, tzinfo, timezone offset/name and weak targets, without overrides.
     Weak proxies fail closed: Python exposes no safe native target accessor.
     Frames come only from held roots, never an interpreter-stack enumeration.
+    Before 3.13, locals require native GC traversal through an owned finished
+    frame or its reached generator/coroutine owner; other frames fail closed.
     """
     pending, visited = list(roots), {}
     boundaries = {}
+    opaque_frames, native_frames = {}, {}
     if namespaces:
         # External module globals and the two process registries are outside the
         # leg. Explicit module roots override the module-global boundary.
@@ -226,27 +234,32 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         yield value
         value_type = type(value)
         if value_type is FrameType:
-            # Supplement only: GC still owns extra-locals dictionaries and
-            # exec's supplied mapping, including keys and dict subclasses.
-            localns = value.f_locals
-            if type(localns) is _FRAME_LOCALS_PROXY:
-                # Exact sealed native type: no user mapping protocol dispatch,
-                # copying, or key lookup (which could call a key's __hash__).
-                for key, held in localns.items():
-                    pending.extend((key, held))
-            elif (sys.version_info < (3, 13) and type(localns) is dict
-                  and id(localns) not in boundaries):
-                # 3.11/3.12 materialize fast locals, cells and free variables
-                # into an exact dict. Native items preserves keys and values
-                # without dispatching user mapping methods or key lookups.
-                # Module frames can expose a registered globals dictionary;
-                # preserve its existing identity boundary, just as GC does.
-                for key, held in dict.items(localns):
-                    pending.extend((key, held))
+            # Before 3.13, f_locals synchronizes into a user-populated dict and
+            # can invoke a colliding key's __eq__. Never materialize it. An
+            # owned finished frame traverses its code and locals natively; a
+            # suspended frame needs its generator/coroutine owner in this walk.
+            if sys.version_info < (3, 13):
+                # f_trace is independently traversed even on an opaque frame
+                # and can itself equal f_code. Discount that edge: only the
+                # additional native code edge proves traversal of locals.
+                code_edges = sum(held is value.f_code for held in gc.get_referents(value))
+                if code_edges <= (value.f_trace is value.f_code):
+                    opaque_frames[identity] = value
+            else:
+                localns = value.f_locals
+                if type(localns) is _FRAME_LOCALS_PROXY:
+                    for key, held in localns.items():
+                        pending.extend((key, held))
             pending.extend((value.f_globals, value.f_back, value.f_code, value.f_trace))
         # Always retain GC edges, including frames. Registry identity boundaries
         # above apply equally to GC and supplemental edges.
         pending.extend(gc.get_referents(value))
+        # Retain *all* native edges and yield the value before this fast path.
+        # These exact scalar types have none of the supplemental native fields;
+        # subclasses can own references and must take the full path.
+        if (value_type is str or value_type is int or value_type is float
+                or value_type is bytes or value_type is bool or value_type is type(None)):
+            continue
         if value_type is weakref.ProxyType or value_type is weakref.CallableProxyType:
             raise AssertionError('weak proxy in frozen reference graph: no safe native target '
                                  'accessor; hold the strong object instead')
@@ -260,12 +273,14 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
                 pending.append(target)
         if value_type is TracebackType:
             pending.extend((value.tb_frame, value.tb_next))
-        elif value_type is GeneratorType:
-            pending.append(value.gi_frame)
-        elif value_type is CoroutineType:
-            pending.append(value.cr_frame)
-        elif value_type is AsyncGeneratorType:
-            pending.append(value.ag_frame)
+        elif (value_type is GeneratorType or value_type is CoroutineType
+              or value_type is AsyncGeneratorType):
+            frame = (value.gi_frame if value_type is GeneratorType else
+                     value.cr_frame if value_type is CoroutineType else value.ag_frame)
+            pending.append(frame)
+            if frame is not None and any(
+                    held is frame.f_code for held in gc.get_referents(value)):
+                native_frames[id(frame)] = frame
         elif issubclass(value_type, BaseException):
             # Exceptions can override properties; read the base C descriptors.
             pending.extend(BaseException.__dict__[name].__get__(value)
@@ -279,6 +294,11 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         elif value_type is _Timezone:
             pending.append(_Timezone.utcoffset(value, None))
             pending.append(_Timezone.tzname(value, None))
+    # Resolve after the complete walk: a frame can precede its native owner.
+    # Strong references prevent id reuse; no stack or global owner search.
+    assert not opaque_frames.keys() - native_frames.keys(), (
+        'opaque frame in frozen reference graph: no safe native locals traversal; '
+        'hold its generator/coroutine owner instead (running frames are unsupported)')
 
 
 def _namespace_roots(*namespaces):
