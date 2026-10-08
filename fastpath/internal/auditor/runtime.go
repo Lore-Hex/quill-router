@@ -75,7 +75,13 @@ type Config struct {
 	// Alert tells a person what needs one: a lease stopped at a gap, an
 	// audit fault, a charge past the allocation, a record no member can
 	// read. It gets the lease and what happened, never a record's contents.
+	// A member that reads a lease tells again what its row already holds,
+	// since the member that stored it may have stopped before it told:
+	// the receiver keeps one per lease and kind.
 	Alert func(lease, what string)
+	// ForgetAfter is how long a lease that is done stays known, so its
+	// later records are acknowledged without reading it again.
+	ForgetAfter time.Duration
 }
 
 // Runtime is a member's work on its share of a region's settle log (§4.8):
@@ -83,9 +89,10 @@ type Config struct {
 // commits batched, and a record acknowledged only once a commit has made
 // what it did durable (assumption A1).
 type Runtime struct {
-	cfg    Config
-	mu     sync.Mutex
-	leases map[string]*held
+	cfg     Config
+	mu      sync.Mutex
+	leases  map[string]*held
+	workers sync.WaitGroup // leases read again after a refused or lost commit
 }
 
 // held is a lease at the runtime: its member, and the records handled since
@@ -96,12 +103,14 @@ type Runtime struct {
 // a record again itself. A lease that is done (closed, stopped at a gap, or
 // none) has its records acknowledged as they come: none is booked.
 type held struct {
-	mu      sync.Mutex
-	id      string
-	ref     store.LeaseRef
-	lease   *Lease
-	pending []handled
-	done    bool
+	mu         sync.Mutex
+	id         string
+	ref        store.LeaseRef
+	lease      *Lease
+	pending    []handled
+	done       bool
+	doneAt     time.Time
+	recovering bool
 }
 
 // handled is a record handled, with its delivery. A bad one no member can
@@ -115,7 +124,8 @@ type handled struct {
 
 // New is a runtime with its configuration.
 func New(cfg Config) (*Runtime, error) {
-	if cfg.Store == nil || cfg.Skew < 0 || cfg.CommitEvery <= 0 || cfg.MaxBatch < 1 || cfg.Retry <= 0 {
+	if cfg.Store == nil || cfg.Skew < 0 || cfg.CommitEvery <= 0 || cfg.MaxBatch < 1 || cfg.Retry <= 0 ||
+		cfg.ForgetAfter < 0 {
 		return nil, errors.New("auditor: a runtime needs a store, a skew allowance, a commit interval, a batch size and a retry wait")
 	}
 	if cfg.Alert == nil {
@@ -147,6 +157,7 @@ func (rt *Runtime) Run(ctx context.Context, src Source) error {
 	err := src.Receive(ctx, rt.handle)
 	cancel()
 	<-committed
+	rt.workers.Wait()
 	return err
 }
 
@@ -270,11 +281,16 @@ func (rt *Runtime) load(ctx context.Context, h *held) bool {
 			rt.cfg.Alert(h.id, "a record of a lease the store does not have")
 			rt.finish(h)
 			return false
-		case err == nil && (loaded.Lease.State == "closed" || loaded.Lease.GapSeq.Valid):
+		case err == nil && loaded.Lease.State == "closed":
+			rt.finish(h)
+			return false
+		case err == nil && loaded.Lease.GapSeq.Valid:
+			rt.cfg.Alert(h.id, "a gap in the lease's records stopped it")
 			rt.finish(h)
 			return false
 		case err == nil:
 			if h.lease, err = Load(h.ref, loaded, rt.cfg.Skew); err == nil {
+				rt.told(h, loaded.Lease)
 				return true
 			}
 		}
@@ -293,6 +309,17 @@ func (rt *Runtime) read(ctx context.Context, h *held) (store.Loaded, error) {
 		h.ref = ref
 	}
 	return rt.cfg.Store.Load(ctx, h.ref)
+}
+
+// told tells what a lease's row holds that a person needs: a write that
+// stored it may have lost its answer, or its member stopped, before telling.
+func (rt *Runtime) told(h *held, l store.Lease) {
+	if l.AuditFaultSeq.Valid {
+		rt.cfg.Alert(h.id, "an audit fault: the owner's checkpoint disagrees with its records")
+	}
+	if l.FaultUsage > 0 {
+		rt.cfg.Alert(h.id, "a charge past the lease's allocation")
+	}
 }
 
 // stopAtGap stops the lease at the gap before pending[i] (AuditorCommit's
@@ -322,7 +349,7 @@ func (rt *Runtime) stopAtGap(ctx context.Context, h *held, i int) bool {
 // finish marks a lease done: none of its records is booked, so each is
 // acknowledged, those kept and those to come.
 func (rt *Runtime) finish(h *held) {
-	h.done, h.lease = true, nil
+	h.done, h.lease, h.doneAt = true, nil, time.Now()
 	rt.ack(h, len(h.pending))
 }
 
@@ -362,8 +389,15 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 	var batch []*held
 	flush := func() {
 		rt.commit(ctx, batch)
+		var again []*held
 		for _, h := range batch {
+			if h.lease == nil {
+				again = append(again, h)
+			}
 			h.mu.Unlock()
+		}
+		for _, h := range again {
+			rt.recover(ctx, h)
 		}
 		batch = batch[:0]
 	}
@@ -379,7 +413,7 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 			continue
 		case h.lease != nil:
 			rt.ack(h, len(h.pending))
-		case h.done && len(h.pending) == 0:
+		case h.done && len(h.pending) == 0 && time.Since(h.doneAt) >= rt.cfg.ForgetAfter:
 			rt.forget(h)
 		}
 		h.mu.Unlock()
@@ -390,9 +424,9 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 }
 
 // commit commits a batch of leases in one transaction. A lease the commit
-// refused, or all of them if its outcome is unknown, is read again and its
-// records applied again: what a commit that landed made durable, they
-// skip.
+// refused, or all of them if its outcome is unknown, loses its member, to
+// be read again with its records applied again (recover): what a commit
+// that landed made durable, they skip.
 func (rt *Runtime) commit(ctx context.Context, batch []*held) {
 	reqs := make([]store.CommitRequest, len(batch))
 	for i, h := range batch {
@@ -406,8 +440,29 @@ func (rt *Runtime) commit(ctx context.Context, batch []*held) {
 			continue
 		}
 		h.lease = nil
-		rt.replay(ctx, h, 0)
 	}
+}
+
+// recover reads a lease that lost its member again and applies its kept
+// records again, in a goroutine of its own, so a lease whose reads keep
+// failing holds up only its own records.
+func (rt *Runtime) recover(ctx context.Context, h *held) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.recovering {
+		return
+	}
+	h.recovering = true
+	rt.workers.Add(1)
+	go func() {
+		defer rt.workers.Done()
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.recovering = false
+		if h.lease == nil && !h.done && len(h.pending) > 0 {
+			rt.replay(ctx, h, 0)
+		}
+	}()
 }
 
 // forget drops a lease that is done and has nothing kept: a record of it

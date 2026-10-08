@@ -59,7 +59,8 @@ type flaky struct {
 	*store.Store
 	mu                             sync.Mutex
 	failFind, failLoad, failCommit int
-	lostCommits                    int
+	lostCommits, lostStops         int
+	failLoadOf                     map[string]int // by lease ID
 	commits                        [][]store.CommitRequest
 }
 
@@ -83,10 +84,33 @@ func (f *flaky) FindLease(ctx context.Context, id string) (store.LeaseRef, error
 }
 
 func (f *flaky) Load(ctx context.Context, ref store.LeaseRef) (store.Loaded, error) {
-	if f.take(&f.failLoad) {
+	f.mu.Lock()
+	of := f.failLoadOf[ref.LeaseID] > 0
+	if of {
+		f.failLoadOf[ref.LeaseID]--
+	}
+	f.mu.Unlock()
+	if of || f.take(&f.failLoad) {
 		return store.Loaded{}, errInjected
 	}
 	return f.Store.Load(ctx, ref)
+}
+
+func (f *flaky) failLoads(lease string, n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failLoadOf == nil {
+		f.failLoadOf = map[string]int{}
+	}
+	f.failLoadOf[lease] = n
+}
+
+func (f *flaky) StopForGap(ctx context.Context, ref store.LeaseRef, version, seq int64) (bool, time.Time, error) {
+	ok, at, err := f.Store.StopForGap(ctx, ref, version, seq)
+	if err == nil && f.take(&f.lostStops) {
+		return false, time.Time{}, errInjected
+	}
+	return ok, at, err
 }
 
 func (f *flaky) Commit(ctx context.Context, reqs []store.CommitRequest) ([]store.CommitResult, time.Time, error) {
@@ -181,6 +205,7 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 func (f *runtimeFixture) runtime(changes ...func(*Config)) *Runtime {
 	f.t.Helper()
 	cfg := Config{Store: f.store, Skew: 2 * time.Second, CommitEvery: time.Hour, MaxBatch: 10, Retry: time.Millisecond,
+		ForgetAfter: time.Hour,
 		Alert: func(lease, what string) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -211,6 +236,12 @@ func on(t *testing.T, ref store.LeaseRef, r record.Record) *fakeDelivery {
 		t.Fatalf("the test's record %+v: %v", r, err)
 	}
 	return &fakeDelivery{lease: ref.LeaseID, data: data, at: start}
+}
+
+// round is one round of commits, and the reads again it leads to.
+func round(rt *Runtime) {
+	rt.commitAll(context.Background())
+	rt.workers.Wait()
 }
 
 func handleAll(rt *Runtime, ds ...*fakeDelivery) {
@@ -248,7 +279,7 @@ func TestTheRuntimeAcknowledgesWhatACommitMadeDurable(t *testing.T) {
 	if got := acks(ds...); !slices.Equal(got, []int{0, 0, 0}) {
 		t.Fatalf("acknowledged before the commit: %v", got)
 	}
-	rt.commitAll(context.Background())
+	round(rt)
 	if got := acks(ds...); !slices.Equal(got, []int{1, 1, 1}) {
 		t.Fatalf("acknowledged after the commit: %v", got)
 	}
@@ -259,7 +290,7 @@ func TestTheRuntimeAcknowledgesWhatACommitMadeDurable(t *testing.T) {
 	}
 	again := on(t, f.ref, settle(2, "a", 40, 0))
 	handleAll(rt, again)
-	rt.commitAll(context.Background())
+	round(rt)
 	if again.acked() != 1 || len(f.store.commitCalls()) != 1 {
 		t.Fatalf("a redelivery: acknowledged %d, %d commits", again.acked(), len(f.store.commitCalls()))
 	}
@@ -275,14 +306,14 @@ func TestARefusedCommitAppliesTheRecordsAgain(t *testing.T) {
 	b1 := on(t, f.ref, r1)
 	handleAll(b, b1) // b reads the lease at version 0
 	handleAll(a, on(t, f.ref, r1), on(t, f.ref, r2))
-	a.commitAll(context.Background())
+	round(a)
 	b2, b3 := on(t, f.ref, r2), on(t, f.ref, r3)
 	handleAll(b, b2, b3)
-	b.commitAll(context.Background()) // refused: read again, 1 and 2 skipped, 3 applied
+	round(b) // refused: read again, 1 and 2 skipped, 3 applied
 	if got := acks(b1, b2, b3); !slices.Equal(got, []int{0, 0, 0}) {
 		t.Fatalf("acknowledged after a refused commit: %v", got)
 	}
-	b.commitAll(context.Background())
+	round(b)
 	if got := acks(b1, b2, b3); !slices.Equal(got, []int{1, 1, 1}) {
 		t.Fatalf("acknowledged after the commit: %v", got)
 	}
@@ -300,11 +331,11 @@ func TestACommitWhoseAnswerIsLost(t *testing.T) {
 	rt := f.runtime()
 	ds := []*fakeDelivery{on(t, f.ref, settle(1, "a", 40, 0)), on(t, f.ref, settle(2, "b", 7, 0))}
 	handleAll(rt, ds...)
-	rt.commitAll(context.Background())
+	round(rt)
 	if got := acks(ds...); !slices.Equal(got, []int{0, 0}) {
 		t.Fatalf("acknowledged when the commit's answer was lost: %v", got)
 	}
-	rt.commitAll(context.Background())
+	round(rt)
 	if got := acks(ds...); !slices.Equal(got, []int{1, 1}) || len(f.store.commitCalls()) != 1 {
 		t.Fatalf("acknowledged %v after %d commits", got, len(f.store.commitCalls()))
 	}
@@ -364,12 +395,12 @@ func TestAManifestReadsTheWinnersFirst(t *testing.T) {
 	f := newRuntimeFixture(t)
 	a := f.runtime()
 	handleAll(a, on(t, f.ref, settle(1, "a", 40, 0)))
-	a.commitAll(context.Background())
+	round(a)
 	held := []record.HeldHold{{Auth: "a", Estimate: 100, Deadline: deadline, Boot: boot},
 		{Auth: "b", Estimate: 50, Deadline: deadline, Boot: boot}}
 	b := f.runtime()
 	handleAll(b, on(t, f.ref, chunkRec(2, held...)), on(t, f.ref, manifestRec(3, digestOf(t, held...), 2)))
-	b.commitAll(context.Background())
+	round(b)
 	l := f.loaded()
 	if len(l.Holds) != 1 || l.Holds[0].AuthorizationID != "b" || !l.Holds[0].Listed ||
 		l.Lease.HoldsListedSeq != (spanner.NullInt64{Int64: 3, Valid: true}) || len(l.Chunks) != 0 {
@@ -399,7 +430,7 @@ func TestARecordNoMemberCanRead(t *testing.T) {
 	bad := &fakeDelivery{lease: f.ref.LeaseID, data: []byte(`{"v":1,`), at: start}
 	ds := []*fakeDelivery{on(t, f.ref, settle(1, "a", 40, 0)), bad}
 	handleAll(rt, ds...)
-	rt.commitAll(context.Background())
+	round(rt)
 	if got := acks(ds...); !slices.Equal(got, []int{1, 1}) ||
 		!slices.Contains(f.alerted(), "a record the auditor cannot read") {
 		t.Fatalf("a record no member can read: acknowledged %v, alerts %v", got, f.alerted())
@@ -418,7 +449,7 @@ func TestFailedReadsAreTriedAgain(t *testing.T) {
 	rt := f.runtime()
 	d := on(t, f.ref, settle(1, "a", 40, 0))
 	handleAll(rt, d)
-	rt.commitAll(context.Background())
+	round(rt)
 	if l := f.loaded(); l.Lease.AppliedSeq != 1 || d.acked() != 1 {
 		t.Fatalf("after failed reads: %+v, acknowledged %d", l.Lease, d.acked())
 	}
@@ -432,7 +463,7 @@ func TestCommitsAreBatched(t *testing.T) {
 	for _, ref := range refs {
 		handleAll(rt, on(t, ref, settle(1, "a", 40, 0)))
 	}
-	rt.commitAll(context.Background())
+	round(rt)
 	calls := f.store.commitCalls()
 	if len(calls) != 2 || len(calls[0]) != 2 || len(calls[1]) != 1 {
 		t.Fatalf("the commits: %d, of %v", len(calls), calls)
@@ -448,12 +479,12 @@ func TestABusyLeaseWaitsForTheNextRound(t *testing.T) {
 	handleAll(rt, d)
 	h := rt.held(f.ref.LeaseID)
 	h.mu.Lock()
-	rt.commitAll(context.Background())
+	round(rt)
 	h.mu.Unlock()
 	if len(f.store.commitCalls()) != 0 || d.acked() != 0 {
 		t.Fatal("a busy lease was committed")
 	}
-	rt.commitAll(context.Background())
+	round(rt)
 	if d.acked() != 1 {
 		t.Fatal("the next round did not commit it")
 	}
@@ -502,7 +533,7 @@ func TestACommitsFaultsAreTold(t *testing.T) {
 	if len(f.alerted()) != 0 {
 		t.Fatalf("told before the commit: %v", f.alerted())
 	}
-	rt.commitAll(context.Background())
+	round(rt)
 	if got := f.alerted(); !slices.Contains(got, "a charge past the lease's allocation") ||
 		!slices.Contains(got, "an audit fault: the owner's checkpoint disagrees with its records") {
 		t.Fatalf("the alerts: %v", got)
@@ -519,7 +550,7 @@ func TestAGapAfterARefusedCommitBooksWhatCameBefore(t *testing.T) {
 	r1, r2, r4 := settle(1, "a", 40, 0), settle(2, "b", 7, 0), settle(4, "d", 1, 0)
 	handleAll(a, on(t, f.ref, r1), on(t, f.ref, r2)) // a reads the lease at version 0
 	handleAll(b, on(t, f.ref, r1))
-	b.commitAll(context.Background())
+	round(b)
 	handleAll(a, on(t, f.ref, r4)) // the gap: a's commit is refused, it reads again, and commits 2
 	l := f.loaded()
 	if l.Lease.AppliedSeq != 2 || l.Lease.Consumed != 47 || l.Lease.GapSeq != (spanner.NullInt64{Int64: 4, Valid: true}) {
@@ -537,5 +568,122 @@ func TestALeaseStoppedAtAGapIsDone(t *testing.T) {
 	handleAll(rt, d)
 	if d.acked() != 1 || rt.held(f.ref.LeaseID).lease != nil {
 		t.Fatalf("a record of a stopped lease: acknowledged %d", d.acked())
+	}
+}
+
+// TestAFailedReadAgainHoldsUpOnlyItsLease: a lease whose commit was refused,
+// and whose reads then keep failing, leaves the round to commit the other
+// leases, and is read again once Spanner answers.
+func TestAFailedReadAgainHoldsUpOnlyItsLease(t *testing.T) {
+	f := newRuntimeFixture(t)
+	rt := f.runtime(func(c *Config) { c.MaxBatch = 2 })
+	other := f.runtime()
+	refs := []store.LeaseRef{f.ref, f.grant(), f.grant()}
+	a1 := on(t, refs[0], settle(1, "a", 40, 0))
+	handleAll(rt, a1) // rt reads lease A at version 0
+	handleAll(other, on(t, refs[0], settle(1, "a", 40, 0)))
+	round(other) // A at version 1: rt's commit of it will be refused
+	a2, b1, c1 := on(t, refs[0], settle(2, "b", 7, 0)), on(t, refs[1], settle(1, "a", 40, 0)), on(t, refs[2], settle(1, "a", 40, 0))
+	handleAll(rt, a2, b1, c1)
+	f.store.failLoads(refs[0].LeaseID, 1_000_000)
+	done := make(chan struct{})
+	go func() {
+		rt.commitAll(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a lease whose reads fail held up the round")
+	}
+	if got := acks(b1, c1); !slices.Equal(got, []int{1, 1}) {
+		t.Fatalf("the other leases' records: acknowledged %v", got)
+	}
+	f.store.failLoads(refs[0].LeaseID, 0)
+	rt.workers.Wait()
+	round(rt)
+	if got := acks(a1, a2); !slices.Equal(got, []int{1, 1}) {
+		t.Fatalf("lease A's records once read again: acknowledged %v", got)
+	}
+	if l, err := f.s.Load(context.Background(), refs[0]); err != nil || l.Lease.AppliedSeq != 2 || l.Lease.Consumed != 47 {
+		t.Fatalf("lease A: %+v %v", l.Lease, err)
+	}
+}
+
+// TestALostCommitStillTells: a commit that stored a fault, and whose answer
+// was lost, is told of when the member reads the lease again.
+func TestALostCommitStillTells(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.store.lostCommits = 1
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, settle(1, "a", 1500, 0)), on(t, f.ref, ckpt(2, record.CheckpointOf{Consumed: 9,
+		KeyStatus: 7})))
+	round(rt)
+	if got := f.alerted(); !slices.Contains(got, "a charge past the lease's allocation") ||
+		!slices.Contains(got, "an audit fault: the owner's checkpoint disagrees with its records") {
+		t.Fatalf("the alerts after a lost commit: %v", got)
+	}
+}
+
+// TestALostGapStopStillTells: a stop at a gap whose answer was lost is told
+// of when the member reads the lease again, and finds it stopped.
+func TestALostGapStopStillTells(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.store.lostStops = 1
+	rt := f.runtime()
+	ds := []*fakeDelivery{on(t, f.ref, settle(1, "a", 40, 0)), on(t, f.ref, settle(3, "c", 5, 0))}
+	handleAll(rt, ds...)
+	if got := acks(ds...); !slices.Equal(got, []int{1, 1}) ||
+		!slices.Contains(f.alerted(), "a gap in the lease's records stopped it") {
+		t.Fatalf("after a lost stop: acknowledged %v, alerts %v", got, f.alerted())
+	}
+}
+
+// TestADoneLeaseStaysKnown: for ForgetAfter, a lease that is done has its
+// later records acknowledged without being read again, and is not told of
+// again; then it is forgotten, and read again if a record of it comes.
+func TestADoneLeaseStaysKnown(t *testing.T) {
+	f := newRuntimeFixture(t)
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, settle(1, "a", 40, 0)), on(t, f.ref, settle(3, "c", 5, 0)))
+	round(rt)
+	later := on(t, f.ref, settle(4, "d", 1, 0))
+	handleAll(rt, later)
+	gaps := func() (n int) {
+		for _, a := range f.alerted() {
+			if a == "a gap in the lease's records stopped it" {
+				n++
+			}
+		}
+		return n
+	}
+	if later.acked() != 1 || gaps() != 1 {
+		t.Fatalf("a record of a lease done: acknowledged %d, %d gap alerts", later.acked(), gaps())
+	}
+	rt.cfg.ForgetAfter = 0
+	round(rt)
+	handleAll(rt, on(t, f.ref, settle(5, "e", 1, 0)))
+	if gaps() != 2 {
+		t.Fatalf("a lease forgotten and read again: %d gap alerts", gaps())
+	}
+}
+
+// TestAClosedLeasesRecordsAreAcknowledged as they come: none is booked.
+func TestAClosedLeasesRecordsAreAcknowledged(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.UpdateMap("tr_lease", map[string]any{
+		"workspace_id": f.ref.Workspace, "lease_id": f.ref.LeaseID, "state": "closed",
+		"closed_at": time.Now(), "close_kind": "operator"})}); err != nil {
+		t.Fatal(err)
+	}
+	rt := f.runtime()
+	d := on(t, f.ref, settle(1, "a", 40, 0))
+	handleAll(rt, d)
+	if l := f.loaded(); d.acked() != 1 || l.Lease.AppliedSeq != 0 {
+		t.Fatalf("a record of a closed lease: acknowledged %d, the lease %+v", d.acked(), l.Lease)
 	}
 }
