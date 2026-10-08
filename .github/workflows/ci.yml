@@ -552,6 +552,48 @@ jobs:
       - name: The watch against the emulator
         run: go test -race -count=1 -p 1 ./internal/watch/... ./cmd/fastpathwatch/...
 
+  # The walks (walk_test.go, debt_walk_test.go) drive the store through
+  # thousands of transactions: about two hours for the debt walk, past Go's default
+  # ten minutes and past the store job's time. They say `//go:build !race`,
+  # so the store job leaves them out; each runs here in a job of its own,
+  # without the race detector, against an emulator of its own.
+  fastpath-walks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 260
+    strategy:
+      fail-fast: false
+      matrix:
+        walk: [TestTheStoreWalksWithAuditorCommit, TestTheStoreKeepsCreditDebtsClaims]
+    env:
+      GOTOOLCHAIN: local
+      SPANNER_EMULATOR_HOST: 127.0.0.1:9010
+      FASTPATH_SPANNER_EMULATOR: "1"
+    services:
+      spanner:
+        image: gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+        ports:
+          - 9010:9010
+          - 9020:9020
+    defaults:
+      run:
+        working-directory: fastpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: fastpath/go.sum
+      - name: Wait for the Spanner emulator (fail if unavailable)
+        run: |
+          for _ in $(seq 1 120); do
+            (exec 3<>/dev/tcp/127.0.0.1/9010) 2>/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "the Spanner emulator did not start"
+          exit 1
+      - name: ${{ matrix.walk }} against the emulator
+        run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
+
   proofs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
