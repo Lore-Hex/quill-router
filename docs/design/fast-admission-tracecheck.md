@@ -300,7 +300,12 @@ state counts updated, and its shadow and the shadow's comparisons with it
     it read, is refused; a refused mark ends only its own.
   - Views. A process refreshes its view of the workspace whether or not a
     pause came, its read served at its timestamp and received later, as a
-    ticker's is.
+    ticker's is. The view it installs is as old as its read: its age runs from
+    the read's request, by the process's monotonic clock, not from its
+    receipt, so a result that comes late installs a view already aged by its
+    wait, as the ring's watcher counts a read's latency in its view's age
+    (`ring/watch.go`). `RefreshView` grows so, installing the elapsed age, not
+    zero.
   - Pauses. A workspace's pause clears and may come again, as a debt mark
     is set and repaid: `Unpause` clears it and a later `Pause` starts a new
     cache window, and an admission is held to the pause its view could have
@@ -741,8 +746,11 @@ fault, which is already set.
   another lease's commit acknowledged before the request; a member's read
   served before another member's commit and received after it, installing the
   older version, its next commit refused; a ticker's read served before a
-  renewal and received after it, its mark refused; and a member that took a
-  lease over reaping at a snapshot another member committed. Each must pass.
+  renewal and received after it, its mark refused; a member that took a lease
+  over reaping at a snapshot another member committed; and a workspace read
+  that found no pause, received after a pause came and longer than the cache's
+  age after its request, which must refuse an admission,
+  `PauseBoundsAdmission` holding. Each must pass.
 - **The runtime's own traces,** once the roles record events: the service's
   end-to-end tests and the scenarios of the spike plan's §5, each checked,
   K6's negative control reported as both a broken assumption and a
