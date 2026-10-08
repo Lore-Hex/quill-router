@@ -1,19 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="js-off">
 <head>
   {% set meta_title = og_title|seo_title %}
   {% set meta_description = og_description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script nonce="{{ csp_nonce() }}">
-    (function () {
-      try {
-        if (localStorage.getItem("tr-theme") === "light") {
-          document.documentElement.dataset.theme = "light";
-        }
-      } catch (e) { /* Dark remains the default when storage is unavailable. */ }
-    })();
-  </script>
+  <script nonce="{{ csp_nonce() }}">document.documentElement.classList.remove("js-off");</script>
   <title>{{ meta_title }}</title>
   <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
@@ -35,20 +27,23 @@
   <meta name="twitter:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="{{ brand_name }} LLM docs">
   <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="{{ brand_name }} full LLM context">
-  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/tokens.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/site-chrome.css?v={{ static_version|default('local') }}">
   {# The homepage carried no structured data at all, which is the page an
      assistant is most likely to land on when asked who operates this. #}
   {% if organization_json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ organization_json_ld|safe }}</script>{% endif %}
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
+  <script defer src="/static/site-chrome.js?v={{ static_version|default('local') }}"></script>
+  <script defer src="/static/homepage/status.js?v={{ static_version|default('local') }}"></script>
 </head>
 <body>
   {% include "public/_nav.html" %}
 
-  <main class="home">
+  <main id="main" class="home">
     <section class="charter-home-hero">
       <div class="home-hero-copy">
         <div class="kicker">{% if alternate_brand %}Powered by TrustedRouter{% else %}Own your alpha{% endif %}</div>

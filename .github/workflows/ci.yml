@@ -135,10 +135,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        # Six shards repeatedly reached 99% at the 25-minute cap on Oct 6.
+        # Spread the full coverage pass further without weakening its bounds.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-latest
     env:
-      TEST_SHARDS: "6"
+      TEST_SHARDS: "8"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
@@ -415,6 +417,87 @@ jobs:
   # runaway guard, not a target. If the job nears it, tighten a spec's
   # constants rather than dropping the job: an unchecked spec is worse than
   # no spec, because it reads as evidence.
+  # The Go service of the fast-admission design (docs/design/fast-admission-
+  # spike.md). Its shadows are held to their TLA+ specs here: each test runs
+  # the pinned TLC from proofs/ on a small instance and compares every step,
+  # so this job needs Java as well as Go.
+  fastpath:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The module stays on Go 1.24, the enclave's: a dependency that needs a
+    # later Go fails the build rather than fetching a newer toolchain.
+    env:
+      GOTOOLCHAIN: local
+    defaults:
+      run:
+        working-directory: fastpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: fastpath/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Check the TLA+ tools jar
+        working-directory: proofs
+        run: sha256sum -c tla2tools.jar.sha256
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race -count=1 ./...
+      # The whole-graph comparisons with TLC are single-threaded and some ten
+      # times slower under the race detector. The files that hold them say
+      # `//go:build !race`, so the step above leaves them out and this one,
+      # without the race detector, runs them with everything else.
+      # AuditorCommit's five configurations take about five minutes on a
+      # laptop and ran past ten here beside the other packages, Go's default
+      # timeout for a package's tests.
+      - name: go test, with the comparisons against TLC
+        run: go test -count=1 -timeout 30m ./...
+
+  # The spike's store (fastpath/internal/store) against the Spanner emulator,
+  # at the image the spanner-emulator job pins. The emulator runs one
+  # read-write transaction at a time, so the tests run one package at a time.
+  # With FASTPATH_SPANNER_EMULATOR=1 an emulator that cannot be reached fails
+  # the tests; the fastpath job, without it, skips them.
+  fastpath-spanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      SPANNER_EMULATOR_HOST: 127.0.0.1:9010
+      FASTPATH_SPANNER_EMULATOR: "1"
+    services:
+      spanner:
+        image: gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79
+        ports:
+          - 9010:9010
+          - 9020:9020
+    defaults:
+      run:
+        working-directory: fastpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: fastpath/go.sum
+      - name: Wait for the Spanner emulator (fail if unavailable)
+        run: |
+          for _ in $(seq 1 120); do
+            (exec 3<>/dev/tcp/127.0.0.1/9010) 2>/dev/null && exit 0
+            sleep 0.5
+          done
+          echo "the Spanner emulator did not start"
+          exit 1
+      - name: The store against the emulator
+        run: go test -race -count=1 -p 1 ./internal/store/...
+
   proofs:
     runs-on: ubuntu-latest
     timeout-minutes: 30

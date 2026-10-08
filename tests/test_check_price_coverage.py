@@ -65,6 +65,7 @@ def _as_listed(
     return raw
 
 _NEW_AUTOMATIC_FEED_MODELS = {
+    "meta/muse-spark-1.3",
     "abliterate/abliterate-0.3-fast",
     "aion-labs/aion-3.0",
     "arcee-ai/trinity-large-thinking",
@@ -97,6 +98,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.meta.ai" in url:
+        return {"data": [{"id": "muse-spark-1.3"}, {"id": "muse-spark-1.3-contributor"}]}
     if "ark.ap-southeast.bytepluses.com" in url:
         return {"data": [{"id": "glm-5-2-260617"}]}
     if "abliterate.ai" in url:

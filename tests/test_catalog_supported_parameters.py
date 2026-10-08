@@ -67,6 +67,7 @@ def test_native_endpoint_replaces_stale_snapshot_model_capabilities(monkeypatch,
     monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", manifests)
     models, endpoints = catalog_ingest._ingested_models_and_endpoints()
+    assert set(endpoints) == {f"{model_id}@grok/prepaid", f"{model_id}@grok/byok"}
     assert "tools" in models[model_id].supported_parameters
     assert not {"logprobs", "top_logprobs"} & set(models[model_id].supported_parameters)
     assert all(endpoint.supported_parameters == models[model_id].supported_parameters
@@ -87,8 +88,9 @@ def test_native_capability_declaration_is_provider_scoped_and_explicit(monkeypat
         }))
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     assert catalog_ingest._native_endpoint_capabilities() == {
-        ("grok", "model"): ("tools", "max_tokens"),
-        ("other", "model"): ("max_tokens", "logprobs"),
+        ("grok", "model"): catalog_ingest._NativeEndpointCapabilities(("tools", "max_tokens"), True),
+        ("other", "model"): catalog_ingest._NativeEndpointCapabilities(("max_tokens", "logprobs"), True),
+        ("partial", "model"): catalog_ingest._NativeEndpointCapabilities(("tools",), False),
     }
 
 

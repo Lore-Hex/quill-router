@@ -18,7 +18,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_speculation_shadow.sh': 'defd388fd3d507e1c8c7b1faf3059dd09df819a114ccccbb18fb6b978c1ba7e6',
  'scripts/deploy/migrate_spend_lease.sh': '198790ab42b43f20306431e386db98188a0c0ad88f948afbc7232f072a7c2798',
  'scripts/deploy/migrate_trust_reconciliation.sh': '7864237a2a0a187f5db14da4812e96481f105b28c4737bc2cfc83b481321140c',
- 'scripts/deploy/migrate_typed_counters.sh': 'd1f3dc7eaa4fc383bcea7ce75846b92dd71532296d4773c3aa9cc818c24fc909',
+ 'scripts/deploy/migrate_typed_counters.sh': '662d7925229da597a7ddfa947f07f70bfdffef9b4bb0438ce05512f9b85ec465',
  'scripts/deploy/retire_settle_outbox_hot_index.sh': 'ce6bac93d3c5442eccfe88aa74eeff151033905161b2d6c87489b4ec9c08cd45'}
 
 DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body '
@@ -116,8 +116,9 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  '(0), reserved INT64 NOT NULL DEFAULT (0), trust_tier INT64 DEFAULT (0), trust_computed_at '
  'TIMESTAMP, trust_latched_at TIMESTAMP, trust_override_tier INT64, billing_pause_causes '
  'ARRAY<STRING(32)>, pause_epoch INT64 DEFAULT (0), trust_reconciled_through TIMESTAMP, '
- 'source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true), updated_at TIMESTAMP '
- 'OPTIONS (allow_commit_timestamp=true), ) PRIMARY KEY (workspace_id, shard)',
+ 'in_debt BOOL DEFAULT (FALSE), source_updated_at TIMESTAMP OPTIONS '
+ '(allow_commit_timestamp=true), updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true), ) '
+ 'PRIMARY KEY (workspace_id, shard)',
  'CREATE TABLE tr_key_limit ( key_hash STRING(64) NOT NULL, shard INT64 NOT NULL DEFAULT (0), '
  'limit_micro INT64, usage INT64 NOT NULL DEFAULT (0), byok_usage INT64 NOT NULL DEFAULT (0), '
  'reserved INT64 NOT NULL DEFAULT (0), include_byok BOOL NOT NULL DEFAULT (true), '

@@ -12,7 +12,9 @@ driven to the bad schedule. It is written before the code it describes.
 | `SurfaceCutover` | The routed multi-region Cloud Run rollout, with a crash between any two steps | implemented |
 | `TerminalOrder` | One lease's records: which terminal wins, and why the live auditor and a rebuild agree (fast admission §4.5, §4.8) | planned |
 | `LeaseLifecycle` | One lease over time: renewals and their answers, the owner's cutoff, its last record and its draining write, draining and close under clock skew (fast admission §4.2, §4.3, §4.8) | planned |
-| `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | planned |
+| `CreditDebt` | Money across leases and credit shards: grants under the trust allowance, a settle above its hold and the shortfall its owner, a front door or the auditor reserves, returns, covering, the debt mark and payments (fast admission §4.2, §4.7) | implemented |
+| `AuditorCommit` | The auditor's per-lease commit: what a member stores so another can carry on, under redelivery, takeover, a member that stalled, records stored twice or out of order, raises between a load and a commit, reaps, the drain log and the checkpoint audit (fast admission §4.8) | planned |
+| `KeyCapFence` | Adding a cap to a key while leases may hold its requests: the key-status version a grant carries, the owners' caches, the checkpoint that shows none of the key's holds open, and the condition on which Python enables the cap (fast admission §4.6) | planned |
 
 `docs/design/fast-admission-and-batched-settlement.md` §5.1 has the plan for
 the fast-admission specs.
@@ -131,9 +133,18 @@ is removed.
     does, each checked alone;
   - `TypeOK`, only when a search past it (with `TypeOK` as a constraint)
     finishes and finds no other invariant broken;
-  - `nothing`;
+  - `nothing`, with `reaches`: `no new state` when every configuration
+    reaches as many distinct states as the table's `[states]` says it does
+    with every guard in place, and `new states` when one reaches more.
+    Removing a guard only adds steps, so the same count is the same states.
+    That needs the specification to use each action of its relation only as
+    a step: a spec that puts one under `ENABLED`, in an `IF`'s condition,
+    inside a value or in its initial condition is refused;
   - `evaluation`, when the spec, or its other invariants past `TypeOK`,
     can no longer be evaluated.
+
+  A row names the variant that shows it (`cfg`) when the main configuration
+  does not, for an expression left with no value as for a claim.
 - A run decides something only if TLC found no error, named a violated
   claim, or said, in one of the ways it has, that an expression has no
   value. A timeout, a parse error, out of memory, a stack overflow, one of
@@ -146,11 +157,15 @@ is removed.
 - `check_mutants.py` checks on every run that the table lists exactly the
   spec's guards and was swept against the spec and configurations as they
   are. It does not repeat the sweep.
-- `guard_sweep.py --verify` runs every row again. The `Proofs guard tables`
-  workflow does that when `proofs/` changes.
+- `guard_sweep.py --verify` runs every row again, and checks each table's
+  `[states]` once, in one of its parts. The `Proofs guard tables` workflow
+  does that when `proofs/` changes.
 - An entry with no table says why: `unswept = "..."`.
 
-When a row says `nothing`, first ask whether a claim is missing. Three of
+When a row says `nothing`, first ask whether a claim is missing, starting
+with the rows that say `new states`: those guards change what the model does
+and no claim minds. `no new state` means idle within the model's bounds, which
+is less than idle. Three of
 `TerminalOrder`'s did break something once two claims said what the design
 meant: the cutoff on reaps, releases and adoptions was held up by nothing
 until the claim about acknowledged settles covered every terminal the owner
@@ -172,6 +187,19 @@ every hold has a booked terminal and `AuditorApplyRow` that the lease is
 live: without both, a lease closes with a row left and the auditor then
 books it (`ShardIdentity`). Leaving out nine of the groups' members, at
 least one of each group, the other 28 removed all together break nothing.
+`AuditorCommit`'s 52 broke a claim too, and three pairs explained it.
+`LoadWinners` and `Reread` each ask that the member has loaded the lease:
+without both, a member that has not loaded can load the winners and re-read,
+again and again, and never load the lease (`DrainingLeaseCloses`). `Gap`
+asks that the member does not yet know S, and `Store` and `StoreAhead` each
+that the fence tick has not come: without `Gap`'s check and either of the
+others, a record lands after the tick past the progress of a member that
+knows S, and the member takes it for a gap the log does not have
+(`GapIsReal`). Leaving out `LoadWinners`' check and `Gap`'s, which every
+pair needs one of, the other 50 removed all together break nothing. That
+covers every claim in `two`, `lying` and `ahead`; in `again` and the main
+configuration, at 95 and 69 million states, the liveness claims were not
+checked. `KeyCapFence`'s 6 break nothing even when all are removed together.
 
 ## Ways a check proves nothing
 

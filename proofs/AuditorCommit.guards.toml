@@ -1,0 +1,804 @@
+# Every guard of every action, and what breaks when it alone is removed.
+# Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
+
+inputs_sha256 = "0e1bdbe31681ec0794eb5d49fdb8c2d22059f96e14c08d6e9343145db2d04f0c"
+
+# The distinct states each configuration reaches with every guard in place.
+[states]
+"AuditorCommit.cfg" = 164159
+"AuditorCommit.again.cfg" = 538371
+"AuditorCommit.ahead.cfg" = 822229
+"AuditorCommit.lying.cfg" = 176287
+"AuditorCommit.two.cfg" = 111596
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ st = "open"'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a heartbeat issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ a \notin ownerDone'''
+breaks = "DrainingLeaseCloses"
+
+[[guard]]
+action = "IssueHeartbeat"
+text = '''/\ osnap[a] < MaxSnap'''
+breaks = "TypeOK"
+cfg = "ahead"
+why = '''
+A bound of the model: the heartbeats per hold.
+'''
+
+[[guard]]
+action = "IssueTerminal"
+text = '''/\ st = "open"'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a terminal issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
+
+[[guard]]
+action = "IssueTerminal"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "IssueTerminal"
+text = '''/\ a \notin ownerDone'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "IssueCheckpoint"
+text = '''/\ st = "open"'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a checkpoint issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
+
+[[guard]]
+action = "IssueCheckpoint"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "IssueWrongCheckpoint"
+text = '''/\ Lying'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Without the flag every configuration's owner may lie, and the audit alerts exactly when a member applies a wrong checkpoint (AuditsEachCheckpoint), so nothing breaks. `lying` has an owner that may lie by design, and there nothing changes.
+'''
+
+[[guard]]
+action = "IssueWrongCheckpoint"
+text = '''/\ st = "open"'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Issuing changes only the owner's records and draining only the lease's state, so the two commute: a wrong checkpoint issued after the lease drains is one issued before it that the log has not stored. Whether it lands before the fence tick, after it or never is the log's. No new state is reached.
+'''
+
+[[guard]]
+action = "IssueWrongCheckpoint"
+text = '''/\ nextSeq <= MaxSeq'''
+breaks = "TypeOK"
+cfg = "again"
+why = '''
+A bound of the model: the records the owner issues.
+'''
+
+[[guard]]
+action = "Store"
+text = '''/\ out # << >>'''
+breaks = "evaluation"
+why = '''
+The log stores a record the owner issued: without one, Head of the empty sequence has no value.
+'''
+
+[[guard]]
+action = "Store"
+text = '''/\ ~ticked'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+After the fence tick, Store stores what StoreLate would, past MaxLate's bound: more records above S, each skipped. New states, which no claim rests on. Removed with Gap's check that the member does not know S, two records land after the tick, and a member that knows S takes the second for a gap the log does not have (GapIsReal).
+'''
+
+[[guard]]
+action = "StoreLate"
+text = '''/\ out # << >>'''
+breaks = "evaluation"
+why = '''
+The log stores a record the owner issued: without one, Head of the empty sequence has no value.
+'''
+
+[[guard]]
+action = "StoreLate"
+text = '''/\ ticked'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Before the fence tick, StoreLate stores what Store would, only counted against MaxLate: new states that differ from Store's in the count.
+'''
+
+[[guard]]
+action = "StoreLate"
+text = '''/\ lates < MaxLate'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the log stores after the fence tick.
+'''
+
+[[guard]]
+action = "StoreAhead"
+text = '''/\ aheads < MaxAhead'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the log stores ahead of an earlier one.
+'''
+
+[[guard]]
+action = "StoreAhead"
+text = '''/\ ~ticked'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A record stored after the fence tick is above S, as the one issued before it is, and every owner record there is skipped in whatever order it lands. New states, which no claim rests on. Removed with Gap's check that the member does not know S, a record stored ahead after the tick is past the progress of a member that knows S, which takes it for a gap the log does not have before the tick (GapIsReal).
+'''
+
+[[guard]]
+action = "StoreAhead"
+text = '''/\ Len(out) >= 2'''
+breaks = "evaluation"
+cfg = "ahead"
+why = '''
+A record stored ahead needs one before it: without two issued records, out[2] has no value.
+'''
+
+[[guard]]
+action = "StoreAgain"
+text = '''/\ dups < MaxDup'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the records the log stores twice.
+'''
+
+[[guard]]
+action = "StoreAgain"
+text = '''/\ i <= Len(log)'''
+breaks = "evaluation"
+cfg = "lying"
+why = '''
+The log stores again a record it holds: without the guard, log[i] has no value.
+'''
+
+[[guard]]
+action = "Raise"
+text = '''/\ st # "closed"'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A raise of a closed lease changes an allocation nothing is booked against any more, and NoRaiseLost counts it like any other. That a front door's append and an owner's write miss a closed lease is CreditDebt's.
+'''
+
+[[guard]]
+action = "Raise"
+text = '''/\ raised < MaxRaise'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the raises of the allocation.
+'''
+
+[[guard]]
+action = "MarkDraining"
+text = '''/\ st = "open"'''
+breaks = "TypeOK"
+why = '''
+A lease drains once. Without the guard a closed lease drains and closes again, and again, each close advancing the commit version past the bound TypeOK states; no other claim breaks first.
+'''
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ st = "draining"'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "FrontDoorAppend"
+text = '''/\ appends < MaxAppend'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the terminals front doors append.
+'''
+
+[[guard]]
+action = "FenceTick"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A tick while the lease is open takes S early: the records the owner issues after it land above S and are skipped, which the claims allow, since they are about the records at or below S as the tick's place in the log defines it. Reaps, the drain log and the close still wait for the lease to drain. When the tick comes is TerminalOrder's.
+'''
+
+[[guard]]
+action = "FenceTick"
+text = '''/\ ~ticked'''
+breaks = "TypeOK"
+why = '''
+The auditor publishes one fence tick per lease. Without the check it publishes another and another, and the log outgrows its bound in TypeOK; no other claim breaks first.
+'''
+
+[[guard]]
+action = "Assign"
+text = '''/\ assigns < MaxAssign'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the times Pub/Sub moves the lease.
+'''
+
+[[guard]]
+action = "Assign"
+text = '''/\ m # holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Pub/Sub may redeliver to the member that holds the lease. What it applied and has not committed it meets again at or below its progress, and skips.
+'''
+
+[[guard]]
+action = "Load"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member the records do not go to can load the row, but applies no record, tick or row, and a member with nothing applied commits nothing.
+'''
+
+[[guard]]
+action = "Load"
+text = '''/\ ~mem[m].loaded'''
+breaks = "GapIsReal"
+
+[[guard]]
+action = "LoadWinners"
+text = '''/\ st # "open"'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Loading the stored winners while the lease is open loads the winners of records at or below the stored progress, which a member skips anyway.
+'''
+
+[[guard]]
+action = "LoadWinners"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member that has not loaded keeps none of the winners it loads now: Load replaces its whole memory, and every step that reads the winners asks that it has loaded. Removed with Reread's check that the member has loaded, a member that has not loaded can load the winners and re-read, again and again, and never load the lease: its work goes on without end and the lease never closes (DrainingLeaseCloses).
+'''
+
+[[guard]]
+action = "LoadWinners"
+text = '''/\ ~mem[m].wl'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Loading the winners again adds those stored since, which only a member another member overtook can lack, and its next commit is refused by the version.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member the lease moved from may go on working: that is what the commit version is for. Its commit is refused unless no member committed since it read the row, and then its work is as good as the holder's.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ mem[m].loaded'''
+breaks = "GapIsReal"
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member applies the next record in sequence, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member applies a record the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ st = "open" \/ mem[m].wl'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+While a lease drains, the stored winners decide drain-log rows. An owner record above the stored progress has no stored winner: the owner issues one terminal per authorization, and reaps and drain rows are applied only once S is known, after every owner record at or below it. So applying it without the winners decides what applying it with them would.
+'''
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ mem[m].S = NoS'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyRecord"
+text = '''/\ log[pos[m]].seq = mem[m].prog + 1'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member the lease moved from may skip what it meets: skipping moves only its own position, which Pub/Sub sets again when the lease comes back. New states, which no claim rests on.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A member that has not loaded has progress 0 and no S, and every owner record's sequence number is above 0, so SkipRecord's own checks refuse. No new state is reached.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member skips a duplicate, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member skips a record the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ log[pos[m]].k # "tick"'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "SkipRecord"
+text = '''/\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS'''
+breaks = "GapIsReal"
+
+[[guard]]
+action = "Gap"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Meeting a gap does not depend on holding the lease, and the move changes nothing Gap reads: a member the lease moved from meets the gap in a state the same member meets it in before the move. No new state is reached.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member that has not loaded has progress and version 0, and the version check lets it declare a gap only before any commit, when its position is the log's first record. A gap there is real, the log having stored a record before one issued before it, and a member that has loaded declares it too. New states, and GapIsReal holds.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Setting the flag again changes nothing. No new state is reached.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member reads a record the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ mem[m].S = NoS'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A member that knows S has applied every owner record up to it, and records the log stores after the fence tick come in the order issued, S + 1 first. In these bounds at most one lands after the tick (MaxLate is at most 1), so none is past the member's progress by more than one, and no new state is reached. Removed with Store's check that the tick has not come, two records land after it, and a member that knows S takes the second for a gap the log does not have (GapIsReal); removed with StoreAhead's, a record stored ahead after the tick is taken for one the same way.
+'''
+
+[[guard]]
+action = "Gap"
+text = '''/\ log[pos[m]].seq > mem[m].prog + 1'''
+breaks = "GapIsReal"
+
+[[guard]]
+action = "Gap"
+text = '''/\ ~mem[m].dirty'''
+breaks = "FaultReported"
+cfg = "ahead"
+
+[[guard]]
+action = "Gap"
+text = '''/\ ver = mem[m].ver'''
+breaks = "GapIsReal"
+cfg = "again"
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member the lease moved from may apply the tick: it takes S from the records it applied before it, in the log's order, as the holder does, and its commit of S is refused unless no member committed since it read the row. New states, which no claim rests on.
+'''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ mem[m].loaded'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member applies a fence tick it has reached, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ pos[m] <= Len(log)'''
+breaks = "evaluation"
+why = '''
+The member applies the tick the log holds: without the guard, log[pos[m]] has no value.
+'''
+
+[[guard]]
+action = "ApplyTick"
+text = '''/\ log[pos[m]].k = "tick"'''
+breaks = "BoundaryIsS"
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member the lease moved from may go on working: that is what the commit version is for. Its commit is refused unless no member committed since it read the row, and then its work is as good as the holder's.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A member's winners are loaded only by Load and LoadWinners, each of a member that has loaded the row, and this action also asks for them. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ mem[m].wl'''
+breaks = "WinnerIsFirst"
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member books a drain-log row, having reached the log's end, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Drain-log rows are appended only while the lease drains. A row applied again after the close has a winner and charges nothing, and the member that applies it moves only its position.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ S # NoS'''
+breaks = "StoredSFirst"
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ pos[m] = Len(log) + 1'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member that knows S has applied every owner record up to it, so what is left in the log is above S, or a duplicate of one at or below it, and is skipped whenever the member gets to it. Booking a drain-log row before skipping them reaches new states, and decides what booking it after would.
+'''
+
+[[guard]]
+action = "ApplyRow"
+text = '''/\ dpos[m] <= Len(drain)'''
+breaks = "evaluation"
+why = '''
+The member applies a row the drain log holds: without the guard, drain[dpos[m]] has no value.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member the lease moved from may still reap: the reap is conditional on the commit version it read, so it holds what is committed and has applied every stored record, and its row is the one the member holding the lease would append. New states, which no claim rests on.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A member's winners are loaded only by Load and LoadWinners, each of a member that has loaded the row, and this action also asks for them. No new state is reached.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].wl'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A hold the member shows open has no stored winner: the terminal that decided it also took it out of the holds the commit stored. And the reap's transaction reads the hold's drain-log rows. So a reap without the winners loaded reaps the holds it would reap with them; applying its row asks for the winners.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member reaps, having reached the log's end, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Reap also asks for the winners, which are loaded only once the lease drains, and after the close the stored holds are all ended. No new state is reached.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ S # NoS'''
+breaks = "StoredSFirst"
+
+[[guard]]
+action = "Reap"
+text = '''/\ pos[m] = Len(log) + 1'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member that knows S has applied every owner record up to it, so what is left in the log is above S, or a duplicate of one at or below it, and is skipped whenever the member gets to it. A reap before it skips them charges the snapshot it would charge after.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].holds[a] # NoHold'''
+breaks = "ReapAtLastSnapshot"
+
+[[guard]]
+action = "Reap"
+text = '''/\ mem[m].win[a] = NoWin'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A hold with a winner in the member's memory is not open in it: deciding a terminal takes the hold out of its holds, so the check that the hold is open refuses already. No new state is reached.
+'''
+
+[[guard]]
+action = "Reap"
+text = '''/\ ver = mem[m].ver'''
+breaks = "ReapAtLastSnapshot"
+cfg = "again"
+
+[[guard]]
+action = "Reap"
+text = '''/\ \A i \in DOMAIN drain : drain[i].a # a'''
+breaks = "TypeOK"
+why = '''
+The reap's transaction first reads the hold's drain-log rows, and a row already there wins. Without that read a member appends reap after reap for one hold, past the drain log's bound in TypeOK. Each later row loses to the first when applied, since an authorization with a winner charges nothing more, so no other claim breaks.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Only applying a record, the fence tick or a row makes a member dirty, and each asks that it has loaded the row; this action also asks that it is dirty. No new state is reached.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ mem[m].dirty'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A commit with nothing applied since the last writes nothing, so in the model it leaves the version as well. What it does is let the member acknowledge records it skipped, which a commit had already made durable.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member commits what it applied before the gap, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "Commit"
+text = '''/\ ver = mem[m].ver'''
+breaks = "BookedIsWinners"
+
+[[guard]]
+action = "Reread"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member that has not loaded has a blank memory with version 0, and re-reading leaves it blank, with its positions at the start of what is not acknowledged and of the drain log. New states, which no claim rests on. Removed with LoadWinners' check that the member has loaded, a member that has not loaded can load the winners and re-read, again and again, and never load the lease (DrainingLeaseCloses).
+'''
+
+[[guard]]
+action = "Reread"
+text = '''/\ ver # mem[m].ver'''
+breaks = "DrainingLeaseCloses"
+
+[[guard]]
+action = "Ack"
+text = '''/\ done[m] > acked'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+Acknowledging less than is already acknowledged only means more records are given again, and a record at or below a member's progress is skipped.
+'''
+
+[[guard]]
+action = "Crash"
+text = '''/\ crashes < MaxCrash'''
+breaks = "TypeOK"
+why = '''
+A bound of the model: the crashes.
+'''
+
+[[guard]]
+action = "Crash"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A member that has not loaded has nothing to lose, and in these bounds its positions in the log and the drain log are already where a crash puts them. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ m = holder'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+The close is conditional on the commit version, so the member that closes has applied and committed everything committed: which member it is does not matter.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ st = "draining"'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Close also asks for the winners, which are loaded only once the lease drains; and closing a closed lease writes nothing, so it leaves the version too. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ mem[m].loaded'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A member's winners are loaded only by Load and LoadWinners, each of a member that has loaded the row, and this action also asks for them. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ mem[m].wl'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+The winners decide drain-log rows, and Close asks that every row is applied, which asks for the winners. A member that closes without them has had no row to apply.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ ~gap'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+A gap is declared only where the log stored a record ahead of one issued before it (GapIsReal), and a member that meets it is held there: records are applied in sequence order, so in the log's order nothing past the gap is applied, skipped or reached. Without this check a member closes, having reached the log's end, which it could do before the flag, and the flag changes nothing else. No new state is reached.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ mem[m].S # NoS'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ pos[m] = Len(log) + 1'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A member that knows S has applied every owner record up to it, so what is left in the log is above S, or a duplicate of one at or below it, and is skipped whenever the member gets to it. Closing before skipping them leaves out nothing the close books.
+'''
+
+[[guard]]
+action = "Close"
+text = '''/\ dpos[m] = Len(drain) + 1'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ ~mem[m].dirty'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ \A a \in Auths : mem[m].holds[a] = NoHold'''
+breaks = "NoChargeLost"
+
+[[guard]]
+action = "Close"
+text = '''/\ ver = mem[m].ver'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Close asks that the member has nothing to commit. Its version is stale only if another member that read the same version committed since, and what that member committed it had applied after reading: records, the tick and rows, which this member also applies, from the same start, before it reaches the log's and the drain log's end, as Close asks. They change this member's memory as they changed the other's, so it has something to commit, and no member closes with a stale version. No new state is reached.
+'''

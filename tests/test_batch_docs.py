@@ -42,7 +42,7 @@ def test_batch_docs_disclose_encrypted_retention_boundary(client: TestClient) ->
 
 def test_batch_docs_are_discoverable(client: TestClient) -> None:
     assert 'href="/docs/batch"' in client.get("/docs").text
-    assert 'href="/docs/batch"' in client.get("/").text
+    assert 'href="/docs/batch"' in client.get("/security").text
     assert "/docs/batch" in client.get("/llms.txt").text
     assert "/docs/batch" in client.get("/docs/llms.txt").text
     assert "/docs/batch" in client.get("/docs/llms-full.txt").text

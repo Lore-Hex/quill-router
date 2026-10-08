@@ -25,6 +25,7 @@ from typing import Any
 
 from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at, update_entity_body_dml
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_gcp_credit_debt import cover_or_mark
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 
 #: Insert-once verdict rows, one per (source_plane, authorization_id).
@@ -79,15 +80,26 @@ def _book_usage(
     row into a terminal dead-letter on the peer — a valid debit dropped
     forever. Workspace existence is the CALLER's check, against the
     workspace entity itself; by the time we are here, the spend books, into
-    a recreated zero-credit row if it must.
+    a recreated zero-credit row if it must. A shard it leaves negative is then
+    covered from the workspace's other shards, or every shard is marked in
+    debt (section 4.7), in the same transaction; the booking stays
+    unconditional.
     """
-    updated = transaction.execute_update(
-        f"UPDATE {CREDIT_BALANCE_TABLE} SET total_usage = total_usage + @amt "  # noqa: S608 - constant table name
-        "WHERE workspace_id = @ws AND shard = 0",
-        params={"amt": cost, "ws": workspace_id},
-        param_types={"amt": param_types.INT64, "ws": param_types.STRING},
+    rows = list(
+        transaction.execute_sql(
+            f"UPDATE {CREDIT_BALANCE_TABLE} SET total_usage = total_usage + @amt "  # noqa: S608 - constant table name
+            "WHERE workspace_id = @ws AND shard = 0 "
+            "THEN RETURN total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)",
+            params={"amt": cost, "ws": workspace_id},
+            param_types={"amt": param_types.INT64, "ws": param_types.STRING},
+        )
     )
-    if updated == 1:
+    if rows:
+        headroom, marked = int(rows[0][0]), bool(rows[0][1])
+        if headroom < 0 and not marked:
+            # Section 4.7: a negative shard is covered from the others at once,
+            # or marks every shard when the workspace's signed sum is negative.
+            cover_or_mark(transaction, param_types, workspace_id, now=now)
         return
     log.error(
         "apply_federated_usage: workspace %s exists but has no shard-0 balance "
@@ -105,7 +117,8 @@ def _book_usage(
             "now": param_types.TIMESTAMP,
         },
     )
-
+    if cost > 0:
+        cover_or_mark(transaction, param_types, workspace_id, now=now)
 
 def apply_federated_usage(
     database: Any,

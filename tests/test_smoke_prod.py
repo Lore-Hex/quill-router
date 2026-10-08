@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.homepage_copy import LANDSCAPE_MULTICLOUD_HEADING
 from tests.private_repository import mentions as private_repository_mentions
 from trusted_router.routing_candidates import auto_candidate_models
 
@@ -319,15 +320,16 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
 
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
     """Belt-and-suspenders for the alpha-removal: if a future deploy
-    accidentally restores 'Public Alpha' framing, this test fails. The
-    cloud copy also verifies that the multi-cloud reliability section rendered."""
+    accidentally restores 'Public Alpha' framing, this test fails. Production
+    serves the landscape homepage (TR_HOMEPAGE_LANDSCAPE_ENABLED), so the cloud
+    check looks for its verification section's multi-cloud proof point; the
+    local landscape test pins the same string."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
-    assert "3 clouds" in body
-    assert "GCP · AWS · Azure" in body
-    assert "GCP, AWS, and Azure" in body
+    assert '<section id="verify">' in body
+    assert LANDSCAPE_MULTICLOUD_HEADING in body
     assert "world-map.svg" not in body
 
 

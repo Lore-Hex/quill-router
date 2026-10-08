@@ -47,20 +47,11 @@ def isolated_comparison_catalog() -> Iterator[None]:
             cache.cache_clear()
 
 
-def test_public_footer_has_exactly_one_lightning_router_link(client: TestClient) -> None:
-    response = client.get("/")
-    footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
-    assert footer.count('href="https://lightningrouter.ai"') == 1
-    assert '>LightningRouter</a>' in footer
-
-
 @pytest.mark.parametrize("path", ["/", "/models", "/providers", "/token-exchange"])
-def test_public_footer_links_to_global_token_exchange(client: TestClient, path: str) -> None:
+def test_public_footer_links_to_token_exchange(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 200
     footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
-    assert footer.count('href="https://thetokenexchange.com/"') == 1
-    assert '>The Token Exchange</a>' in footer
     assert 'href="/token-exchange"' in footer
 
 
@@ -441,8 +432,9 @@ def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None
     response = client.get("/")
 
     assert response.status_code == 200
-    assert '<a href="/trust">Attestation</a>' in response.text
-    assert '<a href="https://trust.trustedrouter.com">Attestation</a>' not in response.text
+    footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
+    assert 'href="/trust"' in footer
+    assert "https://trust.trustedrouter.com" not in footer
 
 
 def test_models_reference_executes_against_canonical_api_host(
@@ -475,7 +467,7 @@ def test_paid_domain_homepages_render_their_own_brand(
 
     assert response.status_code == 200
     assert f"<title>{brand} | Every model. Privacy with proof.</title>" in response.text
-    assert f'<span class="brand-word">{brand}</span>' in response.text
+    assert f'<span class="brand-word" aria-hidden="true">{brand}</span>' in response.text
     assert f'property="og:site_name" content="{brand}"' in response.text
     assert f'property="og:url" content="https://{host}/"' in response.text
     assert '<link rel="canonical" href="https://trustedrouter.com/">' in response.text
@@ -1044,7 +1036,7 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert "github.com/Lore-Hex/quill-router/issues" in support.text
     assert "Never send an API key" in support.text
     assert "status.trustedrouter.com" in support.text
-    assert support.text.count('href="https://discord.gg/FREVts9KAG"') == 3
+    assert support.text.count('href="https://discord.gg/FREVts9KAG"') == 4
     assert "Join Discord" in support.text
 
 
@@ -1613,11 +1605,9 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     footer = client.get("/")
     assert 'href="/about"' in footer.text
     assert 'href="/contact"' in footer.text
-    assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
     assert 'href="https://discord.gg/FREVts9KAG"' in footer.text
-    assert "Discord community" in footer.text
     footer_markup = footer.text.split('<footer class="site-footer"', maxsplit=1)[1]
     assert 'href="/china-ai-models"' not in footer_markup
 
@@ -1773,7 +1763,6 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         "/models/google/gemini-3-pro-image/performance": (
             "/models/google/gemini-3.1-flash-image-preview"
         ),
-        "/models/meta/muse-spark-1.1/performance": "/models?filter=open",
     }
     for path, target in redirects.items():
         response = client.get(path, follow_redirects=False)

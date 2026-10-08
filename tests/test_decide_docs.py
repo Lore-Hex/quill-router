@@ -67,7 +67,6 @@ def test_decide_docs_publish_devs_ordered_host_chain(client: TestClient) -> None
 
 def test_decide_docs_are_discoverable(client: TestClient) -> None:
     assert 'href="/docs/decide"' in client.get("/docs").text
-    assert 'href="/docs/decide"' in client.get("/").text
     assert "/docs/decide" in client.get("/llms.txt").text
     assert "/docs/decide" in client.get("/docs/llms.txt").text
     assert "/docs/decide" in client.get("/docs/llms-full.txt").text

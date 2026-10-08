@@ -179,7 +179,7 @@ def test_every_balance_schema_copy_and_validation_site_uses_same_seven_columns()
     ).read_text()
     fresh_spanner = _create_columns(spanner, "tr_credit_balance")
     fresh_postgres = _create_columns(postgres, "tr_credit_balance")
-    assert len(fresh_spanner) == len(fresh_postgres) == 14
+    assert len(fresh_spanner) == len(fresh_postgres) == 15
     backfill_columns = tuple(
         match.group(1)
         for match in re.finditer(
@@ -192,12 +192,15 @@ def test_every_balance_schema_copy_and_validation_site_uses_same_seven_columns()
             r"ensure_column tr_credit_balance ([a-z_]+)", spanner
         )
     )
+    # The existing table gains the seven trust columns, then the debt mark,
+    # and nothing else.
+    assert ensure_columns == (*TRUST_COLUMNS, "in_debt")
     sites = {
         "canonical": CREDIT_BALANCE_TRUST_COLUMNS,
         "creation seed": CREDIT_BALANCE_COLUMNS[3:10],
         "reshard copy": _RESHARD_COLUMNS[5:12],
         "fresh Spanner DDL": tuple(c for c in fresh_spanner if c in TRUST_COLUMNS),
-        "existing Spanner DDL": ensure_columns,
+        "existing Spanner DDL": tuple(c for c in ensure_columns if c in TRUST_COLUMNS),
         "fresh Postgres DDL": tuple(c for c in fresh_postgres if c in TRUST_COLUMNS),
         "historical backfill": backfill_columns,
     }

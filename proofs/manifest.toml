@@ -37,6 +37,315 @@
 # orphaned spec's deleted path from one that never existed; `git log
 # --diff-filter=D -- <path>` can, and review runs it.
 
+[AuditorCommit]
+# docs/design/fast-admission-and-batched-settlement.md, section 4.8. Its
+# shadow is a package of its own in the Go service.
+state = "implemented"
+code = ["fastpath/internal/auditorcommit"]
+tests = ["fastpath/internal/auditorcommit/auditorcommit_test.go"]
+
+# The commit version: a member another overtook cannot commit over its work.
+[[AuditorCommit.mutants]]
+name = "commit-without-the-version"
+violates = "BookedIsWinners"
+old = '''
+    /\ ver = mem[m].ver
+    /\ ver' = Advanced(mem[m].dirty)
+    /\ prog' = mem[m].prog'''
+new = '''
+    /\ ver' = Advanced(mem[m].dirty)
+    /\ prog' = mem[m].prog'''
+
+# A redelivered record, at or below the progress, is skipped.
+[[AuditorCommit.mutants]]
+name = "apply-a-redelivered-record"
+violates = "BookedIsWinners"
+old = '    /\ log[pos[m]].seq = mem[m].prog + 1'
+new = '    /\ log[pos[m]].seq <= mem[m].prog + 1'
+
+# Records are acknowledged only once a commit has made them durable.
+[[AuditorCommit.mutants]]
+name = "ack-before-commit"
+violates = "NoChargeLost"
+old = '''
+    /\ done[m] > acked
+    /\ acked' = done[m]'''
+new = '''
+    /\ pos[m] - 1 > acked
+    /\ acked' = pos[m] - 1'''
+
+# Assumption A1: Pub/Sub redelivers every record not acknowledged.
+[[AuditorCommit.mutants]]
+name = "redelivery-skips-a-record"
+violates = "NoChargeLost"
+old = '''
+    /\ holder' = m
+    /\ pos' = [pos EXCEPT ![m] = acked + 1]'''
+new = '''
+    /\ holder' = m
+    /\ pos' = [pos EXCEPT ![m] = acked + 2]'''
+
+# Once the member knows S, it applies no owner record: those at or below S
+# are applied already, and one above S is ignored whenever it arrives.
+[[AuditorCommit.mutants]]
+name = "a-record-above-the-boundary-applied"
+violates = "WinnerIsFirst"
+old = '''
+    /\ st = "open" \/ mem[m].wl
+    /\ mem[m].S = NoS
+    /\ log[pos[m]].seq = mem[m].prog + 1'''
+new = '''
+    /\ st = "open" \/ mem[m].wl
+    /\ log[pos[m]].seq = mem[m].prog + 1'''
+
+# S is what the member applied before the fence tick, not what the owner
+# issued.
+[[AuditorCommit.mutants]]
+name = "the-boundary-from-the-owner"
+violates = "BoundaryIsS"
+old = "    /\\ mem' = [mem EXCEPT ![m].S = IF @ = NoS THEN mem[m].prog ELSE @,"
+new = "    /\\ mem' = [mem EXCEPT ![m].S = IF @ = NoS THEN nextSeq - 1 ELSE @,"
+
+# A member taking over loads the open holds the last commit stored.
+[[AuditorCommit.mutants]]
+name = "holds-not-loaded"
+violates = "NoChargeLost"
+old = '                  holds |-> holds,'
+new = '                  holds |-> [a \in Auths |-> NoHold],'
+
+# The commit stores each open hold's latest snapshot.
+[[AuditorCommit.mutants]]
+name = "commit-keeps-the-old-snapshot"
+violates = "ReapAtLastSnapshot"
+old = "    /\\ holds' = mem[m].holds"
+new = "    /\\ holds' = [a \\in Auths |-> IF holds[a] # NoHold /\\ mem[m].holds[a] # NoHold THEN holds[a] ELSE mem[m].holds[a]]"
+
+# A reap is conditional on the commit version: the lease can come back to a
+# member whose memory another member's commit has overtaken.
+[[AuditorCommit.mutants]]
+name = "reap-without-the-version"
+cfg = "again"
+violates = "ReapAtLastSnapshot"
+old = '''
+    /\ mem[m].win[a] = NoWin
+    /\ ver = mem[m].ver
+    /\ \A i \in DOMAIN drain : drain[i].a # a'''
+new = '''
+    /\ mem[m].win[a] = NoWin
+    /\ \A i \in DOMAIN drain : drain[i].a # a'''
+
+# A statement that matched no row is a refused commit, whatever the rest of
+# the transaction did.
+[[AuditorCommit.mutants]]
+name = "a-refused-commit-read-as-done"
+cfg = "again"
+violates = "NoChargeLost"
+old = '''
+    /\ ver # mem[m].ver
+    /\ mem' = [mem EXCEPT ![m] = Blank]
+    /\ pos' = [pos EXCEPT ![m] = acked + 1]
+    /\ dpos' = [dpos EXCEPT ![m] = 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, done, crashes, ghosts >>'''
+new = '''
+    /\ ver # mem[m].ver
+    /\ mem' = [mem EXCEPT ![m] = Blank]
+    /\ pos' = [pos EXCEPT ![m] = acked + 1]
+    /\ dpos' = [dpos EXCEPT ![m] = 1]
+    /\ done' = [done EXCEPT ![m] = pos[m] - 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, crashes, ghosts >>'''
+
+# A member whose memory another's commit overtook re-reads even with nothing
+# to commit: the lease can come back to it, and its reap or close is refused.
+[[AuditorCommit.mutants]]
+name = "no-reread-when-clean"
+cfg = "again"
+violates_property = "DrainingLeaseCloses"
+old = '''
+Reread(m) ==
+    /\ mem[m].loaded'''
+new = '''
+Reread(m) ==
+    /\ mem[m].loaded
+    /\ mem[m].dirty'''
+
+# S is stored before a reap: one appended from S known only in memory
+# outlives a crash that loses that S (Codex's second review).
+[[AuditorCommit.mutants]]
+name = "a-reap-before-s-is-stored"
+violates = "StoredSFirst"
+old = '''
+    /\ S # NoS
+    /\ pos[m] = Len(log) + 1
+    /\ mem[m].holds[a] # NoHold'''
+new = '''
+    /\ mem[m].S # NoS
+    /\ pos[m] = Len(log) + 1
+    /\ mem[m].holds[a] # NoHold'''
+
+# A member declares a gap only with the version it read: one another member
+# overtook compares a record with progress the row has passed.
+[[AuditorCommit.mutants]]
+name = "a-gap-from-stale-progress"
+cfg = "again"
+violates = "GapIsReal"
+old = '''
+    /\ ver = mem[m].ver
+    /\ gap' = TRUE'''
+new = '''
+    /\ gap' = TRUE'''
+
+# The alert is raised with the commit that stores the checkpoint, as every
+# write a member makes is: a member another overtook may apply a wrong
+# checkpoint above S it never learned to ignore, and its refused work raises
+# nothing (Codex's third review).
+[[AuditorCommit.mutants]]
+name = "a-refused-member-alerts"
+cfg = "again"
+violates_property = "AuditsEachCheckpoint"
+old = '''
+    /\ dpos' = [dpos EXCEPT ![m] = 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, done, crashes, ghosts >>'''
+new = '''
+    /\ dpos' = [dpos EXCEPT ![m] = 1]
+    /\ alert' = (alert \/ mem[m].fault)
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, done, crashes, gap >>'''
+
+# A drain-log row is decided only once S is stored, in memory too.
+[[AuditorCommit.mutants]]
+name = "a-row-decided-before-s-is-stored"
+violates = "StoredSFirst"
+old = '''
+    /\ S # NoS
+    /\ pos[m] = Len(log) + 1
+    /\ dpos[m] <= Len(drain)'''
+new = '''
+    /\ mem[m].S # NoS
+    /\ pos[m] = Len(log) + 1
+    /\ dpos[m] <= Len(drain)'''
+
+# A member commits what it applied before it declares a gap: a fault it
+# found before the gap is raised, though the gap stops every later commit
+# (Codex's fourth review).
+[[AuditorCommit.mutants]]
+name = "a-gap-before-the-commit"
+cfg = "ahead"
+violates_property = "FaultReported"
+old = '''
+    /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ~mem[m].dirty
+    /\ ver = mem[m].ver'''
+new = '''
+    /\ log[pos[m]].seq > mem[m].prog + 1
+    /\ ver = mem[m].ver'''
+
+# A fault is raised with the next commit, not held until the lease drains,
+# which it may never do.
+[[AuditorCommit.mutants]]
+name = "a-fault-held-while-open"
+cfg = "lying"
+violates_property = "FaultReported"
+old = '''
+Commit(m) ==
+    /\ mem[m].loaded
+    /\ mem[m].dirty'''
+new = '''
+Commit(m) ==
+    /\ mem[m].loaded
+    /\ mem[m].dirty
+    /\ ~mem[m].fault \/ st # "open"'''
+
+# A heartbeat at 0 is an open hold like any other: no positive minimum.
+[[AuditorCommit.mutants]]
+name = "a-zero-snapshot-shows-no-hold"
+violates = "NoChargeLost"
+old = '                      THEN [M.holds EXCEPT ![r.a] = r.c]'
+new = '                      THEN [M.holds EXCEPT ![r.a] = IF r.c = 0 THEN NoHold ELSE r.c]'
+
+# Once the lease drains, the drain log is booked against the stored winners.
+[[AuditorCommit.mutants]]
+name = "drain-rows-without-the-winners"
+violates = "WinnerIsFirst"
+old = '''
+ApplyRow(m) ==
+    /\ m = holder
+    /\ mem[m].loaded
+    /\ mem[m].wl'''
+new = '''
+ApplyRow(m) ==
+    /\ m = holder
+    /\ mem[m].loaded'''
+
+# A refund is a winner like any other, and is stored.
+[[AuditorCommit.mutants]]
+name = "refunds-not-stored"
+violates = "WinnerIsFirst"
+old = "    /\\ win' = [a \\in Auths |-> IF mem[m].win[a] # NoWin THEN mem[m].win[a] ELSE win[a]]"
+new = "    /\\ win' = [a \\in Auths |-> IF mem[m].win[a] # NoWin /\\ mem[m].win[a].c > 0 THEN mem[m].win[a] ELSE win[a]]"
+
+# The bookings are arithmetic on the row as the commit reads it.
+[[AuditorCommit.mutants]]
+name = "commit-loses-a-raise"
+cfg = "ahead"
+violates = "NoRaiseLost"
+old = "    /\\ alloc' = alloc - mem[m].dbooked"
+new = "    /\\ alloc' = mem[m].alloc - mem[m].dbooked"
+
+# A record stored ahead of an earlier one is a gap, not a record to apply.
+[[AuditorCommit.mutants]]
+name = "gap-ignored"
+cfg = "ahead"
+violates = "NoChargeLost"
+old = '    /\ log[pos[m]].seq = mem[m].prog + 1'
+new = '    /\ log[pos[m]].seq >= mem[m].prog + 1'
+
+# The checkpoint audit.
+[[AuditorCommit.mutants]]
+name = "audit-never-alerts"
+cfg = "lying"
+violates_property = "AuditsEachCheckpoint"
+old = "    /\\ alert' = (alert \\/ mem[m].fault)"
+new = "    /\\ alert' = alert"
+
+[[AuditorCommit.mutants]]
+name = "audit-sum-not-stored"
+cfg = "lying"
+violates_property = "AuditsEachCheckpoint"
+old = "    /\\ osum' = mem[m].osum"
+new = "    /\\ osum' = osum"
+
+[[AuditorCommit.mutants]]
+name = "audit-counts-a-duplicate"
+cfg = "lying"
+violates_property = "AuditsEachCheckpoint"
+old = '''
+    /\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS
+    /\ pos' = [pos EXCEPT ![m] = @ + 1]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, mem, dpos, done, crashes, ghosts >>'''
+new = '''
+    /\ log[pos[m]].seq <= mem[m].prog \/ mem[m].S # NoS
+    /\ pos' = [pos EXCEPT ![m] = @ + 1]
+    /\ mem' = [mem EXCEPT ![m].osum = IF OwnerTerminal(log[pos[m]]) THEN @ + log[pos[m]].c ELSE @]
+    /\ UNCHANGED << ownerv, logv, row, drainv, pubsub, dpos, done, crashes, ghosts >>'''
+
+[[AuditorCommit.mutants]]
+name = "audit-keeps-only-the-last-terminal"
+cfg = "two"
+violates_property = "AuditsEachCheckpoint"
+old = '          !.osum = IF OwnerTerminal(r) THEN M.osum + r.c ELSE M.osum,'
+new = '          !.osum = IF OwnerTerminal(r) THEN r.c ELSE M.osum,'
+
+# The bounds: an owner that issues past MaxSeq leaves the model's types.
+[[AuditorCommit.mutants]]
+name = "owner-issues-without-bound"
+violates = "TypeOK"
+old = '''
+IssueCheckpoint ==
+    /\ st = "open"
+    /\ nextSeq <= MaxSeq'''
+new = '''
+IssueCheckpoint ==
+    /\ st = "open"'''
+
 [AutoRefillHandoff]
 state = "implemented"
 unswept = "written before the guard table; its mutants are its hand-run notes"
@@ -117,11 +426,93 @@ new = '''
     /\ ~refillDue[e]
 '''
 
+[KeyCapFence]
+# docs/design/fast-admission-and-batched-settlement.md, section 4.6. Its
+# shadow is a pure module of the check that enables a cap, which the
+# existing primitives call (section 5.1).
+state = "planned"
+code = ["src/trusted_router/key_cap_fence.py"]
+
+# An owner admits under a lease only with a cache at least as new as the
+# version its grant carried. Without it, a lease granted after the change,
+# which the enabling condition leaves out, admits the key on a stale cache.
+[[KeyCapFence.mutants]]
+name = "admit-without-the-grant-version"
+violates = "CapAfterBooking"
+old = '''
+    /\ cache[l] >= gv[l]
+'''
+new = '''
+'''
+
+# An owner stops admitting the key once its cache shows the change.
+[[KeyCapFence.mutants]]
+name = "owner-admits-after-the-change"
+violates = "CapAfterBooking"
+old = '''
+    /\ capAt = NoCap \/ cache[l] < capAt
+'''
+new = '''
+'''
+
+# Assumption A1: a checkpoint shows the cache version its owner applies.
+[[KeyCapFence.mutants]]
+name = "a-checkpoint-ahead-of-the-cache"
+violates = "CapAfterBooking"
+old = '[k |-> "ckpt", ver |-> cache[l], open |-> open[l]]'
+new = '[k |-> "ckpt", ver |-> kv, open |-> open[l]]'
+
+# The enabling condition, one part at a time.
+[[KeyCapFence.mutants]]
+name = "cleared-by-any-checkpoint"
+violates = "CapAfterBooking"
+old = '''
+        /\ log[l][i].ver >= capAt
+'''
+new = '''
+'''
+
+[[KeyCapFence.mutants]]
+name = "cleared-with-holds-open"
+violates = "CapAfterBooking"
+old = '''
+        /\ log[l][i].open = 0
+'''
+new = '''
+'''
+
+[[KeyCapFence.mutants]]
+name = "cleared-before-booked"
+violates = "CapAfterBooking"
+old = '    \E i \in 1..booked[l] :'
+new = '    \E i \in 1..Len(log[l]) :'
+
+[[KeyCapFence.mutants]]
+name = "enable-ignores-draining-leases"
+violates = "CapAfterBooking"
+old = '''Earlier == { l \in Leases : lst[l] # "none" /\ gv[l] < capAt }'''
+new = '''Earlier == { l \in Leases : lst[l] = "open" /\ gv[l] < capAt }'''
+
+# The model has one change to the key: a second leaves its types.
+[[KeyCapFence.mutants]]
+name = "a-second-change"
+violates = "TypeOK"
+old = '''
+AddCap ==
+    /\ capAt = NoCap
+'''
+new = '''
+AddCap ==
+'''
+
 [LeaseLifecycle]
 # docs/design/fast-admission-and-batched-settlement.md, sections 4.2, 4.3,
-# 4.7 and 4.8. Its shadow is a package of its own in the Go service.
-state = "planned"
+# 4.7 and 4.8. Its shadow is a package of its own in the Go service, whose
+# tests compare every step with TLC's state graph of a small instance and
+# count the states of this .cfg's.
+state = "implemented"
 code = ["fastpath/internal/leaselifecycle"]
+tests = ["fastpath/internal/leaselifecycle/leaselifecycle_test.go"]
 
 # Assumption A1, bounded skew, and what rests on it: the owner's cutoff and
 # the auditor's two conditions on the expiry.
@@ -649,8 +1040,9 @@ new = '''
 # Its shadow is a package of its own in the Go service, written in the spike
 # (section 8). Each planned spec names its own package, so they can become
 # implemented one at a time.
-state = "planned"
+state = "implemented"
 code = ["fastpath/internal/terminalorder"]
+tests = ["fastpath/internal/terminalorder/terminalorder_test.go"]
 
 # Assumption A1 and the owner's cutoff: no acknowledged owner record falls
 # beyond the boundary.
@@ -1114,9 +1506,27 @@ new = '''
 [CreditDebt]
 # docs/design/fast-admission-and-batched-settlement.md, sections 4.2 and
 # 4.7. Its shadow is a pure module of the debt rules, which the existing
-# primitives call (section 5.1).
-state = "planned"
-code = ["src/trusted_router/credit_debt.py"]
+# primitives call (section 5.1): storage_gcp_credit_debt applies it to the
+# credit rows, and tests/test_credit_debt.py checks it against this spec's
+# Cover, Squared, Distribute and Inflow over every small case. The spike's
+# Go store has a port of it, fastpath/internal/creditdebt, held to the
+# Python module's results by golden vectors that
+# tests/test_fastpath_credit_debt_vectors.py keeps current; the store's
+# credit.go applies it to the spike's credit rows, and grant.go grants.
+state = "implemented"
+code = [
+    "src/trusted_router/credit_debt.py",
+    "fastpath/internal/creditdebt/creditdebt.go",
+    "fastpath/internal/store/credit.go",
+    "fastpath/internal/store/grant.go",
+]
+tests = [
+    "tests/test_credit_debt.py",
+    "tests/test_fastpath_credit_debt_vectors.py",
+    "fastpath/internal/creditdebt/creditdebt_test.go",
+    "fastpath/internal/store/credit_test.go",
+    "fastpath/internal/store/grant_test.go",
+]
 
 # Section 4.2's first claim, and what keeps it.
 

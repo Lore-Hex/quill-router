@@ -157,7 +157,20 @@ def test_rebalance_distinguishes_not_needed_insufficient_and_incomplete() -> Non
     ] == RebalanceOutcome.INCOMPLETE
 
 
-def test_overage_settle_negative_shard_rebalance_returns_402_not_500() -> None:
+@pytest.mark.parametrize(
+    ("actual", "headrooms", "marked"),
+    [
+        # The overrun leaves the hold's shard at -20 with a signed sum of 0: the
+        # settle covers it from the other shard at once (section 4.7).
+        (80, [0, 0], False),
+        # The overrun leaves the signed sum at -20: every shard is marked, and
+        # the shard still positive refuses too.
+        (100, [-40, 20], True),
+    ],
+)
+def test_overage_settle_negative_shard_rebalance_returns_402_not_500(
+    actual: int, headrooms: list[int], marked: bool,
+) -> None:
     store, database, key = _seed([100, 100], usage=[60, 60])
 
     outcome, authorization = _typed_authorize(
@@ -174,14 +187,14 @@ def test_overage_settle_negative_shard_rebalance_returns_402_not_500() -> None:
         store._database,
         store._param_types,
         reservation_id=reservation["reservation_id"],
-        actual_micro=80,
+        actual_micro=actual,
         settled_usage_type="Credits",
         success=True,
     )
     assert settled["outcome"] == "settled"
     rows = database.typed[CREDIT_BALANCE_TABLE]
-    assert any(_available(rows[("ws-fragmented", shard)]) < 0 for shard in range(2))
-    assert any(_available(rows[("ws-fragmented", shard)]) > 0 for shard in range(2))
+    assert sorted(_available(rows[("ws-fragmented", shard)]) for shard in range(2)) == sorted(headrooms)
+    assert all(bool(rows[("ws-fragmented", shard)].get("in_debt")) is marked for shard in range(2))
 
     outcome, authorization = _typed_authorize(
         store,

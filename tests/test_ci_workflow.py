@@ -7,6 +7,18 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_ci_shard_matrices_cover_every_partition_with_bounded_jobs() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    for name in ("test", "test-post-cutover"):
+        job = jobs[name]
+        count = int(job["env"]["TEST_SHARDS"])
+        assert job["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+        assert job["timeout-minutes"] == 25
+        assert job["strategy"]["fail-fast"] is False
+        assert "continue-on-error" not in job
+    assert jobs["coverage"]["needs"] == "test"
+
+
 def test_ci_runs_python_suite_once_with_coverage() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 

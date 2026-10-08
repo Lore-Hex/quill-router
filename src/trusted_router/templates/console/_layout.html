@@ -6,22 +6,9 @@
   <title>{{ page_title }} | TrustedRouter</title>
   <meta name="robots" content="noindex">
   {% include "_favicon.html" %}
-  {# Apply the saved theme BEFORE the stylesheets load so the console
-     doesn't flash light. Dark is the default; only a stored "light"
-     preference adds the attribute. See public/_base.html for the matching
-     marketing-chrome script + the toggle that writes localStorage. #}
-  <script nonce="{{ csp_nonce() }}">
-    (function () {
-      try {
-        if (localStorage.getItem("tr-theme") === "light") {
-          document.documentElement.dataset.theme = "light";
-        }
-      } catch (e) { /* localStorage blocked — dark default */ }
-    })();
-  </script>
+  <link rel="preload" href="/static/homepage/archivo.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/tokens.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
-  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
@@ -56,9 +43,6 @@
     {% endif %}
     <div class="console-user">
       <span class="console-user-email">{{ user_email or 'no email' }}</span>
-      {# Same theme toggle as the marketing chrome; console.js handles
-         the click and keeps the glyph in sync. #}
-      <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">◐</button>
       <form class="inline-form" method="post" action="/auth/logout">
         <button class="btn" type="submit">Sign out</button>
       </form>

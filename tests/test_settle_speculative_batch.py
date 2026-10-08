@@ -531,6 +531,16 @@ def _sdk_finalize_options(sdk: Any) -> dict[str, Any]:
 
     def read(**kw: Any) -> Any:
         request = kw['request']
+        if request.sql.startswith('UPDATE tr_credit_balance SET reserved = reserved - @hold'):
+            # release_credit returns its row's headroom and debt mark: headroom
+            # left and no mark, so it reads no other credit row.
+            released = PartialResultSet(metadata={'row_type': {'fields': [
+                {'name': 'headroom', 'type_': param_types.INT64},
+                {'name': 'in_debt', 'type_': param_types.BOOL},
+            ]}})
+            released._pb.values.add(string_value='1000')
+            released._pb.values.add(bool_value=False)
+            return iter([released])
         assert 'FROM tr_reservation WHERE reservation_id=@rid' in request.sql
         assert request.params['rid'] == options['reservation_id']
         response = PartialResultSet(metadata={
@@ -621,7 +631,10 @@ def test_real_sdk_finalize_retry_and_telemetry(
         result = invoke(sdk.db, options)
     attempts = 1 if scenario in {'clean', 'stale_windows'} else 3 if 'aborted' in scenario else 2
     assert result['outcome'] == 'settled' and result['attempts'] == attempts
-    assert len(sdk.transactions) == sdk.rpcs.execute_streaming_sql.call_count == attempts
+    # One reservation read per attempt, and the credit release, which returns
+    # its row (section 4.7), in the sequential attempt that commits.
+    assert len(sdk.transactions) == attempts
+    assert sdk.rpcs.execute_streaming_sql.call_count == attempts + int(attempts > 1)
     sdk.rpcs.commit.assert_called_once()
     assert sdk.rpcs.commit.call_args.kwargs['request'].transaction_id == f'tx-{attempts}'.encode()
     assert all(tx.committed is None for tx in sdk.transactions[:-1])
@@ -641,7 +654,8 @@ def test_real_sdk_finalize_retry_and_telemetry(
         sleep.assert_not_called()
     # Real release DML only executes in the final successful callback.
     updates = [c.kwargs['request'].sql for c in sdk.rpcs.execute_sql.call_args_list]
-    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in updates) == int(attempts > 1)
+    streamed = [c.kwargs['request'].sql for c in sdk.rpcs.execute_streaming_sql.call_args_list]
+    assert sum(sql.startswith('UPDATE tr_credit_balance') for sql in streamed) == int(attempts > 1)
     assert sum(sql.startswith('UPDATE tr_key_limit') for sql in updates) == int(attempts > 1)
     _assert_timing(caplog, attempts=attempts, reason='none' if attempts == 1 else 'claim_zero',
                    outcome='not_attempted' if attempts == 1 else 'settled')

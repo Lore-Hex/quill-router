@@ -3,6 +3,11 @@
 
 inputs_sha256 = "ed6bbb023696afafe13006b6cf01129716044bd3263dc9e31dcccd942c8a99e1"
 
+# The distinct states each configuration reaches with every guard in place.
+[states]
+"TerminalOrder.cfg" = 674936
+"TerminalOrder.undeclared.cfg" = 3564
+
 [[guard]]
 action = "OwnerHeartbeat"
 text = '''/\ OwnerActive'''
@@ -42,11 +47,14 @@ breaks = "AckedOwnerRecordWithinBoundary"
 action = "OwnerSettle"
 text = '''/\ Settles(a)'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 A4 is an assumption about the enclave, and it carries its weight in
-FrontDoorAppend, where removing it breaks ReleasedHoldOwesNothing. For the
-owner it changes nothing: the owner decides one terminal per hold, so a
-settle it takes and a release exclude each other whatever the enclave did.
+FrontDoorAppend, where removing it breaks ReleasedHoldOwesNothing. Without it
+the owner may settle a hold whose enclave never delivered: new states, none of
+which a claim reads differently, since the owner decides one terminal per
+hold, so a settle it takes and a release exclude each other whatever the
+enclave did.
 '''
 
 [[guard]]
@@ -111,6 +119,7 @@ It keeps Min(DrainRows(a)) defined: with no row there is nothing to adopt.
 action = "OwnerCrash"
 text = '''/\ ownerUp'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A crash of an owner that is already down changes no variable.
 '''
@@ -136,6 +145,7 @@ answer-before-the-publish-is-stored).
 action = "Ack"
 text = '''/\ ownerUp'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 It orders two steps that commute. An owner that crashes and is then
 acknowledged ends in the state of one acknowledged and then crashed, so
@@ -151,6 +161,7 @@ breaks = "AckedOwnerRecordWithinBoundary"
 action = "CutoffPass"
 text = '''/\ ~ownerCutoff'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 The cutoff passes once. After it the owner issues nothing, so passing it
 again would change no variable.
@@ -160,6 +171,7 @@ again would change no variable.
 action = "DeadlinePass"
 text = '''/\ ownerCutoff'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 An order in time, not a rule: the fence deadline is the cutoff plus the
 publish deadline, so it cannot pass first. If it did, the owner would get
@@ -171,6 +183,7 @@ nothing that the tick could cut off.
 action = "DeadlinePass"
 text = '''/\ ~deadlinePassed'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 The deadline passes once; passing it again changes no variable.
 '''
@@ -179,6 +192,7 @@ The deadline passes once; passing it again changes no variable.
 action = "AllowanceElapse"
 text = '''/\ ~allowance[a]'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 The allowance elapses once; elapsing again changes no variable.
 '''
@@ -197,6 +211,7 @@ breaks = "NoLiveRequestReleased"
 action = "EnclaveDeliver"
 text = '''/\ enc[a] = "open"'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 A fact about the enclave: it delivers once, and not after it has given up.
 Without the guard an enclave that gave up could deliver after all. That
@@ -208,6 +223,7 @@ stream never is: OwnerRelease asks for a declared stream.
 action = "EnclaveGiveUp"
 text = '''/\ enc[a] = "open"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 A fact about the enclave: one that has delivered does not go back to having
 delivered nothing. No claim reads the enclave's state for a stream that was
@@ -263,6 +279,7 @@ breaks = "WinnerIsFirstInOrder"
 action = "PublishTick"
 text = '''/\ lease = "draining"'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 The design publishes ticks once the lease drains. No claim here rests on
 the draining mark. They rest on what a tick also waits for, the fence
@@ -279,6 +296,7 @@ breaks = "AckedOwnerRecordWithinBoundary"
 action = "StoreS"
 text = '''/\ tickAt # NoTick'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Redundant with `ownerApplied = tickAt`: NoTick is above any count of
 applied records.
@@ -288,6 +306,7 @@ applied records.
 action = "StoreS"
 text = '''/\ S = NoS'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 S is stored once. After that the auditor applies no more owner records
 (AuditorApplyOwner's `S = NoS`, whose removal breaks a claim), so
@@ -305,6 +324,7 @@ breaks = "AckedOwnerTerminalWins"
 action = "RebuildStoreS"
 text = '''/\ tickAt # NoTick'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 Redundant: without a tick the range tickAt..delivered is empty, so no S can
 be chosen.
@@ -332,6 +352,7 @@ It keeps drain[drainApplied + 1] defined: there is no next row to apply.
 action = "AuditorReap"
 text = '''/\ lease = "draining"'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 No claim here rests on the draining mark (see PublishTick's row). A reap
 needs a durable heartbeat, which needs S, which needs a tick.
@@ -341,6 +362,7 @@ needs a durable heartbeat, which needs S, which needs a tick.
 action = "AuditorReap"
 text = '''/\ S # NoS'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 No claim rests on "no reap before S". HbDurable(a) is false until S is
 stored, and even without both a reap row appended early only waits in the
@@ -363,6 +385,7 @@ an unread settle row merely loses is the survivor reap-without-reading-rows.
 action = "AuditorReap"
 text = '''/\ HbDurable(a)'''
 breaks = "nothing"
+reaches = "new states"
 why = '''
 What the auditor can see, not a rule it chooses to follow: it learns of a
 hold from the log. A reap of a hold it never saw is only another terminal
@@ -384,6 +407,7 @@ notices.
 action = "Close"
 text = '''/\ lease = "draining"'''
 breaks = "nothing"
+reaches = "no new state"
 why = '''
 No claim here rests on the draining mark (see PublishTick's row). Close
 waits for S, and closing a closed lease changes no variable.

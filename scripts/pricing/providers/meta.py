@@ -1,100 +1,91 @@
-"""Meta Muse pricing through OpenRouter's provider endpoint.
+"""Direct Meta Standard-tier discovery and first-party pricing.
 
-Muse Spark is not exposed by a direct Meta Model API credential in this
-deployment. OpenRouter is therefore the actual downstream API and billing
-source, and its endpoint feed is authoritative for this explicitly labelled
-route.
+Contributor models allow training on customer content and are never admitted.
+Non-chat model families require their own meters and adapters.
 """
 
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, validate
+from bs4 import BeautifulSoup, Tag
+
+from scripts.pricing.base import ModelPrice, fetch_html
+from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
 
 SLUG = "meta"
+BASE_URL = "https://api.meta.ai/v1"
+URL = f"{BASE_URL}/models"
+PRICING_URL = "https://dev.meta.ai/docs/pricing-rate-limits"
+MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/meta.json"
+MANIFEST_STALE_FALLBACK = True
 MODEL_ID = "meta/muse-spark-1.1"
-URL = f"https://openrouter.ai/api/v1/models/{MODEL_ID}/endpoints"
-EXPECTED_MODELS = [MODEL_ID]
-MANIFEST_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "src"
-    / "trusted_router"
-    / "data"
-    / "provider_models"
-    / "meta.json"
+EXPLICIT_MODEL_MAP = {f"muse-spark-{version}": f"meta/muse-spark-{version}" for version in ("1.1", "1.2", "1.3")}
+EXPECTED_MODELS = list(EXPLICIT_MODEL_MAP.values())
+
+
+def _parse_prices(html: str) -> dict[str, ModelPrice]:
+    soup = BeautifulSoup(html, "html.parser")
+    headings = [node for node in soup.find_all(["h2", "h3"]) if node.get_text(" ", strip=True) == "Standard tier"]
+    if len(headings) != 1:
+        raise RuntimeError("meta: ambiguous Standard-tier pricing section")
+    section: list[Tag] = []
+    for node in headings[0].next_siblings:
+        if isinstance(node, Tag):
+            if node.name in {"h2", "h3"}:
+                break
+            section.append(node)
+    text = " ".join(node.get_text(" ", strip=True) for node in section)
+    if "Price per 1M tokens" not in text:
+        raise RuntimeError("meta: missing per-million pricing unit")
+    native_ids = set(re.findall(r"\bmuse-spark-\d+\.\d+(?:-[a-z]+)?\b", text))
+    if not set(EXPLICIT_MODEL_MAP) <= native_ids or any("contributor" in name for name in native_ids):
+        raise RuntimeError("meta: unexpected Standard-tier model list")
+    tables = [table for node in section for table in ([node] if node.name == "table" else node.find_all("table"))]
+    if len(tables) != 1:
+        raise RuntimeError("meta: ambiguous Standard-tier price table")
+    amounts: dict[str, int] = {}
+    for row in tables[0].find_all("tr"):
+        cells = row.find_all("td")
+        if not cells:
+            continue
+        if len(cells) != 2:
+            raise RuntimeError("meta: unexpected price row")
+        label, raw = [cell.get_text(" ", strip=True) for cell in cells]
+        if label not in {"Cached input", "Input", "Output"} or label in amounts or not re.fullmatch(r"\$\d+(?:\.\d+)?", raw):
+            raise RuntimeError("meta: malformed Standard-tier price")
+        amount = Decimal(raw[1:]) * 1_000_000
+        if amount <= 0 or amount != amount.to_integral_value():
+            raise RuntimeError("meta: invalid price precision or amount")
+        amounts[label] = int(amount)
+    if set(amounts) != {"Cached input", "Input", "Output"} or amounts["Cached input"] > amounts["Input"]:
+        raise RuntimeError("meta: incomplete or invalid Standard-tier rates")
+    price = ModelPrice(amounts["Input"], amounts["Output"], prompt_cached_micro_per_m=amounts["Cached input"])
+    return {model_id: price for model_id in EXPLICIT_MODEL_MAP.values()}
+
+
+def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # /models only returns IDs. Context/modalities are documented in /docs/models.
+    # Advertise only the text/image input supported by our chat adapter.
+    return [{**row, "context_length": 1_048_576, "input_modalities": ["text", "image"], "output_modalities": ["text"]} for row in rows if row.get("id") in EXPLICIT_MODEL_MAP]
+
+
+CATALOG = DirectOpenAIProvider(
+    DirectOpenAIProviderSpec(
+        slug=SLUG, base_url=BASE_URL, api_key_env="META_API_KEY",
+        explicit_model_map=EXPLICIT_MODEL_MAP,
+        model_id_resolver=EXPLICIT_MODEL_MAP.get,
+        expected_models=tuple(EXPECTED_MODELS),
+        price_loader=lambda: _parse_prices(fetch_html(PRICING_URL)),
+        pricing_source_url=PRICING_URL, normalize_rows=_normalize_rows,
+        canary_max_tokens=512, canary_expected_content="PONG",
+        canary_require_usage=True, canary_require_message=True,
+        canary_extra_body={"reasoning_effort": "minimal"},
+    ), manifest_path=MANIFEST_PATH,
 )
-
-
-def _microdollars_per_million(raw: Any) -> int:
-    try:
-        return int((Decimal(str(raw)) * Decimal(1_000_000_000_000)).to_integral_value())
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise RuntimeError(f"meta: invalid per-token price {raw!r}") from exc
-
-
-def _meta_endpoint(payload: Any) -> dict[str, Any]:
-    data = payload.get("data") if isinstance(payload, dict) else None
-    endpoints = data.get("endpoints") if isinstance(data, dict) else None
-    if not isinstance(endpoints, list):
-        raise RuntimeError("meta: endpoint API returned an unexpected shape")
-    for row in endpoints:
-        if isinstance(row, dict) and row.get("provider_name") == "Meta":
-            return row
-    raise RuntimeError("meta: Muse endpoint API did not contain the Meta route")
-
-
-def fetch() -> ProviderPricingResult:
-    row = _meta_endpoint(fetch_json(URL))
-    pricing = row.get("pricing")
-    if not isinstance(pricing, dict):
-        raise RuntimeError("meta: Muse endpoint has no pricing object")
-    cached = pricing.get("input_cache_read")
-    price = ModelPrice(
-        prompt_micro_per_m=_microdollars_per_million(pricing.get("prompt")),
-        completion_micro_per_m=_microdollars_per_million(pricing.get("completion")),
-        prompt_cached_micro_per_m=(
-            _microdollars_per_million(cached) if cached not in (None, "") else None
-        ),
-    )
-    prices = {MODEL_ID: price}
-    errors = validate(prices, EXPECTED_MODELS)
-    if errors:
-        raise RuntimeError(f"meta: invalid Muse pricing: {errors}")
-    return ProviderPricingResult(
-        slug=SLUG,
-        prices=prices,
-        source="api",
-        fetched_url=URL,
-    )
-
-
-def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
-    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    rows = raw.get("models")
-    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
-        raise RuntimeError("meta: provider manifest must contain exactly one model")
-    price = result.prices.get(MODEL_ID)
-    if price is None:
-        raise RuntimeError("meta: refreshed pricing did not include Muse")
-    row = rows[0]
-    tier = price.tiers[0]
-    row["input_token_price_per_m"] = tier.prompt_micro_per_m
-    row["output_token_price_per_m"] = tier.completion_micro_per_m
-    if tier.prompt_cached_micro_per_m is not None:
-        row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
-    else:
-        row.pop("cached_input_token_price_per_m", None)
-    raw["source"] = URL
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
-    MANIFEST_PATH.write_text(
-        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return ["meta: refreshed Muse Spark pricing from OpenRouter's Meta endpoint"]
+UPSTREAM_ID_MAP = CATALOG.upstream_id_map
+fetch = CATALOG.fetch
+write_provider_manifest = CATALOG.write_provider_manifest

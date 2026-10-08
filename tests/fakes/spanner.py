@@ -66,6 +66,7 @@ _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
         "billing_pause_causes": [],
         "pause_epoch": 0,
         "trust_reconciled_through": None,
+        "in_debt": False,
     },
     "tr_earnings_balance": {"total_earned": 0, "total_transferred": 0},
     "tr_user_lifetime_topup": {"total_microdollars": 0},
@@ -567,6 +568,24 @@ class _FakeTransaction:
                 return []
             rec = self._typed_current("tr_credit_balance", (params["ws"], params["shard"]))
             return [[rec.get("billing_pause_causes"), rec.get("pause_epoch")]]
+        if sql.startswith((
+            "UPDATE tr_credit_balance SET reserved = reserved - @hold",
+            "UPDATE tr_credit_balance SET total_usage = total_usage + @amt",
+        )):
+            # release_credit and federated booking return the row's headroom
+            # and debt mark (section 4.7) from the row they wrote.
+            if not sql.endswith(_CREDIT_ROOM_RETURNING):
+                raise ValueError("DML rows require the registered THEN RETURN columns")
+            self._in_returning = True
+            try:
+                count = self.execute_update(sql, params=params, param_types=param_types)
+            finally:
+                self._in_returning = False
+            if not count:
+                return []
+            shard = params["shard"] if "shard" in params else 0
+            rec = self._typed_current("tr_credit_balance", (params["ws"], shard))
+            return [[_credit_room(rec), _credit_marked(rec)]]
         if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):
             if not sql.endswith(" THEN RETURN reservation_id"):
                 raise ValueError("DML rows require THEN RETURN")
@@ -687,6 +706,15 @@ class _FakeTransaction:
             self.db.stage_d_policy_watermarks.get(plane),
         )
 
+    def _typed_pks(self, table: str) -> list[tuple]:
+        """Every primary key of a typed table this transaction can see: the
+        committed rows and the rows it inserted by DML (deleted ones read None)."""
+        pks = set(self.db.typed.get(table, {}))
+        pks.update(
+            op[2] for op in self.pending_writes if op[0] == "insert_typed_dml" and op[1] == table
+        )
+        return sorted(pks, key=lambda pk: tuple(str(part) for part in pk))
+
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
         """In-txn view of a typed row for DML: sees prior DML writes
         (update_typed = read-your-writes) but NOT buffered mutations (real Spanner
@@ -778,6 +806,35 @@ class _FakeTransaction:
             )
         self._did_dml = True
         p = params or {}
+        if sql.startswith("UPDATE tr_credit_balance SET total_credits = total_credits + @delta"):
+            # storage_gcp_credit_debt's move: conditional on the headroom the
+            # transaction read, so a row that is not what was read matches nothing.
+            what = "credit-debt-move"
+            _require_pred(sql, "WHERE workspace_id=@ws AND shard=@shard", what)
+            _require_pred(sql, "AND (total_credits - total_usage - reserved) = @before", what)
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None or _credit_room(rec) != p["before"]:
+                return 0
+            new = dict(rec, total_credits=rec["total_credits"] + p["delta"], updated_at=p["now"])
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_credit_balance SET in_debt=@marked"):
+            # The debt mark is set and cleared on every shard row at once.
+            _require_pred(
+                sql, "WHERE workspace_id=@ws AND shard>=0 AND shard<@shard_count", "credit-debt-mark",
+            )
+            updated = 0
+            for pk in self._typed_pks("tr_credit_balance"):
+                if pk[0] != p["ws"] or not 0 <= int(pk[1]) < int(p["shard_count"]):
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk)
+                if rec is None:
+                    continue
+                new = dict(rec, in_debt=bool(p["marked"]), updated_at=p["now"])
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                updated += 1
+            return updated
         if "UPDATE tr_credit_balance SET total_credits = total_credits - @amt" in sql:
             _require_pred(
                 sql,
@@ -905,11 +962,18 @@ class _FakeTransaction:
             rec = self._typed_current("tr_credit_balance", pk)
             if rec is None:
                 return 0
+            # A row marked in debt refuses (section 4.7). Evaluated only where
+            # the statement says so, as Spanner would: the frozen-main oracles
+            # run statements written before the mark existed.
+            if _CREDIT_NOT_MARKED in sql and _credit_marked(rec):
+                return 0
             if "ARRAY_LENGTH(billing_pause_causes)" in sql:
                 # Evaluate the emitted predicate, including its operator/literals,
                 # independently of billing_paused_row. Native acceptance also
                 # exercises this GoogleSQL against the emulator's ARRAY column.
-                predicate = sql.split(" >= @est AND ", 1)[1]
+                predicate = sql.split(" >= @est AND ", 1)[1].removeprefix(
+                    _CREDIT_NOT_MARKED.removeprefix("AND ") + " AND "
+                )
                 causes = rec.get("billing_pause_causes")
                 with sqlite3.connect(":memory:") as conn:
                     conn.create_function("ARRAY_LENGTH", 1,
@@ -1179,6 +1243,13 @@ class _FakeTransaction:
                     "WHERE workspace_id=@ws AND kind='payment' AND unrecovered_micro>0))",
                     "credit-release-no-debt",
                 )
+                # A marked row is released by release_credit, which repays debt
+                # first. Evaluated only where the statement says so (frozen-main
+                # oracles run statements written before the mark existed).
+                if _CREDIT_NOT_MARKED in sql:
+                    marked = self._typed_current("tr_credit_balance", (p["ws"], p["shard"]))
+                    if marked is not None and _credit_marked(marked):
+                        return 0
                 if p["hold"] > p["actual"]:
                     debts = _execute_sql(
                         self.db, self,
@@ -2291,6 +2362,46 @@ class _FakeBatch:
                 self.pending_writes.append(("delete", table, kind, entity_id))
             else:
                 self.pending_writes.append(("delete_typed", table, tuple(entry)))
+
+
+_CREDIT_NOT_MARKED = "AND NOT COALESCE(in_debt, FALSE)"
+_CREDIT_ROOM_RETURNING = " THEN RETURN total_credits - total_usage - reserved, COALESCE(in_debt, FALSE)"
+
+
+def _credit_room(rec: dict) -> int:
+    """A credit row's headroom: total_credits - total_usage - reserved."""
+    return int(rec.get("total_credits") or 0) - int(rec.get("total_usage") or 0) - int(
+        rec.get("reserved") or 0
+    )
+
+
+def _credit_marked(rec: dict) -> bool:
+    """COALESCE(in_debt, FALSE)."""
+    return bool(rec.get("in_debt") or False)
+
+
+def _select_columns(sql: str) -> list[str]:
+    """The SELECT list, split on the commas outside parentheses."""
+    select = sql.split("SELECT", 1)[1].split(" FROM ", 1)[0]
+    columns, depth, current = [], 0, []
+    for char in select:
+        if char == "," and depth == 0:
+            columns.append("".join(current).strip())
+            current = []
+            continue
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        current.append(char)
+    columns.append("".join(current).strip())
+    return columns
+
+
+def _typed_column(rec: dict, column: str) -> Any:
+    """A typed row's value for a SELECT column, including the debt rules' two expressions."""
+    if column == "total_credits - total_usage - reserved":
+        return _credit_room(rec)
+    if column == "COALESCE(in_debt, FALSE)":
+        return _credit_marked(rec)
+    return rec.get(column)
 
 
 def _require_pred(sql: str, needle: str, what: str) -> None:
@@ -3915,8 +4026,16 @@ def _execute_sql(
     # pk (the typed_balance overlay uses WHERE <pk_col>=@pk AND shard=0).
     for typed_table in ("tr_credit_balance", "tr_key_limit"):
         if f"FROM {typed_table}" in sql:
-            cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+            cols = _select_columns(sql)
             items = list(db.typed.get(typed_table, {}).items())
+            if txn is not None:
+                # Rows this transaction inserted by DML are visible to its reads.
+                known = {pk for pk, _ in items}
+                items += [
+                    (op[2], op[3])
+                    for op in txn.pending_writes
+                    if op[0] == "insert_typed_dml" and op[1] == typed_table and op[2] not in known
+                ]
             pk_col = "workspace_id" if typed_table == "tr_credit_balance" else "key_hash"
             if "shard_count" in params:
                 # A full sharded read of one tenant: the credit-escrow headroom
@@ -3958,7 +4077,7 @@ def _execute_sql(
                 for pk, rec in items
             ]
             recs = [rec for rec in recs if rec is not None]
-            return [[rec.get(c) for c in cols] for rec in recs]
+            return [[_typed_column(rec, c) for c in cols] for rec in recs]
     if "SELECT id, body FROM tr_entities WHERE kind='workspace'" in sql:
         rows = sorted(
             (entity_id, row.body)

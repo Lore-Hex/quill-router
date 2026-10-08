@@ -47,15 +47,25 @@ for (const [status, state, label] of [
     }
   });
 }
-test('stale, cached-old, missing and future samples never show green', async () => {
+test('a check inside 30 minutes keeps its colour even past the server freshness window', async () => {
   for (const data of [snapshot('up', {is_stale: true}),
-    snapshot('up', {latest_sample_at: new Date(Date.now() - 600000).toISOString()}),
+    snapshot('up', {latest_sample_at: new Date(Date.now() - 600000).toISOString(), latest_sample_age_seconds: 600, is_stale: true})]) {
+    const app = await setup(data);
+    assert.equal(app.links[0].dataset.state, 'up');
+    assert.equal(app.links[0].text.textContent, 'Operational');
+  }
+});
+test('really delayed, missing and future samples never show green', async () => {
+  for (const data of [
+    snapshot('up', {latest_sample_at: new Date(Date.now() - 31 * 60000).toISOString(), latest_sample_age_seconds: 31 * 60, is_stale: true}),
     snapshot('up', {latest_sample_at: null}),
     snapshot('up', {latest_sample_at: new Date(Date.now() + 600000).toISOString()}),
     snapshot('up', {is_stale: undefined}), null]) {
     const app = await setup(data);
     assert.equal(app.links[0].dataset.state, 'unknown');
   }
+  const delayed = await setup(snapshot('up', {latest_sample_at: new Date(Date.now() - 31 * 60000).toISOString(), latest_sample_age_seconds: 31 * 60, is_stale: true}));
+  assert.equal(delayed.links[0].text.textContent, 'Status delayed');
 });
 test('failed refresh clears green and subsequent refresh recovers', async () => {
   const app = await setup(snapshot());
@@ -66,7 +76,7 @@ test('failed refresh clears green and subsequent refresh recovers', async () => 
 });
 test('suspended tab expires its badge without background requests', async () => {
   const app = await setup(snapshot());
-  app.document.hidden = true; app.advance(500000); app.tick(); await app.flush();
+  app.document.hidden = true; app.advance(31 * 60000); app.tick(); await app.flush();
   assert.equal(app.calls, 1);
   assert.equal(app.links[0].text.textContent, 'Status delayed');
   app.document.hidden = false; app.events.visibilitychange(); await app.flush();

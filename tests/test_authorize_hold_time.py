@@ -170,7 +170,36 @@ def run_case(module, case, abort_at=None, sequential=False):
     return result, _state(db), db
 
 
+_CREDIT_RESERVE = 'UPDATE tr_credit_balance SET reserved = reserved + @est '
+_NOT_MARKED = ' AND NOT COALESCE(in_debt, FALSE)'
+
+
+def _with_debt_mark(statement):
+    """Main's credit reservation as it is now: a row marked in debt refuses
+    (fast-admission design section 4.7), the one condition added right after
+    the headroom test. Every other statement is main's, unchanged."""
+    sql, *rest = (statement,) if isinstance(statement, str) else statement
+    if sql.startswith(_CREDIT_RESERVE) and _NOT_MARKED not in sql:
+        head, at, tail = sql.partition('>= @est')
+        sql = head + at + _NOT_MARKED + tail
+    return sql if isinstance(statement, str) else (sql, *rest)
+
+
+def _with_debt_marks(traces):
+    return [
+        trace if trace is None else [
+            (label, [_with_debt_mark(statement) for statement in statements])
+            for label, statements in trace
+        ]
+        for trace in traces
+    ]
+
+
 def expected_traces(case, parent):
+    return _with_debt_marks(_main_traces(case, parent))
+
+
+def _main_traces(case, parent):
     armed, credit, shape, idem, funding, paused, key = case
     traces = copy.deepcopy(parent.hold_traces)
     if not credit or shape not in ('speculative', 'skip') or idem in ('replay', 'mismatch'):
