@@ -239,6 +239,11 @@ state counts updated, and its shadow and the shadow's comparisons with it
     under the same epoch; an answer that leaves the expiry as it was still
     tells the owner what it is; and an answer that comes after its owner let
     the lease go is discarded (`AnswerDiscarded`).
+  - Grants. A lease begins with a grant's statement, which reads Spanner's
+    clock as a renewal's does, its commit, and the owner's receipt of its
+    answer, three steps, not an initial state at true time zero: an answer
+    lost leaves the owner without the lease, and a retry of the grant finds
+    it and returns its expiry, as it was, with no second grant.
   - Revocation's bound. A renewal's statement before a revocation may read
     up to S ahead, and the expiry it stores, which the owner's cutoff takes
     as it is, may stand up to S later than true time would have set it: an
@@ -325,11 +330,16 @@ either way.
 - **Time boundaries.** Every record's issuance must have passed the owner's
   cutoff test on its recorded reading, and every acknowledgement of a record
   issued before the cutoff must precede the owner's publish deadline, for
-  every solution of §5's constraints. `CutoffPass` is added after the
-  owner's last issuance and at the latest when its clock would read its
-  known expiry less S, and `DeadlinePass` at the publish deadline after it,
-  both before the fence tick; a killed owner's lease reaches its tick all
-  the same. A late issuance or acknowledgement fails its timed check, where
+  every solution of §5's constraints. `CutoffPass` is the cutoff of the
+  expiry the lease drained at: added after the owner's last issuance and at
+  the latest when its clock would read that expiry less S, and
+  `DeadlinePass` at the publish deadline after it, both before the fence
+  tick; a killed owner's lease reaches its tick all the same. A cutoff the
+  owner passed and recovered from, by a renewal that came late, is no step:
+  the owner issued nothing while past it, which each issuance's own test
+  shows, on its reading and the expiry it knew then, and after it the owner
+  adopted the drain log before it issued anything else, which is checked
+  directly. A late issuance or acknowledgement fails its timed check, where
   it is, not wherever the boundary was placed.
 - **The enclave.** `EnclaveDeliver` at a request's first byte delivered,
   which the load generator records: a request that does not stream at its
@@ -369,7 +379,11 @@ either way.
   a refund or a release, an adoption as its row's kind), a checkpoint
   (`IssueCheckpoint` or `IssueWrongCheckpoint` as the money check finds it,
   §7), a hand-off's chunk or manifest. Numbers are the runtime's own, every
-  record being modeled.
+  record being modeled. A charging reap is a settle to the spec, so what
+  makes it a reap is checked directly: it names its hold's last heartbeat
+  record before it, by that record's owner sequence number, and charges
+  that heartbeat's running charge; a reap prepared before a newer heartbeat
+  and issued after it fails this.
 - **The log.** The spec's log is the key's messages, ticks among them, in
   the order Pub/Sub stored them, each published copy once. `tracecheck`
   builds it before replay from every publisher's acknowledged publishes and
@@ -491,10 +505,14 @@ the constraints, never by putting a reading where the spec has true time:
   reported, whatever the replay finds.
 - Every accepted answer was the owner's to give. `TerminalOrder` models a
   stream's first heartbeat alone, so each accepted answer a gateway
-  received, the first or a later one, is checked directly: it follows the
-  publish result of its heartbeat's record, which came before the owner's
-  cutoff and by the deadline the heartbeat echoed, by the result's reading,
-  and it grants the deadline the owner's rule gives.
+  received, the first or a later one, is checked directly against the
+  owner's decision to give it, which the owner records with the facts it
+  decided on: its reading of the record's acknowledgement, after the
+  publish result, the expiry it knew then and whether its drain log was
+  adopted. The answer is accepted only if that reading was before the
+  cutoff of that expiry and by the deadline the heartbeat echoed, with the
+  drain log adopted, and it grants the deadline the owner's rule gives;
+  the publish result itself is held to the publish deadline (A1).
 - Every stream delivered only while permitted (A4). The load generator
   records each answer as its gateway received it and each delivery, with
   their readings. Each delivery must come, by the gateway's clock, before
@@ -532,7 +550,11 @@ The table is by action and by how the actions' parameters relate: the same
 authorization or another, the same member or another. A test builds it from
 every reachable state of every configuration in the shadow's registry (§2),
 and fails if the table in the code claims a pair is independent that is
-not. That it holds at a run's sizes is assumed, as the machine is (§2).
+not, or claims one that no reachable state witnesses: both actions
+enabled, with their parameters so related. A relation no configuration
+can show, two streams' heartbeats where every configuration has one
+stream, stays dependent until a configuration in the registry shows it.
+That it holds at a run's sizes is assumed, as the machine is (§2).
 
 A dependent pair left unordered makes the run inconclusive, and the report
 names the two events and the evidence that would order them. A step that
