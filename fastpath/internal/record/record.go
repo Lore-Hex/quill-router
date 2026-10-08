@@ -322,6 +322,12 @@ const (
 	maxRecordID = 64
 )
 
+// ValidLease and ValidAuth report whether a lease or an authorization ID is
+// one the format carries, so an owner takes no lease and mints no hold it
+// could not record.
+func ValidLease(id string) bool { return identifier(id, maxLease) }
+func ValidAuth(id string) bool  { return identifier(id, maxAuth) }
+
 // identifier: an ID the format carries is printable ASCII, so no two IDs
 // encode alike, and no longer than the store's column holds.
 func identifier(s string, longest int) bool {
