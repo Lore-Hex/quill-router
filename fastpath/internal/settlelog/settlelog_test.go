@@ -592,9 +592,11 @@ func afterAPing(t *testing.T, ordered bool, publish func(f *fakeLog, data string
 
 // TestAStoppedRecordConsumerLetsGoOfItsMessages: once the record topic's
 // consumer's Receive returns, it holds none of the messages its handlers had
-// and did not settle: record-0's, whose handler ran past the stop and
-// returned without settling, is not extended after it, and the next
-// consumer gets it.
+// and did not settle. The consumer has one place: the first message's
+// handler takes it, runs past the stop and returns without settling, while
+// the second waits for the place, so the client library's stream is not
+// what the stop ends, and its renewals would go on. The first message is
+// not extended after the stop, and the next consumer gets it.
 func TestAStoppedRecordConsumerLetsGoOfItsMessages(t *testing.T) {
 	was := shutdownTimeout
 	shutdownTimeout = 200 * time.Millisecond
@@ -612,22 +614,27 @@ func TestAStoppedRecordConsumerLetsGoOfItsMessages(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	release := make(chan struct{})
-	running := make(chan string, 4)
+	held := make(chan string, 2)
 	received := make(chan error, 1)
 	go func() {
-		received <- SubscribeRecords(f.client, f.sub, 2).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
-			if string(d.Data) == "record-1" {
-				d.Ack()
-			} // record-0's is held, and never settled
-			running <- string(d.Data)
+		received <- SubscribeRecords(f.client, f.sub, 1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+			held <- string(d.Data)
 			<-release
 		})
 	}()
-	for range 2 {
-		select {
-		case <-running:
-		case <-time.After(10 * time.Second):
-			t.Fatal("the handlers did not run")
+	var first string
+	select {
+	case first = <-held:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no handler ran")
+	}
+	// Both messages reach the consumer: the second waits for the place.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if m := f.srv.Messages(); len(m) == 2 && m[0].Deliveries > 0 && m[1].Deliveries > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the second message did not reach the consumer")
 		}
 	}
 	cancel()
@@ -649,13 +656,13 @@ func TestAStoppedRecordConsumerLetsGoOfItsMessages(t *testing.T) {
 	got := false
 	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx2, func(_ context.Context, d *RecordDelivery) {
 		d.Ack()
-		if string(d.Data) == "record-0" {
+		if string(d.Data) == first {
 			got = true
 			cancel2()
 		}
 	})
 	if err != nil || !got {
-		t.Fatalf("the next consumer did not get record-0: %v", err)
+		t.Fatalf("the next consumer did not get %s: %v", first, err)
 	}
 }
 
