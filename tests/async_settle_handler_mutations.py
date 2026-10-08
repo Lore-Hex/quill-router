@@ -18,10 +18,10 @@ MUTATIONS = [
     ('oracle-native-cost-plus-one', [('src/trusted_router/routes/internal/gateway.py', [
         ('        return cost_microdollars\n    _require_native_batch_route_binding',
          '        return cost_microdollars + 1\n    _require_native_batch_route_binding'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('oracle-ordinary-partner-free', [('src/trusted_router/partner_billing.py', [
         ('    return None\n', '    return PartnerBillingMode.INTERNAL\n'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('persist-wrong-model', [(HANDLER, [
         ('model_id=candidate.model_id,', 'model_id="wrong/model",'),
     ])], 'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
@@ -150,11 +150,11 @@ MUTATIONS = [
     ('oracle-generation-amount-plus-one', [('src/trusted_router/storage_models.py', [
         ('total_cost_microdollars=actual_cost_microdollars,',
          'total_cost_microdollars=actual_cost_microdollars + 1,'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('oracle-finalization-input-plus-123', [('src/trusted_router/storage_models.py', [
         ('max(0, int(generation.tokens_prompt)) if generation is not None else 0',
          'max(0, int(generation.tokens_prompt)) + 123 if generation is not None else 0'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('handler-zero-output-usage', [(HANDLER, [
         ('actual_output_tokens=usage.output_tokens,', 'actual_output_tokens=0,'),
     ])], 'tests/test_async_settle_proof.py::test_four_path_billing_state[component_half_up]'),
@@ -165,18 +165,18 @@ MUTATIONS = [
 # Round-4 independent seed-4 mutations, plus the two money-changing guard
 # escapes and reverse import witness. Exact edits retained for reproducibility.
 MUTATIONS += [
-    ('review-generation-json-spacing', [('src/trusted_router/storage_gcp_generation_records.py', [('separators=(",", ":")', 'separators=(", ", ": ")')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-generation-retention-null', [('src/trusted_router/storage_gcp_generation_records.py', [('"terminal_at": terminal_at,', '"terminal_at": None,')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-wire-dollar-conversion', [('src/trusted_router/money.py', [('return float(microdollars) / MICRODOLLARS_PER_DOLLAR', 'return float(microdollars + 1) / MICRODOLLARS_PER_DOLLAR')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-reservation-amount', [('src/trusted_router/storage_gcp_counter_dml.py', [('"actual": int(actual_micro),', '"actual": int(actual_micro) + 1,')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-authorization-region', [('src/trusted_router/storage_models.py', [('self.finalized_region = generation.region if generation is not None else self.region', 'self.finalized_region = "wrong-region"')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-generation-json-spacing', [('src/trusted_router/storage_gcp_generation_records.py', [('separators=(",", ":")', 'separators=(", ", ": ")')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-generation-retention-null', [('src/trusted_router/storage_gcp_generation_records.py', [('"terminal_at": terminal_at,', '"terminal_at": None,')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-wire-dollar-conversion', [('src/trusted_router/money.py', [('return float(microdollars) / MICRODOLLARS_PER_DOLLAR', 'return float(microdollars + 1) / MICRODOLLARS_PER_DOLLAR')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-reservation-amount', [('src/trusted_router/storage_gcp_counter_dml.py', [('"actual": int(actual_micro),', '"actual": int(actual_micro) + 1,')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-authorization-region', [('src/trusted_router/storage_models.py', [('self.finalized_region = generation.region if generation is not None else self.region', 'self.finalized_region = "wrong-region"')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-config-lease', [('src/trusted_router/config.py', [('settle_outbox_lease_seconds: int = Field(default=300,', 'settle_outbox_lease_seconds: int = Field(default=299,')])], 'tests/test_async_settle_proof_faults.py::test_local_ttl_pins'),
-    ('review-money-rounding', [('src/trusted_router/money.py', [('(raw + TOKENS_PER_MILLION // 2) // TOKENS_PER_MILLION', 'raw // TOKENS_PER_MILLION')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-generation-retention-type', [('src/trusted_router/storage_gcp_generation_records.py', [('"terminal_at": param_types.TIMESTAMP,', '"terminal_at": param_types.STRING,')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-money-rounding', [('src/trusted_router/money.py', [('(raw + TOKENS_PER_MILLION // 2) // TOKENS_PER_MILLION', 'raw // TOKENS_PER_MILLION')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-generation-retention-type', [('src/trusted_router/storage_gcp_generation_records.py', [('"terminal_at": param_types.TIMESTAMP,', '"terminal_at": param_types.STRING,')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-config-health', [('src/trusted_router/config.py', [('settle_outbox_health_publish_interval_seconds: float = Field(default=2,', 'settle_outbox_health_publish_interval_seconds: float = Field(default=3,')])], 'tests/test_async_settle_proof_faults.py::test_local_ttl_pins'),
-    ('review-generation-id', [('src/trusted_router/storage_models.py', [("f'trustedrouter:{authorization_id}'", "f'wrong:{authorization_id}'")])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-preexisting-worker-cost-bridge', [('src/trusted_router/routes/internal/gateway.py', [('        return cost_microdollars\n    _require_native_batch_route_binding', '        return cost_microdollars + 1\n    _require_native_batch_route_binding')]), ('tests/test_async_settle_proof_oracle.py', [('def test_f83bbaac_provenance():', "\n@pytest.fixture(autouse=True)\ndef review_existing_worker_bridge(monkeypatch):\n    from concurrent.futures import ThreadPoolExecutor\n    from trusted_router.routes.internal import gateway as live_gateway\n    with ThreadPoolExecutor(max_workers=1) as pool:\n        pool.submit(lambda: None).result()\n        live_cost = live_gateway._native_batch_cost_or_error\n        def callback(*args, **kwargs):\n            return pool.submit(live_cost, *args, **kwargs).result()\n        monkeypatch.setattr(module('routes.internal.gateway'), '_native_batch_cost_or_error', callback)\n        yield\n\ndef test_f83bbaac_provenance():")])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
-    ('review-warmed-cache-cost-bridge', [('src/trusted_router/routes/internal/gateway.py', [('        return cost_microdollars\n    _require_native_batch_route_binding', '        return cost_microdollars + 1\n    _require_native_batch_route_binding')]), ('tests/test_async_settle_proof_oracle.py', [('def test_f83bbaac_provenance():', '\n@pytest.fixture(autouse=True)\ndef review_cached_bridge(monkeypatch):\n    from functools import partial, lru_cache\n    from trusted_router.routes.internal import gateway as live_gateway\n    live_cost = lru_cache(maxsize=1)(live_gateway._native_batch_cost_or_error)\n    assert live_cost(2, route_type="chat.completions", provider="openai", idempotency_key=None,\n                     native_batch_eligible=False, selected_usage_type=live_gateway.UsageType.CREDITS) == 3\n    monkeypatch.setattr(module(\'routes.internal.gateway\'), \'_native_batch_cost_or_error\', partial(live_cost))\n    yield\n\ndef test_f83bbaac_provenance():')])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-generation-id', [('src/trusted_router/storage_models.py', [("f'trustedrouter:{authorization_id}'", "f'wrong:{authorization_id}'")])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-preexisting-worker-cost-bridge', [('src/trusted_router/routes/internal/gateway.py', [('        return cost_microdollars\n    _require_native_batch_route_binding', '        return cost_microdollars + 1\n    _require_native_batch_route_binding')]), ('tests/test_async_settle_proof_oracle.py', [('def test_frozen_main_provenance():', "\n@pytest.fixture(autouse=True)\ndef review_existing_worker_bridge(monkeypatch):\n    from concurrent.futures import ThreadPoolExecutor\n    from trusted_router.routes.internal import gateway as live_gateway\n    with ThreadPoolExecutor(max_workers=1) as pool:\n        pool.submit(lambda: None).result()\n        live_cost = live_gateway._native_batch_cost_or_error\n        def callback(*args, **kwargs):\n            return pool.submit(live_cost, *args, **kwargs).result()\n        monkeypatch.setattr(module('routes.internal.gateway'), '_native_batch_cost_or_error', callback)\n        yield\n\ndef test_frozen_main_provenance():")])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ('review-warmed-cache-cost-bridge', [('src/trusted_router/routes/internal/gateway.py', [('        return cost_microdollars\n    _require_native_batch_route_binding', '        return cost_microdollars + 1\n    _require_native_batch_route_binding')]), ('tests/test_async_settle_proof_oracle.py', [('def test_frozen_main_provenance():', '\n@pytest.fixture(autouse=True)\ndef review_cached_bridge(monkeypatch):\n    from functools import partial, lru_cache\n    from trusted_router.routes.internal import gateway as live_gateway\n    live_cost = lru_cache(maxsize=1)(live_gateway._native_batch_cost_or_error)\n    assert live_cost(2, route_type="chat.completions", provider="openai", idempotency_key=None,\n                     native_batch_eligible=False, selected_usage_type=live_gateway.UsageType.CREDITS) == 3\n    monkeypatch.setattr(module(\'routes.internal.gateway\'), \'_native_batch_cost_or_error\', partial(live_cost))\n    yield\n\ndef test_frozen_main_provenance():')])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-production-imports-snapshot', [('src/trusted_router/storage_errors.py', [('from __future__ import annotations', 'from __future__ import annotations\nfrom tests.fakes.frozen_package import module as _review_snapshot_module')])], 'tests/test_async_settle_proof_oracle.py::test_production_import_fence'),
 ]
 
@@ -310,34 +310,34 @@ MUTATIONS += [
 MUTATIONS += [
     ('review-r7-activity_payload-total_cost_microdollars', [('src/trusted_router/storage_operational_analytics.py', [
         ('"total_cost_microdollars": generation.total_cost_microdollars', '"total_cost_microdollars": ((generation.total_cost_microdollars or 0) + 7)'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-enqueue_statement-payload', [('src/trusted_router/storage_gcp_analytics_outbox.py', [
         ('"payload": json_body(sample)', '"payload": (json_body(sample) + " ")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-activity_payload-key_id', [('src/trusted_router/storage_operational_analytics.py', [
         ('"key_id": analytics_surrogate("api-key", generation.key_hash)', '"key_id": (analytics_surrogate("api-key", generation.key_hash) + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-generation_insert_statement-workspace_id', [('src/trusted_router/storage_gcp_generation_records.py', [
         ('"workspace_id": generation.workspace_id', '"workspace_id": (generation.workspace_id + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-activity_payload-generation_id', [('src/trusted_router/storage_operational_analytics.py', [
         ('"generation_id": generation.id', '"generation_id": (generation.id + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-generation_insert_statement-key_hash', [('src/trusted_router/storage_gcp_generation_records.py', [
         ('"key_hash": generation.key_hash', '"key_hash": (generation.key_hash + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-activity_payload-request_id', [('src/trusted_router/storage_operational_analytics.py', [
         ('"request_id": generation.request_id', '"request_id": (generation.request_id + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-generation_insert_statement-generation_id', [('src/trusted_router/storage_gcp_generation_records.py', [
         ('"generation_id": generation.id', '"generation_id": (generation.id + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-activity_payload-tenant_id', [('src/trusted_router/storage_operational_analytics.py', [
         ('"tenant_id": analytics_surrogate("workspace", generation.workspace_id)', '"tenant_id": (analytics_surrogate("workspace", generation.workspace_id) + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('review-r7-activity_payload-workspace_id', [('src/trusted_router/storage_operational_analytics.py', [
         ('"workspace_id": generation.workspace_id', '"workspace_id": (generation.workspace_id + "-r7")'),
-    ])], 'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
 ]
 MUTATIONS += [
     ('reference-stop-' + name, [('tests/fakes/frozen_package.py', [
@@ -394,6 +394,8 @@ MUTATIONS += [
 
 def main() -> None:
     results = []
+    evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
+    evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='pr-c-mutations-') as directory:
         target = Path(directory)
         for folder in ('src', 'tests', 'scripts'):
@@ -417,7 +419,7 @@ def main() -> None:
                     cwd=target, capture_output=True, text=True, timeout=300,
                     env={**os.environ, 'PYTHONPATH': str(target/'src'), 'PYTHONDONTWRITEBYTECODE': '1'},
                 )
-                log = Path('/tmp')/f'pr-c-mutation-{name}.log'
+                log = evidence / f'pr-c-mutation-{name}.log'
                 log.write_text(result.stdout + result.stderr)
                 killed = result.returncode == 1 and 'FAILED ' + selected_test.split('[')[0] in result.stdout
                 record = dict(mutation=name, killed=killed, exit_code=result.returncode, log=str(log))
@@ -426,7 +428,7 @@ def main() -> None:
             finally:
                 for path, text in originals.items():
                     path.write_text(text)
-    Path('/tmp/pr-c-mutations.json').write_text(json.dumps(results, indent=2)+'\n')
+    (evidence / 'pr-c-mutations.json').write_text(json.dumps(results, indent=2)+'\n')
     assert all(row['killed'] for row in results), results
 
 

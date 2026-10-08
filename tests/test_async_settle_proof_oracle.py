@@ -1,4 +1,4 @@
-"""f83bbaac route → finalize → insert → drain → retention differential.
+"""Frozen-main route → finalize → insert → drain → retention differential.
 
 Frozen files compile under their own paths, never under live coverage paths.
 """
@@ -39,7 +39,7 @@ from trusted_router import (
 from trusted_router.services import settle_outbox_drain
 
 
-def test_f83bbaac_provenance():
+def test_frozen_main_provenance():
     # Importing the loader validates every file and the independently pinned archive.
     assert 'src/trusted_router/routes/internal/gateway.py' in PINS
     assert 'src/trusted_router/partner_billing.py' in PINS
@@ -79,7 +79,7 @@ def frozen_environment(patch, cfg, body):
 
 def inventory(seen):
     # Optional per-process output makes xdist's union reproducible without races.
-    directory = os.environ.get('F83BBAAC_INVENTORY_DIR')
+    directory = os.environ.get('FROZEN_MAIN_INVENTORY_DIR')
     if directory:
         path = Path(directory) / f'{os.getpid()}.json'
         previous = {tuple(row) for row in json.loads(path.read_text())} if path.exists() else set()
@@ -158,7 +158,7 @@ def test_guard_rejects_cached_live_alias(monkeypatch):
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 @pytest.mark.parametrize('mode', ['no_header_off', 'header_off', 'no_header_protected'])
 @pytest.mark.parametrize('commit_path', ['inline', 'repair'])
-def test_f83bbaac_complete_entry(env, monkeypatch, case, kind, mode, commit_path):
+def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_path):
     store, db, _, cfg = env
     body, auth, _ = prepare(env, case, kind=kind)
     catalog(monkeypatch, body)
@@ -268,7 +268,7 @@ def test_f83bbaac_complete_entry(env, monkeypatch, case, kind, mode, commit_path
 
 
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
-def test_f83bbaac_protected_header_rejection(env, monkeypatch, kind):
+def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
     body, _, _ = prepare(env, kind=kind)
     cfg = env[3]
     # CPU-loaded xdist workers must not turn this SQL differential into an
@@ -427,7 +427,11 @@ def test_guard_raw_thread_finishes_before_exit(api):
     namespace, name = api.split('.')
     owner = _thread if namespace == '_thread' else threading
     if not hasattr(owner, name):
-        pytest.skip(f'{api} unavailable on Python {sys.version_info[:2]}')
+        # Older interpreters cannot enter this native path: attribute
+        # resolution fails closed. Pin that reason instead of skipping.
+        with pytest.raises(AttributeError, match=name):
+            getattr(owner, name)
+        return
     values = []
     done = threading.Event()
     def worker():
@@ -587,7 +591,11 @@ def test_guard_rejects_each_prebound_starter(api):
     owner = (threading.Thread(target=ran.set) if namespace == 'Thread'
              else _thread if namespace == '_thread' else threading)
     if not hasattr(owner, name):
-        pytest.skip(f'{api} unavailable on Python {sys.version_info[:2]}')
+        # Older interpreters cannot enter this native path: attribute
+        # resolution fails closed. Pin that reason instead of skipping.
+        with pytest.raises(AttributeError, match=name):
+            getattr(owner, name)
+        return
     # Explicit harness roots obey the same rejection as frozen-module globals.
     with pytest.raises(AssertionError, match='prebound native thread starter'):
         with execution_guard(getattr(owner, name)):
@@ -608,7 +616,10 @@ def test_guard_new_starter_paths_are_profiled(monkeypatch, api, use_partial, liv
     import time
 
     if api == 'joinable' and not hasattr(_thread, 'start_joinable_thread'):
-        pytest.skip('joinable native starter unavailable')
+        # No joinable worker can be created through an absent native API.
+        with pytest.raises(AttributeError, match='start_joinable_thread'):
+            _ = _thread.start_joinable_thread
+        return
     frozen = module('storage_errors')
     # Match the reviewer's detached worker: only the transient held callback
     # supplies live code, with no computed import or external registry lookup.
@@ -800,7 +811,7 @@ def test_guard_clears_both_namespaces_and_harness_caches(monkeypatch):
 def assert_production_import_fence(root):
     import ast
 
-    forbidden = ('tests', 'frozen_f83bbaac')
+    forbidden = ('tests', 'frozen_main')
     violations = []
     for path in sorted(root.rglob('*.py')):
         for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
@@ -831,7 +842,7 @@ def test_production_import_fence():
         [sys.executable, '-c',
          "import sys; import trusted_router; "
          "assert 'tests.fakes.frozen_package' not in sys.modules; "
-         "assert not any(n == 'frozen_f83bbaac' or n.startswith('frozen_f83bbaac.') for n in sys.modules)"],
+         "assert not any(n == 'frozen_main' or n.startswith('frozen_main.') for n in sys.modules)"],
         cwd=root, env={**os.environ, 'PYTHONPATH': str(root / 'src'), 'PYTHONDONTWRITEBYTECODE': '1'},
         capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -881,7 +892,7 @@ def graph_witness(kind, callback):
     from types import MappingProxyType
 
     # Minimal globals avoid an alternative path back through this test module.
-    namespace = {'__name__': 'frozen_f83bbaac.graph_witness', '__builtins__': {}}
+    namespace = {'__name__': 'frozen_main.graph_witness', '__builtins__': {}}
     if kind == 'nested_mapping_slot':
         class Holder:
             __slots__ = ('payload',)
@@ -1454,16 +1465,18 @@ def test_guard_frame_mapping_edges(monkeypatch, kind):
         assert owner.gi_frame.f_locals['namespace'] is None
         assert any(value is localns for value in gc.get_referents(root))
     else:
-        if _FRAME_LOCALS_PROXY is None:
-            pytest.skip('extra locals require the native Python 3.13+ frame proxy')
         exec(compile('def generate():\n yield\n', '<extra-local-witness>', 'exec'), namespace)
         owner = namespace['generate']()
         next(owner)
         root = owner.gi_frame
         assert root.f_back is None
         root.f_locals[held] = None
-        assert type(root.f_locals) is _FRAME_LOCALS_PROXY
-        assert any(type(value) is dict and held in value for value in gc.get_referents(root))
+        if _FRAME_LOCALS_PROXY is None:
+            assert type(root.f_locals) is dict
+            assert any(key is held for key in dict.keys(root.f_locals))
+        else:
+            assert type(root.f_locals) is _FRAME_LOCALS_PROXY
+            assert any(type(value) is dict and held in value for value in gc.get_referents(root))
         if kind == 'proxy_locals_key':
             # Isolate the supplement from the redundant extra-locals GC edge.
             # CPython already omits fast locals on some frames; this controlled
@@ -1584,3 +1597,59 @@ def test_reference_walk_native_frames(kind):
     finally:
         if close is not None:
             close()
+
+
+@pytest.mark.parametrize('scope', ['cell', 'free'])
+def test_reference_walk_frame_cells(scope):
+    from tests.fakes.frozen_package import _references
+
+    # No retained nested function or caller frame can supply an alternate edge.
+    # The marker lives only in the detached generator frame's cell/free slot.
+    namespace = {'__name__': 'frame_cell_witness', '__builtins__': {}}
+    exec(compile('def cell(held):\n'
+                 ' def capture(): return held\n'
+                 ' del capture\n yield\n'
+                 'def free(held):\n'
+                 ' def generate():\n  yield\n  return held\n'
+                 ' return generate()\n', '<frame-cell-witness>', 'exec'), namespace)
+    marker = object()
+    owner = namespace[scope](marker)
+    next(owner)
+    root = owner.gi_frame
+    assert root.f_back is None
+    assert 'held' in (root.f_code.co_cellvars if scope == 'cell' else root.f_code.co_freevars)
+    try:
+        assert any(value is marker for value in _references(
+            [root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+    finally:
+        owner.close()
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_reference_walk_frame_registry_boundary(monkeypatch, explicit):
+    import sys
+    from types import ModuleType
+
+    from tests.fakes.frozen_package import _references
+
+    external = ModuleType('frame_registry_witness')
+    marker = object()
+    captured = []
+    external.__dict__.update(__builtins__={}, marker=marker,
+                             capture=captured.append, sys=sys)
+    monkeypatch.setitem(sys.modules, external.__name__, external)
+    namespace = {'__name__': 'detached_registry_frame', '__builtins__': {'exec': exec}}
+    exec(compile('def generate(namespace):\n'
+                 ' exec("capture(sys._getframe())", namespace)\n'
+                 ' namespace = None\n yield\n', '<frame-registry-witness>', 'exec'), namespace)
+    owner = namespace['generate'](external.__dict__)
+    next(owner)
+    root = captured[0]
+    assert root.f_locals is root.f_globals is external.__dict__
+    assert root.f_back is owner.gi_frame and root.f_back.f_back is None
+    assert owner.gi_frame.f_locals['namespace'] is None
+    try:
+        reached = _references([root, external] if explicit else [root], namespaces=(ALIAS,))
+        assert any(value is marker for value in reached) is explicit
+    finally:
+        owner.close()

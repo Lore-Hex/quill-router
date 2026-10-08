@@ -1,41 +1,37 @@
-# Frozen f83bbaac execution inventory
+# Frozen-main execution inventory
 
-Historical Round-4 observed inventory: **327 modules, 1674 distinct qualified names, 1727 execution entries**.
+Round-12 observed inventory: **330 modules, 1633 distinct qualified names, 1666 execution entries**.
 
-Baseline: `f83bbaacb3e91271f7bac9ba26d826532f10962f`. Python 3.11.15.
+BASE: `4701b1a6da9b2b05df93321a6bbd59ea82188c2b`. CPython 3.12.3.
 
-This is the union of guarded setup, HTTP dispatch, response background tasks, drain and state capture from the requested six-worker selection. It includes class/module bodies and comprehensions as well as functions. Seed preparation and deliberate live negative controls are excluded. Every router entry below maps to unchanged baseline bytes in `tests/fakes/frozen_f83bbaac/package.tar.gz`. No observed live router call is permitted. This inventory is evidence, not an allowlist.
+Union of guarded frozen setup and HTTP/drain/state-capture executions in the Round-12 CPython 3.12.3 normal and post-cutover proof runs; negative controls excluded. This is a golden against BASE. It includes module/class bodies and
+comprehensions as well as functions. Fixture seed preparation is excluded. Every
+router entry below maps to unchanged BASE bytes in the snapshot. No observed live
+router call is permitted. This inventory is evidence, **not an allowlist**.
 
-Archive SHA-256: `e68b785ca7d5d62d82e71be5df07c605aa3f2ef83a528769138de6d2eba8d4da`.
+Archive SHA-256: `8ee042a19b878760da7f024c8805fc7d6f4add1bde7b8d4fd625ce5790357d93`.
 
-[Machine-readable records](../tests/fakes/frozen_f83bbaac/execution-inventory.json) · [all file pins](../tests/fakes/frozen_f83bbaac/pins.json) · [final guard coverage and scope](design/async-settle-outbox-v1.md#frozen-main-coverage)
+[Machine-readable records](../tests/fakes/frozen_main/execution-inventory.json) ·
+[all file pins](../tests/fakes/frozen_main/pins.json) ·
+[re-pin and regeneration instructions](../tests/fakes/frozen_main/README.md) ·
+[guard coverage and scope](design/async-settle-outbox-v1.md#frozen-main-coverage)
 
-Each module heading supplies the frozen alias, archive member and SHA-256 for **every** listed entry. `Code line` means `co_firstlineno`; dataclass-generated methods use their generated code line (usually 2), not a literal source line. Their qualified names identify the owning class, whose unchanged definition is in the pinned member. Standard-library/third-party machinery and the fake IO engine are outside this router inventory; their permitted role is described in the verification report.
+Each module heading supplies the alias, archive member and SHA-256 for every
+listed entry. `Code line` means `co_firstlineno`; generated dataclass methods use
+their generated code line, not a literal source line, and are attributed to the
+owning class and pinned source file. Standard-library/third-party machinery and
+the shared fake IO engine are outside this router inventory. The appendix
+records their permitted roles, native supplements and registry boundaries.
 
-Round 6 strengthens the guard without changing this recorded Round-4 execution
-union or the 747 snapshot members. Existing application workers are rejected;
-new workers, including raw threads, receive profiled bootstraps and must finish
-within scope. Python 3.12+ additionally installs the profiler in every existing
-thread; the supplied venv is 3.11.15, with separate 3.14 API verification.
-Frozen globals and harness roots are walked through Python attributes,
-containers (including generic mappings/sequences/sets), MRO slot descriptors,
-wrappers, captures and cache/state output. Reachable functools caches in both
-namespaces are cleared before execution. All **14** reviewer constructions are
-detected. The [appendix](design/async-settle-outbox-v1.md#frozen-main-coverage)
-contains the traversal table and one-line reasons for the explicit exclusions:
-ctypes/opaque native state, external registries outside both namespaces and
-harness roots, and computed global lookups. This historical inventory is not an
-arbitrary-harness sandbox guarantee.
-
-Round 8 supplements the GC traversal with native frame, traceback, exception,
-generator, coroutine and async-generator references, including direct iteration
-of frame-local values. The appendix records the exact fields and unchanged
-exclusions. All 40 principal constructions have detecting witnesses; snapshot
-bytes and this historical execution inventory are unchanged.
+The reference and execution guards are verified on CPython 3.11, 3.12.3, 3.13
+and 3.14.6. In particular, held frame locals use native exact-dict items on
+3.11/3.12 and the sealed native proxy on 3.13/3.14, always preserving GC edges.
+The interpreter matrix and verification results are in the
+[validation report](validation/async-settle-pr-f1.md).
 
 ## `trusted_router`
 
-Frozen alias: `frozen_f83bbaac`. Member: `src/trusted_router/__init__.py`.
+Frozen alias: `frozen_main`. Member: `src/trusted_router/__init__.py`.
 
 SHA-256: `9206e8b4cc57923ecbabbc3ff2fe233771ab71c82bd6b886bb7f4935fce9c238`.
 
@@ -45,7 +41,7 @@ SHA-256: `9206e8b4cc57923ecbabbc3ff2fe233771ab71c82bd6b886bb7f4935fce9c238`.
 
 ## `trusted_router.acquisition`
 
-Frozen alias: `frozen_f83bbaac.acquisition`. Member: `src/trusted_router/acquisition.py`.
+Frozen alias: `frozen_main.acquisition`. Member: `src/trusted_router/acquisition.py`.
 
 SHA-256: `86099aeb3dd401b71ce79a997a029094111b15b537fe9408f96a1a1699e5e4b0`.
 
@@ -66,7 +62,7 @@ SHA-256: `86099aeb3dd401b71ce79a997a029094111b15b537fe9408f96a1a1699e5e4b0`.
 
 ## `trusted_router.adapter`
 
-Frozen alias: `frozen_f83bbaac.adapter`. Member: `src/trusted_router/adapter.py`.
+Frozen alias: `frozen_main.adapter`. Member: `src/trusted_router/adapter.py`.
 
 SHA-256: `a0693329557b83b0578d103ac14cef4f33fd03f540b9e2001c95763d157b0e76`.
 
@@ -76,7 +72,7 @@ SHA-256: `a0693329557b83b0578d103ac14cef4f33fd03f540b9e2001c95763d157b0e76`.
 
 ## `trusted_router.ai_iq`
 
-Frozen alias: `frozen_f83bbaac.ai_iq`. Member: `src/trusted_router/ai_iq.py`.
+Frozen alias: `frozen_main.ai_iq`. Member: `src/trusted_router/ai_iq.py`.
 
 SHA-256: `f5ee80e0d447f230ddf14e39fba9fe5c8302d13987964c58ec70049284da4a7e`.
 
@@ -90,7 +86,7 @@ SHA-256: `f5ee80e0d447f230ddf14e39fba9fe5c8302d13987964c58ec70049284da4a7e`.
 
 ## `trusted_router.analytics_sink`
 
-Frozen alias: `frozen_f83bbaac.analytics_sink`. Member: `src/trusted_router/analytics_sink.py`.
+Frozen alias: `frozen_main.analytics_sink`. Member: `src/trusted_router/analytics_sink.py`.
 
 SHA-256: `16b5df26f815beccd2ee9912afee6d90a80f7a59320b429bca07df711df5eada`.
 
@@ -104,7 +100,7 @@ SHA-256: `16b5df26f815beccd2ee9912afee6d90a80f7a59320b429bca07df711df5eada`.
 
 ## `trusted_router.app_markup_billing`
 
-Frozen alias: `frozen_f83bbaac.app_markup_billing`. Member: `src/trusted_router/app_markup_billing.py`.
+Frozen alias: `frozen_main.app_markup_billing`. Member: `src/trusted_router/app_markup_billing.py`.
 
 SHA-256: `0f18a2449097ad23ea85dc3b2020a40ff920cf6201d87c81990ec30ad2bfa9d0`.
 
@@ -114,7 +110,7 @@ SHA-256: `0f18a2449097ad23ea85dc3b2020a40ff920cf6201d87c81990ec30ad2bfa9d0`.
 
 ## `trusted_router.apps`
 
-Frozen alias: `frozen_f83bbaac.apps`. Member: `src/trusted_router/apps.py`.
+Frozen alias: `frozen_main.apps`. Member: `src/trusted_router/apps.py`.
 
 SHA-256: `3706f8c3cf6740db324fd9983e3aa0e0d205d36d09275cd9f17482ec94857465`.
 
@@ -124,7 +120,7 @@ SHA-256: `3706f8c3cf6740db324fd9983e3aa0e0d205d36d09275cd9f17482ec94857465`.
 
 ## `trusted_router.async_settle_fence`
 
-Frozen alias: `frozen_f83bbaac.async_settle_fence`. Member: `src/trusted_router/async_settle_fence.py`.
+Frozen alias: `frozen_main.async_settle_fence`. Member: `src/trusted_router/async_settle_fence.py`.
 
 SHA-256: `76739fea9c7eff2125982704c9a96462e21beab94e3c5ad9f1d8489db1e9b413`.
 
@@ -136,7 +132,7 @@ SHA-256: `76739fea9c7eff2125982704c9a96462e21beab94e3c5ad9f1d8489db1e9b413`.
 
 ## `trusted_router.async_settle_ticket`
 
-Frozen alias: `frozen_f83bbaac.async_settle_ticket`. Member: `src/trusted_router/async_settle_ticket.py`.
+Frozen alias: `frozen_main.async_settle_ticket`. Member: `src/trusted_router/async_settle_ticket.py`.
 
 SHA-256: `ed0b7102ad0a9a39620e66d69fa5e11fc8c34ff763fce6ba37dde003f9e1df90`.
 
@@ -145,11 +141,13 @@ SHA-256: `ed0b7102ad0a9a39620e66d69fa5e11fc8c34ff763fce6ba37dde003f9e1df90`.
 | `<module>` | 1 |
 | `TicketClaims` | 27 |
 | `TicketSigner` | 94 |
+| `TicketSigner.__init__` | 95 |
+| `TicketSigner.__init__.<locals>.<genexpr>` | 98 |
 | `verify_lookup_ticket` | 76 |
 
 ## `trusted_router.auth`
 
-Frozen alias: `frozen_f83bbaac.auth`. Member: `src/trusted_router/auth.py`.
+Frozen alias: `frozen_main.auth`. Member: `src/trusted_router/auth.py`.
 
 SHA-256: `67ad9631fcfcd5323111cbe23da7d6a8a6acb9235ab7ecbec285b6f4be583ad2`.
 
@@ -164,7 +162,7 @@ SHA-256: `67ad9631fcfcd5323111cbe23da7d6a8a6acb9235ab7ecbec285b6f4be583ad2`.
 
 ## `trusted_router.axiom_config`
 
-Frozen alias: `frozen_f83bbaac.axiom_config`. Member: `src/trusted_router/axiom_config.py`.
+Frozen alias: `frozen_main.axiom_config`. Member: `src/trusted_router/axiom_config.py`.
 
 SHA-256: `205d3395f39fa36891b593cecf782e76b7b5314d39b043006c4e9b538fcc947c`.
 
@@ -181,7 +179,7 @@ SHA-256: `205d3395f39fa36891b593cecf782e76b7b5314d39b043006c4e9b538fcc947c`.
 
 ## `trusted_router.bedrock_group_buy`
 
-Frozen alias: `frozen_f83bbaac.bedrock_group_buy`. Member: `src/trusted_router/bedrock_group_buy.py`.
+Frozen alias: `frozen_main.bedrock_group_buy`. Member: `src/trusted_router/bedrock_group_buy.py`.
 
 SHA-256: `8470349bb6f1ecc891eabab39be86ef5f391206e2112c4dc81c475c8c362cb38`.
 
@@ -194,7 +192,7 @@ SHA-256: `8470349bb6f1ecc891eabab39be86ef5f391206e2112c4dc81c475c8c362cb38`.
 
 ## `trusted_router.benchmark_reports`
 
-Frozen alias: `frozen_f83bbaac.benchmark_reports`. Member: `src/trusted_router/benchmark_reports.py`.
+Frozen alias: `frozen_main.benchmark_reports`. Member: `src/trusted_router/benchmark_reports.py`.
 
 SHA-256: `a2cfd381e60fe3c909b722d60fc0acf3df69f8f27cdbff4392298de1d8a81d5e`.
 
@@ -204,7 +202,7 @@ SHA-256: `a2cfd381e60fe3c909b722d60fc0acf3df69f8f27cdbff4392298de1d8a81d5e`.
 
 ## `trusted_router.benchmark_samples`
 
-Frozen alias: `frozen_f83bbaac.benchmark_samples`. Member: `src/trusted_router/benchmark_samples.py`.
+Frozen alias: `frozen_main.benchmark_samples`. Member: `src/trusted_router/benchmark_samples.py`.
 
 SHA-256: `cd4cb63e00dfbbe2e6bfcabef4c47e7c5792e473624907acf56ab48a7eb1efda`.
 
@@ -214,7 +212,7 @@ SHA-256: `cd4cb63e00dfbbe2e6bfcabef4c47e7c5792e473624907acf56ab48a7eb1efda`.
 
 ## `trusted_router.benchmark_scores`
 
-Frozen alias: `frozen_f83bbaac.benchmark_scores`. Member: `src/trusted_router/benchmark_scores.py`.
+Frozen alias: `frozen_main.benchmark_scores`. Member: `src/trusted_router/benchmark_scores.py`.
 
 SHA-256: `ea9148d3d270617ebb477ac518b03f7c42d85346bf2c71d751f6dce11747fd9b`.
 
@@ -227,7 +225,7 @@ SHA-256: `ea9148d3d270617ebb477ac518b03f7c42d85346bf2c71d751f6dce11747fd9b`.
 
 ## `trusted_router.billing_policy`
 
-Frozen alias: `frozen_f83bbaac.billing_policy`. Member: `src/trusted_router/billing_policy.py`.
+Frozen alias: `frozen_main.billing_policy`. Member: `src/trusted_router/billing_policy.py`.
 
 SHA-256: `3ca776792e66f86ecdbadf239076fce3988dbc7bd909dc7dbbf321534e967ef1`.
 
@@ -237,7 +235,7 @@ SHA-256: `3ca776792e66f86ecdbadf239076fce3988dbc7bd909dc7dbbf321534e967ef1`.
 
 ## `trusted_router.billing_snapshot`
 
-Frozen alias: `frozen_f83bbaac.billing_snapshot`. Member: `src/trusted_router/billing_snapshot.py`.
+Frozen alias: `frozen_main.billing_snapshot`. Member: `src/trusted_router/billing_snapshot.py`.
 
 SHA-256: `94b15947135794bafc3e07e90cda86049d0b6d3e911cb0fa4a39e6702608b38a`.
 
@@ -248,7 +246,6 @@ SHA-256: `94b15947135794bafc3e07e90cda86049d0b6d3e911cb0fa4a39e6702608b38a`.
 | `AcceptanceStatus` | 330 |
 | `BillingSnapshot` | 256 |
 | `BillingSnapshot.unique_candidates` | 266 |
-| `BillingSnapshot.unique_candidates.<locals>.<listcomp>` | 268 |
 | `Candidate` | 220 |
 | `Candidate.supported` | 233 |
 | `Eligibility` | 149 |
@@ -291,7 +288,7 @@ SHA-256: `94b15947135794bafc3e07e90cda86049d0b6d3e911cb0fa4a39e6702608b38a`.
 
 ## `trusted_router.byok_crypto`
 
-Frozen alias: `frozen_f83bbaac.byok_crypto`. Member: `src/trusted_router/byok_crypto.py`.
+Frozen alias: `frozen_main.byok_crypto`. Member: `src/trusted_router/byok_crypto.py`.
 
 SHA-256: `2d89e6e24a6fd6d04bc540cd90587a4e7e7b4215620acacc995b244388431dff`.
 
@@ -302,88 +299,66 @@ SHA-256: `2d89e6e24a6fd6d04bc540cd90587a4e7e7b4215620acacc995b244388431dff`.
 
 ## `trusted_router.catalog`
 
-Frozen alias: `frozen_f83bbaac.catalog`. Member: `src/trusted_router/catalog.py`.
+Frozen alias: `frozen_main.catalog`. Member: `src/trusted_router/catalog.py`.
 
-SHA-256: `41b2e4df1c3ee1e247dfbe23982bf7ec29f81cdb10ae3160bfaf568d2bac0f0b`.
+SHA-256: `6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `_meta_price_range` | 424 |
-| `_meta_price_range.<locals>.<listcomp>` | 436 |
-| `_meta_price_range.<locals>.<listcomp>` | 445 |
-| `_meta_price_range.<locals>.<listcomp>` | 454 |
-| `_model_max_privacy_tier` | 460 |
-| `_model_max_privacy_tier.<locals>.<listcomp>` | 468 |
-| `_route_provider_slugs` | 539 |
-| `_route_provider_slugs.<locals>.<setcomp>` | 554 |
-| `_route_provider_slugs.<locals>.<setcomp>` | 574 |
-| `canonical_orchestration_model_id` | 309 |
-| `effective_endpoint` | 352 |
-| `endpoints_for_model` | 388 |
-| `model_eu_focused_provider_available` | 589 |
-| `model_eu_focused_provider_available.<locals>.<genexpr>` | 591 |
-| `model_max_privacy_tier` | 486 |
-| `model_open_weights` | 516 |
-| `model_open_weights.<locals>.<genexpr>` | 533 |
+| `_meta_price_range` | 425 |
+| `_model_max_privacy_tier` | 461 |
+| `_route_provider_slugs` | 540 |
+| `canonical_orchestration_model_id` | 310 |
+| `effective_endpoint` | 353 |
+| `endpoints_for_model` | 389 |
+| `model_eu_focused_provider_available` | 590 |
+| `model_eu_focused_provider_available.<locals>.<genexpr>` | 592 |
+| `model_max_privacy_tier` | 487 |
+| `model_open_weights` | 517 |
 | `model_open_weights.<locals>.<genexpr>` | 534 |
-| `model_to_openrouter_shape` | 596 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 609 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 620 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 628 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 631 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 640 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 660 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 663 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 668 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 672 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 754 |
-| `model_to_openrouter_shape.<locals>.<listcomp>` | 600 |
-| `model_to_openrouter_shape.<locals>.<listcomp>` | 716 |
-| `model_to_openrouter_shape.<locals>.<listcomp>` | 732 |
-| `model_to_openrouter_shape.<locals>.<listcomp>` | 818 |
-| `model_us_provider_available` | 580 |
-| `model_us_provider_available.<locals>.<genexpr>` | 582 |
-| `orchestration_primitive` | 305 |
-| `orchestration_role` | 318 |
+| `model_open_weights.<locals>.<genexpr>` | 535 |
+| `model_to_openrouter_shape` | 597 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 610 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 621 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 629 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 632 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 641 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 661 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 664 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 669 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 673 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 755 |
+| `model_us_provider_available` | 581 |
+| `model_us_provider_available.<locals>.<genexpr>` | 583 |
+| `orchestration_primitive` | 306 |
+| `orchestration_role` | 319 |
 
 ## `trusted_router.catalog_capabilities`
 
-Frozen alias: `frozen_f83bbaac.catalog_capabilities`. Member: `src/trusted_router/catalog_capabilities.py`.
+Frozen alias: `frozen_main.catalog_capabilities`. Member: `src/trusted_router/catalog_capabilities.py`.
 
 SHA-256: `8d12100110a36edeb0a6c7cb4a60c9541b6fc4279e7b8b7874f44132c27884f0`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 41 |
 | `<module>` | 1 |
 | `_strings` | 61 |
 | `_strings.<locals>.<genexpr>` | 64 |
 | `manifest_supported_parameters` | 90 |
-| `manifest_supported_parameters.<locals>.<setcomp>` | 112 |
 | `provider_extension_parameters` | 74 |
 | `union_supported_parameters` | 79 |
 | `union_supported_parameters.<locals>.<lambda>` | 85 |
-| `union_supported_parameters.<locals>.<setcomp>` | 81 |
 
 ## `trusted_router.catalog_data`
 
-Frozen alias: `frozen_f83bbaac.catalog_data`. Member: `src/trusted_router/catalog_data.py`.
+Frozen alias: `frozen_main.catalog_data`. Member: `src/trusted_router/catalog_data.py`.
 
-SHA-256: `734d8dca2c899ea4dc70942b106aea6b964defa1281c6bd48eb88cc797db50cc`.
+SHA-256: `8c8bb1451424a9a1859afd6e49cbbd6243a88d1cd0a83c74b3342211145e47e2`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 145 |
-| `<dictcomp>` | 296 |
-| `<dictcomp>` | 338 |
-| `<dictcomp>` | 346 |
-| `<dictcomp>` | 2043 |
-| `<dictcomp>` | 2510 |
-| `<dictcomp>` | 2513 |
-| `<dictcomp>` | 3344 |
-| `<dictcomp>` | 4101 |
-| `<genexpr>` | 3323 |
+| `<genexpr>` | 3322 |
 | `<module>` | 1 |
 | `Model` | 376 |
 | `Model.__init__` | 2 |
@@ -394,26 +369,26 @@ SHA-256: `734d8dca2c899ea4dc70942b106aea6b964defa1281c6bd48eb88cc797db50cc`.
 | `ModelEndpoint.__init__` | 2 |
 | `ModelEndpoint.catalog_is_current` | 443 |
 | `ModelEndpoint.is_byok` | 439 |
-| `ModelOrigin` | 3700 |
+| `ModelOrigin` | 3699 |
 | `ModelOrigin.__init__` | 2 |
 | `ModelProviderPrivacyOverride` | 238 |
 | `ModelProviderPrivacyOverride.__init__` | 2 |
-| `NamedDecisionModel` | 2426 |
+| `NamedDecisionModel` | 2425 |
 | `Provider` | 25 |
 | `Provider.__init__` | 2 |
-| `_DecisionFallbackRoute` | 3271 |
-| `_DecisionSpec` | 3277 |
-| `_EmbeddingSpec` | 3355 |
+| `_DecisionFallbackRoute` | 3270 |
+| `_DecisionSpec` | 3276 |
+| `_EmbeddingSpec` | 3354 |
 | `__create_fn__` | 1 |
 | `_utc_now` | 20 |
-| `maker_provider_slug` | 4221 |
-| `model_vendor_provider_slugs` | 4242 |
-| `model_vendor_provider_slugs.<locals>.<genexpr>` | 4257 |
-| `offers_chat` | 2518 |
+| `maker_provider_slug` | 4241 |
+| `model_vendor_provider_slugs` | 4260 |
+| `model_vendor_provider_slugs.<locals>.<genexpr>` | 4275 |
+| `offers_chat` | 2517 |
 
 ## `trusted_router.catalog_energy`
 
-Frozen alias: `frozen_f83bbaac.catalog_energy`. Member: `src/trusted_router/catalog_energy.py`.
+Frozen alias: `frozen_main.catalog_energy`. Member: `src/trusted_router/catalog_energy.py`.
 
 SHA-256: `a336e64d7e10608f9dba4881a2462ea9e3352923755c2830cafefaeac9d2610a`.
 
@@ -426,64 +401,58 @@ SHA-256: `a336e64d7e10608f9dba4881a2462ea9e3352923755c2830cafefaeac9d2610a`.
 
 ## `trusted_router.catalog_ingest`
 
-Frozen alias: `frozen_f83bbaac.catalog_ingest`. Member: `src/trusted_router/catalog_ingest.py`.
+Frozen alias: `frozen_main.catalog_ingest`. Member: `src/trusted_router/catalog_ingest.py`.
 
-SHA-256: `2d3993ef561d59c2c6fad14424905f96d521b844906411fafb726617f620b161`.
+SHA-256: `cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `_api_reported_context_windows` | 775 |
+| `_NativeEndpointCapabilities` | 739 |
+| `_NativeEndpointCapabilities.__init__` | 2 |
+| `__create_fn__` | 1 |
+| `_api_reported_context_windows` | 782 |
 | `_apply_provider_manifest_expiry` | 213 |
-| `_apply_provider_manifest_expiry.<locals>.<dictcomp>` | 234 |
-| `_author_provider` | 729 |
-| `_authoritative_provider_model_ids` | 297 |
-| `_authoritative_provider_model_ids.<locals>.<setcomp>` | 306 |
-| `_authoritative_provider_model_ids.<locals>.<setcomp>` | 327 |
+| `_author_provider` | 724 |
+| `_authoritative_provider_model_ids` | 298 |
 | `_build_endpoints` | 158 |
-| `_context_window` | 740 |
-| `_decision_fallback_endpoints` | 1440 |
-| `_decision_models` | 1404 |
-| `_embedding_manifest_cost` | 1588 |
-| `_embedding_models` | 1483 |
-| `_embedding_models.<locals>.<genexpr>` | 1559 |
-| `_embedding_models.<locals>.<setcomp>` | 1542 |
+| `_context_window` | 735 |
+| `_decision_fallback_endpoints` | 1457 |
+| `_decision_models` | 1421 |
+| `_embedding_manifest_cost` | 1605 |
+| `_embedding_models` | 1500 |
+| `_embedding_models.<locals>.<genexpr>` | 1576 |
 | `_endpoint` | 127 |
-| `_filter_unserved_provider_endpoints` | 1662 |
-| `_filter_unserved_provider_endpoints.<locals>.<dictcomp>` | 1742 |
-| `_filter_unserved_provider_endpoints.<locals>._keep` | 1692 |
+| `_filter_unserved_provider_endpoints` | 1679 |
+| `_filter_unserved_provider_endpoints.<locals>._keep` | 1709 |
 | `_has_token_prices` | 199 |
-| `_ingested_models_and_endpoints` | 804 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 876 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 877 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 880 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 889 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 900 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 931 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 936 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 956 |
-| `_ingested_models_and_endpoints.<locals>.<listcomp>` | 830 |
-| `_ingested_models_and_endpoints.<locals>.endpoint_capabilities` | 822 |
-| `_input_only_manifest_cost` | 1595 |
-| `_input_only_manifest_cost.<locals>.<setcomp>` | 1615 |
-| `_is_provider_deprecated_model` | 714 |
+| `_ingested_models_and_endpoints` | 811 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 890 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 891 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 894 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 903 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 914 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 949 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 954 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 974 |
+| `_ingested_models_and_endpoints.<locals>.endpoint_capabilities` | 829 |
+| `_input_only_manifest_cost` | 1612 |
+| `_is_provider_deprecated_model` | 709 |
 | `_modalities` | 90 |
 | `_modalities.<locals>.<genexpr>` | 94 |
 | `_model_documentation` | 107 |
-| `_model_documentation.<locals>.<dictcomp>` | 110 |
 | `_model_documentation.<locals>.<genexpr>` | 111 |
-| `_native_endpoint_capabilities` | 744 |
-| `_native_endpoint_capabilities.<locals>.<genexpr>` | 769 |
+| `_native_endpoint_capabilities` | 745 |
+| `_native_endpoint_capabilities.<locals>.<genexpr>` | 770 |
 | `_positive_float` | 80 |
-| `_provider_manifest_dark_model_ids` | 1637 |
-| `_provider_manifest_dark_model_ids.<locals>.<genexpr>` | 1652 |
-| `_supplemental_provider_models_and_endpoints` | 1015 |
-| `_supplemental_provider_models_and_endpoints.<locals>.<setcomp>` | 1150 |
+| `_provider_manifest_dark_model_ids` | 1654 |
+| `_provider_manifest_dark_model_ids.<locals>.<genexpr>` | 1669 |
+| `_supplemental_provider_models_and_endpoints` | 1033 |
 | `report_refused_manifest_rows` | 190 |
 
 ## `trusted_router.catalog_privacy`
 
-Frozen alias: `frozen_f83bbaac.catalog_privacy`. Member: `src/trusted_router/catalog_privacy.py`.
+Frozen alias: `frozen_main.catalog_privacy`. Member: `src/trusted_router/catalog_privacy.py`.
 
 SHA-256: `f75a1d6fa0601a6900dadc1f1079a84546f618c42e5dac92672a43d0e433928c`.
 
@@ -514,19 +483,17 @@ SHA-256: `f75a1d6fa0601a6900dadc1f1079a84546f618c42e5dac92672a43d0e433928c`.
 
 ## `trusted_router.catalog_registry`
 
-Frozen alias: `frozen_f83bbaac.catalog_registry`. Member: `src/trusted_router/catalog_registry.py`.
+Frozen alias: `frozen_main.catalog_registry`. Member: `src/trusted_router/catalog_registry.py`.
 
 SHA-256: `c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 1640 |
 | `<genexpr>` | 1645 |
 | `<genexpr>` | 1658 |
 | `<genexpr>` | 1661 |
 | `<module>` | 1 |
 | `_install_deepseek_v4_pro_release_routes` | 1365 |
-| `_install_deepseek_v4_pro_release_routes.<locals>.<listcomp>` | 1401 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install` | 1432 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install.<locals>.<genexpr>` | 1437 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install.<locals>.<genexpr>` | 1438 |
@@ -534,16 +501,25 @@ SHA-256: `c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c`.
 | `_named_decision_model_with_chain_prices` | 1667 |
 | `_named_decision_model_with_chain_prices.<locals>.<genexpr>` | 1695 |
 | `_named_decision_model_with_chain_prices.<locals>.<genexpr>` | 1696 |
-| `_named_decision_model_with_chain_prices.<locals>.<listcomp>` | 1688 |
 | `_settle_deepseek_v4_pro_0423_leaf` | 1489 |
 | `_settle_deepseek_v4_pro_0423_leaf.<locals>.<genexpr>` | 1507 |
-| `_settle_deepseek_v4_pro_0423_leaf.<locals>.<listcomp>` | 1499 |
 | `archimedes_model` | 980 |
 | `named_decision_model` | 1007 |
 
+## `trusted_router.catalog_usage_policy`
+
+Frozen alias: `frozen_main.catalog_usage_policy`. Member: `src/trusted_router/catalog_usage_policy.py`.
+
+SHA-256: `83561c82477e2d1bdfa65ac31cfe2c974fd6f1870f6b039ea011ad1ce1241b21`.
+
+| Callable / executed code unit | Code line |
+|---|---|
+| `<module>` | 1 |
+| `provider_usage_estimation_policy` | 12 |
+
 ## `trusted_router.chat_capabilities`
 
-Frozen alias: `frozen_f83bbaac.chat_capabilities`. Member: `src/trusted_router/chat_capabilities.py`.
+Frozen alias: `frozen_main.chat_capabilities`. Member: `src/trusted_router/chat_capabilities.py`.
 
 SHA-256: `ea48605c6e2fad3be75df1f2904ba801ee97864990146f3d34caf64bf284b966`.
 
@@ -553,7 +529,7 @@ SHA-256: `ea48605c6e2fad3be75df1f2904ba801ee97864990146f3d34caf64bf284b966`.
 
 ## `trusted_router.choose_catalog`
 
-Frozen alias: `frozen_f83bbaac.choose_catalog`. Member: `src/trusted_router/choose_catalog.py`.
+Frozen alias: `frozen_main.choose_catalog`. Member: `src/trusted_router/choose_catalog.py`.
 
 SHA-256: `25b902ac1d845ea8359d854bb776d44c89df4a50695dd86bdfb2476f72e18176`.
 
@@ -563,7 +539,7 @@ SHA-256: `25b902ac1d845ea8359d854bb776d44c89df4a50695dd86bdfb2476f72e18176`.
 
 ## `trusted_router.clickhouse_endpoints`
 
-Frozen alias: `frozen_f83bbaac.clickhouse_endpoints`. Member: `src/trusted_router/clickhouse_endpoints.py`.
+Frozen alias: `frozen_main.clickhouse_endpoints`. Member: `src/trusted_router/clickhouse_endpoints.py`.
 
 SHA-256: `9d3028386c1b6a8c900d0e4dc3ff2de2e892b72b59fb5362fb805439528c25f5`.
 
@@ -573,7 +549,7 @@ SHA-256: `9d3028386c1b6a8c900d0e4dc3ff2de2e892b72b59fb5362fb805439528c25f5`.
 
 ## `trusted_router.client_context`
 
-Frozen alias: `frozen_f83bbaac.client_context`. Member: `src/trusted_router/client_context.py`.
+Frozen alias: `frozen_main.client_context`. Member: `src/trusted_router/client_context.py`.
 
 SHA-256: `220d733d405bcfa865d8d699c0fb7ca5fa7e00f50bd5fc4599b8fb5459c8e5bc`.
 
@@ -585,7 +561,7 @@ SHA-256: `220d733d405bcfa865d8d699c0fb7ca5fa7e00f50bd5fc4599b8fb5459c8e5bc`.
 
 ## `trusted_router.client_events_schema`
 
-Frozen alias: `frozen_f83bbaac.client_events_schema`. Member: `src/trusted_router/client_events_schema.py`.
+Frozen alias: `frozen_main.client_events_schema`. Member: `src/trusted_router/client_events_schema.py`.
 
 SHA-256: `e65b032c049a144614a9f81b973ce8a0e9e6fdc81ba1dbb8b01156d26626d22a`.
 
@@ -604,7 +580,7 @@ SHA-256: `e65b032c049a144614a9f81b973ce8a0e9e6fdc81ba1dbb8b01156d26626d22a`.
 
 ## `trusted_router.client_reliability`
 
-Frozen alias: `frozen_f83bbaac.client_reliability`. Member: `src/trusted_router/client_reliability.py`.
+Frozen alias: `frozen_main.client_reliability`. Member: `src/trusted_router/client_reliability.py`.
 
 SHA-256: `9b18512c197eb9f5b2655037ae972112783972982512b09f46c1a29afcc6a7d0`.
 
@@ -614,7 +590,7 @@ SHA-256: `9b18512c197eb9f5b2655037ae972112783972982512b09f46c1a29afcc6a7d0`.
 
 ## `trusted_router.company_affiliations`
 
-Frozen alias: `frozen_f83bbaac.company_affiliations`. Member: `src/trusted_router/company_affiliations.py`.
+Frozen alias: `frozen_main.company_affiliations`. Member: `src/trusted_router/company_affiliations.py`.
 
 SHA-256: `f21d6155fedb9f4fbd4bc7aa64e2492f8ebf770fdf5a15143f861f5e45adeb64`.
 
@@ -625,13 +601,12 @@ SHA-256: `f21d6155fedb9f4fbd4bc7aa64e2492f8ebf770fdf5a15143f861f5e45adeb64`.
 
 ## `trusted_router.competitor_comparisons`
 
-Frozen alias: `frozen_f83bbaac.competitor_comparisons`. Member: `src/trusted_router/competitor_comparisons.py`.
+Frozen alias: `frozen_main.competitor_comparisons`. Member: `src/trusted_router/competitor_comparisons.py`.
 
 SHA-256: `d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 2325 |
 | `<module>` | 1 |
 | `ComparisonSource` | 10 |
 | `ComparisonSource.__init__` | 2 |
@@ -644,7 +619,7 @@ SHA-256: `d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d`.
 
 ## `trusted_router.config`
 
-Frozen alias: `frozen_f83bbaac.config`. Member: `src/trusted_router/config.py`.
+Frozen alias: `frozen_main.config`. Member: `src/trusted_router/config.py`.
 
 SHA-256: `08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872`.
 
@@ -659,7 +634,6 @@ SHA-256: `08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872`.
 | `Settings.production_is_fail_closed` | 1303 |
 | `Settings.production_is_fail_closed.<locals>.<genexpr>` | 1472 |
 | `Settings.production_is_fail_closed.<locals>.<genexpr>` | 1571 |
-| `Settings.production_is_fail_closed.<locals>.<setcomp>` | 1307 |
 | `Settings.remediator_mode_is_known` | 1271 |
 | `Settings.settings_customise_sources` | 1251 |
 | `Settings.trust_qualifying_provider_set` | 2072 |
@@ -674,7 +648,7 @@ SHA-256: `08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872`.
 
 ## `trusted_router.content`
 
-Frozen alias: `frozen_f83bbaac.content`. Member: `src/trusted_router/content/__init__.py`.
+Frozen alias: `frozen_main.content`. Member: `src/trusted_router/content/__init__.py`.
 
 SHA-256: `4716c8fab43ef6cfd0c8c54c7ca7f4adca28e7f929fe24e76e34be212205ffa5`.
 
@@ -684,13 +658,12 @@ SHA-256: `4716c8fab43ef6cfd0c8c54c7ca7f4adca28e7f929fe24e76e34be212205ffa5`.
 
 ## `trusted_router.content.blog`
 
-Frozen alias: `frozen_f83bbaac.content.blog`. Member: `src/trusted_router/content/blog.py`.
+Frozen alias: `frozen_main.content.blog`. Member: `src/trusted_router/content/blog.py`.
 
 SHA-256: `8cc18c4591cbd7aa4a116140b62dd8a096237e642b05e44ae9674f3e0ffb6f7a`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 2327 |
 | `<module>` | 1 |
 | `BlogPost` | 6 |
 | `BlogPost.__init__` | 2 |
@@ -698,7 +671,7 @@ SHA-256: `8cc18c4591cbd7aa4a116140b62dd8a096237e642b05e44ae9674f3e0ffb6f7a`.
 
 ## `trusted_router.content.company_signin`
 
-Frozen alias: `frozen_f83bbaac.content.company_signin`. Member: `src/trusted_router/content/company_signin.py`.
+Frozen alias: `frozen_main.content.company_signin`. Member: `src/trusted_router/content/company_signin.py`.
 
 SHA-256: `0be9305335e79bf6e5f7406a66047983560c36040653dd87f2ffc3c25c30f31f`.
 
@@ -708,7 +681,7 @@ SHA-256: `0be9305335e79bf6e5f7406a66047983560c36040653dd87f2ffc3c25c30f31f`.
 
 ## `trusted_router.content.legal`
 
-Frozen alias: `frozen_f83bbaac.content.legal`. Member: `src/trusted_router/content/legal.py`.
+Frozen alias: `frozen_main.content.legal`. Member: `src/trusted_router/content/legal.py`.
 
 SHA-256: `ac88e892440a85f916aa4959944443a9a7b5c490901c322bef91df7b03455a7b`.
 
@@ -718,7 +691,7 @@ SHA-256: `ac88e892440a85f916aa4959944443a9a7b5c490901c322bef91df7b03455a7b`.
 
 ## `trusted_router.content.token_index`
 
-Frozen alias: `frozen_f83bbaac.content.token_index`. Member: `src/trusted_router/content/token_index.py`.
+Frozen alias: `frozen_main.content.token_index`. Member: `src/trusted_router/content/token_index.py`.
 
 SHA-256: `41957d0cb88fbf5b2bde82c6912523a41a8aa00f9457defc508ad6a6ca0ac3dc`.
 
@@ -728,7 +701,7 @@ SHA-256: `41957d0cb88fbf5b2bde82c6912523a41a8aa00f9457defc508ad6a6ca0ac3dc`.
 
 ## `trusted_router.content_handling`
 
-Frozen alias: `frozen_f83bbaac.content_handling`. Member: `src/trusted_router/content_handling.py`.
+Frozen alias: `frozen_main.content_handling`. Member: `src/trusted_router/content_handling.py`.
 
 SHA-256: `b1ffacfdbacff83c720adfcb1ce7151d2075742e75e04ac08a8278109845b6cc`.
 
@@ -738,7 +711,7 @@ SHA-256: `b1ffacfdbacff83c720adfcb1ce7151d2075742e75e04ac08a8278109845b6cc`.
 
 ## `trusted_router.creator_identity`
 
-Frozen alias: `frozen_f83bbaac.creator_identity`. Member: `src/trusted_router/creator_identity.py`.
+Frozen alias: `frozen_main.creator_identity`. Member: `src/trusted_router/creator_identity.py`.
 
 SHA-256: `badef8ccdb007bdbc1039190f27047341e8b71dc8a61d77b7ae7a4901ffcc6b5`.
 
@@ -746,9 +719,22 @@ SHA-256: `badef8ccdb007bdbc1039190f27047341e8b71dc8a61d77b7ae7a4901ffcc6b5`.
 |---|---|
 | `<module>` | 1 |
 
+## `trusted_router.credit_debt`
+
+Frozen alias: `frozen_main.credit_debt`. Member: `src/trusted_router/credit_debt.py`.
+
+SHA-256: `25a349fde3e2720dd6ed70eb18e3f223345ff0a52f61cb023f0f7445953cc5b4`.
+
+| Callable / executed code unit | Code line |
+|---|---|
+| `<module>` | 1 |
+| `Inflow` | 35 |
+| `Squared` | 27 |
+| `__create_fn__` | 1 |
+
 ## `trusted_router.credit_transfer`
 
-Frozen alias: `frozen_f83bbaac.credit_transfer`. Member: `src/trusted_router/credit_transfer.py`.
+Frozen alias: `frozen_main.credit_transfer`. Member: `src/trusted_router/credit_transfer.py`.
 
 SHA-256: `ccb2425d4db917db0c40966aede82f3e0ffe09445779e9419ec3d42961686789`.
 
@@ -761,7 +747,7 @@ SHA-256: `ccb2425d4db917db0c40966aede82f3e0ffe09445779e9419ec3d42961686789`.
 
 ## `trusted_router.custom_model_billing`
 
-Frozen alias: `frozen_f83bbaac.custom_model_billing`. Member: `src/trusted_router/custom_model_billing.py`.
+Frozen alias: `frozen_main.custom_model_billing`. Member: `src/trusted_router/custom_model_billing.py`.
 
 SHA-256: `91e8f08388c2a495e04af49b9d08c7991a296b06a229f5bfa9916a977eb64c06`.
 
@@ -771,7 +757,7 @@ SHA-256: `91e8f08388c2a495e04af49b9d08c7991a296b06a229f5bfa9916a977eb64c06`.
 
 ## `trusted_router.custom_model_markup_billing`
 
-Frozen alias: `frozen_f83bbaac.custom_model_markup_billing`. Member: `src/trusted_router/custom_model_markup_billing.py`.
+Frozen alias: `frozen_main.custom_model_markup_billing`. Member: `src/trusted_router/custom_model_markup_billing.py`.
 
 SHA-256: `c8fc28415a7dfb09b9cd8657d5d974532f9ed15d2be158e6616294f5c3f4151d`.
 
@@ -781,7 +767,7 @@ SHA-256: `c8fc28415a7dfb09b9cd8657d5d974532f9ed15d2be158e6616294f5c3f4151d`.
 
 ## `trusted_router.custom_model_rules`
 
-Frozen alias: `frozen_f83bbaac.custom_model_rules`. Member: `src/trusted_router/custom_model_rules.py`.
+Frozen alias: `frozen_main.custom_model_rules`. Member: `src/trusted_router/custom_model_rules.py`.
 
 SHA-256: `f4679efcc6a6a0ae83f7d3eea7ecd3e8ea5e5f3283538bf6835c7a2763a943b8`.
 
@@ -791,30 +777,28 @@ SHA-256: `f4679efcc6a6a0ae83f7d3eea7ecd3e8ea5e5f3283538bf6835c7a2763a943b8`.
 
 ## `trusted_router.dashboard`
 
-Frozen alias: `frozen_f83bbaac.dashboard`. Member: `src/trusted_router/dashboard.py`.
+Frozen alias: `frozen_main.dashboard`. Member: `src/trusted_router/dashboard.py`.
 
-SHA-256: `64f01e0d5dd1cd19fd0ac08c8cd58e532369eeef9fec9f8d948730c5815ea205`.
+SHA-256: `d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 163 |
-| `<dictcomp>` | 820 |
-| `<genexpr>` | 193 |
-| `<genexpr>` | 231 |
-| `<genexpr>` | 245 |
+| `<genexpr>` | 194 |
+| `<genexpr>` | 233 |
+| `<genexpr>` | 247 |
 | `<module>` | 1 |
-| `BlogIndexPost` | 450 |
-| `OpenRouterLandingVariant` | 424 |
+| `BlogIndexPost` | 452 |
+| `OpenRouterLandingVariant` | 426 |
 | `OpenRouterLandingVariant.__init__` | 2 |
-| `PublicPage` | 411 |
+| `PublicPage` | 413 |
 | `PublicPage.__init__` | 2 |
-| `_EndpointProviderView` | 5221 |
-| `_ModelPublisher` | 4968 |
+| `_EndpointProviderView` | 5229 |
+| `_ModelPublisher` | 4976 |
 | `__create_fn__` | 1 |
 
 ## `trusted_router.detached_jws`
 
-Frozen alias: `frozen_f83bbaac.detached_jws`. Member: `src/trusted_router/detached_jws.py`.
+Frozen alias: `frozen_main.detached_jws`. Member: `src/trusted_router/detached_jws.py`.
 
 SHA-256: `85615e65d8474a8ebe96ce49012bc07674a9f273e6ddfa12bc07fc2cd5c08164`.
 
@@ -823,6 +807,7 @@ SHA-256: `85615e65d8474a8ebe96ce49012bc07674a9f273e6ddfa12bc07fc2cd5c08164`.
 | `<module>` | 1 |
 | `JWSError` | 23 |
 | `TrustedKey` | 27 |
+| `TrustedKey.__init__` | 2 |
 | `__create_fn__` | 1 |
 | `_depth` | 86 |
 | `_integer` | 41 |
@@ -840,11 +825,10 @@ SHA-256: `85615e65d8474a8ebe96ce49012bc07674a9f273e6ddfa12bc07fc2cd5c08164`.
 | `b64encode` | 124 |
 | `canonical` | 60 |
 | `verify` | 138 |
-| `verify.<locals>.<listcomp>` | 149 |
 
 ## `trusted_router.domains`
 
-Frozen alias: `frozen_f83bbaac.domains`. Member: `src/trusted_router/domains.py`.
+Frozen alias: `frozen_main.domains`. Member: `src/trusted_router/domains.py`.
 
 SHA-256: `2417be0b4822ff87720428c27d9924061f1a884bc74b71f4754f57eec61130a0`.
 
@@ -861,7 +845,7 @@ SHA-256: `2417be0b4822ff87720428c27d9924061f1a884bc74b71f4754f57eec61130a0`.
 
 ## `trusted_router.enclave_regions`
 
-Frozen alias: `frozen_f83bbaac.enclave_regions`. Member: `src/trusted_router/enclave_regions.py`.
+Frozen alias: `frozen_main.enclave_regions`. Member: `src/trusted_router/enclave_regions.py`.
 
 SHA-256: `06ebfa0babbf338e367f7fafcb0e5d8382163cd2ac1274d2560e2422bb4aa181`.
 
@@ -871,7 +855,7 @@ SHA-256: `06ebfa0babbf338e367f7fafcb0e5d8382163cd2ac1274d2560e2422bb4aa181`.
 
 ## `trusted_router.endpoint_identity`
 
-Frozen alias: `frozen_f83bbaac.endpoint_identity`. Member: `src/trusted_router/endpoint_identity.py`.
+Frozen alias: `frozen_main.endpoint_identity`. Member: `src/trusted_router/endpoint_identity.py`.
 
 SHA-256: `5ee76f6b49b9e4bb34477673868be895f95e8b76a58c42aa88d2f9bca8b1f600`.
 
@@ -883,7 +867,7 @@ SHA-256: `5ee76f6b49b9e4bb34477673868be895f95e8b76a58c42aa88d2f9bca8b1f600`.
 
 ## `trusted_router.errors`
 
-Frozen alias: `frozen_f83bbaac.errors`. Member: `src/trusted_router/errors.py`.
+Frozen alias: `frozen_main.errors`. Member: `src/trusted_router/errors.py`.
 
 SHA-256: `13e51bc2b46cdf26aa5db7356a6214eb66bf6f473aee8f3328588bfa169374d9`.
 
@@ -893,7 +877,7 @@ SHA-256: `13e51bc2b46cdf26aa5db7356a6214eb66bf6f473aee8f3328588bfa169374d9`.
 
 ## `trusted_router.gateway_boot`
 
-Frozen alias: `frozen_f83bbaac.gateway_boot`. Member: `src/trusted_router/gateway_boot.py`.
+Frozen alias: `frozen_main.gateway_boot`. Member: `src/trusted_router/gateway_boot.py`.
 
 SHA-256: `b2bae2370a207b681ed9d9441a22b2408da473b452fe470629d8f1bf1ba96dd9`.
 
@@ -905,7 +889,7 @@ SHA-256: `b2bae2370a207b681ed9d9441a22b2408da473b452fe470629d8f1bf1ba96dd9`.
 
 ## `trusted_router.gateway_timing`
 
-Frozen alias: `frozen_f83bbaac.gateway_timing`. Member: `src/trusted_router/gateway_timing.py`.
+Frozen alias: `frozen_main.gateway_timing`. Member: `src/trusted_router/gateway_timing.py`.
 
 SHA-256: `4c90ee909448d37464767ce8fb00fedde879344da31f9c1e975b08c94fcf9411`.
 
@@ -915,7 +899,6 @@ SHA-256: `4c90ee909448d37464767ce8fb00fedde879344da31f9c1e975b08c94fcf9411`.
 | `GatewayTiming` | 40 |
 | `GatewayTiming.__init__` | 41 |
 | `GatewayTiming.snapshot` | 55 |
-| `GatewayTiming.snapshot.<locals>.<dictcomp>` | 60 |
 | `GatewayTiming.switch` | 48 |
 | `_scope` | 86 |
 | `gateway_phase` | 73 |
@@ -926,7 +909,7 @@ SHA-256: `4c90ee909448d37464767ce8fb00fedde879344da31f9c1e975b08c94fcf9411`.
 
 ## `trusted_router.google_ads_conversions`
 
-Frozen alias: `frozen_f83bbaac.google_ads_conversions`. Member: `src/trusted_router/google_ads_conversions.py`.
+Frozen alias: `frozen_main.google_ads_conversions`. Member: `src/trusted_router/google_ads_conversions.py`.
 
 SHA-256: `4fc7c9f0e0a8bfae83d52198c88f9bfc3faa0e3c430786882a7dae416ac12ec4`.
 
@@ -939,7 +922,7 @@ SHA-256: `4fc7c9f0e0a8bfae83d52198c88f9bfc3faa0e3c430786882a7dae416ac12ec4`.
 
 ## `trusted_router.identity_guidance`
 
-Frozen alias: `frozen_f83bbaac.identity_guidance`. Member: `src/trusted_router/identity_guidance.py`.
+Frozen alias: `frozen_main.identity_guidance`. Member: `src/trusted_router/identity_guidance.py`.
 
 SHA-256: `9fd56a5202358c0334979cc5b4d07b89a143d9877b3bc3f6ef9ea7db514f5425`.
 
@@ -951,7 +934,7 @@ SHA-256: `9fd56a5202358c0334979cc5b4d07b89a143d9877b3bc3f6ef9ea7db514f5425`.
 
 ## `trusted_router.image_generation`
 
-Frozen alias: `frozen_f83bbaac.image_generation`. Member: `src/trusted_router/image_generation.py`.
+Frozen alias: `frozen_main.image_generation`. Member: `src/trusted_router/image_generation.py`.
 
 SHA-256: `1ba6e13ca8c58f4fb9198b730e91f6883a42533e5953589fbd766fa7d78fff7f`.
 
@@ -961,7 +944,7 @@ SHA-256: `1ba6e13ca8c58f4fb9198b730e91f6883a42533e5953589fbd766fa7d78fff7f`.
 
 ## `trusted_router.key_management`
 
-Frozen alias: `frozen_f83bbaac.key_management`. Member: `src/trusted_router/key_management.py`.
+Frozen alias: `frozen_main.key_management`. Member: `src/trusted_router/key_management.py`.
 
 SHA-256: `78ecef2e40825b87d75a964dcab67a1dffdd6c7fb3b77ffb30c62b777c8f75c5`.
 
@@ -980,7 +963,7 @@ SHA-256: `78ecef2e40825b87d75a964dcab67a1dffdd6c7fb3b77ffb30c62b777c8f75c5`.
 
 ## `trusted_router.main`
 
-Frozen alias: `frozen_f83bbaac.main`. Member: `src/trusted_router/main.py`.
+Frozen alias: `frozen_main.main`. Member: `src/trusted_router/main.py`.
 
 SHA-256: `33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde`.
 
@@ -996,7 +979,7 @@ SHA-256: `33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde`.
 
 ## `trusted_router.markdown_negotiation`
 
-Frozen alias: `frozen_f83bbaac.markdown_negotiation`. Member: `src/trusted_router/markdown_negotiation.py`.
+Frozen alias: `frozen_main.markdown_negotiation`. Member: `src/trusted_router/markdown_negotiation.py`.
 
 SHA-256: `083b3eda428dab4f3aeed46c4a10c1cb333788cf69acc2b86fa53dbfc9bacc30`.
 
@@ -1009,13 +992,12 @@ SHA-256: `083b3eda428dab4f3aeed46c4a10c1cb333788cf69acc2b86fa53dbfc9bacc30`.
 
 ## `trusted_router.marketing_experiments`
 
-Frozen alias: `frozen_f83bbaac.marketing_experiments`. Member: `src/trusted_router/marketing_experiments.py`.
+Frozen alias: `frozen_main.marketing_experiments`. Member: `src/trusted_router/marketing_experiments.py`.
 
 SHA-256: `98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 336 |
 | `<module>` | 1 |
 | `Audience` | 30 |
 | `Audience.__init__` | 2 |
@@ -1030,11 +1012,10 @@ SHA-256: `98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e`.
 | `__create_fn__` | 1 |
 | `build_google_search_cells` | 313 |
 | `build_google_search_cells.<locals>.<genexpr>` | 314 |
-| `build_google_search_cells.<locals>.<setcomp>` | 330 |
 
 ## `trusted_router.mcp_metadata`
 
-Frozen alias: `frozen_f83bbaac.mcp_metadata`. Member: `src/trusted_router/mcp_metadata.py`.
+Frozen alias: `frozen_main.mcp_metadata`. Member: `src/trusted_router/mcp_metadata.py`.
 
 SHA-256: `359f0677a0410754243340353a9f76091163a19e3b72c895744b11404accecb0`.
 
@@ -1044,7 +1025,7 @@ SHA-256: `359f0677a0410754243340353a9f76091163a19e3b72c895744b11404accecb0`.
 
 ## `trusted_router.mcp_skills`
 
-Frozen alias: `frozen_f83bbaac.mcp_skills`. Member: `src/trusted_router/mcp_skills.py`.
+Frozen alias: `frozen_main.mcp_skills`. Member: `src/trusted_router/mcp_skills.py`.
 
 SHA-256: `fb3b02ee3e8f74ccef65687793e676ec8d4d70f7c14801fdaef0245caf85607c`.
 
@@ -1060,7 +1041,7 @@ SHA-256: `fb3b02ee3e8f74ccef65687793e676ec8d4d70f7c14801fdaef0245caf85607c`.
 
 ## `trusted_router.measured`
 
-Frozen alias: `frozen_f83bbaac.measured`. Member: `src/trusted_router/measured.py`.
+Frozen alias: `frozen_main.measured`. Member: `src/trusted_router/measured.py`.
 
 SHA-256: `206bbb4720ada65f01d9ad79812c8904a1e7949ef9ffbbb42e5c029851ef4cb6`.
 
@@ -1070,7 +1051,7 @@ SHA-256: `206bbb4720ada65f01d9ad79812c8904a1e7949ef9ffbbb42e5c029851ef4cb6`.
 
 ## `trusted_router.middleware`
 
-Frozen alias: `frozen_f83bbaac.middleware`. Member: `src/trusted_router/middleware.py`.
+Frozen alias: `frozen_main.middleware`. Member: `src/trusted_router/middleware.py`.
 
 SHA-256: `8e48d90100152c78d68d254e726aadef7c1a9a2779b8d0fc8865a559931cc3ad`.
 
@@ -1096,7 +1077,7 @@ SHA-256: `8e48d90100152c78d68d254e726aadef7c1a9a2779b8d0fc8865a559931cc3ad`.
 
 ## `trusted_router.model_changes`
 
-Frozen alias: `frozen_f83bbaac.model_changes`. Member: `src/trusted_router/model_changes.py`.
+Frozen alias: `frozen_main.model_changes`. Member: `src/trusted_router/model_changes.py`.
 
 SHA-256: `ae30e2ca266b59e81cd37388da1bf1dd2c4cd63835abc17e291d48efaa3d60e6`.
 
@@ -1104,8 +1085,6 @@ SHA-256: `ae30e2ca266b59e81cd37388da1bf1dd2c4cd63835abc17e291d48efaa3d60e6`.
 |---|---|
 | `<module>` | 1 |
 | `active_history` | 127 |
-| `active_history.<locals>.<listcomp>` | 130 |
-| `active_history.<locals>.<setcomp>` | 129 |
 | `last_route_changes` | 133 |
 | `load_history` | 122 |
 | `load_history.<locals>.<genexpr>` | 124 |
@@ -1113,7 +1092,7 @@ SHA-256: `ae30e2ca266b59e81cd37388da1bf1dd2c4cd63835abc17e291d48efaa3d60e6`.
 
 ## `trusted_router.model_regions`
 
-Frozen alias: `frozen_f83bbaac.model_regions`. Member: `src/trusted_router/model_regions.py`.
+Frozen alias: `frozen_main.model_regions`. Member: `src/trusted_router/model_regions.py`.
 
 SHA-256: `9bb09d9b9121b7b19cf9ca7975f903c361a3cd56148124d65c7522b01f9f8ea3`.
 
@@ -1126,7 +1105,7 @@ SHA-256: `9bb09d9b9121b7b19cf9ca7975f903c361a3cd56148124d65c7522b01f9f8ea3`.
 
 ## `trusted_router.money`
 
-Frozen alias: `frozen_f83bbaac.money`. Member: `src/trusted_router/money.py`.
+Frozen alias: `frozen_main.money`. Member: `src/trusted_router/money.py`.
 
 SHA-256: `d6abdb139ed01852ff0235ce9f4ce3ea6c781a6713391f3ee318986c4a8445eb`.
 
@@ -1142,7 +1121,7 @@ SHA-256: `d6abdb139ed01852ff0235ce9f4ce3ea6c781a6713391f3ee318986c4a8445eb`.
 
 ## `trusted_router.oauth_app_policy`
 
-Frozen alias: `frozen_f83bbaac.oauth_app_policy`. Member: `src/trusted_router/oauth_app_policy.py`.
+Frozen alias: `frozen_main.oauth_app_policy`. Member: `src/trusted_router/oauth_app_policy.py`.
 
 SHA-256: `2a045a609d599ffac663588a4909acceabec03d1c7941973f6eb90923d1c6a41`.
 
@@ -1152,7 +1131,7 @@ SHA-256: `2a045a609d599ffac663588a4909acceabec03d1c7941973f6eb90923d1c6a41`.
 
 ## `trusted_router.oauth_provider`
 
-Frozen alias: `frozen_f83bbaac.oauth_provider`. Member: `src/trusted_router/oauth_provider.py`.
+Frozen alias: `frozen_main.oauth_provider`. Member: `src/trusted_router/oauth_provider.py`.
 
 SHA-256: `bce1e4ba95f39ba5f24d4b88c3a77ea9c5b4c21043db0f9682f8b107ac4d2ef1`.
 
@@ -1166,7 +1145,7 @@ SHA-256: `bce1e4ba95f39ba5f24d4b88c3a77ea9c5b4c21043db0f9682f8b107ac4d2ef1`.
 
 ## `trusted_router.og`
 
-Frozen alias: `frozen_f83bbaac.og`. Member: `src/trusted_router/og.py`.
+Frozen alias: `frozen_main.og`. Member: `src/trusted_router/og.py`.
 
 SHA-256: `ef44e53648aba05398354b8039113e3179a0a9f505aead4f298029a83f735629`.
 
@@ -1176,7 +1155,7 @@ SHA-256: `ef44e53648aba05398354b8039113e3179a0a9f505aead4f298029a83f735629`.
 
 ## `trusted_router.openai_service_tiers`
 
-Frozen alias: `frozen_f83bbaac.openai_service_tiers`. Member: `src/trusted_router/openai_service_tiers.py`.
+Frozen alias: `frozen_main.openai_service_tiers`. Member: `src/trusted_router/openai_service_tiers.py`.
 
 SHA-256: `28928c57283a77ce19fbaed1e3bebb2acfbccea0ff26dcb0ab26275b97195cdf`.
 
@@ -1190,7 +1169,7 @@ SHA-256: `28928c57283a77ce19fbaed1e3bebb2acfbccea0ff26dcb0ab26275b97195cdf`.
 
 ## `trusted_router.operational_analytics`
 
-Frozen alias: `frozen_f83bbaac.operational_analytics`. Member: `src/trusted_router/operational_analytics.py`.
+Frozen alias: `frozen_main.operational_analytics`. Member: `src/trusted_router/operational_analytics.py`.
 
 SHA-256: `99e847e1f6746a0cf9ae6472211c42518983cc170aef97fc4b138ed640d4af42`.
 
@@ -1201,7 +1180,7 @@ SHA-256: `99e847e1f6746a0cf9ae6472211c42518983cc170aef97fc4b138ed640d4af42`.
 
 ## `trusted_router.operational_analytics_freshness`
 
-Frozen alias: `frozen_f83bbaac.operational_analytics_freshness`. Member: `src/trusted_router/operational_analytics_freshness.py`.
+Frozen alias: `frozen_main.operational_analytics_freshness`. Member: `src/trusted_router/operational_analytics_freshness.py`.
 
 SHA-256: `10d1c9d35610aae507b8fe13d4b6b073a7cc0c8b6179e31b29a3afa233790a4a`.
 
@@ -1214,7 +1193,7 @@ SHA-256: `10d1c9d35610aae507b8fe13d4b6b073a7cc0c8b6179e31b29a3afa233790a4a`.
 
 ## `trusted_router.partner_billing`
 
-Frozen alias: `frozen_f83bbaac.partner_billing`. Member: `src/trusted_router/partner_billing.py`.
+Frozen alias: `frozen_main.partner_billing`. Member: `src/trusted_router/partner_billing.py`.
 
 SHA-256: `3933997720aca1c8bab813ecdf4ec8ef8afb27c0f394e6fd738a4045e99a6123`.
 
@@ -1226,7 +1205,7 @@ SHA-256: `3933997720aca1c8bab813ecdf4ec8ef8afb27c0f394e6fd738a4045e99a6123`.
 
 ## `trusted_router.phone_verification`
 
-Frozen alias: `frozen_f83bbaac.phone_verification`. Member: `src/trusted_router/phone_verification.py`.
+Frozen alias: `frozen_main.phone_verification`. Member: `src/trusted_router/phone_verification.py`.
 
 SHA-256: `6306c19436f7e6d384d74271c4579f860b1c26c469712f87286f265102e8bc91`.
 
@@ -1240,7 +1219,7 @@ SHA-256: `6306c19436f7e6d384d74271c4579f860b1c26c469712f87286f265102e8bc91`.
 
 ## `trusted_router.polyphemus`
 
-Frozen alias: `frozen_f83bbaac.polyphemus`. Member: `src/trusted_router/polyphemus.py`.
+Frozen alias: `frozen_main.polyphemus`. Member: `src/trusted_router/polyphemus.py`.
 
 SHA-256: `bb10cfe35e31266365551f6e61a2802b442034107a34b20731bd740a220baf80`.
 
@@ -1250,7 +1229,7 @@ SHA-256: `bb10cfe35e31266365551f6e61a2802b442034107a34b20731bd740a220baf80`.
 
 ## `trusted_router.post_commit`
 
-Frozen alias: `frozen_f83bbaac.post_commit`. Member: `src/trusted_router/post_commit.py`.
+Frozen alias: `frozen_main.post_commit`. Member: `src/trusted_router/post_commit.py`.
 
 SHA-256: `5dacfe38037e3aea07c68ad39a2b7d855b0f20b5a6eb250a3d4cbb6118166f3c`.
 
@@ -1262,7 +1241,7 @@ SHA-256: `5dacfe38037e3aea07c68ad39a2b7d855b0f20b5a6eb250a3d4cbb6118166f3c`.
 
 ## `trusted_router.pricing`
 
-Frozen alias: `frozen_f83bbaac.pricing`. Member: `src/trusted_router/pricing.py`.
+Frozen alias: `frozen_main.pricing`. Member: `src/trusted_router/pricing.py`.
 
 SHA-256: `54c9997ef7841dd009769bfbba98d136ecbd489d4f7ebf67dc5b21383345f9d8`.
 
@@ -1295,7 +1274,7 @@ SHA-256: `54c9997ef7841dd009769bfbba98d136ecbd489d4f7ebf67dc5b21383345f9d8`.
 
 ## `trusted_router.provider_adapters`
 
-Frozen alias: `frozen_f83bbaac.provider_adapters`. Member: `src/trusted_router/provider_adapters.py`.
+Frozen alias: `frozen_main.provider_adapters`. Member: `src/trusted_router/provider_adapters.py`.
 
 SHA-256: `ec43182c53bc13e6d13cea3963e6b86049b01476b59fa6e74d749ab371891b7f`.
 
@@ -1305,7 +1284,7 @@ SHA-256: `ec43182c53bc13e6d13cea3963e6b86049b01476b59fa6e74d749ab371891b7f`.
 
 ## `trusted_router.provider_analytics`
 
-Frozen alias: `frozen_f83bbaac.provider_analytics`. Member: `src/trusted_router/provider_analytics.py`.
+Frozen alias: `frozen_main.provider_analytics`. Member: `src/trusted_router/provider_analytics.py`.
 
 SHA-256: `7bd312afd1c1a9354d6b95311225548a19820a4910d0f3c76003a9b718cbbec5`.
 
@@ -1318,20 +1297,20 @@ SHA-256: `7bd312afd1c1a9354d6b95311225548a19820a4910d0f3c76003a9b718cbbec5`.
 
 ## `trusted_router.provider_branding`
 
-Frozen alias: `frozen_f83bbaac.provider_branding`. Member: `src/trusted_router/provider_branding.py`.
+Frozen alias: `frozen_main.provider_branding`. Member: `src/trusted_router/provider_branding.py`.
 
-SHA-256: `f8a2b271a1134a78e099fe61841e13d3e0824315b7d12c6854d0883de382f533`.
+SHA-256: `f0b624ee7ae31c9490cb9f6323dc8e81cc8142159d64bd53f15bbedbe7adaf5d`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `ProviderBrand` | 13 |
+| `ProviderBrand` | 15 |
 | `ProviderBrand.__init__` | 2 |
 | `__create_fn__` | 1 |
 
 ## `trusted_router.provider_compat`
 
-Frozen alias: `frozen_f83bbaac.provider_compat`. Member: `src/trusted_router/provider_compat.py`.
+Frozen alias: `frozen_main.provider_compat`. Member: `src/trusted_router/provider_compat.py`.
 
 SHA-256: `62a54a82224d05e9da68807eebd6beb04057b2be1752b16b7ad6a507246e05dc`.
 
@@ -1341,18 +1320,17 @@ SHA-256: `62a54a82224d05e9da68807eebd6beb04057b2be1752b16b7ad6a507246e05dc`.
 
 ## `trusted_router.provider_contract`
 
-Frozen alias: `frozen_f83bbaac.provider_contract`. Member: `src/trusted_router/provider_contract.py`.
+Frozen alias: `frozen_main.provider_contract`. Member: `src/trusted_router/provider_contract.py`.
 
 SHA-256: `f4c7210b2c28c0d8376577e07bfa0be0aa4144830aac367deb6711e48eb4f3a7`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 242 |
 | `<module>` | 1 |
 
 ## `trusted_router.provider_contracts`
 
-Frozen alias: `frozen_f83bbaac.provider_contracts`. Member: `src/trusted_router/provider_contracts.py`.
+Frozen alias: `frozen_main.provider_contracts`. Member: `src/trusted_router/provider_contracts.py`.
 
 SHA-256: `332c1d4f4aef1da728faaccc66fa1ac0d6198640491d403067d680624d0352ae`.
 
@@ -1365,42 +1343,41 @@ SHA-256: `332c1d4f4aef1da728faaccc66fa1ac0d6198640491d403067d680624d0352ae`.
 
 ## `trusted_router.provider_lifecycle`
 
-Frozen alias: `frozen_f83bbaac.provider_lifecycle`. Member: `src/trusted_router/provider_lifecycle.py`.
+Frozen alias: `frozen_main.provider_lifecycle`. Member: `src/trusted_router/provider_lifecycle.py`.
 
-SHA-256: `d23a6c4c97fc53de27e32dbe6287c6cd66b1fd67eaaf008c805610683096473d`.
+SHA-256: `e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `ProviderPrice` | 95 |
+| `ProviderPrice` | 97 |
 | `ProviderPrice.__init__` | 2 |
-| `_Retirement` | 149 |
+| `_Retirement` | 151 |
 | `_Retirement.__init__` | 2 |
 | `__create_fn__` | 1 |
-| `_clock_override_permitted` | 980 |
-| `_deepseek_prices` | 1096 |
-| `_deepseek_v41_effective_at` | 1088 |
-| `_deepseek_v4_family` | 1055 |
-| `_deepseek_v4_period` | 1065 |
-| `_deepseek_v4_period.<locals>.<genexpr>` | 1080 |
-| `_effective_time` | 1025 |
-| `_tencent_period` | 111 |
-| `_utc_now` | 988 |
-| `provider_catalog_revision` | 1012 |
-| `provider_catalog_revision.<locals>.<genexpr>` | 1020 |
-| `provider_catalog_revision.<locals>.<genexpr>` | 1022 |
-| `provider_model_retired` | 1037 |
-| `provider_price_microdollars` | 1194 |
+| `_clock_override_permitted` | 1007 |
+| `_deepseek_prices` | 1123 |
+| `_deepseek_v41_effective_at` | 1115 |
+| `_deepseek_v4_family` | 1082 |
+| `_deepseek_v4_period` | 1092 |
+| `_deepseek_v4_period.<locals>.<genexpr>` | 1107 |
+| `_effective_time` | 1052 |
+| `_tencent_period` | 113 |
+| `_utc_now` | 1015 |
+| `provider_catalog_revision` | 1039 |
+| `provider_catalog_revision.<locals>.<genexpr>` | 1047 |
+| `provider_catalog_revision.<locals>.<genexpr>` | 1049 |
+| `provider_model_retired` | 1064 |
+| `provider_price_microdollars` | 1221 |
 
 ## `trusted_router.provider_locations`
 
-Frozen alias: `frozen_f83bbaac.provider_locations`. Member: `src/trusted_router/provider_locations.py`.
+Frozen alias: `frozen_main.provider_locations`. Member: `src/trusted_router/provider_locations.py`.
 
 SHA-256: `ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<dictcomp>` | 35 |
 | `<module>` | 1 |
 | `Headquarters` | 233 |
 | `Headquarters.__init__` | 2 |
@@ -1419,22 +1396,22 @@ SHA-256: `ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8`.
 
 ## `trusted_router.provider_manifest_policy`
 
-Frozen alias: `frozen_f83bbaac.provider_manifest_policy`. Member: `src/trusted_router/provider_manifest_policy.py`.
+Frozen alias: `frozen_main.provider_manifest_policy`. Member: `src/trusted_router/provider_manifest_policy.py`.
 
-SHA-256: `8a4af884502f52e2b6deb9ad769d382f6aa3d66bcea198fb409d69f2df782759`.
+SHA-256: `fcbe3a56b78e94f1ef4c01259aec03a373f188c1597493578d4c73025c418afa`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `_provider_manifest_generated_deadline` | 114 |
-| `_provider_manifest_row_price_is_valid` | 80 |
-| `_provider_manifest_row_price_is_valid.<locals>.<genexpr>` | 92 |
-| `decision_manifest_price_is_valid` | 61 |
-| `provider_manifest_valid_until` | 137 |
+| `_provider_manifest_generated_deadline` | 117 |
+| `_provider_manifest_row_price_is_valid` | 83 |
+| `_provider_manifest_row_price_is_valid.<locals>.<genexpr>` | 95 |
+| `decision_manifest_price_is_valid` | 64 |
+| `provider_manifest_valid_until` | 140 |
 
 ## `trusted_router.provider_payloads`
 
-Frozen alias: `frozen_f83bbaac.provider_payloads`. Member: `src/trusted_router/provider_payloads.py`.
+Frozen alias: `frozen_main.provider_payloads`. Member: `src/trusted_router/provider_payloads.py`.
 
 SHA-256: `c5a9b51292dfed2f1a2df2cbe65c5b8971b21c178cdbeb12493d804b8fc1c3a3`.
 
@@ -1444,7 +1421,7 @@ SHA-256: `c5a9b51292dfed2f1a2df2cbe65c5b8971b21c178cdbeb12493d804b8fc1c3a3`.
 
 ## `trusted_router.provider_precision`
 
-Frozen alias: `frozen_f83bbaac.provider_precision`. Member: `src/trusted_router/provider_precision.py`.
+Frozen alias: `frozen_main.provider_precision`. Member: `src/trusted_router/provider_precision.py`.
 
 SHA-256: `40da9ae7acf668cbd8b23a13bff085c2ea0546847d69efbb2a87c1937218d569`.
 
@@ -1469,7 +1446,7 @@ SHA-256: `40da9ae7acf668cbd8b23a13bff085c2ea0546847d69efbb2a87c1937218d569`.
 
 ## `trusted_router.provider_reliability`
 
-Frozen alias: `frozen_f83bbaac.provider_reliability`. Member: `src/trusted_router/provider_reliability.py`.
+Frozen alias: `frozen_main.provider_reliability`. Member: `src/trusted_router/provider_reliability.py`.
 
 SHA-256: `79258686897362b3698e55cc081c9b07baa15103314a797afc132e6a796bc7ef`.
 
@@ -1484,7 +1461,7 @@ SHA-256: `79258686897362b3698e55cc081c9b07baa15103314a797afc132e6a796bc7ef`.
 
 ## `trusted_router.provider_streaming`
 
-Frozen alias: `frozen_f83bbaac.provider_streaming`. Member: `src/trusted_router/provider_streaming.py`.
+Frozen alias: `frozen_main.provider_streaming`. Member: `src/trusted_router/provider_streaming.py`.
 
 SHA-256: `47c1fbd056a2269ab126280f4e81f9fb20555769977f3717de8d2a9e572ecc5c`.
 
@@ -1494,7 +1471,7 @@ SHA-256: `47c1fbd056a2269ab126280f4e81f9fb20555769977f3717de8d2a9e572ecc5c`.
 
 ## `trusted_router.provider_types`
 
-Frozen alias: `frozen_f83bbaac.provider_types`. Member: `src/trusted_router/provider_types.py`.
+Frozen alias: `frozen_main.provider_types`. Member: `src/trusted_router/provider_types.py`.
 
 SHA-256: `33e044dcfd39e49b8edbe33c257b1cb940434c00a27694be2689e8194ffa4bcd`.
 
@@ -1508,9 +1485,9 @@ SHA-256: `33e044dcfd39e49b8edbe33c257b1cb940434c00a27694be2689e8194ffa4bcd`.
 
 ## `trusted_router.providers`
 
-Frozen alias: `frozen_f83bbaac.providers`. Member: `src/trusted_router/providers.py`.
+Frozen alias: `frozen_main.providers`. Member: `src/trusted_router/providers.py`.
 
-SHA-256: `74b4d29db6dd59589a1f4b54cd6923b4fd0d2139a8b28b50aea167ab8a1044ac`.
+SHA-256: `578094ad62c35ffdaa4e750ddb9e3fb7e03a617914ae494969e2f4aa2943aea9`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -1519,7 +1496,7 @@ SHA-256: `74b4d29db6dd59589a1f4b54cd6923b4fd0d2139a8b28b50aea167ab8a1044ac`.
 
 ## `trusted_router.public_analytics_snapshots`
 
-Frozen alias: `frozen_f83bbaac.public_analytics_snapshots`. Member: `src/trusted_router/public_analytics_snapshots.py`.
+Frozen alias: `frozen_main.public_analytics_snapshots`. Member: `src/trusted_router/public_analytics_snapshots.py`.
 
 SHA-256: `c1d2a149855896e1fffb044bcbae1fd8ef6735e770334035558365ffe0dc9f08`.
 
@@ -1529,7 +1506,7 @@ SHA-256: `c1d2a149855896e1fffb044bcbae1fd8ef6735e770334035558365ffe0dc9f08`.
 
 ## `trusted_router.public_catalog_aliases`
 
-Frozen alias: `frozen_f83bbaac.public_catalog_aliases`. Member: `src/trusted_router/public_catalog_aliases.py`.
+Frozen alias: `frozen_main.public_catalog_aliases`. Member: `src/trusted_router/public_catalog_aliases.py`.
 
 SHA-256: `619346ca98764b2c4accda6ca7c18d0c78d8d9a87dcaca751bd6e1ad6ca93ffc`.
 
@@ -1539,7 +1516,7 @@ SHA-256: `619346ca98764b2c4accda6ca7c18d0c78d8d9a87dcaca751bd6e1ad6ca93ffc`.
 
 ## `trusted_router.public_openapi`
 
-Frozen alias: `frozen_f83bbaac.public_openapi`. Member: `src/trusted_router/public_openapi.py`.
+Frozen alias: `frozen_main.public_openapi`. Member: `src/trusted_router/public_openapi.py`.
 
 SHA-256: `bb51b105464e2cd341a09f1b6692e94c98262a511c9d650edbf12fba9991fcb4`.
 
@@ -1550,12 +1527,11 @@ SHA-256: `bb51b105464e2cd341a09f1b6692e94c98262a511c9d650edbf12fba9991fcb4`.
 | `__create_fn__` | 1 |
 | `document_router_server` | 31 |
 | `inference_servers` | 27 |
-| `inference_servers.<locals>.<listcomp>` | 28 |
 | `install_operation_servers` | 38 |
 
 ## `trusted_router.receipt_keys`
 
-Frozen alias: `frozen_f83bbaac.receipt_keys`. Member: `src/trusted_router/receipt_keys.py`.
+Frozen alias: `frozen_main.receipt_keys`. Member: `src/trusted_router/receipt_keys.py`.
 
 SHA-256: `89d05662a37886284955f5723895282c58d7d911ccf05f3430cea105ca49f239`.
 
@@ -1565,7 +1541,7 @@ SHA-256: `89d05662a37886284955f5723895282c58d7d911ccf05f3430cea105ca49f239`.
 
 ## `trusted_router.regions`
 
-Frozen alias: `frozen_f83bbaac.regions`. Member: `src/trusted_router/regions.py`.
+Frozen alias: `frozen_main.regions`. Member: `src/trusted_router/regions.py`.
 
 SHA-256: `38d491f63e99b96e33e99a9e38195ce29c45137c513bb5dafd0195e2d279ab42`.
 
@@ -1578,7 +1554,7 @@ SHA-256: `38d491f63e99b96e33e99a9e38195ce29c45137c513bb5dafd0195e2d279ab42`.
 
 ## `trusted_router.request_attribution`
 
-Frozen alias: `frozen_f83bbaac.request_attribution`. Member: `src/trusted_router/request_attribution.py`.
+Frozen alias: `frozen_main.request_attribution`. Member: `src/trusted_router/request_attribution.py`.
 
 SHA-256: `d881ed6fd83b7766fb314aab9ed72bbdef61853fd41c3d5ea23e419af3003acd`.
 
@@ -1598,7 +1574,7 @@ SHA-256: `d881ed6fd83b7766fb314aab9ed72bbdef61853fd41c3d5ea23e419af3003acd`.
 
 ## `trusted_router.request_body_limit`
 
-Frozen alias: `frozen_f83bbaac.request_body_limit`. Member: `src/trusted_router/request_body_limit.py`.
+Frozen alias: `frozen_main.request_body_limit`. Member: `src/trusted_router/request_body_limit.py`.
 
 SHA-256: `f75518fc19ccbe958d9c025a98cf483131446dd22c890703926734dbdb7f13c5`.
 
@@ -1627,13 +1603,11 @@ SHA-256: `f75518fc19ccbe958d9c025a98cf483131446dd22c890703926734dbdb7f13c5`.
 | `_InFlightBodyBudget.reserve` | 55 |
 | `__create_fn__` | 1 |
 | `_body_framing` | 317 |
-| `_body_framing.<locals>.<listcomp>` | 319 |
-| `_body_framing.<locals>.<listcomp>` | 320 |
 | `_scope_has_possible_body` | 381 |
 
 ## `trusted_router.request_capabilities`
 
-Frozen alias: `frozen_f83bbaac.request_capabilities`. Member: `src/trusted_router/request_capabilities.py`.
+Frozen alias: `frozen_main.request_capabilities`. Member: `src/trusted_router/request_capabilities.py`.
 
 SHA-256: `55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b`.
 
@@ -1642,16 +1616,11 @@ SHA-256: `55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b`.
 | `<module>` | 1 |
 | `RequestCapabilities` | 25 |
 | `_reviewed_contracts` | 33 |
-| `_reviewed_contracts.<locals>.<dictcomp>` | 36 |
 | `endpoint_capabilities` | 100 |
-| `endpoint_capabilities.<locals>.<listcomp>` | 105 |
 | `model_capabilities` | 116 |
 | `model_capabilities.<locals>.<genexpr>` | 125 |
 | `model_capabilities.<locals>.<genexpr>` | 136 |
-| `model_capabilities.<locals>.<listcomp>` | 130 |
-| `model_capabilities.<locals>.<setcomp>` | 122 |
 | `normalize_request_capabilities` | 44 |
-| `normalize_request_capabilities.<locals>.<dictcomp>` | 58 |
 | `normalize_request_capabilities.<locals>.<genexpr>` | 68 |
 | `normalize_request_capabilities.<locals>.<genexpr>` | 69 |
 | `normalize_request_capabilities.<locals>.<genexpr>` | 76 |
@@ -1661,7 +1630,7 @@ SHA-256: `55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b`.
 
 ## `trusted_router.request_limits`
 
-Frozen alias: `frozen_f83bbaac.request_limits`. Member: `src/trusted_router/request_limits.py`.
+Frozen alias: `frozen_main.request_limits`. Member: `src/trusted_router/request_limits.py`.
 
 SHA-256: `f15fa48daedeee4e7a3ddc9d3508674258e594e30b9aae65339e221d1d39b82d`.
 
@@ -1673,7 +1642,7 @@ SHA-256: `f15fa48daedeee4e7a3ddc9d3508674258e594e30b9aae65339e221d1d39b82d`.
 
 ## `trusted_router.request_tags`
 
-Frozen alias: `frozen_f83bbaac.request_tags`. Member: `src/trusted_router/request_tags.py`.
+Frozen alias: `frozen_main.request_tags`. Member: `src/trusted_router/request_tags.py`.
 
 SHA-256: `27756fea57f93fa98b9c9615c784342fd2a3a24ab02583e57a741523803dd8ed`.
 
@@ -1684,7 +1653,7 @@ SHA-256: `27756fea57f93fa98b9c9615c784342fd2a3a24ab02583e57a741523803dd8ed`.
 
 ## `trusted_router.routable_payouts`
 
-Frozen alias: `frozen_f83bbaac.routable_payouts`. Member: `src/trusted_router/routable_payouts.py`.
+Frozen alias: `frozen_main.routable_payouts`. Member: `src/trusted_router/routable_payouts.py`.
 
 SHA-256: `03497a25a9f010a33dceb7d2a9612245ff09ffe350b32fa1e09645babc3b711c`.
 
@@ -1694,7 +1663,7 @@ SHA-256: `03497a25a9f010a33dceb7d2a9612245ff09ffe350b32fa1e09645babc3b711c`.
 
 ## `trusted_router.routes`
 
-Frozen alias: `frozen_f83bbaac.routes`. Member: `src/trusted_router/routes/__init__.py`.
+Frozen alias: `frozen_main.routes`. Member: `src/trusted_router/routes/__init__.py`.
 
 SHA-256: `5c3c572faf2a17c70cdd7d15c793a6ce625ebd00867f8e1d7b5d94855e1c2f7b`.
 
@@ -1704,7 +1673,7 @@ SHA-256: `5c3c572faf2a17c70cdd7d15c793a6ce625ebd00867f8e1d7b5d94855e1c2f7b`.
 
 ## `trusted_router.routes.acquisition`
 
-Frozen alias: `frozen_f83bbaac.routes.acquisition`. Member: `src/trusted_router/routes/acquisition.py`.
+Frozen alias: `frozen_main.routes.acquisition`. Member: `src/trusted_router/routes/acquisition.py`.
 
 SHA-256: `0ae5cb1050478cbc380a73bf0d058a06860b829e25184e46ea4df12d81bd329b`.
 
@@ -1716,7 +1685,7 @@ SHA-256: `0ae5cb1050478cbc380a73bf0d058a06860b829e25184e46ea4df12d81bd329b`.
 
 ## `trusted_router.routes.activity`
 
-Frozen alias: `frozen_f83bbaac.routes.activity`. Member: `src/trusted_router/routes/activity.py`.
+Frozen alias: `frozen_main.routes.activity`. Member: `src/trusted_router/routes/activity.py`.
 
 SHA-256: `eda71d7dbd852c18583137f1a307fc701c29081f685d292f1caba81ebbfb4649`.
 
@@ -1727,7 +1696,7 @@ SHA-256: `eda71d7dbd852c18583137f1a307fc701c29081f685d292f1caba81ebbfb4649`.
 
 ## `trusted_router.routes.auth`
 
-Frozen alias: `frozen_f83bbaac.routes.auth`. Member: `src/trusted_router/routes/auth.py`.
+Frozen alias: `frozen_main.routes.auth`. Member: `src/trusted_router/routes/auth.py`.
 
 SHA-256: `19deb16812155cefa89e3617f438b678815f22dd88d145d3c1e3b9f6cef7ef6c`.
 
@@ -1738,7 +1707,7 @@ SHA-256: `19deb16812155cefa89e3617f438b678815f22dd88d145d3c1e3b9f6cef7ef6c`.
 
 ## `trusted_router.routes.bedrock_group_buy`
 
-Frozen alias: `frozen_f83bbaac.routes.bedrock_group_buy`. Member: `src/trusted_router/routes/bedrock_group_buy.py`.
+Frozen alias: `frozen_main.routes.bedrock_group_buy`. Member: `src/trusted_router/routes/bedrock_group_buy.py`.
 
 SHA-256: `4720495aea054d5d42b04a1de05e426b893dbb1c8e00d3b59b0cd056b0047793`.
 
@@ -1751,7 +1720,7 @@ SHA-256: `4720495aea054d5d42b04a1de05e426b893dbb1c8e00d3b59b0cd056b0047793`.
 
 ## `trusted_router.routes.billing`
 
-Frozen alias: `frozen_f83bbaac.routes.billing`. Member: `src/trusted_router/routes/billing.py`.
+Frozen alias: `frozen_main.routes.billing`. Member: `src/trusted_router/routes/billing.py`.
 
 SHA-256: `738760deb2a51f59ce1d290215879b6edd73cb6341ab998650cc0904530998f6`.
 
@@ -1762,7 +1731,7 @@ SHA-256: `738760deb2a51f59ce1d290215879b6edd73cb6341ab998650cc0904530998f6`.
 
 ## `trusted_router.routes.broadcast`
 
-Frozen alias: `frozen_f83bbaac.routes.broadcast`. Member: `src/trusted_router/routes/broadcast.py`.
+Frozen alias: `frozen_main.routes.broadcast`. Member: `src/trusted_router/routes/broadcast.py`.
 
 SHA-256: `4110fe558a74fe2ec384a77ffd4dfd355890d361825ce7c4005706d401bbcae8`.
 
@@ -1773,7 +1742,7 @@ SHA-256: `4110fe558a74fe2ec384a77ffd4dfd355890d361825ce7c4005706d401bbcae8`.
 
 ## `trusted_router.routes.byok`
 
-Frozen alias: `frozen_f83bbaac.routes.byok`. Member: `src/trusted_router/routes/byok.py`.
+Frozen alias: `frozen_main.routes.byok`. Member: `src/trusted_router/routes/byok.py`.
 
 SHA-256: `e438d60b9cc91e83c2a1a856b9f213692bd8752dd85d7be82942ff6b096dbf99`.
 
@@ -1784,7 +1753,7 @@ SHA-256: `e438d60b9cc91e83c2a1a856b9f213692bd8752dd85d7be82942ff6b096dbf99`.
 
 ## `trusted_router.routes.catalog`
 
-Frozen alias: `frozen_f83bbaac.routes.catalog`. Member: `src/trusted_router/routes/catalog.py`.
+Frozen alias: `frozen_main.routes.catalog`. Member: `src/trusted_router/routes/catalog.py`.
 
 SHA-256: `5ac09eb15ec9944e068392cacecb047ad5c6e04fa67dfeaa441a1df389192bab`.
 
@@ -1799,13 +1768,12 @@ SHA-256: `5ac09eb15ec9944e068392cacecb047ad5c6e04fa67dfeaa441a1df389192bab`.
 | `_json_bytes` | 81 |
 | `_picker_model_shape` | 99 |
 | `_public_catalog_payload` | 128 |
-| `_public_catalog_payload.<locals>.<listcomp>` | 142 |
 | `register_authenticated_catalog_routes` | 663 |
 | `register_catalog_routes` | 422 |
 
 ## `trusted_router.routes.chat_proxy`
 
-Frozen alias: `frozen_f83bbaac.routes.chat_proxy`. Member: `src/trusted_router/routes/chat_proxy.py`.
+Frozen alias: `frozen_main.routes.chat_proxy`. Member: `src/trusted_router/routes/chat_proxy.py`.
 
 SHA-256: `1ed4cb1ff5cbcbbed3339923b85774208e7dd2fc998abc00cd324213b9ea5ee0`.
 
@@ -1816,7 +1784,7 @@ SHA-256: `1ed4cb1ff5cbcbbed3339923b85774208e7dd2fc998abc00cd324213b9ea5ee0`.
 
 ## `trusted_router.routes.client_events`
 
-Frozen alias: `frozen_f83bbaac.routes.client_events`. Member: `src/trusted_router/routes/client_events.py`.
+Frozen alias: `frozen_main.routes.client_events`. Member: `src/trusted_router/routes/client_events.py`.
 
 SHA-256: `87a0af0143b434d8e8835054206e1cacb03a22a80eb7e4ed01769dce49c3b073`.
 
@@ -1827,7 +1795,7 @@ SHA-256: `87a0af0143b434d8e8835054206e1cacb03a22a80eb7e4ed01769dce49c3b073`.
 
 ## `trusted_router.routes.compat`
 
-Frozen alias: `frozen_f83bbaac.routes.compat`. Member: `src/trusted_router/routes/compat.py`.
+Frozen alias: `frozen_main.routes.compat`. Member: `src/trusted_router/routes/compat.py`.
 
 SHA-256: `b64b3a3e53fa31a7e15dccaaa3120ea86e3b2d618d022ac8511bc4ed4a617aeb`.
 
@@ -1842,7 +1810,7 @@ SHA-256: `b64b3a3e53fa31a7e15dccaaa3120ea86e3b2d618d022ac8511bc4ed4a617aeb`.
 
 ## `trusted_router.routes.console`
 
-Frozen alias: `frozen_f83bbaac.routes.console`. Member: `src/trusted_router/routes/console/__init__.py`.
+Frozen alias: `frozen_main.routes.console`. Member: `src/trusted_router/routes/console/__init__.py`.
 
 SHA-256: `35dbe265ad00c2c98729859d8d9887efa2a40f13af21163cd0706af35172422a`.
 
@@ -1853,7 +1821,7 @@ SHA-256: `35dbe265ad00c2c98729859d8d9887efa2a40f13af21163cd0706af35172422a`.
 
 ## `trusted_router.routes.console._shared`
 
-Frozen alias: `frozen_f83bbaac.routes.console._shared`. Member: `src/trusted_router/routes/console/_shared.py`.
+Frozen alias: `frozen_main.routes.console._shared`. Member: `src/trusted_router/routes/console/_shared.py`.
 
 SHA-256: `2232a5fd3844f57f12b53104be531168f3706039264a04e0b295baacdf5565df`.
 
@@ -1865,7 +1833,7 @@ SHA-256: `2232a5fd3844f57f12b53104be531168f3706039264a04e0b295baacdf5565df`.
 
 ## `trusted_router.routes.console.activity`
 
-Frozen alias: `frozen_f83bbaac.routes.console.activity`. Member: `src/trusted_router/routes/console/activity.py`.
+Frozen alias: `frozen_main.routes.console.activity`. Member: `src/trusted_router/routes/console/activity.py`.
 
 SHA-256: `a664b3dbb248f25083fc7c570d7317dc286250777bc6289328a407f6df0c0725`.
 
@@ -1878,7 +1846,7 @@ SHA-256: `a664b3dbb248f25083fc7c570d7317dc286250777bc6289328a407f6df0c0725`.
 
 ## `trusted_router.routes.console.api_keys`
 
-Frozen alias: `frozen_f83bbaac.routes.console.api_keys`. Member: `src/trusted_router/routes/console/api_keys.py`.
+Frozen alias: `frozen_main.routes.console.api_keys`. Member: `src/trusted_router/routes/console/api_keys.py`.
 
 SHA-256: `fb215f51e4bfa6fd30a62919124e89608cfa7d1376c0929a74c6ab92bc154f87`.
 
@@ -1889,7 +1857,7 @@ SHA-256: `fb215f51e4bfa6fd30a62919124e89608cfa7d1376c0929a74c6ab92bc154f87`.
 
 ## `trusted_router.routes.console.authorized_apps`
 
-Frozen alias: `frozen_f83bbaac.routes.console.authorized_apps`. Member: `src/trusted_router/routes/console/authorized_apps.py`.
+Frozen alias: `frozen_main.routes.console.authorized_apps`. Member: `src/trusted_router/routes/console/authorized_apps.py`.
 
 SHA-256: `86c15121a33e7f0802e4e2576345e3bce9ed94b3c4fcc78fb1a7512660277a59`.
 
@@ -1900,7 +1868,7 @@ SHA-256: `86c15121a33e7f0802e4e2576345e3bce9ed94b3c4fcc78fb1a7512660277a59`.
 
 ## `trusted_router.routes.console.broadcast`
 
-Frozen alias: `frozen_f83bbaac.routes.console.broadcast`. Member: `src/trusted_router/routes/console/broadcast.py`.
+Frozen alias: `frozen_main.routes.console.broadcast`. Member: `src/trusted_router/routes/console/broadcast.py`.
 
 SHA-256: `2ebdd6d9c9e9023f328b5202fcaed3d6c2783dc790e5d4161d3c672e51ffd9b2`.
 
@@ -1911,7 +1879,7 @@ SHA-256: `2ebdd6d9c9e9023f328b5202fcaed3d6c2783dc790e5d4161d3c672e51ffd9b2`.
 
 ## `trusted_router.routes.console.byok`
 
-Frozen alias: `frozen_f83bbaac.routes.console.byok`. Member: `src/trusted_router/routes/console/byok.py`.
+Frozen alias: `frozen_main.routes.console.byok`. Member: `src/trusted_router/routes/console/byok.py`.
 
 SHA-256: `41ba512c5b4ec62ba5369dcc9b82d3ed56b903cf7f1b3fec1c9f987b538b071b`.
 
@@ -1922,7 +1890,7 @@ SHA-256: `41ba512c5b4ec62ba5369dcc9b82d3ed56b903cf7f1b3fec1c9f987b538b071b`.
 
 ## `trusted_router.routes.console.credit_transfers`
 
-Frozen alias: `frozen_f83bbaac.routes.console.credit_transfers`. Member: `src/trusted_router/routes/console/credit_transfers.py`.
+Frozen alias: `frozen_main.routes.console.credit_transfers`. Member: `src/trusted_router/routes/console/credit_transfers.py`.
 
 SHA-256: `eb86f8d20bd1047a9aff08463d9e4cc166cfb2638b527454c646bda935de95b1`.
 
@@ -1933,7 +1901,7 @@ SHA-256: `eb86f8d20bd1047a9aff08463d9e4cc166cfb2638b527454c646bda935de95b1`.
 
 ## `trusted_router.routes.console.credits`
 
-Frozen alias: `frozen_f83bbaac.routes.console.credits`. Member: `src/trusted_router/routes/console/credits.py`.
+Frozen alias: `frozen_main.routes.console.credits`. Member: `src/trusted_router/routes/console/credits.py`.
 
 SHA-256: `d99ad03bcda5c50588d1eaa16438722c7b1f585d47927e20cb74f92be6b2cc26`.
 
@@ -1944,7 +1912,7 @@ SHA-256: `d99ad03bcda5c50588d1eaa16438722c7b1f585d47927e20cb74f92be6b2cc26`.
 
 ## `trusted_router.routes.console.custom_models`
 
-Frozen alias: `frozen_f83bbaac.routes.console.custom_models`. Member: `src/trusted_router/routes/console/custom_models.py`.
+Frozen alias: `frozen_main.routes.console.custom_models`. Member: `src/trusted_router/routes/console/custom_models.py`.
 
 SHA-256: `12a9dae37792c0a2049df569755ac087116122ecd0ba3e0dc152e9385a4485ba`.
 
@@ -1955,7 +1923,7 @@ SHA-256: `12a9dae37792c0a2049df569755ac087116122ecd0ba3e0dc152e9385a4485ba`.
 
 ## `trusted_router.routes.console.earnings`
 
-Frozen alias: `frozen_f83bbaac.routes.console.earnings`. Member: `src/trusted_router/routes/console/earnings.py`.
+Frozen alias: `frozen_main.routes.console.earnings`. Member: `src/trusted_router/routes/console/earnings.py`.
 
 SHA-256: `4ccb75198a12a845c4e2dc4a3449265cf3a67c3834587eaea3c4224cdbd80e3f`.
 
@@ -1966,7 +1934,7 @@ SHA-256: `4ccb75198a12a845c4e2dc4a3449265cf3a67c3834587eaea3c4224cdbd80e3f`.
 
 ## `trusted_router.routes.console.preferences`
 
-Frozen alias: `frozen_f83bbaac.routes.console.preferences`. Member: `src/trusted_router/routes/console/preferences.py`.
+Frozen alias: `frozen_main.routes.console.preferences`. Member: `src/trusted_router/routes/console/preferences.py`.
 
 SHA-256: `d3a5305dd61e2527490ca544d9308828c9c908cf5d199e109b2c45d0e2bb0ccd`.
 
@@ -1977,7 +1945,7 @@ SHA-256: `d3a5305dd61e2527490ca544d9308828c9c908cf5d199e109b2c45d0e2bb0ccd`.
 
 ## `trusted_router.routes.console.root`
 
-Frozen alias: `frozen_f83bbaac.routes.console.root`. Member: `src/trusted_router/routes/console/root.py`.
+Frozen alias: `frozen_main.routes.console.root`. Member: `src/trusted_router/routes/console/root.py`.
 
 SHA-256: `2f6bd0557b43684bb734d1fcd7d617904d0c4188bd0f9b718560f8781a0bd694`.
 
@@ -1988,7 +1956,7 @@ SHA-256: `2f6bd0557b43684bb734d1fcd7d617904d0c4188bd0f9b718560f8781a0bd694`.
 
 ## `trusted_router.routes.console.routing_page`
 
-Frozen alias: `frozen_f83bbaac.routes.console.routing_page`. Member: `src/trusted_router/routes/console/routing_page.py`.
+Frozen alias: `frozen_main.routes.console.routing_page`. Member: `src/trusted_router/routes/console/routing_page.py`.
 
 SHA-256: `7d14280700a0a0576eef84979ff6c4a08f8c9959edc8f9f071ec0ec6ee1e8370`.
 
@@ -1999,7 +1967,7 @@ SHA-256: `7d14280700a0a0576eef84979ff6c4a08f8c9959edc8f9f071ec0ec6ee1e8370`.
 
 ## `trusted_router.routes.console.settings`
 
-Frozen alias: `frozen_f83bbaac.routes.console.settings`. Member: `src/trusted_router/routes/console/settings.py`.
+Frozen alias: `frozen_main.routes.console.settings`. Member: `src/trusted_router/routes/console/settings.py`.
 
 SHA-256: `4e5fce52a3e85445a2a029703b046f3b70f0bb5c1e510795ebf10103104fb0e8`.
 
@@ -2010,7 +1978,7 @@ SHA-256: `4e5fce52a3e85445a2a029703b046f3b70f0bb5c1e510795ebf10103104fb0e8`.
 
 ## `trusted_router.routes.console.user_models`
 
-Frozen alias: `frozen_f83bbaac.routes.console.user_models`. Member: `src/trusted_router/routes/console/user_models.py`.
+Frozen alias: `frozen_main.routes.console.user_models`. Member: `src/trusted_router/routes/console/user_models.py`.
 
 SHA-256: `89760fb0f194dfcf487fdd6c0cde350c488fbca4920e32edc007f1f89873aadd`.
 
@@ -2021,7 +1989,7 @@ SHA-256: `89760fb0f194dfcf487fdd6c0cde350c488fbca4920e32edc007f1f89873aadd`.
 
 ## `trusted_router.routes.console.verification`
 
-Frozen alias: `frozen_f83bbaac.routes.console.verification`. Member: `src/trusted_router/routes/console/verification.py`.
+Frozen alias: `frozen_main.routes.console.verification`. Member: `src/trusted_router/routes/console/verification.py`.
 
 SHA-256: `b6512174db83255314204c8a08d0ac6cff5e830ecbe6e37df41f326ab3aee74b`.
 
@@ -2032,7 +2000,7 @@ SHA-256: `b6512174db83255314204c8a08d0ac6cff5e830ecbe6e37df41f326ab3aee74b`.
 
 ## `trusted_router.routes.console.welcome`
 
-Frozen alias: `frozen_f83bbaac.routes.console.welcome`. Member: `src/trusted_router/routes/console/welcome.py`.
+Frozen alias: `frozen_main.routes.console.welcome`. Member: `src/trusted_router/routes/console/welcome.py`.
 
 SHA-256: `d8e62ada6d7c48b28494cf31d7dec36dae994722ab9828a202dfcf559e7639b6`.
 
@@ -2043,7 +2011,7 @@ SHA-256: `d8e62ada6d7c48b28494cf31d7dec36dae994722ab9828a202dfcf559e7639b6`.
 
 ## `trusted_router.routes.credit_transfers`
 
-Frozen alias: `frozen_f83bbaac.routes.credit_transfers`. Member: `src/trusted_router/routes/credit_transfers.py`.
+Frozen alias: `frozen_main.routes.credit_transfers`. Member: `src/trusted_router/routes/credit_transfers.py`.
 
 SHA-256: `79d46ebf306060aceb2a60ed88541f584d679fc627e295d80959192781910934`.
 
@@ -2054,7 +2022,7 @@ SHA-256: `79d46ebf306060aceb2a60ed88541f584d679fc627e295d80959192781910934`.
 
 ## `trusted_router.routes.custom_models`
 
-Frozen alias: `frozen_f83bbaac.routes.custom_models`. Member: `src/trusted_router/routes/custom_models.py`.
+Frozen alias: `frozen_main.routes.custom_models`. Member: `src/trusted_router/routes/custom_models.py`.
 
 SHA-256: `c31ddb26a2d51e9c71301159b701e7615f21aa43ca69c92ca917a073df866d15`.
 
@@ -2065,7 +2033,7 @@ SHA-256: `c31ddb26a2d51e9c71301159b701e7615f21aa43ca69c92ca917a073df866d15`.
 
 ## `trusted_router.routes.email_verify`
 
-Frozen alias: `frozen_f83bbaac.routes.email_verify`. Member: `src/trusted_router/routes/email_verify.py`.
+Frozen alias: `frozen_main.routes.email_verify`. Member: `src/trusted_router/routes/email_verify.py`.
 
 SHA-256: `87268dedca5dee8256affe67d8b8a4b6e28bd3a1284c605a5769c8a33b138b18`.
 
@@ -2076,7 +2044,7 @@ SHA-256: `87268dedca5dee8256affe67d8b8a4b6e28bd3a1284c605a5769c8a33b138b18`.
 
 ## `trusted_router.routes.helpers`
 
-Frozen alias: `frozen_f83bbaac.routes.helpers`. Member: `src/trusted_router/routes/helpers.py`.
+Frozen alias: `frozen_main.routes.helpers`. Member: `src/trusted_router/routes/helpers.py`.
 
 SHA-256: `809759e3857fd6a4bb92257f1e30d513cc8f79376fb570d0180f9c380c6e239e`.
 
@@ -2086,7 +2054,7 @@ SHA-256: `809759e3857fd6a4bb92257f1e30d513cc8f79376fb570d0180f9c380c6e239e`.
 
 ## `trusted_router.routes.identity_verify`
 
-Frozen alias: `frozen_f83bbaac.routes.identity_verify`. Member: `src/trusted_router/routes/identity_verify.py`.
+Frozen alias: `frozen_main.routes.identity_verify`. Member: `src/trusted_router/routes/identity_verify.py`.
 
 SHA-256: `9ab92cea60d44f57cefc249744a1db2334db07d8053e533b56e54f3e51e22257`.
 
@@ -2099,7 +2067,7 @@ SHA-256: `9ab92cea60d44f57cefc249744a1db2334db07d8053e533b56e54f3e51e22257`.
 
 ## `trusted_router.routes.inference`
 
-Frozen alias: `frozen_f83bbaac.routes.inference`. Member: `src/trusted_router/routes/inference.py`.
+Frozen alias: `frozen_main.routes.inference`. Member: `src/trusted_router/routes/inference.py`.
 
 SHA-256: `2f8b327f9363d711373001f116a3b712cbd3c8c7ff565af03f06319dc8fbc7b0`.
 
@@ -2110,7 +2078,7 @@ SHA-256: `2f8b327f9363d711373001f116a3b712cbd3c8c7ff565af03f06319dc8fbc7b0`.
 
 ## `trusted_router.routes.internal`
 
-Frozen alias: `frozen_f83bbaac.routes.internal`. Member: `src/trusted_router/routes/internal/__init__.py`.
+Frozen alias: `frozen_main.routes.internal`. Member: `src/trusted_router/routes/internal/__init__.py`.
 
 SHA-256: `cfbf6687c5cd8e7320f0d0744524e0eec8fd1ac27b754b7695173411fc3cc6c5`.
 
@@ -2125,7 +2093,7 @@ SHA-256: `cfbf6687c5cd8e7320f0d0744524e0eec8fd1ac27b754b7695173411fc3cc6c5`.
 
 ## `trusted_router.routes.internal._shared`
 
-Frozen alias: `frozen_f83bbaac.routes.internal._shared`. Member: `src/trusted_router/routes/internal/_shared.py`.
+Frozen alias: `frozen_main.routes.internal._shared`. Member: `src/trusted_router/routes/internal/_shared.py`.
 
 SHA-256: `68294d0fb5bdf42a524d9be8dcb4c783bec9473ed6e53117b68acc05e88c1b08`.
 
@@ -2137,7 +2105,7 @@ SHA-256: `68294d0fb5bdf42a524d9be8dcb4c783bec9473ed6e53117b68acc05e88c1b08`.
 
 ## `trusted_router.routes.internal.admin`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.admin`. Member: `src/trusted_router/routes/internal/admin.py`.
+Frozen alias: `frozen_main.routes.internal.admin`. Member: `src/trusted_router/routes/internal/admin.py`.
 
 SHA-256: `0a99619b4b71525464079fd0e9093091cf6553676df27ff94e6f1288bfe9727a`.
 
@@ -2148,7 +2116,7 @@ SHA-256: `0a99619b4b71525464079fd0e9093091cf6553676df27ff94e6f1288bfe9727a`.
 
 ## `trusted_router.routes.internal.adyen`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.adyen`. Member: `src/trusted_router/routes/internal/adyen.py`.
+Frozen alias: `frozen_main.routes.internal.adyen`. Member: `src/trusted_router/routes/internal/adyen.py`.
 
 SHA-256: `325205edb904de0abeaa2355923729f55672f3f90147598dd72fcb1337a352db`.
 
@@ -2159,7 +2127,7 @@ SHA-256: `325205edb904de0abeaa2355923729f55672f3f90147598dd72fcb1337a352db`.
 
 ## `trusted_router.routes.internal.broadcast_queue`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.broadcast_queue`. Member: `src/trusted_router/routes/internal/broadcast_queue.py`.
+Frozen alias: `frozen_main.routes.internal.broadcast_queue`. Member: `src/trusted_router/routes/internal/broadcast_queue.py`.
 
 SHA-256: `2e37c998ce090c5c09c8b7a8631012dd98d72bd0d9dcca5eeae69dcfce0d766a`.
 
@@ -2170,7 +2138,7 @@ SHA-256: `2e37c998ce090c5c09c8b7a8631012dd98d72bd0d9dcca5eeae69dcfce0d766a`.
 
 ## `trusted_router.routes.internal.chat_browser_key`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.chat_browser_key`. Member: `src/trusted_router/routes/internal/chat_browser_key.py`.
+Frozen alias: `frozen_main.routes.internal.chat_browser_key`. Member: `src/trusted_router/routes/internal/chat_browser_key.py`.
 
 SHA-256: `a0e31f2e981a7e2376ee0b86e657859ae74e9dbb14b2e1b8bc854673d780e52c`.
 
@@ -2181,7 +2149,7 @@ SHA-256: `a0e31f2e981a7e2376ee0b86e657859ae74e9dbb14b2e1b8bc854673d780e52c`.
 
 ## `trusted_router.routes.internal.federation`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.federation`. Member: `src/trusted_router/routes/internal/federation.py`.
+Frozen alias: `frozen_main.routes.internal.federation`. Member: `src/trusted_router/routes/internal/federation.py`.
 
 SHA-256: `858dd50225e8605090bacc4ca00342aa56ba02151586f46db7901aab4dc5b3ab`.
 
@@ -2192,7 +2160,7 @@ SHA-256: `858dd50225e8605090bacc4ca00342aa56ba02151586f46db7901aab4dc5b3ab`.
 
 ## `trusted_router.routes.internal.fetch_image`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.fetch_image`. Member: `src/trusted_router/routes/internal/fetch_image.py`.
+Frozen alias: `frozen_main.routes.internal.fetch_image`. Member: `src/trusted_router/routes/internal/fetch_image.py`.
 
 SHA-256: `e6b0594ab736e148eef27ba9ae02c5e3b51d80e3ae768176fec9ac2ebad5d7a9`.
 
@@ -2203,7 +2171,7 @@ SHA-256: `e6b0594ab736e148eef27ba9ae02c5e3b51d80e3ae768176fec9ac2ebad5d7a9`.
 
 ## `trusted_router.routes.internal.gateway`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.gateway`. Member: `src/trusted_router/routes/internal/gateway.py`.
+Frozen alias: `frozen_main.routes.internal.gateway`. Member: `src/trusted_router/routes/internal/gateway.py`.
 
 SHA-256: `3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f`.
 
@@ -2234,7 +2202,6 @@ SHA-256: `3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f`.
 | `_settle_gateway_authorization.<locals>.<genexpr>` | 4267 |
 | `_settle_gateway_with_admission_sync` | 3367 |
 | `_settle_repair_metadata` | 4748 |
-| `_settle_repair_metadata.<locals>.<dictcomp>` | 4756 |
 | `register` | 2200 |
 | `register.<locals>.gateway_refund` | 2308 |
 | `register.<locals>.gateway_settle` | 2299 |
@@ -2242,7 +2209,7 @@ SHA-256: `3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f`.
 
 ## `trusted_router.routes.internal.lightning`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.lightning`. Member: `src/trusted_router/routes/internal/lightning.py`.
+Frozen alias: `frozen_main.routes.internal.lightning`. Member: `src/trusted_router/routes/internal/lightning.py`.
 
 SHA-256: `ff266da36f6af7309ca3e946af617e524df3d47501b9fec1ed010894be81013a`.
 
@@ -2258,7 +2225,7 @@ SHA-256: `ff266da36f6af7309ca3e946af617e524df3d47501b9fec1ed010894be81013a`.
 
 ## `trusted_router.routes.internal.paypal`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.paypal`. Member: `src/trusted_router/routes/internal/paypal.py`.
+Frozen alias: `frozen_main.routes.internal.paypal`. Member: `src/trusted_router/routes/internal/paypal.py`.
 
 SHA-256: `6d98d16f55361ec27001ba1dadfb0a4baa37646f40d30f2c1f87a08bc5a2bcb9`.
 
@@ -2269,7 +2236,7 @@ SHA-256: `6d98d16f55361ec27001ba1dadfb0a4baa37646f40d30f2c1f87a08bc5a2bcb9`.
 
 ## `trusted_router.routes.internal.reconcile`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.reconcile`. Member: `src/trusted_router/routes/internal/reconcile.py`.
+Frozen alias: `frozen_main.routes.internal.reconcile`. Member: `src/trusted_router/routes/internal/reconcile.py`.
 
 SHA-256: `385e32b057565132496c8f045e708142865edb6f9b522a3a5ce21fa33404a4ec`.
 
@@ -2280,7 +2247,7 @@ SHA-256: `385e32b057565132496c8f045e708142865edb6f9b522a3a5ce21fa33404a4ec`.
 
 ## `trusted_router.routes.internal.routable`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.routable`. Member: `src/trusted_router/routes/internal/routable.py`.
+Frozen alias: `frozen_main.routes.internal.routable`. Member: `src/trusted_router/routes/internal/routable.py`.
 
 SHA-256: `1fce2134e757c37dde60582aa846047d935d96ff8c8844b10a7f46af9a2c0071`.
 
@@ -2291,7 +2258,7 @@ SHA-256: `1fce2134e757c37dde60582aa846047d935d96ff8c8844b10a7f46af9a2c0071`.
 
 ## `trusted_router.routes.internal.sentry`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.sentry`. Member: `src/trusted_router/routes/internal/sentry.py`.
+Frozen alias: `frozen_main.routes.internal.sentry`. Member: `src/trusted_router/routes/internal/sentry.py`.
 
 SHA-256: `36b48f4978b80d41a2a7abb7de88d9f2eb96565a3b859f0dc56d007088c0a749`.
 
@@ -2302,7 +2269,7 @@ SHA-256: `36b48f4978b80d41a2a7abb7de88d9f2eb96565a3b859f0dc56d007088c0a749`.
 
 ## `trusted_router.routes.internal.speculation`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.speculation`. Member: `src/trusted_router/routes/internal/speculation.py`.
+Frozen alias: `frozen_main.routes.internal.speculation`. Member: `src/trusted_router/routes/internal/speculation.py`.
 
 SHA-256: `c0917337d8f336e54a76f9e2d29c517f8cc595736018715f400da0021aaf36fa`.
 
@@ -2313,7 +2280,7 @@ SHA-256: `c0917337d8f336e54a76f9e2d29c517f8cc595736018715f400da0021aaf36fa`.
 
 ## `trusted_router.routes.internal.synthetic`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.synthetic`. Member: `src/trusted_router/routes/internal/synthetic.py`.
+Frozen alias: `frozen_main.routes.internal.synthetic`. Member: `src/trusted_router/routes/internal/synthetic.py`.
 
 SHA-256: `503c62e8484adf2cc197cbfe1894b9160712f0ff5ae4d5c4c668fd5136c9ee9d`.
 
@@ -2325,7 +2292,7 @@ SHA-256: `503c62e8484adf2cc197cbfe1894b9160712f0ff5ae4d5c4c668fd5136c9ee9d`.
 
 ## `trusted_router.routes.internal.veriff`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.veriff`. Member: `src/trusted_router/routes/internal/veriff.py`.
+Frozen alias: `frozen_main.routes.internal.veriff`. Member: `src/trusted_router/routes/internal/veriff.py`.
 
 SHA-256: `838407394aa8a3404d2e361e72ccb9572421ce4d7e099437a84e755924a154ee`.
 
@@ -2336,7 +2303,7 @@ SHA-256: `838407394aa8a3404d2e361e72ccb9572421ce4d7e099437a84e755924a154ee`.
 
 ## `trusted_router.routes.internal.video_jobs`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.video_jobs`. Member: `src/trusted_router/routes/internal/video_jobs.py`.
+Frozen alias: `frozen_main.routes.internal.video_jobs`. Member: `src/trusted_router/routes/internal/video_jobs.py`.
 
 SHA-256: `07eb5600af6e7a8f2b10969950c6a37b7bf1ab03f7b03980619c4f158abf980f`.
 
@@ -2347,7 +2314,7 @@ SHA-256: `07eb5600af6e7a8f2b10969950c6a37b7bf1ab03f7b03980619c4f158abf980f`.
 
 ## `trusted_router.routes.internal.webhook`
 
-Frozen alias: `frozen_f83bbaac.routes.internal.webhook`. Member: `src/trusted_router/routes/internal/webhook.py`.
+Frozen alias: `frozen_main.routes.internal.webhook`. Member: `src/trusted_router/routes/internal/webhook.py`.
 
 SHA-256: `4f8307e9aee19a5305c8f09ca40b835e3bedf08da821a4f51e4ce609f475fec6`.
 
@@ -2358,7 +2325,7 @@ SHA-256: `4f8307e9aee19a5305c8f09ca40b835e3bedf08da821a4f51e4ce609f475fec6`.
 
 ## `trusted_router.routes.keys`
 
-Frozen alias: `frozen_f83bbaac.routes.keys`. Member: `src/trusted_router/routes/keys.py`.
+Frozen alias: `frozen_main.routes.keys`. Member: `src/trusted_router/routes/keys.py`.
 
 SHA-256: `f3dfe934806670bac26a87b857a222c39255aac43c9a7ebaa2a1d9d097dfe892`.
 
@@ -2369,7 +2336,7 @@ SHA-256: `f3dfe934806670bac26a87b857a222c39255aac43c9a7ebaa2a1d9d097dfe892`.
 
 ## `trusted_router.routes.lightning_support`
 
-Frozen alias: `frozen_f83bbaac.routes.lightning_support`. Member: `src/trusted_router/routes/lightning_support.py`.
+Frozen alias: `frozen_main.routes.lightning_support`. Member: `src/trusted_router/routes/lightning_support.py`.
 
 SHA-256: `add8d903c42a99b6903d068dedc1adddc70d562bf71289a56b7497efc13e3421`.
 
@@ -2381,7 +2348,7 @@ SHA-256: `add8d903c42a99b6903d068dedc1adddc70d562bf71289a56b7497efc13e3421`.
 
 ## `trusted_router.routes.mcp`
 
-Frozen alias: `frozen_f83bbaac.routes.mcp`. Member: `src/trusted_router/routes/mcp.py`.
+Frozen alias: `frozen_main.routes.mcp`. Member: `src/trusted_router/routes/mcp.py`.
 
 SHA-256: `9ff3e5a2858562b4a63537257ef6557387a6a204736d37615b2c4005bb807555`.
 
@@ -2397,7 +2364,7 @@ SHA-256: `9ff3e5a2858562b4a63537257ef6557387a6a204736d37615b2c4005bb807555`.
 
 ## `trusted_router.routes.mcp_advisor`
 
-Frozen alias: `frozen_f83bbaac.routes.mcp_advisor`. Member: `src/trusted_router/routes/mcp_advisor.py`.
+Frozen alias: `frozen_main.routes.mcp_advisor`. Member: `src/trusted_router/routes/mcp_advisor.py`.
 
 SHA-256: `9c9a0bb46515fb15ad27f5a28178ca526a9544a206d0a63a4bf66f49e4a780c9`.
 
@@ -2414,7 +2381,7 @@ SHA-256: `9c9a0bb46515fb15ad27f5a28178ca526a9544a206d0a63a4bf66f49e4a780c9`.
 
 ## `trusted_router.routes.model_changes`
 
-Frozen alias: `frozen_f83bbaac.routes.model_changes`. Member: `src/trusted_router/routes/model_changes.py`.
+Frozen alias: `frozen_main.routes.model_changes`. Member: `src/trusted_router/routes/model_changes.py`.
 
 SHA-256: `ed2cfa2d14be4e83dbe38fe0a3c1b10d4aa59b01e9def554fa08e3f09d441bdb`.
 
@@ -2428,7 +2395,7 @@ SHA-256: `ed2cfa2d14be4e83dbe38fe0a3c1b10d4aa59b01e9def554fa08e3f09d441bdb`.
 
 ## `trusted_router.routes.notify`
 
-Frozen alias: `frozen_f83bbaac.routes.notify`. Member: `src/trusted_router/routes/notify.py`.
+Frozen alias: `frozen_main.routes.notify`. Member: `src/trusted_router/routes/notify.py`.
 
 SHA-256: `b07c0b68af8b07bc3d781053ee3b02b3d20aee99d407fe77a7f275b075117123`.
 
@@ -2441,7 +2408,7 @@ SHA-256: `b07c0b68af8b07bc3d781053ee3b02b3d20aee99d407fe77a7f275b075117123`.
 
 ## `trusted_router.routes.oauth`
 
-Frozen alias: `frozen_f83bbaac.routes.oauth`. Member: `src/trusted_router/routes/oauth.py`.
+Frozen alias: `frozen_main.routes.oauth`. Member: `src/trusted_router/routes/oauth.py`.
 
 SHA-256: `e0eb3d6a7935a2847f2d5cd58fb40d375f653d1108eef0749706f40d2c29da1c`.
 
@@ -2455,7 +2422,7 @@ SHA-256: `e0eb3d6a7935a2847f2d5cd58fb40d375f653d1108eef0749706f40d2c29da1c`.
 
 ## `trusted_router.routes.oauth_apps`
 
-Frozen alias: `frozen_f83bbaac.routes.oauth_apps`. Member: `src/trusted_router/routes/oauth_apps.py`.
+Frozen alias: `frozen_main.routes.oauth_apps`. Member: `src/trusted_router/routes/oauth_apps.py`.
 
 SHA-256: `70207fdd6c9ea45d715d09512e15f67f11d7af010836eb5656df0b27449c0e35`.
 
@@ -2466,7 +2433,7 @@ SHA-256: `70207fdd6c9ea45d715d09512e15f67f11d7af010836eb5656df0b27449c0e35`.
 
 ## `trusted_router.routes.oauth_authorized_apps`
 
-Frozen alias: `frozen_f83bbaac.routes.oauth_authorized_apps`. Member: `src/trusted_router/routes/oauth_authorized_apps.py`.
+Frozen alias: `frozen_main.routes.oauth_authorized_apps`. Member: `src/trusted_router/routes/oauth_authorized_apps.py`.
 
 SHA-256: `8ec81a900e4c6ed0a65fc2902320da5f7d4abe6e815f2fa6ebea560963d45de1`.
 
@@ -2477,7 +2444,7 @@ SHA-256: `8ec81a900e4c6ed0a65fc2902320da5f7d4abe6e815f2fa6ebea560963d45de1`.
 
 ## `trusted_router.routes.oauth_keys`
 
-Frozen alias: `frozen_f83bbaac.routes.oauth_keys`. Member: `src/trusted_router/routes/oauth_keys.py`.
+Frozen alias: `frozen_main.routes.oauth_keys`. Member: `src/trusted_router/routes/oauth_keys.py`.
 
 SHA-256: `033ffb106bdf540541157192c783e1fb6d9a1c4436e6849faec2f1938ddbc586`.
 
@@ -2488,7 +2455,7 @@ SHA-256: `033ffb106bdf540541157192c783e1fb6d9a1c4436e6849faec2f1938ddbc586`.
 
 ## `trusted_router.routes.payouts`
 
-Frozen alias: `frozen_f83bbaac.routes.payouts`. Member: `src/trusted_router/routes/payouts.py`.
+Frozen alias: `frozen_main.routes.payouts`. Member: `src/trusted_router/routes/payouts.py`.
 
 SHA-256: `9e0a4ad78eaee57efdacdf0749e08f6be6932e7fe5291021864686c13ff1f88a`.
 
@@ -2500,7 +2467,7 @@ SHA-256: `9e0a4ad78eaee57efdacdf0749e08f6be6932e7fe5291021864686c13ff1f88a`.
 
 ## `trusted_router.routes.provider_portal`
 
-Frozen alias: `frozen_f83bbaac.routes.provider_portal`. Member: `src/trusted_router/routes/provider_portal.py`.
+Frozen alias: `frozen_main.routes.provider_portal`. Member: `src/trusted_router/routes/provider_portal.py`.
 
 SHA-256: `c6cae976629ff2b977a471d09bc48adbd6e3f8f5f97f72cfa5b3955b861e468b`.
 
@@ -2513,28 +2480,27 @@ SHA-256: `c6cae976629ff2b977a471d09bc48adbd6e3f8f5f97f72cfa5b3955b861e468b`.
 
 ## `trusted_router.routes.public`
 
-Frozen alias: `frozen_f83bbaac.routes.public`. Member: `src/trusted_router/routes/public.py`.
+Frozen alias: `frozen_main.routes.public`. Member: `src/trusted_router/routes/public.py`.
 
-SHA-256: `6fd2e9e79075e9ec5ff7906a9cc8a6bf8251d7d247becceb346949ec75853045`.
+SHA-256: `f3200bfd197a336afe5dbf2e01eb82e63adc43fedde89e8d5e682066f0c0bdb8`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<genexpr>` | 789 |
+| `<genexpr>` | 785 |
 | `<module>` | 1 |
-| `_CachedPublicBody` | 282 |
-| `_CachedStaticFiles` | 290 |
-| `_CachedStaticFiles.__init__` | 306 |
-| `_CachedStaticFiles.__init__.<locals>.<dictcomp>` | 316 |
-| `_UnfilteredReceiptKeyCursor` | 442 |
+| `_CachedPublicBody` | 278 |
+| `_CachedStaticFiles` | 286 |
+| `_CachedStaticFiles.__init__` | 302 |
+| `_UnfilteredReceiptKeyCursor` | 438 |
 | `__create_fn__` | 1 |
-| `register_public_action_routes` | 930 |
-| `register_public_routes` | 950 |
-| `register_public_routes.<locals>.public_html_route` | 1060 |
-| `register_public_routes.<locals>.public_html_route.<locals>.decorator` | 1063 |
+| `register_public_action_routes` | 926 |
+| `register_public_routes` | 946 |
+| `register_public_routes.<locals>.public_html_route` | 1056 |
+| `register_public_routes.<locals>.public_html_route.<locals>.decorator` | 1059 |
 
 ## `trusted_router.routes.ses_notifications`
 
-Frozen alias: `frozen_f83bbaac.routes.ses_notifications`. Member: `src/trusted_router/routes/ses_notifications.py`.
+Frozen alias: `frozen_main.routes.ses_notifications`. Member: `src/trusted_router/routes/ses_notifications.py`.
 
 SHA-256: `460318dcbe5db5e31efe8819905c74f19f32c2a4c60d1131aafaf69c86d9613b`.
 
@@ -2545,7 +2511,7 @@ SHA-256: `460318dcbe5db5e31efe8819905c74f19f32c2a4c60d1131aafaf69c86d9613b`.
 
 ## `trusted_router.routes.settlements`
 
-Frozen alias: `frozen_f83bbaac.routes.settlements`. Member: `src/trusted_router/routes/settlements.py`.
+Frozen alias: `frozen_main.routes.settlements`. Member: `src/trusted_router/routes/settlements.py`.
 
 SHA-256: `a6a6247961d8b6c6e03d9c325fcdfa938a5c4ade09eae1ef621cc261c7b7c948`.
 
@@ -2559,7 +2525,7 @@ SHA-256: `a6a6247961d8b6c6e03d9c325fcdfa938a5c4ade09eae1ef621cc261c7b7c948`.
 
 ## `trusted_router.routes.signup`
 
-Frozen alias: `frozen_f83bbaac.routes.signup`. Member: `src/trusted_router/routes/signup.py`.
+Frozen alias: `frozen_main.routes.signup`. Member: `src/trusted_router/routes/signup.py`.
 
 SHA-256: `6f3138ea943d85480669a0deb177aef691697f0008695e99b7254bdd46cc3d8d`.
 
@@ -2570,7 +2536,7 @@ SHA-256: `6f3138ea943d85480669a0deb177aef691697f0008695e99b7254bdd46cc3d8d`.
 
 ## `trusted_router.routes.user_models`
 
-Frozen alias: `frozen_f83bbaac.routes.user_models`. Member: `src/trusted_router/routes/user_models.py`.
+Frozen alias: `frozen_main.routes.user_models`. Member: `src/trusted_router/routes/user_models.py`.
 
 SHA-256: `f73a0f5a1f237df585b45f3defe388b4f7453c6677077589fca7398e3bf27b11`.
 
@@ -2581,7 +2547,7 @@ SHA-256: `f73a0f5a1f237df585b45f3defe388b4f7453c6677077589fca7398e3bf27b11`.
 
 ## `trusted_router.routes.user_models_public`
 
-Frozen alias: `frozen_f83bbaac.routes.user_models_public`. Member: `src/trusted_router/routes/user_models_public.py`.
+Frozen alias: `frozen_main.routes.user_models_public`. Member: `src/trusted_router/routes/user_models_public.py`.
 
 SHA-256: `fb8ca6c11ebebb52acc37c59b279649ed6fb6269836dac9a2b94f34b387fefef`.
 
@@ -2592,7 +2558,7 @@ SHA-256: `fb8ca6c11ebebb52acc37c59b279649ed6fb6269836dac9a2b94f34b387fefef`.
 
 ## `trusted_router.routes.verification_status`
 
-Frozen alias: `frozen_f83bbaac.routes.verification_status`. Member: `src/trusted_router/routes/verification_status.py`.
+Frozen alias: `frozen_main.routes.verification_status`. Member: `src/trusted_router/routes/verification_status.py`.
 
 SHA-256: `af4212b91b60e59f609ff566c7d97663f41c9c116e33ade7079c69f2cb131b29`.
 
@@ -2603,7 +2569,7 @@ SHA-256: `af4212b91b60e59f609ff566c7d97663f41c9c116e33ade7079c69f2cb131b29`.
 
 ## `trusted_router.routes.wallet_oauth`
 
-Frozen alias: `frozen_f83bbaac.routes.wallet_oauth`. Member: `src/trusted_router/routes/wallet_oauth.py`.
+Frozen alias: `frozen_main.routes.wallet_oauth`. Member: `src/trusted_router/routes/wallet_oauth.py`.
 
 SHA-256: `102b80e960501e3cfb355c6dbdc8e34c7907b4dfbdedcc0d17d921c86a208167`.
 
@@ -2616,7 +2582,7 @@ SHA-256: `102b80e960501e3cfb355c6dbdc8e34c7907b4dfbdedcc0d17d921c86a208167`.
 
 ## `trusted_router.routes.workspaces`
 
-Frozen alias: `frozen_f83bbaac.routes.workspaces`. Member: `src/trusted_router/routes/workspaces.py`.
+Frozen alias: `frozen_main.routes.workspaces`. Member: `src/trusted_router/routes/workspaces.py`.
 
 SHA-256: `ef4811378f0f8c1c841d3a00b49d5da0d9fad89d0bfedf4f341011c28d541585`.
 
@@ -2627,7 +2593,7 @@ SHA-256: `ef4811378f0f8c1c841d3a00b49d5da0d9fad89d0bfedf4f341011c28d541585`.
 
 ## `trusted_router.routing`
 
-Frozen alias: `frozen_f83bbaac.routing`. Member: `src/trusted_router/routing.py`.
+Frozen alias: `frozen_main.routing`. Member: `src/trusted_router/routing.py`.
 
 SHA-256: `b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c`.
 
@@ -2641,7 +2607,7 @@ SHA-256: `b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c`.
 
 ## `trusted_router.routing_candidates`
 
-Frozen alias: `frozen_f83bbaac.routing_candidates`. Member: `src/trusted_router/routing_candidates.py`.
+Frozen alias: `frozen_main.routing_candidates`. Member: `src/trusted_router/routing_candidates.py`.
 
 SHA-256: `6cf0de2a48740c566076aed0e98aa848f1c143f3a37741a804fc0ca5402626ed`.
 
@@ -2654,35 +2620,25 @@ SHA-256: `6cf0de2a48740c566076aed0e98aa848f1c143f3a37741a804fc0ca5402626ed`.
 | `_models_for_ids` | 372 |
 | `_price_sort_key` | 550 |
 | `_privacy_candidate_models` | 261 |
-| `_privacy_candidate_models.<locals>.<dictcomp>` | 275 |
 | `_privacy_candidate_models.<locals>.<lambda>` | 307 |
 | `_privacy_candidate_models.<locals>.<lambda>` | 319 |
 | `auto_candidate_models` | 137 |
-| `auto_candidate_models.<locals>.<listcomp>` | 138 |
 | `cheap_candidate_models` | 166 |
-| `cheap_candidate_models.<locals>.<listcomp>` | 172 |
-| `cheap_candidate_models.<locals>.<listcomp>` | 185 |
-| `cheap_candidate_models.<locals>.<setcomp>` | 177 |
 | `e2e_candidate_models` | 364 |
 | `eu_candidate_models` | 330 |
 | `fast_candidate_models` | 199 |
 | `free_candidate_models` | 156 |
-| `free_candidate_models.<locals>.<listcomp>` | 157 |
 | `green_candidate_models` | 339 |
 | `meta_candidate_models` | 396 |
 | `monitor_candidate_models` | 215 |
 | `prometheus_1m_candidate_models` | 383 |
-| `prometheus_1m_candidate_models.<locals>.<listcomp>` | 385 |
 | `validate_auto_model_order` | 113 |
-| `validate_auto_model_order.<locals>.<listcomp>` | 114 |
-| `validate_auto_model_order.<locals>.<listcomp>` | 119 |
-| `validate_auto_model_order.<locals>.<listcomp>` | 126 |
-| `validate_auto_model_order.<locals>.<listcomp>.<genexpr>` | 129 |
+| `validate_auto_model_order.<locals>.<genexpr>` | 129 |
 | `zdr_candidate_models` | 348 |
 
 ## `trusted_router.routing_state`
 
-Frozen alias: `frozen_f83bbaac.routing_state`. Member: `src/trusted_router/routing_state.py`.
+Frozen alias: `frozen_main.routing_state`. Member: `src/trusted_router/routing_state.py`.
 
 SHA-256: `faf6be9fc7159c0a88bcbec1ef592f265e9cf009be80c72d54f5341de24158a3`.
 
@@ -2694,7 +2650,7 @@ SHA-256: `faf6be9fc7159c0a88bcbec1ef592f265e9cf009be80c72d54f5341de24158a3`.
 
 ## `trusted_router.schemas`
 
-Frozen alias: `frozen_f83bbaac.schemas`. Member: `src/trusted_router/schemas.py`.
+Frozen alias: `frozen_main.schemas`. Member: `src/trusted_router/schemas.py`.
 
 SHA-256: `4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386`.
 
@@ -2750,7 +2706,7 @@ SHA-256: `4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386`.
 
 ## `trusted_router.scopes`
 
-Frozen alias: `frozen_f83bbaac.scopes`. Member: `src/trusted_router/scopes.py`.
+Frozen alias: `frozen_main.scopes`. Member: `src/trusted_router/scopes.py`.
 
 SHA-256: `69208a5623de4c3f59b53b2f8c72121c80e68540af017870b208b77d08444b85`.
 
@@ -2760,7 +2716,7 @@ SHA-256: `69208a5623de4c3f59b53b2f8c72121c80e68540af017870b208b77d08444b85`.
 
 ## `trusted_router.secrets`
 
-Frozen alias: `frozen_f83bbaac.secrets`. Member: `src/trusted_router/secrets.py`.
+Frozen alias: `frozen_main.secrets`. Member: `src/trusted_router/secrets.py`.
 
 SHA-256: `ca85821fc9589906cafaa9ae62c87ea22dc38708472b5c606e9e927c3e0d6ea6`.
 
@@ -2771,7 +2727,7 @@ SHA-256: `ca85821fc9589906cafaa9ae62c87ea22dc38708472b5c606e9e927c3e0d6ea6`.
 
 ## `trusted_router.security`
 
-Frozen alias: `frozen_f83bbaac.security`. Member: `src/trusted_router/security.py`.
+Frozen alias: `frozen_main.security`. Member: `src/trusted_router/security.py`.
 
 SHA-256: `c0b26132d312213a4e773dff588b3437d537f26fe2062f5cb16d51e1cd537a1a`.
 
@@ -2781,26 +2737,26 @@ SHA-256: `c0b26132d312213a4e773dff588b3437d537f26fe2062f5cb16d51e1cd537a1a`.
 
 ## `trusted_router.sentry_config`
 
-Frozen alias: `frozen_f83bbaac.sentry_config`. Member: `src/trusted_router/sentry_config.py`.
+Frozen alias: `frozen_main.sentry_config`. Member: `src/trusted_router/sentry_config.py`.
 
-SHA-256: `5000df88a980187dde0a41b474e198ecbffcb715aaf42b2681bafc03daf91e53`.
+SHA-256: `23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `SentryFloodgateConfig` | 102 |
+| `SentryFloodgateConfig` | 103 |
 | `SentryFloodgateConfig.__init__` | 2 |
-| `_FloodBucket` | 112 |
+| `_FloodBucket` | 113 |
 | `_FloodBucket.__init__` | 2 |
-| `_SentryFloodgate` | 118 |
-| `_SentryFloodgate.__init__` | 119 |
+| `_SentryFloodgate` | 119 |
+| `_SentryFloodgate.__init__` | 120 |
 | `__create_fn__` | 1 |
-| `init_sentry` | 225 |
-| `sentry_should_init` | 275 |
+| `init_sentry` | 226 |
+| `sentry_should_init` | 276 |
 
 ## `trusted_router.seo_catalog`
 
-Frozen alias: `frozen_f83bbaac.seo_catalog`. Member: `src/trusted_router/seo_catalog.py`.
+Frozen alias: `frozen_main.seo_catalog`. Member: `src/trusted_router/seo_catalog.py`.
 
 SHA-256: `12aa5b110ba5f01d17007a19a18ac60256dee9d62a3c8db53425145ab49a83b5`.
 
@@ -2810,7 +2766,7 @@ SHA-256: `12aa5b110ba5f01d17007a19a18ac60256dee9d62a3c8db53425145ab49a83b5`.
 
 ## `trusted_router.seo_meta`
 
-Frozen alias: `frozen_f83bbaac.seo_meta`. Member: `src/trusted_router/seo_meta.py`.
+Frozen alias: `frozen_main.seo_meta`. Member: `src/trusted_router/seo_meta.py`.
 
 SHA-256: `bbc85892b781625fca0a29eae7fa39516e70d9b888728a31dde22b3f8d131237`.
 
@@ -2820,7 +2776,7 @@ SHA-256: `bbc85892b781625fca0a29eae7fa39516e70d9b888728a31dde22b3f8d131237`.
 
 ## `trusted_router.serialization`
 
-Frozen alias: `frozen_f83bbaac.serialization`. Member: `src/trusted_router/serialization.py`.
+Frozen alias: `frozen_main.serialization`. Member: `src/trusted_router/serialization.py`.
 
 SHA-256: `b55908e9185a1852e285e4c2a290001156f2d0a92e2031998aac69d03c943db0`.
 
@@ -2830,7 +2786,7 @@ SHA-256: `b55908e9185a1852e285e4c2a290001156f2d0a92e2031998aac69d03c943db0`.
 
 ## `trusted_router.services`
 
-Frozen alias: `frozen_f83bbaac.services`. Member: `src/trusted_router/services/__init__.py`.
+Frozen alias: `frozen_main.services`. Member: `src/trusted_router/services/__init__.py`.
 
 SHA-256: `755a30a153222d94db5bc6114d96ca3ec39962a064a03e0f0b000b287addec5e`.
 
@@ -2840,7 +2796,7 @@ SHA-256: `755a30a153222d94db5bc6114d96ca3ec39962a064a03e0f0b000b287addec5e`.
 
 ## `trusted_router.services.adyen_billing`
 
-Frozen alias: `frozen_f83bbaac.services.adyen_billing`. Member: `src/trusted_router/services/adyen_billing.py`.
+Frozen alias: `frozen_main.services.adyen_billing`. Member: `src/trusted_router/services/adyen_billing.py`.
 
 SHA-256: `41d8ededf5c96d4b7547bd4b726f44177a040d87f02f3b0881e66c2cce24c288`.
 
@@ -2854,7 +2810,7 @@ SHA-256: `41d8ededf5c96d4b7547bd4b726f44177a040d87f02f3b0881e66c2cce24c288`.
 
 ## `trusted_router.services.async_settle`
 
-Frozen alias: `frozen_f83bbaac.services.async_settle`. Member: `src/trusted_router/services/async_settle.py`.
+Frozen alias: `frozen_main.services.async_settle`. Member: `src/trusted_router/services/async_settle.py`.
 
 SHA-256: `1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297`.
 
@@ -2865,6 +2821,7 @@ SHA-256: `1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297`.
 | `AdmissionCache` | 52 |
 | `AdmissionCache.__init__` | 53 |
 | `DrainHealth` | 45 |
+| `DrainHealth.__init__` | 2 |
 | `Runtime` | 178 |
 | `Runtime.__init__` | 2 |
 | `__create_fn__` | 1 |
@@ -2872,7 +2829,7 @@ SHA-256: `1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297`.
 
 ## `trusted_router.services.async_settle_handler`
 
-Frozen alias: `frozen_f83bbaac.services.async_settle_handler`. Member: `src/trusted_router/services/async_settle_handler.py`.
+Frozen alias: `frozen_main.services.async_settle_handler`. Member: `src/trusted_router/services/async_settle_handler.py`.
 
 SHA-256: `ab2a1619085597be9c30a16c222356170c71b6feadca6aeabe07baa08d8ed77c`.
 
@@ -2895,7 +2852,7 @@ SHA-256: `ab2a1619085597be9c30a16c222356170c71b6feadca6aeabe07baa08d8ed77c`.
 
 ## `trusted_router.services.auto_refill`
 
-Frozen alias: `frozen_f83bbaac.services.auto_refill`. Member: `src/trusted_router/services/auto_refill.py`.
+Frozen alias: `frozen_main.services.auto_refill`. Member: `src/trusted_router/services/auto_refill.py`.
 
 SHA-256: `be89c4dff7d8cab05fd0effb3c239173332b04d2ad382101e1329936b0f80656`.
 
@@ -2910,7 +2867,7 @@ SHA-256: `be89c4dff7d8cab05fd0effb3c239173332b04d2ad382101e1329936b0f80656`.
 
 ## `trusted_router.services.broadcast`
 
-Frozen alias: `frozen_f83bbaac.services.broadcast`. Member: `src/trusted_router/services/broadcast.py`.
+Frozen alias: `frozen_main.services.broadcast`. Member: `src/trusted_router/services/broadcast.py`.
 
 SHA-256: `84c0bbffd77271eb372f29406a06e41116c49fdf1e7076d4b725ae56da395efb`.
 
@@ -2923,7 +2880,7 @@ SHA-256: `84c0bbffd77271eb372f29406a06e41116c49fdf1e7076d4b725ae56da395efb`.
 
 ## `trusted_router.services.broadcast_adapters`
 
-Frozen alias: `frozen_f83bbaac.services.broadcast_adapters`. Member: `src/trusted_router/services/broadcast_adapters.py`.
+Frozen alias: `frozen_main.services.broadcast_adapters`. Member: `src/trusted_router/services/broadcast_adapters.py`.
 
 SHA-256: `a98ef0a2bc50483127812ff8661149a198c5da2e664b3259b74701c58a5d287d`.
 
@@ -2936,7 +2893,7 @@ SHA-256: `a98ef0a2bc50483127812ff8661149a198c5da2e664b3259b74701c58a5d287d`.
 
 ## `trusted_router.services.budget_alerts`
 
-Frozen alias: `frozen_f83bbaac.services.budget_alerts`. Member: `src/trusted_router/services/budget_alerts.py`.
+Frozen alias: `frozen_main.services.budget_alerts`. Member: `src/trusted_router/services/budget_alerts.py`.
 
 SHA-256: `b49827aaadcfe88f62cc6f8ad193e666a889a20e8307efbc5fa43800e9524838`.
 
@@ -2947,7 +2904,7 @@ SHA-256: `b49827aaadcfe88f62cc6f8ad193e666a889a20e8307efbc5fa43800e9524838`.
 
 ## `trusted_router.services.credit_transfer`
 
-Frozen alias: `frozen_f83bbaac.services.credit_transfer`. Member: `src/trusted_router/services/credit_transfer.py`.
+Frozen alias: `frozen_main.services.credit_transfer`. Member: `src/trusted_router/services/credit_transfer.py`.
 
 SHA-256: `cd2e4c186e0eb50099bfe0f6abcdcaab1ccfcf536424c5f02c00f0373f873e4c`.
 
@@ -2959,7 +2916,7 @@ SHA-256: `cd2e4c186e0eb50099bfe0f6abcdcaab1ccfcf536424c5f02c00f0373f873e4c`.
 
 ## `trusted_router.services.email`
 
-Frozen alias: `frozen_f83bbaac.services.email`. Member: `src/trusted_router/services/email.py`.
+Frozen alias: `frozen_main.services.email`. Member: `src/trusted_router/services/email.py`.
 
 SHA-256: `022dca9a90c860b4e8274844ff3d71ee60a3f13a29616cc67dc331021e5737b3`.
 
@@ -2972,7 +2929,7 @@ SHA-256: `022dca9a90c860b4e8274844ff3d71ee60a3f13a29616cc67dc331021e5737b3`.
 
 ## `trusted_router.services.federation`
 
-Frozen alias: `frozen_f83bbaac.services.federation`. Member: `src/trusted_router/services/federation.py`.
+Frozen alias: `frozen_main.services.federation`. Member: `src/trusted_router/services/federation.py`.
 
 SHA-256: `393ff92cf63c6b73fc48a8eede5fbc9298f741a811a62020fce1217a4975c751`.
 
@@ -2987,7 +2944,7 @@ SHA-256: `393ff92cf63c6b73fc48a8eede5fbc9298f741a811a62020fce1217a4975c751`.
 
 ## `trusted_router.services.inference`
 
-Frozen alias: `frozen_f83bbaac.services.inference`. Member: `src/trusted_router/services/inference.py`.
+Frozen alias: `frozen_main.services.inference`. Member: `src/trusted_router/services/inference.py`.
 
 SHA-256: `8ea09c6d8280a3190b23fa5e4b62f8e146544a4a5ad30bf2b02eb77e065bb8ee`.
 
@@ -2997,7 +2954,7 @@ SHA-256: `8ea09c6d8280a3190b23fa5e4b62f8e146544a4a5ad30bf2b02eb77e065bb8ee`.
 
 ## `trusted_router.services.inference_errors`
 
-Frozen alias: `frozen_f83bbaac.services.inference_errors`. Member: `src/trusted_router/services/inference_errors.py`.
+Frozen alias: `frozen_main.services.inference_errors`. Member: `src/trusted_router/services/inference_errors.py`.
 
 SHA-256: `a00ee3cc15c089d2f5c87922f93a9961e39c201041b4d61b096136cf878c5cb6`.
 
@@ -3007,7 +2964,7 @@ SHA-256: `a00ee3cc15c089d2f5c87922f93a9961e39c201041b4d61b096136cf878c5cb6`.
 
 ## `trusted_router.services.inference_quota`
 
-Frozen alias: `frozen_f83bbaac.services.inference_quota`. Member: `src/trusted_router/services/inference_quota.py`.
+Frozen alias: `frozen_main.services.inference_quota`. Member: `src/trusted_router/services/inference_quota.py`.
 
 SHA-256: `dd1c99744704da78ef03a5dbc4fc52ce70fe6ae4059f67ca7c633003b852b828`.
 
@@ -3019,7 +2976,7 @@ SHA-256: `dd1c99744704da78ef03a5dbc4fc52ce70fe6ae4059f67ca7c633003b852b828`.
 
 ## `trusted_router.services.keyed_admission`
 
-Frozen alias: `frozen_f83bbaac.services.keyed_admission`. Member: `src/trusted_router/services/keyed_admission.py`.
+Frozen alias: `frozen_main.services.keyed_admission`. Member: `src/trusted_router/services/keyed_admission.py`.
 
 SHA-256: `58b7910f6e92fd3d1eb37bbf8321d4622767c69bec5a53eede7ffdcd4a810711`.
 
@@ -3033,7 +2990,7 @@ SHA-256: `58b7910f6e92fd3d1eb37bbf8321d4622767c69bec5a53eede7ffdcd4a810711`.
 
 ## `trusted_router.services.lightning`
 
-Frozen alias: `frozen_f83bbaac.services.lightning`. Member: `src/trusted_router/services/lightning.py`.
+Frozen alias: `frozen_main.services.lightning`. Member: `src/trusted_router/services/lightning.py`.
 
 SHA-256: `7bde9a938f24a43c5d8e1fe8f4f85ff3ad2b6f93573f0484bc0bc0c93d8ec3cf`.
 
@@ -3046,7 +3003,7 @@ SHA-256: `7bde9a938f24a43c5d8e1fe8f4f85ff3ad2b6f93573f0484bc0bc0c93d8ec3cf`.
 
 ## `trusted_router.services.notify`
 
-Frozen alias: `frozen_f83bbaac.services.notify`. Member: `src/trusted_router/services/notify.py`.
+Frozen alias: `frozen_main.services.notify`. Member: `src/trusted_router/services/notify.py`.
 
 SHA-256: `efe3e3fc9bb93edac522cb07396a1bf0cd241aecea8fa324affc6c12a9f104c1`.
 
@@ -3059,7 +3016,7 @@ SHA-256: `efe3e3fc9bb93edac522cb07396a1bf0cd241aecea8fa324affc6c12a9f104c1`.
 
 ## `trusted_router.services.ops_chat`
 
-Frozen alias: `frozen_f83bbaac.services.ops_chat`. Member: `src/trusted_router/services/ops_chat.py`.
+Frozen alias: `frozen_main.services.ops_chat`. Member: `src/trusted_router/services/ops_chat.py`.
 
 SHA-256: `4e81fa3186b8c837c2dcffeaaf7e380131143c2ec6b2ad4cac6e7ec03f7e3832`.
 
@@ -3072,7 +3029,7 @@ SHA-256: `4e81fa3186b8c837c2dcffeaaf7e380131143c2ec6b2ad4cac6e7ec03f7e3832`.
 
 ## `trusted_router.services.paypal_billing`
 
-Frozen alias: `frozen_f83bbaac.services.paypal_billing`. Member: `src/trusted_router/services/paypal_billing.py`.
+Frozen alias: `frozen_main.services.paypal_billing`. Member: `src/trusted_router/services/paypal_billing.py`.
 
 SHA-256: `32dc5487344d7e6630c05d3628fd939c9332615f6f7b50e6b6da378e8c4377cd`.
 
@@ -3085,7 +3042,7 @@ SHA-256: `32dc5487344d7e6630c05d3628fd939c9332615f6f7b50e6b6da378e8c4377cd`.
 
 ## `trusted_router.services.receipt_key_collector`
 
-Frozen alias: `frozen_f83bbaac.services.receipt_key_collector`. Member: `src/trusted_router/services/receipt_key_collector.py`.
+Frozen alias: `frozen_main.services.receipt_key_collector`. Member: `src/trusted_router/services/receipt_key_collector.py`.
 
 SHA-256: `1626e08d5f6d8e9320c41709e7f4ff2758816c53f7abe03cfd23a84771d0f06a`.
 
@@ -3097,7 +3054,7 @@ SHA-256: `1626e08d5f6d8e9320c41709e7f4ff2758816c53f7abe03cfd23a84771d0f06a`.
 
 ## `trusted_router.services.routable_payouts`
 
-Frozen alias: `frozen_f83bbaac.services.routable_payouts`. Member: `src/trusted_router/services/routable_payouts.py`.
+Frozen alias: `frozen_main.services.routable_payouts`. Member: `src/trusted_router/services/routable_payouts.py`.
 
 SHA-256: `f0fe2e47afa4656c18fbbd4b26f8ba30cea125598db12f87b758f62e0a4de7f4`.
 
@@ -3110,7 +3067,7 @@ SHA-256: `f0fe2e47afa4656c18fbbd4b26f8ba30cea125598db12f87b758f62e0a4de7f4`.
 
 ## `trusted_router.services.safe_egress`
 
-Frozen alias: `frozen_f83bbaac.services.safe_egress`. Member: `src/trusted_router/services/safe_egress.py`.
+Frozen alias: `frozen_main.services.safe_egress`. Member: `src/trusted_router/services/safe_egress.py`.
 
 SHA-256: `9608c392b935b4be3937e0388d9f5810d462c00c702d3206f97ba393fa028af0`.
 
@@ -3120,7 +3077,7 @@ SHA-256: `9608c392b935b4be3937e0388d9f5810d462c00c702d3206f97ba393fa028af0`.
 
 ## `trusted_router.services.ses_suppression`
 
-Frozen alias: `frozen_f83bbaac.services.ses_suppression`. Member: `src/trusted_router/services/ses_suppression.py`.
+Frozen alias: `frozen_main.services.ses_suppression`. Member: `src/trusted_router/services/ses_suppression.py`.
 
 SHA-256: `1630d26832c899603c2aa970e789589f026156d2f167b4c85df280d83f3ed3a8`.
 
@@ -3133,7 +3090,7 @@ SHA-256: `1630d26832c899603c2aa970e789589f026156d2f167b4c85df280d83f3ed3a8`.
 
 ## `trusted_router.services.settle_outbox_apply`
 
-Frozen alias: `frozen_f83bbaac.services.settle_outbox_apply`. Member: `src/trusted_router/services/settle_outbox_apply.py`.
+Frozen alias: `frozen_main.services.settle_outbox_apply`. Member: `src/trusted_router/services/settle_outbox_apply.py`.
 
 SHA-256: `636a8b6a48ee61bdd0d2f47d3e158aff73ce6da7b9f0e125b9459275e2bcb9de`.
 
@@ -3154,7 +3111,7 @@ SHA-256: `636a8b6a48ee61bdd0d2f47d3e158aff73ce6da7b9f0e125b9459275e2bcb9de`.
 
 ## `trusted_router.services.settle_outbox_drain`
 
-Frozen alias: `frozen_f83bbaac.services.settle_outbox_drain`. Member: `src/trusted_router/services/settle_outbox_drain.py`.
+Frozen alias: `frozen_main.services.settle_outbox_drain`. Member: `src/trusted_router/services/settle_outbox_drain.py`.
 
 SHA-256: `6e65f390c91e2f75ad0bb8783afd865240dee9b045645eb9798711b19c6a27c5`.
 
@@ -3167,7 +3124,7 @@ SHA-256: `6e65f390c91e2f75ad0bb8783afd865240dee9b045645eb9798711b19c6a27c5`.
 
 ## `trusted_router.services.stripe_billing`
 
-Frozen alias: `frozen_f83bbaac.services.stripe_billing`. Member: `src/trusted_router/services/stripe_billing.py`.
+Frozen alias: `frozen_main.services.stripe_billing`. Member: `src/trusted_router/services/stripe_billing.py`.
 
 SHA-256: `425bebb6e16b1cacea65a82bb9b420c6bada57db3028555b63d91255abb9bee1`.
 
@@ -3177,7 +3134,7 @@ SHA-256: `425bebb6e16b1cacea65a82bb9b420c6bada57db3028555b63d91255abb9bee1`.
 
 ## `trusted_router.services.stripe_fees`
 
-Frozen alias: `frozen_f83bbaac.services.stripe_fees`. Member: `src/trusted_router/services/stripe_fees.py`.
+Frozen alias: `frozen_main.services.stripe_fees`. Member: `src/trusted_router/services/stripe_fees.py`.
 
 SHA-256: `9172dc527d8b0808591fe936c1ddc43a4a1f931eb81f23bf56037c13a64ba19d`.
 
@@ -3189,7 +3146,7 @@ SHA-256: `9172dc527d8b0808591fe936c1ddc43a4a1f931eb81f23bf56037c13a64ba19d`.
 
 ## `trusted_router.services.telephony`
 
-Frozen alias: `frozen_f83bbaac.services.telephony`. Member: `src/trusted_router/services/telephony.py`.
+Frozen alias: `frozen_main.services.telephony`. Member: `src/trusted_router/services/telephony.py`.
 
 SHA-256: `057c4f69989ad219b96434b2a6372c6ff32cc271261a0bec37e75b7c2f139c49`.
 
@@ -3202,7 +3159,7 @@ SHA-256: `057c4f69989ad219b96434b2a6372c6ff32cc271261a0bec37e75b7c2f139c49`.
 
 ## `trusted_router.services.trust_release`
 
-Frozen alias: `frozen_f83bbaac.services.trust_release`. Member: `src/trusted_router/services/trust_release.py`.
+Frozen alias: `frozen_main.services.trust_release`. Member: `src/trusted_router/services/trust_release.py`.
 
 SHA-256: `7760b755b404902da0a966b3eedab4f555f0da02e3735d8ad1a72a3949004980`.
 
@@ -3218,7 +3175,7 @@ SHA-256: `7760b755b404902da0a966b3eedab4f555f0da02e3735d8ad1a72a3949004980`.
 
 ## `trusted_router.services.user_model_dispatch`
 
-Frozen alias: `frozen_f83bbaac.services.user_model_dispatch`. Member: `src/trusted_router/services/user_model_dispatch.py`.
+Frozen alias: `frozen_main.services.user_model_dispatch`. Member: `src/trusted_router/services/user_model_dispatch.py`.
 
 SHA-256: `304b82213a290ffcc6e27706ea2c779354fbacad9f08281693589119ce013f2a`.
 
@@ -3232,7 +3189,7 @@ SHA-256: `304b82213a290ffcc6e27706ea2c779354fbacad9f08281693589119ce013f2a`.
 
 ## `trusted_router.services.user_model_gateway_health`
 
-Frozen alias: `frozen_f83bbaac.services.user_model_gateway_health`. Member: `src/trusted_router/services/user_model_gateway_health.py`.
+Frozen alias: `frozen_main.services.user_model_gateway_health`. Member: `src/trusted_router/services/user_model_gateway_health.py`.
 
 SHA-256: `a1aa3fb5564af6f6156248df6c2803d21dd8cae30575c8be8f0263fd0b583485`.
 
@@ -3242,7 +3199,7 @@ SHA-256: `a1aa3fb5564af6f6156248df6c2803d21dd8cae30575c8be8f0263fd0b583485`.
 
 ## `trusted_router.services.user_model_probe`
 
-Frozen alias: `frozen_f83bbaac.services.user_model_probe`. Member: `src/trusted_router/services/user_model_probe.py`.
+Frozen alias: `frozen_main.services.user_model_probe`. Member: `src/trusted_router/services/user_model_probe.py`.
 
 SHA-256: `67a07c446a44104aa4edcd2adfa6d122e525c07c0c8842a921da186a39c24ec3`.
 
@@ -3254,7 +3211,7 @@ SHA-256: `67a07c446a44104aa4edcd2adfa6d122e525c07c0c8842a921da186a39c24ec3`.
 
 ## `trusted_router.services.user_model_secrets`
 
-Frozen alias: `frozen_f83bbaac.services.user_model_secrets`. Member: `src/trusted_router/services/user_model_secrets.py`.
+Frozen alias: `frozen_main.services.user_model_secrets`. Member: `src/trusted_router/services/user_model_secrets.py`.
 
 SHA-256: `ba81a341a9dc1332da7d67f2c5550e0dc70788db16dc76935b56d1d72fc85011`.
 
@@ -3264,7 +3221,7 @@ SHA-256: `ba81a341a9dc1332da7d67f2c5550e0dc70788db16dc76935b56d1d72fc85011`.
 
 ## `trusted_router.services.user_model_slots`
 
-Frozen alias: `frozen_f83bbaac.services.user_model_slots`. Member: `src/trusted_router/services/user_model_slots.py`.
+Frozen alias: `frozen_main.services.user_model_slots`. Member: `src/trusted_router/services/user_model_slots.py`.
 
 SHA-256: `4b224e446240a4bf0ad8db1cee38e1382df2807501efab8542d20d98393850ec`.
 
@@ -3274,7 +3231,7 @@ SHA-256: `4b224e446240a4bf0ad8db1cee38e1382df2807501efab8542d20d98393850ec`.
 
 ## `trusted_router.services.veriff`
 
-Frozen alias: `frozen_f83bbaac.services.veriff`. Member: `src/trusted_router/services/veriff.py`.
+Frozen alias: `frozen_main.services.veriff`. Member: `src/trusted_router/services/veriff.py`.
 
 SHA-256: `c850f6a8060b24225002e7c1dc90d11ab8258d8888c87f4095fba9a43d9aaaf1`.
 
@@ -3287,7 +3244,7 @@ SHA-256: `c850f6a8060b24225002e7c1dc90d11ab8258d8888c87f4095fba9a43d9aaaf1`.
 
 ## `trusted_router.services.x402_billing`
 
-Frozen alias: `frozen_f83bbaac.services.x402_billing`. Member: `src/trusted_router/services/x402_billing.py`.
+Frozen alias: `frozen_main.services.x402_billing`. Member: `src/trusted_router/services/x402_billing.py`.
 
 SHA-256: `d8149188fb562f1abc4692e9a86534b88c297a9baf495367a00cd129938b7e00`.
 
@@ -3297,7 +3254,7 @@ SHA-256: `d8149188fb562f1abc4692e9a86534b88c297a9baf495367a00cd129938b7e00`.
 
 ## `trusted_router.signup_gate`
 
-Frozen alias: `frozen_f83bbaac.signup_gate`. Member: `src/trusted_router/signup_gate.py`.
+Frozen alias: `frozen_main.signup_gate`. Member: `src/trusted_router/signup_gate.py`.
 
 SHA-256: `1fd520ce6f6b31ed107542edee0fc2661f68a82a004fe5816575665d7cbc6257`.
 
@@ -3307,7 +3264,7 @@ SHA-256: `1fd520ce6f6b31ed107542edee0fc2661f68a82a004fe5816575665d7cbc6257`.
 
 ## `trusted_router.sns_verify`
 
-Frozen alias: `frozen_f83bbaac.sns_verify`. Member: `src/trusted_router/sns_verify.py`.
+Frozen alias: `frozen_main.sns_verify`. Member: `src/trusted_router/sns_verify.py`.
 
 SHA-256: `2ef4f2c49f185c158fbe6f76f0655ea8ec53b9cd99f91bdf45a3ddfade02e1fc`.
 
@@ -3318,7 +3275,7 @@ SHA-256: `2ef4f2c49f185c158fbe6f76f0655ea8ec53b9cd99f91bdf45a3ddfade02e1fc`.
 
 ## `trusted_router.spend_windows`
 
-Frozen alias: `frozen_f83bbaac.spend_windows`. Member: `src/trusted_router/spend_windows.py`.
+Frozen alias: `frozen_main.spend_windows`. Member: `src/trusted_router/spend_windows.py`.
 
 SHA-256: `a8513ffd13637fc1ce05eab88545918d6810f6c310c8bcec1bf4b41479496315`.
 
@@ -3334,7 +3291,7 @@ SHA-256: `a8513ffd13637fc1ce05eab88545918d6810f6c310c8bcec1bf4b41479496315`.
 
 ## `trusted_router.stage_d`
 
-Frozen alias: `frozen_f83bbaac.stage_d`. Member: `src/trusted_router/stage_d.py`.
+Frozen alias: `frozen_main.stage_d`. Member: `src/trusted_router/stage_d.py`.
 
 SHA-256: `fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b`.
 
@@ -3345,15 +3302,13 @@ SHA-256: `fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b`.
 | `endpoint_cost_microdollars_from_candidate` | 161 |
 | `endpoint_cost_microdollars_from_document` | 221 |
 | `endpoint_pricing_candidate` | 83 |
-| `endpoint_pricing_candidate.<locals>.<listcomp>` | 111 |
 | `endpoint_pricing_candidate.<locals>.rates` | 86 |
 | `endpoint_pricing_document` | 127 |
-| `endpoint_pricing_document.<locals>.<listcomp>` | 131 |
 | `pricing_candidate_for_endpoint` | 149 |
 
 ## `trusted_router.stage_d_policy`
 
-Frozen alias: `frozen_f83bbaac.stage_d_policy`. Member: `src/trusted_router/stage_d_policy.py`.
+Frozen alias: `frozen_main.stage_d_policy`. Member: `src/trusted_router/stage_d_policy.py`.
 
 SHA-256: `e8fd6e6b8eca139727e71af4f8062bc097f5a9779bc1ad92abc236b5f38d7ffc`.
 
@@ -3372,28 +3327,28 @@ SHA-256: `e8fd6e6b8eca139727e71af4f8062bc097f5a9779bc1ad92abc236b5f38d7ffc`.
 
 ## `trusted_router.storage`
 
-Frozen alias: `frozen_f83bbaac.storage`. Member: `src/trusted_router/storage.py`.
+Frozen alias: `frozen_main.storage`. Member: `src/trusted_router/storage.py`.
 
-SHA-256: `cfa3b99ca3a0d67c9d2d0bbaa1c67ae7214029ee9c098f15d1dc651e07934992`.
+SHA-256: `6b3102183d2d946dabc1691043c02aaa0a9a1ea8a4e6961bdcedb20edcbb620d`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
 | `InMemoryStore` | 148 |
 | `InMemoryStore.__init__` | 156 |
-| `_StoreProxy` | 3801 |
-| `_StoreProxy.__getattr__` | 3857 |
-| `_StoreProxy.__init__` | 3817 |
-| `_StoreProxy._configure` | 3821 |
-| `_StoreProxy.target` | 3825 |
-| `configure_analytics_sink` | 3891 |
-| `configure_store` | 3871 |
-| `create_store` | 3897 |
-| `typed_billing_store` | 3875 |
+| `_StoreProxy` | 3812 |
+| `_StoreProxy.__getattr__` | 3868 |
+| `_StoreProxy.__init__` | 3828 |
+| `_StoreProxy._configure` | 3832 |
+| `_StoreProxy.target` | 3836 |
+| `configure_analytics_sink` | 3902 |
+| `configure_store` | 3882 |
+| `create_store` | 3908 |
+| `typed_billing_store` | 3886 |
 
 ## `trusted_router.storage_activity`
 
-Frozen alias: `frozen_f83bbaac.storage_activity`. Member: `src/trusted_router/storage_activity.py`.
+Frozen alias: `frozen_main.storage_activity`. Member: `src/trusted_router/storage_activity.py`.
 
 SHA-256: `e94dbf7230793f7ef91b2b46995f0a8e0e922f72c8a36a2c6d983a3eb4497379`.
 
@@ -3405,7 +3360,7 @@ SHA-256: `e94dbf7230793f7ef91b2b46995f0a8e0e922f72c8a36a2c6d983a3eb4497379`.
 
 ## `trusted_router.storage_attribution`
 
-Frozen alias: `frozen_f83bbaac.storage_attribution`. Member: `src/trusted_router/storage_attribution.py`.
+Frozen alias: `frozen_main.storage_attribution`. Member: `src/trusted_router/storage_attribution.py`.
 
 SHA-256: `0d9cfd005d3ca4fac14477dd92c4ffb8679502c212e2d525c46186187e8e6f77`.
 
@@ -3417,7 +3372,7 @@ SHA-256: `0d9cfd005d3ca4fac14477dd92c4ffb8679502c212e2d525c46186187e8e6f77`.
 
 ## `trusted_router.storage_auth_context`
 
-Frozen alias: `frozen_f83bbaac.storage_auth_context`. Member: `src/trusted_router/storage_auth_context.py`.
+Frozen alias: `frozen_main.storage_auth_context`. Member: `src/trusted_router/storage_auth_context.py`.
 
 SHA-256: `205afd6ed1728525de23f04323a8f1361589cf8d9db0f39afdbdc0e331b4eae1`.
 
@@ -3427,7 +3382,7 @@ SHA-256: `205afd6ed1728525de23f04323a8f1361589cf8d9db0f39afdbdc0e331b4eae1`.
 
 ## `trusted_router.storage_auth_sessions`
 
-Frozen alias: `frozen_f83bbaac.storage_auth_sessions`. Member: `src/trusted_router/storage_auth_sessions.py`.
+Frozen alias: `frozen_main.storage_auth_sessions`. Member: `src/trusted_router/storage_auth_sessions.py`.
 
 SHA-256: `695bbbee22ba7aea70d98cf2b6b4e9e4a441537719d13f7033beb62d46ce7745`.
 
@@ -3439,7 +3394,7 @@ SHA-256: `695bbbee22ba7aea70d98cf2b6b4e9e4a441537719d13f7033beb62d46ce7745`.
 
 ## `trusted_router.storage_broadcast`
 
-Frozen alias: `frozen_f83bbaac.storage_broadcast`. Member: `src/trusted_router/storage_broadcast.py`.
+Frozen alias: `frozen_main.storage_broadcast`. Member: `src/trusted_router/storage_broadcast.py`.
 
 SHA-256: `3f2c884e7dc46e99e92b467fd33ee38fda1f1f6f654bab2aeaa8520e843e2d4c`.
 
@@ -3451,7 +3406,7 @@ SHA-256: `3f2c884e7dc46e99e92b467fd33ee38fda1f1f6f654bab2aeaa8520e843e2d4c`.
 
 ## `trusted_router.storage_byok`
 
-Frozen alias: `frozen_f83bbaac.storage_byok`. Member: `src/trusted_router/storage_byok.py`.
+Frozen alias: `frozen_main.storage_byok`. Member: `src/trusted_router/storage_byok.py`.
 
 SHA-256: `60b359fd83cc74e48b4a4199750f57e4b972d03472254a653f03c66552be22c3`.
 
@@ -3463,7 +3418,7 @@ SHA-256: `60b359fd83cc74e48b4a4199750f57e4b972d03472254a653f03c66552be22c3`.
 
 ## `trusted_router.storage_codec`
 
-Frozen alias: `frozen_f83bbaac.storage_codec`. Member: `src/trusted_router/storage_codec.py`.
+Frozen alias: `frozen_main.storage_codec`. Member: `src/trusted_router/storage_codec.py`.
 
 SHA-256: `954889a6b1e798c187cdf0b918431fc8b3e74d4536dbe9ac1029edf6881d5025`.
 
@@ -3474,7 +3429,7 @@ SHA-256: `954889a6b1e798c187cdf0b918431fc8b3e74d4536dbe9ac1029edf6881d5025`.
 
 ## `trusted_router.storage_custom_models`
 
-Frozen alias: `frozen_f83bbaac.storage_custom_models`. Member: `src/trusted_router/storage_custom_models.py`.
+Frozen alias: `frozen_main.storage_custom_models`. Member: `src/trusted_router/storage_custom_models.py`.
 
 SHA-256: `8692bf3038ff3c67d3b8d6688177522d9f8cebf4e7f77df2bb6b2767462a5d1c`.
 
@@ -3486,7 +3441,7 @@ SHA-256: `8692bf3038ff3c67d3b8d6688177522d9f8cebf4e7f77df2bb6b2767462a5d1c`.
 
 ## `trusted_router.storage_email_blocks`
 
-Frozen alias: `frozen_f83bbaac.storage_email_blocks`. Member: `src/trusted_router/storage_email_blocks.py`.
+Frozen alias: `frozen_main.storage_email_blocks`. Member: `src/trusted_router/storage_email_blocks.py`.
 
 SHA-256: `bc579ce29805325926a87f4cc54f6edcdacd449bf91d088137cdb6b576e3be34`.
 
@@ -3498,7 +3453,7 @@ SHA-256: `bc579ce29805325926a87f4cc54f6edcdacd449bf91d088137cdb6b576e3be34`.
 
 ## `trusted_router.storage_errors`
 
-Frozen alias: `frozen_f83bbaac.storage_errors`. Member: `src/trusted_router/storage_errors.py`.
+Frozen alias: `frozen_main.storage_errors`. Member: `src/trusted_router/storage_errors.py`.
 
 SHA-256: `ad1467651d4fb92e9d34973ea8287c9daccb5e4d4052710aea07aaa80a323e07`.
 
@@ -3516,34 +3471,32 @@ SHA-256: `ad1467651d4fb92e9d34973ea8287c9daccb5e4d4052710aea07aaa80a323e07`.
 
 ## `trusted_router.storage_gcp`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp`. Member: `src/trusted_router/storage_gcp.py`.
+Frozen alias: `frozen_main.storage_gcp`. Member: `src/trusted_router/storage_gcp.py`.
 
-SHA-256: `e77e3a7f53f894929e43569421d782e7c4adbd57b79c7acb91a3fc79f8eb9baf`.
+SHA-256: `15323301fe6b5d92f3383ce80585fe9efa8da6517b4a47999938d515938818a8`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `SpannerStore` | 382 |
-| `SpannerStore._list_entities` | 6889 |
-| `SpannerStore._list_entities.<locals>.<listcomp>` | 6922 |
-| `SpannerStore._read_entity` | 6843 |
-| `SpannerStore._read_entity_from` | 6863 |
-| `SpannerStore._read_entity_from.<locals>.<setcomp>` | 6880 |
-| `SpannerStore.claim_broadcast_deliveries` | 2978 |
-| `SpannerStore.get_acquisition_attribution` | 601 |
-| `SpannerStore.get_credit_account` | 1835 |
-| `SpannerStore.get_gateway_authorization` | 4651 |
-| `SpannerStore.get_key_by_hash` | 2441 |
-| `SpannerStore.list_broadcast_destinations` | 2941 |
-| `SpannerStore.reap_expired_reservations_result` | 5580 |
-| `SpannerStore.typed_finalize_gateway` | 4716 |
-| `SpannerStore.typed_settle_one_commit_result` | 4895 |
-| `SpannerStore.typed_settle_one_commit_result.<locals>.attempt` | 4982 |
-| `_AuthorizationReplay` | 236 |
+| `SpannerStore` | 385 |
+| `SpannerStore._list_entities` | 6967 |
+| `SpannerStore._read_entity` | 6921 |
+| `SpannerStore._read_entity_from` | 6941 |
+| `SpannerStore.claim_broadcast_deliveries` | 3015 |
+| `SpannerStore.get_acquisition_attribution` | 604 |
+| `SpannerStore.get_credit_account` | 1838 |
+| `SpannerStore.get_gateway_authorization` | 4709 |
+| `SpannerStore.get_key_by_hash` | 2478 |
+| `SpannerStore.list_broadcast_destinations` | 2978 |
+| `SpannerStore.reap_expired_reservations_result` | 5658 |
+| `SpannerStore.typed_finalize_gateway` | 4774 |
+| `SpannerStore.typed_settle_one_commit_result` | 4953 |
+| `SpannerStore.typed_settle_one_commit_result.<locals>.attempt` | 5040 |
+| `_AuthorizationReplay` | 239 |
 
 ## `trusted_router.storage_gcp_analytics_outbox`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_analytics_outbox`. Member: `src/trusted_router/storage_gcp_analytics_outbox.py`.
+Frozen alias: `frozen_main.storage_gcp_analytics_outbox`. Member: `src/trusted_router/storage_gcp_analytics_outbox.py`.
 
 SHA-256: `8c546064fce8e036776669cf5d456acd13c206bf1709f0d7a0ac43be03eae5a2`.
 
@@ -3560,7 +3513,7 @@ SHA-256: `8c546064fce8e036776669cf5d456acd13c206bf1709f0d7a0ac43be03eae5a2`.
 
 ## `trusted_router.storage_gcp_async_admission`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_async_admission`. Member: `src/trusted_router/storage_gcp_async_admission.py`.
+Frozen alias: `frozen_main.storage_gcp_async_admission`. Member: `src/trusted_router/storage_gcp_async_admission.py`.
 
 SHA-256: `62810d8ac37f54d9cc17e55009bf16668e9ced89005bf42d00bf5b1270442f6f`.
 
@@ -3570,7 +3523,7 @@ SHA-256: `62810d8ac37f54d9cc17e55009bf16668e9ced89005bf42d00bf5b1270442f6f`.
 
 ## `trusted_router.storage_gcp_async_settle`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_async_settle`. Member: `src/trusted_router/storage_gcp_async_settle.py`.
+Frozen alias: `frozen_main.storage_gcp_async_settle`. Member: `src/trusted_router/storage_gcp_async_settle.py`.
 
 SHA-256: `7aca516fdc555fb73ac978b49d78c2304da867deed2cd7d9d1519142a2e61e4c`.
 
@@ -3581,7 +3534,7 @@ SHA-256: `7aca516fdc555fb73ac978b49d78c2304da867deed2cd7d9d1519142a2e61e4c`.
 
 ## `trusted_router.storage_gcp_attribution`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_attribution`. Member: `src/trusted_router/storage_gcp_attribution.py`.
+Frozen alias: `frozen_main.storage_gcp_attribution`. Member: `src/trusted_router/storage_gcp_attribution.py`.
 
 SHA-256: `ea96da93661b6fc994b0a277474e75473f9ca890d66d118183f4e6858885f73f`.
 
@@ -3594,7 +3547,7 @@ SHA-256: `ea96da93661b6fc994b0a277474e75473f9ca890d66d118183f4e6858885f73f`.
 
 ## `trusted_router.storage_gcp_auth_sessions`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_auth_sessions`. Member: `src/trusted_router/storage_gcp_auth_sessions.py`.
+Frozen alias: `frozen_main.storage_gcp_auth_sessions`. Member: `src/trusted_router/storage_gcp_auth_sessions.py`.
 
 SHA-256: `4b5d0a41d45e7f8e43d351a368dda5f56d079917f9fc5a39d8ed05119997a702`.
 
@@ -3606,9 +3559,9 @@ SHA-256: `4b5d0a41d45e7f8e43d351a368dda5f56d079917f9fc5a39d8ed05119997a702`.
 
 ## `trusted_router.storage_gcp_authorize`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_authorize`. Member: `src/trusted_router/storage_gcp_authorize.py`.
+Frozen alias: `frozen_main.storage_gcp_authorize`. Member: `src/trusted_router/storage_gcp_authorize.py`.
 
-SHA-256: `0cf99f8a7258db2e655df0df8fb677aa6405ed20dc1f8b822e5d9e7c78ab9483`.
+SHA-256: `ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -3617,38 +3570,38 @@ SHA-256: `0cf99f8a7258db2e655df0df8fb677aa6405ed20dc1f8b822e5d9e7c78ab9483`.
 | `AuthorizeVerdict` | 146 |
 | `ExhaustedKeyCache` | 200 |
 | `ExhaustedKeyCache.__init__` | 203 |
-| `OneCommitSettleDeclined` | 811 |
-| `ReapPassResult` | 826 |
+| `OneCommitSettleDeclined` | 819 |
+| `ReapPassResult` | 834 |
 | `ReapPassResult.__init__` | 2 |
-| `ReapPassResult.out_of_cohort_share` | 854 |
-| `ReapPassResult.started_marker_share` | 850 |
-| `SettleOutcome` | 791 |
-| `_ReapGuardLost` | 807 |
-| `_ReapOneResult` | 859 |
+| `ReapPassResult.out_of_cohort_share` | 862 |
+| `ReapPassResult.started_marker_share` | 858 |
+| `SettleOutcome` | 799 |
+| `_ReapGuardLost` | 815 |
+| `_ReapOneResult` | 867 |
 | `_Reject` | 162 |
 | `_RetrySequentialCreditReserve` | 169 |
 | `_RetrySequentialFinalize` | 186 |
 | `_RetrySequentialKeyReserve` | 176 |
-| `_SettleError` | 802 |
+| `_SettleError` | 810 |
 | `__create_fn__` | 1 |
-| `_cached_outbox_availability` | 1120 |
-| `_log_missing_key_releases` | 929 |
-| `_outbox_cache_key` | 1099 |
-| `_outbox_table_available` | 1149 |
-| `_release_key_or_skip_deleted` | 869 |
-| `_remember_outbox_availability` | 1135 |
-| `reap_expired_reservations_result` | 1215 |
-| `typed_finalize_atomic` | 1674 |
-| `typed_finalize_atomic.<locals>.run` | 2065 |
-| `typed_finalize_atomic.<locals>.run.<locals>.tracked` | 2072 |
-| `typed_finalize_atomic.<locals>.speculative_batch` | 1783 |
-| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.<genexpr>` | 1873 |
-| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.check_prefix` | 1855 |
-| `typed_finalize_atomic.<locals>.txn` | 1876 |
+| `_cached_outbox_availability` | 1128 |
+| `_log_missing_key_releases` | 937 |
+| `_outbox_cache_key` | 1107 |
+| `_outbox_table_available` | 1157 |
+| `_release_key_or_skip_deleted` | 877 |
+| `_remember_outbox_availability` | 1143 |
+| `reap_expired_reservations_result` | 1223 |
+| `typed_finalize_atomic` | 1691 |
+| `typed_finalize_atomic.<locals>.run` | 2082 |
+| `typed_finalize_atomic.<locals>.run.<locals>.tracked` | 2089 |
+| `typed_finalize_atomic.<locals>.speculative_batch` | 1800 |
+| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.<genexpr>` | 1890 |
+| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.check_prefix` | 1872 |
+| `typed_finalize_atomic.<locals>.txn` | 1893 |
 
 ## `trusted_router.storage_gcp_batch_dml`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_batch_dml`. Member: `src/trusted_router/storage_gcp_batch_dml.py`.
+Frozen alias: `frozen_main.storage_gcp_batch_dml`. Member: `src/trusted_router/storage_gcp_batch_dml.py`.
 
 SHA-256: `0bc5f9e3161e869c37d70df0ff3e3d6bf2d247a54f42fe6a6968ae9dc9fd8e2a`.
 
@@ -3661,7 +3614,7 @@ SHA-256: `0bc5f9e3161e869c37d70df0ff3e3d6bf2d247a54f42fe6a6968ae9dc9fd8e2a`.
 
 ## `trusted_router.storage_gcp_broadcast`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_broadcast`. Member: `src/trusted_router/storage_gcp_broadcast.py`.
+Frozen alias: `frozen_main.storage_gcp_broadcast`. Member: `src/trusted_router/storage_gcp_broadcast.py`.
 
 SHA-256: `a85339557a1321155c976e4e29b05479b1e1a566f8893f28082f1e8076071ad1`.
 
@@ -3677,7 +3630,7 @@ SHA-256: `a85339557a1321155c976e4e29b05479b1e1a566f8893f28082f1e8076071ad1`.
 
 ## `trusted_router.storage_gcp_byok`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_byok`. Member: `src/trusted_router/storage_gcp_byok.py`.
+Frozen alias: `frozen_main.storage_gcp_byok`. Member: `src/trusted_router/storage_gcp_byok.py`.
 
 SHA-256: `69d07625b4063e045491ab85b7e42810c62074a3330599d28c975020951dbebe`.
 
@@ -3689,7 +3642,7 @@ SHA-256: `69d07625b4063e045491ab85b7e42810c62074a3330599d28c975020951dbebe`.
 
 ## `trusted_router.storage_gcp_codec`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_codec`. Member: `src/trusted_router/storage_gcp_codec.py`.
+Frozen alias: `frozen_main.storage_gcp_codec`. Member: `src/trusted_router/storage_gcp_codec.py`.
 
 SHA-256: `2060d9b39f0645b8937a5aae7e4f4fec16054d08de07428cd34c10df5bee8531`.
 
@@ -3700,24 +3653,25 @@ SHA-256: `2060d9b39f0645b8937a5aae7e4f4fec16054d08de07428cd34c10df5bee8531`.
 
 ## `trusted_router.storage_gcp_counter_dml`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_counter_dml`. Member: `src/trusted_router/storage_gcp_counter_dml.py`.
+Frozen alias: `frozen_main.storage_gcp_counter_dml`. Member: `src/trusted_router/storage_gcp_counter_dml.py`.
 
-SHA-256: `1949f9be8439028b6c9acdda8d3b7a5d1eee2b8d186fbe734fa69eb32762786f`.
+SHA-256: `b262f1ecb008a0cc84025fa84b139776c7d964e4b614b636c878731d5573f164`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `claim_reservation_statement` | 769 |
-| `read_reservation` | 682 |
-| `release_credit` | 295 |
-| `release_credit_no_debt_statement` | 371 |
-| `release_key` | 581 |
-| `release_key_statement` | 509 |
-| `reservation_retention_clear_statement` | 866 |
+| `claim_reservation_statement` | 810 |
+| `read_reservation` | 723 |
+| `release_credit` | 299 |
+| `release_credit.<locals>.absorb` | 358 |
+| `release_credit_no_debt_statement` | 409 |
+| `release_key` | 622 |
+| `release_key_statement` | 550 |
+| `reservation_retention_clear_statement` | 907 |
 
 ## `trusted_router.storage_gcp_counters`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_counters`. Member: `src/trusted_router/storage_gcp_counters.py`.
+Frozen alias: `frozen_main.storage_gcp_counters`. Member: `src/trusted_router/storage_gcp_counters.py`.
 
 SHA-256: `38e8845cd529c485ee67691dff6413f3f25328801dcd6b508b5cfc4363bcbf15`.
 
@@ -3725,9 +3679,24 @@ SHA-256: `38e8845cd529c485ee67691dff6413f3f25328801dcd6b508b5cfc4363bcbf15`.
 |---|---|
 | `<module>` | 1 |
 
+## `trusted_router.storage_gcp_credit_debt`
+
+Frozen alias: `frozen_main.storage_gcp_credit_debt`. Member: `src/trusted_router/storage_gcp_credit_debt.py`.
+
+SHA-256: `3098d0c1eb4f7488dae52e6ea0c96cff3b80ef20929cbe6696dc502ccb35ea89`.
+
+| Callable / executed code unit | Code line |
+|---|---|
+| `<module>` | 1 |
+| `CreditRows` | 56 |
+| `CreditRowsChanged` | 41 |
+| `CreditRowsIncomplete` | 45 |
+| `InflowResult` | 187 |
+| `__create_fn__` | 1 |
+
 ## `trusted_router.storage_gcp_credit_shards`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_credit_shards`. Member: `src/trusted_router/storage_gcp_credit_shards.py`.
+Frozen alias: `frozen_main.storage_gcp_credit_shards`. Member: `src/trusted_router/storage_gcp_credit_shards.py`.
 
 SHA-256: `084fb0ec657a057b5dd985ddf0b1d7f7e9ba9dd3b939a97b2bc5fd41a51d6c1a`.
 
@@ -3743,9 +3712,9 @@ SHA-256: `084fb0ec657a057b5dd985ddf0b1d7f7e9ba9dd3b939a97b2bc5fd41a51d6c1a`.
 
 ## `trusted_router.storage_gcp_credit_transfer`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_credit_transfer`. Member: `src/trusted_router/storage_gcp_credit_transfer.py`.
+Frozen alias: `frozen_main.storage_gcp_credit_transfer`. Member: `src/trusted_router/storage_gcp_credit_transfer.py`.
 
-SHA-256: `18d56b8b8c00da33e6e6a250d26394bf4c1b913fbdc48cbc37568fa7ce0a79f2`.
+SHA-256: `20cdfd3b81f9fb20ff6244a14a19ee661488468d20703e89c91d68d1cbe86b6f`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -3754,7 +3723,7 @@ SHA-256: `18d56b8b8c00da33e6e6a250d26394bf4c1b913fbdc48cbc37568fa7ce0a79f2`.
 
 ## `trusted_router.storage_gcp_custom_models`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_custom_models`. Member: `src/trusted_router/storage_gcp_custom_models.py`.
+Frozen alias: `frozen_main.storage_gcp_custom_models`. Member: `src/trusted_router/storage_gcp_custom_models.py`.
 
 SHA-256: `a02b231b60e0ad2c0651dbf1b60228f35e17e014ac54b87123e474661d11b213`.
 
@@ -3766,7 +3735,7 @@ SHA-256: `a02b231b60e0ad2c0651dbf1b60228f35e17e014ac54b87123e474661d11b213`.
 
 ## `trusted_router.storage_gcp_email_blocks`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_email_blocks`. Member: `src/trusted_router/storage_gcp_email_blocks.py`.
+Frozen alias: `frozen_main.storage_gcp_email_blocks`. Member: `src/trusted_router/storage_gcp_email_blocks.py`.
 
 SHA-256: `e409852ad5cd88805bd5a9191918d722c5b3e497fdc19b1b46e24050c2a21be8`.
 
@@ -3778,7 +3747,7 @@ SHA-256: `e409852ad5cd88805bd5a9191918d722c5b3e497fdc19b1b46e24050c2a21be8`.
 
 ## `trusted_router.storage_gcp_generation_records`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_generation_records`. Member: `src/trusted_router/storage_gcp_generation_records.py`.
+Frozen alias: `frozen_main.storage_gcp_generation_records`. Member: `src/trusted_router/storage_gcp_generation_records.py`.
 
 SHA-256: `3d78d071d123b78a65f0baa77f6217dec78aa5207ec6e3634e7fa47432b0e8b5`.
 
@@ -3791,7 +3760,7 @@ SHA-256: `3d78d071d123b78a65f0baa77f6217dec78aa5207ec6e3634e7fa47432b0e8b5`.
 
 ## `trusted_router.storage_gcp_generations`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_generations`. Member: `src/trusted_router/storage_gcp_generations.py`.
+Frozen alias: `frozen_main.storage_gcp_generations`. Member: `src/trusted_router/storage_gcp_generations.py`.
 
 SHA-256: `f5a652f450dd62098ffc34dd2c567a4a08a768ac08a77d6c911def759962508e`.
 
@@ -3810,7 +3779,7 @@ SHA-256: `f5a652f450dd62098ffc34dd2c567a4a08a768ac08a77d6c911def759962508e`.
 
 ## `trusted_router.storage_gcp_group_buy`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_group_buy`. Member: `src/trusted_router/storage_gcp_group_buy.py`.
+Frozen alias: `frozen_main.storage_gcp_group_buy`. Member: `src/trusted_router/storage_gcp_group_buy.py`.
 
 SHA-256: `370a443bbcfe686020dbd508e8ad674cdee0bfd87569c8c9068052b2460b288c`.
 
@@ -3822,7 +3791,7 @@ SHA-256: `370a443bbcfe686020dbd508e8ad674cdee0bfd87569c8c9068052b2460b288c`.
 
 ## `trusted_router.storage_gcp_io`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_io`. Member: `src/trusted_router/storage_gcp_io.py`.
+Frozen alias: `frozen_main.storage_gcp_io`. Member: `src/trusted_router/storage_gcp_io.py`.
 
 SHA-256: `bc03206cc99c37f653989d2fa11e82b5be974e51e871a358a6466f26731bf008`.
 
@@ -3849,7 +3818,7 @@ SHA-256: `bc03206cc99c37f653989d2fa11e82b5be974e51e871a358a6466f26731bf008`.
 
 ## `trusted_router.storage_gcp_keys`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_keys`. Member: `src/trusted_router/storage_gcp_keys.py`.
+Frozen alias: `frozen_main.storage_gcp_keys`. Member: `src/trusted_router/storage_gcp_keys.py`.
 
 SHA-256: `28956fe72544b2379ec7f2ee5794acd2fc9b18660ae6ab1c060eabd6cbd6b058`.
 
@@ -3862,7 +3831,7 @@ SHA-256: `28956fe72544b2379ec7f2ee5794acd2fc9b18660ae6ab1c060eabd6cbd6b058`.
 
 ## `trusted_router.storage_gcp_oauth_apps`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_oauth_apps`. Member: `src/trusted_router/storage_gcp_oauth_apps.py`.
+Frozen alias: `frozen_main.storage_gcp_oauth_apps`. Member: `src/trusted_router/storage_gcp_oauth_apps.py`.
 
 SHA-256: `07c3f956633fd042bb32ee856a7eaa5399a8f24395446db66ebccbc7369b33ec`.
 
@@ -3874,7 +3843,7 @@ SHA-256: `07c3f956633fd042bb32ee856a7eaa5399a8f24395446db66ebccbc7369b33ec`.
 
 ## `trusted_router.storage_gcp_oauth_codes`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_oauth_codes`. Member: `src/trusted_router/storage_gcp_oauth_codes.py`.
+Frozen alias: `frozen_main.storage_gcp_oauth_codes`. Member: `src/trusted_router/storage_gcp_oauth_codes.py`.
 
 SHA-256: `d2bacc72b87da09fe27b261c07352e6aeb343cfdd013be204be9c1bab90039c6`.
 
@@ -3886,7 +3855,7 @@ SHA-256: `d2bacc72b87da09fe27b261c07352e6aeb343cfdd013be204be9c1bab90039c6`.
 
 ## `trusted_router.storage_gcp_operational_analytics_outbox`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_operational_analytics_outbox`. Member: `src/trusted_router/storage_gcp_operational_analytics_outbox.py`.
+Frozen alias: `frozen_main.storage_gcp_operational_analytics_outbox`. Member: `src/trusted_router/storage_gcp_operational_analytics_outbox.py`.
 
 SHA-256: `2ea7a84b07577870afd497b5561a44895390e7c3df2a49abe1c27acfa0a9cb42`.
 
@@ -3900,7 +3869,7 @@ SHA-256: `2ea7a84b07577870afd497b5561a44895390e7c3df2a49abe1c27acfa0a9cb42`.
 
 ## `trusted_router.storage_gcp_rate_limits`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_rate_limits`. Member: `src/trusted_router/storage_gcp_rate_limits.py`.
+Frozen alias: `frozen_main.storage_gcp_rate_limits`. Member: `src/trusted_router/storage_gcp_rate_limits.py`.
 
 SHA-256: `24e3d202185aa025618fa03c2eac5af49cfceda0bbc5c533297ab4167a3fb054`.
 
@@ -3912,7 +3881,7 @@ SHA-256: `24e3d202185aa025618fa03c2eac5af49cfceda0bbc5c533297ab4167a3fb054`.
 
 ## `trusted_router.storage_gcp_request_records`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_request_records`. Member: `src/trusted_router/storage_gcp_request_records.py`.
+Frozen alias: `frozen_main.storage_gcp_request_records`. Member: `src/trusted_router/storage_gcp_request_records.py`.
 
 SHA-256: `0d768b096a8a9d3ab60115c28104c6eb65a69da4cbf45b476bde43261738f724`.
 
@@ -3921,13 +3890,10 @@ SHA-256: `0d768b096a8a9d3ab60115c28104c6eb65a69da4cbf45b476bde43261738f724`.
 | `<module>` | 1 |
 | `AuthorizationDataError` | 57 |
 | `_authorization_from_payload` | 461 |
-| `_authorization_from_payload.<locals>.<dictcomp>` | 464 |
-| `_authorization_from_payload.<locals>.<setcomp>` | 463 |
 | `_current_heartbeat_json_sql` | 297 |
 | `_settled_payload_sql` | 315 |
 | `_timestamp_string` | 467 |
 | `authorization_typed_columns` | 61 |
-| `authorization_typed_columns.<locals>.<dictcomp>` | 63 |
 | `gateway_authorization_retention_clear_statement` | 449 |
 | `gateway_authorization_settled_statement` | 345 |
 | `gateway_authorization_settled_statement.<locals>.<genexpr>` | 364 |
@@ -3936,7 +3902,7 @@ SHA-256: `0d768b096a8a9d3ab60115c28104c6eb65a69da4cbf45b476bde43261738f724`.
 
 ## `trusted_router.storage_gcp_settle_outbox`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_settle_outbox`. Member: `src/trusted_router/storage_gcp_settle_outbox.py`.
+Frozen alias: `frozen_main.storage_gcp_settle_outbox`. Member: `src/trusted_router/storage_gcp_settle_outbox.py`.
 
 SHA-256: `eb0532fb27eb95968d9ec7e20ed3c79ecb5e52d880f1f1a699ad66c2824f0a14`.
 
@@ -3950,7 +3916,6 @@ SHA-256: `eb0532fb27eb95968d9ec7e20ed3c79ecb5e52d880f1f1a699ad66c2824f0a14`.
 | `SpannerSettleOutbox._claim_one.<locals>.txn` | 658 |
 | `SpannerSettleOutbox.claim` | 627 |
 | `SpannerSettleOutbox.due` | 609 |
-| `SpannerSettleOutbox.due.<locals>.<listcomp>` | 625 |
 | `SpannerSettleOutbox.enqueue` | 500 |
 | `SpannerSettleOutbox.enqueue.<locals>.insert_txn` | 515 |
 | `SpannerSettleOutbox.get` | 1119 |
@@ -3970,7 +3935,7 @@ SHA-256: `eb0532fb27eb95968d9ec7e20ed3c79ecb5e52d880f1f1a699ad66c2824f0a14`.
 
 ## `trusted_router.storage_gcp_stage_d`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_stage_d`. Member: `src/trusted_router/storage_gcp_stage_d.py`.
+Frozen alias: `frozen_main.storage_gcp_stage_d`. Member: `src/trusted_router/storage_gcp_stage_d.py`.
 
 SHA-256: `429ab16d053f0a6916313bc1861e33fcf52786148b029740c1a6fb9a873b43d1`.
 
@@ -3983,19 +3948,19 @@ SHA-256: `429ab16d053f0a6916313bc1861e33fcf52786148b029740c1a6fb9a873b43d1`.
 
 ## `trusted_router.storage_gcp_trust`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_trust`. Member: `src/trusted_router/storage_gcp_trust.py`.
+Frozen alias: `frozen_main.storage_gcp_trust`. Member: `src/trusted_router/storage_gcp_trust.py`.
 
-SHA-256: `860821c5a405c931343abbeaf78ab3016071a1609768c0090caae13729652e57`.
+SHA-256: `51ea1a5884501c89a58a25f15a0e20497ff9a3a028acf15f486acd0a0181f6f1`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `RecordingReader` | 812 |
-| `absorb_unrecovered_recovery_tx` | 261 |
+| `RecordingReader` | 817 |
+| `absorb_unrecovered_recovery_tx` | 259 |
 
 ## `trusted_router.storage_gcp_user_models`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_user_models`. Member: `src/trusted_router/storage_gcp_user_models.py`.
+Frozen alias: `frozen_main.storage_gcp_user_models`. Member: `src/trusted_router/storage_gcp_user_models.py`.
 
 SHA-256: `c1ad40ccc4b59dd563045def36be4f1f548336e316b2ab5acf9155f7ff76393d`.
 
@@ -4007,7 +3972,7 @@ SHA-256: `c1ad40ccc4b59dd563045def36be4f1f548336e316b2ab5acf9155f7ff76393d`.
 
 ## `trusted_router.storage_gcp_verification_tokens`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_verification_tokens`. Member: `src/trusted_router/storage_gcp_verification_tokens.py`.
+Frozen alias: `frozen_main.storage_gcp_verification_tokens`. Member: `src/trusted_router/storage_gcp_verification_tokens.py`.
 
 SHA-256: `768c5c724b0290c0b7df2337f3b7f8bf95c8461ca091d1e4ed089617461a7f1e`.
 
@@ -4019,7 +3984,7 @@ SHA-256: `768c5c724b0290c0b7df2337f3b7f8bf95c8461ca091d1e4ed089617461a7f1e`.
 
 ## `trusted_router.storage_gcp_video_jobs`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_video_jobs`. Member: `src/trusted_router/storage_gcp_video_jobs.py`.
+Frozen alias: `frozen_main.storage_gcp_video_jobs`. Member: `src/trusted_router/storage_gcp_video_jobs.py`.
 
 SHA-256: `b6301a1487475f7fa23e303110ed1e4a501e61e489ce41c18a9e57b02e8c3f23`.
 
@@ -4031,7 +3996,7 @@ SHA-256: `b6301a1487475f7fa23e303110ed1e4a501e61e489ce41c18a9e57b02e8c3f23`.
 
 ## `trusted_router.storage_gcp_wallet_challenges`
 
-Frozen alias: `frozen_f83bbaac.storage_gcp_wallet_challenges`. Member: `src/trusted_router/storage_gcp_wallet_challenges.py`.
+Frozen alias: `frozen_main.storage_gcp_wallet_challenges`. Member: `src/trusted_router/storage_gcp_wallet_challenges.py`.
 
 SHA-256: `47d27e2c534ff3d1c96779a56ae2faeab4f2e1c3b3adc17c1e0e86615525bd85`.
 
@@ -4043,7 +4008,7 @@ SHA-256: `47d27e2c534ff3d1c96779a56ae2faeab4f2e1c3b3adc17c1e0e86615525bd85`.
 
 ## `trusted_router.storage_generations`
 
-Frozen alias: `frozen_f83bbaac.storage_generations`. Member: `src/trusted_router/storage_generations.py`.
+Frozen alias: `frozen_main.storage_generations`. Member: `src/trusted_router/storage_generations.py`.
 
 SHA-256: `18d342478a3d17df196a58de29d6b348577c26c339255e7178d63671aa7454d1`.
 
@@ -4056,7 +4021,7 @@ SHA-256: `18d342478a3d17df196a58de29d6b348577c26c339255e7178d63671aa7454d1`.
 
 ## `trusted_router.storage_group_buy`
 
-Frozen alias: `frozen_f83bbaac.storage_group_buy`. Member: `src/trusted_router/storage_group_buy.py`.
+Frozen alias: `frozen_main.storage_group_buy`. Member: `src/trusted_router/storage_group_buy.py`.
 
 SHA-256: `b8e61a1f4a0084359e6b1987bb22f70078a11f40be13279f5ce7ba85a605a75d`.
 
@@ -4070,7 +4035,7 @@ SHA-256: `b8e61a1f4a0084359e6b1987bb22f70078a11f40be13279f5ce7ba85a605a75d`.
 
 ## `trusted_router.storage_key_patch`
 
-Frozen alias: `frozen_f83bbaac.storage_key_patch`. Member: `src/trusted_router/storage_key_patch.py`.
+Frozen alias: `frozen_main.storage_key_patch`. Member: `src/trusted_router/storage_key_patch.py`.
 
 SHA-256: `7fbc2dcd015287738441a77616f03134d1b1eeb9a64f33be930c774b6ed209d9`.
 
@@ -4080,7 +4045,7 @@ SHA-256: `7fbc2dcd015287738441a77616f03134d1b1eeb9a64f33be930c774b6ed209d9`.
 
 ## `trusted_router.storage_key_usage`
 
-Frozen alias: `frozen_f83bbaac.storage_key_usage`. Member: `src/trusted_router/storage_key_usage.py`.
+Frozen alias: `frozen_main.storage_key_usage`. Member: `src/trusted_router/storage_key_usage.py`.
 
 SHA-256: `95d9d0d88e1854450c0411f99e4a63bba4ee70fd1e940aa5ec62fa84bcfb1f15`.
 
@@ -4090,7 +4055,7 @@ SHA-256: `95d9d0d88e1854450c0411f99e4a63bba4ee70fd1e940aa5ec62fa84bcfb1f15`.
 
 ## `trusted_router.storage_keys`
 
-Frozen alias: `frozen_f83bbaac.storage_keys`. Member: `src/trusted_router/storage_keys.py`.
+Frozen alias: `frozen_main.storage_keys`. Member: `src/trusted_router/storage_keys.py`.
 
 SHA-256: `cef192053ae10aa0d8cf0cf39be92cc22a252d4ee4b6c8092136e851a97a69c4`.
 
@@ -4102,7 +4067,7 @@ SHA-256: `cef192053ae10aa0d8cf0cf39be92cc22a252d4ee4b6c8092136e851a97a69c4`.
 
 ## `trusted_router.storage_legacy_trust`
 
-Frozen alias: `frozen_f83bbaac.storage_legacy_trust`. Member: `src/trusted_router/storage_legacy_trust.py`.
+Frozen alias: `frozen_main.storage_legacy_trust`. Member: `src/trusted_router/storage_legacy_trust.py`.
 
 SHA-256: `3f700a2cbc40d4cc078455b6fd53f710862b09961460f5b5cbc6b62a4e08a531`.
 
@@ -4113,7 +4078,7 @@ SHA-256: `3f700a2cbc40d4cc078455b6fd53f710862b09961460f5b5cbc6b62a4e08a531`.
 
 ## `trusted_router.storage_lightning`
 
-Frozen alias: `frozen_f83bbaac.storage_lightning`. Member: `src/trusted_router/storage_lightning.py`.
+Frozen alias: `frozen_main.storage_lightning`. Member: `src/trusted_router/storage_lightning.py`.
 
 SHA-256: `2d612f24589e6167631b6e9c054ba28476a0d1503e0b0d839fbdff534c6cd4cb`.
 
@@ -4124,7 +4089,7 @@ SHA-256: `2d612f24589e6167631b6e9c054ba28476a0d1503e0b0d839fbdff534c6cd4cb`.
 
 ## `trusted_router.storage_models`
 
-Frozen alias: `frozen_f83bbaac.storage_models`. Member: `src/trusted_router/storage_models.py`.
+Frozen alias: `frozen_main.storage_models`. Member: `src/trusted_router/storage_models.py`.
 
 SHA-256: `cab2350e32369f73ae25ee288a8a290620e91cdac8ebe80a0074c349d8efde61`.
 
@@ -4172,7 +4137,6 @@ SHA-256: `cab2350e32369f73ae25ee288a8a290620e91cdac8ebe80a0074c349d8efde61`.
 | `Generation.__init__` | 2 |
 | `Generation.__post_init__` | 1069 |
 | `Generation.from_settle_body` | 1172 |
-| `Generation.from_settle_body.<locals>.<listcomp>` | 1254 |
 | `GoogleAdsConversion` | 1734 |
 | `Member` | 279 |
 | `OAuthApp` | 348 |
@@ -4216,7 +4180,7 @@ SHA-256: `cab2350e32369f73ae25ee288a8a290620e91cdac8ebe80a0074c349d8efde61`.
 
 ## `trusted_router.storage_oauth_apps`
 
-Frozen alias: `frozen_f83bbaac.storage_oauth_apps`. Member: `src/trusted_router/storage_oauth_apps.py`.
+Frozen alias: `frozen_main.storage_oauth_apps`. Member: `src/trusted_router/storage_oauth_apps.py`.
 
 SHA-256: `55899347706aaf93a72dbe34cd8b9078f8c1d6c0022fefa09fe51a141f9029b9`.
 
@@ -4228,7 +4192,7 @@ SHA-256: `55899347706aaf93a72dbe34cd8b9078f8c1d6c0022fefa09fe51a141f9029b9`.
 
 ## `trusted_router.storage_oauth_codes`
 
-Frozen alias: `frozen_f83bbaac.storage_oauth_codes`. Member: `src/trusted_router/storage_oauth_codes.py`.
+Frozen alias: `frozen_main.storage_oauth_codes`. Member: `src/trusted_router/storage_oauth_codes.py`.
 
 SHA-256: `342accdd3d8e7649ef2fdfecc26d5be6d6c759cd1c0d7fdb062607d84fb0d27d`.
 
@@ -4240,7 +4204,7 @@ SHA-256: `342accdd3d8e7649ef2fdfecc26d5be6d6c759cd1c0d7fdb062607d84fb0d27d`.
 
 ## `trusted_router.storage_operational_analytics`
 
-Frozen alias: `frozen_f83bbaac.storage_operational_analytics`. Member: `src/trusted_router/storage_operational_analytics.py`.
+Frozen alias: `frozen_main.storage_operational_analytics`. Member: `src/trusted_router/storage_operational_analytics.py`.
 
 SHA-256: `195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2`.
 
@@ -4254,7 +4218,7 @@ SHA-256: `195a1a50de1bfb7c888d22323e00d9c03289d0bdde806469ec0de67c6fdc47e2`.
 
 ## `trusted_router.storage_rate_limits`
 
-Frozen alias: `frozen_f83bbaac.storage_rate_limits`. Member: `src/trusted_router/storage_rate_limits.py`.
+Frozen alias: `frozen_main.storage_rate_limits`. Member: `src/trusted_router/storage_rate_limits.py`.
 
 SHA-256: `68af0a2637fe3f4c822d4694832556b0f22a85d3083d0626c0a4fb1c53bcf514`.
 
@@ -4264,11 +4228,10 @@ SHA-256: `68af0a2637fe3f4c822d4694832556b0f22a85d3083d0626c0a4fb1c53bcf514`.
 | `InMemoryRateLimits` | 27 |
 | `InMemoryRateLimits.__init__` | 28 |
 | `InMemoryRateLimits.hit` | 48 |
-| `InMemoryRateLimits.hit.<locals>.<listcomp>` | 70 |
 
 ## `trusted_router.storage_synthetic`
 
-Frozen alias: `frozen_f83bbaac.storage_synthetic`. Member: `src/trusted_router/storage_synthetic.py`.
+Frozen alias: `frozen_main.storage_synthetic`. Member: `src/trusted_router/storage_synthetic.py`.
 
 SHA-256: `e5dd845d3cde99862e1201f7c8218a7d4750e11032f00fcbf72f564ccd6b7d02`.
 
@@ -4280,7 +4243,7 @@ SHA-256: `e5dd845d3cde99862e1201f7c8218a7d4750e11032f00fcbf72f564ccd6b7d02`.
 
 ## `trusted_router.storage_user_models`
 
-Frozen alias: `frozen_f83bbaac.storage_user_models`. Member: `src/trusted_router/storage_user_models.py`.
+Frozen alias: `frozen_main.storage_user_models`. Member: `src/trusted_router/storage_user_models.py`.
 
 SHA-256: `29a446ab001cf5ff515c8411e187893972990fba6ecd413e17e29dc97c6e0f3f`.
 
@@ -4292,7 +4255,7 @@ SHA-256: `29a446ab001cf5ff515c8411e187893972990fba6ecd413e17e29dc97c6e0f3f`.
 
 ## `trusted_router.storage_verification_tokens`
 
-Frozen alias: `frozen_f83bbaac.storage_verification_tokens`. Member: `src/trusted_router/storage_verification_tokens.py`.
+Frozen alias: `frozen_main.storage_verification_tokens`. Member: `src/trusted_router/storage_verification_tokens.py`.
 
 SHA-256: `31240d4d6d9bad54f4341090ec37e85d3012622bc1e3afd6143578f520da7ddf`.
 
@@ -4304,7 +4267,7 @@ SHA-256: `31240d4d6d9bad54f4341090ec37e85d3012622bc1e3afd6143578f520da7ddf`.
 
 ## `trusted_router.storage_video_jobs`
 
-Frozen alias: `frozen_f83bbaac.storage_video_jobs`. Member: `src/trusted_router/storage_video_jobs.py`.
+Frozen alias: `frozen_main.storage_video_jobs`. Member: `src/trusted_router/storage_video_jobs.py`.
 
 SHA-256: `e8056ca835d64a19f0e7db9b10a74a33c787aa1f92ed42312d4ba2670177634c`.
 
@@ -4316,7 +4279,7 @@ SHA-256: `e8056ca835d64a19f0e7db9b10a74a33c787aa1f92ed42312d4ba2670177634c`.
 
 ## `trusted_router.storage_wallet_challenges`
 
-Frozen alias: `frozen_f83bbaac.storage_wallet_challenges`. Member: `src/trusted_router/storage_wallet_challenges.py`.
+Frozen alias: `frozen_main.storage_wallet_challenges`. Member: `src/trusted_router/storage_wallet_challenges.py`.
 
 SHA-256: `16ac2ee83fb3a8503dc010431e6be38207391761363d827c5d7842a28005097a`.
 
@@ -4328,7 +4291,7 @@ SHA-256: `16ac2ee83fb3a8503dc010431e6be38207391761363d827c5d7842a28005097a`.
 
 ## `trusted_router.store_protocol`
 
-Frozen alias: `frozen_f83bbaac.store_protocol`. Member: `src/trusted_router/store_protocol.py`.
+Frozen alias: `frozen_main.store_protocol`. Member: `src/trusted_router/store_protocol.py`.
 
 SHA-256: `85cd2a8df41f89c7b9e6565b6f980d0b8520265a53939a60d1b35b47a530fc8d`.
 
@@ -4343,7 +4306,7 @@ SHA-256: `85cd2a8df41f89c7b9e6565b6f980d0b8520265a53939a60d1b35b47a530fc8d`.
 
 ## `trusted_router.synthetic`
 
-Frozen alias: `frozen_f83bbaac.synthetic`. Member: `src/trusted_router/synthetic/__init__.py`.
+Frozen alias: `frozen_main.synthetic`. Member: `src/trusted_router/synthetic/__init__.py`.
 
 SHA-256: `d2a06ce18138fc7e19c3dd064660aa85e5d25d31fcbf92c3ccc714490086a156`.
 
@@ -4353,7 +4316,7 @@ SHA-256: `d2a06ce18138fc7e19c3dd064660aa85e5d25d31fcbf92c3ccc714490086a156`.
 
 ## `trusted_router.synthetic.alerts`
 
-Frozen alias: `frozen_f83bbaac.synthetic.alerts`. Member: `src/trusted_router/synthetic/alerts.py`.
+Frozen alias: `frozen_main.synthetic.alerts`. Member: `src/trusted_router/synthetic/alerts.py`.
 
 SHA-256: `4dd9f312dbacb25974a3f739a046a0fceca2c1af0638288b7d504f0b207fd3a1`.
 
@@ -4363,7 +4326,7 @@ SHA-256: `4dd9f312dbacb25974a3f739a046a0fceca2c1af0638288b7d504f0b207fd3a1`.
 
 ## `trusted_router.synthetic.cli`
 
-Frozen alias: `frozen_f83bbaac.synthetic.cli`. Member: `src/trusted_router/synthetic/cli.py`.
+Frozen alias: `frozen_main.synthetic.cli`. Member: `src/trusted_router/synthetic/cli.py`.
 
 SHA-256: `f64c83dce5e3874b3e11fe4d7164b2ca2b104a99eab505f1a6cd7e1e33656ba5`.
 
@@ -4373,7 +4336,7 @@ SHA-256: `f64c83dce5e3874b3e11fe4d7164b2ca2b104a99eab505f1a6cd7e1e33656ba5`.
 
 ## `trusted_router.synthetic.client_watch`
 
-Frozen alias: `frozen_f83bbaac.synthetic.client_watch`. Member: `src/trusted_router/synthetic/client_watch.py`.
+Frozen alias: `frozen_main.synthetic.client_watch`. Member: `src/trusted_router/synthetic/client_watch.py`.
 
 SHA-256: `1f18eb0201a3311fd5a96b08f22499d1d2ac5a179f3a05fb017539f50973e1ea`.
 
@@ -4385,7 +4348,7 @@ SHA-256: `1f18eb0201a3311fd5a96b08f22499d1d2ac5a179f3a05fb017539f50973e1ea`.
 
 ## `trusted_router.synthetic.components`
 
-Frozen alias: `frozen_f83bbaac.synthetic.components`. Member: `src/trusted_router/synthetic/components.py`.
+Frozen alias: `frozen_main.synthetic.components`. Member: `src/trusted_router/synthetic/components.py`.
 
 SHA-256: `035f6ba0e555e167f29e118968ed9d35b67dfbca1f4adb43bf19b69852dcf0b6`.
 
@@ -4396,7 +4359,7 @@ SHA-256: `035f6ba0e555e167f29e118968ed9d35b67dfbca1f4adb43bf19b69852dcf0b6`.
 
 ## `trusted_router.synthetic.fleet`
 
-Frozen alias: `frozen_f83bbaac.synthetic.fleet`. Member: `src/trusted_router/synthetic/fleet.py`.
+Frozen alias: `frozen_main.synthetic.fleet`. Member: `src/trusted_router/synthetic/fleet.py`.
 
 SHA-256: `67a0c77043a4a0d699ec64d073508591af095ac7fd17d35e601049fe15862c18`.
 
@@ -4406,7 +4369,7 @@ SHA-256: `67a0c77043a4a0d699ec64d073508591af095ac7fd17d35e601049fe15862c18`.
 
 ## `trusted_router.synthetic.funding`
 
-Frozen alias: `frozen_f83bbaac.synthetic.funding`. Member: `src/trusted_router/synthetic/funding.py`.
+Frozen alias: `frozen_main.synthetic.funding`. Member: `src/trusted_router/synthetic/funding.py`.
 
 SHA-256: `1ba3838ee6d24a40d34fc804ac605dc1b62123dc58ad337d99d4561f1a8a9baf`.
 
@@ -4416,7 +4379,7 @@ SHA-256: `1ba3838ee6d24a40d34fc804ac605dc1b62123dc58ad337d99d4561f1a8a9baf`.
 
 ## `trusted_router.synthetic.inference_sdk`
 
-Frozen alias: `frozen_f83bbaac.synthetic.inference_sdk`. Member: `src/trusted_router/synthetic/inference_sdk.py`.
+Frozen alias: `frozen_main.synthetic.inference_sdk`. Member: `src/trusted_router/synthetic/inference_sdk.py`.
 
 SHA-256: `1b8973ff33bb27871ca4c4f823603fb0102196835d8ee58175284f8db94c301e`.
 
@@ -4428,7 +4391,7 @@ SHA-256: `1b8973ff33bb27871ca4c4f823603fb0102196835d8ee58175284f8db94c301e`.
 
 ## `trusted_router.synthetic.internal_auth`
 
-Frozen alias: `frozen_f83bbaac.synthetic.internal_auth`. Member: `src/trusted_router/synthetic/internal_auth.py`.
+Frozen alias: `frozen_main.synthetic.internal_auth`. Member: `src/trusted_router/synthetic/internal_auth.py`.
 
 SHA-256: `4aff6a78a81d3dbf2ae5156fd32882028985735bf90de270b4caa9c110dde9ba`.
 
@@ -4438,7 +4401,7 @@ SHA-256: `4aff6a78a81d3dbf2ae5156fd32882028985735bf90de270b4caa9c110dde9ba`.
 
 ## `trusted_router.synthetic.leaderboard`
 
-Frozen alias: `frozen_f83bbaac.synthetic.leaderboard`. Member: `src/trusted_router/synthetic/leaderboard.py`.
+Frozen alias: `frozen_main.synthetic.leaderboard`. Member: `src/trusted_router/synthetic/leaderboard.py`.
 
 SHA-256: `bbb5e0eb270441623113111b06b8648391993434599e72ccc89dc29c57936dac`.
 
@@ -4451,7 +4414,7 @@ SHA-256: `bbb5e0eb270441623113111b06b8648391993434599e72ccc89dc29c57936dac`.
 
 ## `trusted_router.synthetic.probes`
 
-Frozen alias: `frozen_f83bbaac.synthetic.probes`. Member: `src/trusted_router/synthetic/probes.py`.
+Frozen alias: `frozen_main.synthetic.probes`. Member: `src/trusted_router/synthetic/probes.py`.
 
 SHA-256: `6c617c9a89395fb194a59e29ea902b5905f75701489a8ec9bd9895c648f3c732`.
 
@@ -4465,7 +4428,7 @@ SHA-256: `6c617c9a89395fb194a59e29ea902b5905f75701489a8ec9bd9895c648f3c732`.
 
 ## `trusted_router.synthetic.remediator`
 
-Frozen alias: `frozen_f83bbaac.synthetic.remediator`. Member: `src/trusted_router/synthetic/remediator.py`.
+Frozen alias: `frozen_main.synthetic.remediator`. Member: `src/trusted_router/synthetic/remediator.py`.
 
 SHA-256: `4443a5fc0205436f276630a4a46858cd2e8a6ca8044492c919a7fe81ed584601`.
 
@@ -4477,7 +4440,7 @@ SHA-256: `4443a5fc0205436f276630a4a46858cd2e8a6ca8044492c919a7fe81ed584601`.
 
 ## `trusted_router.synthetic.rollups`
 
-Frozen alias: `frozen_f83bbaac.synthetic.rollups`. Member: `src/trusted_router/synthetic/rollups.py`.
+Frozen alias: `frozen_main.synthetic.rollups`. Member: `src/trusted_router/synthetic/rollups.py`.
 
 SHA-256: `af7c5781d2727010e5754f53babf6bb0f391e58b398eba2363222852c7b93af1`.
 
@@ -4487,7 +4450,7 @@ SHA-256: `af7c5781d2727010e5754f53babf6bb0f391e58b398eba2363222852c7b93af1`.
 
 ## `trusted_router.synthetic.route_health`
 
-Frozen alias: `frozen_f83bbaac.synthetic.route_health`. Member: `src/trusted_router/synthetic/route_health.py`.
+Frozen alias: `frozen_main.synthetic.route_health`. Member: `src/trusted_router/synthetic/route_health.py`.
 
 SHA-256: `26a71e330306caa3ecfe43f0fd93ebe6ce24641beaf5352421a0600bd9396242`.
 
@@ -4499,9 +4462,9 @@ SHA-256: `26a71e330306caa3ecfe43f0fd93ebe6ce24641beaf5352421a0600bd9396242`.
 
 ## `trusted_router.synthetic.status`
 
-Frozen alias: `frozen_f83bbaac.synthetic.status`. Member: `src/trusted_router/synthetic/status.py`.
+Frozen alias: `frozen_main.synthetic.status`. Member: `src/trusted_router/synthetic/status.py`.
 
-SHA-256: `aacbe7efe291e08efa097953e59d3f590d069d5135675270670de22df99ce05b`.
+SHA-256: `77d45c9a6b109697d80ee13823617ac38cd71baf1d2b992ee9a0568cb1ffb28e`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -4509,7 +4472,7 @@ SHA-256: `aacbe7efe291e08efa097953e59d3f590d069d5135675270670de22df99ce05b`.
 
 ## `trusted_router.synthetic.throughput`
 
-Frozen alias: `frozen_f83bbaac.synthetic.throughput`. Member: `src/trusted_router/synthetic/throughput.py`.
+Frozen alias: `frozen_main.synthetic.throughput`. Member: `src/trusted_router/synthetic/throughput.py`.
 
 SHA-256: `878724a5ef467544b976ee77a2e357c1c8f1464f2cf3c7ecedcfea3e975fa7a9`.
 
@@ -4519,7 +4482,7 @@ SHA-256: `878724a5ef467544b976ee77a2e357c1c8f1464f2cf3c7ecedcfea3e975fa7a9`.
 
 ## `trusted_router.synthetic.video_leaderboard`
 
-Frozen alias: `frozen_f83bbaac.synthetic.video_leaderboard`. Member: `src/trusted_router/synthetic/video_leaderboard.py`.
+Frozen alias: `frozen_main.synthetic.video_leaderboard`. Member: `src/trusted_router/synthetic/video_leaderboard.py`.
 
 SHA-256: `0f558069a93e98fefa0ceb0694b383d824382b8c917334c78bac3d2d3d1db6c5`.
 
@@ -4529,7 +4492,7 @@ SHA-256: `0f558069a93e98fefa0ceb0694b383d824382b8c917334c78bac3d2d3d1db6c5`.
 
 ## `trusted_router.token_exchange`
 
-Frozen alias: `frozen_f83bbaac.token_exchange`. Member: `src/trusted_router/token_exchange.py`.
+Frozen alias: `frozen_main.token_exchange`. Member: `src/trusted_router/token_exchange.py`.
 
 SHA-256: `7143b8140f38f927002dfaf139176085f7181fb54f712f0d00381351f3cae35f`.
 
@@ -4539,7 +4502,7 @@ SHA-256: `7143b8140f38f927002dfaf139176085f7181fb54f712f0d00381351f3cae35f`.
 
 ## `trusted_router.trust`
 
-Frozen alias: `frozen_f83bbaac.trust`. Member: `src/trusted_router/trust.py`.
+Frozen alias: `frozen_main.trust`. Member: `src/trusted_router/trust.py`.
 
 SHA-256: `64acdff283e577be484416adc66d969ea09e26b1cc4844d993a3e2dc9cebfbfc`.
 
@@ -4549,7 +4512,7 @@ SHA-256: `64acdff283e577be484416adc66d969ea09e26b1cc4844d993a3e2dc9cebfbfc`.
 
 ## `trusted_router.trust_ownership`
 
-Frozen alias: `frozen_f83bbaac.trust_ownership`. Member: `src/trusted_router/trust_ownership.py`.
+Frozen alias: `frozen_main.trust_ownership`. Member: `src/trusted_router/trust_ownership.py`.
 
 SHA-256: `7ab9b356269793e9688e139c66c09f8bc78afab02a2a1255dcd804b17ed3ee45`.
 
@@ -4561,7 +4524,7 @@ SHA-256: `7ab9b356269793e9688e139c66c09f8bc78afab02a2a1255dcd804b17ed3ee45`.
 
 ## `trusted_router.trust_reconciliation`
 
-Frozen alias: `frozen_f83bbaac.trust_reconciliation`. Member: `src/trusted_router/trust_reconciliation.py`.
+Frozen alias: `frozen_main.trust_reconciliation`. Member: `src/trusted_router/trust_reconciliation.py`.
 
 SHA-256: `920f5f457a62a749e4b81bbb8666a29adb3c92cf56a4e6cc8358785c4c346710`.
 
@@ -4577,7 +4540,7 @@ SHA-256: `920f5f457a62a749e4b81bbb8666a29adb3c92cf56a4e6cc8358785c4c346710`.
 
 ## `trusted_router.trust_tiers`
 
-Frozen alias: `frozen_f83bbaac.trust_tiers`. Member: `src/trusted_router/trust_tiers.py`.
+Frozen alias: `frozen_main.trust_tiers`. Member: `src/trusted_router/trust_tiers.py`.
 
 SHA-256: `15e35838f39ebc7db3bfae142d8deb460217664f9c572ecb2b2be3c699e251ce`.
 
@@ -4589,7 +4552,7 @@ SHA-256: `15e35838f39ebc7db3bfae142d8deb460217664f9c572ecb2b2be3c699e251ce`.
 
 ## `trusted_router.typed_balance`
 
-Frozen alias: `frozen_f83bbaac.typed_balance`. Member: `src/trusted_router/typed_balance.py`.
+Frozen alias: `frozen_main.typed_balance`. Member: `src/trusted_router/typed_balance.py`.
 
 SHA-256: `e1c50229c71747041b64c31d22866f0e3af9fef515f04d3c945eb7c1e04bbbf5`.
 
@@ -4601,7 +4564,7 @@ SHA-256: `e1c50229c71747041b64c31d22866f0e3af9fef515f04d3c945eb7c1e04bbbf5`.
 
 ## `trusted_router.types`
 
-Frozen alias: `frozen_f83bbaac.types`. Member: `src/trusted_router/types.py`.
+Frozen alias: `frozen_main.types`. Member: `src/trusted_router/types.py`.
 
 SHA-256: `bb6bad99ee8193390b43cece44f311e0a15a7e94ec97ad57681e48fd37b90df0`.
 
@@ -4616,21 +4579,20 @@ SHA-256: `bb6bad99ee8193390b43cece44f311e0a15a7e94ec97ad57681e48fd37b90df0`.
 
 ## `trusted_router.user_model_rules`
 
-Frozen alias: `frozen_f83bbaac.user_model_rules`. Member: `src/trusted_router/user_model_rules.py`.
+Frozen alias: `frozen_main.user_model_rules`. Member: `src/trusted_router/user_model_rules.py`.
 
 SHA-256: `afd0bc3e37723312f972ecf1cd09d05a1ecd933158f1b9a38d817002ed8952ec`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `<setcomp>` | 52 |
 | `DispatchBudget` | 56 |
 | `DispatchBudget.__init__` | 2 |
 | `__create_fn__` | 1 |
 
 ## `trusted_router.veriff_verify`
 
-Frozen alias: `frozen_f83bbaac.veriff_verify`. Member: `src/trusted_router/veriff_verify.py`.
+Frozen alias: `frozen_main.veriff_verify`. Member: `src/trusted_router/veriff_verify.py`.
 
 SHA-256: `5a3b30eca0f855e1bf0f327d9dc948ab506d550da0c86da7f87d1d651a3004c2`.
 
@@ -4641,7 +4603,7 @@ SHA-256: `5a3b30eca0f855e1bf0f327d9dc948ab506d550da0c86da7f87d1d651a3004c2`.
 
 ## `trusted_router.verification`
 
-Frozen alias: `frozen_f83bbaac.verification`. Member: `src/trusted_router/verification.py`.
+Frozen alias: `frozen_main.verification`. Member: `src/trusted_router/verification.py`.
 
 SHA-256: `e678b4fe7d7fd53894123d956c71e697f584edee81dc5c8b28262ff449beaf50`.
 
@@ -4651,7 +4613,7 @@ SHA-256: `e678b4fe7d7fd53894123d956c71e697f584edee81dc5c8b28262ff449beaf50`.
 
 ## `trusted_router.verification_gates`
 
-Frozen alias: `frozen_f83bbaac.verification_gates`. Member: `src/trusted_router/verification_gates.py`.
+Frozen alias: `frozen_main.verification_gates`. Member: `src/trusted_router/verification_gates.py`.
 
 SHA-256: `90b6294fbcc9efc9d84eb450e22f76f22b4a334cdccc12158fc09372d970a68f`.
 
@@ -4661,7 +4623,7 @@ SHA-256: `90b6294fbcc9efc9d84eb450e22f76f22b4a334cdccc12158fc09372d970a68f`.
 
 ## `trusted_router.video_billing`
 
-Frozen alias: `frozen_f83bbaac.video_billing`. Member: `src/trusted_router/video_billing.py`.
+Frozen alias: `frozen_main.video_billing`. Member: `src/trusted_router/video_billing.py`.
 
 SHA-256: `a2c7309f39e7f6b575bd3a781ce54b47b6e58f26a4cbec9f896afda51fd92e1a`.
 
@@ -4671,9 +4633,9 @@ SHA-256: `a2c7309f39e7f6b575bd3a781ce54b47b6e58f26a4cbec9f896afda51fd92e1a`.
 
 ## `trusted_router.views`
 
-Frozen alias: `frozen_f83bbaac.views`. Member: `src/trusted_router/views.py`.
+Frozen alias: `frozen_main.views`. Member: `src/trusted_router/views.py`.
 
-SHA-256: `e47b5914a25527504b02c7cce05ad335b65bf5b38baaea1076812232e1f39f94`.
+SHA-256: `e009bcd0c0a70ca242cea41df4e34b0848588f6536e869388469f45e2e9d61b5`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -4681,7 +4643,7 @@ SHA-256: `e47b5914a25527504b02c7cce05ad335b65bf5b38baaea1076812232e1f39f94`.
 
 ## `trusted_router.wafer_policy`
 
-Frozen alias: `frozen_f83bbaac.wafer_policy`. Member: `src/trusted_router/wafer_policy.py`.
+Frozen alias: `frozen_main.wafer_policy`. Member: `src/trusted_router/wafer_policy.py`.
 
 SHA-256: `41c995561e490e2bfac9bd3d47adf84723c665e726f3ff5b1443dbf6e412e9d6`.
 
@@ -4693,7 +4655,7 @@ SHA-256: `41c995561e490e2bfac9bd3d47adf84723c665e726f3ff5b1443dbf6e412e9d6`.
 
 ## `trusted_router.wallet_auth`
 
-Frozen alias: `frozen_f83bbaac.wallet_auth`. Member: `src/trusted_router/wallet_auth.py`.
+Frozen alias: `frozen_main.wallet_auth`. Member: `src/trusted_router/wallet_auth.py`.
 
 SHA-256: `ed32ea418f6bf66b7aa96b05995a705b6e24351d0663e22f15608b9efb102026`.
 
@@ -4702,3 +4664,4 @@ SHA-256: `ed32ea418f6bf66b7aa96b05995a705b6e24351d0663e22f15608b9efb102026`.
 | `<module>` | 1 |
 | `SiweMessage` | 20 |
 | `__create_fn__` | 1 |
+

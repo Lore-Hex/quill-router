@@ -55,7 +55,7 @@ MUTATIONS = [
      [(') -> DmlStatement:\n    return (\n        "INSERT INTO tr_generation ("',
        ') -> DmlStatement:\n    terminal_at = dt.datetime(2099, 1, 1, tzinfo=dt.UTC)\n'
        '    return (\n        "INSERT INTO tr_generation ("')],
-     'tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]'),
+     'tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]'),
     ('sparse-predicate', 'src/trusted_router/storage_gcp_async_admission.py',
      [('WHERE unresolved_at IS NOT NULL ORDER BY', 'WHERE TRUE ORDER BY')],
      'tests/test_async_settle_proof_faults.py::test_fake_rejects_dropped_predicate[sparse]'),
@@ -71,6 +71,8 @@ MUTATIONS = [
 
 def run() -> None:
     results = []
+    evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
+    evidence.mkdir(parents=True, exist_ok=True)
     # Copies contain the runtime/test dependencies, not an editable install or
     # a Git directory. sys.executable supplies the already-resolved environment.
     with tempfile.TemporaryDirectory(prefix='pr-d-mutations-') as directory:
@@ -94,7 +96,7 @@ def run() -> None:
                 [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--disable-warnings', test],
                 cwd=target, env=env, capture_output=True, text=True, timeout=300,
             )
-            log = Path('/tmp') / f'pr-d-mutation-{name}.log'
+            log = evidence / f'pr-d-mutation-{name}.log'
             log.write_text(completed.stdout + completed.stderr)
             # Collection/import crashes are not killed mutations. Require the
             # selected test's assertion failure and normal pytest failure code.
@@ -103,7 +105,7 @@ def run() -> None:
             results.append(result)
             print(json.dumps(result), flush=True)
             shutil.rmtree(target)
-    Path('/tmp/pr-d-mutations.json').write_text(json.dumps(results, indent=2) + '\n')
+    (evidence / 'pr-d-mutations.json').write_text(json.dumps(results, indent=2) + '\n')
     assert all(row['killed'] for row in results), results
 
 

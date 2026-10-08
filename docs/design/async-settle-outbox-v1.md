@@ -1246,7 +1246,8 @@ strict exposure cap; PR D does not resolve the policy questions in §6/§10.
 
 ### PR F proof set, D3 propagation audit and cap semantics
 
-This is **F1**, based on main `f83bbaac`. F2 owns the shadow comparator and
+This is **F1**, a golden against **BASE**
+`4701b1a6da9b2b05df93321a6bbd59ea82188c2b` (the main parent merged for Round 12). F2 owns the shadow comparator and
 seven-day traffic report. This appendix is local correctness evidence, not
 permission to activate async admission, a production measurement, or an
 assertion that F/G's rollout gates have passed. Production code, schemas and
@@ -1288,28 +1289,49 @@ routes are unchanged. No git writes or deployments are part of F1.
 
 #### Frozen-main coverage
 
-`tests/test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry` executes
+The oracle is a **golden against BASE**, not an assertion that legacy behavior
+never changes. `tests/fakes/frozen_main/BASE` records the full commit. Re-pin with
+`python scripts/async_settle/freeze_reference.py --base <commit>` and paste its
+printed archive digest into `tests/fakes/frozen_package.py`. The script reads only
+Git objects (`ls-tree` and `show`), keeps the existing text-member policy and
+repository paths, sorts tar members and normalizes their metadata and gzip time.
+Regenerate the execution inventory after a re-pin. A PR that intentionally changes
+the legacy path **re-freezes from its own tree in the same PR**; the reviewer reads
+the frozen diff as the intended behavior change. For this tests-only F1, live
+`src` is byte-for-byte BASE's tree.
+
+The local gate runs `python scripts/async_settle/freeze_reference.py --check`,
+which re-derives the archive and pins from BASE and rejects any byte difference.
+CI's shallow checkout cannot run that Git-object check; the hermetic archive,
+per-member pins, import guard and execution guard remain enforced without Git.
+The interpreter matrix is CPython **3.11, 3.12.3 (CI), 3.13 and 3.14.6** for all
+guards, native-reference witnesses and all three mutation tables (136 rows).
+The complete proof files also run on 3.12.3 with CI's post-cutover clock:
+`max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)`.
+Exact versions, counts and limitations are in the [validation report](../validation/async-settle-pr-f1.md).
+
+`tests/test_async_settle_proof_oracle.py::test_frozen_main_complete_entry` executes
 both frozen and live route registration, dispatch, settlement and drain using
 actual Spanner fake transactions. Round 4 replaces the selected-function copies
 and their exemption list with **one package snapshot** in
-`tests/fakes/frozen_f83bbaac/package.tar.gz`.
+`tests/fakes/frozen_main/package.tar.gz`.
 
 The archive contains every Python module and text resource from the
-`src/trusted_router` subtree at **f83bbaac** (Python, JSON/JSONL, HTML, TXT,
+`src/trusted_router` subtree at **BASE** (Python, JSON/JSONL, HTML, TXT,
 SQL, CSS and JavaScript). Static binary media are omitted; they are not used by
 these requests. `pins.json` records the SHA-256 of the original bytes of each
 file. `tests/fakes/frozen_package.py` independently pins the archive digest,
 verifies its exact member set and every member digest, and compiles the unchanged
 Python bytes under temporary snapshot paths, never live coverage paths.
 Its importer redirects all absolute `trusted_router` imports into
-`frozen_f83bbaac`; relative imports stay there. A missing snapshot import fails,
+`frozen_main`; relative imports stay there. A missing snapshot import fails,
 with no fallback to the live package. Settings, enums, schemas, dataclasses,
 feature stores, captured IO callbacks, gateway, middleware and the HTTP app are
 constructed independently in that namespace. No live production globals seed it.
 
 `execution_guard(*harness)` profiles Python calls by module globals and source
 path and exposed C-call events in **admitted threads, including guarded raw
-`_thread` workers**. On Python 3.12+ (verified separately on 3.14), entry calls
+`_thread` workers**. On Python 3.12+ (verified on 3.12.3, 3.13 and 3.14), entry calls
 `threading.setprofile_all_threads(profile)` for already-running threads and
 `threading.setprofile(profile)` for later `threading.Thread` workers. During the
 scope it wraps `_thread.start_new_thread`, `_thread.start_joinable_thread` and
@@ -1343,7 +1365,7 @@ Pre-existing application workers still refuse the frozen leg, and frame checks
 reject leaked workers. The only infrastructure exceptions are xdist's active
 execnet receiver stack and pytest-timeout's Timer target, not application thread
 names; profiling still applies to them. The supplied worktree's resolved venv is
-Python **3.11.15**: it lacks `setprofile_all_threads`, so it uses the
+Python **3.12.3**, matching CI. Python **3.11** lacks `setprofile_all_threads`, so it uses the
 existing-worker refusal plus instrumented new-worker bootstraps. The retroactive
 all-thread installation is specifically a Python 3.12+ guarantee. Live calls are
 recorded even if application error handling swallows an exception.
@@ -1365,15 +1387,15 @@ expose `co_consts` and metadata, including string/bytes subclasses with held
 callbacks. Native `datetime`/`time` descriptors expose `tzinfo`; native
 `timezone` methods expose the retained offset and name. These accessors avoid
 subclass properties. The atomic-constants, atomic-metadata and atomic-tzinfo
-tests run on 3.11 and 3.14; removal mutations cover every demonstrated field.
+tests run on 3.11, 3.12.3, 3.13 and 3.14.6; removal mutations cover every demonstrated field.
 
-Native frame references also need a supplement: CPython 3.14 omits a running
-frame's locals from GC, and a detached suspended generator frame has the same
-gap. These are held Python objects inside the existing reference scope.
+Native frame references also need a supplement: CPython 3.11–3.14 can omit a
+running frame's locals from GC, and detached suspended generator frames have
+the same gap. These are held Python objects inside the existing reference scope.
 
 | Reached object | Native traversal |
 |---|---|
-| Frame | Always follow `gc.get_referents(frame)`, including extra-locals dictionary keys and values and exec-supplied locals mappings. Add `f_globals`, `f_back`, `f_code`, and `f_trace`. Only when `type(f_locals)` is the sealed native `FrameLocalsProxy`, add both keys and values through native `items()` iteration, without key lookup, copying, or calling user mapping methods. Ordinary/custom mappings rely on GC traversal. The supplement never replaces GC edges or continues past them. Existing module-registry identity boundaries apply to every edge; the strong visited map bounds cycles. |
+| Frame | Always follow `gc.get_referents(frame)`, including extra-locals dictionary keys and values and exec-supplied locals mappings. Add `f_globals`, `f_back`, `f_code`, and `f_trace`. On CPython 3.13/3.14, when `type(f_locals)` is the sealed native `FrameLocalsProxy`, add both keys and values through native `items()` iteration, without key lookup, copying, or calling user mapping methods. On CPython 3.11/3.12, an exact `dict` from `f_locals` is the materialized snapshot of fast locals, cells and free variables: follow both keys and values with unbound `dict.items`, without user-protocol dispatch. Honor the dictionary's existing registry identity boundary before iteration (module frames can expose globals as locals); explicit module roots still override that boundary. Custom mappings still rely on GC traversal. The supplement never replaces GC edges or continues past them. Existing module-registry identity boundaries apply to every edge; the strong visited map bounds cycles. |
 | Traceback | Follow `tb_frame` and `tb_next`, in addition to GC edges. Every reached frame receives the frame supplement. |
 | Generator / coroutine / async generator | Follow `gi_frame` / `cr_frame` / `ag_frame`, respectively, in addition to GC edges. The native types cannot override these attributes. |
 | Exception | Follow native `BaseException` descriptors for `__traceback__`, `__context__`, and `__cause__`, in addition to GC edges, without invoking subclass properties. |
@@ -1385,6 +1407,8 @@ reached object/frame). The deliberately live comparison leg is never an audit
 root. The separate worker-refusal/profile checks retain their existing stack
 inspection. Every reached `f_code` gets the same live-filename check as any other
 code object. Frame/traceback/generator skip mutations verify these paths.
+Detached-frame cell/free-variable witnesses additionally pin materialized slots
+without retained nested functions or caller-frame alternate paths.
 The sealed proxy type is discovered from a disposable unstarted generator
 because gate CPython 3.14.6 does not export it from `types`; the walker never
 looks up the current frame. There is no special frame-builtins edge exclusion:
@@ -1458,7 +1482,7 @@ asserting object bound. Thread execution is covered by all-thread profiling on
 Python 3.12+, guarded worker bootstraps, rejection of reachable prebound native
 starters, and refusal of pre-existing application workers. Older Python uses
 the same admission restrictions and guarded bootstraps without retroactive
-all-thread installation. The worktree venv is Python 3.11; the gate venv is Python 3.14.6.
+all-thread installation. The worktree and CI venv are Python 3.12.3; the additional matrix covers 3.11, 3.13 and 3.14.6.
 The following exclusions explain the limits of that scope:
 
 | Exclusion | Reason |
@@ -1518,7 +1542,7 @@ Pydantic validators, cached results, raw joinable APIs and native worker cleanup
 
 `test_production_import_fence` statically scans imports in **every** live Python
 module, including imports inside functions and literal dynamic imports, banning
-`tests` (and all children) and `frozen_f83bbaac`. A fresh interpreter separately
+`tests` (and all children) and `frozen_main`. A fresh interpreter separately
 checks that importing `trusted_router` does not load the snapshot loader/alias.
 The reviewer's copied-module reverse import is rejected by the same scanner and
 is retained as a C-table mutation. Computed dynamic import strings are outside
@@ -1533,7 +1557,7 @@ feature-store methods all come from the snapshot. Test-owned clocks, lease UUID,
 catalog inputs, crash injections and trace callbacks control both legs equally.
 Fixture seed preparation happens before the comparison. The complete execution
 inventory, per-callable source location and file pin are recorded in
-[the Round-4 inventory](../async-settle-f83bbaac-inventory.md), with machine-readable
+[the regenerated BASE inventory](../async-settle-frozen-main-inventory.md), with machine-readable
 rows beside it. Inventory records are evidence, never an execution allowlist.
 
 The differential compares response contents, actual SQL parameters and serialized
@@ -1547,7 +1571,7 @@ partner-free classification mutations. Their frozen legs retain baseline amounts
 | `/settle` and `/refund`, no negotiation header | false/false | F1 `complete_entry[*-no_header_off-*]` |
 | Both routes, `async-v1` header and ordinary legacy body | false/false | F1 `complete_entry[*-header_off-*]` |
 | Both routes, no header | false/true | F1 `complete_entry[*-no_header_protected-*]` |
-| Snapshot header with protection on, admission off | false/true | F1 `test_f83bbaac_protected_header_rejection` (both routes), plus PR C `test_snapshot_dispatch_after_admission_rollback`; recovery/rejection is not legacy entry |
+| Snapshot header with protection on, admission off | false/true | F1 `test_frozen_main_protected_header_rejection` (both routes), plus PR C `test_snapshot_dispatch_after_admission_rollback`; recovery/rejection is not legacy entry |
 | Pre-C claim/refresh/enqueue and unresolved finalize | false/false | `test_async_settle_oracle.py::test_frozen_main_effects_and_operation_trace` (c2c8f606) |
 | Dormant scheduler/error/park/dead/clamp/budget | off | `test_async_settle_drain_oracle.py::test_flag_off_frozen_drain_sql_state_response` (ecb79459) |
 | Authorize/reserve and one-commit finalize | off | `test_async_settle_authorize_oracle.py`, `test_settle_c1_oracle.py` |
@@ -1640,7 +1664,7 @@ native-Spanner evidence.
 #### D3 propagation audit
 
 Paths below are relative to `src/trusted_router`; line references refer to the
-unchanged f83bbaac production sources. Bounds start **after the relevant write
+original F1 audit at `f83bbaac` (historical source-line citations). Bounds start **after the relevant write
 commits**, and concern subsequent decisions, not requests already in flight.
 
 | Cache or visibility boundary | TTL / lag | Pin / evidence | Bound or qualification |
@@ -1744,7 +1768,7 @@ Round 5 incorporates the ten
 independent seed-4 reviewer edits, both money-changing thread/cache bridges,
 and the production-import witness. Round 4 added both ordinary-cost
 helper corruptions, witnessed by
-`test_async_settle_proof_oracle.py::test_f83bbaac_complete_entry[inline-no_header_off-settle-component_half_up]`,
+`test_async_settle_proof_oracle.py::test_frozen_main_complete_entry[inline-no_header_off-settle-component_half_up]`,
 and the wrong-model intent, witnessed by
 `test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
 The generation/finalization builder and handler output corruptions remain.

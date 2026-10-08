@@ -1,4 +1,4 @@
-"""A separate, byte-pinned f83bbaac package; no fallback to live router code."""
+"""A separate, byte-pinned frozen-main package; no fallback to live router code."""
 from __future__ import annotations
 
 import _abc
@@ -40,11 +40,11 @@ from types import (
     TracebackType,
 )
 
-SNAPSHOT = Path(__file__).with_name('frozen_f83bbaac')
-ARCHIVE_SHA256 = 'e68b785ca7d5d62d82e71be5df07c605aa3f2ef83a528769138de6d2eba8d4da'
-ALIAS = 'frozen_f83bbaac'
+SNAPSHOT = Path(__file__).with_name('frozen_main')
+ARCHIVE_SHA256 = '8ee042a19b878760da7f024c8805fc7d6f4add1bde7b8d4fd625ce5790357d93'
+ALIAS = 'frozen_main'
 PINS = json.loads((SNAPSHOT / 'pins.json').read_text())
-_TEMP = tempfile.TemporaryDirectory(prefix='f83bbaac-')
+_TEMP = tempfile.TemporaryDirectory(prefix='frozen-main-')
 ROOT = Path(_TEMP.name)
 assert hashlib.sha256((SNAPSHOT / 'package.tar.gz').read_bytes()).hexdigest() == ARCHIVE_SHA256
 with tarfile.open(SNAPSHOT / 'package.tar.gz') as archive:
@@ -82,7 +82,7 @@ class SnapshotLoader(importlib.abc.MetaPathFinder, importlib.abc.Loader):
                 spec = importlib.util.spec_from_loader(fullname, loader=None, is_package=True)
                 spec.submodule_search_locations = [str(ROOT / relative)]
                 return spec
-            raise ImportError(f'Not present in frozen f83bbaac snapshot: {fullname}')
+            raise ImportError(f'Not present in frozen-main snapshot: {fullname}')
         return importlib.util.spec_from_file_location(
             fullname, source, loader=self,
             submodule_search_locations=[str(source.parent)] if source == package else None)
@@ -233,6 +233,15 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
                 # Exact sealed native type: no user mapping protocol dispatch,
                 # copying, or key lookup (which could call a key's __hash__).
                 for key, held in localns.items():
+                    pending.extend((key, held))
+            elif (sys.version_info < (3, 13) and type(localns) is dict
+                  and id(localns) not in boundaries):
+                # 3.11/3.12 materialize fast locals, cells and free variables
+                # into an exact dict. Native items preserves keys and values
+                # without dispatching user mapping methods or key lookups.
+                # Module frames can expose a registered globals dictionary;
+                # preserve its existing identity boundary, just as GC does.
+                for key, held in dict.items(localns):
                     pending.extend((key, held))
             pending.extend((value.f_globals, value.f_back, value.f_code, value.f_trace))
         # Always retain GC edges, including frames. Registry identity boundaries
