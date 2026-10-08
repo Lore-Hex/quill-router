@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -552,7 +553,10 @@ func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
 	}
 	ctx := context.Background()
 	ps := pubSub(t)
-	a, b, c := listen(t), listen(t), listen(t)
+	// c, the third node, is the peer a sends a terminal through when it
+	// cannot reach b: its listener counts the relays it is asked for.
+	relays := &sniffed{Listener: listen(t), path: []byte("POST /peer/terminal ")}
+	a, b, c := listen(t), listen(t), net.Listener(relays)
 	ws := ownedBy(t, b, a, b, c)
 	stops := map[net.Listener]func(){}
 	for _, ln := range []net.Listener{a, b, c} {
@@ -574,6 +578,11 @@ func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
 		if err != nil || got.Status != frontdoor.Recorded {
 			t.Fatalf("settle %d with its owner gone: %+v %v", i, got, err)
 		}
+	}
+	// Before a recorded its terminals, it tried b through c, which could not
+	// reach b either.
+	if n := relays.seen.Load(); n == 0 {
+		t.Fatal("a recorded its terminals without asking the third node to relay them")
 	}
 	s, err := store.New(shared, short(config(a)).Store)
 	if err != nil {
@@ -842,6 +851,38 @@ func TestAListenerRunMadeIsClosedOnAFailedStart(t *testing.T) {
 		t.Fatalf("the address was left taken: %v", err)
 	}
 	_ = ln.Close()
+}
+
+// sniffed is a listener whose connections count the requests they carry
+// whose first line begins with path.
+type sniffed struct {
+	net.Listener
+	path []byte
+	seen atomic.Int64
+}
+
+func (s *sniffed) Accept() (net.Conn, error) {
+	c, err := s.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &sniffedConn{Conn: c, s: s}, nil
+}
+
+type sniffedConn struct {
+	net.Conn
+	s *sniffed
+	// tail is the last bytes read, shorter than the path, so a path split
+	// between two reads is counted once.
+	tail []byte
+}
+
+func (c *sniffedConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	seen := append(c.tail, b[:n]...)
+	c.s.seen.Add(int64(bytes.Count(seen, c.s.path)))
+	c.tail = append([]byte(nil), seen[max(0, len(seen)-len(c.s.path)+1):]...)
+	return n, err
 }
 
 // watchedListener is a listener whose Close calls closed first.
