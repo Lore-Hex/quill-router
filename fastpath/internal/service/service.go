@@ -184,11 +184,12 @@ func PubSubOptions(region string) []option.ClientOption {
 }
 
 // Run runs the process until ctx ends, or one of its parts fails, and
-// returns once every part has stopped: nil if ctx ended it, else the first
-// failure. When ctx ends, the parts run on while the process leaves: an
-// admission node is marked leaving and its owner hands its leases off,
-// within HandOff; then they stop. A part that fails stops them all at once.
-// A Listener given it is its own, closed however it returns.
+// returns once every part has stopped: the first failure, though ctx ended
+// too, else nil. When ctx ends, the parts run on while the process leaves:
+// an admission node is marked leaving and its owner hands its leases off,
+// within HandOff; then they stop. A part that fails stops them all at once,
+// a leaving under way too (lifecycle). A Listener given it is its own,
+// closed however it returns.
 func Run(ctx context.Context, cfg Config, c Clients) error {
 	if cfg.Listener != nil {
 		defer cfg.Listener.Close()
@@ -236,11 +237,14 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 }
 
 // lifecycle starts a process's parts with start and runs them until ctx
-// ends or one fails, and returns once every part has stopped: nil if ctx
-// ended it, else the first failure. While start runs, ctx's end stops the
-// parts, a start under way too; once they have started, it begins the
+// ends or one fails, and returns once every part has stopped: the first
+// failure, whenever it came, else nil. While start runs, ctx's end stops
+// the parts, a start under way too; once they have started, it begins the
 // process's leaving: what whenLeaving was given runs while every part still
-// runs, and then the parts stop. A part's failure stops them at once.
+// runs, and then the parts stop. A part's failure stops them at once, a
+// leaving under way too, which it may have left undone, so it is returned
+// though ctx had ended: a failure that ends ctx itself, as a server's whose
+// listener's close does, comes after ctx's end all the same.
 func lifecycle(ctx context.Context, start func(p *parts)) error {
 	p := &parts{caller: ctx, armed: make(chan struct{})}
 	p.ctx, p.cancel = context.WithCancel(context.WithoutCancel(ctx))

@@ -775,6 +775,41 @@ func TestAProcessLeavesBeforeItsPartsStop(t *testing.T) {
 	if !errors.Is(err, failed) || len(events) != 0 {
 		t.Fatalf("a failed part: %v, and %q", err, events)
 	}
+
+	// A part that fails once the caller has begun the process's leaving
+	// ends the leaving at once, and is what the process returns: the
+	// leaving it cut short may have left work undone.
+	ctx, cancel = context.WithCancel(context.Background())
+	done = make(chan error, 1)
+	started = make(chan *parts, 1)
+	fail := make(chan struct{})
+	go func() {
+		done <- lifecycle(ctx, func(p *parts) {
+			p.run("part", func(ctx context.Context) error {
+				select {
+				case <-fail:
+					return failed
+				case <-ctx.Done():
+					return nil
+				}
+			})
+			p.whenLeaving(func() {
+				close(fail)
+				<-p.ctx.Done() // the leaving, ended by the failure
+			})
+			started <- p
+		})
+	}()
+	<-(<-started).armed
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, failed) {
+			t.Fatalf("a part that failed as its process left: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the leaving did not end at the part's failure")
+	}
 }
 
 // TestEveryPartAgreesOnTheStoresTimes: the owner, the front door, the
