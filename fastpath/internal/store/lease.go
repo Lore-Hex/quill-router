@@ -98,6 +98,30 @@ func (s *Store) ReadLease(ctx context.Context, ref LeaseRef) (Lease, time.Time, 
 	return l, read, err
 }
 
+// FindLease finds a lease's row key from its ID alone (tr_lease_by_id): the
+// settle log keys a lease's records by its ID, and the auditor loads the
+// lease by its workspace and ID. A lease ID names one lease, and its
+// workspace never changes.
+func (s *Store) FindLease(ctx context.Context, leaseID string) (LeaseRef, error) {
+	ro := s.client.Single()
+	defer ro.Close()
+	ref, found := LeaseRef{LeaseID: leaseID}, false
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL:    `SELECT workspace_id FROM tr_lease@{FORCE_INDEX=tr_lease_by_id} WHERE lease_id = @l`,
+		Params: map[string]any{"l": leaseID},
+	}, spanner.QueryOptions{RequestTag: tag("find-lease")}).Do(func(row *spanner.Row) error {
+		found = true
+		return row.Columns(&ref.Workspace)
+	})
+	switch {
+	case err != nil:
+		return LeaseRef{}, err
+	case !found:
+		return LeaseRef{}, ErrNoLease
+	}
+	return ref, nil
+}
+
 // RenewResult is one lease's renewal: whether the lease took it, and the
 // expiry Spanner holds after it.
 type RenewResult struct {
