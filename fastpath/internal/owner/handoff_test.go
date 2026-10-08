@@ -1109,44 +1109,40 @@ func TestAnOversizedBasisIsRefusedBeforeTheLock(t *testing.T) {
 	}
 }
 
-// TestAReapScanCopiesNothingUnderTheLock: the reap scan keeps what it finds
-// in a batch it moves out with the lease's lock let go, so with half a
-// million holds due nothing it gathers is copied under the lock as it grows,
-// and the lock is never held long.
-func TestAReapScanCopiesNothingUnderTheLock(t *testing.T) {
-	f, _ := releaseFixture(t)
-	l := f.lease
-	const holds = 500_000
-	hash := sum("snapshot")
-	l.mu.Lock()
+// TestAScanLetsTheLockGoBetweenBatches: a scan visits each hold with the
+// lease's lock held, at most scanBatch of them between flushes, and flushes
+// with the lock let go, between batches and once at the end; gather's result
+// is every hold its visit takes, which it joins in those flushes.
+func TestAScanLetsTheLockGoBetweenBatches(t *testing.T) {
+	l := &Lease{holds: map[string]*hold{}}
+	const holds = 3*scanBatch + 5
 	for i := range holds {
-		auth := fmt.Sprintf("auth-%07d", i)
-		l.holds[auth] = &hold{auth: auth, estimate: 1, heartbeat: true, deadline: start, hash: hash, basis: []byte("terms"),
-			boot: boot}
+		auth := fmt.Sprintf("auth-%05d", i)
+		l.holds[auth] = &hold{auth: auth, estimate: int64(i % 2)}
 	}
-	l.mu.Unlock()
-	t.Cleanup(func() {
-		l.mu.Lock()
-		clear(l.holds)
-		l.mu.Unlock()
-	})
-	scanned := make(chan int, 1)
-	go func() { scanned <- len(l.due(start.Add(time.Hour), time.Minute)) }()
-	var longest time.Duration
-	for {
-		select {
-		case n := <-scanned:
-			if n != holds || longest > 10*time.Millisecond {
-				t.Fatalf("the scan found %d of %d holds due, the lease's lock held up to %v", n, holds, longest)
-			}
-			return
-		default:
+	visited, since, flushes := 0, 0, 0
+	l.scan(func(h *hold) {
+		if l.mu.TryLock() {
+			l.mu.Unlock()
+			t.Fatal("a hold visited without the lease's lock")
 		}
-		began := time.Now()
-		l.mu.Lock()
-		longest = max(longest, time.Since(began))
+		visited++
+		if since++; since > scanBatch {
+			t.Fatalf("%d holds visited between flushes", since)
+		}
+	}, func() {
+		if !l.mu.TryLock() {
+			t.Fatal("a flush with the lease's lock held")
+		}
 		l.mu.Unlock()
-		runtime.Gosched()
+		flushes, since = flushes+1, 0
+	})
+	if visited != holds || flushes != holds/scanBatch+1 {
+		t.Fatalf("%d of %d holds visited, %d flushes", visited, holds, flushes)
+	}
+	odd := gather(l, func(h *hold) (string, bool) { return h.auth, h.estimate == 1 })
+	if len(odd) != holds/2 {
+		t.Fatalf("gathered %d of %d", len(odd), holds/2)
 	}
 }
 

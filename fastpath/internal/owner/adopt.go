@@ -124,15 +124,7 @@ func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
 	if allowance == 0 {
 		return
 	}
-	var due []string
-	batch := make([]string, 0, scanBatch)
-	l.scan(func(h *hold) {
-		if released(h, now, allowance+grace) {
-			batch = append(batch, h.auth)
-		}
-	}, func() {
-		due, batch = append(due, batch...), batch[:0]
-	})
+	due := gather(l, func(h *hold) (string, bool) { return h.auth, released(h, now, allowance+grace) })
 	slices.Sort(due)
 	for len(due) > 0 {
 		n := min(len(due), releaseBatch)
@@ -272,6 +264,23 @@ func (l *Lease) adopt(row store.DrainRow) error {
 	return nil
 }
 
+// gather is what visit takes from each of the lease's holds, in a scan: a
+// batch of at most scanBatch, made under the lock, joins the result only with
+// the lock let go, so nothing a pass gathers grows, and is copied, under the
+// lock with the lease's holds.
+func gather[T any](l *Lease, visit func(h *hold) (T, bool)) []T {
+	var out []T
+	batch := make([]T, 0, scanBatch)
+	l.scan(func(h *hold) {
+		if x, ok := visit(h); ok {
+			batch = append(batch, x)
+		}
+	}, func() {
+		out, batch = append(out, batch...), batch[:0]
+	})
+	return out
+}
+
 // dueReap is a hold the reaper reaps, as its full record states it (§4.9):
 // at its last heartbeat's snapshot, the running charge, the basis the first
 // brought, and the boot binding.
@@ -294,17 +303,13 @@ type dueReap struct {
 // sorted once its lock is let go. A hold that never heartbeated has no
 // snapshot to reap at.
 func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
-	var out []dueReap
-	batch := make([]dueReap, 0, scanBatch)
-	l.scan(func(h *hold) {
+	out := gather(l, func(h *hold) (dueReap, bool) {
 		if !h.heartbeat || now.Before(h.deadline.Add(grace)) {
-			return
+			return dueReap{}, false
 		}
-		batch = append(batch, dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
+		return dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
 			Deadline: h.deadline.UTC(), GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: h.usage, OwnerSeq: h.snapSeq,
-			Basis: h.basis, Boot: h.boot})
-	}, func() {
-		out, batch = append(out, batch...), batch[:0]
+			Basis: h.basis, Boot: h.boot}, true
 	})
 	slices.SortFunc(out, func(a, b dueReap) int { return strings.Compare(a.Auth, b.Auth) })
 	return out
