@@ -27,6 +27,8 @@ import (
 
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 // Endpoint is a region's locational endpoint. Pub/Sub keeps one key's
@@ -53,11 +55,20 @@ type Settings struct {
 	Deadline time.Duration
 }
 
-// Pub/Sub's limits on one Publish call.
+// Pub/Sub's limits on one Publish call: its messages, and its request's
+// size, 10 MB, which a batch keeps under with room for the topic's name.
 const (
 	maxBatchMessages = 1000
 	maxBatchBytes    = 9 << 20
 )
+
+// requestSize is a message's part of a Publish call's request: its
+// encoding, attributes and ordering key included, with its field's tag and
+// length.
+func requestSize(m *pubsubpb.PubsubMessage) int {
+	n := proto.Size(m)
+	return protowire.SizeTag(2) + protowire.SizeVarint(uint64(n)) + n
+}
 
 // publishFunc is Pub/Sub's Publish call.
 type publishFunc func(ctx context.Context, req *pubsubpb.PublishRequest) (*pubsubpb.PublishResponse, error)
@@ -72,6 +83,7 @@ func publisherOf(client *pubsub.Client) publishFunc {
 // Pending is a record handed over and not yet acknowledged.
 type Pending struct {
 	msg      *pubsubpb.PubsubMessage
+	size     int
 	deadline time.Time
 	done     chan struct{}
 	id       string
@@ -79,7 +91,7 @@ type Pending struct {
 }
 
 func newPending(msg *pubsubpb.PubsubMessage, deadline time.Time) *Pending {
-	return &Pending{msg: msg, deadline: deadline, done: make(chan struct{})}
+	return &Pending{msg: msg, size: requestSize(msg), deadline: deadline, done: make(chan struct{})}
 }
 
 func (p *Pending) finish(id string, err error) {
@@ -235,10 +247,12 @@ func (l *Log) send(lease string, k *key) {
 }
 
 // takeBatch takes records from the front of queue, within Pub/Sub's limits.
+// A record too large for a request by itself goes alone, and Pub/Sub's
+// refusal fails it like any other.
 func takeBatch(queue *[]*Pending) []*Pending {
 	n, size := 0, 0
 	for n < len(*queue) && n < maxBatchMessages {
-		size += len((*queue)[n].msg.Data) + 64
+		size += (*queue)[n].size
 		if n > 0 && size > maxBatchBytes {
 			break
 		}

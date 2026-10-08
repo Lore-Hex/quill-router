@@ -4,9 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestResumeKeepsQueuedRecordsBehindAFailedOne: a record queued behind one
@@ -242,5 +248,119 @@ func TestResumeAfterAFailedWait(t *testing.T) {
 		if err := wait(t, l.Publish(lease, []byte(lease+"#1"), nil)); err != nil {
 			t.Fatalf("lease %d: the republish right after the failure: %v", i, err)
 		}
+	}
+}
+
+// TestABatchIsCutByItsRequestsSize: records queued together are sent in
+// Publish requests within Pub/Sub's 10 MB, every record's attributes and
+// ordering key counted, not its payload alone. The test's publish call
+// refuses a request over 10 MB, as Pub/Sub does; pstest's server takes no
+// request over gRPC's default 4 MB, so it cannot tell.
+func TestABatchIsCutByItsRequestsSize(t *testing.T) {
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	var sizes []int
+	var sent []string
+	publish := func(_ context.Context, req *pubsubpb.PublishRequest) (*pubsubpb.PublishResponse, error) {
+		mu.Lock()
+		first := len(sizes) == 0
+		sizes = append(sizes, proto.Size(req))
+		mu.Unlock()
+		if first {
+			<-gate
+		}
+		if proto.Size(req) > 10_000_000 {
+			return nil, status.Error(codes.InvalidArgument, "publish request exceeds 10MB")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		ids := make([]string, len(req.Messages))
+		for i, m := range req.Messages {
+			sent = append(sent, string(m.Data))
+			ids[i] = fmt.Sprint(len(sent))
+		}
+		return &pubsubpb.PublishResponse{MessageIds: ids}, nil
+	}
+	l, err := openLog(publish, "projects/spike/topics/settle-log", Settings{Deadline: 30 * time.Second}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop()
+	pending := []*Pending{l.Publish("la", []byte("la#0"), nil)}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		mu.Lock()
+		calls := len(sizes)
+		mu.Unlock()
+		if calls == 1 {
+			break // la#0 is in its call, held, and the rest queue behind it
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("la#0 was never sent")
+		}
+	}
+	attrs := map[string]string{}
+	for i := range 10 {
+		attrs[fmt.Sprintf("a%d", i)] = strings.Repeat("v", 1024)
+	}
+	for i := 1; i <= 1000; i++ {
+		pending = append(pending, l.Publish("la", []byte(fmt.Sprintf("la#%d%s", i, strings.Repeat(".", 250))), attrs))
+	}
+	close(gate)
+	for i, p := range pending {
+		if err := wait(t, p); err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1001 || len(sizes) < 3 {
+		t.Fatalf("%d records sent in %d requests", len(sent), len(sizes))
+	}
+	for i, n := range sizes {
+		if n > 10_000_000 {
+			t.Fatalf("request %d is %d bytes", i, n)
+		}
+	}
+	for i, r := range sent {
+		if !strings.HasPrefix(r, fmt.Sprintf("la#%d", i)) || (i > 0 && r[len(fmt.Sprintf("la#%d", i))] != '.') {
+			t.Fatalf("record %d sent as %.8s", i, r)
+		}
+	}
+}
+
+// TestAReturnIsNoAcknowledgement: a handler that returns without Ack, its
+// member still receiving, leaves its record unacknowledged; once the member
+// stops, the record comes back.
+func TestAReturnIsNoAcknowledgement(t *testing.T) {
+	f := newFakeLog(t, true)
+	l := f.log(t)
+	if err := wait(t, l.Publish("la", []byte("la#1"), nil)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	returned := make(chan struct{})
+	var once sync.Once
+	received := make(chan error, 1)
+	go func() {
+		received <- Subscribe(f.client, f.sub, -1).Receive(ctx, func(context.Context, *Delivery) {
+			once.Do(func() { close(returned) })
+		})
+	}()
+	select {
+	case <-returned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("la#1 was never delivered")
+	}
+	time.Sleep(500 * time.Millisecond) // the member keeps receiving after the handler returned
+	if m := f.srv.Messages(); len(m) != 1 || m[0].Acks != 0 {
+		t.Fatalf("the record after its handler returned: %+v", m)
+	}
+	cancel()
+	if err := <-received; err != nil {
+		t.Fatal(err)
+	}
+	if got := f.receive(t, 1, 40*time.Second, nil); !equal(got["la"], []string{"la#1"}) {
+		t.Fatalf("the next member got %v", got)
 	}
 }
