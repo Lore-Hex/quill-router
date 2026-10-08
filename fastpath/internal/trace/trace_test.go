@@ -25,7 +25,8 @@ func TestEventsAreNumberedInTheirProcess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.Record("settle", nil, Facts{Lease: "l", Auth: "a", OwnerSeq: Seq(int64(i))})
+			r.Record("settle", nil, Facts{Lease: "l", Auth: "a", OwnerSeq: Seq(int64(i)), Message: "m", Key: "k",
+				Outcome: "settled"})
 		}()
 	}
 	wg.Wait()
@@ -53,8 +54,9 @@ func TestEventsAreNumberedInTheirProcess(t *testing.T) {
 			t.Fatalf("event %d: %+v", i, e)
 		}
 		if i < 50 {
-			if e.OwnerSeq == nil {
-				t.Fatalf("event %d states no owner sequence", i)
+			if e.OwnerSeq == nil || e.Lease != "l" || e.Auth != "a" || e.Message != "m" || e.Key != "k" ||
+				e.Outcome != "settled" {
+				t.Fatalf("event %d's facts: %+v", i, e.Facts)
 			}
 			seqs[*e.OwnerSeq] = true
 		}
@@ -253,6 +255,9 @@ func TestReadTakesOnlyEvents(t *testing.T) {
 		"text not UTF-8":          strings.Replace(good, `"kind":"x"`, "\"kind\":\"x\",\"auth\":\"a\xff\"", 1) + "\n",
 		"a time past nanoseconds": strings.Replace(good, `"kind":"x"`, `"kind":"x","commit":"2026-10-08T12:00:00.1234567891Z"`, 1) + "\n",
 		"a time not in UTC":       strings.Replace(good, `"2026-10-08T12:00:00Z"`, `"2026-10-08T12:00:00+00:00"`, 1) + "\n",
+		"a wall an hour off":      strings.Replace(good, `"2026-10-08T12:00:00Z"`, `"2026-10-08T13:00:00+01:00"`, 1) + "\n",
+		"a commit an hour off":    strings.Replace(good, `"kind":"x"`, `"kind":"x","commit":"2026-10-08T13:00:00+01:00"`, 1) + "\n",
+		"a read an hour off":      strings.Replace(good, `"kind":"x"`, `"kind":"x","read":"2026-10-08T13:00:00+01:00"`, 1) + "\n",
 		"an offset past a day":    strings.Replace(good, `"2026-10-08T12:00:00Z"`, `"2026-10-08T12:00:00+24:00"`, 1) + "\n",
 		"the keys out of order":   `{"mono":0,"id":{"node":"n","epoch":1,"seq":1},"wall":"2026-10-08T12:00:00Z","kind":"x"}` + "\n",
 		"a space after":           good + " \n",

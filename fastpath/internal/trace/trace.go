@@ -238,10 +238,11 @@ func Read(rd io.Reader) ([]Event, error) {
 }
 
 // readEvent reads one line as an event: one a recorder writes, with its
-// identity, its clocks and its kind, and the very bytes a recorder writes
-// for it. So nothing that decoding would change passes: a key twice, in
-// another case or null, text that is not UTF-8, a time not in UTC to the
-// nanosecond, or anything after the event.
+// identity, its clocks and its kind, and the very bytes Record writes for
+// it, its times in UTC. So nothing that decoding would change passes, nor
+// anything Record would not write: a key twice, in another case or null,
+// text that is not UTF-8, a time not in UTC or past the nanosecond, or
+// anything after the event.
 func readEvent(line []byte) (Event, error) {
 	var e Event
 	if err := json.Unmarshal(line, &e); err != nil {
@@ -250,7 +251,9 @@ func readEvent(line []byte) (Event, error) {
 	if !e.ID.valid() || (e.Cause != nil && !e.Cause.valid()) || e.Kind == "" || e.Wall.IsZero() || e.Mono < 0 {
 		return Event{}, errors.New("no event a recorder writes")
 	}
-	if canonical, err := json.Marshal(e); err != nil || !bytes.Equal(canonical, line) {
+	written := e
+	written.Wall, written.Commit, written.Read = utc(e.Wall), utc(e.Commit), utc(e.Read)
+	if canonical, err := json.Marshal(written); err != nil || !bytes.Equal(canonical, line) {
 		return Event{}, errors.New("not as a recorder writes it")
 	}
 	return e, nil
