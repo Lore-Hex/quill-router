@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -107,6 +109,42 @@ func admitting(t *testing.T) *fakeGateway {
 	return f
 }
 
+func mustOpen(t *testing.T, sealed string) frontdoor.Envelope {
+	t.Helper()
+	e, err := frontdoor.Open(key, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// ownEnvelopes checks that each heartbeat and settle carries its own
+// generation's envelope, which names its request ("gwa-" and the request,
+// as admitting seals it): a heartbeat's hash is of its request and
+// sequence, and a settle's full record names its request; and that every
+// sealed envelope's refunds are one generation's.
+func ownEnvelopes(t *testing.T, gws ...*fakeGateway) {
+	t.Helper()
+	for _, gw := range gws {
+		for _, hb := range gw.heartbeats {
+			request := strings.TrimPrefix(mustOpen(t, hb.Envelope).Auth, "gwa-")
+			want := sha256.Sum256([]byte(request + "/" + strconv.FormatInt(hb.GatewaySeq, 10)))
+			if !bytes.Equal(hb.Hash, want[:]) {
+				t.Fatalf("heartbeat %d of %s carries another generation's envelope", hb.GatewaySeq, request)
+			}
+		}
+		for _, s := range gw.settles {
+			var full struct {
+				Request string `json:"request"`
+			}
+			if err := json.Unmarshal(s.Full, &full); err != nil ||
+				"gwa-"+full.Request != mustOpen(t, s.Envelope).Auth {
+				t.Fatalf("a settle of %s carries another generation's envelope", full.Request)
+			}
+		}
+	}
+}
+
 // echoed checks that every heartbeat, settle and refund the gateways were
 // sent carries an envelope one of them sealed, and the one of its
 // generation's authorize: with one generation, there is one.
@@ -172,6 +210,9 @@ func TestAGenerationIsPlayedThrough(t *testing.T) {
 	if len(gw.heartbeats) != 3 {
 		t.Fatalf("%d heartbeats", len(gw.heartbeats))
 	}
+	// The running charge is the bill so far, 125 over three heartbeats,
+	// within the hold of 100.
+	running := []int64{41, 83, 100}
 	var last frontdoor.HeartbeatOf
 	for i, hb := range gw.heartbeats {
 		seq := int64(i + 1)
@@ -179,11 +220,24 @@ func TestAGenerationIsPlayedThrough(t *testing.T) {
 		if i > 0 {
 			echoed = time.Date(2026, 10, 8, 12, 0, i, 0, time.UTC)
 		}
-		if hb.GatewaySeq != seq || len(hb.Hash) != 32 || hb.Running > 100 || hb.Running < last.Running ||
-			hb.Usage <= last.Usage || !hb.Echoed.Equal(echoed) || (i == 0) != (len(hb.Basis) > 0) {
+		if hb.GatewaySeq != seq || len(hb.Hash) != 32 || hb.Running != running[i] || hb.Usage <= last.Usage ||
+			!hb.Echoed.Equal(echoed) || (i == 0) != (len(hb.Basis) > 0) {
 			t.Fatalf("heartbeat %d: %+v", i, hb)
 		}
 		last = hb
+	}
+	// The first heartbeat's basis has what a reap's full record needs: the
+	// request's terms and the boot binding.
+	var basis struct {
+		Request  string `json:"request"`
+		Model    string `json:"model"`
+		Estimate int64  `json:"estimate"`
+		Boot     []byte `json:"boot"`
+	}
+	if err := json.Unmarshal(gw.heartbeats[0].Basis, &basis); err != nil || basis.Request == "" ||
+		basis.Request != strings.TrimPrefix(mustOpen(t, gw.heartbeats[0].Envelope).Auth, "gwa-") ||
+		basis.Model == "" || basis.Estimate != 100 || string(basis.Boot) != "boot" {
+		t.Fatalf("the reap's basis %s: %v", gw.heartbeats[0].Basis, err)
 	}
 	if len(gw.settles) != 1 || gw.settles[0].Charge != 125 || len(gw.sealed) != 1 {
 		t.Fatalf("the settles: %+v", gw.settles)
@@ -287,6 +341,15 @@ func TestAStreamEndsAsTheEnclaveEndsIt(t *testing.T) {
 				t.Fatalf("%s: %d heartbeats, %+v, %+v", c.name, len(gw.heartbeats), g, rep.Outcomes)
 			}
 			echoed(t, gw)
+			// A heartbeat's tries carry one snapshot.
+			bySeq := map[int64]frontdoor.HeartbeatOf{}
+			for _, hb := range gw.heartbeats {
+				if first, ok := bySeq[hb.GatewaySeq]; ok && (first.Running != hb.Running ||
+					!bytes.Equal(first.Hash, hb.Hash) || first.Usage != hb.Usage) {
+					t.Fatalf("%s: heartbeat %d's tries differ: %+v, %+v", c.name, hb.GatewaySeq, first, hb)
+				}
+				bySeq[hb.GatewaySeq] = hb
+			}
 			switch {
 			case c.settled < 0:
 				if len(gw.settles)+len(gw.refunds) != 0 || g.Terminal != nil {
@@ -645,6 +708,10 @@ func TestAMixIsRead(t *testing.T) {
 		"garbage after":       good + ` x`,
 		"a null share":        strings.Replace(good, `"stream_share":0.6`, `"stream_share":null`, 1),
 		"no refund share":     strings.Replace(good, `"refund_share":0.1,`, ``, 1),
+		"a field twice": strings.Replace(good, `"estimates":[{"value":100,"weight":2},{"value":1000,"weight":1}]`,
+			`"estimates":[{"value":100,"weight":1}],"estimates":[{"weight":2}]`, 1),
+		"a bin's field twice": strings.Replace(good, `{"value":100,"weight":2}`,
+			`{"value":100,"value":7,"weight":2}`, 1),
 		// Each beside a bin that would do alone.
 		"a null value":    strings.Replace(good, `{"value":100,"weight":2}`, `{"value":null,"weight":2}`, 1),
 		"a null weight":   strings.Replace(good, `{"value":100,"weight":2}`, `{"value":100,"weight":null}`, 1),
@@ -813,47 +880,43 @@ func TestARateIsTheDecimalWritten(t *testing.T) {
 }
 
 // TestAHeartbeatsTriesShareItsWait: a heartbeat's attempts end together at
-// HeartbeatWait, however long a call would take, and the stream ends.
+// HeartbeatWait from its first, however long each takes, and the stream
+// ends.
 func TestAHeartbeatsTriesShareItsWait(t *testing.T) {
-	for _, first := range []frontdoor.Status{"", frontdoor.Retry} {
-		gw := admitting(t)
-		var mu sync.Mutex
-		tries := 0
-		gw.heartbeat = nil
-		hold := &blockingGateway{fakeGateway: gw, heartbeat: func(ctx context.Context) (frontdoor.HeartbeatAnswer, error) {
-			mu.Lock()
-			tries++
-			n := tries
-			mu.Unlock()
-			if n == 1 && first != "" {
-				return frontdoor.HeartbeatAnswer{Status: first}, nil
-			}
-			<-ctx.Done()
-			return frontdoor.HeartbeatAnswer{}, ctx.Err()
-		}}
-		cfg := config(gw)
-		cfg.Gateways, cfg.HeartbeatWait = []Gateway{hold}, 100*time.Millisecond
-		var log bytes.Buffer
-		cfg.Log = &log
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		began := time.Now()
-		_, err := Run(ctx, cfg)
-		cancel()
-		if err != nil {
-			t.Fatal(err)
+	gw := admitting(t)
+	var mu sync.Mutex
+	var deadlines []time.Time
+	hold := &blockingGateway{fakeGateway: gw, heartbeat: func(ctx context.Context) (frontdoor.HeartbeatAnswer, error) {
+		d, _ := ctx.Deadline()
+		mu.Lock()
+		deadlines = append(deadlines, d)
+		n := len(deadlines)
+		mu.Unlock()
+		if n == 1 {
+			// The first takes part of the wait, then is answered Retry.
+			time.Sleep(60 * time.Millisecond)
+			return frontdoor.HeartbeatAnswer{Status: frontdoor.Retry}, nil
 		}
-		var g Generation
-		if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil {
-			t.Fatal(err)
-		}
-		want := 1
-		if first != "" {
-			want = 2
-		}
-		if took := time.Since(began); took > 2*time.Second || g.Streamed != "refused" || len(g.Heartbeats) != 1 ||
-			len(g.Heartbeats[0].Tries) != want {
-			t.Fatalf("first answer %q: after %v, %+v", first, took, g)
-		}
+		<-ctx.Done()
+		return frontdoor.HeartbeatAnswer{}, ctx.Err()
+	}}
+	cfg := config(gw)
+	cfg.Gateways, cfg.HeartbeatWait = []Gateway{hold}, 150*time.Millisecond
+	var log bytes.Buffer
+	cfg.Log = &log
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	began := time.Now()
+	if _, err := Run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	var g Generation
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(began); took > 2*time.Second || g.Streamed != "refused" || len(deadlines) != 2 ||
+		!deadlines[0].Equal(deadlines[1]) {
+		t.Fatalf("after %v, %+v, the tries' deadlines %v", took, g, deadlines)
 	}
 }
 
@@ -865,4 +928,109 @@ type blockingGateway struct {
 
 func (b *blockingGateway) Heartbeat(ctx context.Context, _ frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
 	return b.heartbeat(ctx)
+}
+
+// TestEachGenerationCarriesItsOwnEnvelope: generations run at once, and
+// each one's heartbeats, settle and refund, their retries too, carry the
+// envelope its own authorize sealed.
+func TestEachGenerationCarriesItsOwnEnvelope(t *testing.T) {
+	gw := admitting(t)
+	var mu sync.Mutex
+	tries := map[string]int{}
+	cfg := config(gw)
+	cfg.Rate, cfg.Duration, cfg.MaxInFlight, cfg.HeartbeatEvery = 2000, 5*time.Millisecond, 20, 2*time.Millisecond
+	rep, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Started < 5 || len(gw.settles) != int(rep.Started) {
+		t.Fatalf("started %d, %d settles", rep.Started, len(gw.settles))
+	}
+	ownEnvelopes(t, gw)
+
+	// A refund names no request: each sealed envelope's refund and its
+	// retry carry that envelope, and no other's.
+	refunding := admitting(t)
+	refunding.terminal = func(attempt int) (frontdoor.TerminalAnswer, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if attempt%2 == 1 {
+			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+		}
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
+	}
+	cfg = config(refunding)
+	cfg.Rate, cfg.Duration, cfg.MaxInFlight = 2000, 5*time.Millisecond, 20
+	cfg.Mix.StreamShare, cfg.Mix.RefundShare = 0, 1
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range refunding.refunds {
+		tries[r.Envelope]++
+	}
+	if len(tries) != len(refunding.sealed) || len(refunding.sealed) < 5 {
+		t.Fatalf("%d envelopes refunded, %d sealed", len(tries), len(refunding.sealed))
+	}
+	for _, e := range refunding.sealed {
+		if tries[e] < 1 {
+			t.Fatalf("a generation's envelope with no refund: %v", tries)
+		}
+	}
+}
+
+// TestTheRetryQueueIsServedInItsOrder: an enclave's one worker serves its
+// queued terminals in the order they joined, the second behind the one in
+// service, the third behind the second.
+func TestTheRetryQueueIsServedInItsOrder(t *testing.T) {
+	serving, release := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var served []string
+	gw := &orderedGateway{fakeGateway: admitting(t), settle: func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+		if s.Envelope == "first" {
+			close(serving)
+			<-release
+		}
+		mu.Lock()
+		served = append(served, s.Envelope)
+		mu.Unlock()
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
+	}}
+	cfg := config(gw.fakeGateway)
+	cfg.Gateways, cfg.RetryDelays = []Gateway{gw}, []time.Duration{0}
+	r := &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{}}
+	workers, stop := r.startEnclaves(context.Background())
+	defer func() {
+		stop()
+		workers.Wait()
+	}()
+	e := r.enclaves[0]
+	job := func(envelope string) *queued {
+		return &queued{p: &played{r: r, enclave: e}, envelope: envelope, done: &TerminalDone{Kind: record.Settle},
+			served: make(chan struct{})}
+	}
+	first, second, third := job("first"), job("second"), job("third")
+	e.queue(first)
+	<-serving
+	e.queue(second)
+	e.queue(third)
+	close(release)
+	for _, j := range []*queued{first, second, third} {
+		<-j.served
+		if j.done.Status != "won" {
+			t.Fatalf("%s: %+v", j.envelope, j.done)
+		}
+	}
+	if !slices.Equal(served, []string{"first", "second", "third"}) {
+		t.Fatalf("served %v", served)
+	}
+}
+
+// orderedGateway is a fake whose settles its function answers.
+type orderedGateway struct {
+	*fakeGateway
+	settle func(frontdoor.SettleOf) (frontdoor.TerminalAnswer, error)
+}
+
+func (o *orderedGateway) Settle(_ context.Context, s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+	return o.settle(s)
 }

@@ -10,6 +10,7 @@
 package loadgen
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -62,8 +63,77 @@ type Weight struct {
 const MaxHeartbeats = 1 << 20
 
 // ReadMix reads a mix as JSON, such as fastpath/testdata/load-mix.json: one
-// object, every field given and none null, and nothing after it.
+// object, every field given once and none null, and nothing after it.
 func ReadMix(r io.Reader) (Mix, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxMix+1))
+	if err != nil {
+		return Mix{}, fmt.Errorf("loadgen: the mix: %w", err)
+	}
+	if len(data) > maxMix {
+		return Mix{}, fmt.Errorf("loadgen: the mix is past %d bytes", maxMix)
+	}
+	if err := onceEach(data); err != nil {
+		return Mix{}, err
+	}
+	return readMix(bytes.NewReader(data))
+}
+
+// maxMix bounds a mix file.
+const maxMix = 1 << 20
+
+// onceEach reports an object in data that names a field twice: the decoder
+// would take the second, onto what the first set.
+func onceEach(data []byte) error {
+	d := json.NewDecoder(bytes.NewReader(data))
+	type object struct {
+		names map[string]bool
+		key   bool // the next token is a field's name
+	}
+	var open []*object
+	for {
+		tok, err := d.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("loadgen: the mix: %w", err)
+		}
+		var top *object
+		if len(open) > 0 {
+			top = open[len(open)-1]
+		}
+		switch tok {
+		case json.Delim('{'):
+			if top != nil {
+				top.key = true
+			}
+			open = append(open, &object{names: map[string]bool{}, key: true})
+			continue
+		case json.Delim('['):
+			if top != nil {
+				top.key = true
+			}
+			open = append(open, nil)
+			continue
+		case json.Delim('}'), json.Delim(']'):
+			open = open[:len(open)-1]
+			continue
+		}
+		if top == nil {
+			continue
+		}
+		if top.key {
+			name := tok.(string)
+			if top.names[name] {
+				return fmt.Errorf("loadgen: the mix names %q twice in one object", name)
+			}
+			top.names[name] = true
+		}
+		top.key = !top.key
+	}
+}
+
+func readMix(r io.Reader) (Mix, error) {
 	type weight struct {
 		Value  *int64   `json:"value"`
 		Weight *float64 `json:"weight"`
@@ -505,7 +575,11 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 		hb := frontdoor.HeartbeatOf{Envelope: envelope, GatewaySeq: seq, Hash: snapshot[:], Usage: 10 * seq,
 			Running: min(delivered, estimate), Echoed: echoed}
 		if seq == 1 {
-			hb.Basis = []byte(`{"model":"spike","prices":"fixed"}`)
+			// The reap's basis: what a reap of the hold needs to build its
+			// full record without the request's own, the request's terms
+			// and the boot binding (§4.9).
+			hb.Basis, _ = json.Marshal(map[string]any{"request": g.Request, "model": "spike", "prices": "fixed",
+				"estimate": estimate, "boot": p.r.cfg.Boot})
 		}
 		deadline, accepted := p.heartbeat(ctx, g, hb)
 		switch {
