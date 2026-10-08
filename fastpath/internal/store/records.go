@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -59,62 +60,60 @@ func (s *Store) ReadStaged(ctx context.Context, authorization string, digest []b
 	return r, true, nil
 }
 
-// DropStaged removes an authorization's staged records with the digests
-// given, once nothing can need them (§4.9): once the pack that holds the
-// authorization's winner is marked done, so the winner's records are all
-// written and its outcome published; for an authorization with no winner,
-// once its lease has closed, as for losing terminals; and once the lease's
-// row is gone, since it goes, with its packs, only seven days after the
-// lease has closed with no pack's work pending (§4.8). A record written
-// alone is not enough: the winner's others may not be. Until then the
-// records stay and DropStaged reports false. The lease comes from the
-// authorization's ID, which an owner mints only under a lease it holds.
-func (s *Store) DropStaged(ctx context.Context, authorization string, digests ...[]byte) (bool, error) {
-	leaseID, err := LeaseOfAuthorization(authorization)
-	if err != nil {
-		return false, err
+// StagedKey names a staged record: its authorization and digest.
+type StagedKey struct {
+	AuthorizationID string
+	Digest          []byte
+}
+
+// MaxDropStaged bounds the staged records one DropStaged removes: each is
+// two of a commit's mutations, its row's and its index entry's.
+const MaxDropStaged = 1000
+
+// DropStaged removes up to MaxDropStaged staged records that its caller
+// knows nothing needs (§4.9): a pack's winners', once the pack's work is
+// done, or those RetiredStaged reads.
+func (s *Store) DropStaged(ctx context.Context, keys ...StagedKey) error {
+	if len(keys) > MaxDropStaged {
+		return fmt.Errorf("store: %d staged records dropped at once, past %d", len(keys), MaxDropStaged)
 	}
-	var dropped bool
-	_, err = s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		dropped = false
-		ref := LeaseRef{LeaseID: leaseID}
-		var state string
-		found := false
-		err := txn.QueryWithOptions(ctx, spanner.Statement{
-			SQL:    `SELECT workspace_id, state FROM tr_lease@{FORCE_INDEX=tr_lease_by_id} WHERE lease_id = @l`,
-			Params: map[string]any{"l": leaseID},
-		}, spanner.QueryOptions{RequestTag: stagingTag}).Do(func(row *spanner.Row) error {
-			found = true
-			return row.Columns(&ref.Workspace, &state)
-		})
-		if err != nil {
+	if len(keys) == 0 {
+		return nil
+	}
+	mutations := make([]*spanner.Mutation, 0, len(keys))
+	for _, k := range keys {
+		mutations = append(mutations, spanner.Delete("tr_spike_staged", spanner.Key{k.AuthorizationID, k.Digest}))
+	}
+	_, err := s.client.Apply(ctx, mutations, spanner.TransactionTag(stagingTag))
+	return err
+}
+
+// RetiredStaged reads up to limit staged records that nothing can need,
+// since their lease has retired, closed with every pack's work done, or its
+// row is gone, seven days after (§4.9): a record no winner names, such as a
+// losing terminal's or an enclave retry's compacted copy, one a crash left
+// between its pack's mark and its drop, and one a redelivery staged again
+// after its drop. A lease's row goes only once it has retired, and the
+// stager stages a record only for a lease it finds, so neither kind needs
+// it again. It reads the staged records' index on their lease, in one
+// strong read.
+func (s *Store) RetiredStaged(ctx context.Context, limit int) ([]StagedKey, error) {
+	var out []StagedKey
+	err := s.client.Single().QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT s.authorization_id, s.record_digest FROM tr_spike_staged@{FORCE_INDEX=tr_spike_staged_by_lease} AS s
+		       LEFT JOIN tr_lease AS l ON l.workspace_id = s.workspace_id AND l.lease_id = s.lease_id
+		       WHERE l.lease_id IS NULL OR l.retire_at IS NOT NULL
+		       LIMIT @limit`,
+		Params: map[string]any{"limit": int64(limit)},
+	}, spanner.QueryOptions{RequestTag: stagingTag}).Do(func(row *spanner.Row) error {
+		var k StagedKey
+		if err := row.Columns(&k.AuthorizationID, &k.Digest); err != nil {
 			return err
 		}
-		var packs []Pack
-		if found {
-			if packs, err = readPacks(ctx, txn, ref, stagingTag); err != nil {
-				return err
-			}
-		}
-		won, done := false, false
-		for _, p := range packs {
-			for _, w := range p.Winners {
-				if w.AuthorizationID == authorization && !won {
-					won, done = true, p.WorkDoneAt.Valid
-				}
-			}
-		}
-		if found && ((won && !done) || (!won && state != "closed")) {
-			return nil
-		}
-		mutations := make([]*spanner.Mutation, 0, len(digests))
-		for _, d := range digests {
-			mutations = append(mutations, spanner.Delete("tr_spike_staged", spanner.Key{authorization, d}))
-		}
-		dropped = true
-		return txn.BufferWrite(mutations)
-	}, spanner.TransactionOptions{TransactionTag: stagingTag})
-	return dropped, err
+		out = append(out, k)
+		return nil
+	})
+	return out, err
 }
 
 // LeaseRecord is a record the pending work writes (§4.9): an

@@ -253,3 +253,74 @@ func TestAShardIsGrantedItsLeaseByTheStore(t *testing.T) {
 		t.Fatalf("the granted lease's row: %+v %v", row, err)
 	}
 }
+
+// TestTheOwnerAdoptsAgainstTheStore: a front door's append for a hold the
+// owner holds, its charge above the hold, raises the lease in Spanner; the
+// owner's next renewal adopts the row as its own record and counts the
+// raise as allocation, so its books and the lease's agree.
+func TestTheOwnerAdoptsAgainstTheStore(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	s, err := store.New(shared, store.Config{LiveFor: time.Hour, Window: 30 * time.Second, Skew: 2 * time.Second,
+		PublishDeadline: 5 * time.Second, MaxLife: 5 * time.Minute, Grace: time.Minute, Allowance: 1_000_000,
+		RequiredTier: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := storetest.UniqueID("ws")
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	who := store.Owner{Node: "owner-1", Epoch: 3}
+	id := store.NewLeaseID()
+	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: id, Region: "us-central1", Owner: who,
+		Amount: 100, KeyStatusVersion: 7})
+	if err != nil || granted.Refused != "" {
+		t.Fatalf("the grant: %+v %v", granted, err)
+	}
+	log := newFakeLog()
+	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
+		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID,
+		Grace: time.Minute, Records: &fakeRecords{}}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := o.Take(id, ws, 100, granted.Expiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Stop()
+	ref := store.LeaseRef{Workspace: ws, LeaseID: id}
+	a, err := l.Admit(Admission{Estimate: 10, Boot: boot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Append(ctx, store.DrainTerminal{Ref: ref, AuthorizationID: a.Auth, RecordID: "d1", Kind: "settle",
+		Charge: 15, Estimate: 10, Digest: sum("d1"), Money: []byte(`{}`), Cause: "owner unreachable"})
+	if err != nil || got.Refused != "" || got.Raise != 5 {
+		t.Fatalf("the append: %+v %v", got, err)
+	}
+	if err := o.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var adopted record.Record
+	for _, r := range log.records(t, id) {
+		if r.Kind == record.Settle {
+			adopted = r
+		}
+	}
+	if adopted.Drain != "d1" || adopted.Auth != a.Auth || adopted.Charge != 15 || adopted.Shortfall != 0 {
+		t.Fatalf("the adopted record: %+v", adopted)
+	}
+	row, _, err := s.ReadLease(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := l.Books(); row.Allocation != 105 || b.Allocation != row.Allocation || b.Consumed != 15 {
+		t.Fatalf("the lease's allocation %d, the owner's books %+v", row.Allocation, b)
+	}
+}

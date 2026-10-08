@@ -259,3 +259,56 @@ def pytest_collection_modifyitems(items):
     if paths:
         check_proof_oracle_paths(paths)
     yield
+
+
+@pytest.fixture
+def shadow_deadline_clock(monkeypatch):
+    """Deterministic budgets for fake shadow I/O, without freezing asyncio.
+
+    Patch module references, not the process-wide time module: Runtime, the
+    evidence adapter and the shared Spanner RPC wrapper must use one domain.
+    UTC/counter clocks remain independently controlled by each witness.
+    """
+    import time
+
+    from trusted_router import storage_gcp_async_settle_shadow, storage_gcp_io
+    from trusted_router.services import async_settle_shadow
+
+    class Clock:
+        now = 16.0
+
+        def monotonic(self):
+            return self.now
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    clock = Clock()
+    for module in (async_settle_shadow, storage_gcp_async_settle_shadow, storage_gcp_io):
+        monkeypatch.setattr(module, 'time', clock)
+    return clock
+
+
+@pytest.fixture(autouse=True)
+def deterministic_shadow_budgets(request, monkeypatch):
+    """Fake shadow I/O and TestClient bodies consume only injected time.
+
+    Body-limit behavior has its own tests. Here in-memory ASGI receive must
+    finish independently of scheduler load, including the handler HTTP oracle.
+    Do not patch the event loop's clock or process-wide asyncio/time objects.
+    """
+    name = request.node.path.name
+    if request.node.path.parent.name != 'tests' or not (
+            name.startswith('test_async_settle_shadow') or name == 'test_async_settle_handler.py'):
+        return
+    from types import SimpleNamespace
+
+    from trusted_router import request_body_limit
+
+    if name.startswith('test_async_settle_shadow'):
+        request.getfixturevalue('shadow_deadline_clock')
+    async def receive_without_elapsed_budget(awaitable, timeout):
+        return await awaitable
+    monkeypatch.setattr(request_body_limit, 'asyncio', SimpleNamespace(
+        get_running_loop=lambda: SimpleNamespace(time=lambda: 16.0),
+        wait_for=receive_without_elapsed_budget))

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -895,6 +895,8 @@ class Settings(BaseSettings):
     speculation_shadow_private_key_file: str = ""
 
     # Dormant async v1 authorize metadata; activation requires later PR gates.
+    async_settle_shadow_workspaces: str = ""
+    _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
     async_settle_ticket_kid: str = ""
@@ -1288,6 +1290,18 @@ class Settings(BaseSettings):
                 and self.settle_outbox_pass_budget_seconds >= self.settle_outbox_lease_seconds):
             raise ValueError("fast drain pass budget must be below its lease")
         return self
+
+    @model_validator(mode="after")
+    def parse_shadow_workspaces(self) -> Settings:
+        ids = frozenset(part.strip() for part in self.async_settle_shadow_workspaces.split(",") if part.strip())
+        if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
+            raise ValueError("invalid async settle shadow workspace set")
+        self._async_settle_shadow_workspace_ids = ids
+        return self
+
+    @property
+    def async_settle_shadow_workspace_ids(self) -> frozenset[str]:
+        return self._async_settle_shadow_workspace_ids
 
     @property
     def async_settle_admission_enabled(self) -> bool:

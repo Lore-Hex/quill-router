@@ -1054,7 +1054,22 @@ observation, not seven calendar filenames. Every correctness mismatch, even
 an unsampled one counted in counters or a retry conflict, resets eligibility
 for a clean interval. Start again at the first sample satisfying that predicate
 after the fixed revision is serving and the mismatch is resolved; retain reset
-timestamps/revisions.
+timestamps/revisions. Resolution validity is fleet-wide: any supplied sample,
+counter interval or daily revision roster showing the defective revision (or
+an earlier revision) serving again invalidates that resolution and adds a
+`revision_rollback` reset at the first such instant, before requested-day
+filtering. Daily rosters conservatively cover the entire UTC day. Commit hashes
+are opaque; reviewed resolution links define a partial order, so only the fixed
+revision and its reviewed successors prove fix retention. Unordered revisions
+also block; cycles are rejected. Restoring the fix after a rollback requires a
+new reviewed resolution for that reset before the clock can restart.
+Every accepted resolution is itself evidence that its defective revision and
+its reviewed predecessors are defective: enforce its history even when the
+underlying mismatch rows are absent. Each resolution must also have supporting
+mismatch evidence or a rollback derived from supplied serving evidence at its
+exact timestamp/revision. Missing support is a persistent `missing_support`
+gap identifying that resolution; it cannot age out into a clean window.
+Duplicate timestamp/revision resolution keys are rejected as ambiguous.
 An evidence gap is not proof of a correctness bug, but cannot count as clean
 time: conservative restart after coverage is restored. A router restart does
 not erase durable history; continuation requires verified closed/flushed

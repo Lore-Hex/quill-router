@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -23,6 +24,8 @@ type Spanner interface {
 	Renew(ctx context.Context, owner store.Owner, refs []store.LeaseRef) ([]store.RenewResult, time.Time, error)
 	ShortfallWrite(ctx context.Context, owner store.Owner, ref store.LeaseRef, total int64) (store.ShortfallResult, error)
 	OwnerMarkDraining(ctx context.Context, owner store.Owner, ref store.LeaseRef) (bool, time.Time, error)
+	ReadDrainSince(ctx context.Context, ref store.LeaseRef, cursor time.Time) ([]store.DrainRow, time.Time, error)
+	ReadHoldDrainRows(ctx context.Context, ref store.LeaseRef, authorization string) ([]store.DrainRow, time.Time, error)
 }
 
 // who is the owner as the store's conditions name it.
@@ -30,18 +33,36 @@ func (o *Owner) who() store.Owner { return store.Owner{Node: o.cfg.Node, Epoch: 
 
 func (l *Lease) ref() store.LeaseRef { return store.LeaseRef{Workspace: l.workspace, LeaseID: l.id} }
 
-// Run renews the owner's leases every RenewEvery until ctx ends. A round
-// that fails renews nothing, and the next tries again.
+// Run renews the owner's leases every RenewEvery until ctx ends or the
+// owner stops, and, given the record topic, runs its reaper as often,
+// apart, so neither waits for the other. A round or a pass that fails is
+// tried again at the next.
 func (o *Owner) Run(ctx context.Context) {
+	var reaper sync.WaitGroup
+	defer reaper.Wait()
+	if o.cfg.Records != nil {
+		reaper.Add(1)
+		go func() {
+			defer reaper.Done()
+			o.every(ctx, func() { _ = o.Reap(ctx) })
+		}()
+	}
+	o.every(ctx, func() { _ = o.Renew(ctx) })
+}
+
+// every runs f every RenewEvery until ctx ends or the owner stops.
+func (o *Owner) every(ctx context.Context, f func()) {
 	ticker := time.NewTicker(o.cfg.RenewEvery)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-o.ctx.Done():
+			return
 		case <-ticker.C:
 		}
-		_ = o.Renew(ctx)
+		f()
 	}
 }
 
@@ -53,11 +74,25 @@ func (o *Owner) Run(ctx context.Context) {
 // go, and answers what names it as an owner past its cutoff does. With each
 // round every lease publishes a checkpoint record. A lease the owner no
 // longer renews, its publishes failing, is let go once past its cutoff. The
-// auditor finishes a lease let go so.
+// auditor finishes a lease let go so. Rounds run one at a time, and each
+// ends with ctx or the owner, which waits for it to end when it stops.
 func (o *Owner) Renew(ctx context.Context) error {
 	if o.cfg.Spanner == nil {
 		return errors.New("owner: no store to renew in")
 	}
+	o.mu.Lock()
+	if o.stopped {
+		o.mu.Unlock()
+		return errors.New("owner: stopped")
+	}
+	o.rounds.Add(1)
+	o.mu.Unlock()
+	defer o.rounds.Done()
+	o.round.Lock()
+	defer o.round.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(o.ctx, cancel)()
 	o.mu.Lock()
 	leases := make([]*Lease, 0, len(o.leases))
 	for _, l := range o.leases {
@@ -97,6 +132,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 	}
 	now = o.cfg.Clock()
 	for _, l := range leases {
+		o.adoptDrain(ctx, l)
 		l.closeIfDone(now, o.cfg.TopUps)
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)

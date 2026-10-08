@@ -76,6 +76,17 @@ class Capture:
 
 def builder_cases() -> list[SQLCase]:
     cases = []
+    from trusted_router.async_settle_shadow_evidence import CONTROL, COUNTER, SAMPLE
+    from trusted_router.storage_gcp_async_settle_shadow import (
+        day_statement,
+        finalization_statement,
+        point_statement,
+    )
+    cases.extend([
+        SQLCase("shadow-finalization", [finalization_statement("shadow-auth")]),
+        *[SQLCase("shadow-day-" + kind, [day_statement(kind, "2026-10-06")]) for kind in (SAMPLE, COUNTER, CONTROL)],
+        *[SQLCase("shadow-point-" + kind, [point_statement(kind, "2026-10-06/key")]) for kind in (SAMPLE, COUNTER, CONTROL)],
+    ])
     from trusted_router.storage_gcp_async_admission import admission_statement
     cases.append(SQLCase("async_admission", [admission_statement("admission-ws")]))
     from trusted_router.storage_gcp_async_admission import control_statement, unresolved_statement

@@ -1,0 +1,76 @@
+{
+  "envelope": {
+    "v": 1,
+    "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InNoYWRvdy12MS1maXh0dXJlIiwidHlwIjoidHItYXN5bmMtc2V0dGxlLXNoYWRvdy12MSJ9.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiYXV0aC12MSIsImJpbGxpbmdfYXV0aG9yaXR5IjoibG9jYWwiLCJlcG9jaCI6MSwiZXhwIjoxNzkxNDE3NjAwLCJnZW5lcmF0aW9uX2lkIjoiZ2VuLWM3YTczNDk4ZGQ4YTVkNTlhNzA1ZjQ4MjA3MGM5ZTU2IiwiaWF0IjoxNzkxMjQ0ODAwLCJpbnZvY2F0aW9uX25vbmNlIjoibm9uY2UtdjEiLCJpc3MiOiJyb3V0ZXItZml4dHVyZSIsImpvdXJuYWxfcmVnaW9uIjoidXMtY2VudHJhbDEiLCJrZXlfaWQiOiJrZXktdjEiLCJyZXNlcnZhdGlvbl9pZCI6InJlcy12MSIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImNiOGZlYWYwOGRhMzgxZjBkMzU2ZGNkOGVkNGM2NTc3ZjFkNDRhMTMwZTdmM2I4MDI5NjQ3ZmEzODE0ODcyYjQiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IndzLXYxIn0.bMSJVwAC6uk8SSuetHZr3c1rpH-zWgmnc0bNdrcPNdzWsDBXBPmjmtIn1YiErGvmLML26U6R7u1ecI7yGnxrDQ",
+    "raw_usage": {
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "reasoning_tokens": 0
+    },
+    "observed": {},
+    "terminal": {
+      "authorization_id": "auth-v1",
+      "generation_id": "gen-c7a73498dd8a5d59a705f482070c9e56",
+      "workspace_id": "ws-v1",
+      "key_id": "key-v1",
+      "invocation_nonce": "nonce-v1",
+      "billing_authority": "local",
+      "journal_region": "us-central1",
+      "epoch": 1,
+      "snapshot_version": 1,
+      "snapshot_hash": "cb8feaf08da381f0d356dcd8ed4c6577f1d44a130e7f3b8029647fa3814872b4",
+      "route_type": "chat.completions",
+      "streamed": false,
+      "v": 1,
+      "terminal_kind": "settle",
+      "selected_endpoint": "openai/billing-v1@openai/prepaid",
+      "usage": {
+        "uncached_input_tokens": 1,
+        "total_prompt_tokens": 1,
+        "output_tokens": 1,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "charge_micro": 2
+    },
+    "payload_hash": "f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32",
+    "go_error": null,
+    "go_evaluator": "billing-v1",
+    "go_revision": "cf82c77b02a8c07191f71e954196ab90d35294d3",
+    "handoff_prepare_us": 1000
+  },
+  "rebuilt_snapshot": {
+    "v": 1,
+    "kind": "credits_endpoint",
+    "candidates": [
+      {
+        "endpoint_id": "openai/billing-v1@openai/prepaid",
+        "provider": "openai",
+        "model_id": "openai/billing-v1",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1500000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 625000,
+          "output_micro_per_million": 500000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      }
+    ],
+    "minimum_charge": "one_micro_if_positive",
+    "charge_cap": null,
+    "tier_basis": "total_prompt",
+    "tier_boundary": "inclusive",
+    "tier_fallback": "last_tier"
+  },
+  "classification": "unevaluable",
+  "reason": "snapshot_reconstruction_failed"
+}

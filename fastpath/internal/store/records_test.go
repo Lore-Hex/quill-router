@@ -50,113 +50,67 @@ func TestStagedRecordsJoinByAuthorizationAndDigest(t *testing.T) {
 	}
 }
 
-// TestStagedRecordsStayUntilNothingNeedsThem: a staged record stays until
-// its authorization's winner is in a pack marked done, whatever records are
-// written before, or, with no winner, until its lease has closed (§4.9).
-func TestStagedRecordsStayUntilNothingNeedsThem(t *testing.T) {
+// TestRetiredStagedReadsWhatNothingNeeds: the staged records of a lease that
+// has retired, closed with every pack's work done, or whose row is gone are
+// read, and DropStaged drops them; those of a lease open, or closed with a
+// pack's work pending, are not read (§4.9).
+func TestRetiredStagedReadsWhatNothingNeeds(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
-	lease := NewLeaseID()
-	ids := map[string]string{}
-	for _, name := range []string{"settled", "refunded", "unseen"} {
-		var err error
-		if ids[name], err = NewAuthorizationID(lease); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stage := func(ref LeaseRef) {
+	stage := func(ref LeaseRef) StagedKey {
 		t.Helper()
-		for _, a := range ids {
-			for _, d := range []string{"original", "compacted"} {
-				if err := s.StageRecord(ctx, StagedRecord{AuthorizationID: a, Digest: []byte(d), Ref: ref,
-					Body: []byte("full"), MessageID: "m-" + d, PublishTime: time.Now()}); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-	}
-	drop := func(name string) bool {
-		t.Helper()
-		dropped, err := s.DropStaged(ctx, ids[name], []byte("original"), []byte("compacted"))
+		a, err := NewAuthorizationID(ref.LeaseID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, d := range []string{"original", "compacted"} {
-			if _, kept, err := s.ReadStaged(ctx, ids[name], []byte(d)); err != nil || kept == dropped {
-				t.Fatalf("%s's %s: dropped %v, and kept %v, %v", name, d, dropped, kept, err)
-			}
+		k := StagedKey{AuthorizationID: a, Digest: []byte("d")}
+		if err := s.StageRecord(ctx, StagedRecord{AuthorizationID: a, Digest: k.Digest, Ref: ref, Body: []byte("full"),
+			MessageID: "m", PublishTime: time.Now()}); err != nil {
+			t.Fatal(err)
 		}
-		return dropped
+		return k
 	}
-	req := grantOf(seedWorkspace(t, 100), 30)
-	req.LeaseID = lease
-	if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
-		t.Fatalf("grant: %+v %v", got, err)
+	open := wonLease(t, s)
+	pending := wonLease(t, s)
+	execLease(t, pending, closeIt)
+	retired := wonLease(t, s)
+	execLease(t, retired, closeIt)
+	if ok, err := s.MarkPackDone(ctx, retired, 1); err != nil || !ok {
+		t.Fatalf("marking the retired lease's pack done: %v %v", ok, err)
 	}
-	ref := LeaseRef{req.Workspace, req.LeaseID}
-	stage(ref)
-	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 1, Money: []MoneyOp{Book(4, 0)},
-		Winners: []Winner{{AuthorizationID: ids["settled"], Kind: "settle", Charge: 4, RecordID: "o1"},
-			{AuthorizationID: ids["refunded"], Kind: "refund", RecordID: "o2"}}})
-	// A crash between the winner's records: the generation record alone is
-	// not its work done.
-	if err := s.WriteRecords(ctx, []LeaseRecord{{AuthorizationID: ids["settled"], Kind: "generation", Ref: ref,
-		Outcome: "settled", Cost: spanner.NullInt64{Int64: 4, Valid: true}, Body: []byte("{}")}}); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"settled", "refunded", "unseen"} {
-		if drop(name) {
-			t.Fatalf("%s's staged records go while the lease is open and its pack's work is pending", name)
+	gone := wonLease(t, s)
+	kept := []StagedKey{stage(open), stage(pending)}
+	dropped := []StagedKey{stage(retired), stage(gone)}
+	execLease(t, gone, `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`)
+	// The database is the package's: other tests' records may be read too.
+	seen := map[string]bool{}
+	for {
+		keys, err := s.RetiredStaged(ctx, MaxDropStaged)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	execLease(t, ref, closeIt)
-	if drop("settled") || drop("refunded") {
-		t.Fatal("a winner's staged records go before its pack's work is done")
-	}
-	if !drop("unseen") {
-		t.Fatal("a closed lease keeps the staged records of an authorization with no winner")
-	}
-	if ok, err := s.MarkPackDone(ctx, ref, 1); err != nil || !ok {
-		t.Fatalf("marking the pack done: %v %v", ok, err)
-	}
-	if !drop("settled") || !drop("refunded") {
-		t.Fatal("a winner's staged records stay after its pack's work is done")
-	}
-	// A record staged again late, once retention has deleted the lease's row
-	// and its packs, can still go.
-	stage(ref)
-	execLease(t, ref, `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`)
-	for _, name := range []string{"settled", "refunded", "unseen"} {
-		if !drop(name) {
-			t.Fatalf("%s's staged records stay after the lease's row is gone", name)
+		for _, k := range keys {
+			seen[k.AuthorizationID] = true
+		}
+		if err := s.DropStaged(ctx, keys...); err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) < MaxDropStaged {
+			break
 		}
 	}
-	if dropped, err := s.DropStaged(ctx, "gwa-not-one-of-ours", []byte("d")); err == nil || dropped {
-		t.Fatalf("a staged record of an authorization that names no lease: %v %v", dropped, err)
+	for _, k := range kept {
+		if _, ok, err := s.ReadStaged(ctx, k.AuthorizationID, k.Digest); seen[k.AuthorizationID] || !ok || err != nil {
+			t.Fatalf("a record a pending pack may need: read %v, kept %v %v", seen[k.AuthorizationID], ok, err)
+		}
 	}
-}
-
-// TestADoneWinnersRecordsGoOnAnOpenLease: the pack's work done is enough,
-// whether or not the lease has closed.
-func TestADoneWinnersRecordsGoOnAnOpenLease(t *testing.T) {
-	s := spikeStore(t)
-	ctx := context.Background()
-	ref := wonLease(t, s)
-	b, _ := NewAuthorizationID(ref.LeaseID)
-	commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 2, Money: []MoneyOp{Book(4, 0)},
-		Winners: []Winner{{AuthorizationID: b, Kind: "settle", Charge: 4, RecordID: "o2"}}})
-	if err := s.StageRecord(ctx, StagedRecord{AuthorizationID: b, Digest: []byte("d"), Ref: ref, Body: []byte("full"),
-		MessageID: "m", PublishTime: time.Now()}); err != nil {
-		t.Fatal(err)
+	for _, k := range dropped {
+		if _, ok, err := s.ReadStaged(ctx, k.AuthorizationID, k.Digest); !seen[k.AuthorizationID] || ok || err != nil {
+			t.Fatalf("a record nothing needs: read %v, kept %v %v", seen[k.AuthorizationID], ok, err)
+		}
 	}
-	if dropped, err := s.DropStaged(ctx, b, []byte("d")); err != nil || dropped {
-		t.Fatalf("before the pack is done: %v %v", dropped, err)
-	}
-	if ok, err := s.MarkPackDone(ctx, ref, 2); err != nil || !ok {
-		t.Fatalf("marking the pack done: %v %v", ok, err)
-	}
-	if dropped, err := s.DropStaged(ctx, b, []byte("d")); err != nil || !dropped {
-		t.Fatalf("after the pack is done: %v %v", dropped, err)
+	if err := s.DropStaged(ctx, make([]StagedKey, MaxDropStaged+1)...); err == nil {
+		t.Fatal("more staged records dropped at once than a commit holds")
 	}
 }
 

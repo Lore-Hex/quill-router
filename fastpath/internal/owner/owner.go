@@ -76,11 +76,16 @@ type Config struct {
 	// TopUps is how the owner keeps its shards' leases (shard.go); zero, it
 	// asks for none, and admits only under the leases it was given.
 	TopUps TopUps
+	// Grace is the reaper's grace (§4.5, §4.8): the owner reaps a hold
+	// whose last heartbeat's deadline plus it has passed. Records takes the
+	// full records of its reaps (§4.9); without it the owner reaps nothing.
+	Grace   time.Duration
+	Records RecordLog
 }
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
-		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 {
+		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter and a clock")
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
@@ -123,11 +128,16 @@ type Owner struct {
 	pub Publisher
 
 	// ctx ends when the owner stops; writers are its shortfall writers,
-	// which outlive the leases they write for.
+	// which outlive the leases they write for. rounds are its renewal
+	// rounds and reaper passes under way; round lets one round run at a
+	// time, and reaping one pass.
 	ctx     context.Context
 	cancel  context.CancelFunc
 	writers sync.WaitGroup
 	grants  sync.WaitGroup
+	rounds  sync.WaitGroup
+	round   sync.Mutex
+	reaping sync.Mutex
 
 	mu      sync.Mutex
 	stopped bool
@@ -153,8 +163,9 @@ func New(cfg Config, pub Publisher) (*Owner, error) {
 	return o, nil
 }
 
-// Stop ends the owner: it lets every lease go, and its shortfall writers end,
-// leaving any total they did not store to the auditor's commits.
+// Stop ends the owner: it lets every lease go, a renewal round under way
+// ends, and its shortfall writers end, leaving any total they did not store
+// to the auditor's commits.
 func (o *Owner) Stop() {
 	o.cancel()
 	o.mu.Lock()
@@ -167,6 +178,7 @@ func (o *Owner) Stop() {
 	for _, id := range ids {
 		o.Let(id)
 	}
+	o.rounds.Wait()
 	o.grants.Wait()
 	o.writers.Wait()
 }
@@ -288,6 +300,8 @@ type hold struct {
 	deadline   time.Time
 	snapSeq    int64
 	sent       *sent
+	// basis is what the hold's first heartbeat brought for a reap of it.
+	basis []byte
 }
 
 // decision is an authorization's terminal: its kind and charge, and the
@@ -356,6 +370,13 @@ type Lease struct {
 	shard     *shard
 	takenAt   time.Time
 	lastAdmit time.Time
+	// adopted is the timestamp of the last read of the lease's drain log,
+	// past which the next reads (adopt.go); only the renewal round uses it.
+	// unadopted is set by a renewal that found the lease past its cutoff,
+	// and cleared once its drain log is adopted: until then it admits and
+	// decides nothing and answers each heartbeat retry (§4.2).
+	adopted   time.Time
+	unadopted bool
 
 	// workers are the lease's flusher and the finish of its draining, which
 	// Let waits for: stopped is closed once they end.
@@ -406,6 +427,12 @@ func (l *Lease) Renewed(expiry time.Time) {
 	defer l.mu.Unlock()
 	if l.let || !expiry.After(l.expiry) {
 		return
+	}
+	if l.o.cfg.Spanner != nil && !l.withinCutoff(l.o.cfg.Clock()) {
+		// Past the cutoff, the owner answered its terminals past_cutoff,
+		// and the front doors took them to the drain log: it adopts that
+		// first (§4.2).
+		l.unadopted = true
 	}
 	l.expiry = expiry
 	select {

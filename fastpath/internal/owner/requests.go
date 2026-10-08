@@ -94,7 +94,7 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.let {
+	if l.let || l.unadopted {
 		return Admitted{}, ErrPastCutoff
 	}
 	if l.closing {
@@ -163,7 +163,7 @@ type HeartbeatOf struct {
 // accepted one under the lease, and answers with the deadline it grants once
 // the record is acknowledged before the cutoff. A replay, the same sequence
 // and hash, is answered as the heartbeat it repeats, without a second
-// publish.
+// publish. Until the lease's drain log is adopted, each is answered retry.
 func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (time.Time, error) {
 	l.mu.Lock()
 	h := l.holds[auth]
@@ -179,6 +179,12 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		// Only a stream heartbeats; another hold keeps its end of life.
 		l.mu.Unlock()
 		return time.Time{}, ErrRejected
+	}
+	if l.unadopted {
+		// The drain log a renewal left to adopt may have this hold's
+		// terminal, so no deadline is answered, a replay's either.
+		l.mu.Unlock()
+		return time.Time{}, ErrRetry
 	}
 	if h.heartbeat {
 		switch {
@@ -240,6 +246,9 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		return time.Time{}, err
 	}
 	l.buffer = buffer
+	if r.First {
+		h.basis = append([]byte(nil), hb.Basis...)
+	}
 	h.heartbeat, h.echoed, h.gatewaySeq, h.hash, h.usage, h.running, h.deadline, h.snapSeq, h.sent = true, hb.Echoed,
 		hb.GatewaySeq, append([]byte(nil), hb.Hash...), hb.Usage, hb.Running, deadline, s.seq, s
 	l.mu.Unlock()
@@ -248,13 +257,19 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 
 // heartbeatAnswer answers a heartbeat whose record is s: the deadline it
 // granted, once s is acknowledged before the cutoff and by the deadline the
-// heartbeat echoed; deadline_passed if after that; else retry (§4.5).
+// heartbeat echoed; deadline_passed if after that; else retry (§4.5). It is
+// retry too while a renewal, maybe one since s was handed over, has left
+// the drain log to adopt.
 func (l *Lease) heartbeatAnswer(ctx context.Context, s *sent, granted, echoed time.Time) (time.Time, error) {
 	acked, before, err := l.awaitAck(ctx, s)
-	switch {
-	case err != nil:
+	if err != nil {
 		return time.Time{}, err
-	case !acked || !before:
+	}
+	l.mu.Lock()
+	unadopted := l.unadopted
+	l.mu.Unlock()
+	switch {
+	case !acked || !before || unadopted:
 		return time.Time{}, ErrRetry
 	case !echoed.IsZero() && s.ackedAt.After(echoed):
 		return time.Time{}, ErrDeadlinePassed
@@ -283,13 +298,8 @@ func (l *Lease) Refund(ctx context.Context, auth string) (Outcome, error) {
 	return l.terminal(ctx, auth, record.Refund, 0, nil)
 }
 
-// terminal decides auth's terminal under the lease's lock (§4.2, §4.5): the
-// first wins, and a later one is answered with the winner's outcome and not
-// published. The decision moves the books once its record is handed over:
-// the hold's estimate out of held, the charge into consumed, any overrun the
-// lease has no room for into the shortfall total and the allocation, which
-// the record carries, and what the hold frees into pending until the record
-// is acknowledged.
+// terminal decides auth's terminal under the lease's lock (decide), or
+// answers a later one with the winner's outcome, published once.
 func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, charge int64, digest []byte) (Outcome, error) {
 	l.mu.Lock()
 	if d := l.decided[auth]; d != nil {
@@ -298,41 +308,71 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		l.mu.Unlock()
 		return l.terminalAnswer(ctx, s, out)
 	}
+	s, err := l.decide(auth, terminalOf{kind: kind, charge: charge, digest: digest})
+	l.mu.Unlock()
+	if err != nil {
+		return Outcome{}, err
+	}
+	return l.terminalAnswer(ctx, s, Outcome{Kind: kind, Charge: charge})
+}
+
+// terminalOf is a terminal to decide: its kind and charge, its full
+// record's digest, the drain-log row it adopts, if any, and for a reap, the
+// owner sequence number of the heartbeat record whose snapshot it charges.
+type terminalOf struct {
+	kind    record.Kind
+	charge  int64
+	digest  []byte
+	drain   string
+	snapSeq int64
+}
+
+// decide decides an undecided auth's terminal, with l.mu held (§4.2,
+// §4.5): the first wins. The decision moves the books once its record is
+// handed over: the hold's estimate out of held, a settle's or a reap's
+// charge into consumed, any overrun the lease has no room for into the
+// shortfall total and the allocation, which the record carries, and what
+// the hold frees into pending until the record is acknowledged.
+func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	h := l.holds[auth]
 	if h == nil {
-		l.mu.Unlock()
-		return Outcome{}, ErrUnknownHold
+		return nil, ErrUnknownHold
 	}
 	if !l.withinCutoff(l.o.cfg.Clock()) {
-		l.mu.Unlock()
-		return Outcome{}, ErrPastCutoff
+		return nil, ErrPastCutoff
+	}
+	if l.unadopted && t.drain == "" {
+		// The drain log a renewal left to adopt may have this hold's
+		// terminal: only an adoption decides until it is adopted. A
+		// direct terminal goes to the drain log too, and the lease's
+		// order decides (§4.2).
+		return nil, ErrPastCutoff
 	}
 	held, charged, freed := l.held-h.estimate, int64(0), h.estimate
-	if kind == record.Settle {
-		charged, freed = charge, max(h.estimate-charge, 0)
+	if t.kind == record.Settle || t.kind == record.Reap {
+		charged, freed = t.charge, max(h.estimate-t.charge, 0)
 	}
 	// What is booked and held once decided. The allocation rises to it at
 	// most, and the shortfall total, never above the allocation, with it; so
 	// if it fits an int64, so do they.
 	total, ok := add(l.consumed, charged, held)
 	if !ok {
-		l.mu.Unlock()
-		return Outcome{}, fmt.Errorf("owner: a %s of %d the lease's books cannot hold", kind, charge)
+		return nil, fmt.Errorf("owner: a %s of %d the lease's books cannot hold", t.kind, t.charge)
 	}
 	consumed, allocation, shortfall := l.consumed+charged, l.allocation, l.shortfall
 	if short := total - allocation; short > 0 {
 		shortfall += short
 		allocation += short
 	}
-	r := record.Record{Kind: kind, Auth: auth, Estimate: h.estimate, Charge: charge, Shortfall: shortfall, Digest: digest}
-	if kind == record.Refund {
+	r := record.Record{Kind: t.kind, Auth: auth, Estimate: h.estimate, Charge: t.charge, Shortfall: shortfall,
+		Digest: t.digest, Drain: t.drain, SnapshotSeq: t.snapSeq}
+	if t.kind == record.Refund {
 		r.Boot = h.boot
 	}
 	s, err := l.handOver(r, freed)
 	if err != nil {
 		// Not handed over: nothing is decided.
-		l.mu.Unlock()
-		return Outcome{}, err
+		return nil, err
 	}
 	raised := shortfall > l.shortfall
 	if l.shard != nil {
@@ -349,9 +389,8 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		default:
 		}
 	}
-	l.decided[auth] = &decision{kind: kind, charge: charge, sent: s}
-	l.mu.Unlock()
-	return l.terminalAnswer(ctx, s, Outcome{Kind: kind, Charge: charge})
+	l.decided[auth] = &decision{kind: t.kind, charge: t.charge, sent: s}
+	return s, nil
 }
 
 // terminalAnswer answers a terminal decided as out, whose record is s: the

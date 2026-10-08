@@ -28,6 +28,7 @@ TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
+GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -342,6 +343,33 @@ _RETIREMENTS = (
             "gpt-4o-2024-05-13", "openai/gpt-4o-2024-05-13",
         }),
         effective_at=OPENAI_OCTOBER_23_RETIREMENT_AT,
+    ),
+    # The same notice shuts down o1-2024-12-17, o1-pro-2025-03-19,
+    # o3-mini-2025-01-31 and o4-mini-2025-04-16. Each is the only snapshot
+    # behind its undated alias, so the alias routes stop working with them.
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({
+            "openai/o1", "openai/o1-pro", "openai/o3-mini", "openai/o4-mini",
+        }),
+        upstream_ids=frozenset({
+            "o1", "o1-pro", "o3-mini", "o4-mini",
+            "o1-2024-12-17", "o1-pro-2025-03-19", "o3-mini-2025-01-31", "o4-mini-2025-04-16",
+        }),
+        effective_at=OPENAI_OCTOBER_23_RETIREMENT_AT,
+    ),
+    # Google AI Studio's October 8 notice deprecates the Veo 3.1 and Gemini
+    # Omni previews in the Gemini API on 2026-10-22 (date only, so 00:00 UTC).
+    # Retire only the AI Studio preview routes; Venice's Veo routes stay. The
+    # named successor, gemini-omni-1.1-flash, is not in the catalog.
+    _Retirement(
+        provider="google-ai-studio",
+        model_ids=frozenset({"google/veo-3.1", "google/veo-3.1-fast"}),
+        upstream_ids=frozenset({
+            "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview",
+            "veo-3.1-lite-generate-preview", "gemini-omni-flash-preview",
+        }),
+        effective_at=GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT,
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct

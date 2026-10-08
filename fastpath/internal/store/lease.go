@@ -98,6 +98,30 @@ func (s *Store) ReadLease(ctx context.Context, ref LeaseRef) (Lease, time.Time, 
 	return l, read, err
 }
 
+// FindLease finds a lease's row key from its ID alone (tr_lease_by_id): the
+// settle log keys a lease's records by its ID, and the auditor loads the
+// lease by its workspace and ID. A lease ID names one lease, and its
+// workspace never changes.
+func (s *Store) FindLease(ctx context.Context, leaseID string) (LeaseRef, error) {
+	ro := s.client.Single()
+	defer ro.Close()
+	ref, found := LeaseRef{LeaseID: leaseID}, false
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL:    `SELECT workspace_id FROM tr_lease@{FORCE_INDEX=tr_lease_by_id} WHERE lease_id = @l`,
+		Params: map[string]any{"l": leaseID},
+	}, spanner.QueryOptions{RequestTag: tag("find-lease")}).Do(func(row *spanner.Row) error {
+		found = true
+		return row.Columns(&ref.Workspace)
+	})
+	switch {
+	case err != nil:
+		return LeaseRef{}, err
+	case !found:
+		return LeaseRef{}, ErrNoLease
+	}
+	return ref, nil
+}
+
 // RenewResult is one lease's renewal: whether the lease took it, and the
 // expiry Spanner holds after it.
 type RenewResult struct {
@@ -231,6 +255,33 @@ func (s *Store) ScanExpired(ctx context.Context, now time.Time, limit int) ([]Ex
 	}
 	read, err := readTimestamp(ro)
 	return out, read, err
+}
+
+// ScanDraining finds up to limit of a region's draining leases past after,
+// in key order, through the leases' state index: the leases the auditor
+// ticks (§4.8). The zero LeaseRef starts from the first.
+func (s *Store) ScanDraining(ctx context.Context, region string, after LeaseRef, limit int) ([]LeaseRef, error) {
+	ro := s.client.Single()
+	defer ro.Close()
+	var out []LeaseRef
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT workspace_id, lease_id FROM tr_lease@{FORCE_INDEX=tr_lease_by_state}
+		       WHERE state = 'draining' AND region = @region
+		         AND (workspace_id > @w OR (workspace_id = @w AND lease_id > @l))
+		       ORDER BY workspace_id, lease_id LIMIT @limit`,
+		Params: map[string]any{"region": region, "w": after.Workspace, "l": after.LeaseID, "limit": int64(limit)},
+	}, spanner.QueryOptions{RequestTag: tag("scan-draining")}).Do(func(row *spanner.Row) error {
+		var r LeaseRef
+		if err := row.Columns(&r.Workspace, &r.LeaseID); err != nil {
+			return err
+		}
+		out = append(out, r)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // AuditorMarkDraining is the auditor's draining write for a lease a scan
