@@ -247,7 +247,8 @@ func (l *Lease) roomAndNeeds() (room, needs int64) {
 	defer l.mu.Unlock()
 	now := l.o.cfg.Clock()
 	b := l.booksLocked()
-	if !l.closing && !l.failed && l.withinCutoff(now) && !l.o.cfg.TopUps.over(now, l.lastAdmit, l.takenAt) {
+	if !l.closing && !l.failed && !l.unadopted && l.withinCutoff(now) &&
+		!l.o.cfg.TopUps.over(now, l.lastAdmit, l.takenAt) {
 		if used, ok := add(b.Consumed, b.Held, b.Buffer); ok {
 			room = max(b.Allocation-used, 0)
 		}

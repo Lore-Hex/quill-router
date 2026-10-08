@@ -42,6 +42,16 @@ type fakeSpanner struct {
 	grantGate    chan struct{}
 	deaf         bool
 	lostGrants   int
+	// drain is each lease's drain log, and cursors are the cursors its
+	// reads were given, in order. failReads fails that many reads; a read
+	// tells reading it began, if set, then waits for readGate to close, or,
+	// with readsWait, for its context to end, and returns afterCancel later.
+	drain     map[string][]store.DrainRow
+	cursors   []time.Time
+	failReads int
+	reading   chan struct{}
+	readGate  chan struct{}
+	readsWait bool
 }
 
 func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.GrantResult, error) {
@@ -78,7 +88,68 @@ func (f *fakeSpanner) granted() []store.GrantRequest {
 	return slices.Clone(f.grants)
 }
 
-func newFakeSpanner() *fakeSpanner { return &fakeSpanner{refuse: map[string]bool{}} }
+func newFakeSpanner() *fakeSpanner {
+	return &fakeSpanner{refuse: map[string]bool{}, drain: map[string][]store.DrainRow{}}
+}
+
+// appendRow adds a front door's row to a lease's drain log, committed at
+// at.
+func (f *fakeSpanner) appendRow(lease string, row store.DrainRow, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row.CommitTS = at
+	f.drain[lease] = append(f.drain[lease], row)
+}
+
+func (f *fakeSpanner) ReadDrainSince(ctx context.Context, ref store.LeaseRef, cursor time.Time) ([]store.DrainRow, time.Time, error) {
+	f.mu.Lock()
+	reading, gate, wait := f.reading, f.readGate, f.readsWait
+	f.mu.Unlock()
+	if reading != nil {
+		reading <- struct{}{}
+	}
+	if gate != nil {
+		<-gate
+	}
+	if wait {
+		<-ctx.Done()
+		f.mu.Lock()
+		after := f.afterCancel
+		f.mu.Unlock()
+		time.Sleep(after)
+		return nil, time.Time{}, ctx.Err()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cursors = append(f.cursors, cursor)
+	if f.failReads > 0 {
+		f.failReads--
+		return nil, time.Time{}, errors.New("the read failed")
+	}
+	read := cursor
+	var out []store.DrainRow
+	for _, r := range f.drain[ref.LeaseID] {
+		if r.CommitTS.After(cursor) {
+			out = append(out, r)
+		}
+		if r.CommitTS.After(read) {
+			read = r.CommitTS
+		}
+	}
+	return out, read, nil
+}
+
+func (f *fakeSpanner) ReadHoldDrainRows(ctx context.Context, ref store.LeaseRef, authorization string) ([]store.DrainRow, time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []store.DrainRow
+	for _, r := range f.drain[ref.LeaseID] {
+		if r.AuthorizationID == authorization {
+			out = append(out, r)
+		}
+	}
+	return out, time.Time{}, nil
+}
 
 func (f *fakeSpanner) Renew(ctx context.Context, owner store.Owner, refs []store.LeaseRef) ([]store.RenewResult, time.Time, error) {
 	f.mu.Lock()
