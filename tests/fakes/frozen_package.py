@@ -46,6 +46,7 @@ ALIAS = 'frozen_main'
 PINS = json.loads((SNAPSHOT / 'pins.json').read_text())
 _TEMP = tempfile.TemporaryDirectory(prefix='frozen-main-')
 ROOT = Path(_TEMP.name)
+_ROOT_PREFIX = str(ROOT) + '/'
 assert hashlib.sha256((SNAPSHOT / 'package.tar.gz').read_bytes()).hexdigest() == ARCHIVE_SHA256
 with tarfile.open(SNAPSHOT / 'package.tar.gz') as archive:
     assert {m.name for m in archive if m.isfile()} == set(PINS)
@@ -214,7 +215,47 @@ def _in_namespace(name, namespace):
 
 def _live_source(filename):
     return (str.__contains__(filename, '/src/trusted_router/')
-            and not str.startswith(filename, str(ROOT) + '/'))
+            and not str.startswith(filename, _ROOT_PREFIX))
+
+
+def _event_text(value):
+    # Strip subclasses before hashing, formatting or storing inventory keys.
+    return str.__str__(value) if issubclass(type(value), str) else ''
+
+
+def _event_name(value):
+    if issubclass(type(value), ModuleType):
+        value = _metadata(dict.items(_MODULE_DICT.__get__(value)), '__name__')
+    return _event_text(value)
+
+
+# These sealed native callables/descriptors cannot dispatch metadata protocols.
+_NATIVE_GET_IDENT = _thread.get_ident
+_NATIVE_GETFRAME = sys._getframe
+_NATIVE_REFERENTS = gc.get_referents
+_BUILTIN_MODULE = BuiltinFunctionType.__dict__['__module__']
+_BUILTIN_NAME = BuiltinFunctionType.__dict__['__name__']
+_BUILTIN_SELF = BuiltinFunctionType.__dict__['__self__']
+
+
+def _event_builtin_qualname(value):
+    # The native builtin __qualname__ getter itself reads its bound owner's
+    # class through ordinary attribute access, which can invoke a metaclass.
+    name = _event_text(_BUILTIN_NAME.__get__(value))
+    bound = _BUILTIN_SELF.__get__(value)
+    if bound is None and type(value) is BuiltinFunctionType:
+        # METH_STATIC hides m_self from __self__, but native tp_traverse still
+        # visits it before m_module. Only the exact base type has these two
+        # edges (PyCMethod additionally holds its defining class).
+        edges = _NATIVE_REFERENTS(value)
+        if edges and edges[-1] is _BUILTIN_MODULE.__get__(value):
+            edges.pop()
+        if edges:
+            bound = edges[0]
+    if bound is None or issubclass(type(bound), ModuleType):
+        return name
+    cls = bound if issubclass(type(bound), type) else type(bound)
+    return _event_text(_TYPE_QUALNAME.__get__(cls)) + '.' + name
 
 
 MAX_REFERENCE_OBJECTS = 2_000_000
@@ -492,19 +533,18 @@ def execution_guard(*harness):
     start_codes = set()
     def profile(frame, event, arg):
         if event == 'call':
-            name = frame.f_globals.get('__name__', '')
-            filename = frame.f_code.co_filename
+            name = _event_name(_metadata(dict.items(frame.f_globals), '__name__'))
+            filename = _event_text(frame.f_code.co_filename)
         elif event == 'c_call':
             if (_NATIVE_THREAD_STARTERS.get(id(arg)) is arg
-                    and frame.f_code not in start_codes):
-                first.setdefault(threading.get_ident(), 'unwrapped raw worker creation')
+                    and id(frame.f_code) not in start_codes):
+                first.setdefault(_NATIVE_GET_IDENT(), 'unwrapped raw worker creation')
                 raise AssertionError('raw worker must use guarded thread bootstrap')
-            name = getattr(arg, '__module__', '') or ''
+            assert issubclass(type(arg), BuiltinFunctionType), 'non-native C call event'
+            name = _event_name(_BUILTIN_MODULE.__get__(arg))
             filename = ''
         else:
             return
-        if not isinstance(name, str):
-            name = getattr(name, '__name__', '')
         # Module label and code filename are both part of the key: changing
         # either is rechecked. This memoizes provenance, never callable results.
         key = (name, filename)
@@ -518,19 +558,26 @@ def execution_guard(*harness):
         # building inventory keys/qualnames for millions of irrelevant events.
         if not live and not frozen:
             return
-        qualname = (frame.f_code.co_qualname if event == 'call'
-                    else getattr(arg, '__qualname__', type(arg).__qualname__))
+        qualname = _event_text(frame.f_code.co_qualname if event == 'call'
+                               else _event_builtin_qualname(arg))
         # Never read f_locals here, on any interpreter.
         generated = _GENERATED_NAMES.get(id(frame.f_code))
         if str.__eq__(filename, '<string>') is True and generated is not None:
             qualname = generated[1]
         if live:
-            first.setdefault(threading.get_ident(), f'{name}:{qualname}')
+            first.setdefault(_NATIVE_GET_IDENT(), f'{name}:{qualname}')
         identity = (name, qualname, frame.f_code.co_firstlineno)
         if frozen and identity not in recorded:
             recorded.add(identity)
-            source = sys.modules[name].__file__
-            relative = str(Path(source).relative_to(ROOT))
+            # Native iteration also avoids equality on hostile keys already
+            # stored in a dict; dict.get alone would not provide that guarantee.
+            modules = _metadata(dict.items(_MODULE_DICT.__get__(sys)), 'modules')
+            assert issubclass(type(modules), dict), 'non-native module registry'
+            loaded = _metadata(dict.items(modules), name)
+            assert issubclass(type(loaded), ModuleType), 'missing frozen module'
+            source = _event_text(_metadata(dict.items(_MODULE_DICT.__get__(loaded)), '__file__'))
+            assert str.startswith(source, _ROOT_PREFIX), 'frozen source outside snapshot'
+            relative = str.__getitem__(source, slice(len(_ROOT_PREFIX), None))
             seen.add((name.replace(ALIAS, 'trusted_router', 1), qualname, frame.f_code.co_firstlineno, relative, PINS[relative]))
     previous, previous_thread = sys.getprofile(), threading.getprofile()
     monitoring = sys.monitoring if sys.version_info < (3, 13) else None
@@ -540,13 +587,13 @@ def execution_guard(*harness):
     tool_id = 4
 
     def monitor_python(code, offset, *args):
-        if entered or threading.get_ident() != main_thread:
-            profile(sys._getframe(1), 'call', None)
+        if entered or _NATIVE_GET_IDENT() != main_thread:
+            profile(_NATIVE_GETFRAME(1), 'call', None)
 
     def monitor_call(code, offset, callable, arg):
-        if entered or threading.get_ident() != main_thread:
-            if type(callable) is BuiltinFunctionType:
-                profile(sys._getframe(1), 'c_call', callable)
+        if entered or _NATIVE_GET_IDENT() != main_thread:
+            if issubclass(type(callable), BuiltinFunctionType):
+                profile(_NATIVE_GETFRAME(1), 'c_call', callable)
 
     def install_profile():
         # On 3.12 a Python sys.setprofile callback is unsafe even if it never
@@ -577,7 +624,7 @@ def execution_guard(*harness):
             except BaseException:
                 active.discard(token)
                 raise
-        start_codes.add(start.__code__)
+        start_codes.add(id(start.__code__))
         return start
 
     # Cover raw APIs as well as threading's cached aliases on 3.11 and 3.14.

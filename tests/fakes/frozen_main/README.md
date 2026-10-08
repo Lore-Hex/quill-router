@@ -123,10 +123,19 @@ entry without replacing its owner. Exit unregisters callbacks and frees the ID.
 On **3.13/3.14**, PEP 667 removed that synchronization; the existing all-thread,
 default-thread and raw-bootstrap profile paths remain.
 
-Both callbacks may read native frame code/global metadata and native builtin
-metadata. **Neither reads `f_locals`, obtains a locals proxy, nor inspects
-`self` on any interpreter.** Generated dataclass attribution uses a strong
-code-identity registry populated after frozen module execution and at guard
+Both callbacks use only sealed native frame/code fields, native builtin and
+module namespace descriptors, native dict item iteration with `str.__eq__`,
+and metadata normalized to exact strings with `str.__str__` before hashing
+or formatting.
+Module lookup, filename classification, attribution and worker admission invoke
+no user metadata protocols; worker code admission uses integer identities.
+Snapshot paths use native string prefix/slicing operations, never path protocols.
+Builtin qualnames combine native name/owner slots with the native type qualname
+slot; the builtin `__qualname__` getter can itself invoke a metaclass. Native
+GC edges on the exact builtin base type retain static owners hidden by `__self__`.
+**Neither reads `f_locals`, obtains a locals proxy, nor inspects
+the Python local `self` on any interpreter.** Generated dataclass attribution
+uses a strong code-identity registry populated after frozen module execution and at guard
 entry for loaded router modules. Native function qualnames identify generated
 bodies, including bodies held by recursive-repr closures. Unknown generated
 code retains its `co_qualname`; attribution never exempts a live call. This
@@ -138,4 +147,9 @@ requiring zero key protocols/live calls. Separate isolated running exec-frame
 witnesses pin exact-dict traversal and rejection of a warmed live money cache.
 Mutations restore the unsafe profile trampoline, explicitly materialize locals,
 remove unsupported-interpreter rejection, remove generated-code attribution,
-and omit the non-proxy dict edge.
+and omit the non-proxy dict edge. Event-metadata witnesses additionally resume
+a frozen frame with a hostile module `__file__` property and check native string,
+module-owner and worker-code handling. Their mutations restore ordinary module
+attribute access, dictionary lookup on hostile keys, string subclass hashing,
+code-constant hashing, the unsafe builtin qualname getter and missing static
+builtin attribution.

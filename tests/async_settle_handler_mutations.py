@@ -262,8 +262,8 @@ MUTATIONS += [
 ]
 MUTATIONS += [
     ('reference-overridden-filename-comparison', [('tests/fakes/frozen_package.py', [
-        ("str.__contains__(filename, '/src/trusted_router/')\n            and not str.startswith(filename, str(ROOT) + '/')",
-         "'/src/trusted_router/' in filename and not filename.startswith(str(ROOT) + '/')"),
+        ("str.__contains__(filename, '/src/trusted_router/')\n            and not str.startswith(filename, _ROOT_PREFIX)",
+         "'/src/trusted_router/' in filename and not filename.startswith(_ROOT_PREFIX)"),
     ])], 'tests/test_async_settle_proof_oracle.py::test_guard_live_code_filename_subclass'),
 ]
 
@@ -445,6 +445,34 @@ MUTATIONS += [
         ('                    pending.append(localns)', '                    pass'),
     ])], 'tests/test_async_settle_proof_oracle.py::test_guard_running_exec_locals_cache'),
 ] if sys.version_info >= (3, 13) else []
+
+
+# Round 15: event callbacks must not execute metadata or code hashing protocols.
+MUTATIONS += [
+    ('profile-module-file-attribute-access', [('tests/fakes/frozen_package.py', [
+        ("source = _event_text(_metadata(dict.items(_MODULE_DICT.__get__(loaded)), '__file__'))",
+         'source = loaded.__file__'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_resumed_module_file_property_is_not_called'),
+    ('profile-globals-dict-lookup', [('tests/fakes/frozen_package.py', [
+        ("_event_name(_metadata(dict.items(frame.f_globals), '__name__'))",
+         "_event_name(frame.f_globals.get('__name__', ''))"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_event_metadata_uses_native_protocols[globals_key]'),
+    ('profile-keep-string-subclass', [('tests/fakes/frozen_package.py', [
+        ("return str.__str__(value) if issubclass(type(value), str) else ''",
+         "return value if issubclass(type(value), str) else ''"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_event_metadata_uses_native_protocols[globals_value]'),
+    ('profile-worker-hashes-code', [('tests/fakes/frozen_package.py', [
+        ('id(frame.f_code) not in start_codes', 'frame.f_code not in start_codes'),
+        ('start_codes.add(id(start.__code__))', 'start_codes.add(start.__code__)'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_worker_admission_does_not_hash_code_constants'),
+    ('profile-builtin-qualname-property', [('tests/fakes/frozen_package.py', [
+        ('else _event_builtin_qualname(arg)',
+         "else BuiltinFunctionType.__dict__['__qualname__'].__get__(arg)"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_event_metadata_uses_native_protocols[builtin_bound_class]'),
+    ('profile-static-builtin-owner-omitted', [('tests/fakes/frozen_package.py', [
+        ('            bound = edges[0]', '            pass'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_event_metadata_uses_native_protocols[static_builtin_owner]'),
+] if sys.version_info >= (3, 12) else []
 
 
 def main() -> None:

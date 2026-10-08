@@ -2056,3 +2056,199 @@ def test_guard_monitoring_slot_lifecycle():
         assert _thread.start_new_thread is original
         assert sys.getprofile() is previous
         assert threading.getprofile() is previous_thread
+
+
+
+def test_guard_resumed_module_file_property_is_not_called():
+    from types import ModuleType
+
+    from tests.fakes.frozen_package import _UNSUPPORTED_INTERPRETER
+
+    calls = []
+    class HostileModule(ModuleType):
+        @property
+        def __file__(self):
+            from trusted_router.money import microdollars_to_float
+            calls.append(microdollars_to_float(1_000_000))
+            return ModuleType.__dict__['__dict__'].__get__(self)['__file__']
+
+    frozen = module('storage_errors')
+    namespace = {'__name__': frozen.__name__, '__builtins__': {}}
+    exec('def generate():\n yield\n yield\n', namespace)
+    owner = namespace['generate']()
+    next(owner)
+    frozen.__class__ = HostileModule
+    entered = False
+    expected = (pytest.raises(AssertionError, match=re.escape(_UNSUPPORTED_INTERPRETER))
+                if sys.version_info < (3, 12) else nullcontext())
+    try:
+        with expected:
+            with execution_guard(owner) as seen:
+                entered = True
+                next(owner)
+                assert any(row == ('trusted_router.storage_errors', 'generate', 1,
+                                   'src/trusted_router/storage_errors.py',
+                                   PINS['src/trusted_router/storage_errors.py']) for row in seen)
+        assert entered is (sys.version_info >= (3, 12))
+        assert calls == []
+    finally:
+        frozen.__class__ = ModuleType
+        owner.close()
+
+
+@pytest.mark.parametrize('field', [
+    'globals_key', 'globals_value', 'module_key', 'file_key', 'file_value',
+    'filename', 'qualname', 'builtin_owner', 'module_owner', 'invalid_builtin_owner',
+    'native_builtin_owner', 'builtin_bound_class', 'static_builtin_owner',
+])
+def test_guard_event_metadata_uses_native_protocols(field):
+    from types import ModuleType
+
+    if guard_unavailable():
+        return
+    calls = []
+    class Label(str):
+        def __hash__(self):
+            calls.append('hash')
+            return str.__hash__(self)
+        def __eq__(self, other):
+            calls.append('eq')
+            return str.__eq__(self, other)
+        def __str__(self):
+            calls.append('str')
+            return str.__str__(self)
+        def __bool__(self):
+            calls.append('bool')
+            return True
+        def startswith(self, *args):
+            calls.append('startswith')
+            return str.startswith(self, *args)
+        def replace(self, *args):
+            calls.append('replace')
+            return str.replace(self, *args)
+        def __fspath__(self):
+            calls.append('fspath')
+            return str.__str__(self)
+
+    class HostileModule(ModuleType):
+        @property
+        def __name__(self):
+            calls.append('module name')
+            return 'trusted_router.money'
+
+    class InvalidOwner:
+        def __bool__(self):
+            calls.append('invalid bool')
+            return True
+        @property
+        def __name__(self):
+            calls.append('invalid name')
+            return 'trusted_router.money'
+
+    class Meta(type):
+        def __getattribute__(self, name):
+            if name == '__qualname__':
+                calls.append('builtin class qualname')
+            return type.__getattribute__(self, name)
+
+    class Carrier(list, metaclass=Meta):
+        pass
+
+    frozen = module('storage_errors')
+    name, source = frozen.__name__, frozen.__file__
+    namespace = {'__name__': name, '__builtins__': {}}
+    exec('def generate():\n yield\n yield\n', namespace)
+    function = namespace['generate']
+    if field in ('filename', 'qualname'):
+        function.__code__ = function.__code__.replace(**{
+            'co_' + field: Label('<string>' if field == 'filename' else 'generate')})
+    owner = function()
+    next(owner)
+    builtin = (str.maketrans if field == 'static_builtin_owner' else
+               re.compile('').match if field == 'native_builtin_owner' else
+               Carrier().append if field == 'builtin_bound_class' else [].append)
+    previous_module = builtin.__module__
+    builtin.__module__ = Label(name) if field in ('builtin_owner', 'native_builtin_owner', 'builtin_bound_class', 'static_builtin_owner') else (
+        HostileModule(name) if field == 'module_owner' else InvalidOwner())
+    key = None
+    try:
+        with execution_guard(owner) as seen:
+            # Install only for the resumed event, after preflight. Restore before
+            # postflight, so this witness tests the callback itself.
+            if field == 'globals_key':
+                namespace.pop('__name__')
+                key = Label('__name__')
+                namespace[key] = name
+            elif field == 'globals_value':
+                namespace['__name__'] = Label(name)
+            elif field == 'module_key':
+                sys.modules.pop(name)
+                key = Label(name)
+                sys.modules[key] = frozen
+            elif field == 'file_key':
+                frozen.__dict__.pop('__file__')
+                key = Label('__file__')
+                frozen.__dict__[key] = source
+            elif field == 'file_value':
+                frozen.__dict__['__file__'] = Label(source)
+            calls.clear()
+            try:
+                if field in ('builtin_owner', 'module_owner', 'invalid_builtin_owner', 'native_builtin_owner', 'builtin_bound_class', 'static_builtin_owner'):
+                    builtin({} if field == 'static_builtin_owner' else '' if field == 'native_builtin_owner' else None)
+                    qualname = 'Pattern.match' if field == 'native_builtin_owner' else 'list.append'
+                    if field == 'builtin_bound_class':
+                        qualname = type.__dict__['__qualname__'].__get__(Carrier) + '.append'
+                    elif field == 'static_builtin_owner':
+                        qualname = 'str.maketrans'
+                    assert any(row[1] == qualname for row in seen) is (field != 'invalid_builtin_owner')
+                else:
+                    next(owner)
+                    assert any(row[:4] == ('trusted_router.storage_errors', 'generate', 1,
+                                          'src/trusted_router/storage_errors.py') for row in seen)
+                assert calls == []
+            finally:
+                if field == 'globals_key':
+                    namespace.pop(key)
+                    namespace['__name__'] = name
+                elif field == 'globals_value':
+                    namespace['__name__'] = name
+                elif field == 'module_key':
+                    sys.modules.pop(key)
+                    sys.modules[name] = frozen
+                elif field == 'file_key':
+                    frozen.__dict__.pop(key)
+                    frozen.__dict__['__file__'] = source
+                elif field == 'file_value':
+                    frozen.__dict__['__file__'] = source
+    finally:
+        builtin.__module__ = previous_module
+        owner.close()
+
+
+
+def test_guard_worker_admission_does_not_hash_code_constants():
+    import _thread
+    import threading
+
+    if guard_unavailable():
+        return
+    calls = []
+    class Constant:
+        def __hash__(self):
+            calls.append('hash')
+            return 0
+        def __eq__(self, other):
+            calls.append('eq')
+            return False
+
+    ran = threading.Event()
+    namespace = {'__name__': 'external_worker_witness', '__builtins__': {},
+                 'starter': _thread.start_new_thread, 'target': ran.set}
+    exec('def create():\n starter(target, ())\n', namespace)
+    function = namespace['create']
+    function.__code__ = function.__code__.replace(co_consts=(*function.__code__.co_consts, Constant()))
+    with pytest.raises(AssertionError, match='unwrapped raw worker'):
+        with execution_guard():
+            function()
+    assert not ran.is_set()
+    assert calls == []

@@ -1391,8 +1391,15 @@ registry, populated from native function qualnames after frozen module
 execution and at guard entry for loaded router modules (including generated
 repr bodies reached through native closure cells). Unknown generated code
 retains `co_qualname`; inventory attribution never controls live-call rejection.
-Callbacks read native frame code/global metadata and builtin metadata, never
-instance `self`, frame locals, or a locals proxy.
+Callbacks use sealed native frame/code fields and native builtin/module
+namespace descriptors. Dict item iteration and native string comparison avoid
+key protocols; native string normalization removes subclasses before hashing
+or formatting. Module lookup, source prefix/slicing, code attribution and
+integer-identity worker admission invoke no user metadata protocols. Builtin
+qualnames use native name/owner slots and the native type qualname slot; the
+builtin qualname getter can itself invoke a metaclass and is not used. Native
+GC edges on the exact builtin base type retain hidden static owners.
+Callbacks never inspect the Python local `self`, frame locals, or a locals proxy.
 
 At entry and exit the reference walk starts at **every module object** in the
 frozen namespace, the fake Spanner module, explicit harness roots, and the
