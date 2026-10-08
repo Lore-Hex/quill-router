@@ -296,6 +296,13 @@ type Config struct {
 	// answers' latency does not move: well within the owners' heartbeat
 	// deadline.
 	HeartbeatEvery time.Duration
+	// OpenHeartbeat: the enclave's boot declares the heartbeat at stream
+	// open (§4.5), as an enclave that sends it does. Each stream's
+	// authorize says so, and its first heartbeat is sent as it opens, before
+	// its provider answers, each later one HeartbeatEvery after the one
+	// before; without it the first is sent HeartbeatEvery in, as at a first
+	// byte.
+	OpenHeartbeat bool
 	// HeartbeatWait bounds a heartbeat's attempts together, as the enclave's
 	// 5 seconds do: three at most, the later two after a Retry or a call
 	// that failed (§4.5).
@@ -549,7 +556,7 @@ func (r *run) generation(ctx context.Context, n int64) {
 	actx, cancel := context.WithTimeout(ctx, cfg.CallWait)
 	began := time.Now()
 	got, err := p.gateway().Authorize(actx, frontdoor.AuthorizeOf{Workspace: g.Workspace, Request: g.Request,
-		Estimate: estimate, Stream: g.Stream, Boot: cfg.Boot})
+		Estimate: estimate, Stream: g.Stream, Boot: cfg.Boot, OpenHeartbeat: g.Stream && cfg.OpenHeartbeat})
 	cancel()
 	if err != nil {
 		g.Authorized = "error"
@@ -595,8 +602,9 @@ func (r *run) generation(ctx context.Context, n int64) {
 }
 
 // stream heartbeats beats times, the seq-th HeartbeatEvery × seq after the
-// stream began, each with its sequence, a hash of its snapshot, the usage
-// and running charge so far within the hold, and the deadline the last one
+// stream began, or HeartbeatEvery × (seq-1) with the stream-open heartbeat
+// declared, each with its sequence, a hash of its snapshot, the usage and
+// running charge so far within the hold, and the deadline the last one
 // granted; the first carries the reap's basis. It reports how the stream
 // ended, and the charge it delivered: at a heartbeat not accepted, what that
 // heartbeat reports, past the hold if the bill is.
@@ -605,8 +613,12 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 	cfg := p.r.cfg
 	began := time.Now()
 	var echoed time.Time
+	first := int64(1)
+	if cfg.OpenHeartbeat {
+		first = 0
+	}
 	for seq := int64(1); seq <= beats; seq++ {
-		wait := time.NewTimer(time.Until(began.Add(time.Duration(seq) * cfg.HeartbeatEvery)))
+		wait := time.NewTimer(time.Until(began.Add(time.Duration(seq-1+first) * cfg.HeartbeatEvery)))
 		select {
 		case <-ctx.Done():
 			wait.Stop()

@@ -562,6 +562,50 @@ func TestHeartbeatsKeepTheirSchedule(t *testing.T) {
 			t.Fatalf("heartbeat %d %v after the authorize, due at %v", k+1, since, due)
 		}
 	}
+	if gw.authorizes[0].OpenHeartbeat {
+		t.Fatal("an authorize that declares the stream-open heartbeat, with none declared")
+	}
+}
+
+// TestADeclaredStreamHeartbeatsAsItOpens: with the stream-open heartbeat
+// declared, a stream's authorize says so, and its first heartbeat is sent as
+// it opens, the k-th (k-1) × HeartbeatEvery after the authorize, however
+// long the answers before it took; a request that does not stream declares
+// nothing.
+func TestADeclaredStreamHeartbeatsAsItOpens(t *testing.T) {
+	const every, answerTakes = 150 * time.Millisecond, 120 * time.Millisecond
+	gw := admitting(t)
+	accept := gw.heartbeat
+	gw.heartbeat = func(hb frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
+		time.Sleep(answerTakes)
+		return accept(hb)
+	}
+	cfg := config(gw)
+	cfg.HeartbeatEvery, cfg.OpenHeartbeat = every, true
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	gw.mu.Lock()
+	if len(gw.at["heartbeat"]) != 3 || !gw.authorizes[0].OpenHeartbeat || !gw.authorizes[0].Stream {
+		t.Fatalf("%d heartbeats; the authorize %+v", len(gw.at["heartbeat"]), gw.authorizes[0])
+	}
+	for k, at := range gw.at["heartbeat"] {
+		due := time.Duration(k) * every
+		if since := at.Sub(gw.at["authorize"][0]); since < due || since >= due+100*time.Millisecond {
+			t.Fatalf("heartbeat %d %v after the authorize, due at %v", k+1, since, due)
+		}
+	}
+	gw.mu.Unlock()
+
+	plain := admitting(t)
+	cfg = config(plain)
+	cfg.OpenHeartbeat, cfg.Mix.StreamShare = true, 0
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.authorizes) != 1 || plain.authorizes[0].Stream || plain.authorizes[0].OpenHeartbeat {
+		t.Fatalf("a request that does not stream: %+v", plain.authorizes)
+	}
 }
 
 // TestATerminalIsRetriedAsTheEnclaveDoes: a terminal failed or not answered

@@ -36,6 +36,8 @@ func run() error {
 	inFlight := flag.Int("in-flight", 100_000, "the most generations at once")
 	workspaces := flag.Int("workspaces", 10, "how many workspaces the load spreads over, ws-0 on")
 	heartbeat := flag.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
+	openHeartbeat := flag.Bool("open-heartbeat", false,
+		"the boot declares the heartbeat at stream open: each stream's authorize says so, and its first heartbeat is sent as it opens")
 	heartbeatWait := flag.Duration("heartbeat-wait", 5*time.Second, "how long a heartbeat's attempts may take, together")
 	boot := flag.String("boot", "spike-boot", "the boot binding every request carries")
 	enclaves := flag.Int("enclaves", 8, "how many enclaves the load spreads over, each with its retry queue's one worker")
@@ -59,7 +61,7 @@ func run() error {
 	}
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1024}}
 	cfg := loadgen.Config{Rate: *rate, Duration: *duration, MaxInFlight: *inFlight, Mix: mix,
-		HeartbeatEvery: *heartbeat, HeartbeatWait: *heartbeatWait, Boot: []byte(*boot), Enclaves: *enclaves,
+		HeartbeatEvery: *heartbeat, OpenHeartbeat: *openHeartbeat, HeartbeatWait: *heartbeatWait, Boot: []byte(*boot), Enclaves: *enclaves,
 		RetryQueue: *retryQueue, CallWait: *callWait, Seed: *seed}
 	for _, d := range strings.Split(*retryDelays, ",") {
 		if d = strings.TrimSpace(d); d == "" {
