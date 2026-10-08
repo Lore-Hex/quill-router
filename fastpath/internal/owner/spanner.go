@@ -80,12 +80,18 @@ func (o *Owner) Renew(ctx context.Context) error {
 		if len(results) != len(refs) {
 			return errors.New("owner: a renewal answered for other leases than it renewed")
 		}
+		// Every refused lease is released before any is waited for, so a
+		// slow finish of one keeps no other in use.
+		var dropped []<-chan struct{}
 		for i, r := range results {
 			if r.Renewed {
 				renewing[i].Renewed(r.Expiry)
-			} else {
-				o.Let(renewing[i].id)
+			} else if stopped := o.release(renewing[i].id); stopped != nil {
+				dropped = append(dropped, stopped)
 			}
+		}
+		for _, stopped := range dropped {
+			<-stopped
 		}
 	}
 	now = o.cfg.Clock()

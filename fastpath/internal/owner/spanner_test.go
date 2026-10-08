@@ -32,6 +32,8 @@ type fakeSpanner struct {
 	drainGate     chan struct{}
 	afterCancel   time.Duration
 	drainReturned chan struct{}
+	// drainHold, when set, holds a cancelled draining write until closed.
+	drainHold chan struct{}
 }
 
 func newFakeSpanner() *fakeSpanner { return &fakeSpanner{refuse: map[string]bool{}} }
@@ -79,14 +81,19 @@ func (f *fakeSpanner) ShortfallWrite(ctx context.Context, owner store.Owner, ref
 
 func (f *fakeSpanner) OwnerMarkDraining(ctx context.Context, owner store.Owner, ref store.LeaseRef) (bool, time.Time, error) {
 	f.mu.Lock()
-	gate, afterCancel, returned := f.drainGate, f.afterCancel, f.drainReturned
+	gate, afterCancel, returned, hold := f.drainGate, f.afterCancel, f.drainReturned, f.drainHold
 	f.mu.Unlock()
 	if gate != nil {
 		select {
 		case <-gate:
 		case <-ctx.Done():
+			if hold != nil {
+				<-hold
+			}
 			time.Sleep(afterCancel)
-			close(returned)
+			if returned != nil {
+				close(returned)
+			}
 			return false, time.Time{}, ctx.Err()
 		}
 	}
@@ -508,4 +515,80 @@ func TestTheFinalCheckpointIsTheLast(t *testing.T) {
 		t.Fatalf("the records after the final checkpoint: %+v", recs)
 	}
 	f.log.letGo()
+}
+
+// TestARefusedBatchDropsEveryLeaseAtOnce: a lease whose finish is slow to
+// end does not keep another refused in the same batch in use meanwhile.
+func TestARefusedBatchDropsEveryLeaseAtOnce(t *testing.T) {
+	f, sp := spannerFixture(t, 1000, nil)
+	ctx := context.Background()
+	other, err := f.owner.Take("lease-2", "ws-1", 1000, start.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// lease-1 finishes: its draining write is held, and once cancelled is
+	// held again until the test lets it return.
+	sp.mu.Lock()
+	sp.drainGate, sp.drainHold = make(chan struct{}), make(chan struct{})
+	sp.mu.Unlock()
+	f.lease.Close()
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // the final checkpoint acknowledged, the draining write held
+	sp.mu.Lock()
+	sp.refuse["lease-1"], sp.refuse["lease-2"] = true, true
+	sp.mu.Unlock()
+	renewed := make(chan error, 1)
+	go func() { renewed <- f.owner.Renew(ctx) }()
+	waitFor(t, "lease-2 dropped", func() bool {
+		_, held := f.owner.Lease("lease-2")
+		return !held
+	})
+	if _, err := other.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("an admission under a lease dropped beside a slow one: %v", err)
+	}
+	select {
+	case <-renewed:
+		t.Fatal("the round returned while lease-1's finish is held")
+	default:
+	}
+	close(sp.drainHold)
+	if err := <-renewed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAbandonmentAndARenewalRace: run together, either the renewal's answer
+// keeps the lease, or the lease is let go and the answer changes nothing;
+// never both.
+func TestAbandonmentAndARenewalRace(t *testing.T) {
+	for range 300 {
+		f, _ := spannerFixture(t, 100, nil)
+		f.lease.mu.Lock()
+		f.lease.failedAt = start
+		f.lease.mu.Unlock()
+		f.clock.advance(time.Minute) // past the window and the cutoff
+		now := f.clock.Now()
+		later := start.Add(time.Hour)
+		var abandoned bool
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			abandoned = f.lease.letIfAbandoned(now)
+		}()
+		go func() {
+			defer wg.Done()
+			f.lease.Renewed(later)
+		}()
+		wg.Wait()
+		f.lease.mu.Lock()
+		extended := f.lease.expiry.Equal(later)
+		f.lease.mu.Unlock()
+		if abandoned == extended {
+			t.Fatalf("let go %v, and the renewal's answer taken %v", abandoned, extended)
+		}
+		f.owner.Stop()
+	}
 }
