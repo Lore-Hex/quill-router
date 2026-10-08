@@ -94,7 +94,7 @@ func run() error {
 		return err
 	}
 	defer sp.Close()
-	ps, err := pubsub.NewClient(ctx, *project)
+	ps, err := pubsub.NewClient(ctx, *project, service.PubSubOptions(cfg.Region)...)
 	if err != nil {
 		return err
 	}

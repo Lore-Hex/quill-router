@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -302,7 +304,6 @@ func short(cfg Config) Config {
 	cfg.Store.Window, cfg.Store.Skew, cfg.Store.PublishDeadline = 2*time.Second, 200*time.Millisecond,
 		500*time.Millisecond
 	cfg.Store.MaxLife, cfg.Store.Grace = 3*time.Second, 1500*time.Millisecond
-	cfg.Publish.Deadline = 500 * time.Millisecond
 	cfg.Owner.RenewEvery, cfg.Owner.HeartbeatEvery, cfg.Owner.AnswerWait = 500*time.Millisecond, time.Second,
 		2*time.Second
 	cfg.FrontDoor.OwnerWait = 500 * time.Millisecond
@@ -387,12 +388,17 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 	})
 }
 
-// TestEveryPartAgreesOnTheStoresTimes: the owner, the front door and the
-// auditor take the times they must agree on from the store's configuration.
+// TestEveryPartAgreesOnTheStoresTimes: the owner, the front door, the
+// auditor and the publishers take the times they must agree on from the
+// store's configuration.
 func TestEveryPartAgreesOnTheStoresTimes(t *testing.T) {
 	cfg := Defaults()
 	cfg.Store.Window, cfg.Store.Skew, cfg.Store.MaxLife, cfg.Store.Grace = 11*time.Second, 3*time.Second,
 		17*time.Minute, 5*time.Minute
+	cfg.Store.PublishDeadline = 7 * time.Second
+	if d := cfg.publish().Deadline; d != 7*time.Second {
+		t.Fatalf("a publish's deadline %v, and the owner's is 7s", d)
+	}
 	got := cfg.agreed()
 	o, f, r := got.Owner, got.FrontDoor, got.Runtime
 	if o.Skew != 3*time.Second || o.Window != 11*time.Second || o.Grace != 5*time.Minute ||
@@ -568,4 +574,79 @@ func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
 		l, _, err := s.ReadLease(ctx, store.LeaseRef{Workspace: ws, LeaseID: e.Lease})
 		return err == nil && l.Revoked, err
 	})
+}
+
+// TestPubSubIsTheRegions: the client reaches the region's own endpoint, so
+// owners and the auditor's ticks are ordered as one, unless an emulator is
+// named.
+func TestPubSubIsTheRegions(t *testing.T) {
+	t.Setenv("PUBSUB_EMULATOR_HOST", "")
+	want := []option.ClientOption{option.WithEndpoint("us-central1-pubsub.googleapis.com:443")}
+	if got := PubSubOptions("us-central1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the options %v", got)
+	}
+	t.Setenv("PUBSUB_EMULATOR_HOST", "127.0.0.1:8085")
+	if got := PubSubOptions("us-central1"); got != nil {
+		t.Fatalf("with an emulator, the options %v", got)
+	}
+}
+
+// TestAProcessStoppedAsItStartsStopsCleanly: a process whose context ends
+// before its parts have started returns no error.
+func TestAProcessStoppedAsItStartsStopsCleanly(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Run(ctx, config(listen(t)), Clients{Spanner: shared, PubSub: pubSub(t)}); err != nil {
+		t.Fatalf("a process stopped as it started: %v", err)
+	}
+}
+
+// TestAStoppingNodeEndsItsRequests: a request still being read when its
+// node stops gets Stopping to finish, then its connection is closed: it is
+// not served once the node has stopped.
+func TestAStoppingNodeEndsItsRequests(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln := listen(t)
+	cfg := config(ln)
+	cfg.Auditor, cfg.Stopping = false, 200*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg, Clients{Spanner: shared, PubSub: pubSub(t)}) }()
+	var conn net.Conn
+	eventually(t, 10*time.Second, "the node serving", func() (bool, error) {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			return false, nil
+		}
+		conn = c
+		return true, nil
+	})
+	defer conn.Close()
+	body := `{"workspace":"ws-1","request":"r1","estimate":40,"boot":"Ym9vdA=="}`
+	if _, err := fmt.Fprintf(conn, "POST /v1/authorize HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"+
+		"Content-Length: %d\r\n\r\n%s", len(body), body[:10]); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // the request being read
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the node did not stop")
+	}
+	_, _ = conn.Write([]byte(body[10:]))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	answer, _ := io.ReadAll(conn)
+	if bytes.Contains(answer, []byte("200 OK")) {
+		t.Fatalf("a request was served after its node stopped: %q", answer)
+	}
 }

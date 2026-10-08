@@ -15,11 +15,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/spanner"
+	"google.golang.org/api/option"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
@@ -57,8 +59,6 @@ type Config struct {
 	SettleSubscription, RecordSubscription string
 	// MaxOutstanding bounds the messages a subscription holds at once.
 	MaxOutstanding int
-	// Publish bounds a publish to either topic (settlelog.Settings).
-	Publish settlelog.Settings
 
 	// Store's times are the ones every part agrees on.
 	Store store.Config
@@ -89,7 +89,6 @@ func Defaults() Config {
 	return Config{
 		Shards:         1,
 		MaxOutstanding: 1000,
-		Publish:        settlelog.Settings{Deadline: 5 * time.Second},
 		Store: store.Config{LiveFor: 3 * time.Second, Window: 30 * time.Second, Skew: 2 * time.Second,
 			PublishDeadline: 5 * time.Second, MaxLife: maxLife, Grace: time.Minute, Allowance: 1 << 50,
 			RequiredTier: 1},
@@ -145,6 +144,24 @@ func (c Config) agreed() Config {
 	return c
 }
 
+// publish is a publish's deadline, the owner's (§4.5): the fence waits for
+// it to pass, so a publisher that kept trying longer could land a record
+// after the fence tick.
+func (c Config) publish() settlelog.Settings {
+	return settlelog.Settings{Deadline: c.Store.PublishDeadline}
+}
+
+// PubSubOptions are the Pub/Sub client's options for a region: its
+// locational endpoint, so that every publisher of a lease's records orders
+// them as one (settlelog.Endpoint), unless PUBSUB_EMULATOR_HOST names an
+// emulator.
+func PubSubOptions(region string) []option.ClientOption {
+	if os.Getenv("PUBSUB_EMULATOR_HOST") != "" {
+		return nil
+	}
+	return []option.ClientOption{option.WithEndpoint(settlelog.Endpoint(region))}
+}
+
 // Run runs the process until ctx ends, or one of its parts fails, and
 // returns once every part has stopped: nil if ctx ended it, else the first
 // failure.
@@ -163,12 +180,12 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if err != nil {
 		return err
 	}
-	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.Publish)
+	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.publish())
 	if err != nil {
 		return err
 	}
 	defer settle.Stop()
-	records, err := settlelog.OpenRecords(c.PubSub, cfg.RecordTopic, cfg.Publish)
+	records, err := settlelog.OpenRecords(c.PubSub, cfg.RecordTopic, cfg.publish())
 	if err != nil {
 		return err
 	}
@@ -179,12 +196,12 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	defer p.cancel()
 	if cfg.Admission {
 		if err := p.admission(cfg, s, settle, records); err != nil {
-			p.fail(err)
+			p.startFailed(ctx, err)
 		}
 	}
 	if cfg.Auditor && p.ctx.Err() == nil {
 		if err := p.auditor(cfg, c, s, settle, records); err != nil {
-			p.fail(err)
+			p.startFailed(ctx, err)
 		}
 	}
 	p.wait()
@@ -213,6 +230,16 @@ func (p *parts) fail(err error) {
 	}
 	p.mu.Unlock()
 	p.cancel()
+}
+
+// startFailed ends a process whose part could not start: a failure, unless
+// the caller's ctx ending is why.
+func (p *parts) startFailed(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		p.cancel()
+		return
+	}
+	p.fail(err)
 }
 
 // run runs f until it returns; an error, unless ctx ended it, fails the
@@ -269,7 +296,10 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, rec
 		return err
 	}
 
-	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256}}
+	transport := &http.Transport{MaxIdleConnsPerHost: 256, IdleConnTimeout: 90 * time.Second}
+	client := &http.Client{Transport: transport}
+	// Once every caller has stopped, its idle connections close.
+	p.stop(transport.CloseIdleConnections)
 	fc := cfg.FrontDoor
 	fc.Owners = owners{self: cfg.Address, local: frontdoor.Direct{cfg.Address: local},
 		remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
@@ -289,20 +319,30 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, rec
 			return err
 		}
 	}
-	srv := &http.Server{Handler: frontdoor.Handler(door, local), ReadHeaderTimeout: 5 * time.Second}
+	handlers := &inFlight{}
+	requests, endRequests := context.WithCancel(context.Background())
+	srv := &http.Server{Handler: handlers.wrap(frontdoor.Handler(door, local)), ReadHeaderTimeout: 5 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return requests }}
 	p.run("http", func(ctx context.Context) error {
 		served := make(chan error, 1)
 		go func() { served <- srv.Serve(ln) }()
+		var err error
 		select {
-		case err := <-served:
-			return err
+		case err = <-served:
 		case <-ctx.Done():
+			// Requests under way get Stopping to end; then their
+			// connections close and their contexts end.
+			stopping, cancel := context.WithTimeout(context.Background(), cfg.Stopping)
+			_ = srv.Shutdown(stopping)
+			cancel()
+			<-served
 		}
-		stopping, cancel := context.WithTimeout(context.Background(), cfg.Stopping)
-		defer cancel()
-		_ = srv.Shutdown(stopping)
-		<-served
-		return nil
+		_ = srv.Close()
+		endRequests()
+		// The parts the handlers call stop only once every handler has
+		// returned.
+		handlers.wait()
+		return err
 	})
 	// A node whose row another process took stops: its epoch is not the
 	// row's, so its leases' writes are refused.
@@ -388,4 +428,35 @@ func (o owners) Terminal(ctx context.Context, address string, req frontdoor.Owne
 
 func (o owners) Ping(ctx context.Context, address string) error {
 	return o.at(address).Ping(ctx, address)
+}
+
+// inFlight counts the requests a server's handler is serving, so that its
+// process stops the parts they call only once each has returned. A request
+// that comes after wait began is turned away.
+type inFlight struct {
+	mu      sync.RWMutex
+	ending  bool
+	serving sync.WaitGroup
+}
+
+func (f *inFlight) wrap(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.RLock()
+		if f.ending {
+			f.mu.RUnlock()
+			http.Error(w, "stopping", http.StatusServiceUnavailable)
+			return
+		}
+		f.serving.Add(1)
+		f.mu.RUnlock()
+		defer f.serving.Done()
+		h.ServeHTTP(w, r)
+	})
+}
+
+func (f *inFlight) wait() {
+	f.mu.Lock()
+	f.ending = true
+	f.mu.Unlock()
+	f.serving.Wait()
 }
