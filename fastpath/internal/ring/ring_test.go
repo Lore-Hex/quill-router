@@ -25,12 +25,14 @@ type fake struct {
 	liveFor time.Duration
 	rows    map[string]*store.Member
 	fail    error
-	beats   map[string]int
+	// beats counts the heartbeats that landed, attempts every one tried.
+	beats    map[string]int
+	attempts map[string]int
 }
 
 func newFake() *fake {
 	return &fake{now: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), liveFor: 3 * time.Second,
-		rows: map[string]*store.Member{}, beats: map[string]int{}}
+		rows: map[string]*store.Member{}, beats: map[string]int{}, attempts: map[string]int{}}
 }
 
 func (f *fake) Join(ctx context.Context, address string, roles []string) (int64, time.Time, error) {
@@ -61,6 +63,7 @@ func (f *fake) Heartbeat(ctx context.Context, address string, epoch int64, state
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.attempts[address]++
 	if f.fail != nil {
 		return false, time.Time{}, f.fail
 	}
@@ -119,6 +122,23 @@ func (f *fake) beatCount(address string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.beats[address]
+}
+
+func (f *fake) attemptCount(address string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attempts[address]
+}
+
+// tick ticks a node's or a watcher's loop, and returns once the loop took
+// it: a loop takes a tick only once its step before has ended.
+func tick(t *testing.T, ticks chan<- time.Time) {
+	t.Helper()
+	select {
+	case ticks <- time.Now():
+	case <-time.After(time.Second):
+		t.Fatal("the loop took no tick")
+	}
 }
 
 // eventually waits up to a second for cond.
@@ -299,11 +319,13 @@ func TestLeavingIsForGood(t *testing.T) {
 }
 
 // TestANodeStartedElsewhereIsLost: once its address joins again, the old
-// process's heartbeat is refused, and it stops.
+// process's heartbeat is refused, and it stops: its loop ends, and it writes
+// no heartbeat after.
 func TestANodeStartedElsewhereIsLost(t *testing.T) {
 	f := newFake()
 	ctx := context.Background()
-	old, err := Start(ctx, f, "a:1", []string{OwnerRole}, time.Millisecond)
+	ticks := make(chan time.Time)
+	old, err := start(ctx, f, "a:1", []string{OwnerRole}, time.Hour, ticks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,33 +333,57 @@ func TestANodeStartedElsewhereIsLost(t *testing.T) {
 	if epoch, _, err := f.Join(ctx, "a:1", []string{OwnerRole}); err != nil || epoch != 2 {
 		t.Fatalf("the restart: %d %v", epoch, err)
 	}
+	tick(t, ticks) // a heartbeat, which the row refuses
 	select {
 	case <-old.Lost():
 	case <-time.After(time.Second):
 		t.Fatal("the old process is not lost")
 	}
+	select {
+	case <-old.done:
+	case <-time.After(time.Second):
+		t.Fatal("a lost node's loop goes on")
+	}
+	attempts := f.attemptCount("a:1")
+	select {
+	case ticks <- time.Now():
+		t.Fatal("a lost node's loop took a tick")
+	case <-time.After(50 * time.Millisecond):
+	}
 	if err := old.SetState(ctx, store.Withdrawn); !errors.Is(err, ErrLost) {
 		t.Fatalf("a lost node's state change: %v", err)
+	}
+	if got := f.attemptCount("a:1"); got != attempts {
+		t.Fatalf("a lost node tried %d heartbeats more", got-attempts)
 	}
 	if f.row("a:1").Epoch != 2 || f.row("a:1").State != store.Serving {
 		t.Fatalf("the old process wrote the new one's row: %+v", f.row("a:1"))
 	}
 }
 
-// TestAFailedHeartbeatIsTriedAgain: a heartbeat that fails is not a loss.
+// TestAFailedHeartbeatIsTriedAgain: a heartbeat that fails is not a loss;
+// the next tick tries again, and lands once the store is back.
 func TestAFailedHeartbeatIsTriedAgain(t *testing.T) {
 	f := newFake()
 	ctx := context.Background()
-	n, err := Start(ctx, f, "a:1", []string{OwnerRole}, time.Millisecond)
+	ticks := make(chan time.Time)
+	n, err := start(ctx, f, "a:1", []string{OwnerRole}, time.Hour, ticks)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer n.Stop()
 	f.setFail(errors.New("unavailable"))
-	time.Sleep(10 * time.Millisecond)
-	before := f.beatCount("a:1")
+	tick(t, ticks)
+	tick(t, ticks) // taken once the first, failed heartbeat ended
+	if f.attemptCount("a:1") < 1 || f.beatCount("a:1") != 0 {
+		t.Fatalf("%d heartbeats tried and %d landed while they fail", f.attemptCount("a:1"), f.beatCount("a:1"))
+	}
 	f.setFail(nil)
-	eventually(t, "heartbeats after the failures", func() bool { return f.beatCount("a:1") > before })
+	tick(t, ticks) // taken once the second, failed heartbeat ended
+	tick(t, ticks) // taken once the third ended, which lands
+	if f.beatCount("a:1") < 1 {
+		t.Fatal("no heartbeat landed after the failures")
+	}
 	select {
 	case <-n.Lost():
 		t.Fatal("failed heartbeats lost the node")
@@ -404,11 +450,18 @@ func newGated(f *fake) *gated {
 }
 
 func (g *gated) Members(ctx context.Context) ([]store.Member, time.Time, error) {
-	g.began <- struct{}{}
+	select {
+	case g.began <- struct{}{}:
+	case <-ctx.Done():
+		return nil, time.Time{}, ctx.Err()
+	}
 	select {
 	case <-g.next:
 	case <-ctx.Done():
-		g.finished <- ctx.Err()
+		select {
+		case g.finished <- ctx.Err():
+		default:
+		}
 		return nil, time.Time{}, ctx.Err()
 	}
 	members, at, err := g.fake.Members(ctx)
@@ -430,11 +483,11 @@ func (g *gated) begun(t *testing.T, within time.Duration) {
 	}
 }
 
-// read lets the read under way go and waits for it to end, then for the
-// watcher's next read to begin, within its interval. The watcher begins it
-// only once it has applied this one's result, so when read returns the view
-// is the one this read made, or kept.
-func (g *gated) read(t *testing.T, interval time.Duration) error {
+// read lets the read under way go and waits for it to end, then ticks the
+// watcher, which takes the tick only once it has applied that read's result,
+// and begins its next read. So when read returns, the view is the one the
+// read made, or kept, and the next read is under way, held.
+func (g *gated) read(t *testing.T, ticks chan<- time.Time) error {
 	t.Helper()
 	g.begun(t, time.Second)
 	g.waiting = false
@@ -449,7 +502,8 @@ func (g *gated) read(t *testing.T, interval time.Duration) error {
 	case <-time.After(time.Second):
 		t.Fatal("the read did not end")
 	}
-	g.begun(t, interval+time.Second)
+	tick(t, ticks)
+	g.begun(t, time.Second)
 	return err
 }
 
@@ -463,22 +517,23 @@ func TestAWatcherKeepsItsLastView(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := newGated(f)
+	ticks := make(chan time.Time)
 	watched := make(chan *Watcher, 1)
 	go func() {
-		w, err := Watch(ctx, g, time.Millisecond)
+		w, err := watch(ctx, g, time.Hour, ticks)
 		if err != nil {
 			t.Error(err)
 		}
 		watched <- w
 	}()
-	if err := g.read(t, time.Millisecond); err != nil {
+	if err := g.read(t, ticks); err != nil {
 		t.Fatal(err)
 	}
 	w := <-watched
 	defer w.Stop() // which ends the read under way
 	// The baseline: one more successful read, built apart from anything the
 	// watcher returned.
-	if err := g.read(t, time.Millisecond); err != nil {
+	if err := g.read(t, ticks); err != nil {
 		t.Fatal(err)
 	}
 	members, readAt, err := f.Members(ctx)
@@ -492,7 +547,7 @@ func TestAWatcherKeepsItsLastView(t *testing.T) {
 	}
 	f.setFail(errors.New("unavailable"))
 	for range 3 {
-		if err := g.read(t, time.Millisecond); err == nil {
+		if err := g.read(t, ticks); err == nil {
 			t.Fatal("a read succeeded while reads fail")
 		}
 		got, gotAt := w.View()
@@ -516,23 +571,29 @@ func TestStopCancelsAReadUnderWay(t *testing.T) {
 	f := newFake()
 	ctx := context.Background()
 	g := newGated(f)
+	ticks := make(chan time.Time)
 	watched := make(chan *Watcher, 1)
 	go func() {
-		w, err := Watch(ctx, g, 2*time.Second)
+		w, err := watch(ctx, g, time.Hour, ticks)
 		if err != nil {
 			t.Error(err)
 		}
 		watched <- w
 	}()
-	// The first read, and then the next, two seconds on, begun and held.
-	if err := g.read(t, 2*time.Second); err != nil {
+	// The first read, and then the next, under way and held.
+	if err := g.read(t, ticks); err != nil {
 		t.Fatal(err)
 	}
 	w := <-watched
-	stopped := time.Now()
-	w.Stop()
-	if took := time.Since(stopped); took > 500*time.Millisecond {
-		t.Fatalf("Stop took %v, waiting on the read", took)
+	stopped := make(chan struct{})
+	go func() {
+		w.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop waits on the read under way")
 	}
 	select {
 	case err := <-g.finished:

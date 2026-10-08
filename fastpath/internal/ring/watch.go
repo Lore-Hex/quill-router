@@ -14,6 +14,8 @@ import (
 type Watcher struct {
 	m        Membership
 	interval time.Duration
+	// ticks, when a test sets it, stands in for the interval's ticker.
+	ticks <-chan time.Time
 
 	// ctx ends when Stop begins, and with it a read under way.
 	ctx    context.Context
@@ -28,10 +30,14 @@ type Watcher struct {
 
 // Watch reads the members once, and then every interval until stopped.
 func Watch(ctx context.Context, m Membership, interval time.Duration) (*Watcher, error) {
+	return watch(ctx, m, interval, nil)
+}
+
+func watch(ctx context.Context, m Membership, interval time.Duration, ticks <-chan time.Time) (*Watcher, error) {
 	if interval <= 0 {
 		return nil, fmt.Errorf("ring: a watch interval of %v", interval)
 	}
-	w := &Watcher{m: m, interval: interval, done: make(chan struct{})}
+	w := &Watcher{m: m, interval: interval, ticks: ticks, done: make(chan struct{})}
 	if err := w.read(ctx); err != nil {
 		return nil, err
 	}
@@ -57,13 +63,17 @@ func (w *Watcher) Stop() {
 
 func (w *Watcher) run() {
 	defer close(w.done)
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
+	tick := w.ticks
+	if tick == nil {
+		ticker := time.NewTicker(w.interval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
 		select {
 		case <-w.ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		// A tick and the stop can be ready together: the stop wins.
 		if w.ctx.Err() != nil {

@@ -32,6 +32,8 @@ type Node struct {
 	address  string
 	epoch    int64
 	interval time.Duration
+	// ticks, when a test sets it, stands in for the interval's ticker.
+	ticks <-chan time.Time
 
 	// ctx ends when Stop begins, and with it every write under way.
 	ctx    context.Context
@@ -49,6 +51,11 @@ type Node struct {
 
 // Start joins and starts the node's heartbeats.
 func Start(ctx context.Context, m Membership, address string, roles []string, interval time.Duration) (*Node, error) {
+	return start(ctx, m, address, roles, interval, nil)
+}
+
+func start(ctx context.Context, m Membership, address string, roles []string, interval time.Duration,
+	ticks <-chan time.Time) (*Node, error) {
 	if interval <= 0 {
 		return nil, fmt.Errorf("ring: a heartbeat interval of %v", interval)
 	}
@@ -56,7 +63,7 @@ func Start(ctx context.Context, m Membership, address string, roles []string, in
 	if err != nil {
 		return nil, err
 	}
-	n := &Node{m: m, address: address, epoch: epoch, interval: interval, meant: store.Serving,
+	n := &Node{m: m, address: address, epoch: epoch, interval: interval, ticks: ticks, meant: store.Serving,
 		written: store.Serving, lost: make(chan struct{}), done: make(chan struct{})}
 	n.ctx, n.cancel = context.WithCancel(context.Background())
 	go n.run()
@@ -114,15 +121,19 @@ func (n *Node) Stop() {
 
 func (n *Node) run() {
 	defer close(n.done)
-	ticker := time.NewTicker(n.interval)
-	defer ticker.Stop()
+	tick := n.ticks
+	if tick == nil {
+		ticker := time.NewTicker(n.interval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
 		select {
 		case <-n.ctx.Done():
 			return
 		case <-n.lost:
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		n.mu.Lock()
 		// A heartbeat takes at most an interval, so a slow one holds
