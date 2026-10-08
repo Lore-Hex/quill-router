@@ -90,11 +90,17 @@ func holdPayload(auth string, seq int64) (hash, usage, basis []byte) {
 }
 
 // payloadIs reports whether a hold row keeps the payload the walk wrote for
-// its heartbeat at seq.
+// its heartbeat at owner sequence seq, the gateway's sequence among it.
 func payloadIs(h HoldRow, seq int64) bool {
 	hash, usage, basis := holdPayload(h.AuthorizationID, seq)
-	return bytes.Equal(h.SnapshotHash, hash) && bytes.Equal(h.SnapshotUsage, usage) && bytes.Equal(h.ReapBasis, basis)
+	return bytes.Equal(h.SnapshotHash, hash) && bytes.Equal(h.SnapshotUsage, usage) && bytes.Equal(h.ReapBasis, basis) &&
+		h.SnapshotSeq == (spanner.NullInt64{Int64: gatewaySeq(seq), Valid: true})
 }
+
+// gatewaySeq is the gateway's sequence of the walk's heartbeat whose record
+// has owner sequence seq: another number, so the two columns that keep them
+// cannot be swapped unseen.
+func gatewaySeq(seq int64) int64 { return seq + 1000 }
 
 // TestTheStoreWalksWithAuditorCommit runs FASTPATH_WALKS walks (default 12)
 // from FASTPATH_WALK_SEED (default a fixed seed, so the walks CI runs are
@@ -481,6 +487,9 @@ func (w *walker) applyRow(m int8, from ac.State) {
 		if err != nil || len(rows) == 0 {
 			w.fatalf("member %s reads no row to apply: %v", w.c.Members[m], err)
 		}
+		for _, r := range rows {
+			w.checkRow(r, "member "+w.c.Members[m]+"'s")
+		}
 		side.buffer, side.cursor = rows, read
 	}
 	row := side.buffer[0]
@@ -544,7 +553,7 @@ func (w *walker) request(m int8, from ac.State) CommitRequest {
 		if mem.Holds[a] != ac.NoHold {
 			hash, usage, basis := holdPayload(w.c.Auths[a], side.holdSeq[a])
 			req.PutHolds = append(req.PutHolds, HoldRow{AuthorizationID: w.c.Auths[a], Estimate: walkEstimate,
-				Deadline: walkDeadline, SnapshotSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true},
+				Deadline: walkDeadline, SnapshotSeq: spanner.NullInt64{Int64: gatewaySeq(side.holdSeq[a]), Valid: true},
 				SnapshotHash: hash, SnapshotUsage: usage,
 				RunningCharge:    spanner.NullInt64{Int64: int64(mem.Holds[a]), Valid: true},
 				SnapshotOwnerSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true}, ReapBasis: basis})
@@ -605,7 +614,7 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		}
 	}
 	for _, h := range req.PutHolds {
-		w.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotSeq.Int64
+		w.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotOwnerSeq.Int64
 	}
 	w.packVers = append(w.packVers, got[0].NewVersion)
 	w.packWins = append(w.packWins, req.Winners)
@@ -924,15 +933,7 @@ func (w *walker) check() {
 		w.fatalf("%d drain rows, and the walk wrote %d", len(rows), len(w.rows))
 	}
 	for _, r := range rows {
-		// The row's commit timestamp is the one its append or reap
-		// returned: a row stamped otherwise could sort behind a cursor
-		// already read past it.
-		want, ok := w.rows[r.RecordID]
-		got, wantTS := r, want.CommitTS
-		got.CommitTS, want.CommitTS = time.Time{}, time.Time{}
-		if !ok || !reflect.DeepEqual(got, want) || wantTS.IsZero() || !r.CommitTS.Equal(wantTS) {
-			w.fatalf("drain row %+v, and the walk wrote %+v at %v", r, want, wantTS)
-		}
+		w.checkRow(r, "the checker's")
 	}
 	w.checkUnprojected(l, loaded.Holds, packs)
 	// A load gives a member the lease's packs once it is not open, closed
@@ -946,6 +947,19 @@ func (w *walker) check() {
 		w.fatalf("the identity: %v %v", problems, err)
 	}
 	w.invariants()
+}
+
+// checkRow holds a drain row a read returned to what the walk's append or
+// reap wrote, field by field, and to the commit timestamp it returned: a
+// row stamped otherwise could sort behind a cursor already read past it.
+func (w *walker) checkRow(r DrainRow, read string) {
+	w.t.Helper()
+	want, ok := w.rows[r.RecordID]
+	got, wantTS := r, want.CommitTS
+	got.CommitTS, want.CommitTS = time.Time{}, time.Time{}
+	if !ok || !reflect.DeepEqual(got, want) || wantTS.IsZero() || !r.CommitTS.Equal(wantTS) {
+		w.fatalf("%s read's drain row %+v, and the walk wrote %+v at %v", read, r, want, wantTS)
+	}
 }
 
 // checkUnprojected holds the columns the projection leaves out to what the
@@ -993,7 +1007,7 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	w.checkPacks(packs, "the winners'")
 	for _, h := range holds {
 		seq := spanner.NullInt64{Int64: w.holdSeq[index(w.c.Auths, h.AuthorizationID)], Valid: true}
-		if h.SnapshotSeq != seq || h.SnapshotOwnerSeq != seq || h.Estimate != walkEstimate ||
+		if h.SnapshotOwnerSeq != seq || h.Estimate != walkEstimate ||
 			!h.Deadline.Equal(walkDeadline) || h.Listed || !payloadIs(h, seq.Int64) {
 			w.fatalf("a hold row %+v, and the walk stored its snapshot at %d", h, seq.Int64)
 		}
