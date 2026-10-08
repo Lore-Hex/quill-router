@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -101,7 +102,7 @@ type debtLease struct {
 	raises     map[string]int64
 	stamped    map[string]time.Time // each row's commit timestamp, as its append returned it
 	committed  map[string]bool
-	packs      []int64 // each commit's winner count, in commit order
+	packs      []Pack // each commit's version and winners, in commit order
 }
 
 // donor is one of a lease's donors as the walk books it: its credit shard,
@@ -376,7 +377,7 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 		d.fatalf("a commit that books nothing faulted %v", got[0].Faults)
 	}
 	l.version, l.seq = got[0].NewVersion, seq
-	l.packs = append(l.packs, int64(len(req.Winners)))
+	l.packs = append(l.packs, Pack{CommitVersion: got[0].NewVersion, Winners: req.Winners})
 	d.checkPacks(l)
 	l.stored = l.stored || boundary
 	return got[0]
@@ -561,7 +562,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			d.fatalf("committing the drain log's winners: %+v %v", got2, err)
 		}
 		l.version = got2[0].NewVersion
-		l.packs = append(l.packs, int64(len(winners)))
+		l.packs = append(l.packs, Pack{CommitVersion: got2[0].NewVersion, Winners: winners})
 		d.checkPacks(l)
 		if len(winners) > 1 {
 			d.seen["a pack of several winners"]++
@@ -602,17 +603,33 @@ func (d *debtWalk) checkRow(l *debtLease, r DrainRow) {
 	}
 }
 
-// checkPacks holds each of the lease's packs' stored winner counts to its
-// commit's, after a commit.
+// checkPacks holds each of the lease's packs, its stored winner count and
+// its winners as a read decodes them, to its commit's, after a commit.
 func (d *debtWalk) checkPacks(l *debtLease) {
 	d.t.Helper()
 	counts, err := winnerCounts(l.ref)
 	if err != nil {
 		d.fatalf("reading lease %s's winner counts: %v", l.ref.LeaseID, err)
 	}
-	if !slices.Equal(counts, l.packs) {
+	want := make([]int64, len(l.packs))
+	for i, p := range l.packs {
+		want[i] = int64(len(p.Winners))
+	}
+	if !slices.Equal(counts, want) {
 		d.fatalf("lease %s's packs' winner counts are %v, and the walk's commits stored %v", l.ref.LeaseID, counts,
-			l.packs)
+			want)
+	}
+	packs, _, err := d.s.LoadWinners(context.Background(), l.ref)
+	if err != nil || len(packs) != len(l.packs) {
+		d.fatalf("lease %s's packs read %d, and the walk's commits stored %d: %v", l.ref.LeaseID, len(packs),
+			len(l.packs), err)
+	}
+	for i, p := range packs {
+		w := l.packs[i]
+		if p.CommitVersion != w.CommitVersion || p.WorkDoneAt.Valid || len(p.Winners) != len(w.Winners) ||
+			(len(w.Winners) > 0 && !reflect.DeepEqual(p.Winners, w.Winners)) {
+			d.fatalf("lease %s's pack %d is %+v, and its commit stored %+v", l.ref.LeaseID, i, p, w)
+		}
 	}
 }
 

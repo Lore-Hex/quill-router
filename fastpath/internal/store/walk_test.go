@@ -144,12 +144,14 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	}
 	t.Logf("store calls:%s", b.String())
 	required := []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
-		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close"}
+		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close", "a reap past its time",
+		"a close past its time"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
 		"commit below S": {RefusedBoundary},
-		"gap":            {RefusedVersion, RefusedGap, RefusedBoundary, "the record is the next after the stored progress"},
+		"gap": {RefusedVersion, "the version alone", RefusedGap, RefusedBoundary,
+			"the record is the next after the stored progress"},
 		"reap": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTerminal, RefusedNoHold,
 			RefusedNotDue},
 		"close": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTooSoon, RefusedHoldsOpen,
@@ -195,6 +197,12 @@ type walker struct {
 	probes     int
 	tries      map[string]int
 	justClosed bool
+	// reaps and closes count those taken: every other one an hour past its
+	// time rather than at it, a walk's first reap and, as the walk's seed
+	// falls, its first or second close. The walks reap seldom, once in the
+	// default twelve, so that reap is the late one, and the store's
+	// TestAReapWaitsForItsDeadlinePlusGrace takes one at its time exactly.
+	reaps, closes int64
 	// fault is the audit fault the lease's row holds: the first a commit
 	// stored, or 0.
 	fault int64
@@ -329,11 +337,16 @@ func (w *walker) apply(tr ac.Transition) {
 		m, a := member(), index(w.c.Auths, args[1])
 		// Until its hold's deadline plus the grace the store refuses it,
 		// though the shadow, which has no clock, allows it: a tick a
-		// microsecond before is refused, and one at it taken.
+		// microsecond before is refused, and one an hour past it taken, or,
+		// every other reap, one at it.
 		due := walkDeadline.Add(w.s.cfg.Grace)
 		w.timed("reap", RefusedNotDue, func() {
 			w.reap(m, a, from, due.Add(-time.Microsecond), fmt.Sprintf("p%d", w.probes), RefusedNotDue)
 		})
+		if w.reaps++; w.reaps%2 == 1 {
+			due = due.Add(time.Hour)
+			w.seen["a reap past its time"]++
+		}
 		w.reap(m, a, from, due, fmt.Sprintf("d%d", from.DrainLen+1), "")
 	case "Commit":
 		w.commit(member(), from, tr.To, "")
@@ -346,6 +359,10 @@ func (w *walker) apply(tr ac.Transition) {
 		w.timed("close", RefusedTooSoon, func() {
 			w.close(m, from, from, due.Add(-time.Microsecond), RefusedTooSoon)
 		})
+		if w.closes++; (w.seed+w.closes)%2 == 0 {
+			due = due.Add(time.Hour)
+			w.seen["a close past its time"]++
+		}
 		w.close(m, from, tr.To, due, "")
 	case "Reread", "Crash":
 		w.members[member()] = memberSide{}
@@ -696,10 +713,14 @@ func (w *walker) probe() bool {
 				try("commit below S", RefusedBoundary, func() { w.commitOff(m, s, -1) })
 			}
 		}
-		// A gap past the member's progress, and the stored progress's next
-		// record, which is no gap.
-		for _, seq := range []int8{mem.Prog + 2, s.Prog + 1} {
+		// A gap past the member's progress, the stored progress's next
+		// record, which is no gap, and a gap past the stored progress, which
+		// a member behind the lease's version is refused for that alone.
+		for _, seq := range []int8{mem.Prog + 2, s.Prog + 1, s.Prog + 2} {
 			if why := w.gapRefusal(m, seq); why != "" {
+				if why == RefusedVersion && !s.Gap && s.S == ac.NoS && s.Prog < seq-1 {
+					why = "the version alone"
+				}
 				try("gap", why, func() { w.gap(m, seq, false) })
 			}
 		}
