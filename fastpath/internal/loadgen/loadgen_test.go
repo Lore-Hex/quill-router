@@ -508,7 +508,7 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 		return frontdoor.TerminalAnswer{Status: frontdoor.Failed}, nil
 	}
 	cfg := config(lost)
-	cfg.RetryDelays = []time.Duration{0, 20 * time.Millisecond, 40 * time.Millisecond}
+	cfg.RetryDelays = []time.Duration{0, 60 * time.Millisecond, 180 * time.Millisecond}
 	cfg.Mix.RefundShare = 1
 	var log bytes.Buffer
 	cfg.Log = &log
@@ -521,10 +521,12 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 		t.Fatalf("%d refunds, %+v", n, rep.Outcomes)
 	}
 	// Each queued attempt waits its own delay, in order, after the one
-	// before it.
+	// before it: at least its delay, and less than the next one's.
 	for k, d := range cfg.RetryDelays {
-		if gap := lost.at["refund"][k+1].Sub(lost.at["refund"][k]); gap < d {
-			t.Fatalf("attempt %d %v after the one before it, before its delay of %v", k+2, gap, d)
+		gap := lost.at["refund"][k+1].Sub(lost.at["refund"][k])
+		if gap < d || (k+1 < len(cfg.RetryDelays) && gap >= cfg.RetryDelays[k+1]) {
+			t.Fatalf("attempt %d %v after the one before it, its delay %v, the delays %v", k+2, gap, d,
+				cfg.RetryDelays)
 		}
 	}
 	echoed(t, lost)
@@ -594,12 +596,26 @@ func TestTheRateIsKept(t *testing.T) {
 	cfg := config(a)
 	cfg.Gateways = []Gateway{a, b}
 	cfg.Rate, cfg.Duration, cfg.Mix.StreamShare = 400, 250*time.Millisecond, 0
+	began := time.Now()
 	rep, err := Run(context.Background(), cfg)
+	took := time.Since(began)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rep.Started != 100 || rep.NotStarted != 0 || len(a.authorizes) != 50 || len(b.authorizes) != 50 {
 		t.Fatalf("started %d, not %d; %d and %d", rep.Started, rep.NotStarted, len(a.authorizes), len(b.authorizes))
+	}
+	// The k-th generation is due k / 400 seconds into the run, so the k-th
+	// authorize comes no sooner; and the run lasts its duration.
+	at := slices.Concat(a.at["authorize"], b.at["authorize"])
+	slices.SortFunc(at, func(x, y time.Time) int { return x.Compare(y) })
+	for k, when := range at {
+		if due := time.Duration(k+1) * time.Second / 400; when.Sub(began) < due {
+			t.Fatalf("authorize %d %v into the run, due at %v", k+1, when.Sub(began), due)
+		}
+	}
+	if took < cfg.Duration {
+		t.Fatalf("a run of %v ended after %v", cfg.Duration, took)
 	}
 
 	slow := admitting(t)
@@ -1242,42 +1258,30 @@ func TestTheRetryQueueIsServedInItsOrder(t *testing.T) {
 	}
 }
 
-// TestACancelledRunAuthorizesNoMore: once a run's context ends in a batch
-// of generations due at once, no more of them call their gateway: the
-// batch stops, and a generation started before the end and not yet at its
-// authorize is recorded cancelled without one.
-func TestACancelledRunAuthorizesNoMore(t *testing.T) {
+// TestACancelledGenerationCallsNothing: a generation the run's end reaches
+// before its authorize calls no gateway, and is recorded cancelled.
+func TestACancelledGenerationCallsNothing(t *testing.T) {
 	gw := admitting(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var mu sync.Mutex
-	calls, late := 0, 0
-	admit := gw.authorize
-	gw.authorize = func(a frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
-		mu.Lock()
-		if ctx.Err() != nil {
-			late++
-		}
-		if calls++; calls == 10 {
-			cancel()
-		}
-		mu.Unlock()
-		return admit(a)
+	gw.authorize = func(frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
+		t.Error("a generation authorized after the run ended")
+		return frontdoor.Authorized{}, errors.New("called")
 	}
 	cfg := config(gw)
-	cfg.Rate, cfg.Duration, cfg.MaxInFlight, cfg.Mix.StreamShare = MaxRate, 5*time.Millisecond, 10_000, 0
-	rep, err := Run(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A generation that found the run going as it came to its authorize
-	// may make it as the run ends: a few, never a batch.
-	if late > 10 || !rep.Cancelled {
-		t.Fatalf("%d of %d authorizes made once the run had ended, %+v", late, calls, rep.Outcomes)
-	}
-	if rep.Started != rep.Outcomes["generation"] ||
-		rep.Outcomes["authorize cancelled"]+int64(calls) != rep.Started {
-		t.Fatalf("%d started, %d authorizes, %+v", rep.Started, calls, rep.Outcomes)
+	var log bytes.Buffer
+	cfg.Log = &log
+	r := newRun(cfg)
+	workers, stop := r.startEnclaves(context.Background())
+	defer func() {
+		stop()
+		workers.Wait()
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.generation(ctx, 1)
+	var g Generation
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil || g.Authorized != "cancelled" ||
+		r.outcomes["authorize cancelled"] != 1 || r.started != 1 {
+		t.Fatalf("%+v %v, %+v", g, err, r.outcomes)
 	}
 }
 

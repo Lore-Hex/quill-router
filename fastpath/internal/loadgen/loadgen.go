@@ -421,9 +421,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := cfg.valid(); err != nil {
 		return Report{}, err
 	}
-	r := &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{},
-		streams: newHisto(cfg.Mix.Heartbeats), estimates: newHisto(cfg.Mix.Estimates),
-		bills: newHisto(cfg.Mix.BillPermill)}
+	r := newRun(cfg)
 	workers, stop := r.startEnclaves(ctx)
 	defer func() {
 		stop()
@@ -468,6 +466,13 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	rep := r.report()
 	rep.Cancelled = ctx.Err() != nil
 	return rep, r.logErr
+}
+
+// newRun is a run of cfg, its enclaves not yet started.
+func newRun(cfg Config) *run {
+	return &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{},
+		streams: newHisto(cfg.Mix.Heartbeats), estimates: newHisto(cfg.Mix.Estimates),
+		bills: newHisto(cfg.Mix.BillPermill)}
 }
 
 // startDue starts the generations after the n-th through the due-th, a batch
