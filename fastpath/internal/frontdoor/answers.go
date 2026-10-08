@@ -55,11 +55,12 @@ const (
 // OwnerAuthorize is an authorize as a front door forwards it to its shard's
 // owner.
 type OwnerAuthorize struct {
-	Workspace string
-	Shard     int64
-	Estimate  int64
-	Stream    bool
-	Boot      []byte
+	Workspace     string
+	Shard         int64
+	Estimate      int64
+	Stream        bool
+	Boot          []byte
+	OpenHeartbeat bool
 }
 
 // OwnerAdmitted is an owner's answer to an authorize: Admitted with the

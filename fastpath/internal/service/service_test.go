@@ -238,6 +238,57 @@ func TestARequestIsAdmittedSettledAndBooked(t *testing.T) {
 	}
 }
 
+// TestADeclaredStreamWithNoHeartbeatIsReleased: a stream whose boot declares
+// the heartbeat at stream open, admitted through a gateway's authorize and
+// sent no heartbeat, is released by its owner once the default
+// first-heartbeat allowance and the grace have passed, and not before; and
+// the auditor books the release, uncharged.
+func TestADeclaredStreamWithNoHeartbeatIsReleased(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := workspace(t, 100_000)
+	cfg := config(ln)
+	// The least grace the store takes with the default publish deadline and
+	// skew, and reap rounds every second, so the release comes soon after
+	// the default allowance.
+	cfg.Store.Grace, cfg.Owner.RenewEvery = 10*time.Second, time.Second
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+
+	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + ln.Addr().String()}
+	var got frontdoor.Authorized
+	// asked is when the authorize that was admitted was sent: no later than
+	// its admission.
+	var asked time.Time
+	eventually(t, 20*time.Second, "an admission", func() (bool, error) {
+		var err error
+		asked = time.Now()
+		got, err = gw.Authorize(ctx, frontdoor.AuthorizeOf{Workspace: ws, Request: "r1", Estimate: 40, Stream: true,
+			Boot: []byte("boot"), OpenHeartbeat: true})
+		return err == nil && got.Status == frontdoor.Admitted, nil
+	})
+	e, err := frontdoor.Open(key, got.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.New(shared, cfg.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, time.Minute, "the release booked", func() (bool, error) {
+		d, err := s.Disposition(ctx, e.Auth)
+		return err == nil && d.Outcome == "released" && d.Cost.Valid && d.Cost.Int64 == 0, err
+	})
+	if took, least := time.Since(asked), Defaults().Owner.FirstHeartbeat+cfg.Store.Grace; took < least {
+		t.Fatalf("released %v after its admission, before its allowance and the grace, %v", took, least)
+	}
+}
+
 // TestARequestFindsItsOwnerOnAnotherNode: two admission nodes and an
 // auditor member, each a process of its own. A request that comes to one
 // node for a workspace whose shard the other owns is admitted by the other's
