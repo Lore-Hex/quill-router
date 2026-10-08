@@ -383,6 +383,46 @@ func TestARenewalPastTheCutoffAdoptsBeforeDecidingAgain(t *testing.T) {
 	f.admit(t, 1, false)
 }
 
+// TestAHeartbeatAcknowledgedPastARenewalLeftToAdoptRetries: a heartbeat
+// handed over before the cutoff, and acknowledged only after a renewal past
+// it failed to read the drain log, answers retry, though the renewed cutoff
+// holds the acknowledgement; once the drain log's settle is adopted, the
+// hold is decided.
+func TestAHeartbeatAcknowledgedPastARenewalLeftToAdoptRetries(t *testing.T) {
+	f, sp, _ := adoptFixture(t)
+	ctx := context.Background()
+	s := f.admit(t, 10, true)
+	f.clock.advance(50 * time.Second) // the lease's cutoff is at 58 seconds
+	first, err := f.lease.Heartbeat(ctx, s, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(7900 * time.Millisecond)
+	f.log.hold()
+	got := make(chan error, 1)
+	go func() {
+		_, err := f.lease.Heartbeat(ctx, s, HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 2, Running: 2,
+			Echoed: first})
+		got <- err
+	}()
+	waitFor(t, "the second heartbeat's record", func() bool { return len(f.log.records(t, "lease-1")) == 2 })
+	f.clock.advance(200 * time.Millisecond)
+	sp.appendRow("lease-1", store.DrainRow{AuthorizationID: s, RecordID: "d1", Kind: "settle", Charge: 2, Estimate: 10,
+		Digest: sum("late")}, f.clock.Now())
+	sp.failReads = 1
+	renew(t, f)
+	f.log.letGo()
+	if err := <-got; !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat acknowledged with the drain log left to adopt: %v", err)
+	}
+	renew(t, f)
+	if _, err := f.lease.Heartbeat(ctx, s, HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 2, Running: 2,
+		Echoed: first}); !errors.Is(err, ErrDecided) {
+		t.Fatalf("its replay once the settle is adopted: %v", err)
+	}
+}
+
 // TestRenewalRoundsRunOneAtATime: a round waits for the one under way, so
 // each reads the drain log from the last one's read.
 func TestRenewalRoundsRunOneAtATime(t *testing.T) {

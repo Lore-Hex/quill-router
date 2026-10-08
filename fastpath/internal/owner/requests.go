@@ -257,13 +257,19 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 
 // heartbeatAnswer answers a heartbeat whose record is s: the deadline it
 // granted, once s is acknowledged before the cutoff and by the deadline the
-// heartbeat echoed; deadline_passed if after that; else retry (§4.5).
+// heartbeat echoed; deadline_passed if after that; else retry (§4.5). It is
+// retry too while a renewal, maybe one since s was handed over, has left
+// the drain log to adopt.
 func (l *Lease) heartbeatAnswer(ctx context.Context, s *sent, granted, echoed time.Time) (time.Time, error) {
 	acked, before, err := l.awaitAck(ctx, s)
-	switch {
-	case err != nil:
+	if err != nil {
 		return time.Time{}, err
-	case !acked || !before:
+	}
+	l.mu.Lock()
+	unadopted := l.unadopted
+	l.mu.Unlock()
+	switch {
+	case !acked || !before || unadopted:
 		return time.Time{}, ErrRetry
 	case !echoed.IsZero() && s.ackedAt.After(echoed):
 		return time.Time{}, ErrDeadlinePassed
