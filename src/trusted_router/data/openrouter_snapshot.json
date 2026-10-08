@@ -2974,6 +2974,23 @@
           "pricing_source": "provider_direct",
           "supported_parameters": [],
           "quantization": "unknown"
+        },
+        {
+          "name": "chutes | deepseek/deepseek-v4-flash-0731",
+          "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
+          "model_name": "DeepSeek: DeepSeek V4 Flash 0731",
+          "provider_name": "chutes",
+          "tag": "chutes",
+          "tr_provider_slug": "chutes",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000044",
+            "completion": "0.00000132",
+            "input_cache_read": "0.000000044"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
         }
       ],
       "pricing_source": "provider_direct"
@@ -12808,6 +12825,23 @@
           "pricing_source": "provider_direct",
           "supported_parameters": [],
           "quantization": "unknown"
+        },
+        {
+          "name": "chutes | moonshotai/kimi-k3",
+          "model_id": "moonshotai/Kimi-K3-TEE",
+          "model_name": "MoonshotAI: Kimi K3",
+          "provider_name": "chutes",
+          "tag": "chutes",
+          "tr_provider_slug": "chutes",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.000003",
+            "completion": "0.000015",
+            "input_cache_read": "0.0000003"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
         }
       ],
       "pricing_source": "provider_direct"
@@ -19765,23 +19799,6 @@
           "quantization": "unknown"
         },
         {
-          "name": "chutes | qwen/qwen3-235b-a22b-thinking-2507",
-          "model_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
-          "model_name": "Qwen: Qwen3 235B A22B Thinking 2507",
-          "provider_name": "chutes",
-          "tag": "chutes",
-          "tr_provider_slug": "chutes",
-          "context_length": 131072,
-          "pricing": {
-            "prompt": "0.0000002989",
-            "completion": "0.0000011957",
-            "input_cache_read": "0.00000002989"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
           "name": "streamlake | qwen/qwen3-235b-a22b-thinking-2507",
           "model_id": "Qwen3-235B-A22B-Thinking-2507",
           "model_name": "Qwen: Qwen3 235B A22B Thinking 2507",
@@ -23490,6 +23507,23 @@
             "prompt": "0.000000345",
             "completion": "0.00000269",
             "input_cache_read": "0.0000001725"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
+          "name": "chutes | qwen/qwen3.8-27b",
+          "model_id": "Qwen/Qwen3.8-27B-TEE",
+          "model_name": "Qwen: Qwen3.8 27B",
+          "provider_name": "chutes",
+          "tag": "chutes",
+          "tr_provider_slug": "chutes",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000024",
+            "completion": "0.0000022",
+            "input_cache_read": "0.000000024"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],

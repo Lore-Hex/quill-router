@@ -2,9 +2,9 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-08T21:57:30Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 13,
+  "model_count": 17,
   "models": [
     {
       "display_name": "deepseek-ai/DeepSeek-V3.2",
@@ -211,7 +211,9 @@
       ],
       "input_token_price_per_m": 298900,
       "output_token_price_per_m": 1195700,
-      "cached_input_token_price_per_m": 29890
+      "cached_input_token_price_per_m": 29890,
+      "routable": false,
+      "routable_reason": "attestation-evidence-unavailable"
     },
     {
       "display_name": "Qwen/Qwen3-32B",
@@ -391,6 +393,118 @@
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 3950000,
       "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
+      "confidential_compute": true,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 44000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K3",
+      "title": "moonshotai/Kimi-K3-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/Kimi-K3-TEE",
+      "confidential_compute": true,
+      "context_length": 1048576,
+      "max_output_tokens": 65535,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Nemotron-3-Nano-Omni-30B",
+      "title": "Nemotron-3-Nano-Omni-30B-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3-nano-omni",
+      "upstream_id": "Nemotron-3-Nano-Omni-30B-TEE",
+      "confidential_compute": true,
+      "context_length": 131072,
+      "input_token_price_per_m": 24500,
+      "output_token_price_per_m": 97800,
+      "cached_input_token_price_per_m": 2450
+    },
+    {
+      "display_name": "Qwen/Qwen3.8-27B",
+      "title": "Qwen/Qwen3.8-27B-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "Qwen/Qwen3.8-27B-TEE",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 240000,
+      "output_token_price_per_m": 2200000,
+      "cached_input_token_price_per_m": 24000
     }
   ]
 }

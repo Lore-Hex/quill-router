@@ -251,6 +251,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
         "meta",
         "cerebras",
+        "chutes",
         "cloudflare-workers-ai",
         "crusoe",
         "deepseek",
