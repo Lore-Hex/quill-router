@@ -503,11 +503,17 @@ the constraints, never by putting a reading where the spec has true time:
   an owner admitted with its reading before the expiry it knew, less S; an
   auditor marked a lease draining with its reading past the expiry plus S.
 - The spec's guard at true time, and each timed fact the spec keeps (an
-  admission within a revocation's window or a pause's cache age, a hold
-  whose life has not run out, a process past its cutoff when its lease
-  drains), must hold for every solution. A bound on one event is decided by
-  its earliest and latest true times; a bound between two events, by the
-  shortest path between them.
+  admission within a revocation's window or a pause's cache age, a hold whose
+  life has not run out, an admission before the auditor's mark of its lease
+  draining, which the auditor made with its reading past the expiry plus S),
+  must hold for every solution. A bound on one event is decided by its
+  earliest and latest true times; a bound between two events, by the shortest
+  path between them. A lease its owner marks draining needs no cutoff: the
+  owner may drain its empty closing lease long before the expiry, its write's
+  reply delayed or lost, and the rule §4.1 keeps in `CutoffBeforeDrain`'s
+  place, that the owner admits nothing once the lease is marked draining, is
+  checked on the owner's own events in their order, with no time: no admission
+  after its draining write's request.
 - Every request stopped in time (A3). The load generator records each
   request's end, the gateway's own: a stream completed, cut short or given
   up, a request answered or failed. That end, not its last delivery or its
@@ -591,18 +597,22 @@ concurrent streams put that out of reach.
 Money stays the specs' abstraction: in `AuditorCommit` a settle charges
 `SettleCharge` and an append `DoorCharge`, and holds are units in
 `LeaseLifecycle`. The run's amounts are checked directly, by CreditDebt's
-rules as the store's walks check them, with the walks' ledger moved where
-both use it: each commit's bookings, returns and raises against the
-allocation, each fault by kind and amount, and the owner's books against
-the allocation: the holds it holds, the terminals it decided whose
-publishes are not acknowledged, and what it booked, as CreditDebt's
-`OpenLog` counts stored and unbooked records. The lifecycle's holds, open
-until their terminals are booked, are not that set: a hold refunded and
-acknowledged frees its room for the next admission before any commit.
-Each reap's amount is checked too, the auditor's and the owner's: it names
-its hold's last durable snapshot by owner sequence number and charges
-`min(running charge, estimate)` of it, or nothing for a hold listed with
-no snapshot, as `store.Reap` books.
+rules as the store's walks check them, with the walks' ledger moved where both
+use it: each commit's bookings, returns and raises against the allocation,
+each fault by kind and amount, and the owner's books against the allocation:
+the holds it holds, the terminals it decided whose publishes are not
+acknowledged, and what it booked, as CreditDebt's `OpenLog` counts stored and
+unbooked records. The lifecycle's holds, open until their terminals are
+booked, are not that set: a hold refunded and acknowledged frees its room for
+the next admission before any commit. Each reap's amount is checked too, each
+by its own rule. The owner's names its hold's last heartbeat record issued
+before it, by owner sequence number, whether or not that record is durable
+yet, and charges that heartbeat's running charge (§4.2): the owner reaps at
+the snapshot it last issued, and may die before that snapshot or the reap is
+durable. The auditor's names its hold's last durable snapshot, the last
+heartbeat record of the hold its member committed before the reap, and charges
+`min(running charge, estimate)` of it, or nothing for a hold listed with no
+snapshot, as `store.Reap` books.
 
 The runtime records each fault with its kind:
 
@@ -664,32 +674,40 @@ fault, which is already set.
   each time check is solved again by an independent method (all pairs' shortest
   paths); and each direct check is written again, apart from `tracecheck`'s and
   from its definition, over the raw events: the money ledger summed afresh per
-  lease, each reap's amount against its snapshot (§7), A3 and A4 per request
-  (§5, §4.2), A4's coverage by every delivery against every answer its gateway
-  had by then, every accepted answer against its record's publish result, the
-  order's cycles by search, the log and its runs by trying every way the
-  acknowledged publishes and the deliveries could come from one. It reports
-  each assumption broken as §8 says, named as `tracecheck` must name it, K6's
-  control both broken and violated, and goes on without it; then pass if every
-  extension is a run, every timed predicate holds for every solution and the
-  money checks hold; violation if a money check fails, no extension is a run,
-  or a timed predicate holds for no solution; inconclusive otherwise, with the
-  first step that fails in each extension. `tracecheck` may be more careful
-  than the oracle, never less: its pass must be the oracle's pass, its
-  violation the oracle's violation at the step it names, each assumption it
-  reports broken the oracle's, and it may call inconclusive a trace the oracle
-  decides, since its independence table is judged over every state a pair could
-  meet, not the states this trace does. The tests count how often it does, so a
-  table grown too careful shows.
+  lease, each reap's amount against its snapshot, the owner's last issued and
+  the auditor's last durable (§7), A3 and A4 per request (§5, §4.2), A4's
+  coverage by every delivery against every answer its gateway had by then, every
+  accepted answer against the owner's decision to give it, made again from the
+  facts the owner recorded with it (§5): its reading of the record's
+  acknowledgement before the cutoff of the expiry it knew then and by the
+  deadline the heartbeat echoed, its drain log adopted, and the deadline granted
+  the one the owner's rule gives, with the publish result held to the publish
+  deadline, the order's cycles by search, the log and its runs by trying every
+  way the acknowledged publishes and the deliveries could come from one. It
+  reports each assumption broken as §8 says, named as `tracecheck` must name it,
+  K6's control both broken and violated, and goes on without it; then pass if
+  every extension is a run, every timed predicate holds for every solution and
+  the money checks hold; violation if a money check fails, no extension is a
+  run, or a timed predicate holds for no solution; inconclusive otherwise, with
+  the first step that fails in each extension. `tracecheck` may be more careful
+  than the oracle, never less: its pass must be the oracle's pass, its violation
+  the oracle's violation at the step it names, each assumption it reports broken
+  the oracle's, and it may call inconclusive a trace the oracle decides, since
+  its independence table is judged over every state a pair could meet, not the
+  states this trace does. The tests count how often it does, so a table grown
+  too careful shows.
 - **Traces from the machines.** Each step of a machine emits the events the
   runtime records for it, with their facts, clock readings within S, and
   evidence, so a random run becomes a trace. Each is checked as it is, with
   evidence removed, and altered: a fact changed, two events swapped, an event
-  dropped or repeated, a reading or a timestamp moved. The small ones are
-  held to the oracle; for every one, an alteration that turns a verdict to
-  a violation must name a step the oracle shows failing, or a cycle the
-  oracle's solver finds, and one that turns it to inconclusive must name the
-  pair or the timed predicate that leaves it open.
+  dropped or repeated, a reading or a timestamp moved. The small ones are held
+  to the oracle; for every one, an alteration that turns a verdict to a
+  violation must name a step the oracle shows failing, or a cycle the oracle's
+  solver finds, and one that turns it to inconclusive must name the pair or
+  the timed predicate that leaves it open. Some are written out by hand, for
+  what random runs may seldom reach: an owner that drains its empty closing
+  lease well before its cutoff, its draining write's reply delayed in one
+  trace and lost in another, each of which must pass.
 - **The runtime's own traces,** once the roles record events: the service's
   end-to-end tests and the scenarios of the spike plan's §5, each checked,
   K6's negative control reported as both a broken assumption and a
