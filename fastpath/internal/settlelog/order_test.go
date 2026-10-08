@@ -364,3 +364,83 @@ func TestAReturnIsNoAcknowledgement(t *testing.T) {
 		t.Fatalf("the next member got %v", got)
 	}
 }
+
+// TestAStoppedMemberLetsGoOfItsRecords: once a member's Receive returns, it
+// holds none of the records its handlers had and did not settle: the client
+// library, left alone, can go on extending such a record's deadline, here
+// la#1's, whose handler ran past the stop while lb#1's acknowledged handler
+// and lb#2, waiting behind it, filled the member's two places. The next
+// member gets la#1.
+func TestAStoppedMemberLetsGoOfItsRecords(t *testing.T) {
+	was := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	defer func() { shutdownTimeout = was }()
+	f := newFakeLog(t, true)
+	l := f.log(t)
+	for _, r := range []struct{ lease, data string }{{"la", "la#1"}, {"lb", "lb#1"}, {"lb", "lb#2"}} {
+		if err := wait(t, l.Publish(r.lease, []byte(r.data), nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	running := make(chan string, 4)
+	received := make(chan error, 1)
+	go func() {
+		received <- Subscribe(f.client, f.sub, 2).Receive(ctx, func(_ context.Context, d *Delivery) {
+			switch string(d.Data) {
+			case "la#1": // held, and never settled
+			case "lb#1":
+				d.Ack()
+			default:
+				return
+			}
+			running <- string(d.Data)
+			<-release
+		})
+	}()
+	for range 2 {
+		select {
+		case <-running:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the handlers did not run")
+		}
+	}
+	// lb#1's acknowledgement reaches the server, which then sends lb#2, to
+	// wait in the member behind lb#1's handler.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if m := f.srv.Messages(); len(m) == 3 && m[1].Acks == 1 && m[2].Deliveries > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("lb#2 did not reach the member")
+		}
+	}
+	cancel()
+	if err := <-received; err != nil {
+		t.Fatal(err)
+	}
+	stopped := time.Now()
+	close(release)
+	time.Sleep(6 * time.Second) // the library extends a held record's deadline every few seconds
+	for _, m := range f.srv.Messages() {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 && a.ReceivedAt.After(stopped) {
+				t.Fatalf("%s's deadline was extended %v after the member stopped", m.Data, a.ReceivedAt.Sub(stopped))
+			}
+		}
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	got := false
+	err := Subscribe(f.client, f.sub, -1).Receive(ctx2, func(_ context.Context, d *Delivery) {
+		d.Ack()
+		if string(d.Data) == "la#1" {
+			got = true
+			cancel2()
+		}
+	})
+	if err != nil || !got {
+		t.Fatalf("the next member did not get la#1: %v", err)
+	}
+}

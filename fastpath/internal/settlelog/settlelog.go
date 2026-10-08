@@ -365,12 +365,13 @@ func (r *Records) Stop() {
 var shutdownTimeout = 10 * time.Second
 
 // Subscription is the auditor's subscription to a region's settle log,
-// which must have message ordering on.
+// which must have message ordering on. It runs one Receive at a time.
 type Subscription struct {
 	sub *pubsub.Subscriber
 
-	mu     sync.Mutex
-	active map[string]bool
+	mu          sync.Mutex
+	active      map[string]bool
+	outstanding map[*pubsub.Message]bool
 }
 
 // Subscribe opens it. maxOutstanding bounds the records delivered and not
@@ -382,7 +383,7 @@ func Subscribe(client *pubsub.Client, subscription string, maxOutstanding int) *
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
-	return &Subscription{sub: sub, active: map[string]bool{}}
+	return &Subscription{sub: sub, active: map[string]bool{}, outstanding: map[*pubsub.Message]bool{}}
 }
 
 // Delivery is one record as the log delivered it.
@@ -397,14 +398,33 @@ type Delivery struct {
 	Attempt *int
 
 	msg *pubsub.Message
+	sub *Subscription
 }
 
 // Ack acknowledges the record, once what it did is committed (assumption
 // A1, design §4.8): a record not acknowledged is delivered again.
-func (d *Delivery) Ack() { d.msg.Ack() }
+func (d *Delivery) Ack() { d.sub.settle(d.msg, true) }
 
 // Nack asks for the record again now.
-func (d *Delivery) Nack() { d.msg.Nack() }
+func (d *Delivery) Nack() { d.sub.settle(d.msg, false) }
+
+// settle acknowledges a delivered record, or asks for it again, once. A
+// record its member's stop has asked for again already stays so: its
+// handler's acknowledgement after the stop does nothing, and the record
+// comes back, which A1's redelivery allows.
+func (s *Subscription) settle(m *pubsub.Message, ack bool) {
+	s.mu.Lock()
+	out := s.outstanding[m]
+	delete(s.outstanding, m)
+	s.mu.Unlock()
+	switch {
+	case !out:
+	case ack:
+		m.Ack()
+	default:
+		m.Nack()
+	}
+}
 
 // Receive delivers records until ctx ends or the subscription fails: each
 // lease's in the order the log stored them, and one at a time, the next
@@ -416,9 +436,13 @@ func (d *Delivery) Nack() { d.msg.Nack() }
 // begins to shut down, when it stops waiting for a handler still running.
 // So Receive itself never hands a record over once ctx has ended, nor while
 // another of its lease's is being handled: such a record is asked for again,
-// and comes back in its order.
+// and comes back in its order. Nor does the library always let go of a
+// record its handler returned without settling, or one whose handler is
+// still running when it returns: it can go on extending its deadline, for up
+// to an hour. So when Receive returns it asks for every such record again
+// itself.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
-	return s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
 		lease := m.OrderingKey
 		s.mu.Lock()
 		if ctx.Err() != nil || cctx.Err() != nil || s.active[lease] {
@@ -427,6 +451,7 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 			return
 		}
 		s.active[lease] = true
+		s.outstanding[m] = true
 		s.mu.Unlock()
 		defer func() {
 			s.mu.Lock()
@@ -434,6 +459,14 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 			s.mu.Unlock()
 		}()
 		handle(cctx, &Delivery{Lease: lease, Data: m.Data, Attrs: m.Attributes, ID: m.ID,
-			PublishTime: m.PublishTime, Attempt: m.DeliveryAttempt, msg: m})
+			PublishTime: m.PublishTime, Attempt: m.DeliveryAttempt, msg: m, sub: s})
 	})
+	s.mu.Lock()
+	left := s.outstanding
+	s.outstanding = map[*pubsub.Message]bool{}
+	s.mu.Unlock()
+	for m := range left {
+		m.Nack()
+	}
+	return err
 }
