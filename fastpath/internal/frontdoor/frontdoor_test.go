@@ -85,6 +85,11 @@ func (f *fakeOwners) Heartbeat(ctx context.Context, address string, req OwnerHea
 	return f.heartbeat, nil
 }
 
+func (f *fakeOwners) Ping(ctx context.Context, address string) error {
+	f.ev.add("owner %s ping", address)
+	return f.reach(ctx, address)
+}
+
 func (f *fakeOwners) Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error) {
 	f.ev.add("owner %s %s", address, req.Kind)
 	f.terminals = append(f.terminals, req)
@@ -101,6 +106,7 @@ type fakeStore struct {
 	failAppend  bool
 	disposition store.Disposition
 	failDisp    bool
+	failRevoke  int
 }
 
 func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.AppendResult, error) {
@@ -113,6 +119,15 @@ func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.Appe
 		return store.AppendResult{Refused: store.RefusedClosed}, nil
 	}
 	return store.AppendResult{CommitTS: start}, nil
+}
+
+func (f *fakeStore) Revoke(_ context.Context, ref store.LeaseRef) (bool, time.Time, error) {
+	f.ev.add("revoke %s", ref.LeaseID)
+	if f.failRevoke > 0 {
+		f.failRevoke--
+		return false, time.Time{}, errInjected
+	}
+	return true, start, nil
 }
 
 func (f *fakeStore) Disposition(_ context.Context, authorization string) (store.Disposition, error) {

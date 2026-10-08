@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -23,11 +24,13 @@ import (
 )
 
 // Store is what a front door writes and reads in Spanner: the drain log's
-// appends, and an authorization's disposition when an append is refused.
-// *store.Store is one.
+// appends, an authorization's disposition when an append is refused, and
+// the revocation of a lease whose owner no one reaches. *store.Store is
+// one.
 type Store interface {
 	Append(ctx context.Context, t store.DrainTerminal) (store.AppendResult, error)
 	Disposition(ctx context.Context, authorization string) (store.Disposition, error)
+	Revoke(ctx context.Context, ref store.LeaseRef) (bool, time.Time, error)
 }
 
 // Waiter is a publish: its acknowledgement's message ID, or its failure.
@@ -70,11 +73,54 @@ type Config struct {
 	OwnerWait time.Duration
 	// PublishWait bounds a full record's publish (§4.9).
 	PublishWait time.Duration
+
+	// Self is this node's address, Peers the other nodes' front doors: a
+	// terminal or a heartbeat whose owner this one cannot reach is sent
+	// through one of them, a heartbeat's within PeerWait, since its own
+	// budget is five seconds (§4.3). Without Peers it is sent through none.
+	Self     string
+	Peers    Peers
+	PeerWait time.Duration
+	// Node is this node's row in the ring. Once calls to two or more owners
+	// fail here within WithdrawWithin while a peer reaches them, the front
+	// door withdraws and takes no new request; every ProbeEvery it tries
+	// those owners again, and serves once it reaches each that is still a
+	// member (§4.3, spike plan §4). Without Node it never withdraws.
+	Node           States
+	WithdrawWithin time.Duration
+	ProbeEvery     time.Duration
+	// A lease whose owner neither this front door nor its peer has reached
+	// for RevokeAfter is revoked, at most one lease a RevokeEvery; a
+	// withdrawn front door revokes none (§4.3). Zero RevokeAfter revokes
+	// none.
+	RevokeAfter time.Duration
+	RevokeEvery time.Duration
+	Clock       func() time.Time
+}
+
+// States sets a node's state in the ring; *ring.Node is one.
+type States interface {
+	SetState(ctx context.Context, state string) error
 }
 
 // FrontDoor takes a node's gateway requests.
 type FrontDoor struct {
 	cfg Config
+
+	mu sync.Mutex
+	// withdrawn is set while the front door is withdrawn. unreached are the
+	// owners whose calls last failed here while a peer reached them, with
+	// when; failing, each lease whose owner no one reached since a call
+	// first failed, with when; revoked, the leases revoked, with when, and
+	// lastRevoke the last of those.
+	withdrawn  bool
+	unreached  map[string]time.Time
+	failing    map[store.LeaseRef]time.Time
+	revoked    map[store.LeaseRef]time.Time
+	lastRevoke time.Time
+	// work are its revocations and state writes under way, which Run waits
+	// for when it returns.
+	work sync.WaitGroup
 }
 
 // New is a front door with its configuration.
@@ -84,7 +130,17 @@ func New(cfg Config) (*FrontDoor, error) {
 		return nil, errors.New("frontdoor: owners, a store, the record topic, the members, a key of at least " +
 			"32 bytes, the workspaces' shard counts and positive waits")
 	}
-	return &FrontDoor{cfg: cfg}, nil
+	if (cfg.Peers != nil && (cfg.Self == "" || cfg.PeerWait <= 0)) ||
+		(cfg.Node != nil && (cfg.WithdrawWithin <= 0 || cfg.ProbeEvery <= 0)) || cfg.RevokeAfter < 0 ||
+		(cfg.RevokeAfter > 0 && cfg.RevokeEvery <= 0) {
+		return nil, errors.New("frontdoor: peers need this node's address and a wait, withdrawing a window and " +
+			"a probe interval, and revoking an interval")
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = time.Now
+	}
+	return &FrontDoor{cfg: cfg, unreached: map[string]time.Time{}, failing: map[store.LeaseRef]time.Time{},
+		revoked: map[store.LeaseRef]time.Time{}}, nil
 }
 
 // AuthorizeOf is a gateway's authorize.
@@ -109,11 +165,14 @@ type Authorized struct {
 // picks (§4.3). If that owner has no lease to take it, or cannot be reached,
 // a sharded workspace tries one other shard's owner, and then is Busy
 // (§4.4). The spike has no synchronous path, so an unsharded workspace is
-// Busy at once.
+// Busy at once. A withdrawn front door takes no new request: Busy.
 func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 	k := f.cfg.Shards(a.Workspace)
 	if a.Workspace == "" || k < 1 || a.Estimate < 0 || len(a.Boot) == 0 {
 		return Authorized{Status: Invalid}
+	}
+	if f.Withdrawn() {
+		return Authorized{Status: Busy}
 	}
 	shard := pick(a.Request, k)
 	shards := []int64{shard}
@@ -158,19 +217,18 @@ type HeartbeatOf struct {
 	Basis      []byte
 }
 
-// Heartbeat sends a heartbeat to the owner its envelope names. One the
-// owner does not answer gets Retry, which stops the stream (§4.3).
+// Heartbeat sends a heartbeat to the owner its envelope names, through a
+// peer if this front door cannot reach it. One that no owner answers gets
+// Retry, which stops the stream (§4.3).
 func (f *FrontDoor) Heartbeat(ctx context.Context, hb HeartbeatOf) HeartbeatAnswer {
 	env, err := Open(f.cfg.Key, hb.Envelope)
 	if err != nil {
 		return HeartbeatAnswer{Status: Invalid}
 	}
-	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
-	defer cancel()
-	got, err := f.cfg.Owners.Heartbeat(octx, env.Owner, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
+	got, ok := f.heartbeatAt(ctx, env, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
 		GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: hb.Usage, Running: hb.Running, Echoed: hb.Echoed,
 		Basis: hb.Basis})
-	if err != nil {
+	if !ok {
 		return HeartbeatAnswer{Status: Retry}
 	}
 	return got
@@ -251,17 +309,16 @@ func (f *FrontDoor) Refund(ctx context.Context, r RefundOf) TerminalAnswer {
 	return f.terminal(ctx, env, req, rowID(req, r.Money), r.Money)
 }
 
-// terminal sends a terminal to the owner its envelope names. If the owner
-// cannot be reached, or answers that it may never publish it, the terminal
-// goes to the lease's drain log at once, under the row ID given.
+// terminal sends a terminal to the owner its envelope names, through a peer
+// if this front door cannot reach it. If no owner answers, or the owner
+// answers that it may never publish it, the terminal goes to the lease's
+// drain log at once, under the row ID given.
 func (f *FrontDoor) terminal(ctx context.Context, env Envelope, req OwnerTerminal, recordID string,
 	money []byte) TerminalAnswer {
-	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
-	got, err := f.cfg.Owners.Terminal(octx, env.Owner, req)
-	cancel()
+	got, ok := f.terminalAt(ctx, env, req)
 	cause := "unreachable"
 	switch {
-	case err != nil:
+	case !ok:
 	case got.Status == PastCutoff:
 		cause = "past_cutoff"
 	case got.Status == Won:
