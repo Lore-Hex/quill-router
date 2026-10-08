@@ -47,8 +47,8 @@ func (f *fake) Join(_ context.Context, address string, roles []string) (int64, t
 	if r, ok := f.rows[address]; ok {
 		epoch = r.Epoch + 1
 	}
-	f.rows[address] = &store.Member{Address: address, Epoch: epoch, Roles: roles, State: store.Serving, StartedAt: f.now,
-		HeartbeatAt: f.now}
+	f.rows[address] = &store.Member{Address: address, Epoch: epoch, Roles: slices.Clone(roles), State: store.Serving,
+		StartedAt: f.now, HeartbeatAt: f.now}
 	return epoch, f.now, nil
 }
 
@@ -80,6 +80,7 @@ func (f *fake) Members(context.Context) ([]store.Member, time.Time, error) {
 	var out []store.Member
 	for _, r := range f.rows {
 		m := *r
+		m.Roles = slices.Clone(r.Roles)
 		m.Live = f.now.Sub(m.HeartbeatAt) < f.liveFor
 		out = append(out, m)
 	}
@@ -379,7 +380,7 @@ func TestAWatcherSeesAMemberGo(t *testing.T) {
 }
 
 // TestAWatcherKeepsItsLastView: a read that fails leaves the view, and its
-// time, as they were.
+// time, as they were; and the view a caller gets is its own copy.
 func TestAWatcherKeepsItsLastView(t *testing.T) {
 	f := newFake()
 	ctx := context.Background()
@@ -391,24 +392,103 @@ func TestAWatcherKeepsItsLastView(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Stop()
+	// The baseline, taken before reads begin to fail, built apart from
+	// anything the watcher returned.
+	members, readAt, err := f.Members(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := View{Members: members, ReadAt: readAt}
+	eventually(t, "a read of the baseline", func() bool {
+		v, _ := w.View()
+		return reflect.DeepEqual(v, want)
+	})
+	_, before := w.View()
 	f.setFail(errors.New("unavailable"))
-	time.Sleep(5 * time.Millisecond) // a read under way when reads began to fail lands first
-	kept, before := w.View()
-	if len(kept.Members) != 1 || !kept.Members[0].Live || kept.ReadAt.IsZero() {
-		t.Fatalf("the view before the failures: %+v", kept)
-	}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	v, after := w.View()
-	if !after.Equal(before) || !reflect.DeepEqual(v, kept) {
-		t.Fatalf("a failed read changed the view: %v %+v, then %v %+v", before, kept, after, v)
+	if !reflect.DeepEqual(v, want) || after.Before(before) {
+		t.Fatalf("a failed read changed the view: %+v at %v, then %+v at %v", want, before, v, after)
 	}
-	// The view is the caller's copy: changing it changes nothing kept.
+	// Reads go on failing, so the time stays the last success's.
+	time.Sleep(5 * time.Millisecond)
+	if _, again := w.View(); !again.Equal(after) {
+		t.Fatalf("the view's time moved with no successful read: %v, then %v", after, again)
+	}
 	v.Members[0].Roles[0], v.Members[0].Live = "frontdoor", false
-	if again, _ := w.View(); !reflect.DeepEqual(again, kept) {
+	if again, _ := w.View(); !reflect.DeepEqual(again, want) {
 		t.Fatalf("a caller's change reached the watcher's view: %+v", again)
 	}
 	if _, err := Watch(ctx, f, time.Millisecond); err == nil {
 		t.Fatal("a watch starts with no first read")
+	}
+}
+
+// slowMembers is the fake whose reads take a while, counted.
+type slowMembers struct {
+	*fake
+	mu    sync.Mutex
+	reads int
+	took  time.Duration
+}
+
+func (s *slowMembers) Members(ctx context.Context) ([]store.Member, time.Time, error) {
+	s.mu.Lock()
+	s.reads++
+	took := s.took
+	s.mu.Unlock()
+	select {
+	case <-time.After(took):
+	case <-ctx.Done():
+		return nil, time.Time{}, ctx.Err()
+	}
+	return s.fake.Members(ctx)
+}
+
+func (s *slowMembers) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
+}
+
+// TestAViewsTimeCountsItsRead and the watcher reads nothing after Stop.
+func TestAViewsTimeCountsItsReadAndNoReadFollowsStop(t *testing.T) {
+	sm := &slowMembers{fake: newFake(), took: 30 * time.Millisecond}
+	ctx := context.Background()
+	began := time.Now()
+	w, err := Watch(ctx, sm, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, at := w.View(); at.After(began.Add(5 * time.Millisecond)) {
+		t.Fatalf("a read that took 30 ms is dated %v after it began", at.Sub(began))
+	}
+	time.Sleep(50 * time.Millisecond)
+	w.Stop()
+	stopped := sm.count()
+	time.Sleep(60 * time.Millisecond)
+	if sm.count() != stopped {
+		t.Fatalf("%d reads after Stop", sm.count()-stopped)
+	}
+}
+
+// TestNoStateIsMeantThatIsNone: a state the store does not know is refused
+// before the node means it, so its heartbeats go on.
+func TestNoStateIsMeantThatIsNone(t *testing.T) {
+	f := newFake()
+	ctx := context.Background()
+	n, err := Start(ctx, f, "a:1", []string{OwnerRole}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Stop()
+	if err := n.SetState(ctx, "gone"); err == nil {
+		t.Fatal("a node means a state there is not")
+	}
+	before := f.beatCount("a:1")
+	eventually(t, "heartbeats after the refusal", func() bool { return f.beatCount("a:1") > before+2 })
+	if f.row("a:1").State != store.Serving {
+		t.Fatalf("the row says %s", f.row("a:1").State)
 	}
 }
 

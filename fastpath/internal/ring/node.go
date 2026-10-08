@@ -88,6 +88,9 @@ func (n *Node) SetState(ctx context.Context, state string) error {
 	if n.ctx.Err() != nil {
 		return ErrStopped
 	}
+	if state != store.Serving && state != store.Leaving && state != store.Withdrawn {
+		return fmt.Errorf("ring: no member state %q", state)
+	}
 	if n.meant == store.Leaving && state != store.Leaving {
 		return fmt.Errorf("ring: a leaving node cannot be %s until it starts again", state)
 	}
