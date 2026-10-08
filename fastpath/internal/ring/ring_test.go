@@ -443,10 +443,9 @@ type gated struct {
 	began    chan struct{}
 	finished chan error
 	waiting  bool // a read has begun that the test has not let go
-	// afterCancel is how long a cancelled read takes to return, and
-	// returned is closed once one has.
-	afterCancel time.Duration
-	returned    chan struct{}
+	// When the test sets them, a read cancelled under way closes cancelled,
+	// is held until release is closed, and then closes returned.
+	cancelled, release, returned chan struct{}
 }
 
 func newGated(f *fake) *gated {
@@ -462,7 +461,10 @@ func (g *gated) Members(ctx context.Context) ([]store.Member, time.Time, error) 
 	select {
 	case <-g.next:
 	case <-ctx.Done():
-		time.Sleep(g.afterCancel)
+		if g.cancelled != nil {
+			close(g.cancelled)
+			<-g.release
+		}
 		select {
 		case g.finished <- ctx.Err():
 		default:
@@ -588,12 +590,12 @@ func TestStopCancelsAReadUnderWay(t *testing.T) {
 		}
 		watched <- w
 	}()
-	// The first read, and then the next, under way and held; cancelled, it
-	// takes 150 ms more to return.
+	// The first read, and then the next, under way and held; once
+	// cancelled, it is held until the test releases it.
 	if err := g.read(t, ticks); err != nil {
 		t.Fatal(err)
 	}
-	g.afterCancel, g.returned = 150*time.Millisecond, make(chan struct{})
+	g.cancelled, g.release, g.returned = make(chan struct{}), make(chan struct{}), make(chan struct{})
 	w := <-watched
 	stopped := make(chan struct{})
 	go func() {
@@ -601,9 +603,20 @@ func TestStopCancelsAReadUnderWay(t *testing.T) {
 		close(stopped)
 	}()
 	select {
+	case <-g.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not cancel the read under way")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while the read it cancelled had not")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(g.release)
+	select {
 	case <-stopped:
 	case <-time.After(time.Second):
-		t.Fatal("Stop waits on the read under way")
+		t.Fatal("Stop did not return once the read did")
 	}
 	select {
 	case <-g.returned:
@@ -704,15 +717,15 @@ type blocking struct {
 	block   chan struct{}
 	entered chan struct{}
 	landErr error
-	// afterCancel is how long a cancelled write takes to return, and
-	// returned is closed once one has.
-	afterCancel time.Duration
-	returned    chan struct{}
+	// When the test sets them, a write cancelled under way closes
+	// cancelled, is held until release is closed, and then closes returned.
+	cancelled, release, returned chan struct{}
 }
 
 func (b *blocking) Heartbeat(ctx context.Context, address string, epoch int64, state string) (bool, time.Time, error) {
 	b.mu.Lock()
-	block, entered, landErr, afterCancel, returned := b.block, b.entered, b.landErr, b.afterCancel, b.returned
+	block, entered, landErr := b.block, b.entered, b.landErr
+	cancelled, release, returned := b.cancelled, b.release, b.returned
 	b.mu.Unlock()
 	if block != nil {
 		if entered != nil {
@@ -724,8 +737,9 @@ func (b *blocking) Heartbeat(ctx context.Context, address string, epoch int64, s
 		select {
 		case <-block:
 		case <-ctx.Done():
-			time.Sleep(afterCancel)
-			if returned != nil {
+			if cancelled != nil {
+				close(cancelled)
+				<-release
 				close(returned)
 			}
 			return false, time.Time{}, ctx.Err()
@@ -804,13 +818,17 @@ func TestALeaveThatTimedOutStaysMeant(t *testing.T) {
 func TestStopEndsAWriteUnderWay(t *testing.T) {
 	b := &blocking{fake: newFake()}
 	ctx := context.Background()
-	n, err := Start(ctx, b, "a:1", []string{OwnerRole}, time.Hour)
+	ticks := make(chan time.Time)
+	n, err := start(ctx, b, "a:1", []string{OwnerRole}, time.Hour, ticks)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The loop runs: it took a tick, and its heartbeat reached the store.
+	tick(t, ticks)
+	eventually(t, "the loop's heartbeat", func() bool { return b.attemptCount("a:1") == 1 })
 	b.mu.Lock()
 	b.block, b.entered = make(chan struct{}), make(chan struct{}, 1)
-	b.afterCancel, b.returned = 150*time.Millisecond, make(chan struct{}) // cancelled, it takes 150 ms to return
+	b.cancelled, b.release, b.returned = make(chan struct{}), make(chan struct{}), make(chan struct{})
 	b.mu.Unlock()
 	result := make(chan error, 1)
 	go func() { result <- n.SetState(context.Background(), store.Withdrawn) }()
@@ -825,9 +843,20 @@ func TestStopEndsAWriteUnderWay(t *testing.T) {
 		close(stopped)
 	}()
 	select {
+	case <-b.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not cancel the write under way")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while the write it cancelled had not")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(b.release)
+	select {
 	case <-stopped:
 	case <-time.After(time.Second):
-		t.Fatal("Stop waits on a write stuck under way")
+		t.Fatal("Stop did not return once the write did")
 	}
 	select {
 	case <-b.returned:
@@ -838,7 +867,7 @@ func TestStopEndsAWriteUnderWay(t *testing.T) {
 		t.Fatalf("the stuck write ended with %v", err)
 	}
 	b.mu.Lock()
-	b.block, b.returned = nil, nil
+	b.block, b.cancelled = nil, nil
 	b.mu.Unlock()
 	beats := b.beatCount("a:1")
 	if err := n.SetState(ctx, store.Serving); !errors.Is(err, ErrStopped) {
