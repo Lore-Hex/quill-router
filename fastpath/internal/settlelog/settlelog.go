@@ -494,6 +494,9 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 // acknowledged by its handler once staged.
 type RecordSubscription struct {
 	sub *pubsub.Subscriber
+
+	mu          sync.Mutex
+	outstanding map[*pubsub.Message]bool
 }
 
 // SubscribeRecords opens it. maxOutstanding bounds the messages delivered
@@ -505,7 +508,7 @@ func SubscribeRecords(client *pubsub.Client, subscription string, maxOutstanding
 	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
-	return &RecordSubscription{sub: sub}
+	return &RecordSubscription{sub: sub, outstanding: map[*pubsub.Message]bool{}}
 }
 
 // RecordDelivery is one message of the record topic as it was delivered:
@@ -518,21 +521,54 @@ type RecordDelivery struct {
 	PublishTime   time.Time
 
 	msg *pubsub.Message
+	sub *RecordSubscription
 }
 
 // Ack acknowledges the message once it is staged: it is not delivered
 // again.
-func (d *RecordDelivery) Ack() { d.msg.Ack() }
+func (d *RecordDelivery) Ack() { d.sub.settle(d.msg, true) }
 
 // Nack asks for the message again.
-func (d *RecordDelivery) Nack() { d.msg.Nack() }
+func (d *RecordDelivery) Nack() { d.sub.settle(d.msg, false) }
+
+// settle acknowledges a delivered message, or asks for it again, once, as
+// Subscription's does: one its consumer's stop has asked for again already
+// stays so.
+func (s *RecordSubscription) settle(m *pubsub.Message, ack bool) {
+	s.mu.Lock()
+	out := s.outstanding[m]
+	delete(s.outstanding, m)
+	s.mu.Unlock()
+	switch {
+	case !out:
+	case ack:
+		m.Ack()
+	default:
+		m.Nack()
+	}
+}
 
 // Receive delivers messages until ctx ends or the subscription fails, many
 // at once. handle settles each: Ack once it is staged, Nack to have it
-// again.
+// again. A message whose handler returns without settling it, as the
+// service's does for one that comes once it is stopping, or whose handler
+// still runs when Receive returns, the client library can go on holding,
+// extending its deadline for up to an hour, as Subscription's Receive
+// says; so when Receive returns it asks for each such message again itself.
 func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Context, *RecordDelivery)) error {
-	return s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		s.mu.Lock()
+		s.outstanding[m] = true
+		s.mu.Unlock()
 		handle(cctx, &RecordDelivery{Authorization: m.Attributes[AuthorizationAttr], Kind: m.Attributes[KindAttr],
-			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m})
+			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m, sub: s})
 	})
+	s.mu.Lock()
+	left := s.outstanding
+	s.outstanding = map[*pubsub.Message]bool{}
+	s.mu.Unlock()
+	for m := range left {
+		m.Nack()
+	}
+	return err
 }
