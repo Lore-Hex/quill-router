@@ -389,12 +389,14 @@ func TestAWatcherSeesAMemberGo(t *testing.T) {
 }
 
 // gated is the fake whose reads each wait for the test to let them go, and
-// report when they end, so a test knows exactly which read made a view.
+// report when they begin and end, so a test knows exactly which read made a
+// view.
 type gated struct {
 	*fake
 	next     chan struct{}
 	began    chan struct{}
 	finished chan error
+	waiting  bool // a read has begun that the test has not let go
 }
 
 func newGated(f *fake) *gated {
@@ -414,21 +416,41 @@ func (g *gated) Members(ctx context.Context) ([]store.Member, time.Time, error) 
 	return members, at, err
 }
 
-// read lets one read go and waits for it to end.
-func (g *gated) read(t *testing.T) error {
+// begun waits up to within for a read to begin, unless one has.
+func (g *gated) begun(t *testing.T, within time.Duration) {
 	t.Helper()
+	if g.waiting {
+		return
+	}
+	select {
+	case <-g.began:
+		g.waiting = true
+	case <-time.After(within):
+		t.Fatal("no read began")
+	}
+}
+
+// read lets the read under way go and waits for it to end, then for the
+// watcher's next read to begin, within its interval. The watcher begins it
+// only once it has applied this one's result, so when read returns the view
+// is the one this read made, or kept.
+func (g *gated) read(t *testing.T, interval time.Duration) error {
+	t.Helper()
+	g.begun(t, time.Second)
+	g.waiting = false
 	select {
 	case g.next <- struct{}{}:
 	case <-time.After(time.Second):
-		t.Fatal("no read began")
+		t.Fatal("the read under way ended unanswered")
 	}
+	var err error
 	select {
-	case err := <-g.finished:
-		return err
+	case err = <-g.finished:
 	case <-time.After(time.Second):
 		t.Fatal("the read did not end")
 	}
-	return nil
+	g.begun(t, interval+time.Second)
+	return err
 }
 
 // TestAWatcherKeepsItsLastView: a read that fails leaves the view, and its
@@ -449,24 +471,14 @@ func TestAWatcherKeepsItsLastView(t *testing.T) {
 		}
 		watched <- w
 	}()
-	if err := g.read(t); err != nil {
+	if err := g.read(t, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	w := <-watched
-	defer func() {
-		go func() {
-			for range g.began {
-				select {
-				case g.next <- struct{}{}:
-				default:
-				}
-			}
-		}()
-		w.Stop()
-	}()
+	defer w.Stop() // which ends the read under way
 	// The baseline: one more successful read, built apart from anything the
 	// watcher returned.
-	if err := g.read(t); err != nil {
+	if err := g.read(t, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	members, readAt, err := f.Members(ctx)
@@ -480,7 +492,7 @@ func TestAWatcherKeepsItsLastView(t *testing.T) {
 	}
 	f.setFail(errors.New("unavailable"))
 	for range 3 {
-		if err := g.read(t); err == nil {
+		if err := g.read(t, time.Millisecond); err == nil {
 			t.Fatal("a read succeeded while reads fail")
 		}
 		got, gotAt := w.View()
@@ -512,19 +524,11 @@ func TestStopCancelsAReadUnderWay(t *testing.T) {
 		}
 		watched <- w
 	}()
-	if err := g.read(t); err != nil {
+	// The first read, and then the next, two seconds on, begun and held.
+	if err := g.read(t, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	w := <-watched
-	select {
-	case <-g.began: // the first read's
-	default:
-	}
-	select {
-	case <-g.began: // the next, held, two seconds on
-	case <-time.After(3 * time.Second):
-		t.Fatal("no second read began")
-	}
 	stopped := time.Now()
 	w.Stop()
 	if took := time.Since(stopped); took > 500*time.Millisecond {
@@ -614,14 +618,21 @@ type blocking struct {
 	*fake
 	mu      sync.Mutex
 	block   chan struct{}
+	entered chan struct{}
 	landErr error
 }
 
 func (b *blocking) Heartbeat(ctx context.Context, address string, epoch int64, state string) (bool, time.Time, error) {
 	b.mu.Lock()
-	block, landErr := b.block, b.landErr
+	block, entered, landErr := b.block, b.entered, b.landErr
 	b.mu.Unlock()
 	if block != nil {
+		if entered != nil {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+		}
 		select {
 		case <-block:
 		case <-ctx.Done():
@@ -706,11 +717,15 @@ func TestStopEndsAWriteUnderWay(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.mu.Lock()
-	b.block = make(chan struct{})
+	b.block, b.entered = make(chan struct{}), make(chan struct{}, 1)
 	b.mu.Unlock()
 	result := make(chan error, 1)
 	go func() { result <- n.SetState(context.Background(), store.Withdrawn) }()
-	time.Sleep(5 * time.Millisecond)
+	select {
+	case <-b.entered:
+	case <-time.After(time.Second):
+		t.Fatal("the write did not begin")
+	}
 	stopped := make(chan struct{})
 	go func() {
 		n.Stop()
@@ -721,8 +736,8 @@ func TestStopEndsAWriteUnderWay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Stop waits on a write stuck under way")
 	}
-	if err := <-result; err == nil {
-		t.Fatal("the stuck write succeeded")
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the stuck write ended with %v", err)
 	}
 	b.mu.Lock()
 	b.block = nil
