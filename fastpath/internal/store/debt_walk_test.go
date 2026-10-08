@@ -376,8 +376,9 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	if !slices.ContainsFunc(money, func(op MoneyOp) bool { return op.Book }) && len(got[0].Faults) != 0 {
 		d.fatalf("a commit that books nothing faulted %v", got[0].Faults)
 	}
-	l.version, l.seq = got[0].NewVersion, seq
-	l.packs = append(l.packs, Pack{CommitVersion: got[0].NewVersion, Winners: req.Winners})
+	l.advance(d, "the commit", got[0].NewVersion)
+	l.seq = seq
+	l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: req.Winners})
 	d.checkPacks(l)
 	l.stored = l.stored || boundary
 	return got[0]
@@ -552,7 +553,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	if len(winners) > 0 {
 		// Still, a row whose winner is not stored holds the close back.
 		got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
-		if err != nil || got.Refused != RefusedUndecided {
+		if err != nil || got.Refused != RefusedUndecided || got.Released != 0 {
 			d.fatalf("a close over undecided drain rows: %+v %v", got, err)
 		}
 		d.seen["refused close: undecided"]++
@@ -561,8 +562,8 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		if err != nil || len(got2) != 1 || got2[0].Refused != "" {
 			d.fatalf("committing the drain log's winners: %+v %v", got2, err)
 		}
-		l.version = got2[0].NewVersion
-		l.packs = append(l.packs, Pack{CommitVersion: got2[0].NewVersion, Winners: winners})
+		l.advance(d, "the drain log's winners' commit", got2[0].NewVersion)
+		l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: winners})
 		d.checkPacks(l)
 		if len(winners) > 1 {
 			d.seen["a pack of several winners"]++
@@ -583,11 +584,22 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	if err != nil || got.Refused != "" || got.Released != room {
 		d.fatalf("the close of lease %s, room %d: %+v %v", l.ref.LeaseID, room, got, err)
 	}
-	l.state, l.version = "closed", got.NewVersion
+	l.state = "closed"
+	l.advance(d, "the close", got.NewVersion)
 	if l.gaveBack(got.Released) {
 		d.seen["a return before the last donor"]++
 	}
 	d.seen["close"]++
+}
+
+// advance moves the lease's version on by one, as each commit and close
+// that lands does, and holds the version the store answered what to it.
+func (l *debtLease) advance(d *debtWalk, what string, answered int64) {
+	d.t.Helper()
+	l.version++
+	if answered != l.version {
+		d.fatalf("%s of lease %s answered version %d, and the walk's is %d", what, l.ref.LeaseID, answered, l.version)
+	}
 }
 
 // checkRow holds a drain row, field by field, to what the walk appended.

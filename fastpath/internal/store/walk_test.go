@@ -671,7 +671,7 @@ func (w *walker) close(m int8, from, to ac.State, now time.Time, want Refusal) {
 	w.seen["close"]++
 	mem := from.Mem[m]
 	got, err := w.s.CloseLease(context.Background(), w.ref, int64(mem.Ver), w.members[m].through, now)
-	if err != nil || got.Refused != want {
+	if err != nil || got.Refused != want || (want != "" && got.Released != 0) {
 		w.fatalf("member %s's close: %+v, want %q, %v", w.c.Members[m], got, want, err)
 	}
 	if want == "" && got.NewVersion != int64(to.Ver) {
