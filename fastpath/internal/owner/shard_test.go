@@ -3,6 +3,8 @@ package owner
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,6 +262,9 @@ func TestAShardWithRoomAsksForNothing(t *testing.T) {
 // shard.
 func TestALeaseIdleOrOldCloses(t *testing.T) {
 	f, sp := shardFixture(t)
+	// Asks only for requests no lease takes, so that the shard's leases are
+	// the test's.
+	f.owner.cfg.TopUps.LowWater = 0
 	ctx := context.Background()
 	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
 	a := f.waitLeases(t, 1)[0]
@@ -564,4 +569,123 @@ func TestAnIdleLeaseAddsNoRoom(t *testing.T) {
 		t.Fatalf("admitted under %s, and the oldest with room is %s", got.Lease, a.id)
 	}
 	waitFor(t, "the ask with only a's room of 39", func() bool { return len(sp.granted()) == 3 })
+}
+
+// blockedIn reports whether a goroutine is blocked for reason, as the
+// runtime names the wait (such as "sync.Mutex.Lock"), in a function of this
+// package whose name begins with fn, the first of this package on its stack.
+func blockedIn(fn, reason string) bool {
+	const frame = "github.com/Lore-Hex/quill-router/fastpath/internal/owner."
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		header, frames, _ := strings.Cut(g, "\n")
+		if !strings.Contains(header, " ["+reason+"]") && !strings.Contains(header, " ["+reason+",") {
+			continue
+		}
+		for _, line := range strings.Split(frames, "\n") {
+			if strings.HasPrefix(line, frame) {
+				if strings.HasPrefix(line, frame+fn) {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
+// TestAnAskIsTimedOnceTheChargesAreRead: a top-up that waited for the
+// shard's charges is timed after the wait, and sized by the charges within
+// the horizon then.
+func TestAnAskIsTimedOnceTheChargesAreRead(t *testing.T) {
+	f, sp := shardFixture(t)
+	f.owner.cfg.TopUps.Min = 1
+	_, _ = f.owner.Admit(key, Admission{Estimate: 5, Boot: boot})
+	a := f.waitLeases(t, 1)[0] // 5
+	got, err := a.Admit(Admission{Estimate: 5, Boot: boot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Settle(context.Background(), got.Auth, 5, sum("a")); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(10 * time.Second)
+	f.owner.mu.Lock()
+	sh := f.owner.shards[key]
+	f.owner.mu.Unlock()
+	sh.charges.mu.Lock()
+	asked := make(chan struct{})
+	go func() {
+		f.owner.topUp(key, true, 1)
+		close(asked)
+	}()
+	// Seen waiting for the charges' lock, the top-up has read every room.
+	waitFor(t, "the top-up at the charges' lock", func() bool { return blockedIn("(*charges).", "sync.Mutex.Lock") })
+	f.clock.advance(70 * time.Second) // the charge of 5 is past the horizon
+	sh.charges.mu.Unlock()
+	<-asked
+	f.owner.mu.Lock()
+	askedAt := sh.askedAt
+	f.owner.mu.Unlock()
+	if want := start.Add(80 * time.Second); !askedAt.Equal(want) {
+		t.Fatalf("the ask is timed at %v, and it was made at %v", askedAt, want)
+	}
+	waitFor(t, "the second ask", func() bool { return len(sp.granted()) == 2 })
+	if got := sp.granted()[1].Amount; got != 1 {
+		t.Fatalf("an ask for the request of 1, with nothing charged within the horizon: %d", got)
+	}
+}
+
+// TestALeaseWhosePublishesFailAddsNoRoom: it admits nothing until a publish
+// succeeds again, so the shard's other lease running low asks for a
+// top-up; its holds still size it.
+func TestALeaseWhosePublishesFailAddsNoRoom(t *testing.T) {
+	f, sp := shardFixture(t)
+	f.owner.cfg.TopUps.Min = 100
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	a := f.waitLeases(t, 1)[0] // 100
+	f.clock.advance(10 * time.Second)
+	if _, err := f.owner.Admit(key, Admission{Estimate: 101, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("a request of 101 under a lease of 100: %v", err)
+	}
+	b := f.waitLeases(t, 2)[1] // 101
+	held, err := a.Admit(Admission{Estimate: 7, Boot: boot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.log.fail(a.id, 1_000_000)
+	go func() { _, _ = a.Settle(context.Background(), held.Auth, 1, sum("a")) }()
+	waitFor(t, "a's publishes failing", func() bool {
+		_, err := a.Admit(Admission{Estimate: 1, Boot: boot})
+		return errors.Is(err, ErrPublishing)
+	})
+	f.clock.advance(10 * time.Second)
+	if got := admitTo(t, f, 60); got.Lease != b.id { // b's room 41, a's none
+		t.Fatalf("admitted under %s, and the lease whose publishes work is %s", got.Lease, b.id)
+	}
+	waitFor(t, "the ask with only b's room of 41", func() bool { return len(sp.granted()) == 3 })
+}
+
+// TestATopUpCountsTheHoldsBuffers: a top-up's size has room for the open
+// holds' buffers too.
+func TestATopUpCountsTheHoldsBuffers(t *testing.T) {
+	f, sp := shardFixture(t)
+	f.owner.cfg.TopUps.Min = 1
+	f.owner.cfg.Overrun = func(e int64) int64 { return e / 4 }
+	_, _ = f.owner.Admit(key, Admission{Estimate: 40, Boot: boot})
+	f.waitLeases(t, 1) // 50: the request's 40 and its buffer of 10
+	f.clock.advance(10 * time.Second)
+	admitTo(t, f, 40) // room 0: an ask for 40 held and a buffer of 10
+	waitFor(t, "the second ask", func() bool { return len(sp.granted()) == 2 })
+	if got := sp.granted()[1].Amount; got != 50 {
+		t.Fatalf("a top-up for 40 held and a buffer of 10: %d", got)
+	}
 }
