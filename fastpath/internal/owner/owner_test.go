@@ -583,6 +583,21 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 		open := map[string]int64{}
 		streams := map[string]bool{}
 		var consumed int64
+		// The shortfall rule (§4.2), apart from the owner's: after each
+		// terminal, what is booked and held past the allocation raises the
+		// shortfall total and the allocation by as much.
+		allocation, shortfall := int64(2000), int64(0)
+		var wantShort []int64
+		decided := func() {
+			var held int64
+			for _, e := range open {
+				held += e
+			}
+			if over := consumed + held - allocation; over > 0 {
+				shortfall, allocation = shortfall+over, allocation+over
+			}
+			wantShort = append(wantShort, shortfall)
+		}
 		gseq := map[string]int64{}
 		granted := map[string]time.Time{}
 		for step := 0; step < 80; step++ {
@@ -622,11 +637,13 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 					}
 					consumed += charge
 					delete(open, a)
+					decided()
 				case 3:
 					if _, err := f.lease.Refund(ctx, a); err != nil {
 						t.Fatal(err)
 					}
 					delete(open, a)
+					decided()
 				}
 			}
 			b := f.lease.Books()
@@ -634,27 +651,29 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 			for _, e := range open {
 				held += e
 			}
-			if b.Held != held || b.Consumed != consumed || b.Allocation != 2000+b.Shortfall || b.Remaining() < 0 ||
-				b.Pending != 0 || b.Open != len(open) {
+			if b.Held != held || b.Consumed != consumed || b.Allocation != allocation || b.Shortfall != shortfall ||
+				b.Remaining() < 0 || b.Pending != 0 || b.Open != len(open) {
 				t.Fatalf("seed %d step %d: books %+v, held %d, consumed %d", seed, step, b, held, consumed)
 			}
 		}
-		var sum, shortfall int64
+		var charged int64
+		terminals := 0
 		for i, r := range f.log.records(t, "lease-1") {
 			if r.Seq != int64(i+1) || r.Epoch != 3 {
 				t.Fatalf("seed %d: record %d is %+v", seed, i, r)
 			}
 			if r.Kind.Terminal() {
-				sum += r.Charge
-				if r.Shortfall < shortfall {
-					t.Fatalf("seed %d: a shortfall total fell: %+v", seed, r)
+				charged += r.Charge
+				if terminals >= len(wantShort) || r.Shortfall != wantShort[terminals] {
+					t.Fatalf("seed %d: terminal %d carries a shortfall total of %d, and the rule gives %v", seed,
+						terminals, r.Shortfall, wantShort)
 				}
-				shortfall = r.Shortfall
+				terminals++
 			}
 		}
-		if sum != consumed || shortfall != f.lease.Books().Shortfall {
-			t.Fatalf("seed %d: the log's terminals charge %d, shortfall %d; the books %+v", seed, sum, shortfall,
-				f.lease.Books())
+		if charged != consumed || terminals != len(wantShort) {
+			t.Fatalf("seed %d: the log's %d terminals charge %d; %d decided, consumed %d", seed, terminals, charged,
+				len(wantShort), consumed)
 		}
 		f.owner.Let("lease-1")
 	}
@@ -1114,5 +1133,38 @@ func TestEveryLetWaitsForTheLeaseToStop(t *testing.T) {
 	case <-f.lease.stopped:
 	default:
 		t.Fatal("Let returned before the flusher stopped")
+	}
+}
+
+// TestARecordTooLargeIsNotNumbered: a record the settle log could not carry
+// is refused before it takes a number, so it never holds back the lease's
+// records after it; and an admission's boot binding is bounded, so its
+// refund always fits.
+func TestARecordTooLargeIsNotNumbered(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	a, b := f.admit(t, 100, true), f.admit(t, 100, false)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: bytes.Repeat([]byte("x"), 2<<20)}); !errors.Is(err, ErrRejected) {
+		t.Fatalf("a heartbeat whose record is past the settle log's size: %v", err)
+	}
+	if b := f.lease.Books(); b.NextSeq != 1 {
+		t.Fatalf("the refused record took a number: %+v", b)
+	}
+	if _, err := f.lease.Refund(ctx, b); err != nil {
+		t.Fatalf("a refund after it: %v", err)
+	}
+	if recs := f.log.records(t, "lease-1"); len(recs) != 1 || recs[0].Seq != 1 || recs[0].Kind != record.Refund {
+		t.Fatalf("the records: %+v", recs)
+	}
+	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: bytes.Repeat([]byte("b"), 2<<10)}); err == nil {
+		t.Fatal("an admission whose boot binding its refund could not carry")
+	}
+	big, err := f.lease.Admit(Admission{Estimate: 1, Boot: bytes.Repeat([]byte("b"), 1<<10)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.lease.Refund(ctx, big.Auth); err != nil {
+		t.Fatalf("the refund of the longest boot binding: %v", err)
 	}
 }

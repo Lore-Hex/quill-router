@@ -34,6 +34,18 @@ var (
 	ErrStale          = errors.New("owner: a stale heartbeat")
 	ErrRejected       = errors.New("owner: a heartbeat the hold cannot take")
 	ErrDeadlinePassed = errors.New("owner: the heartbeat's record was acknowledged after the deadline it echoed")
+	// ErrTooLarge: a record larger than the settle log carries.
+	ErrTooLarge = errors.New("owner: a record past the settle log's size")
+)
+
+// maxRecord is the largest record the owner hands over: the settle log
+// carries it in one Publish call with room to spare under Pub/Sub's 10 MB
+// request (§4.1); one larger would fail every publish and hold back the
+// lease's records after it. maxBoot is the longest boot binding an
+// admission takes, so its refund's record always fits.
+const (
+	maxRecord = 1 << 20
+	maxBoot   = 1 << 10
 )
 
 // Admission is an authorize's: the hold's estimate e, whether it is a
@@ -57,7 +69,7 @@ type Admitted struct {
 // stream's buffer joins the lease's at its first heartbeat, since until
 // then it may never run; another hold's at once.
 func (l *Lease) Admit(a Admission) (Admitted, error) {
-	if a.Estimate < 0 || len(a.Boot) == 0 {
+	if a.Estimate < 0 || len(a.Boot) == 0 || len(a.Boot) > maxBoot {
 		return Admitted{}, fmt.Errorf("owner: an estimate of %d with a boot binding of %d bytes", a.Estimate, len(a.Boot))
 	}
 	auth, err := l.o.cfg.NewAuthorization(l.id)
@@ -199,8 +211,11 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		r.First, r.Basis = true, hb.Basis
 	}
 	s, err := l.handOver(r, 0)
-	if errors.Is(err, ErrPastCutoff) {
+	switch {
+	case errors.Is(err, ErrPastCutoff):
 		err = ErrRetry
+	case errors.Is(err, ErrTooLarge):
+		err = ErrRejected
 	}
 	if err != nil {
 		l.mu.Unlock()
@@ -336,14 +351,18 @@ func (l *Lease) terminalAnswer(ctx context.Context, s *sent, out Outcome) (Outco
 // handOver gives a record the lease's next owner sequence number and hands
 // it to the lease's key, with l.mu held: at once if every record before it
 // is published since the last failure, so it follows them; else it waits for
-// the flusher's republish, which sends it in its order. It reads the cutoff
-// again once the record is encoded, which takes time: past it, nothing is
-// handed over, numbered or decided.
+// the flusher's republish, which sends it in its order. A record larger
+// than the settle log carries is refused before it is numbered. It reads the
+// cutoff again once the record is encoded, which takes time: past it,
+// nothing is handed over, numbered or decided.
 func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	r.Version, r.Lease, r.Epoch, r.Seq = record.Version, l.id, l.o.cfg.Epoch, l.nextSeq
 	data, err := record.Encode(r)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxRecord {
+		return nil, fmt.Errorf("%w: %d bytes", ErrTooLarge, len(data))
 	}
 	if !l.withinCutoff(l.o.cfg.Clock()) {
 		return nil, ErrPastCutoff
