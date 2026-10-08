@@ -118,7 +118,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
-		"commit": {RefusedVersion, RefusedClosed, RefusedGap},
+		"commit": {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
 		"gap":    {RefusedVersion, RefusedGap, RefusedBoundary, "the record is the next after the stored progress"},
 		"reap": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTerminal, RefusedNoHold,
 			RefusedNotDue},
@@ -168,6 +168,9 @@ type walker struct {
 	// fault is the audit fault the lease's row holds: the first a commit
 	// stored, or 0.
 	fault int64
+	// consumed and faulted are what the commits booked, matched against the
+	// allocation and beyond it, as the store books (§4.2).
+	consumed, faulted int64
 }
 
 func newWalker(t *testing.T, s *Store, seed int64) *walker {
@@ -523,9 +526,28 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 	if got[0].NewVersion != int64(to.Ver) || got[0].State != stateName(from.St) {
 		w.fatalf("member %s's commit: %+v, and the shadow's version is %d", w.c.Members[m], got[0], to.Ver)
 	}
+	allocation := int64(w.c.Grant) + int64(from.Raised)
+	for _, op := range req.Money {
+		matched := min(op.Charge, max(allocation-w.consumed, 0))
+		w.consumed += matched
+		w.faulted += op.Charge - matched
+	}
 	w.members[m].decided, w.members[m].faultSeq = nil, 0
 	if req.AuditFault != nil && w.fault == 0 {
 		w.fault = *req.AuditFault
+	}
+}
+
+// commitPast commits member m's progress one past the stored S, which the
+// store must refuse.
+func (w *walker) commitPast(m int8, from ac.State) {
+	w.t.Helper()
+	w.seen["commit"]++
+	req := w.request(m, from)
+	req.AppliedSeq, req.Boundary = int64(from.S)+1, nil
+	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
+	if err != nil || len(got) != 1 || got[0].Refused != RefusedBoundary {
+		w.fatalf("member %s's commit past S: %+v %v", w.c.Members[m], got, err)
 	}
 }
 
@@ -567,6 +589,10 @@ func (w *walker) probe() bool {
 		}
 		if want := w.commitRefusal(m); want != "" {
 			try("commit", want, func() { w.commit(m, s, s, want) })
+		} else if s.S != ac.NoS {
+			// Past a stored S no owner record is applied: a commit of
+			// progress S + 1 at the member's version is refused.
+			try("commit", RefusedBoundary, func() { w.commitPast(m, s) })
 		}
 		// A gap past the member's progress, and the stored progress's next
 		// record, which is no gap.
@@ -776,6 +802,14 @@ func (w *walker) check() {
 		w.fatalf("a closed lease's allocation %d, consumed %d, returned %d", l.Allocation, l.Consumed, l.Returned)
 	case l.AuditFaultSeq != (spanner.NullInt64{Int64: w.fault, Valid: w.fault != 0}) || l.Revoked != (w.fault != 0):
 		w.fatalf("audit fault %v and revoked %v; the walk stored fault %d", l.AuditFaultSeq, l.Revoked, w.fault)
+	case l.Consumed != w.consumed || l.FaultUsage != w.faulted:
+		w.fatalf("consumed %d and fault usage %d; the walk booked %d matched and %d beyond", l.Consumed, l.FaultUsage,
+			w.consumed, w.faulted)
+	}
+	for _, r := range rows {
+		if r.DoorRaise != 0 {
+			w.fatalf("drain row %s raised %d, and its append raised nothing", r.RecordID, r.DoorRaise)
+		}
 	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
