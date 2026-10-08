@@ -30,7 +30,7 @@ def test_required_impossible_retry_counts(damage):
     result = report(rows, days, proof)
     assert result['status'] == 'BLOCKED'
 
-def test_duplicate_cannot_change_signed_stream_dimension():
+def test_duplicate_cannot_change_signed_stream_dimension(shadow_deadline_clock):
     rows, days, proof = synthetic_window()
     counter_row = next(r for r in rows if r['kind'] == COUNTER)
     before = copy.deepcopy(counter_row['body'])
@@ -56,7 +56,6 @@ def test_duplicate_cannot_change_signed_stream_dimension():
     assert all(r['body']['streamed'] is False for r in rows if r['kind'] == SAMPLE)
     # Produce both valid signed terminal observations and ask the real adapter.
     import hashlib
-    import time
     from dataclasses import replace
 
     from tests.test_async_settle_shadow import FIXTURE, NOW, context, signer, wire
@@ -85,7 +84,7 @@ def test_duplicate_cannot_change_signed_stream_dimension():
     db = Database()
     identity = original['authorization_day']+'/'+original['authorization_id']
     db.rows[SAMPLE,identity] = json.dumps(original)
-    actual = EvidenceStore(db).insert_sample(identity,retry,time.monotonic()+1)
+    actual = EvidenceStore(db).insert_sample(identity,retry,shadow_deadline_clock.monotonic()+1)
     assert actual == 'conflict'
     result = report(rows,days,proof)
     assert result['status'] == 'BLOCKED', 'A verified identical terminal cannot switch its signed streamed field'

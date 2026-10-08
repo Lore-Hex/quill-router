@@ -247,3 +247,31 @@ def inference_key(client: TestClient, user_headers: dict[str, str]) -> str:
 @pytest.fixture
 def inference_headers(inference_key: str) -> dict[str, str]:
     return {"authorization": f"Bearer {inference_key}"}
+
+
+@pytest.fixture
+def shadow_deadline_clock(monkeypatch):
+    """Deterministic budgets for fake shadow I/O, without freezing asyncio.
+
+    Patch module references, not the process-wide time module: Runtime, the
+    evidence adapter and the shared Spanner RPC wrapper must use one domain.
+    UTC/counter clocks remain independently controlled by each witness.
+    """
+    import time
+
+    from trusted_router import storage_gcp_async_settle_shadow, storage_gcp_io
+    from trusted_router.services import async_settle_shadow
+
+    class Clock:
+        now = 16.0
+
+        def monotonic(self):
+            return self.now
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    clock = Clock()
+    for module in (async_settle_shadow, storage_gcp_async_settle_shadow, storage_gcp_io):
+        monkeypatch.setattr(module, 'time', clock)
+    return clock

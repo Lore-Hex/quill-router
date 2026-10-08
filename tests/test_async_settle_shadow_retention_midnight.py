@@ -83,7 +83,7 @@ def test_no_retired_sample_insert_across_midnight(monkeypatch):
     )
 
 
-def test_insert_rechecks_clock_after_point_read(monkeypatch):
+def test_insert_rechecks_clock_after_point_read(monkeypatch, shadow_deadline_clock):
     row = sample_row()
     created = dt.datetime.fromtimestamp(row["authorize_at_us"] / 1e6, dt.UTC)
     now = [created.timestamp() + 31 * 86400 - 0.1]
@@ -107,7 +107,7 @@ def test_insert_rechecks_clock_after_point_read(monkeypatch):
     error = None
     try:
         EvidenceStore(db).insert_sample(
-            row["authorization_day"] + "/auth-v1", row, time.monotonic() + 1
+            row["authorization_day"] + "/auth-v1", row, shadow_deadline_clock.monotonic() + 1
         )
     except ValueError as exc:
         error = str(exc)
@@ -115,7 +115,7 @@ def test_insert_rechecks_clock_after_point_read(monkeypatch):
     assert not [key for key in db.rows if key[0] == SAMPLE]
 
 
-def test_retention_and_insert_share_one_timestamp(monkeypatch):
+def test_retention_and_insert_share_one_timestamp(monkeypatch, shadow_deadline_clock):
     row = sample_row()
     real = dt.datetime
     boundary = real.fromtimestamp(row['authorize_at_us']/1e6 + 31*86400, dt.UTC)
@@ -134,7 +134,7 @@ def test_retention_and_insert_share_one_timestamp(monkeypatch):
         inserted_at.extend(values[-1] for values in kwargs['values'])
         insert(**kwargs)
     monkeypatch.setattr(db, 'insert_or_update', record)
-    outcome = EvidenceStore(db).insert_sample(row['authorization_day']+'/auth-v1', row, time.monotonic()+1)
+    outcome = EvidenceStore(db).insert_sample(row['authorization_day']+'/auth-v1', row, shadow_deadline_clock.monotonic()+1)
     assert outcome == 'retired'
     assert calls == [boundary - dt.timedelta(microseconds=1)]
     assert inserted_at == []

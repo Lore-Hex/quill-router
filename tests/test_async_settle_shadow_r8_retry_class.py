@@ -4,7 +4,6 @@ import copy
 import datetime as dt
 import hashlib
 import json
-import time
 
 import pytest
 
@@ -49,9 +48,9 @@ def observation(phase, *, charge=None, failure=False, rebuild=True):
         revision="a" * 40)
 
 
-def test_exact_retry_cannot_borrow_an_excluded_original(monkeypatch):
+def test_exact_retry_cannot_borrow_an_excluded_original(monkeypatch, shadow_deadline_clock):
     """Reviewer's actual-worker null-hash refund witness, without /tmp side effects."""
-    rows, days, proof, _, _ = real_exclusion_window(monkeypatch, phase="refund")
+    rows, days, proof, _, _ = real_exclusion_window(monkeypatch, phase="refund", monotonic=shadow_deadline_clock.monotonic)
     assert report(rows, days, proof)["status"] == "PASS"
     originals = [r["body"] for r in rows if r["kind"] == SAMPLE
         and r["body"]["booking"]["attempted_kind"] == "refund"]
@@ -64,7 +63,7 @@ def test_exact_retry_cannot_borrow_an_excluded_original(monkeypatch):
     db = Database()
     identity = original["authorization_day"] + "/" + original["authorization_id"]
     db.rows[SAMPLE, identity] = json.dumps(original)
-    assert EvidenceStore(db).insert_sample(identity, exact, time.monotonic() + 1) == "conflict"
+    assert EvidenceStore(db).insert_sample(identity, exact, shadow_deadline_clock.monotonic() + 1) == "conflict"
     counter = add_retry(rows, "refund", day_index=0)
     validate_counter(counter["id"], counter["body"], partitions=True)
     result = report(rows, days, proof)
@@ -99,7 +98,7 @@ def original_for(phase, original_class):
 
 @pytest.mark.parametrize("phase", ["settle", "refund"])
 @pytest.mark.parametrize("original_class", ORIGINAL_CLASSES)
-def test_adapter_retry_original_class(phase, original_class):
+def test_adapter_retry_original_class(phase, original_class, shadow_deadline_clock):
     original, retry = original_for(phase, original_class), observation(phase)
     if original_class == "expired":
         retry["observed_at_us"] += 3 * 86400_000000
@@ -118,9 +117,9 @@ def test_adapter_retry_original_class(phase, original_class):
     assert retry_classification(original, retry) == expected
     if expected == "proof_expired":
         with pytest.raises(ValueError, match="^proof_expired$"):
-            EvidenceStore(db).insert_sample(identity, retry, time.monotonic() + 1)
+            EvidenceStore(db).insert_sample(identity, retry, shadow_deadline_clock.monotonic() + 1)
     else:
-        assert EvidenceStore(db).insert_sample(identity, retry, time.monotonic() + 1) == expected
+        assert EvidenceStore(db).insert_sample(identity, retry, shadow_deadline_clock.monotonic() + 1) == expected
     assert json.loads(db.rows[SAMPLE, identity]) == original
 
 
@@ -166,7 +165,7 @@ def test_retry_damage_original_class(phase, outcome, delta, original_class):
 
 @pytest.mark.parametrize("phase", ["settle", "refund"])
 @pytest.mark.parametrize("damage", ["both-null", "original-unverified", "retry-unverified", "diagnostic-change"])
-def test_retry_requires_verified_hash_not_diagnostic_equality(phase, damage):
+def test_retry_requires_verified_hash_not_diagnostic_equality(phase, damage, shadow_deadline_clock):
     original, retry = observation(phase), observation(phase)
     if damage == "both-null":
         original = observation(phase, failure=True)
@@ -181,5 +180,5 @@ def test_retry_requires_verified_hash_not_diagnostic_equality(phase, damage):
     db = Database()
     db.rows[SAMPLE, identity] = json.dumps(original)
     expected = "duplicate" if damage == "diagnostic-change" else "conflict"
-    assert EvidenceStore(db).insert_sample(identity, retry, time.monotonic() + 1) == expected
+    assert EvidenceStore(db).insert_sample(identity, retry, shadow_deadline_clock.monotonic() + 1) == expected
     assert json.loads(db.rows[SAMPLE, identity]) == original

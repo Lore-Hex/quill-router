@@ -17,7 +17,7 @@ from trusted_router.async_settle_shadow_evidence import SAMPLE
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 
 
-def real_exclusion_window(monkeypatch, phase="settle"):
+def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=time.monotonic):
     rows, days, proof = synthetic_window()
     first = rows[0]['body']
     now = NOW + 1
@@ -40,7 +40,7 @@ def real_exclusion_window(monkeypatch, phase="settle"):
     rt.counters.clock = lambda: now
     monkeypatch.setattr(time, 'time', lambda: now)
     bg = BackgroundTasks()
-    capture = Capture(rt, ctx.body, phase, now, time.monotonic(), ctx.authorization, endpoint(), (endpoint(),))
+    capture = Capture(rt, ctx.body, phase, now, monotonic(), ctx.authorization, endpoint(), (endpoint(),))
     try:
         rt.submit(capture, SimpleNamespace(headers=Headers({'X-TR-Settlement-Shadow': wire(envelope)[0]})),
             {'data': {'settled': True}}, bg)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -54,11 +53,11 @@ class Database:
             self.rows[kind,identity] = body
 
 
-def test_daily_cap_concurrent_instances():
+def test_daily_cap_concurrent_instances(shadow_deadline_clock):
     db = Database()
     db.rows[CONTROL,'2026-10-06/cap-v1'] = json.dumps(dict(v=1,limit=100000,reserved=99900,updated_at_us=0))
     def attempt(_):
-        return EvidenceStore(db).reserve('2026-10-06', time.monotonic()+1)
+        return EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(attempt,range(2))) == [0,100]
     assert json.loads(db.rows[CONTROL,'2026-10-06/cap-v1'])['reserved'] == 100000
@@ -71,11 +70,11 @@ def sample_row():
         router_us=1, comparator_us=1, booking_us=1, instance='00000000-0000-0000-0000-000000000001', revision='a'*40)
 
 
-def test_first_sample_wins_and_conflicts():
+def test_first_sample_wins_and_conflicts(shadow_deadline_clock):
     db, row = Database(), sample_row()
     store = EvidenceStore(db)
     identity = '2026-10-06/auth-v1'
-    deadline = time.monotonic()+1
+    deadline = shadow_deadline_clock.monotonic()+1
     assert store.insert_sample(identity,row,deadline) == 'inserted'
     assert store.insert_sample(identity,row,deadline) == 'duplicate'
     row['payload_hash'] = '0'*64
@@ -88,7 +87,7 @@ def test_first_sample_wins_and_conflicts():
     assert json.loads(db.rows[SAMPLE,identity]) == sample_row()
 
 
-def test_cumulative_flush_monotonic_and_partition():
+def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
     db = Database()
     counters = Counters('us-central1','a'*40,clock=lambda:NOW)
     dims = dimensions('openai','responses',True)
@@ -100,7 +99,7 @@ def test_cumulative_flush_monotonic_and_partition():
     second['sequence'] += 1
     store = EvidenceStore(db)
     for row in (second,first,second):
-        store.flush(identity,row,time.monotonic()+1)
+        store.flush(identity,row,shadow_deadline_clock.monotonic()+1)
     assert json.loads(db.rows[COUNTER,identity]) == second
     broken = copy.deepcopy(first)
     broken['counts'][0]['observed_attempts'] += 1
@@ -297,7 +296,7 @@ def test_report_reconciles_samples_per_writer():
 
 
 @pytest.mark.parametrize('abort_at', ['callback', 'commit'])
-def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at):
+def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at, shadow_deadline_clock):
     import contextlib
     from types import SimpleNamespace
     from unittest.mock import MagicMock
@@ -334,7 +333,7 @@ def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at):
     configure_spanner_rpc_deadlines(db)
     failure = None
     try:
-        EvidenceStore(db).transaction(callback, time.monotonic()+1)
+        EvidenceStore(db).transaction(callback, shadow_deadline_clock.monotonic()+1)
     except Exception as exc:
         failure = exc
     assert isinstance(failure, RuntimeError) and str(failure) == 'shadow_transaction_retry'
@@ -385,10 +384,10 @@ def test_report_reviewer_same_boot_uncovered_day():
     assert days[0]+':writer_coverage_gap' in result['gaps']
 
 
-def test_same_verified_payload_retains_original_observation():
+def test_same_verified_payload_retains_original_observation(shadow_deadline_clock):
     db, row = Database(), sample_row()
     store = EvidenceStore(db)
-    identity, deadline = '2026-10-06/auth-v1', time.monotonic()+1
+    identity, deadline = '2026-10-06/auth-v1', shadow_deadline_clock.monotonic()+1
     assert store.insert_sample(identity, row, deadline) == 'inserted'
     original = copy.deepcopy(row)
     from dataclasses import replace
@@ -495,9 +494,9 @@ def test_report_rejects_unverified_ineligible_zero_sample_writer():
     assert result['status'] == 'BLOCKED' and any(g.endswith(':exclusion_outcome_gap') for g in result['gaps'])
 
 
-def test_evidence_storage_call_contract():
+def test_evidence_storage_call_contract(shadow_deadline_clock):
     db = Database()
-    granted = EvidenceStore(db).reserve('2026-10-06', time.monotonic()+1)
+    granted = EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     assert granted == 100
     assert db.transaction_options == [dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})]
     assert len(db.query_options) == 2

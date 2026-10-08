@@ -10,7 +10,7 @@ from trusted_router.services.async_settle_shadow import Runtime
 from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 
 
-def test_timer_flushes_without_sample_work_and_keeps_idle_roster():
+def test_timer_flushes_without_sample_work_and_keeps_idle_roster(shadow_deadline_clock):
     async def run():
         db = Database()
         rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
@@ -30,18 +30,17 @@ def test_timer_flushes_without_sample_work_and_keeps_idle_roster():
     assert all(bucket['observed_attempts'] == 0 for bucket in bodies[0]['counts'])
 
 
-def test_counter_timer_flushes_rate_drops_and_failure_is_sticky():
+def test_counter_timer_flushes_rate_drops_and_failure_is_sticky(shadow_deadline_clock):
     db = Database()
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
     dims = dimensions('openai', 'responses', True)
     rt.counters.reason(dims, 'settle', 'rate_limit')
-    import time
-    rt.flush(time.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+1)
     first = next(json.loads(body) for (kind, _), body in db.rows.items() if kind == COUNTER)
     assert first['drops'] == [dict(phase='settle', adapter='openai', route_type='responses', streamed=True, reason='rate_limit', count=1)]
     gap = first['first_gap_at_us']
     rt.last_flush = 0
-    rt.flush(time.monotonic()+1, True)
+    rt.flush(shadow_deadline_clock.monotonic()+1, True)
     final = next(json.loads(body) for (kind, _), body in db.rows.items() if kind == COUNTER)
     assert final['closed'] is True and final['first_gap_at_us'] == gap and gap is not None
     rt.executor.shutdown()
@@ -70,14 +69,13 @@ def test_hash_precedence_over_simultaneous_identity_disagreement():
     assert (result.classification, result.reasons) == ('hash', {'hash'})
 
 
-def test_manifest_write_uses_exact_control_schema():
+def test_manifest_write_uses_exact_control_schema(shadow_deadline_clock):
     from tests.test_async_settle_shadow_accounting import synthetic_window
     from trusted_router.async_settle_shadow_evidence import CONTROL
     rows, _, _ = synthetic_window()
     body = rows[1]['body']
     db = Database()
-    import time
-    EvidenceStore(db).publish_manifest(body, time.monotonic()+1)
+    EvidenceStore(db).publish_manifest(body, shadow_deadline_clock.monotonic()+1)
     assert json.loads(db.rows[CONTROL, body['day']+'/manifest-v1']) == body
 
 
@@ -263,8 +261,7 @@ def test_local_worker_failure_and_storage_failure_keep_distinct_reasons(monkeypa
     assert captured == []
 
 
-def test_flush_failure_counts_drop_and_preserves_first_gap():
-    import time
+def test_flush_failure_counts_drop_and_preserves_first_gap(shadow_deadline_clock):
     from types import SimpleNamespace
 
     def fail(*args):
@@ -273,16 +270,41 @@ def test_flush_failure_counts_drop_and_preserves_first_gap():
     rt.counters.clock = lambda:1791244801
     rt.counters.reason(dimensions('openai','responses',False),'settle','usage_missing','exclusions')
     rt.counters.clock = lambda:1791244804
-    rt.flush(time.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+1)
     body = rt.counters.snapshot()[0][1]
     assert body['first_gap_at_us'] == 1791244801000000
     assert body['drops'] == [dict(phase='worker',adapter='unknown',route_type='unknown',streamed=None,reason='store_unavailable',count=1)]
     rt.executor.shutdown()
 
 
-def test_long_lived_writer_closes_seven_clean_days_before_new_writer():
-    import time
+def test_injected_commit_deadline_failure_is_not_acknowledged(monkeypatch, shadow_deadline_clock):
+    db = Database()
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.counters.clock = lambda: 1791244801
+    acknowledged = []
+    original = db.run_in_transaction
 
+    def slow_commit(*args, **kwargs):
+        result = original(*args, **kwargs)
+        # Cross both the 200 ms store budget and the outer one-second budget
+        # deterministically, even though the fake commit returned successfully.
+        shadow_deadline_clock.now += 2
+        return result
+
+    monkeypatch.setattr(db, 'run_in_transaction', slow_commit)
+    monkeypatch.setattr(rt.counters, 'acknowledge', lambda *args: acknowledged.append(args))
+    try:
+        rt.flush(shadow_deadline_clock.monotonic()+1)
+        body = rt.counters.snapshot()[0][1]
+        assert acknowledged == []
+        assert body['drops'] == [dict(phase='worker', adapter='unknown', route_type='unknown',
+            streamed=None, reason='store_unavailable', count=1)]
+        assert body['first_gap_at_us'] == 1791244801000000
+    finally:
+        rt.executor.shutdown()
+
+
+def test_long_lived_writer_closes_seven_clean_days_before_new_writer(shadow_deadline_clock):
     from scripts.async_settle.shadow_report import validate_counter
     from trusted_router.async_settle_shadow_evidence import day_at
     now = [1791244800.]
@@ -293,7 +315,9 @@ def test_long_lived_writer_closes_seven_clean_days_before_new_writer():
     for n in range(8):
         now[0] = 1791244800. + 86400*n
         rt.last_flush = 0
-        rt.flush(time.monotonic()+1)
+        rt.flush(shadow_deadline_clock.monotonic()+1)
+        assert all(not body['drops'] for body in rt.counters.days.values()), rt.counters.days
+        assert rt.counters.retired_through == (day_at(now[0]-86400) if n else '')
         for prior in range(n):
             key = day_at(1791244800. + 86400*prior) + '/' + rt.counters.instance
             body = json.loads(db.rows[COUNTER, key])
@@ -305,7 +329,8 @@ def test_long_lived_writer_closes_seven_clean_days_before_new_writer():
         rt.counters.increment(dims, 'authorize_fresh')
         now[0] += 10
         rt.last_flush = 0
-        rt.flush(time.monotonic()+1)
+        rt.flush(shadow_deadline_clock.monotonic()+1)
+        assert all(not body['drops'] for body in rt.counters.days.values()), rt.counters.days
     writes = [(params['id'], params) for _, params, _ in db.trace]
     # Each prior close's point read precedes the new day's first write/read.
     for n in range(1, 8):
@@ -315,8 +340,7 @@ def test_long_lived_writer_closes_seven_clean_days_before_new_writer():
     rt.executor.shutdown()
 
 
-def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch):
-    import time
+def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch, shadow_deadline_clock):
 
     from trusted_router.async_settle_shadow_evidence import day_at
     now = [1791244801.]
@@ -326,10 +350,10 @@ def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch):
     rt.counters.clock = lambda: now[0]
     received = now[0]
     rt.counters.retain(received)
-    rt.flush(time.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+1)
     now[0] += 86400
     rt.last_flush = 0
-    rt.flush(time.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+1)
     old = day_at(received) + '/' + rt.counters.instance
     assert not json.loads(db.rows[COUNTER, old])['closed']
     assert (COUNTER, day_at(now[0]) + '/' + rt.counters.instance) not in db.rows
@@ -341,12 +365,12 @@ def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch):
         return original(identity, body, deadline)
     monkeypatch.setattr(store, 'flush', fail_close)
     rt.last_flush = 0
-    rt.flush(time.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+1)
     assert day_at(received) in rt.counters.days
     assert not json.loads(db.rows[COUNTER, old])['closed']
     monkeypatch.setattr(store, 'flush', original)
     rt.last_flush = 0
-    rt.flush(time.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+1)
     assert json.loads(db.rows[COUNTER, old])['closed']
     assert day_at(received) not in rt.counters.days
     rt.executor.shutdown()

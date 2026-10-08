@@ -3,7 +3,6 @@ import copy
 import datetime as dt
 import hashlib
 import json
-import time
 from dataclasses import replace
 
 import pytest
@@ -89,7 +88,7 @@ def test_validator_expiry_boundary(offset_us):
 
 @pytest.mark.parametrize('reverse', [False, True])
 @pytest.mark.parametrize('receipts', [(NOW, NOW+1), (NOW-1, NOW+LIFETIME-2), (NOW, NOW)])
-def test_same_signed_payload_delayed_observation(reverse, receipts):
+def test_same_signed_payload_delayed_observation(reverse, receipts, shadow_deadline_clock):
     observations = []
     for received in receipts:
         ctx = replace(context(), received_at=received)
@@ -104,10 +103,10 @@ def test_same_signed_payload_delayed_observation(reverse, receipts):
     db = Database()
     store = EvidenceStore(db)
     identity = observations[0]['authorization_day']+'/'+observations[0]['authorization_id']
-    assert store.insert_sample(identity, observations[0], time.monotonic()+1) == 'inserted'
+    assert store.insert_sample(identity, observations[0], shadow_deadline_clock.monotonic()+1) == 'inserted'
     assert retry_classification(*observations) == 'duplicate'
     try:
-        result = store.insert_sample(identity, observations[1], time.monotonic()+1)
+        result = store.insert_sample(identity, observations[1], shadow_deadline_clock.monotonic()+1)
     except ValueError as exc:
         result = str(exc)
     assert result == 'duplicate', 'delivery order must not expire two valid identical observations'
