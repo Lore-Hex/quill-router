@@ -463,8 +463,11 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			select {
 			case <-cfg.Leave:
 				// The write ends when the process begins to leave, which
-				// writes the row itself.
-				leave(p.caller)
+				// writes the row itself, or when a part fails.
+				lctx, cancel := context.WithCancel(p.caller)
+				defer context.AfterFunc(ctx, cancel)()
+				leave(lctx)
+				cancel()
 			case <-ctx.Done():
 			}
 			return nil

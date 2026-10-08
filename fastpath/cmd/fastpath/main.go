@@ -61,7 +61,7 @@ func run() error {
 	flag.DurationVar(&cfg.HandOff, "hand-off", cfg.HandOff,
 		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
 	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,
-		"added to every clock reading, to inject a clock's error; 0 for a true clock")
+		"added to the owner's clock readings, to inject an owner's clock error; 0 for a true clock")
 	flag.Parse()
 
 	switch *roles {

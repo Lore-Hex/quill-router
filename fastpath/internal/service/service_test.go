@@ -580,12 +580,14 @@ func TestAStoppingNodesOwnerHandsItsLeasesOff(t *testing.T) {
 }
 
 // TestALeavingNodeKeepsItsLeasesAndTakesNoNew: a stream admitted by one
-// node's owner, which is then marked leaving (spike plan K3). Its row says
-// so; a new request for the workspace is admitted by the other node's
-// owner, and one sent straight to the leaving owner, as by a front door
-// whose view is old, is Busy; the stream's heartbeat and settle, through
-// the other node's front door, are its own owner's still, and taken; and
-// once its hold has ended, the leaving owner's lease drains.
+// node's owner, which heartbeats and is then marked leaving (spike plan
+// K3). Its row says so; a new request for the workspace is admitted by the
+// other node's owner, and one sent straight to the leaving owner, as by a
+// front door whose view is old, is Busy; the stream goes on heartbeating
+// through the other node's front door past its lease's expiry when the
+// owner left, each heartbeat taken, the lease renewed and open; its settle
+// is taken too; and once its hold has ended, the leaving owner's lease
+// drains.
 func TestALeavingNodeKeepsItsLeasesAndTakesNoNew(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
@@ -609,11 +611,34 @@ func TestALeavingNodeKeepsItsLeasesAndTakesNoNew(t *testing.T) {
 		e, err := frontdoor.Open(key, stream.Envelope)
 		return err == nil && e.Owner == b.Addr().String(), err
 	})
-	close(leave)
+	beat := func(seq int64, echoed time.Time) time.Time {
+		t.Helper()
+		hash := sha256.Sum256([]byte(fmt.Sprint("r1/", seq)))
+		hb := frontdoor.HeartbeatOf{Envelope: stream.Envelope, GatewaySeq: seq, Hash: hash[:], Echoed: echoed}
+		if seq == 1 {
+			hb.Basis = []byte("terms")
+		}
+		got, err := gw.Heartbeat(ctx, hb)
+		if err != nil || got.Status != frontdoor.Accepted {
+			t.Fatalf("the stream's heartbeat %d: %+v %v", seq, got, err)
+		}
+		return got.Deadline
+	}
+	echoed := beat(1, time.Time{})
+	e, err := frontdoor.Open(key, stream.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, err := store.New(db, config(a).Store)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: e.Lease}
+	before, _, err := s.ReadLease(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(leave)
 	eventually(t, 10*time.Second, "the leaving node's row", func() (bool, error) {
 		return memberState(t, s, b) == store.Leaving, nil
 	})
@@ -624,22 +649,19 @@ func TestALeavingNodeKeepsItsLeasesAndTakesNoNew(t *testing.T) {
 	if err != nil || got.Status != frontdoor.Busy {
 		t.Fatalf("a request straight to the leaving owner: %+v %v", got, err)
 	}
-	hash := sha256.Sum256([]byte("r1/1"))
-	hb, err := gw.Heartbeat(ctx, frontdoor.HeartbeatOf{Envelope: stream.Envelope, GatewaySeq: 1, Hash: hash[:],
-		Basis: []byte("terms")})
-	if err != nil || hb.Status != frontdoor.Accepted {
-		t.Fatalf("the stream's heartbeat: %+v %v", hb, err)
+	// The stream outlives the expiry its lease had when its owner left.
+	for seq := int64(2); time.Now().Before(before.Expiry.Add(2 * time.Second)); seq++ {
+		time.Sleep(3 * time.Second)
+		echoed = beat(seq, echoed)
+	}
+	if lease, _, err := s.ReadLease(ctx, ref); err != nil || lease.State != "open" || !lease.Expiry.After(before.Expiry) {
+		t.Fatalf("the leaving owner's lease, its expiry %v when the owner left: %+v %v", before.Expiry, lease, err)
 	}
 	settled, err := gw.Settle(ctx, frontdoor.SettleOf{Envelope: stream.Envelope, Charge: 30,
 		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
 	if err != nil || settled.Status != frontdoor.Won {
 		t.Fatalf("the stream's settle: %+v %v", settled, err)
 	}
-	e, err := frontdoor.Open(key, stream.Envelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := store.LeaseRef{Workspace: ws, LeaseID: e.Lease}
 	eventually(t, 30*time.Second, "the leaving owner's lease drained", func() (bool, error) {
 		lease, _, err := s.ReadLease(ctx, ref)
 		return err == nil && lease.State != "open", err
