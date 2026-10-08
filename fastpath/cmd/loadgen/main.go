@@ -41,6 +41,7 @@ func run() error {
 	enclaves := flag.Int("enclaves", 8, "how many enclaves the load spreads over, each with its retry queue's one worker")
 	retryDelays := flag.String("retry-delays", "0s,500ms,1s,2s,4s,8s",
 		"the delays before each of the retry queue's attempts at a terminal, separated by commas")
+	retryQueue := flag.Int("retry-queue", 1024, "how many terminals each enclave's retry queue holds")
 	callWait := flag.Duration("call-wait", 28*time.Second, "how long a call but a heartbeat's may take")
 	keyPath := flag.String("key", "", "a file with the fleet's envelope key, to name each generation's authorization")
 	seed := flag.Uint64("seed", uint64(time.Now().UnixNano()), "the run's seed")
@@ -59,7 +60,7 @@ func run() error {
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1024}}
 	cfg := loadgen.Config{Rate: *rate, Duration: *duration, MaxInFlight: *inFlight, Mix: mix,
 		HeartbeatEvery: *heartbeat, HeartbeatWait: *heartbeatWait, Boot: []byte(*boot), Enclaves: *enclaves,
-		CallWait: *callWait, Seed: *seed}
+		RetryQueue: *retryQueue, CallWait: *callWait, Seed: *seed}
 	for _, d := range strings.Split(*retryDelays, ",") {
 		if d = strings.TrimSpace(d); d == "" {
 			continue

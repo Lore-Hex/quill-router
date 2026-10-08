@@ -37,7 +37,9 @@ type fakeGateway struct {
 	authorize  func(frontdoor.AuthorizeOf) (frontdoor.Authorized, error)
 	heartbeat  func(frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error)
 	terminal   func(attempt int) (frontdoor.TerminalAnswer, error)
-	// refund, when set, answers refunds in terminal's place.
+	// settle and refund, when set, answer settles and refunds in
+	// terminal's place.
+	settle func(frontdoor.SettleOf) (frontdoor.TerminalAnswer, error)
 	refund func(frontdoor.RefundOf) (frontdoor.TerminalAnswer, error)
 }
 
@@ -70,6 +72,9 @@ func (f *fakeGateway) Settle(_ context.Context, s frontdoor.SettleOf) (frontdoor
 	f.called("settle")
 	n := len(f.settles)
 	f.mu.Unlock()
+	if f.settle != nil {
+		return f.settle(s)
+	}
 	return f.terminal(n)
 }
 
@@ -185,7 +190,7 @@ func echoed(t *testing.T, gws ...*fakeGateway) {
 func config(gw Gateway) Config {
 	return Config{Gateways: []Gateway{gw}, Rate: 1000, Duration: time.Millisecond, MaxInFlight: 10,
 		Workspaces: []string{"ws-1"}, HeartbeatEvery: time.Millisecond, HeartbeatWait: time.Second,
-		Boot: []byte("boot"), Enclaves: 1,
+		Boot: []byte("boot"), Enclaves: 1, RetryQueue: 1024,
 		RetryDelays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
 		CallWait:    time.Second, Key: key, Seed: 7,
 		Mix: Mix{StreamShare: 1, Heartbeats: []Weight{{3, 1}}, RefundShare: 0, Estimates: []Weight{{100, 1}},
@@ -623,7 +628,8 @@ func TestTheRateIsKept(t *testing.T) {
 }
 
 // TestARunNeedsARate: a rate not above 0, past MaxRate or not a number,
-// or no enclave, is refused before anything starts.
+// no enclave, or no room in the retry queue, is refused before anything
+// starts.
 func TestARunNeedsARate(t *testing.T) {
 	for _, rate := range []float64{0, -1, math.NaN(), math.Inf(1), 2e9} {
 		cfg := config(admitting(t))
@@ -636,6 +642,11 @@ func TestARunNeedsARate(t *testing.T) {
 	cfg.Enclaves = 0
 	if _, err := Run(context.Background(), cfg); err == nil {
 		t.Fatal("a run with no enclave ran")
+	}
+	cfg = config(admitting(t))
+	cfg.RetryQueue = 0
+	if _, err := Run(context.Background(), cfg); err == nil {
+		t.Fatal("a run with no room in the retry queue ran")
 	}
 }
 
@@ -842,35 +853,135 @@ func TestADrawLandsOnAWeight(t *testing.T) {
 	}
 }
 
-// TestTheRetryQueueServesInTurn: an enclave's one worker serves its queued
-// terminals in turn, each through its delays, so one queued behind another
-// is tried after it; here the first queued is lost and the second, whose
-// tries come after the outage, is not.
+// TestTheRetryQueueServesInTurn: an enclave's one worker takes its queued
+// terminals in turn, one attempt each, and one that fails joins the
+// queue's end again, so two queued in an outage take their attempts by
+// turns, the second not waiting out the first's: here the outage lasts
+// three attempts, and both are won.
 func TestTheRetryQueueServesInTurn(t *testing.T) {
 	gw := admitting(t)
+	serving, release := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex
-	calls := 0
-	gw.terminal = func(int) (frontdoor.TerminalAnswer, error) {
+	var sent []string
+	gw.settle = func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
 		mu.Lock()
-		defer mu.Unlock()
-		// Both generations' first sends, and the first queued one's three
-		// tries, fail.
-		if calls++; calls <= 5 {
+		sent = append(sent, s.Envelope)
+		n := len(sent)
+		mu.Unlock()
+		if n == 1 {
+			// The first attempt waits for the second terminal to join.
+			close(serving)
+			<-release
+		}
+		if n <= 3 {
 			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
 		}
-		return frontdoor.TerminalAnswer{Status: frontdoor.Recorded}, nil
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
 	}
+	_, e, job := queueOf(t, gw, 2, 0, 0, 0)
+	letGo := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(letGo) // a test that fails lets the worker's attempt go before the worker stops
+	first, second := job("first"), job("second")
+	e.queue(first)
+	<-serving
+	e.queue(second)
+	letGo()
+	ended(t, first, second)
+	if !slices.Equal(sent, []string{"first", "second", "first", "second", "first"}) {
+		t.Fatalf("sent %v", sent)
+	}
+	if first.done.Status != "won" || !slices.Equal(first.done.Tries, []string{"error", "error", "won"}) ||
+		second.done.Status != "won" || !slices.Equal(second.done.Tries, []string{"error", "won"}) {
+		t.Fatalf("first %+v, second %+v", first.done, second.done)
+	}
+}
+
+// TestAFullRetryQueueDropsItsOldest: a terminal that joins a full queue
+// drops the queue's first, which ends dropped at once and is not sent
+// again; one that fails and joins the end again drops one too.
+func TestAFullRetryQueueDropsItsOldest(t *testing.T) {
+	gw := admitting(t)
+	serving, release := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var sent []string
+	gw.settle = func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+		mu.Lock()
+		sent = append(sent, s.Envelope)
+		n := len(sent)
+		mu.Unlock()
+		if n == 1 {
+			// The first attempt fails once three more have joined.
+			close(serving)
+			<-release
+			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+		}
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
+	}
+	r, e, job := queueOf(t, gw, 2, 0, 0)
+	letGo := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(letGo) // a test that fails lets the worker's attempt go before the worker stops
+	inService, a, b, c := job("in service"), job("a"), job("b"), job("c")
+	e.queue(inService)
+	<-serving
+	e.queue(a)
+	e.queue(b)
+	// The queue holds two: c drops a.
+	e.queue(c)
+	ended(t, a)
+	// The one in service fails and joins the end again: it drops b.
+	letGo()
+	ended(t, b, c, inService)
+	for _, j := range []*queued{a, b} {
+		if j.done.Status != "dropped" || len(j.done.Tries) != 0 {
+			t.Fatalf("%s: %+v, not dropped unsent", j.envelope, j.done)
+		}
+	}
+	for _, j := range []*queued{c, inService} {
+		if j.done.Status != "won" {
+			t.Fatalf("%s: %+v", j.envelope, j.done)
+		}
+	}
+	if !slices.Equal(sent, []string{"in service", "c", "in service"}) {
+		t.Fatalf("sent %v", sent)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.outcomes["settle dropped"] != 2 {
+		t.Fatalf("%+v", r.outcomes)
+	}
+}
+
+// queueOf is a run of gw with one enclave, whose queue holds room terminals
+// and tries each after delays, its worker started until the test ends; and
+// a terminal for it, a settle with the envelope named.
+func queueOf(t *testing.T, gw Gateway, room int, delays ...time.Duration) (*run, *enclave,
+	func(envelope string) *queued) {
+	t.Helper()
 	cfg := config(gw)
-	cfg.Rate, cfg.Duration, cfg.Mix.StreamShare = 2000, time.Millisecond, 0
-	rep, err := Run(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
+	cfg.RetryQueue, cfg.RetryDelays = room, delays
+	r := &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{}}
+	workers, stop := r.startEnclaves(context.Background())
+	t.Cleanup(func() {
+		stop()
+		workers.Wait()
+	})
+	e := r.enclaves[0]
+	return r, e, func(envelope string) *queued {
+		return &queued{p: &played{r: r, enclave: e}, envelope: envelope, done: &TerminalDone{Kind: record.Settle},
+			served: make(chan struct{})}
 	}
-	if rep.Started != 2 || rep.Outcomes["settle lost"] != 1 || rep.Outcomes["settle recorded"] != 1 ||
-		len(gw.settles) != 6 {
-		t.Fatalf("%d settles, %+v", len(gw.settles), rep.Outcomes)
+}
+
+// ended waits for each terminal to end.
+func ended(t *testing.T, js ...*queued) {
+	t.Helper()
+	for _, j := range js {
+		select {
+		case <-j.served:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s never ended", j.envelope)
+		}
 	}
-	echoed(t, gw)
 }
 
 // TestARateIsTheDecimalWritten: generations due are worked from the rate as
@@ -895,11 +1006,15 @@ func TestAHeartbeatsTriesShareItsWait(t *testing.T) {
 	gw := admitting(t)
 	var mu sync.Mutex
 	var deadlines []time.Time
+	var firstAt time.Time
 	hold := &blockingGateway{fakeGateway: gw, heartbeat: func(ctx context.Context) (frontdoor.HeartbeatAnswer, error) {
 		d, _ := ctx.Deadline()
 		mu.Lock()
 		deadlines = append(deadlines, d)
 		n := len(deadlines)
+		if n == 1 {
+			firstAt = time.Now()
+		}
 		mu.Unlock()
 		if n == 1 {
 			// The first takes part of the wait, then is answered Retry.
@@ -927,6 +1042,11 @@ func TestAHeartbeatsTriesShareItsWait(t *testing.T) {
 		!deadlines[0].Equal(deadlines[1]) {
 		t.Fatalf("after %v, %+v, the tries' deadlines %v", took, g, deadlines)
 	}
+	// The deadline is HeartbeatWait from the first attempt's start, which
+	// came just after it was set.
+	if early := firstAt.Add(cfg.HeartbeatWait).Sub(deadlines[0]); early < 0 || early > 50*time.Millisecond {
+		t.Fatalf("the tries' deadline %v before the first attempt's start and the wait", early)
+	}
 }
 
 // blockingGateway is a fake whose heartbeats see their call's context.
@@ -943,19 +1063,52 @@ func (b *blockingGateway) Heartbeat(ctx context.Context, _ frontdoor.HeartbeatOf
 // each one's heartbeats, settle and refund, their retries too, carry the
 // envelope its own authorize sealed.
 func TestEachGenerationCarriesItsOwnEnvelope(t *testing.T) {
+	// Each heartbeat's first attempt is answered Retry or fails, and each
+	// settle's first send fails, so each is sent again: a heartbeat at
+	// once, a settle through the queue, every generation's at once.
 	gw := admitting(t)
 	var mu sync.Mutex
-	tries := map[string]int{}
+	sends := map[string]int{}
+	again := func(what string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		sends[what]++
+		return sends[what] > 1
+	}
+	accept := gw.heartbeat
+	gw.heartbeat = func(hb frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
+		switch {
+		case again(hb.Envelope + "/" + strconv.FormatInt(hb.GatewaySeq, 10)):
+			return accept(hb)
+		case hb.GatewaySeq%2 == 1:
+			return frontdoor.HeartbeatAnswer{Status: frontdoor.Retry}, nil
+		}
+		return frontdoor.HeartbeatAnswer{}, errors.New("unreachable")
+	}
+	gw.settle = func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+		if !again(s.Envelope) {
+			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+		}
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won, Kind: record.Settle, Charge: 125}, nil
+	}
 	cfg := config(gw)
 	cfg.Rate, cfg.Duration, cfg.MaxInFlight, cfg.HeartbeatEvery = 2000, 5*time.Millisecond, 20, 2*time.Millisecond
 	rep, err := Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Started < 5 || len(gw.settles) != int(rep.Started) {
-		t.Fatalf("started %d, %d settles", rep.Started, len(gw.settles))
+	if rep.Started < 5 || len(gw.settles) != 2*int(rep.Started) || len(gw.heartbeats) != 6*int(rep.Started) ||
+		rep.Outcomes["settle won"] != rep.Started || len(sends) != 4*int(rep.Started) {
+		t.Fatalf("started %d, %d settles, %d heartbeats, %+v", rep.Started, len(gw.settles), len(gw.heartbeats),
+			rep.Outcomes)
+	}
+	for what, n := range sends {
+		if n != 2 {
+			t.Fatalf("%s sent %d times, not its first and its retry", what, n)
+		}
 	}
 	ownEnvelopes(t, gw)
+	tries := map[string]int{}
 
 	// A refund names no request: each generation's first refund fails, and
 	// its retry, through the queue, must carry its own envelope, so each
@@ -994,10 +1147,11 @@ func TestEachGenerationCarriesItsOwnEnvelope(t *testing.T) {
 // queued terminals in the order they joined, the second behind the one in
 // service, the third behind the second.
 func TestTheRetryQueueIsServedInItsOrder(t *testing.T) {
+	gw := admitting(t)
 	serving, release := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex
 	var served []string
-	gw := &orderedGateway{fakeGateway: admitting(t), settle: func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+	gw.settle = func(s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
 		if s.Envelope == "first" {
 			close(serving)
 			<-release
@@ -1006,28 +1160,18 @@ func TestTheRetryQueueIsServedInItsOrder(t *testing.T) {
 		served = append(served, s.Envelope)
 		mu.Unlock()
 		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
-	}}
-	cfg := config(gw.fakeGateway)
-	cfg.Gateways, cfg.RetryDelays = []Gateway{gw}, []time.Duration{0}
-	r := &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{}}
-	workers, stop := r.startEnclaves(context.Background())
-	defer func() {
-		stop()
-		workers.Wait()
-	}()
-	e := r.enclaves[0]
-	job := func(envelope string) *queued {
-		return &queued{p: &played{r: r, enclave: e}, envelope: envelope, done: &TerminalDone{Kind: record.Settle},
-			served: make(chan struct{})}
 	}
+	_, e, job := queueOf(t, gw, 1024, 0)
+	letGo := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(letGo) // a test that fails lets the worker's attempt go before the worker stops
 	first, second, third := job("first"), job("second"), job("third")
 	e.queue(first)
 	<-serving
 	e.queue(second)
 	e.queue(third)
-	close(release)
+	letGo()
+	ended(t, first, second, third)
 	for _, j := range []*queued{first, second, third} {
-		<-j.served
 		if j.done.Status != "won" {
 			t.Fatalf("%s: %+v", j.envelope, j.done)
 		}
@@ -1035,16 +1179,6 @@ func TestTheRetryQueueIsServedInItsOrder(t *testing.T) {
 	if !slices.Equal(served, []string{"first", "second", "third"}) {
 		t.Fatalf("served %v", served)
 	}
-}
-
-// orderedGateway is a fake whose settles its function answers.
-type orderedGateway struct {
-	*fakeGateway
-	settle func(frontdoor.SettleOf) (frontdoor.TerminalAnswer, error)
-}
-
-func (o *orderedGateway) Settle(_ context.Context, s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
-	return o.settle(s)
 }
 
 // TestACancelledRunSaysSo: a run whose context ends before its duration

@@ -304,13 +304,19 @@ type Config struct {
 	Boot []byte
 	// Enclaves is how many enclaves the generations spread over, in turn.
 	// Each has its retry queue: a terminal failed or not answered joins its
-	// enclave's queue, whose one worker serves the queued terminals in turn,
-	// as the enclave's does (§4.5).
+	// enclave's queue, whose one worker takes the queued terminals in turn,
+	// one attempt each, as the enclave's does (§4.5).
 	Enclaves int
 	// RetryDelays are the queue's, as the enclave's are (§4.5: 0, 0.5, 1, 2,
-	// 4 and 8 seconds): the worker sends a terminal again after each delay
-	// in turn, and it is lost once the last such attempt is.
+	// 4 and 8 seconds): the worker waits the delay of a terminal's next
+	// attempt and sends it once; one that fails joins the queue's end
+	// again, and is lost once its last attempt is.
 	RetryDelays []time.Duration
+	// RetryQueue is how many terminals each queue holds, the enclave's
+	// 1,024: one that joins a full queue drops the queue's first, which ends
+	// dropped, as an outage that fills the enclave's loses settles before
+	// their attempts run out (§4.8).
+	RetryQueue int
 	// CallWait bounds each call but a heartbeat's.
 	CallWait time.Duration
 	// Key, when set, opens envelopes, so each generation's record names its
@@ -332,11 +338,11 @@ const heartbeatTries = 3
 func (c Config) valid() error {
 	if len(c.Gateways) == 0 || !(c.Rate > 0 && c.Rate <= MaxRate) || c.Duration <= 0 || c.MaxInFlight < 1 ||
 		len(c.Workspaces) == 0 || c.HeartbeatEvery <= 0 || c.HeartbeatWait <= 0 || len(c.Boot) == 0 ||
-		c.Enclaves < 1 || c.CallWait <= 0 ||
+		c.Enclaves < 1 || c.RetryQueue < 1 || c.CallWait <= 0 ||
 		slices.ContainsFunc(c.RetryDelays, func(d time.Duration) bool { return d < 0 }) {
 		return errors.New("loadgen: a run needs gateways, a rate above 0 and at most MaxRate, a duration, room " +
 			"in flight, workspaces, a heartbeat interval and wait, a boot binding, enclaves, retry delays not " +
-			"negative and a call wait")
+			"negative, room in the retry queue and a call wait")
 	}
 	return c.Mix.valid()
 }
@@ -373,8 +379,9 @@ type Beat struct {
 
 // TerminalDone is a generation's terminal: what it sent, each attempt's
 // answer ("error" for a call that failed), and the answer that ended it,
-// with the winner or disposition it named; "lost" once the retry queue gave
-// it up, "cancelled" with the run.
+// with the winner or disposition it named; "lost" once the retry queue spent
+// its attempts, "dropped" once a full queue dropped it, "cancelled" with the
+// run.
 type TerminalDone struct {
 	Kind      record.Kind `json:"kind"`
 	Charge    int64       `json:"charge"`
@@ -654,7 +661,13 @@ func (p *played) terminal(ctx context.Context, envelope string, kind record.Kind
 	full, _ := json.Marshal(map[string]any{"request": request, "boot": p.r.cfg.Boot, "charge": charge})
 	t := &queued{p: p, envelope: envelope, full: full, done: &TerminalDone{Kind: kind, Charge: charge},
 		served: make(chan struct{})}
-	if !p.attempt(ctx, t) {
+	switch {
+	case p.attempt(ctx, t):
+	case ctx.Err() != nil:
+		t.end("cancelled")
+	case len(p.r.cfg.RetryDelays) == 0:
+		t.end("lost")
+	default:
 		p.enclave.queue(t)
 		<-t.served
 	}
@@ -667,13 +680,16 @@ type queued struct {
 	envelope string
 	full     []byte
 	done     *TerminalDone
+	tries    int // the queue's attempts so far
 	served   chan struct{}
 }
 
-// end ends the terminal with a status no answer gave: lost or cancelled.
+// end ends the terminal with a status no answer gave: lost, dropped or
+// cancelled.
 func (t *queued) end(status string) {
 	t.done.Status = status
 	t.p.r.count(string(t.done.Kind) + " " + status)
+	close(t.served)
 }
 
 // attempt sends the terminal once, through the generation's gateway, which
@@ -711,10 +727,17 @@ func (p *played) attempt(ctx context.Context, t *queued) bool {
 	return true
 }
 
-// enclave is one enclave's retry queue, and its one worker.
+// enclave is one enclave's retry queue and its one worker, as the
+// enclave's settlementRetries are (quill-cloud-proxy
+// cmd/enclave/settlement_retry.go): the worker takes the queue's first
+// terminal, waits the delay of its next attempt and sends it once, and one
+// that fails joins the queue's end again until its attempts are spent. A
+// terminal that joins a full queue drops the queue's first, which ends
+// dropped.
 type enclave struct {
 	mu    sync.Mutex
 	jobs  []*queued
+	room  int
 	wake  chan struct{}
 	ended bool
 }
@@ -726,7 +749,7 @@ func (r *run) startEnclaves(ctx context.Context) (*sync.WaitGroup, func()) {
 	var workers sync.WaitGroup
 	stopped := make(chan struct{})
 	for range r.cfg.Enclaves {
-		e := &enclave{wake: make(chan struct{}, 1)}
+		e := &enclave{room: r.cfg.RetryQueue, wake: make(chan struct{}, 1)}
 		r.enclaves = append(r.enclaves, e)
 		workers.Add(1)
 		go func() {
@@ -742,19 +765,25 @@ func (e *enclave) queue(t *queued) {
 	if e.ended {
 		e.mu.Unlock()
 		t.end("cancelled")
-		close(t.served)
 		return
+	}
+	var dropped *queued
+	if len(e.jobs) == e.room {
+		dropped, e.jobs = e.jobs[0], e.jobs[1:]
 	}
 	e.jobs = append(e.jobs, t)
 	e.mu.Unlock()
+	if dropped != nil {
+		dropped.end("dropped")
+	}
 	select {
 	case e.wake <- struct{}{}:
 	default:
 	}
 }
 
-// work serves the queue's terminals in turn, each through every delay
-// until it is answered or lost, until stopped or ctx ends.
+// work serves the queue's terminals in turn, one attempt each, until
+// stopped or ctx ends.
 func (e *enclave) work(ctx context.Context, stopped <-chan struct{}, delays []time.Duration) {
 	defer func() {
 		e.mu.Lock()
@@ -764,7 +793,6 @@ func (e *enclave) work(ctx context.Context, stopped <-chan struct{}, delays []ti
 		e.mu.Unlock()
 		for _, t := range left {
 			t.end("cancelled")
-			close(t.served)
 		}
 	}()
 	for {
@@ -785,31 +813,33 @@ func (e *enclave) work(ctx context.Context, stopped <-chan struct{}, delays []ti
 			}
 		}
 		e.serve(ctx, t, delays)
-		close(t.served)
 	}
 }
 
+// serve sends t once, after the delay of its next attempt; if that fails, t
+// joins the queue's end again, or with its attempts spent is lost.
 func (e *enclave) serve(ctx context.Context, t *queued, delays []time.Duration) {
-	for _, d := range delays {
-		wait := time.NewTimer(d)
-		select {
-		case <-ctx.Done():
-			wait.Stop()
-		case <-wait.C:
-		}
-		if ctx.Err() != nil {
-			t.end("cancelled")
-			return
-		}
-		if t.p.attempt(ctx, t) {
-			return
-		}
+	wait := time.NewTimer(delays[t.tries])
+	select {
+	case <-ctx.Done():
+		wait.Stop()
+	case <-wait.C:
 	}
 	if ctx.Err() != nil {
 		t.end("cancelled")
 		return
 	}
-	t.end("lost")
+	t.tries++
+	switch {
+	case t.p.attempt(ctx, t):
+		close(t.served)
+	case ctx.Err() != nil:
+		t.end("cancelled")
+	case t.tries == len(delays):
+		t.end("lost")
+	default:
+		e.queue(t)
+	}
 }
 
 func (r *run) count(what string) {
