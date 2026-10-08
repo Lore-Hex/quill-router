@@ -42,8 +42,8 @@ type Config struct {
 	Auditor   bool
 
 	// Address is the admission node's host and port, as the ring and the
-	// other nodes reach it. Listener, when set, is where it serves; without
-	// it, it listens at Address.
+	// other nodes reach it. Listener, when set, is where it serves, and Run
+	// closes it however Run returns; without it, it listens at Address.
 	Address  string
 	Listener net.Listener
 	// Region is the settle log's region: the owner's shard keys carry it,
@@ -165,8 +165,11 @@ func PubSubOptions(region string) []option.ClientOption {
 
 // Run runs the process until ctx ends, or one of its parts fails, and
 // returns once every part has stopped: nil if ctx ended it, else the first
-// failure.
+// failure. A Listener given it is its own, closed however it returns.
 func Run(ctx context.Context, cfg Config, c Clients) error {
+	if cfg.Listener != nil {
+		defer cfg.Listener.Close()
+	}
 	if err := cfg.valid(); err != nil {
 		return err
 	}
@@ -339,14 +342,20 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, rec
 			stopping, cancel := context.WithTimeout(context.Background(), cfg.Stopping)
 			_ = srv.Shutdown(stopping)
 			cancel()
-			<-served
+			err = <-served
+		}
+		// A server that failed, not one shut down, fails the process at
+		// once: its handlers are waited for below, and the process's
+		// context may end meanwhile.
+		if !errors.Is(err, http.ErrServerClosed) {
+			p.fail(fmt.Errorf("service: http: %w", err))
 		}
 		_ = srv.Close()
 		endRequests()
 		// The parts the handlers call stop only once every handler has
 		// returned.
 		handlers.wait()
-		return err
+		return nil
 	})
 	// A node whose row another process took stops: its epoch is not the
 	// row's, so its leases' writes are refused.

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -603,6 +604,76 @@ func TestAProcessStoppedAsItStartsStopsCleanly(t *testing.T) {
 	if err := Run(ctx, config(listen(t)), Clients{Spanner: shared, PubSub: pubSub(t)}); err != nil {
 		t.Fatalf("a process stopped as it started: %v", err)
 	}
+}
+
+// TestAServerThatFailsFailsTheProcess: a node whose listener fails ends
+// the process with that failure, kept though the process's context ends as
+// the server closes.
+func TestAServerThatFailsFailsTheProcess(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The server closes its listener as it returns: the process's context
+	// ends then, before the part that runs the server has returned.
+	ln := &watchedListener{Listener: listen(t), closed: cancel}
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, config(ln), Clients{Spanner: shared, PubSub: pubSub(t)}) }()
+	_ = ln.Listener.Close() // the listener fails
+	select {
+	case err := <-done:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("a process whose listener failed ended with %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the process did not stop")
+	}
+}
+
+// TestAGivenListenerIsClosed: a listener given to Run is closed however Run
+// returns: stopped as it starts, with an owner that cannot start, or with a
+// configuration it refuses.
+func TestAGivenListenerIsClosed(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, c := range []struct {
+		name  string
+		ctx   context.Context
+		set   func(cfg *Config)
+		fails bool
+	}{
+		{"stopped as it starts", stopped, func(*Config) {}, false},
+		{"an owner that cannot start", context.Background(), func(cfg *Config) { cfg.Owner.AnswerWait = 0 }, true},
+		{"a configuration refused", context.Background(), func(cfg *Config) { cfg.Shards = 0 }, true},
+	} {
+		closed := make(chan struct{})
+		ln := &watchedListener{Listener: listen(t), closed: sync.OnceFunc(func() { close(closed) })}
+		cfg := config(ln)
+		c.set(&cfg)
+		if err := Run(c.ctx, cfg, Clients{Spanner: shared, PubSub: pubSub(t)}); (err != nil) != c.fails {
+			t.Fatalf("%s: Run returned %v", c.name, err)
+		}
+		select {
+		case <-closed:
+		default:
+			t.Fatalf("%s: the listener was left open", c.name)
+		}
+	}
+}
+
+// watchedListener is a listener whose Close calls closed first.
+type watchedListener struct {
+	net.Listener
+	closed func()
+}
+
+func (l *watchedListener) Close() error {
+	l.closed()
+	return l.Listener.Close()
 }
 
 // TestAStoppingNodeEndsItsRequests: a request still being read when its
