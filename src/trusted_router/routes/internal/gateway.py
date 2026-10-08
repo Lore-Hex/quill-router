@@ -200,6 +200,8 @@ from trusted_router.services.user_model_slots import (
     release_user_model_slot,
 )
 from trusted_router.stage_d import (
+    ESTIMATED_USAGE_SNAPSHOT_MODELS,
+    ESTIMATED_USAGE_SNAPSHOT_REASON,
     billing_pricing_snapshot,
     canonical_pricing_snapshot,
     endpoint_pricing_document,
@@ -1578,7 +1580,27 @@ def _authorize_gateway_sync_impl(
         )
         if body.route_type == "videos" else None
     )
-    if stage_d_reason == "ok":
+    # Frozen prices also bound estimated usage on reviewed Abliterate routes.
+    # This is a billing contract, not admission to streaming heartbeats.
+    if (
+        stage_d_reason != "ok"
+        and body.route_type in {"chat.completions", "responses", "messages"}
+        and standard_endpoint_pricing
+        and service_tier not in {"priority", "auto"}
+        and receipt_fee_basis_points == 0
+        and app_markup_basis_points == 0
+        and _typed_store is not None
+        and getattr(_typed_store, "request_record_write_mode", "legacy") == "typed"
+        and endpoint_candidates
+        and all(
+            candidate_model.id in ESTIMATED_USAGE_SNAPSHOT_MODELS
+            and candidate_endpoint.provider == "abliterate"
+            and UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+            for candidate_model, candidate_endpoint in endpoint_candidates
+        )
+    ):
+        stage_d_reason = ESTIMATED_USAGE_SNAPSHOT_REASON
+    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON}:
         pricing_snapshot = canonical_pricing_snapshot(
             endpoint_pricing_document(
                 effective_endpoint(candidate_endpoint, at=pricing_effective_at)
@@ -2944,12 +2966,17 @@ def _gateway_stage_d_payload(
     *,
     reason_override: str | None = None,
 ) -> dict[str, Any]:
+    billing_snapshot = billing_pricing_snapshot(authorization)
+    billing_fields = (
+        {"candidate_prices": billing_snapshot["candidates"], "cap_micro": int(authorization.estimated_microdollars)}
+        if billing_snapshot is not None and authorization.stage_d_reason == ESTIMATED_USAGE_SNAPSHOT_REASON else {}
+    )
     if reason_override is not None and reason_override != "ok":
-        return {"stage_d": {"eligible": False, "reason": reason_override}}
+        return {"stage_d": {"eligible": False, "reason": reason_override}, **billing_fields}
     snapshot = authorization.pricing_snapshot
     reason = reason_override or authorization.stage_d_reason or "settlement_backend"
-    if snapshot is None:
-        return {"stage_d": {"eligible": False, "reason": reason}}
+    if snapshot is None or reason != "ok":
+        return {"stage_d": {"eligible": False, "reason": reason}, **billing_fields}
     document = parse_pricing_snapshot(snapshot)
     cap_micro = int(authorization.estimated_microdollars)
     return {
