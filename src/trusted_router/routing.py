@@ -66,6 +66,7 @@ class RoutePreferences:
     privacy_requirements: frozenset[int] = frozenset()
     require_parameters: bool = False
     requested_parameters: frozenset[str] = frozenset()
+    input_modalities: frozenset[str] = frozenset()
     max_prompt_price_microdollars_per_million_tokens: int | None = None
     max_completion_price_microdollars_per_million_tokens: int | None = None
     preferred_max_latency: Thresholds = ()
@@ -648,11 +649,31 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         provider_jurisdiction=provider_jurisdiction,
         require_parameters=require_parameters,
         requested_parameters=requested_parameters,
+        input_modalities=_requested_input_modalities(body),
         max_prompt_price_microdollars_per_million_tokens=max_prompt_price,
         max_completion_price_microdollars_per_million_tokens=max_completion_price,
         preferred_max_latency=parse_thresholds(raw.get("preferred_max_latency"), "preferred_max_latency"),
         preferred_min_throughput=parse_thresholds(raw.get("preferred_min_throughput"), "preferred_min_throughput"),
     )
+
+
+def _requested_input_modalities(body: dict[str, Any]) -> frozenset[str]:
+    raw = body.get("input_modalities")
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, list) or any(
+        not isinstance(value, str) or value not in {"text", "image", "audio", "video"}
+        for value in raw
+    ):
+        raise api_error(400, "input_modalities must be a supported modality array", ErrorType.BAD_REQUEST)
+    return frozenset(raw)
+
+
+def endpoint_supports_input_modalities(
+    endpoint: ModelEndpoint, requested: frozenset[str],
+) -> bool:
+    # Missing endpoint metadata must never inherit a model-level vision union.
+    return requested.issubset(endpoint.input_modalities or ("text",))
 
 
 def _requested_parameters(body: dict[str, Any]) -> frozenset[str]:
@@ -1035,6 +1056,7 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if (
             prefs.require_parameters
+            or prefs.input_modalities
             or prefs.max_prompt_price_microdollars_per_million_tokens is not None
             or prefs.max_completion_price_microdollars_per_million_tokens is not None
         ) and not any(
@@ -1116,6 +1138,8 @@ def _endpoint_matches_parameter_and_price_filters(
     endpoint: ModelEndpoint,
     prefs: RoutePreferences,
 ) -> bool:
+    if not endpoint_supports_input_modalities(endpoint, prefs.input_modalities):
+        return False
     if prefs.require_parameters and not _endpoint_supports_requested_parameters(
         endpoint, prefs.requested_parameters
     ):

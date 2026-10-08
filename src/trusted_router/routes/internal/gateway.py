@@ -152,6 +152,7 @@ from trusted_router.routing import (
     chat_route_endpoint_candidates,
     decide_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
+    endpoint_supports_input_modalities,
     image_route_endpoint_candidates,
     normalize_routing_inputs,
     provider_route_preferences,
@@ -1083,6 +1084,7 @@ def _authorize_gateway_sync_impl(
                 else _required_privacy_postures(effective_route_preferences)
             ),
             video_replay=catalog_video_request,
+            input_modalities=effective_route_preferences.input_modalities,
         )
         byok_configs = _byok_configs_for_candidates(
             existing_candidates, workspace.id, folded_rows=folded_byok,
@@ -2638,6 +2640,7 @@ def _authorization_endpoint_candidates(
     *,
     privacy_requirements: frozenset[int] = frozenset(),
     video_replay: bool = False,
+    input_modalities: frozenset[str] = frozenset(),
 ) -> list[tuple[Model, ModelEndpoint]]:
     user_model_pair = _authorized_user_model_pair(authorization)
     if user_model_pair is not None:
@@ -2647,6 +2650,7 @@ def _authorization_endpoint_candidates(
     if not endpoint_ids and authorization.endpoint_id:
         endpoint_ids = [authorization.endpoint_id]
     privacy_excluded = False
+    modality_excluded = False
     for endpoint_id in endpoint_ids:
         endpoint = _endpoint_for_id_compat(endpoint_id)
         if video_replay:
@@ -2680,7 +2684,17 @@ def _authorization_endpoint_candidates(
         model = MODELS.get(endpoint.model_id)
         if model is None:
             continue
+        if not endpoint_supports_input_modalities(endpoint, input_modalities):
+            modality_excluded = True
+            continue
         candidates.append((model, endpoint))
+    if not candidates and modality_excluded:
+        raise api_error(
+            409,
+            "This authorization's routes no longer support the requested input modalities; "
+            "retry with a new idempotency key",
+            ErrorType.BAD_REQUEST,
+        )
     if not candidates and privacy_excluded:
         # Settlement and refund accept only routes this authorization holds,
         # so it cannot hand out the freshly filtered ones.
