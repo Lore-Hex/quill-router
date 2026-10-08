@@ -364,6 +364,16 @@ func (r *Records) Stop() {
 // library to ask for its outstanding records again.
 var shutdownTimeout = 10 * time.Second
 
+// ackExtension bounds how long the log holds a record for a member at a
+// time: each extension of its deadline the client library asks for, and
+// the deadline of every record the log sends on the member's stream. A
+// record the log sends and the member never receives is held that long: as
+// when the client library, stopping, asks for the member's records again
+// and the log sends one straight back on the member's stream before that
+// stream is closed. Unbounded, that hold is the library's default of a
+// minute, and the record's lease waits behind it.
+const ackExtension = 10 * time.Second
+
 // Subscription is the auditor's subscription to a region's settle log,
 // which must have message ordering on. It runs one Receive at a time.
 type Subscription struct {
@@ -377,10 +387,13 @@ type Subscription struct {
 // Subscribe opens it. maxOutstanding bounds the records delivered and not
 // yet acknowledged; a negative one is no bound. When Receive ends, the
 // records it delivered and was not asked to acknowledge are asked for again
-// at once, so another member gets them (assumption A1).
+// at once, so another member gets them (assumption A1): at once, or, one
+// the log sends back on this member's closing stream, once ackExtension
+// has passed.
 func Subscribe(client *pubsub.Client, subscription string, maxOutstanding int) *Subscription {
 	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
+	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
 	return &Subscription{sub: sub, active: map[string]bool{}, outstanding: map[*pubsub.Message]bool{}}
@@ -483,6 +496,7 @@ type RecordSubscription struct {
 func SubscribeRecords(client *pubsub.Client, subscription string, maxOutstanding int) *RecordSubscription {
 	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
+	sub.ReceiveSettings.MaxDurationPerAckExtension = ackExtension
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
 		Timeout: shutdownTimeout}
 	return &RecordSubscription{sub: sub}

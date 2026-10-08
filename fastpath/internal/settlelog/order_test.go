@@ -366,6 +366,27 @@ func TestAReturnIsNoAcknowledgement(t *testing.T) {
 	}
 }
 
+// TestARecordNeverReceivedComesBackSoon: a record the log sent on a
+// member's stream, and the member never received, as when the log sends a
+// stopping member's stream a record its member has just asked for again, is
+// held for no longer than ackExtension, and then comes back, not after the
+// client library's default minute, with its lease's records behind it.
+func TestARecordNeverReceivedComesBackSoon(t *testing.T) {
+	t.Parallel()
+	opt, lost := losing("la#1")
+	f := newFakeLog(t, true, opt)
+	l := f.log(t)
+	if err := wait(t, l.Publish("la", []byte("la#1"), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(t, l.Publish("la", []byte("la#2"), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.receive(t, 2, 3*ackExtension, nil); !lost.Load() || !equal(got["la"], []string{"la#1", "la#2"}) {
+		t.Fatalf("lost %v; delivered %v", lost.Load(), got)
+	}
+}
+
 // TestAStoppedMemberLetsGoOfItsRecords: once a member's Receive returns, it
 // holds none of the records its handlers had and did not settle: the client
 // library, left alone, can go on extending such a record's deadline, here

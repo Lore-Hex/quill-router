@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,13 +83,14 @@ type fakeLog struct {
 	reactor *failing
 }
 
-func newFakeLog(t *testing.T, ordered bool) *fakeLog {
+func newFakeLog(t *testing.T, ordered bool, opts ...grpc.DialOption) *fakeLog {
 	t.Helper()
 	ctx := context.Background()
 	reactor := &failing{seen: map[string]bool{}}
 	srv := pstest.NewServer(pstest.ServerReactorOption{FuncName: "Publish", Reactor: reactor})
 	t.Cleanup(func() { _ = srv.Close() })
-	conn, err := grpc.NewClient(srv.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(srv.Addr, append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,5 +416,82 @@ func TestTheRecordTopicIsDeliveredWithItsAttributes(t *testing.T) {
 	}
 	if most < 2 || !nacked {
 		t.Fatalf("at most %d handled at once; asked again %v", most, nacked)
+	}
+}
+
+// losing is a dial option whose streams lose the first delivery of the
+// message with data data, as a stream does that the log sends a message on
+// as its member closes it: the log holds the message for that member, and
+// the member never receives it. The flag reports the loss.
+func losing(data string) (grpc.DialOption, *atomic.Bool) {
+	lost := &atomic.Bool{}
+	return grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn,
+		method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		s, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil || method != "/google.pubsub.v1.Subscriber/StreamingPull" {
+			return s, err
+		}
+		return &losingStream{ClientStream: s, data: data, lost: lost}, nil
+	}), lost
+}
+
+type losingStream struct {
+	grpc.ClientStream
+	data string
+	lost *atomic.Bool
+}
+
+// RecvMsg passes on each response but the lost message; a response that
+// held only that one is not passed on at all.
+func (s *losingStream) RecvMsg(m any) error {
+	for {
+		if err := s.ClientStream.RecvMsg(m); err != nil {
+			return err
+		}
+		resp := m.(*pubsubpb.StreamingPullResponse)
+		var kept []*pubsubpb.ReceivedMessage
+		for _, rm := range resp.ReceivedMessages {
+			if string(rm.GetMessage().GetData()) == s.data && s.lost.CompareAndSwap(false, true) {
+				continue
+			}
+			kept = append(kept, rm)
+		}
+		if len(kept) > 0 || len(resp.ReceivedMessages) == 0 {
+			resp.ReceivedMessages = kept
+			return nil
+		}
+	}
+}
+
+// TestARecordMessageNeverReceivedComesBackSoon: a message of the record
+// topic the log sent on the staging consumer's stream, and the consumer
+// never received, is held for no longer than ackExtension, and then comes
+// back, not after the client library's default minute.
+func TestARecordMessageNeverReceivedComesBackSoon(t *testing.T) {
+	t.Parallel()
+	opt, lost := losing("record-0")
+	f := newFakeLog(t, false, opt)
+	r, err := OpenRecords(f.client, f.topic, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	if err := wait(t, r.Publish("gwa-0", FullRecord, []byte("record-0"))); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*ackExtension)
+	defer cancel()
+	began := time.Now()
+	var took time.Duration
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+		took = time.Since(began)
+		d.Ack()
+		cancel()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lost.Load() || took == 0 {
+		t.Fatalf("lost %v; delivered after %v", lost.Load(), took)
 	}
 }
