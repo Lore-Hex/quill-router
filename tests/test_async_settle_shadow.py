@@ -331,10 +331,26 @@ def test_optimized_projection_matches_builder():
 
 def test_transport_measured_shapes():
     from scripts.async_settle.shadow_benchmark import cases
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
     measured = list(cases())
-    assert [(n,sizes['snapshot']) for n,_,_,sizes in measured] == [(1,1041),(4,3563),(43,28821)]
+    # The named shapes are catalog-stable pins from the appendix measurement record.
+    assert [(n,sizes['snapshot']) for n,_,_,sizes in measured[:2]] == [(1,1041),(4,3563)]
     assert measured[1][3] == dict(snapshot=3563,decoded=5492,encoded=7323,transmitted_decoded=5492,transmitted_encoded=7323)
-    assert 'billing_snapshot' not in measured[2][1]
+    # The third shape is every supported openai/anthropic Credits chat candidate in the
+    # import-time catalog (43 candidates / 28,821 bytes when the appendix measured it).
+    # Scheduled retirements and catalog additions move it — the test-post-cutover job
+    # runs with the lifecycle clock past every cutover — so it is derived from the same
+    # catalog the benchmark read, not pinned; its invariant is that it exceeds the
+    # snapshot bound and therefore travels hash-only within the transmitted bound.
+    count, value, ctx, sizes = measured[2]
+    expected = tuple(e for e in MODEL_ENDPOINTS.values() if e.provider in {'openai','anthropic'}
+        and e.usage_type == 'Credits' and e.model_id.startswith(e.provider+'/') and MODELS[e.model_id].supports_chat)
+    assert count == len(expected)
+    assert ctx.authorization.candidate_endpoint_ids == [e.id for e in expected]
+    assert sizes['snapshot'] == len(b.canonical_bytes(project(expected,ctx.authorization.created_at)))
+    assert sizes['snapshot'] > 6144
+    assert 'billing_snapshot' not in value
+    assert sizes['transmitted_encoded'] <= 12288
     for _,value,ctx,_ in measured:
         result = compare(wire(value),ctx,[signer().trusted])
         assert result.classification == 'exact'
