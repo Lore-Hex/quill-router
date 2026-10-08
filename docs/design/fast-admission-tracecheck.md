@@ -88,8 +88,13 @@ of event go into the order:
   and its caller has no timestamp for it. So, when a run is traced, every
   read-write transaction of the store also writes one row of an operations
   journal: the attempt's ID, which the caller chose and recorded with its
-  request, and the commit timestamp. An attempt committed exactly when its
-  journal row exists, at that row's timestamp, whatever its caller learned.
+  request, and the commit timestamp. A row proves its attempt committed, at
+  the row's timestamp, whatever its caller learned. Its absence proves the
+  attempt did not commit only once nothing can still commit it: the
+  journal is read after every process has exited and every attempt's
+  deadline has passed by a sealing interval, an assumption the run states;
+  an attempt that read cannot settle is pending, and the events that rest
+  on it inconclusive.
   Each attempt is its own: a retried append that finds its drain row writes
   only its journal row, and the original raise and timestamp it returns are
   checked against the row, never taken as its own point. A statement's
@@ -237,8 +242,11 @@ state counts updated, and its shadow and the shadow's comparisons with it
     (A1 for Spanner's clock), not true time, and its commit makes the expiry
     visible later; a renewal that timed out at its owner may still commit,
     under the same epoch; an answer that leaves the expiry as it was still
-    tells the owner what it is; and an answer that comes after its owner let
-    the lease go is discarded (`AnswerDiscarded`).
+    tells the owner what it is; an answer that comes after its owner let
+    the lease go is discarded (`AnswerDiscarded`); and an answer that
+    refuses the renewal, the lease revoked or no longer the owner's,
+    carries no expiry, and the owner drops the lease on it (`OwnerDrops`),
+    or, the answer lost, keeps it to its known cutoff.
   - Grants. A lease begins with a grant's statement, which reads Spanner's
     clock as a renewal's does, its commit, and the owner's receipt of its
     answer, three steps, not an initial state at true time zero: an answer
@@ -273,6 +281,10 @@ state counts updated, and its shadow and the shadow's comparisons with it
     each read is its own, and a refused mark ends only its own.
   - Views. A process refreshes its view of the workspace whether or not a
     pause came.
+  - Pauses. A workspace's pause clears and may come again, as a debt mark
+    is set and repaid: `Unpause` clears it and a later `Pause` starts a new
+    cache window, and an admission is held to the pause its view could have
+    missed, the one in force within its view's age.
 
 Each change is checked by TLC like the specs are now, and the mappings
 below are written against the specs as they will be. A gap found later, on
@@ -337,10 +349,13 @@ either way.
   tick; a killed owner's lease reaches its tick all the same. A cutoff the
   owner passed and recovered from, by a renewal that came late, is no step:
   the owner issued nothing while past it, which each issuance's own test
-  shows, on its reading and the expiry it knew then, and after it the owner
-  adopted the drain log before it issued anything else, which is checked
-  directly. A late issuance or acknowledgement fails its timed check, where
-  it is, not wherever the boundary was placed.
+  shows, on its reading and the expiry it knew then; and after it, until
+  its drain log was adopted, it admitted nothing, issued no fresh
+  heartbeat, decided no terminal but an adoption and answered no
+  heartbeat accepted, which is checked directly, while checkpoints,
+  adoptions and the republish of records issued before the cutoff go on.
+  A late issuance or acknowledgement fails its timed check, where it is,
+  not wherever the boundary was placed.
 - **The enclave.** `EnclaveDeliver` at a request's first byte delivered,
   which the load generator records: a request that does not stream at its
   provider's answer, a stream once `Answer` permits it. An enclave that
@@ -452,7 +467,9 @@ either way.
   or `CloseOnTime` at the close's commit, by the kind it records. `Tick` is
   time passing between steps (§5).
 - Holds are the run's, keyed by authorization, each one unit as the spec
-  has them; `HoldsFitAllocation` is checked on their amounts (§7).
+  has them, open until their terminals are booked. That is not the set
+  money is held to: `HoldsFitAllocation` is checked on the owner's books
+  (§7).
 
 ## 5. Time
 
@@ -563,10 +580,11 @@ among it and the events that some extension puts before it is independent,
 the failed step's own pairs included: then it fails in every extension.
 Otherwise it is inconclusive, with the failure and the pairs named.
 
-No other extension is replayed. Replaying them all costs one state per
-downset of the order, up to ∏(nᵢ+1) for chains of nᵢ events covering it, at
-most (n/w+1)^w for w chains of n events in all, which hundreds of concurrent
-streams put out of reach.
+No other extension is replayed. Replaying them all visits every downset of
+the order, up to ∏(nᵢ+1) for chains of nᵢ events covering it, at most
+(n/w+1)^w for w chains of n events in all, and a downset may hold several
+states, since two orders of one downset can end apart; hundreds of
+concurrent streams put that out of reach.
 
 ## 7. Money and faults
 
@@ -575,8 +593,16 @@ Money stays the specs' abstraction: in `AuditorCommit` a settle charges
 `LeaseLifecycle`. The run's amounts are checked directly, by CreditDebt's
 rules as the store's walks check them, with the walks' ledger moved where
 both use it: each commit's bookings, returns and raises against the
-allocation, each fault by kind and amount, and the open holds' amounts
-against the allocation.
+allocation, each fault by kind and amount, and the owner's books against
+the allocation: the holds it holds, the terminals it decided whose
+publishes are not acknowledged, and what it booked, as CreditDebt's
+`OpenLog` counts stored and unbooked records. The lifecycle's holds, open
+until their terminals are booked, are not that set: a hold refunded and
+acknowledged frees its room for the next admission before any commit.
+Each reap's amount is checked too, the auditor's and the owner's: it names
+its hold's last durable snapshot by owner sequence number and charges
+`min(running charge, estimate)` of it, or nothing for a hold listed with
+no snapshot, as `store.Reap` books.
 
 The runtime records each fault with its kind:
 
@@ -632,30 +658,29 @@ fault, which is already set.
   (§2).
 - **The independence tables,** built from the reachable states (§6) and
   checked against the tables in the code.
-- **An exact oracle for small traces.** For a trace of a few dozen events on
-  a configuration in the registry, the verdict can be had without
-  `tracecheck`'s method. Every linear extension of its order is replayed
-  through the shadow; each time check is solved again by an independent
-  method (all pairs' shortest paths); and each direct check is written
-  again, apart from `tracecheck`'s and from its definition, over the raw
-  events: the money ledger summed afresh per lease (§7), A3 and A4 per
-  request (§5, §4.2), A4's coverage by every delivery against every answer
-  its gateway had by then, every accepted answer against its record's
-  publish result, the order's cycles by search, the log and its runs by
-  trying every way the acknowledged publishes and the deliveries could come
-  from one. It reports each
-  assumption broken as §8 says, named as `tracecheck` must name it, K6's
-  control both broken and violated, and goes on without it; then pass if
-  every extension is a run, every timed predicate holds for every solution
-  and the money checks hold; violation if a money check fails, no extension
-  is a run, or a timed predicate holds for no solution; inconclusive
-  otherwise, with the first step that fails in each extension. `tracecheck`
-  may be more careful than the oracle, never less: its pass must be the
-  oracle's pass, its violation the oracle's violation at the step it names,
-  each assumption it reports broken the oracle's, and it may call
-  inconclusive a trace the oracle decides, since its independence table is
-  judged over every state a pair could meet, not the states this trace does.
-  The tests count how often it does, so a table grown too careful shows.
+- **An exact oracle for small traces.** For a trace of a few dozen events on a
+  configuration in the registry, the verdict can be had without `tracecheck`'s
+  method. Every linear extension of its order is replayed through the shadow;
+  each time check is solved again by an independent method (all pairs' shortest
+  paths); and each direct check is written again, apart from `tracecheck`'s and
+  from its definition, over the raw events: the money ledger summed afresh per
+  lease, each reap's amount against its snapshot (§7), A3 and A4 per request
+  (§5, §4.2), A4's coverage by every delivery against every answer its gateway
+  had by then, every accepted answer against its record's publish result, the
+  order's cycles by search, the log and its runs by trying every way the
+  acknowledged publishes and the deliveries could come from one. It reports
+  each assumption broken as §8 says, named as `tracecheck` must name it, K6's
+  control both broken and violated, and goes on without it; then pass if every
+  extension is a run, every timed predicate holds for every solution and the
+  money checks hold; violation if a money check fails, no extension is a run,
+  or a timed predicate holds for no solution; inconclusive otherwise, with the
+  first step that fails in each extension. `tracecheck` may be more careful
+  than the oracle, never less: its pass must be the oracle's pass, its
+  violation the oracle's violation at the step it names, each assumption it
+  reports broken the oracle's, and it may call inconclusive a trace the oracle
+  decides, since its independence table is judged over every state a pair could
+  meet, not the states this trace does. The tests count how often it does, so a
+  table grown too careful shows.
 - **Traces from the machines.** Each step of a machine emits the events the
   runtime records for it, with their facts, clock readings within S, and
   evidence, so a random run becomes a trace. Each is checked as it is, with
