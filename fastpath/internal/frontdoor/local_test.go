@@ -1,8 +1,10 @@
 package frontdoor
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -85,12 +87,34 @@ func (f *fakeLog) Resume(string) {}
 type clock struct {
 	mu  sync.Mutex
 	now time.Time
+	// gate, when set, holds every reading until it closes.
+	gate chan struct{}
 }
 
 func (c *clock) Now() time.Time {
 	c.mu.Lock()
+	gate := c.gate
+	c.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
+}
+
+// hold holds the clock's readings until the function it returns is called.
+func (c *clock) hold() func() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	gate := make(chan struct{})
+	c.gate = gate
+	return func() {
+		c.mu.Lock()
+		c.gate = nil
+		c.mu.Unlock()
+		close(gate)
+	}
 }
 
 func (c *clock) advance(d time.Duration) {
@@ -476,5 +500,64 @@ func TestDirectStartsNothingPastTheWait(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the hold the wait gave up on never landed")
 		}
+	}
+}
+
+// TestDirectCopiesWhatItHandsTheOwner: a heartbeat's hash and basis and a
+// terminal's digest that the caller reuses once Direct has given up on the
+// owner reach the owner's records as the call stated them.
+func TestDirectCopiesWhatItHandsTheOwner(t *testing.T) {
+	f := newLocal(t)
+	d := Direct{"node-a": f.local}
+	_, e := f.admit(t, OwnerAuthorize{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot")})
+	last := func(kind record.Kind) record.Record {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			f.log.mu.Lock()
+			records := slices.Clone(f.log.records[e.Lease])
+			f.log.mu.Unlock()
+			for i := len(records) - 1; i >= 0; i-- {
+				if r, err := record.Decode(records[i]); err == nil && r.Kind == kind {
+					return r
+				}
+			}
+		}
+		t.Fatalf("no %s record", kind)
+		return record.Record{}
+	}
+	call := func(f func(context.Context) error) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		if err := f(ctx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("a call held past its wait: %v", err)
+		}
+	}
+
+	h, basis := hash("h1"), []byte("terms")
+	release := f.clock.hold()
+	call(func(ctx context.Context) error {
+		_, err := d.Heartbeat(ctx, "node-a", OwnerHeartbeat{Lease: e.Lease, Auth: e.Auth, GatewaySeq: 1, Hash: h,
+			Usage: 1, Running: 1, Basis: basis})
+		return err
+	})
+	copy(h, bytes.Repeat([]byte("x"), len(h)))
+	copy(basis, "XXXXX")
+	release()
+	if r := last(record.Heartbeat); !bytes.Equal(r.Snapshot.Hash, hash("h1")) || string(r.Basis) != "terms" {
+		t.Fatalf("the heartbeat's record: hash %x, basis %q", r.Snapshot.Hash, r.Basis)
+	}
+
+	digest := hash("full")
+	release = f.clock.hold()
+	call(func(ctx context.Context) error {
+		_, err := d.Terminal(ctx, "node-a", OwnerTerminal{Lease: e.Lease, Auth: e.Auth, Kind: record.Settle,
+			Charge: 3, Digest: digest})
+		return err
+	})
+	copy(digest, bytes.Repeat([]byte("y"), len(digest)))
+	release()
+	if r := last(record.Settle); !bytes.Equal(r.Digest, hash("full")) {
+		t.Fatalf("the settle's record: digest %x", r.Digest)
 	}
 }
