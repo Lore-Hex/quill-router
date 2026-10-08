@@ -403,7 +403,8 @@ func (w *walker) appendDoor(a int8, record string, taken bool) {
 	}
 	if taken {
 		w.rows[record] = DrainRow{AuthorizationID: w.c.Auths[a], RecordID: record, Kind: "settle",
-			Charge: ac.DoorCharge, Estimate: ac.DoorCharge, Digest: []byte(record), Money: []byte(`{}`), Cause: "walk"}
+			Charge: ac.DoorCharge, Estimate: ac.DoorCharge, Digest: []byte(record), Money: []byte(`{}`), Cause: "walk",
+			CommitTS: got.CommitTS}
 	}
 }
 
@@ -424,6 +425,7 @@ func (w *walker) load(m int8, to ac.State) {
 	}
 	if l.State != "open" {
 		got.Win = w.winsOf(loaded.Packs)
+		w.checkPacks(loaded.Packs, "the load's")
 	} else if len(loaded.Packs) != 0 {
 		w.fatalf("an open lease's load has winners: %+v", loaded.Packs)
 	}
@@ -512,7 +514,7 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 	w.seen["reap"]++
 	mem := from.Mem[m]
 	charge := int64(max(mem.Holds[a], 0))
-	got, _, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, ReapRow{AuthorizationID: w.c.Auths[a],
+	got, committed, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, ReapRow{AuthorizationID: w.c.Auths[a],
 		RecordID: record, Charge: charge, Estimate: walkEstimate,
 		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)})
 	if err != nil || got != want {
@@ -521,7 +523,7 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 	if want == "" {
 		w.rows[record] = DrainRow{AuthorizationID: w.c.Auths[a], RecordID: record, Kind: "reap", Charge: charge,
 			Estimate: walkEstimate, Digest: []byte(record), Money: []byte(`{}`), Cause: "reap",
-			SnapshotOwnerSeq: spanner.NullInt64{Int64: w.members[m].holdSeq[a], Valid: true}}
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: w.members[m].holdSeq[a], Valid: true}, CommitTS: committed}
 	}
 }
 
@@ -922,10 +924,14 @@ func (w *walker) check() {
 		w.fatalf("%d drain rows, and the walk wrote %d", len(rows), len(w.rows))
 	}
 	for _, r := range rows {
-		got := r
-		got.CommitTS = time.Time{}
-		if want, ok := w.rows[r.RecordID]; !ok || !reflect.DeepEqual(got, want) {
-			w.fatalf("drain row %+v, and the walk wrote %+v", got, want)
+		// The row's commit timestamp is the one its append or reap
+		// returned: a row stamped otherwise could sort behind a cursor
+		// already read past it.
+		want, ok := w.rows[r.RecordID]
+		got, wantTS := r, want.CommitTS
+		got.CommitTS, want.CommitTS = time.Time{}, time.Time{}
+		if !ok || !reflect.DeepEqual(got, want) || wantTS.IsZero() || !r.CommitTS.Equal(wantTS) {
+			w.fatalf("drain row %+v, and the walk wrote %+v at %v", r, want, wantTS)
 		}
 	}
 	w.checkUnprojected(l, loaded.Holds, packs)
@@ -976,25 +982,33 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 		w.fatalf("closed at %v by %v, and the lease is %s", l.ClosedAt, l.CloseKind, stateName(w.state.St))
 	case l.HoldsListedSeq.Valid || l.LastTick != 0:
 		w.fatalf("holds listed at %v, last tick %d, and the walk sent neither", l.HoldsListedSeq, l.LastTick)
-	case len(packs) != len(w.packVers):
-		w.fatalf("%d packs, and the walk's commits stored %d", len(packs), len(w.packVers))
 	}
-	for i, p := range packs {
-		if p.CommitVersion != w.packVers[i] || p.WorkDoneAt.Valid {
-			w.fatalf("pack %d is at version %d, done %v, and the walk's commit was at %d", i, p.CommitVersion,
-				p.WorkDoneAt, w.packVers[i])
-		}
-		// Each pack holds its own commit's winners, work and all.
-		if len(p.Winners) != len(w.packWins[i]) || (len(p.Winners) > 0 && !reflect.DeepEqual(p.Winners, w.packWins[i])) {
-			w.fatalf("pack %d at version %d holds %+v, and its commit stored %+v", i, p.CommitVersion, p.Winners,
-				w.packWins[i])
-		}
-	}
+	w.checkPacks(packs, "the winners'")
 	for _, h := range holds {
 		seq := spanner.NullInt64{Int64: w.holdSeq[index(w.c.Auths, h.AuthorizationID)], Valid: true}
 		if h.SnapshotSeq != seq || h.SnapshotOwnerSeq != seq || h.Estimate != walkEstimate ||
 			!h.Deadline.Equal(walkDeadline) || h.Listed || !payloadIs(h, seq.Int64) {
 			w.fatalf("a hold row %+v, and the walk stored its snapshot at %d", h, seq.Int64)
+		}
+	}
+}
+
+// checkPacks holds packs as a read returned them to the walk's commits:
+// one pack per commit, at its version, none marked done, each with its own
+// commit's winners, work and all.
+func (w *walker) checkPacks(packs []Pack, read string) {
+	w.t.Helper()
+	if len(packs) != len(w.packVers) {
+		w.fatalf("%s read has %d packs, and the walk's commits stored %d", read, len(packs), len(w.packVers))
+	}
+	for i, p := range packs {
+		if p.CommitVersion != w.packVers[i] || p.WorkDoneAt.Valid {
+			w.fatalf("%s read's pack %d is at version %d, done %v, and the walk's commit was at %d", read, i,
+				p.CommitVersion, p.WorkDoneAt, w.packVers[i])
+		}
+		if len(p.Winners) != len(w.packWins[i]) || (len(p.Winners) > 0 && !reflect.DeepEqual(p.Winners, w.packWins[i])) {
+			w.fatalf("%s read's pack %d at version %d holds %+v, and its commit stored %+v", read, i, p.CommitVersion,
+				p.Winners, w.packWins[i])
 		}
 	}
 }

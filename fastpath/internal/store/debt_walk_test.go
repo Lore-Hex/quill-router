@@ -98,6 +98,7 @@ type debtLease struct {
 	donors     []donor
 	rows       map[string]DrainTerminal
 	raises     map[string]int64
+	stamped    map[string]time.Time // each row's commit timestamp, as its append returned it
 	committed  map[string]bool
 }
 
@@ -304,7 +305,8 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 	// A grant reserves L on donor shards in ascending order, each up to its
 	// headroom.
 	l := &debtLease{ref: LeaseRef{d.ws, req.LeaseID}, state: "open", granted: req.Amount,
-		rows: map[string]DrainTerminal{}, raises: map[string]int64{}, committed: map[string]bool{}}
+		rows: map[string]DrainTerminal{}, raises: map[string]int64{}, stamped: map[string]time.Time{},
+		committed: map[string]bool{}}
 	left := req.Amount
 	for shard, h := range headrooms(rows) {
 		if x := min(h, left); x > 0 {
@@ -475,7 +477,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	}
 	l.doorRaised += raise
 	l.raised(raise)
-	l.rows[record], l.raises[record] = t, raise
+	l.rows[record], l.raises[record], l.stamped[record] = t, raise, got.CommitTS
 	d.seen["door raise"]++
 }
 
@@ -554,7 +556,8 @@ func (d *debtWalk) checkRow(l *debtLease, r DrainRow) {
 	t, ok := l.rows[r.RecordID]
 	if !ok || r.AuthorizationID != t.AuthorizationID || r.Kind != t.Kind || r.Charge != t.Charge ||
 		r.Estimate != t.Estimate || r.DoorRaise != l.raises[r.RecordID] || !bytes.Equal(r.Digest, t.Digest) ||
-		!bytes.Equal(r.Money, t.Money) || r.Cause != t.Cause || r.SnapshotOwnerSeq.Valid {
+		!bytes.Equal(r.Money, t.Money) || r.Cause != t.Cause || r.SnapshotOwnerSeq.Valid ||
+		l.stamped[r.RecordID].IsZero() || !r.CommitTS.Equal(l.stamped[r.RecordID]) {
 		d.fatalf("lease %s's drain row %+v, and the walk appended %+v raising %d", l.ref.LeaseID, r, t,
 			l.raises[r.RecordID])
 	}
