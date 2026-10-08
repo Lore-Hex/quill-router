@@ -89,6 +89,9 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	if l.let {
 		return Admitted{}, ErrPastCutoff
 	}
+	if l.closing {
+		return Admitted{}, ErrClosing
+	}
 	if _, open := l.holds[auth]; open || l.decided[auth] != nil {
 		return Admitted{}, fmt.Errorf("owner: minted authorization %q twice", auth)
 	}
@@ -316,10 +319,18 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		l.mu.Unlock()
 		return Outcome{}, err
 	}
+	raised := shortfall > l.shortfall
 	l.held, l.consumed, l.allocation, l.shortfall = held, consumed, allocation, shortfall
 	l.buffer -= h.counted()
 	l.pending += freed
 	delete(l.holds, auth)
+	if raised {
+		// The shortfall writer stores the new total in Spanner (§4.2).
+		select {
+		case l.shortKick <- struct{}{}:
+		default:
+		}
+	}
 	l.decided[auth] = &decision{kind: kind, charge: charge, sent: s}
 	l.mu.Unlock()
 	return l.terminalAnswer(ctx, s, Outcome{Kind: kind, Charge: charge})
