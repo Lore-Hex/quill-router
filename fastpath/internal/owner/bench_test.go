@@ -92,7 +92,10 @@ func BenchmarkAdmitParallel(b *testing.B) {
 	workers := runtime.GOMAXPROCS(0)
 	var l *Lease
 	b.ReportAllocs()
+	// Nothing before the first batch's admissions is timed: the timer
+	// stops, and what it had counted is set to zero.
 	b.StopTimer()
+	b.ResetTimer()
 	for left := b.N; left > 0; {
 		n := min(left, benchBatch)
 		left -= n

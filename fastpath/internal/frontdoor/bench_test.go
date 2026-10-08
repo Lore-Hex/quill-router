@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/owner"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
 // BenchmarkAuthorize is an authorize through the front door to the node's
@@ -15,7 +16,7 @@ import (
 // milliseconds has the network and Pub/Sub besides).
 func BenchmarkAuthorize(b *testing.B) {
 	c := &clock{now: start}
-	cfg := ownerConfig(c, &fakeGrants{expiry: start.Add(time.Hour)})
+	cfg := ownerConfig(c, &clockGrants{c: c})
 	cfg.TopUps.Min, cfg.TopUps.Max = 1<<50, 1<<50
 	o, err := owner.New(cfg, &fakeLog{records: map[string][][]byte{}})
 	if err != nil {
@@ -84,3 +85,15 @@ func BenchmarkAuthorize(b *testing.B) {
 // benchBatch is how many holds a benchmark's lease takes before it is
 // replaced.
 const benchBatch = 4096
+
+// clockGrants grants each lease to expire an hour past the clock's time
+// then, so a lease granted after the clock has moved lasts as the first
+// did, however long the run. The owner makes no other call of it here.
+type clockGrants struct {
+	owner.Spanner
+	c *clock
+}
+
+func (g *clockGrants) Grant(context.Context, store.GrantRequest) (store.GrantResult, error) {
+	return store.GrantResult{Expiry: g.c.Now().Add(time.Hour)}, nil
+}
