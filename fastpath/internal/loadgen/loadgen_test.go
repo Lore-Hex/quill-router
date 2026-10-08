@@ -568,43 +568,74 @@ func TestHeartbeatsKeepTheirSchedule(t *testing.T) {
 }
 
 // TestADeclaredStreamHeartbeatsAsItOpens: with the stream-open heartbeat
-// declared, a stream's authorize says so, and its first heartbeat is sent as
-// it opens, the k-th (k-1) × HeartbeatEvery after the authorize, however
-// long the answers before it took; a request that does not stream declares
-// nothing.
+// declared, a stream's authorize says so, as its log records; its first
+// heartbeat is sent as it opens, reporting nothing delivered, the k-th
+// (k-1) × HeartbeatEvery after the authorize's answer, however long the
+// answers before it took; and its last heartbeat delivers the bill. A
+// request that does not stream declares nothing.
 func TestADeclaredStreamHeartbeatsAsItOpens(t *testing.T) {
-	const every, answerTakes = 150 * time.Millisecond, 120 * time.Millisecond
+	const every, answerTakes = 400 * time.Millisecond, 120 * time.Millisecond
 	gw := admitting(t)
-	accept := gw.heartbeat
+	accept, authorize := gw.heartbeat, gw.authorize
+	var opened time.Time
+	gw.authorize = func(a frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
+		got, err := authorize(a)
+		gw.mu.Lock()
+		opened = time.Now()
+		gw.mu.Unlock()
+		return got, err
+	}
 	gw.heartbeat = func(hb frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
 		time.Sleep(answerTakes)
 		return accept(hb)
 	}
 	cfg := config(gw)
 	cfg.HeartbeatEvery, cfg.OpenHeartbeat = every, true
+	var log bytes.Buffer
+	cfg.Log = &log
 	if _, err := Run(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	gw.mu.Lock()
-	if len(gw.at["heartbeat"]) != 3 || !gw.authorizes[0].OpenHeartbeat || !gw.authorizes[0].Stream {
-		t.Fatalf("%d heartbeats; the authorize %+v", len(gw.at["heartbeat"]), gw.authorizes[0])
+	var g Generation
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil {
+		t.Fatal(err)
 	}
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	if len(gw.heartbeats) != 3 || !gw.authorizes[0].OpenHeartbeat || !gw.authorizes[0].Stream || !g.OpenHeartbeat {
+		t.Fatalf("%d heartbeats; the authorize %+v; logged %+v", len(gw.heartbeats), gw.authorizes[0], g)
+	}
+	// Each is due (k-1) × every after the stream opened: an answer the
+	// authorize gave late moves none but the first, which is sent at once,
+	// and the margin, half of every, is for the scheduler.
 	for k, at := range gw.at["heartbeat"] {
 		due := time.Duration(k) * every
-		if since := at.Sub(gw.at["authorize"][0]); since < due || since >= due+100*time.Millisecond {
-			t.Fatalf("heartbeat %d %v after the authorize, due at %v", k+1, since, due)
+		if since := at.Sub(opened); since < due || since >= due+every/2 {
+			t.Fatalf("heartbeat %d %v after the stream opened, due at %v", k+1, since, due)
 		}
 	}
-	gw.mu.Unlock()
+	// The bill, 125, is delivered over the two heartbeats after the first.
+	for k, want := range []struct{ usage, running int64 }{{0, 0}, {10, 62}, {20, 100}} {
+		if hb := gw.heartbeats[k]; hb.Usage != want.usage || hb.Running != want.running {
+			t.Fatalf("heartbeat %d reports usage %d and running %d, want %d and %d", k+1, hb.Usage, hb.Running,
+				want.usage, want.running)
+		}
+	}
 
 	plain := admitting(t)
 	cfg = config(plain)
 	cfg.OpenHeartbeat, cfg.Mix.StreamShare = true, 0
+	log.Reset()
+	cfg.Log = &log
 	if _, err := Run(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if len(plain.authorizes) != 1 || plain.authorizes[0].Stream || plain.authorizes[0].OpenHeartbeat {
-		t.Fatalf("a request that does not stream: %+v", plain.authorizes)
+	var pg Generation
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &pg); err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.authorizes) != 1 || plain.authorizes[0].Stream || plain.authorizes[0].OpenHeartbeat || pg.OpenHeartbeat {
+		t.Fatalf("a request that does not stream: %+v; logged %+v", plain.authorizes, pg)
 	}
 }
 

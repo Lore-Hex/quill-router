@@ -366,7 +366,10 @@ type Generation struct {
 	// failed, or "cancelled" for one the run's end kept from being made.
 	Authorized string `json:"authorized"`
 	Stream     bool   `json:"stream"`
-	Heartbeats []Beat `json:"heartbeats,omitempty"`
+	// OpenHeartbeat is whether its authorize declared the stream-open
+	// heartbeat (Config.OpenHeartbeat), which only a stream does.
+	OpenHeartbeat bool   `json:"open_heartbeat,omitempty"`
+	Heartbeats    []Beat `json:"heartbeats,omitempty"`
 	// Streamed is how a stream ended: "complete"; "stopped" at a heartbeat
 	// after the first that was not accepted, which settles what was
 	// delivered; "refused" at a first heartbeat not accepted, which sends
@@ -555,8 +558,9 @@ func (r *run) generation(ctx context.Context, n int64) {
 
 	actx, cancel := context.WithTimeout(ctx, cfg.CallWait)
 	began := time.Now()
+	g.OpenHeartbeat = g.Stream && cfg.OpenHeartbeat
 	got, err := p.gateway().Authorize(actx, frontdoor.AuthorizeOf{Workspace: g.Workspace, Request: g.Request,
-		Estimate: estimate, Stream: g.Stream, Boot: cfg.Boot, OpenHeartbeat: g.Stream && cfg.OpenHeartbeat})
+		Estimate: estimate, Stream: g.Stream, Boot: cfg.Boot, OpenHeartbeat: g.OpenHeartbeat})
 	cancel()
 	if err != nil {
 		g.Authorized = "error"
@@ -605,7 +609,9 @@ func (r *run) generation(ctx context.Context, n int64) {
 // stream began, or HeartbeatEvery × (seq-1) with the stream-open heartbeat
 // declared, each with its sequence, a hash of its snapshot, the usage and
 // running charge so far within the hold, and the deadline the last one
-// granted; the first carries the reap's basis. It reports how the stream
+// granted; the first carries the reap's basis. A declared stream's first
+// heartbeat, sent as it opens, before its provider answers, reports nothing
+// delivered, and its later ones deliver the bill. It reports how the stream
 // ended, and the charge it delivered: at a heartbeat not accepted, what that
 // heartbeat reports, past the hold if the bill is.
 func (p *played) stream(ctx context.Context, g *Generation, envelope string, estimate, bill, beats int64) (string,
@@ -613,9 +619,11 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 	cfg := p.r.cfg
 	began := time.Now()
 	var echoed time.Time
-	first := int64(1)
+	// first is the first heartbeat's place in the schedule, and paying how
+	// many heartbeats deliver the bill, each after the one before.
+	first, paying := int64(1), beats
 	if cfg.OpenHeartbeat {
-		first = 0
+		first, paying = 0, beats-1
 	}
 	for seq := int64(1); seq <= beats; seq++ {
 		wait := time.NewTimer(time.Until(began.Add(time.Duration(seq-1+first) * cfg.HeartbeatEvery)))
@@ -630,9 +638,13 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 		if ctx.Err() != nil {
 			return "cancelled", 0
 		}
-		delivered, _ := mulDiv(bill, seq, beats)
+		paid := seq - (beats - paying)
+		var delivered int64
+		if paid > 0 {
+			delivered, _ = mulDiv(bill, paid, paying)
+		}
 		snapshot := sha256.Sum256([]byte(g.Request + "/" + strconv.FormatInt(seq, 10)))
-		hb := frontdoor.HeartbeatOf{Envelope: envelope, GatewaySeq: seq, Hash: snapshot[:], Usage: 10 * seq,
+		hb := frontdoor.HeartbeatOf{Envelope: envelope, GatewaySeq: seq, Hash: snapshot[:], Usage: 10 * paid,
 			Running: min(delivered, estimate), Echoed: echoed}
 		if seq == 1 {
 			// The reap's basis: what a reap of the hold needs to build its
