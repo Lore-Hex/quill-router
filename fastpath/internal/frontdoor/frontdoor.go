@@ -108,21 +108,39 @@ type FrontDoor struct {
 	cfg Config
 
 	mu sync.Mutex
-	// withdrawn is set while the front door is withdrawn, and want is the
-	// state its ring row should say. unreached are the owners whose calls
-	// last failed here while a peer reached them, with when; failing, each
-	// lease whose owner no one reached since a call first failed, with
-	// when; revoked, the leases revoked, with when, and lastRevoke the last
-	// of those.
-	withdrawn  bool
-	want       string
-	unreached  map[string]time.Time
-	failing    map[store.LeaseRef]time.Time
-	revoked    map[store.LeaseRef]time.Time
-	lastRevoke time.Time
-	// writing lets one state write run at a time, each the state wanted
-	// when it runs, so the row ends at the latest.
-	writing sync.Mutex
+	// withdrawn is set while the front door is withdrawn; want is the
+	// state its ring row should say, and handed the last Run handed the
+	// node. seq numbers the reaches and failures the front door sees, so
+	// their order is known whatever the clock says. unreached are the
+	// owners whose calls last failed here while a peer reached them, and
+	// reachedAt, when each owner last answered, here or through a peer;
+	// failing, each lease whose owner no one has reached since a call
+	// first failed; revoked, the leases revoked or to be, with when,
+	// lastRevoke the last of those, and toRevoke those Run is to revoke.
+	withdrawn    bool
+	want, handed string
+	seq          uint64
+	unreached    map[string]seen
+	reachedAt    map[string]seen
+	failing      map[store.LeaseRef]failure
+	revoked      map[store.LeaseRef]time.Time
+	lastRevoke   time.Time
+	toRevoke     []store.LeaseRef
+	// kick wakes Run for a state to hand the node or a lease to revoke.
+	kick chan struct{}
+}
+
+// seen is when the front door saw a reach or a failure, by its clock and
+// in its order.
+type seen struct {
+	at  time.Time
+	seq uint64
+}
+
+// failure is a lease's first failure since its owner last answered.
+type failure struct {
+	owner string
+	since seen
 }
 
 // New is a front door with its configuration.
@@ -141,8 +159,8 @@ func New(cfg Config) (*FrontDoor, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
-	return &FrontDoor{cfg: cfg, unreached: map[string]time.Time{}, failing: map[store.LeaseRef]time.Time{},
-		revoked: map[store.LeaseRef]time.Time{}}, nil
+	return &FrontDoor{cfg: cfg, unreached: map[string]seen{}, reachedAt: map[string]seen{},
+		failing: map[store.LeaseRef]failure{}, revoked: map[store.LeaseRef]time.Time{}, kick: make(chan struct{}, 1)}, nil
 }
 
 // AuthorizeOf is a gateway's authorize.
