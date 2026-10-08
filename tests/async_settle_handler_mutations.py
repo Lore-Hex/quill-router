@@ -181,6 +181,130 @@ MUTATIONS += [
 ]
 
 
+# Round 7: deleting one GC edge kind must make its dormant witness go red.
+# Mutation-only type dispatch deliberately demonstrates what the real walker
+# must never do. These rows alter tests/fakes only, never snapshot bytes.
+_REFERENCE_MUTATIONS = [
+    ('partial', "type(value).__name__ == 'partial'", 'test_guard_reviewer_references[partial_cache]'),
+    ('namespace', "type(value).__name__ == 'SimpleNamespace'", 'test_guard_reviewer_references[simple_namespace]'),
+    ('function-default', "isinstance(value, FunctionType)", 'test_guard_reviewer_references[external_default]'),
+    ('function-globals', "isinstance(value, FunctionType)", 'test_guard_reviewer_references[copied_globals]'),
+    ('shared-io', "type(value).__name__ == 'partial'", 'test_guard_reviewer_references[shared_fake_io]'),
+    ('bound-cache-call', "type(value).__name__ == 'method-wrapper'", 'test_guard_reviewer_references[cached_bound_call]'),
+    ('dataclass-factory', "isinstance(value, type)", 'test_guard_reviewer_references[dataclass_factory]'),
+    ('validator', "isinstance(value, type)", 'test_guard_reviewer_references[pydantic_validator]'),
+    ('closure-cell', "type(value).__name__ == 'cell'", 'test_guard_reviewer_references[captured_callback]'),
+    ('private-slot', "type(value).__name__ == 'Holder'", 'test_guard_reviewer_separate_warmed_cache[private_slot]'),
+    ('mapping-proxy', "type(value).__name__ == 'mappingproxy'", 'test_guard_reviewer_separate_warmed_cache[mapping_proxy]'),
+    ('nested-mapping-slot', "type(value).__name__ == 'mappingproxy'", 'test_guard_gc_composed_witness[nested_mapping_slot]'),
+    ('code-constants', "isinstance(value, CodeType)", 'test_guard_gc_composed_witness[code_constants]'),
+    ('frozen-closure', "type(value).__name__ == 'cell'", 'test_guard_gc_composed_witness[frozen_closure]'),
+    ('class-descriptor', "type(value).__name__ == 'property'", 'test_guard_gc_composed_witness[class_descriptor]'),
+    ('dataclass-frozenset-tuple', "type(value).__name__ == 'frozenset'", 'test_guard_gc_composed_witness[dataclass_frozenset_tuple]'),
+]
+MUTATIONS += [
+    ('reference-stop-' + name, [('tests/fakes/frozen_package.py', [
+        ('        yield value\n', '        yield value\n        if ' + condition + ':\n            continue\n'),
+    ])], 'tests/test_async_settle_proof_oracle.py::' + witness)
+    for name, condition, witness in _REFERENCE_MUTATIONS
+]
+MUTATIONS += [
+    ('reference-omit-datetime-tzinfo', [('tests/fakes/frozen_package.py', [
+        ('pending.append(_Datetime.tzinfo.__get__(value))', 'pass'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_atomic_tzinfo_cache[datetime]'),
+    ('reference-omit-time-tzinfo', [('tests/fakes/frozen_package.py', [
+        ('pending.append(_Time.tzinfo.__get__(value))', 'pass'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_atomic_tzinfo_cache[time]'),
+    ('reference-omit-typing-registry-caches', [('tests/fakes/frozen_package.py', [
+        ('    caches.update(shared_runtime_caches)', ''),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_clears_registry_only_typing_cache'),
+    ('reference-ignore-explicit-cache-root', [('tests/fakes/frozen_package.py', [
+        (' and identity not in explicit', ''),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_explicit_typing_cache_root_is_inspected'),
+    ('reference-purge-external-cache-before-audit', [('tests/fakes/frozen_package.py', [
+        ('identity in shared_runtime_caches and identity not in explicit',
+         "identity in shared_runtime_caches or _owner(cache) == 'review_external'"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_reviewer_references[external_cache_result]'),
+    ('reference-omit-code-supplement', [('tests/fakes/frozen_package.py', [
+        ('pending.extend(field.__get__(value) for field in _CODE_MEMBERS)', 'pass'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_reference_walk_atomic_code_constants'),
+    ('reference-omit-object-bound', [('tests/fakes/frozen_package.py', [
+        ('assert len(visited) < max_objects', 'assert True'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_reference_walk_bound_and_cycle'),
+    ('reference-omit-code-provenance', [('tests/fakes/frozen_package.py', [
+        ('else value if value_type is CodeType else None)', 'else None)'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_live_code_object_argument'),
+    ('profile-omit-existing-worker-check', [('tests/fakes/frozen_package.py', [
+        ('assert not foreign,', 'assert True,'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_preexisting_worker_cost_bridge'),
+]
+MUTATIONS += [
+    ('profile-omit-' + name, [('tests/fakes/frozen_package.py', [
+        ('        if live:\n', '        if False:\n'),
+    ])], 'tests/test_async_settle_proof_oracle.py::' + witness)
+    for name, witness in [
+        ('dynamic-import', 'test_guard_dynamic_import'),
+        ('thread', 'test_guard_has_no_omitted_function_or_module_exemption[worker]'),
+        ('raw-thread', 'test_guard_raw_thread_finishes_before_exit[_thread.start_new_thread]'),
+    ]
+]
+
+
+MUTATIONS += [
+    ('reference-omit-atomic-' + kind, [('tests/fakes/frozen_package.py', [(edge, 'pass')])],
+     'tests/test_async_settle_proof_oracle.py::test_guard_atomic_metadata_cache[' + kind + ']')
+    for kind, edge in [
+        *[(name, 'pending.extend(field.__get__(value) for field in _CODE_MEMBERS)')
+          for name in ('co_filename', 'co_name', 'co_qualname', 'co_linetable', 'co_exceptiontable')],
+        ('timezone_offset', 'pending.append(_Timezone.utcoffset(value, None))'),
+        ('timezone_name', 'pending.append(_Timezone.tzname(value, None))'),
+    ]
+]
+MUTATIONS += [
+    ('reference-overridden-filename-comparison', [('tests/fakes/frozen_package.py', [
+        ("str.__contains__(filename, '/src/trusted_router/')\n            and not str.startswith(filename, str(ROOT) + '/')",
+         "'/src/trusted_router/' in filename and not filename.startswith(str(ROOT) + '/')"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_live_code_filename_subclass'),
+]
+
+MUTATIONS += [
+    ('reference-dynamic-provenance-property', [('tests/fakes/frozen_package.py', [
+        ("    value_type = type(value)\n    if issubclass(value_type, ModuleType):",
+         "    owner = (value.__name__ if isinstance(value, ModuleType) else getattr(value, '__module__', type(value).__module__))\n    return owner if isinstance(owner, str) else getattr(owner, '__name__', '')\n    value_type = type(value)\n    if issubclass(value_type, ModuleType):"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_provenance_property_cannot_remove_nested_cache'),
+    ('reference-dynamic-walk-class-property', [('tests/fakes/frozen_package.py', [
+        ('        if value_type is CodeType:', '        if isinstance(value, CodeType):'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_does_not_execute_metadata_properties[__class__]'),
+    ('reference-dynamic-cache-class-property', [('tests/fakes/frozen_package.py', [
+        ('type(value) is functools._lru_cache_wrapper', 'isinstance(value, functools._lru_cache_wrapper)'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_does_not_execute_metadata_properties[__class__]'),
+    ('reference-dynamic-audit-class-property', [('tests/fakes/frozen_package.py', [
+        ('value.__code__ if value_type is FunctionType', 'value.__code__ if isinstance(value, FunctionType)'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_does_not_execute_metadata_properties[__class__]'),
+    ('reference-dynamic-namespace-comparisons', [('tests/fakes/frozen_package.py', [
+        ("str.__eq__(name, namespace) is True or str.startswith(name, namespace + '.')",
+         "name == namespace or name.startswith(namespace + '.')"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_does_not_execute_namespace_comparisons'),
+]
+
+
+MUTATIONS += [
+    ('reference-overridden-cache-clear', [('tests/fakes/frozen_package.py', [
+        ('functools._lru_cache_wrapper.cache_clear(cache)', 'cache.cache_clear()'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_clears_native_cache_despite_shadowed_method'),
+]
+
+
+MUTATIONS += [
+    ('reference-dynamic-metadata-dictionary-get', [('tests/fakes/frozen_package.py', [
+        ("_metadata(dict.items(vars(value)), '__module__')", "vars(value).get('__module__', '')"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_cache_metadata_cannot_remove_cached_live_result[dictionary_get]'),
+    ('reference-dynamic-metadata-key-equality', [('tests/fakes/frozen_package.py', [
+        ('str.__eq__(key, name) is True', 'key == name'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_cache_metadata_cannot_remove_cached_live_result[key_equality]'),
+]
+
+
 def main() -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix='pr-c-mutations-') as directory:

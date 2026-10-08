@@ -16,10 +16,13 @@ import tarfile
 import tempfile
 import threading
 import time
-from collections.abc import Mapping, Sequence, Set
+import typing
 from contextlib import contextmanager
+from datetime import datetime as _Datetime
+from datetime import time as _Time
+from datetime import timezone as _Timezone
 from pathlib import Path
-from types import FunctionType, MemberDescriptorType, MethodType, ModuleType
+from types import BuiltinFunctionType, CodeType, FunctionType, MemberDescriptorType, ModuleType
 
 SNAPSHOT = Path(__file__).with_name('frozen_f83bbaac')
 ARCHIVE_SHA256 = 'e68b785ca7d5d62d82e71be5df07c605aa3f2ef83a528769138de6d2eba8d4da'
@@ -96,131 +99,104 @@ def fake_store():
                    generation_records_enabled=True, analytics_outbox_enabled=True)
 
 
-def _owner(value):
-    owner = (value.__name__ if isinstance(value, ModuleType)
-             else getattr(value, '__module__', type(value).__module__))
-    return owner if isinstance(owner, str) else getattr(owner, '__name__', '')
+_TYPE_DICT = type.__dict__['__dict__']
+_TYPE_QUALNAME = type.__dict__['__qualname__']
+_MODULE_DICT = ModuleType.__dict__['__dict__']
+
+
+def _metadata(items, name):
+    # Native item iterators and comparisons never call a dict subclass's get,
+    # or a metadata key's overridden equality/hash methods.
+    for key, value in items:
+        if issubclass(type(key), str) and str.__eq__(key, name) is True:
+            return value
+    return ''
+
+
+def _owner(value, owners=None):
+    """Read provenance without invoking instance/metaclass properties."""
+    value_type = type(value)
+    if issubclass(value_type, ModuleType):
+        owner = _metadata(dict.items(_MODULE_DICT.__get__(value)), '__name__')
+    elif value_type is FunctionType or value_type is BuiltinFunctionType:
+        owner = value.__module__  # These native function types cannot be subclassed.
+    elif value_type is functools._lru_cache_wrapper:
+        owner = _metadata(dict.items(vars(value)), '__module__')
+    else:
+        cls = value if issubclass(value_type, type) else value_type
+        # Class labels are stable during this property-free audit; memoize only
+        # within one traversal. Identity keys avoid custom metaclass hashing.
+        entry = owners.get(id(cls)) if owners is not None else None
+        if entry is None:
+            owner = _metadata(_TYPE_DICT.__get__(cls).items(), '__module__')
+            if owners is not None:
+                owners[id(cls)] = (cls, owner)
+        else:
+            _, owner = entry
+    if issubclass(type(owner), ModuleType):
+        owner = _metadata(dict.items(_MODULE_DICT.__get__(owner)), '__name__')
+    return owner if issubclass(type(owner), str) else ''
 
 
 def _in_namespace(name, namespace):
-    return name == namespace or name.startswith(namespace + '.')
+    return str.__eq__(name, namespace) is True or str.startswith(name, namespace + '.')
 
 
 def _live_source(filename):
-    return '/src/trusted_router/' in filename and not filename.startswith(str(ROOT) + '/')
+    return (str.__contains__(filename, '/src/trusted_router/')
+            and not str.startswith(filename, str(ROOT) + '/'))
 
 
-def _references(roots, *, namespaces):
-    """Walk data/captures, not the entire interpreter via external module globals.
+MAX_REFERENCE_OBJECTS = 2_000_000
+_CODE_MEMBERS = tuple(field for field in vars(CodeType).values()
+                      if isinstance(field, MemberDescriptorType))
 
-    External functions' captures are inspected too. Harness function globals used
-    by bytecode are followed. External module globals and logging registries
-    are boundaries (see the appendix); class definitions and bases are inspected.
+
+def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
+    """Walk every GC edge, with explicit process-registry boundaries for a leg.
+
+    No container-kind dispatch: tp_traverse supplies the edges. CPython treats
+    code, datetime, time and timezone as atomic despite held Python objects.
+    Supplements follow native code members, tzinfo, timezone offset/name; they
+    never evaluate overridden properties. See the atomic-reference witnesses.
     """
     pending, visited = list(roots), {}
-    root_ids = {id(root) for root in pending}
+    boundaries = {}
+    if namespaces:
+        # External module globals and the two process registries are outside the
+        # leg. Explicit module roots override the module-global boundary.
+        explicit = {id(root) for root in pending}
+        boundaries = {id(vars(loaded)): vars(loaded)
+                      for name, loaded in list(sys.modules.items())
+                      if issubclass(type(loaded), ModuleType) and id(loaded) not in explicit
+                      and not any(_in_namespace(name, ns) for ns in namespaces)}
+        boundaries[id(sys.modules)] = sys.modules
+        registry = logging.Logger.manager.loggerDict
+        boundaries[id(registry)] = registry
+        boundaries.update((id(logger), logger) for logger in [logging.root, *registry.values()]
+                          if id(logger) not in explicit)
+        for identity in explicit:
+            boundaries.pop(identity, None)
     while pending:
         value = pending.pop()
-        if id(value) in visited:
+        identity = id(value)
+        if identity in visited or identity in boundaries:
             continue
-        visited[id(value)] = value  # Keep synthesized state alive; ids must not recycle.
-        if value is None or type(value) in (str, bytes, int, float, bool, complex):
-            continue
+        assert len(visited) < max_objects, (
+            f'frozen reference graph exceeds {max_objects} objects')
+        visited[identity] = value  # Strong references prevent visited-id reuse.
         yield value
-        owner = _owner(value)
-        owned = any(_in_namespace(owner, ns) for ns in namespaces)
-        if isinstance(value, ModuleType):
-            if owned or id(value) in root_ids:
-                pending.extend(v for k, v in list(vars(value).items())
-                               if k not in {'__builtins__', '__loader__', '__spec__'})
-            continue
-        # Loggers are process-wide registries, not IO/callback inputs. Following
-        # their manager walks every live application logger/formatter in Python.
-        # Executed formatter code is still covered by the call profiler.
-        if isinstance(value, logging.Logger) and id(value) not in root_ids:
-            continue
-        if isinstance(value, (Mapping, Sequence, Set)):
-            try:
-                if isinstance(value, Mapping):
-                    for key in value:
-                        pending.extend((key, value[key]))
-                else:
-                    pending.extend(value)
-            except (TypeError, ValueError, RuntimeError):
-                # E.g. Pydantic's unbuilt abstract schema refuses iteration.
-                # Its attributes/slots and class definitions are still walked.
-                pass
-        elif isinstance(value, functools.partial):
-            pending.extend((value.func, value.args, value.keywords))
-        elif isinstance(value, MethodType):
-            pending.extend((value.__func__, value.__self__))
-        elif isinstance(value, FunctionType):
-            pending.extend((value.__defaults__, value.__kwdefaults__))
-            for cell in value.__closure__ or ():
-                try:
-                    pending.append(cell.cell_contents)
-                except ValueError:
-                    pass
-            # The frozen modules are already roots. Only callbacks/fake IO need
-            # global-name resolution; walking all test globals would include the
-            # deliberately live comparison leg and pytest's process registries.
-            if owner.startswith('tests.'):
-                pending.extend(value.__globals__[name] for name in value.__code__.co_names
-                               if name in value.__globals__ and name != '__builtins__')
-        elif isinstance(value, (staticmethod, classmethod)):
-            pending.append(value.__func__)
-        elif isinstance(value, property):
-            pending.extend((value.fget, value.fset, value.fdel))
-        # Includes C bound methods/method-wrappers (dict.get, cached.__call__).
-        try:
-            pending.append(object.__getattribute__(value, '__self__'))
-        except (AttributeError, TypeError):
-            pass
-        if isinstance(value, functools._lru_cache_wrapper):
-            # CPython exposes keys/results as GC referents even though the cache
-            # has no public item iterator. Inspect before clearing its state.
-            pending.extend(gc.get_referents(value))
-        if isinstance(value, type):
-            pending.extend(vars(value).values())
-            pending.extend(value.__bases__)
-            continue
-        try:
-            attributes = object.__getattribute__(value, '__dict__')
-        except (AttributeError, TypeError):
-            attributes = None
-        if attributes is not None:
-            pending.append(attributes)
-        # Descriptor names are already mangled; walking every MRO dictionary
-        # also preserves distinct base/subclass slots with the same spelling.
-        for cls in type(value).__mro__:
-            for descriptor in vars(cls).values():
-                if isinstance(descriptor, MemberDescriptorType):
-                    # Function globals are handled by the namespace/bytecode
-                    # rules above, not as an external interpreter registry.
-                    if isinstance(value, FunctionType) and descriptor.__name__ in {
-                        '__globals__', '__builtins__',
-                    }:
-                        continue
-                    try:
-                        pending.append(descriptor.__get__(value, type(value)))
-                    except AttributeError:  # An unset slot has no reference.
-                        pass
-        try:
-            pending.append(object.__getattribute__(value, '__wrapped__'))
-        except AttributeError:
-            pass
-        # Includes custom pickle state and the default dict/slot state. Do not
-        # evaluate arbitrary properties: cached property values are in __dict__.
-        try:
-            getstate = object.__getattribute__(value, '__getstate__')
-        except AttributeError:
-            pass
-        else:
-            try:
-                pending.append(getstate())
-            except (TypeError, ValueError, RuntimeError):  # Non-pickleable objects still expose dict/slot state.
-                pass
-        pending.append(type(value))
+        pending.extend(gc.get_referents(value))
+        value_type = type(value)
+        if value_type is CodeType:
+            pending.extend(field.__get__(value) for field in _CODE_MEMBERS)
+        elif issubclass(value_type, _Datetime):
+            pending.append(_Datetime.tzinfo.__get__(value))
+        elif issubclass(value_type, _Time):
+            pending.append(_Time.tzinfo.__get__(value))
+        elif value_type is _Timezone:
+            pending.append(_Timezone.utcoffset(value, None))
+            pending.append(_Timezone.tzname(value, None))
 
 
 def _namespace_roots(*namespaces):
@@ -233,26 +209,54 @@ def reject_live_references(*harness):
     from tests.fakes import spanner
 
     roots = [*_namespace_roots(ALIAS), spanner, *harness]
+    owners = {}
     for value in _references(roots, namespaces=(ALIAS, 'tests.fakes.spanner')):
-        owner = _owner(value)
-        code = value.__code__ if isinstance(value, FunctionType) else None
-        assert not (_in_namespace(owner, 'trusted_router')
-                    or code is not None and _live_source(code.co_filename)), (
-            'live reference in frozen namespace: '
-            + owner + ':' + getattr(value, '__qualname__', type(value).__qualname__))
+        owner = _owner(value, owners)
+        value_type = type(value)
+        code = (value.__code__ if value_type is FunctionType
+                else value if value_type is CodeType else None)
+        if (_in_namespace(owner, 'trusted_router')
+                or code is not None and _live_source(code.co_filename)):
+            if code is not None:
+                label = code.co_qualname
+            elif value_type is functools._lru_cache_wrapper:
+                label = _metadata(dict.items(vars(value)), '__qualname__')
+            elif value_type is BuiltinFunctionType:
+                label = value.__qualname__
+            else:
+                label = _TYPE_QUALNAME.__get__(value if issubclass(value_type, type) else value_type)
+            if not issubclass(type(label), str):
+                label = _TYPE_QUALNAME.__get__(value_type)
+            raise AssertionError('live reference in frozen namespace: '
+                                 + str.__str__(owner) + ':' + str.__str__(label))
+
+
+def _is_functools_cache(value):
+    # Recognize the sealed native wrapper without executing attribute lookups.
+    # Its wrapped function and cache contents are ordinary GC referents.
+    return type(value) is functools._lru_cache_wrapper
 
 
 def clear_functools_caches(*harness, external_only=False):
     roots = [*_namespace_roots(ALIAS, 'trusted_router', 'tests.fakes.spanner'), *harness]
     # Materialize before clearing so nested caches in keys/results are included.
-    caches = [value for value in _references(
+    caches = {id(value): value for value in _references(
         roots, namespaces=(ALIAS, 'trusted_router', 'tests.fakes.spanner'))
-        if isinstance(value, functools._lru_cache_wrapper)]
-    for cache in caches:
-        if not external_only or not any(_in_namespace(_owner(cache), ns)
-                                        for ns in (ALIAS, 'trusted_router', 'tests')):
-            cache.cache_clear()
-    return caches
+        if _is_functools_cache(value)}
+    # Only this known process-wide registry needs normalization before audit:
+    # typing retains schemas from the live comparison leg. Module labels alone
+    # do not make a cache shared runtime state: purging an external callback's
+    # cache here could discard its sole held live reference before inspection.
+    # On 3.14 _tp_cache looks up caches in a global registry instead of holding
+    # them in closures, so collect the registered caches explicitly as well.
+    shared_runtime_caches = {id(cleanup.__self__): cleanup.__self__
+                            for cleanup in typing._cleanups}
+    caches.update(shared_runtime_caches)
+    explicit = {id(root) for root in harness}
+    for identity, cache in caches.items():
+        if not external_only or (identity in shared_runtime_caches and identity not in explicit):
+            functools._lru_cache_wrapper.cache_clear(cache)
+    return list(caches.values())
 
 
 def reject_existing_workers():
@@ -377,6 +381,10 @@ def execution_guard(*harness):
     threading.setprofile(profile)
     if all_threads is not None:
         all_threads(profile)
+    # all_threads also changes this thread. Reference preflight is test-harness
+    # work, not the frozen leg; keep worker hooks active but avoid profiling the
+    # GC walk itself. Install the main hook immediately before yielding below.
+    sys.setprofile(previous)
     entered = False
     try:
         reject_existing_workers()
@@ -388,7 +396,7 @@ def execution_guard(*harness):
         caches = clear_functools_caches(*harness, external_only=True)
         reject_live_references(*harness)
         for cache in caches:
-            cache.cache_clear()
+            functools._lru_cache_wrapper.cache_clear(cache)
         entered = True
         sys.setprofile(profile)
         yield seen

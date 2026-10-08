@@ -19,7 +19,14 @@ from types import FunctionType, SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.fakes.frozen_package import PINS, execution_guard, fake_store, module
+from tests.fakes.frozen_package import (
+    ALIAS,
+    FROZEN_BUILTINS,
+    PINS,
+    execution_guard,
+    fake_store,
+    module,
+)
 from tests.fakes.spanner import _FakeBatch, _FakeSnapshot, _FakeTransaction
 from tests.test_async_settle_handler import SUPPORTED, env, prepare
 from tests.test_async_settle_proof import catalog, legacy_body, restore, save
@@ -85,10 +92,15 @@ def frozen_runtime():
     # In particular, never attach the live Runtime (or its admission callback).
     from tests import test_async_settle_ticket as fixture
 
-    namespace = dict(fixture.runtime.__globals__)
+    # Admission callbacks retain this dictionary. Copying every fixture global
+    # also retains unused live router definitions (for example UsageType).
+    # Give the unchanged fixture factories only their actual dependencies.
+    namespace = {'__name__': fixture.__name__, '__builtins__': FROZEN_BUILTINS,
+                 'Ed25519PrivateKey': fixture.Ed25519PrivateKey,
+                 'FIXTURE': fixture.FIXTURE, 'PURPOSE': module('async_settle_ticket').PURPOSE}
     for name in ('Admission', 'AdmissionCache', 'DrainHealth', 'Runtime',
                  'TicketSigner', 'TrustedKey'):
-        value = namespace[name]
+        value = getattr(fixture, name)
         namespace[name] = getattr(module(value.__module__.removeprefix('trusted_router.')), name)
     namespace['signer'] = FunctionType(fixture.signer.__code__, namespace)
     return FunctionType(fixture.runtime.__code__, namespace)()
@@ -199,7 +211,7 @@ def test_f83bbaac_complete_entry(env, monkeypatch, case, kind, mode, commit_path
             patch.setattr(outbox, '_iso_now', iso_clock)
             patch.setattr(authorize, '_OUTBOX_AVAILABILITY_CACHE', {})
             patch.setattr(acquisition, '_usage_check_after', OrderedDict())
-            with execution_guard(store, db, client) if frozen else nullcontext(set()) as seen:
+            with execution_guard(store, db, client, body) if frozen else nullcontext(set()) as seen:
                 trace = []
                 def record(cls, method, trace=trace):
                     original = getattr(cls, method)
@@ -279,7 +291,7 @@ def test_f83bbaac_protected_header_rejection(env, monkeypatch, kind):
                 client = _client(cfg)
             if not frozen:
                 client.app.state.async_settle = env[2]
-            with execution_guard(db, client) if frozen else nullcontext(set()) as seen:
+            with execution_guard(db, client, body) if frozen else nullcontext(set()) as seen:
                 reply = client.post('/v1/internal/gateway/'+kind, json=body,
                                     headers={'X-TR-Settlement-Mode': 'async-v1'})
                 client.close()
@@ -295,7 +307,7 @@ def test_f83bbaac_protected_header_rejection(env, monkeypatch, kind):
     'partial_cache', 'simple_namespace', 'external_default', 'shared_fake_io',
     'cached_bound_call', 'dataclass_factory', 'captured_callback', 'pydantic_validator',
     'partial_argument', 'partial_keyword', 'bound_method', 'cache_result', 'spoofed_module',
-    'external_callable_class', 'bounded_cache_result',
+    'external_callable_class', 'bounded_cache_result', 'copied_globals', 'external_cache_result',
 ])
 def test_guard_reviewer_references(monkeypatch, bridge):
     import dataclasses
@@ -308,7 +320,7 @@ def test_guard_reviewer_references(monkeypatch, bridge):
 
     frozen = module('storage_errors')
     live = storage_errors.transient_store_error_types
-    live()  # The attack must start with a genuinely warm C cache.
+    live()  # The construction starts with a warmed C cache.
     assert live.cache_info().currsize
     if bridge == 'partial_cache':
         root = functools.partial(live)
@@ -344,11 +356,17 @@ def test_guard_reviewer_references(monkeypatch, bridge):
             def call(self):
                 return self.callback()
         root = Holder().call
-    elif bridge in {'cache_result', 'bounded_cache_result'}:
+    elif bridge in {'cache_result', 'bounded_cache_result', 'external_cache_result'}:
         @functools.lru_cache(maxsize=1 if bridge == 'bounded_cache_result' else None)
         def root():
             return importlib.import_module('trusted_router.storage_errors').transient_store_error_types
+        if bridge == 'external_cache_result':
+            root = functools.cache(FunctionType(root.__wrapped__.__code__,
+                                                {'__name__': 'review_external', 'importlib': importlib}))
         root()  # Live callable is held in C cache state, not a closure/default.
+    elif bridge == 'copied_globals':
+        root = FunctionType((lambda: None).__code__,
+                            {'__name__': 'review_fixture_copy', 'unused_callback': live})
     elif bridge == 'external_callable_class':
         class External:
             __module__ = 'review_external'
@@ -372,7 +390,7 @@ def test_guard_reviewer_separate_warmed_cache(monkeypatch, bridge):
     from trusted_router.storage_errors import transient_store_error_types
 
     # A separate wrapper is essential: clearing the live module's own cache
-    # would mask a traversal gap by turning the attack into a profiled cold call.
+    # would mask a traversal gap by turning the construction into a profiled cold call.
     live = functools.lru_cache(maxsize=1)(transient_store_error_types.__wrapped__)
     expected = live()
     assert live.cache_info().currsize == 1
@@ -526,9 +544,9 @@ def test_reference_walk_python_state(kind):
     from tests.fakes.frozen_package import _references
 
     marker = object()
-    # Keep protocol-only values in external function globals, which the walker
-    # deliberately cannot follow. A closure/instance dict would let a broken
-    # container/state traversal pass by reaching the marker through another edge.
+    # A synthetic function namespace is ordinary held state, not a registered
+    # external module dictionary. GC reaches the marker through that state
+    # without invoking container protocols, descriptors or __getstate__.
     namespace = {'__name__': 'review_external', 'marker': marker,
                  'Mapping': Mapping, 'Sequence': Sequence, 'Set': Set}
     exec("""
@@ -576,7 +594,7 @@ class State:
         root.__dict__['callback'] = marker
     else:
         root = namespace['State']()
-    assert any(value is marker for value in _references([root], namespaces=()))
+    assert any(value is marker for value in _references([root], namespaces=(ALIAS, 'tests.fakes.spanner')))
 
 
 @pytest.mark.parametrize('root_kind', ['namespace', 'module', 'logger'])
@@ -705,19 +723,400 @@ def test_production_import_fence_reviewer_witness(tmp_path):
 
 
 def test_guard_clears_shared_typing_cache_between_legs():
-    import functools
+    import typing
     from typing import Annotated
 
-    from tests.fakes.frozen_package import _references
     from trusted_router.routes.internal.lightning import Credit
 
     # This exact shared stdlib cache caused a second-case false positive after
     # the live HTTP app registered its Credit response schema.
     module('billing_snapshot')
     Annotated[Credit, 'f1-review-typing-cache']
-    cache = next(value for value in _references([Annotated], namespaces=())
-                 if isinstance(value, functools._lru_cache_wrapper)
-                 and value.__qualname__ == 'Annotated._class_getitem_inner')
+    # This is an explicit shared-runtime registry control, not a traversal of
+    # every module reachable through typing's interpreter-global namespace.
+    cache = next(cleanup.__self__ for cleanup in typing._cleanups
+                 if cleanup.__self__.__qualname__ in {'Annotated._class_getitem_inner', 'Annotated'})
     assert cache.cache_info().currsize
     with execution_guard():
         assert cache.cache_info().currsize == 0
+
+
+GRAPH_WITNESSES = (
+    'nested_mapping_slot', 'code_constants', 'frozen_closure',
+    'class_descriptor', 'dataclass_frozenset_tuple',
+)
+
+
+def graph_witness(kind, callback):
+    """Hold callback only along the intended path, never in helper globals."""
+    import dataclasses
+    from types import MappingProxyType
+
+    # Minimal globals avoid an alternative path back through this test module.
+    namespace = {'__name__': 'frozen_f83bbaac.graph_witness', '__builtins__': {}}
+    if kind == 'nested_mapping_slot':
+        class Holder:
+            __slots__ = ('payload',)
+        root = Holder()
+        root.payload = {'outer': MappingProxyType({'inner': {'callback': callback}})}
+        return root
+    if kind == 'code_constants':
+        code = compile('def held(): return None', '<frozen-graph-witness>', 'exec').co_consts[0]
+        return FunctionType(code.replace(co_consts=(None, callback)), namespace)
+    if kind == 'frozen_closure':
+        code = compile('def capture(callback):\n def held(): return callback\n return held',
+                       '<frozen-graph-witness>', 'exec')
+        exec(code, namespace)
+        return namespace.pop('capture')(callback)
+    if kind == 'class_descriptor':
+        # The getter carries the callable as its default. No closure owns it.
+        code = compile('def getter(self, callback): return callback',
+                       '<frozen-graph-witness>', 'exec').co_consts[0]
+        getter = FunctionType(code, namespace, argdefs=(callback,))
+        return type('FrozenDescriptor', (), {'__module__': namespace['__name__'],
+                                           'held': property(getter)})
+    assert kind == 'dataclass_frozenset_tuple'
+    return dataclasses.make_dataclass('FrozenDefault', [
+        ('held', object, dataclasses.field(default=frozenset({('nested', (callback,))})))],
+        namespace={'__module__': namespace['__name__']})
+
+
+@pytest.mark.parametrize('kind', GRAPH_WITNESSES)
+def test_guard_gc_composed_witness(monkeypatch, kind):
+    import functools
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    live = functools.lru_cache(maxsize=2)(transient_store_error_types.__wrapped__)
+    live()
+    assert live.cache_info().currsize == 1
+    root = graph_witness(kind, live)
+    monkeypatch.setattr(module('storage_errors'), 'graph_witness', root, raising=False)
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard():
+            pytest.fail('undetected construction reached the frozen leg')
+
+
+@pytest.mark.parametrize('kind', GRAPH_WITNESSES)
+def test_gc_composed_witness_reaches_marker(kind):
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    assert any(value is marker for value in _references([graph_witness(kind, marker)],
+                                                          namespaces=(ALIAS, 'tests.fakes.spanner')))
+
+
+def test_reference_walk_atomic_code_constants():
+    import gc
+
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    code = (lambda: None).__code__.replace(co_consts=(None, marker))
+    # CPython code objects are untracked and omit even Python object constants.
+    assert not gc.is_tracked(code)
+    assert gc.get_referents(code) == []
+    assert any(value is marker for value in _references([code], namespaces=(ALIAS, 'tests.fakes.spanner')))
+
+
+def test_reference_walk_bound_and_cycle():
+    from tests.fakes.frozen_package import _references
+
+    root = []
+    root.append(root)
+    assert list(_references([root], max_objects=1)) == [root]
+    root.append(object())
+    with pytest.raises(AssertionError, match='reference graph exceeds 1 objects'):
+        list(_references([root], max_objects=1))
+
+
+def test_guard_live_code_object_argument():
+    from trusted_router.storage_errors import is_transient_store_error
+
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(is_transient_store_error.__code__):
+            pytest.fail('undetected code reference reached the frozen leg')
+
+
+@pytest.mark.parametrize('explicit', ['module', 'dictionary', 'logger'])
+def test_reference_registry_boundary_explicit_root_override(monkeypatch, explicit):
+    import logging
+    import sys
+    from types import ModuleType
+
+    from tests.fakes.frozen_package import ALIAS, _references
+
+    marker = object()
+    external = ModuleType('f1_external_registry')
+    external.marker = marker
+    monkeypatch.setitem(sys.modules, external.__name__, external)
+    logger = logging.getLogger('f1-external-registry-witness')
+    monkeypatch.setattr(logger, 'held_marker', marker, raising=False)
+    # Process registries are the only deliberate graph cuts. Ordinary nested
+    # object state and unregistered function namespaces have no such boundary.
+    assert not any(value is marker for value in _references(
+        [SimpleNamespace(registry=external, logger=logger)], namespaces=(ALIAS,)))
+    root = {'module': external, 'dictionary': vars(external), 'logger': logger}[explicit]
+    assert any(value is marker for value in _references([root], namespaces=(ALIAS,)))
+
+
+def test_reference_walk_does_not_execute_object_protocols():
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    class Held:
+        __slots__ = ('payload',)
+        def __iter__(self):
+            pytest.fail('reference traversal executed __iter__')
+        def __getstate__(self):
+            pytest.fail('reference traversal executed __getstate__')
+        @property
+        def __wrapped__(self):
+            pytest.fail('reference traversal executed a property')
+    root = Held()
+    root.payload = marker
+    assert any(value is marker for value in _references([root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+
+
+def test_guard_explicit_typing_cache_root_is_inspected():
+    import typing
+    from typing import Annotated
+
+    from trusted_router.routes.internal.lightning import Credit
+
+    Annotated[Credit, 'f1-explicit-cache-root']
+    # This is an explicit shared-runtime registry control, not a traversal of
+    # every module reachable through typing's interpreter-global namespace.
+    cache = next(cleanup.__self__ for cleanup in typing._cleanups
+                 if cleanup.__self__.__qualname__ in {'Annotated._class_getitem_inner', 'Annotated'})
+    assert cache.cache_info().currsize
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(cache):
+            pytest.fail('explicit cache root was purged before inspection')
+
+
+def test_guard_clears_registry_only_typing_cache(monkeypatch):
+    import functools
+    import typing
+
+    @functools.cache
+    def callback():
+        return 42
+    callback()
+    # Model 3.14's _tp_cache: the cache is held by the process registry, not a
+    # frozen callback closure. The existing Annotated control uses the real API.
+    monkeypatch.setattr(typing, '_cleanups', [*typing._cleanups, callback.cache_clear])
+    with execution_guard():
+        assert callback.cache_info().currsize == 0
+
+
+def atomic_tzinfo_root(kind, callback):
+    from datetime import datetime, time, tzinfo
+
+    class Zone(tzinfo):
+        __slots__ = ('callback',)
+    zone = Zone()
+    zone.callback = callback
+    return (datetime(2026, 1, 1, tzinfo=zone) if kind == 'datetime'
+            else time(tzinfo=zone)), zone
+
+
+@pytest.mark.parametrize('kind', ['datetime', 'time'])
+def test_reference_walk_atomic_tzinfo(kind):
+    import gc
+
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    root, zone = atomic_tzinfo_root(kind, marker)
+    assert root.tzinfo is zone
+    assert not gc.is_tracked(root)
+    assert gc.get_referents(root) == []  # Yet the tzinfo reference is owned.
+    assert any(value is marker for value in _references([root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+
+
+@pytest.mark.parametrize('kind', ['datetime', 'time'])
+def test_guard_atomic_tzinfo_cache(kind):
+    import functools
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    cache = functools.lru_cache(maxsize=2)(transient_store_error_types.__wrapped__)
+    cache()
+    root, _ = atomic_tzinfo_root(kind, cache)
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(root):
+            pytest.fail('undetected atomic tzinfo construction reached the frozen leg')
+
+
+ATOMIC_METADATA = ('co_filename', 'co_name', 'co_qualname', 'co_linetable',
+                   'co_exceptiontable', 'timezone_offset', 'timezone_name')
+
+
+def atomic_metadata_root(kind, callback):
+    from datetime import timedelta, timezone
+
+    class Text(str):
+        pass
+
+    class Blob(bytes):
+        pass
+
+    class Delta(timedelta):
+        pass
+
+    if kind.startswith('co_'):
+        code = (lambda: None).__code__
+        original = getattr(code, kind)
+        payload = Text(original) if isinstance(original, str) else Blob(original)
+        payload.callback = callback
+        root = code.replace(**{kind: payload})
+        assert getattr(root, kind) is payload
+    elif kind == 'timezone_offset':
+        payload = Delta(seconds=1)
+        payload.callback = callback
+        root = timezone(payload)
+        assert root.utcoffset(None) is payload
+    else:
+        payload = Text('frozen-zone')
+        payload.callback = callback
+        root = timezone(timedelta(0), payload)
+        assert root.tzname(None) is payload
+    return root
+
+
+@pytest.mark.parametrize('kind', ATOMIC_METADATA)
+def test_reference_walk_atomic_metadata(kind):
+    import gc
+
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    root = atomic_metadata_root(kind, marker)
+    assert not gc.is_tracked(root)
+    assert gc.get_referents(root) == []
+    assert any(value is marker for value in _references([root], namespaces=(ALIAS, 'tests.fakes.spanner')))
+
+
+@pytest.mark.parametrize('kind', ATOMIC_METADATA)
+def test_guard_atomic_metadata_cache(kind):
+    import functools
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    cache = functools.lru_cache(maxsize=2)(transient_store_error_types.__wrapped__)
+    cache()
+    assert cache.cache_info().currsize == 1
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(atomic_metadata_root(kind, cache)):
+            pytest.fail('undetected atomic metadata construction reached the frozen leg')
+
+
+def test_guard_live_code_filename_subclass():
+    class Filename(str):
+        def __contains__(self, item):
+            return False
+
+        def startswith(self, prefix, *args):
+            return True
+
+    filename = Filename('/live/src/trusted_router/held.py')
+    code = (lambda: None).__code__.replace(co_filename=filename)
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(code):
+            pytest.fail('undetected filename comparison construction reached the frozen leg')
+
+
+def test_guard_provenance_property_cannot_remove_nested_cache():
+    import functools
+
+    from trusted_router.storage_errors import transient_store_error_types
+
+    class Holder:
+        def __init__(self, callback):
+            self.mapping = {'nested': {'callback': callback}}
+
+        @property
+        def __module__(self):
+            self.mapping['nested'].clear()
+            return 'review_external'
+
+    cache = functools.lru_cache(maxsize=1)(transient_store_error_types.__wrapped__)
+    cache()
+    root = Holder(cache)
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(root):
+            pytest.fail('undetected provenance-property construction reached the frozen leg')
+    assert root.mapping['nested']['callback'] is cache
+
+
+@pytest.mark.parametrize('attribute', ['__class__', '__module__'])
+def test_guard_does_not_execute_metadata_properties(attribute):
+    def read(self):
+        pytest.fail('guard executed a metadata property')
+
+    holder = type('MetadataProperties', (), {attribute: property(read)})()
+    with execution_guard(holder):
+        pass
+
+
+def test_guard_does_not_execute_namespace_comparisons():
+    class Name(str):
+        def __eq__(self, other):
+            pytest.fail('guard executed namespace equality')
+
+        def startswith(self, prefix, *args):
+            pytest.fail('guard executed namespace startswith')
+
+    callback = FunctionType((lambda: None).__code__, {'__name__': 'review_external'})
+    callback.__module__ = Name('review_external')
+    with execution_guard(callback):
+        pass
+
+
+def test_guard_clears_native_cache_despite_shadowed_method():
+    import functools
+
+    callback = FunctionType((lambda: 42).__code__, {'__name__': 'review_external'})
+    cache = functools.lru_cache(maxsize=1)(callback)
+    cache()
+    cache.cache_clear = lambda: None
+    assert cache.cache_info().currsize == 1
+    with execution_guard(cache):
+        assert cache.cache_info().currsize == 0
+
+
+@pytest.mark.parametrize('kind', ['dictionary_get', 'key_equality'])
+def test_guard_cache_metadata_cannot_remove_cached_live_result(kind):
+    import functools
+
+    code = compile("def held():\n return importlib.import_module('trusted_router.storage_errors').is_transient_store_error",
+                   '<frozen-metadata-witness>', 'exec').co_consts[0]
+    callback = FunctionType(code, {'__name__': 'review_external', 'importlib': importlib})
+    cache = functools.lru_cache(maxsize=1)(callback)
+    cache()
+    assert cache.cache_info().currsize == 1
+
+    if kind == 'dictionary_get':
+        class Labels(dict):
+            def get(self, name, default=None):
+                functools._lru_cache_wrapper.cache_clear(self.target)
+                return 'review_external'
+        labels = Labels(cache.__dict__)
+        labels.target = cache
+        cache.__dict__ = labels
+    else:
+        class Name(str):
+            __hash__ = str.__hash__
+            def __eq__(self, other):
+                functools._lru_cache_wrapper.cache_clear(self.target)
+                return str.__eq__(self, other)
+        label = Name('__module__')
+        label.target = cache
+        del cache.__dict__['__module__']
+        cache.__dict__[label] = 'review_external'
+
+    with pytest.raises(AssertionError, match='live reference'):
+        with execution_guard(cache):
+            pytest.fail('undetected cache-metadata construction reached the frozen leg')
+    assert cache.cache_info().currsize == 1

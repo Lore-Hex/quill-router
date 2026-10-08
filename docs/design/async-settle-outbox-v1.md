@@ -1329,90 +1329,109 @@ Pre-existing application workers still refuse the frozen leg, and frame checks
 reject leaked workers. The only infrastructure exceptions are xdist's active
 execnet receiver stack and pytest-timeout's Timer target, not application thread
 names; profiling still applies to them. The supplied worktree's resolved venv is
-Python **3.11.15**, not 3.14: it lacks `setprofile_all_threads`, so it uses the
+Python **3.11.15**: it lacks `setprofile_all_threads`, so it uses the
 existing-worker refusal plus instrumented new-worker bootstraps. The retroactive
 all-thread installation is specifically a Python 3.12+ guarantee. Live calls are
 recorded even if application error handling swallows an exception.
 
-At entry and exit the reference walk starts at every loaded frozen module's
-globals, the shared fake Spanner module and the explicit store/database/HTTP client
-roots supplied by the harness. Its traversal is:
+At entry and exit the reference walk starts at **every module object** in the
+frozen namespace, the fake Spanner module, explicit harness roots, and the
+frozen leg's supplied call arguments (including the request body). It follows
+`gc.get_referents()` recursively with a strong visited-id map. Cycles terminate;
+the **2,000,000-object bound raises**, never silently truncates a walk. Retaining
+the visited objects prevents identity reuse. There is no container-kind dispatch,
+protocol iteration, property evaluation or `__getstate__` invocation.
 
-| Object kind | References followed |
-|---|---|
-| Frozen modules and harness module roots | Global values, excluding loader/spec/builtins machinery |
-| Every `collections.abc.Mapping`, including `MappingProxyType` | Iterated keys and their values |
-| Every `collections.abc.Sequence` / `Set` | Elements; primitive scalar strings/bytes terminate the walk |
-| Instance attributes | `__dict__`, including cached property values |
-| Slots, including inherited, private and shadowed slots | Each `MemberDescriptorType` in every MRO class dictionary, via its own `__get__`; unset slots have no value |
-| Classes | Class dictionary values and base classes |
-| Functions | Defaults, keyword defaults, closure cells, attribute state; test callback global names used in bytecode |
-| Partial functions | Function, positional arguments and keyword arguments |
-| Python bound methods | Function and receiver |
-| C bound methods / method wrappers | `__self__`, including cached `__call__` receivers |
-| Static/class methods and properties | Wrapped function or getter/setter/deleter; cached values through instance state |
-| Decorator wrappers | Explicit `__wrapped__` plus normal attribute/slot state |
-| CPython `functools.cache` / `lru_cache` | GC referents, including keys/results, wrapped function and nested caches |
-| Objects exposing `__getstate__` | Returned state, recursively; objects refusing serialization still have their attributes/slots inspected |
+`tp_traverse` supplies the edges for dict keys/values, slots, closures, partials,
+bound methods, mapping proxies, class dictionaries, descriptors, dataclass
+fields/defaults and GC-visible C containers. Known atomic references require
+supplements, each demonstrated by a test asserting that raw GC returns no
+referents despite retaining a Python object. Native code member descriptors
+expose `co_consts` and metadata, including string/bytes subclasses with held
+callbacks. Native `datetime`/`time` descriptors expose `tzinfo`; native
+`timezone` methods expose the retained offset and name. These accessors avoid
+subclass properties. The atomic-constants, atomic-metadata and atomic-tzinfo
+tests run on 3.11 and 3.14; removal mutations cover every demonstrated field.
+Every reached function **and code object** is checked against the live source
+path using native string comparisons; namespace provenance also rejects live
+generated definitions. Changing a function's module label or overriding a
+filename subclass's comparison methods does not hide its source filename.
 
-Container protocols that refuse iteration (for example an unbuilt Pydantic base
-schema) still have their attributes, slots and class definitions inspected.
-Function `__globals__`/`__builtins__` native descriptors obey the module/global
-boundary below; they do not open every external module registry. The visited map
-keeps objects alive, preventing temporary state dictionaries from reusing an
-already-visited identity. Function source paths also detect disguised module
-labels. Dataclass factories and Pydantic validators are reached through these
-same class, descriptor and object-state rules.
+Provenance reads use native class/module dictionaries and sealed function/cache
+types. Actual-type checks avoid overridden `__class__` properties, and native
+string comparisons avoid overridden namespace comparisons. This keeps the
+audit from invoking a provenance property that removes a nested held cache
+before the GC walk visits it; a dedicated negative witness and mutation retain
+that previously undetected construction. Native dictionary-item iteration and
+string comparisons prevent metadata-dictionary methods or metadata-key equality
+from removing held references. Class labels are memoized only within one audit
+using identity keys; graph edges and callable results are never memoized.
 
-Before a frozen leg runs, all reachable `functools.cache`/`lru_cache` wrappers
-from **both** router namespaces and the harness are cleared, including nested
-cache results. The shared lock recorder's installation metadata is separate from
-its runtime recording state, so fake Spanner callbacks no longer capture live
-Postgres hooks. Settings cross the setup boundary as plain data; the
-protected-header frozen client runs the same signing/admission fixture factories
-with snapshot classes and literal key inputs. No production code or snapshot
-bytes change.
+The graph has explicit **external process-registry boundaries**, represented by
+object identity, not by container kinds: registered external module dictionaries,
+`sys.modules`, the logging registry and its registered logger objects. Frozen and
+fake-Spanner module dictionaries are included. An explicit root overrides a
+registry boundary, including a module dictionary or registered logger supplied
+directly. Synthetic function globals that are not registered external module
+dictionaries are ordinary held state and are traversed. These boundaries are
+necessary in a shared interpreter: even a clean frozen module reaches
+`__builtins__ -> frozen_import -> globals -> sys -> sys.modules -> live modules`.
+The boundary/override regression test documents this limitation; **unrestricted
+reachability across these registries is not claimed**.
 
-The broad class walk also reaches `typing.Annotated._class_getitem_inner`.
-A consecutive-case probe showed that its shared functools cache retained the
-live HTTP app's `Credit` schema. External runtime functools caches are therefore
-purged before reference rejection; their wrapped functions/captures are still
-inspected. Router and harness caches retain their state for the reference check,
-then **every** collected cache is cleared before execution, including nested
-caches disconnected by the first purge. A regression witness warms that exact
-typing cache between legs and requires it to be empty in the guarded body.
+Reachable functools cache wrappers (`__wrapped__` and `cache_info`) are identified
+by their sealed native type without attribute lookup, and collected
+before clearing, including nested cache keys/results. Both router namespaces and
+the harness participate in cache clearing. Only caches registered in typing's process-wide cleanup registry, including
+`typing.Annotated`, are purged first because they retain the preceding live
+leg's schemas; wrapped functions and captures remain inspected. On Python 3.14 typing looks up caches through a global registry, so the cleanup
+registry supplies those otherwise unheld cache objects too. An explicitly
+supplied cache root overrides that normalization. All other
+cache state, including externally labelled callback caches, is inspected before
+clearing. Every collected cache is then cleared through the native cache descriptor before
+entering the frozen leg, even if the instance shadows its `cache_clear` method. A live wrapped function is rejected even
+when a warmed cache would otherwise avoid executing its body. The per-callable
+profiler remains the independent execution layer.
 
-The reference scope is **all references reachable through the Python-level
-attributes, containers, descriptors, wrappers and caches above from the frozen
-namespace and harness roots**, together with executed Python/exposed C calls in
-all threads, including raw threads. This is an independence check with a trusted
-harness and profiler, not an arbitrary Python sandbox. The reference exclusions
-are explicit:
+The reference scope is **all Python-visible GC referents plus these atomic fields
+from the roots, up to the explicit external-registry boundaries**, with an
+asserting object bound. Thread execution is covered by all-thread profiling on
+Python 3.12+, with guarded worker bootstraps and the existing-worker refusal on
+older Python. The worktree venv is Python 3.11; the gate venv is Python 3.14.6.
+The following exclusions explain the limits of that scope:
 
 | Exclusion | Reason |
 |---|---|
-| `ctypes` / opaque native extension state (other than the explicitly inspected CPython functools caches) | No general Python API exposes the stored native references. |
-| External registries outside both router namespaces and supplied harness roots, including external module globals and shared logger registries | Walking process registries reaches the intentionally live comparison leg; a full logger walk reached its `_ApplicationConsoleFormatter`. |
-| Computed global callback lookups | Static reference traversal cannot resolve runtime-generated lookup keys without executing arbitrary application logic. |
+| `ctypes` / native memory outside Python-visible objects | `tp_traverse` cannot enumerate references an extension does not expose to Python's GC. |
+| External processes and process registries across the boundaries above | Another process has a separate object graph; shared interpreter registries contain the deliberately live comparison leg and pytest infrastructure. Explicit roots override registry boundaries. |
+| Computed lookups that resolve a name only at call time without holding a reference | There is no held object edge to traverse before the lookup executes. |
 
-Executed Python callbacks remain profiled even when retrieved through an excluded
-registry or computed lookup. Third-party classes/modules remain shared runtime
-machinery; class definitions/bases, supplied object state and function captures
-are inspected. No reviewed construction relies on these exclusions. The harness,
-profiler hooks and pytest/xdist infrastructure are trusted; disabling a guard is
-not an independence proof.
+Python callbacks executed through these paths remain subject to the profiler in
+the guarded process. The harness and profiler infrastructure are trusted.
+Describe a missed case as an **undetected construction**.
 
-All **14** reviewer constructions have detecting witnesses: the eleven Round-4
-cases plus the raw worker, private-slot and mapping-proxy Round-5 survivors. The
-last two use **separately warmed** `lru_cache` wrappers around the live function's
-`__wrapped__`, so clearing its module-owned cache cannot mask a traversal gap.
-Additional witnesses cover raw joinable APIs and prebound starter aliases,
-inherited/shadowed slots, generic containers, wrapper descriptors, cached
-properties, `__getstate__`, partial arguments/keywords, bound receivers, cached
-results, explicit fake IO roots, disguised module labels and nested-cache
-clearing. The pre-existing-worker witness uses the reviewer's actual native cost
-**2 → 3** change. Both that bridge and the warmed native-cost cache bridge also
-run as failing complete-oracle mutations.
+All **35** principal constructions have detecting witnesses: the earlier 14,
+plus a warmed cache inside a nested mapping in a slot, a live cache held in code
+constants, a live cache in a frozen closure, a live callable in a frozen class
+dictionary via a descriptor, and a live cache in a nested tuple inside a
+frozenset inside a dataclass default. Code constants and closures are separate
+cases. A further witness covers an unused live callable retained in a copied
+fixture globals dictionary; the protected-header fixture now passes only its
+required data, SDK key type and frozen classes to its callbacks. Further cases
+require inspection of an external callback's cached live result and a shared
+typing cache supplied as an explicit root, plus warmed live caches in the native
+`tzinfo` fields of datetime and time objects. Seven more cover held caches in
+code filename/name/qualified-name/line-table/exception-table metadata and
+timezone offset/name objects; another covers overridden filename comparisons.
+Another witness holds a live cache behind a provenance property that would
+remove it if evaluated; two more cover metadata dictionaries and keys that would
+remove a cached live result if their methods were invoked. The new cache witnesses use
+independent warmed wrappers and remain dormant
+inside the guard, so the reference layer itself must detect them. Mutation rows
+stop individual graph kinds, remove the code supplement/bound/provenance check,
+or remove the relevant thread/execution check, and must make the corresponding
+witness fail. Additional existing tests cover partial arguments/keywords,
+Pydantic validators, cached results, raw joinable APIs and native worker cleanup.
 
 `test_production_import_fence` statically scans imports in **every** live Python
 module, including imports inside functions and literal dynamic imports, banning
@@ -1631,8 +1650,10 @@ remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
 | Retention clearing / generation TTL | D `retention-body-clear`, `generation-future-terminal-at` |
 | Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
 
-The executable tables contain B **10**, C **48**, and D **14** mutations
-(**72 total**, retaining all 59 Round-4 rows). Round 5 incorporates the ten
+The executable tables contain B **10**, C **92**, and D **14** mutations
+(**116 total**, retaining all 72 Round-6 rows). Round 7 adds 44 reference and
+execution-guard mutations, including one for every principal construction.
+Round 5 incorporates the ten
 independent seed-4 reviewer edits, both money-changing thread/cache bridges,
 and the production-import witness. Round 4 added both ordinary-cost
 helper corruptions, witnessed by
@@ -1640,8 +1661,8 @@ helper corruptions, witnessed by
 and the wrong-model intent, witnessed by
 `test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
 The generation/finalization builder and handler output corruptions remain.
-Collection/import errors never count as kills. See the
-[Round-6 verification report](../async-settle-pr-f1-round6.md) for current results
+Collection/import errors never count as detected mutations. See the
+[Round-7 verification report](../async-settle-pr-f1-round7.md) for current results
 and the reviewer witness matrix; the Round-4 model-identity assertions remain.
 
 The fake now explicitly requires the claim's `NOT EXISTS`, the atomic
