@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"cloud.google.com/go/pubsub/v2/pstest"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -406,10 +407,19 @@ func TestAStoppedMemberLetsGoOfItsRecords(t *testing.T) {
 			t.Fatal("the handlers did not run")
 		}
 	}
-	// lb#1's acknowledgement reaches the server, which then sends lb#2, to
-	// wait in the member behind lb#1's handler.
+	// lb#1's acknowledgement reaches the server, which then sends lb#2, and
+	// the member receives it, as its receipt's deadline change shows, to
+	// wait behind lb#1's handler.
+	received2 := func(m *pstest.Message) bool {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 {
+				return true
+			}
+		}
+		return false
+	}
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
-		if m := f.srv.Messages(); len(m) == 3 && m[1].Acks == 1 && m[2].Deliveries > 0 {
+		if m := f.srv.Messages(); len(m) == 3 && m[1].Acks == 1 && m[2].Deliveries > 0 && received2(m[2]) {
 			break
 		}
 		if time.Now().After(deadline) {
