@@ -3,6 +3,7 @@ package frontdoor
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
@@ -127,7 +128,9 @@ var ErrUnreachable = errors.New("frontdoor: the owner cannot be reached")
 type Direct map[string]*Local
 
 // call runs f with the owner at address, and returns its answer, or the
-// context's end if that comes first.
+// context's end if that comes first; f starts nothing once the context has
+// ended. Its caller hands f copies of what it keeps, since f may run on
+// after call returns.
 func call[A any](ctx context.Context, d Direct, address string, f func(*Local) A) (A, error) {
 	var zero A
 	if err := ctx.Err(); err != nil {
@@ -138,7 +141,12 @@ func call[A any](ctx context.Context, d Direct, address string, f func(*Local) A
 		return zero, ErrUnreachable
 	}
 	answer := make(chan A, 1)
-	go func() { answer <- f(l) }()
+	go func() {
+		if ctx.Err() != nil {
+			return
+		}
+		answer <- f(l)
+	}()
 	select {
 	case a := <-answer:
 		return a, nil
@@ -149,15 +157,18 @@ func call[A any](ctx context.Context, d Direct, address string, f func(*Local) A
 
 // Authorize forwards to the owner at address.
 func (d Direct) Authorize(ctx context.Context, address string, req OwnerAuthorize) (OwnerAdmitted, error) {
+	req.Boot = slices.Clone(req.Boot)
 	return call(ctx, d, address, func(l *Local) OwnerAdmitted { return l.Authorize(req) })
 }
 
 // Heartbeat forwards to the owner at address.
 func (d Direct) Heartbeat(ctx context.Context, address string, req OwnerHeartbeat) (HeartbeatAnswer, error) {
+	req.Hash, req.Basis = slices.Clone(req.Hash), slices.Clone(req.Basis)
 	return call(ctx, d, address, func(l *Local) HeartbeatAnswer { return l.Heartbeat(ctx, req) })
 }
 
 // Terminal forwards to the owner at address.
 func (d Direct) Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error) {
+	req.Digest = slices.Clone(req.Digest)
 	return call(ctx, d, address, func(l *Local) OwnerTerminalAnswer { return l.Terminal(ctx, req) })
 }

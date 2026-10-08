@@ -85,6 +85,7 @@ func Open(key []byte, sealed string) (Envelope, error) {
 	if err := json.Unmarshal(payload, &e); err != nil || e.valid() != nil {
 		return Envelope{}, ErrSeal
 	}
+	e.EndOfLife = e.EndOfLife.UTC()
 	if again, err := json.Marshal(e); err != nil || !bytes.Equal(again, payload) {
 		return Envelope{}, ErrSeal
 	}

@@ -87,6 +87,7 @@ func TestAnEnvelopeOpensOnlyUnderItsSeal(t *testing.T) {
 		"a brace after":        whole + `}`,
 		"spaces":               `{"a": "gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"eol":"2026-10-08T12:00:00Z"}`,
 		"another time form":    `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"eol":"2026-10-08T12:00:00.000Z"}`,
+		"another time zone":    `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"eol":"2026-10-08T13:00:00+01:00"}`,
 	} {
 		if _, err := Open(key, sealedOver(payload)); !errors.Is(err, ErrSeal) {
 			t.Fatalf("%s: %v", name, err)

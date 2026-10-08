@@ -115,8 +115,10 @@ type localFixture struct {
 	grants *fakeGrants
 	owner  *owner.Owner
 	local  *Local
-	// minting, when set, holds each authorization minted until it closes.
+	// minting, when set, holds each authorization minted until it closes;
+	// minted are the authorizations minted, in order.
 	minting chan struct{}
+	minted  []string
 	mu      sync.Mutex
 }
 
@@ -132,7 +134,11 @@ func newLocal(t *testing.T) *localFixture {
 		if gate != nil {
 			<-gate
 		}
-		return store.NewAuthorizationID(lease)
+		auth, err := store.NewAuthorizationID(lease)
+		f.mu.Lock()
+		f.minted = append(f.minted, auth)
+		f.mu.Unlock()
+		return auth, err
 	}
 	o, err := owner.New(cfg, f.log)
 	if err != nil {
@@ -384,5 +390,91 @@ func TestDirectReachesItsOwners(t *testing.T) {
 	if got, err := d.Terminal(context.Background(), "node-a", OwnerTerminal{Lease: "another", Kind: record.Refund}); err != nil ||
 		got.Status != PastCutoff {
 		t.Fatalf("node-a's owner: %+v %v", got, err)
+	}
+}
+
+// endingCtx is a context that has not ended when first asked and has ended
+// every time after: a request whose wait runs out between Direct's look
+// and its call's start.
+type endingCtx struct {
+	context.Context
+	mu    sync.Mutex
+	asked int
+	done  chan struct{}
+}
+
+func newEndingCtx() *endingCtx {
+	c := &endingCtx{Context: context.Background(), done: make(chan struct{})}
+	close(c.done)
+	return c
+}
+
+func (c *endingCtx) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.asked++; c.asked == 1 {
+		return nil
+	}
+	return context.DeadlineExceeded
+}
+
+func (c *endingCtx) Done() <-chan struct{} { return c.done }
+
+// TestDirectStartsNothingPastTheWait: a request whose wait runs out before
+// its call to the owner starts admits nothing; and what Direct hands the
+// owner is its own copy, so a caller that reuses its buffers once Direct
+// returns changes nothing the owner reads.
+func TestDirectStartsNothingPastTheWait(t *testing.T) {
+	f := newLocal(t)
+	d := Direct{"node-a": f.local}
+	f.admit(t, OwnerAuthorize{Workspace: "ws-1", Estimate: 1, Boot: []byte("boot")})
+	before := f.held(t)
+	if _, err := d.Authorize(newEndingCtx(), "node-a", OwnerAuthorize{Workspace: "ws-1", Estimate: 7,
+		Boot: []byte("boot")}); err == nil {
+		t.Fatal("a call whose wait ran out answered")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if after := f.held(t); after != before {
+		t.Fatalf("a call whose wait ran out held %d, before %d", after, before)
+	}
+
+	f.mu.Lock()
+	f.minting = make(chan struct{})
+	mint := len(f.minted)
+	f.mu.Unlock()
+	boot := []byte("boot")
+	wctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	_, err := d.Authorize(wctx, "node-a", OwnerAuthorize{Workspace: "ws-1", Estimate: 1, Boot: boot})
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("an admission held past the wait: %v", err)
+	}
+	copy(boot, "BOOT")
+	close(f.minting)
+	// The hold the wait gave up on has the boot binding the call was given,
+	// which its refund's record carries.
+	var auth string
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		if len(f.minted) > mint {
+			auth = f.minted[mint]
+		}
+		f.mu.Unlock()
+		if lease, err := store.LeaseOfAuthorization(auth); err == nil {
+			if got := f.local.Terminal(context.Background(), OwnerTerminal{Lease: lease, Auth: auth,
+				Kind: record.Refund}); got.Status == Won {
+				f.log.mu.Lock()
+				records := f.log.records[lease]
+				last, err := record.Decode(records[len(records)-1])
+				f.log.mu.Unlock()
+				if err != nil || last.Kind != record.Refund || string(last.Boot) != "boot" {
+					t.Fatalf("the refund's record: %+v %v", last, err)
+				}
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the hold the wait gave up on never landed")
+		}
 	}
 }
