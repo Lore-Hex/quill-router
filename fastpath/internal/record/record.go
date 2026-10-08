@@ -124,13 +124,15 @@ type CheckpointOf struct {
 }
 
 // HeldHold is an open hold in a forced exit's hand-off (§4.2): its
-// authorization, estimate and deadline, and, if it has one, its last valid
+// authorization, estimate and deadline, the boot binding a disposition of it
+// needs (§4.9), heartbeat or none, and, if it has one, its last valid
 // snapshot, whose deadline is the hold's, with the owner sequence number of
 // the record that carried it and the basis its first carried.
 type HeldHold struct {
 	Auth        string    `json:"a"`
 	Estimate    int64     `json:"est"`
 	Deadline    time.Time `json:"deadline"`
+	Boot        []byte    `json:"boot"`
 	Snapshot    *Snapshot `json:"hb,omitempty"`
 	SnapshotSeq int64     `json:"snap,omitempty"`
 	Basis       []byte    `json:"basis,omitempty"`
@@ -181,7 +183,7 @@ func (r Record) Validate() error {
 	if r.Version != Version {
 		return fmt.Errorf("record: version %d", r.Version)
 	}
-	if !identifier(r.Lease) {
+	if !identifier(r.Lease, maxLease) {
 		return fmt.Errorf("record: lease %q", r.Lease)
 	}
 	if r.Estimate < 0 || r.Charge < 0 || r.Shortfall < 0 || r.SnapshotSeq < 0 || r.TickNumber < 0 {
@@ -223,10 +225,10 @@ func (r Record) Validate() error {
 	if !got.auth && r.Estimate != 0 {
 		return bad("an estimate without an authorization")
 	}
-	if got.auth && !identifier(r.Auth) {
+	if got.auth && !identifier(r.Auth, maxAuth) {
 		return bad("authorization %q", r.Auth)
 	}
-	if r.Drain != "" && !identifier(r.Drain) {
+	if r.Drain != "" && !identifier(r.Drain, maxRecordID) {
 		return bad("drain record %q", r.Drain)
 	}
 	if got.digest && len(r.Digest) != DigestSize {
@@ -296,22 +298,30 @@ func (s *Snapshot) validate(estimate int64) error {
 
 func (h HeldHold) validate(seq int64) error {
 	switch {
-	case !identifier(h.Auth) || h.Estimate < 0 || !utc(h.Deadline):
-		return errors.New("an authorization, an estimate and a UTC deadline")
+	case !identifier(h.Auth, maxAuth) || h.Estimate < 0 || !utc(h.Deadline) || len(h.Boot) == 0:
+		return errors.New("an authorization, an estimate, a UTC deadline and a boot binding")
 	case (h.Snapshot == nil) != (h.SnapshotSeq == 0) || (h.Snapshot == nil && len(h.Basis) > 0):
 		return errors.New("a snapshot with its record's number and basis, or none of them")
 	case h.Snapshot == nil:
 		return nil
-	case h.SnapshotSeq >= seq || len(h.Basis) == 0 || !h.Deadline.Equal(h.Snapshot.Deadline):
+	case h.SnapshotSeq < 1 || h.SnapshotSeq >= seq || len(h.Basis) == 0 || !h.Deadline.Equal(h.Snapshot.Deadline):
 		return errors.New("a snapshot from an earlier record, with its basis and the hold's deadline")
 	}
 	return h.Snapshot.validate(h.Estimate)
 }
 
+// The longest IDs the store's columns hold: a lease ID, an authorization ID
+// and a drain-log record ID.
+const (
+	maxLease    = 32
+	maxAuth     = 64
+	maxRecordID = 64
+)
+
 // identifier: an ID the format carries is printable ASCII, so no two IDs
-// encode alike.
-func identifier(s string) bool {
-	if s == "" || len(s) > 256 {
+// encode alike, and no longer than the store's column holds.
+func identifier(s string, longest int) bool {
+	if s == "" || len(s) > longest {
 		return false
 	}
 	for i := 0; i < len(s); i++ {

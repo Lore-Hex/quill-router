@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,8 +37,8 @@ func one() map[Kind]Record {
 	ckpt := base(Checkpoint, 6)
 	ckpt.Checkpoint = &CheckpointOf{Consumed: 760, Open: 2, OpenSum: 800, LatestEnd: deadline, KeyStatus: 9, Return: 50}
 	handoff := base(Handoff, 7)
-	handoff.Holds = []HeldHold{{Auth: "gwa-5", Estimate: 500, Deadline: deadline, Snapshot: snapshot(), SnapshotSeq: 1,
-		Basis: []byte(`{"model":"m"}`)}, {Auth: "gwa-6", Estimate: 300, Deadline: deadline}}
+	handoff.Holds = []HeldHold{{Auth: "gwa-5", Estimate: 500, Deadline: deadline, Boot: []byte("boot"), Snapshot: snapshot(),
+		SnapshotSeq: 1, Basis: []byte(`{"model":"m"}`)}, {Auth: "gwa-6", Estimate: 300, Deadline: deadline, Boot: []byte("boot")}}
 	sum, err := HoldsDigest(handoff.Holds)
 	if err != nil {
 		panic(err)
@@ -65,21 +66,39 @@ func TestEachKindRoundTrips(t *testing.T) {
 	}
 }
 
-// TestTheFormatIsPinned: the auditor of another release reads these bytes.
+// TestTheFormatIsPinned: the auditor of another release reads these bytes,
+// every kind's, and this digest of a hand-off's holds.
 func TestTheFormatIsPinned(t *testing.T) {
 	for kind, want := range map[Kind]string{
+		Heartbeat: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":1,"kind":"hb","a":"gwa-1","est":500,"first":true,` +
+			`"basis":"eyJtb2RlbCI6Im0ifQ==","hb":{"gseq":3,"hash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=",` +
+			`"usage":"eyJvdXQiOjQwfQ==","run":120,"deadline":"2026-10-08T02:20:00Z"}}`,
 		Settle: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":2,"kind":"settle","a":"gwa-1","est":500,` +
 			`"charge":640,"sf":140,"digest":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s="}`,
+		Refund: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":3,"kind":"refund","a":"gwa-2","est":300,` +
+			`"sf":140,"drain":"d-7","boot":"Ym9vdA=="}`,
+		Reap: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":4,"kind":"reap","a":"gwa-3","est":500,"charge":120,` +
+			`"sf":140,"digest":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=","snap":1}`,
+		Release: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":5,"kind":"release","a":"gwa-4","est":200,` +
+			`"sf":140,"boot":"Ym9vdA=="}`,
+		Checkpoint: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":6,"kind":"ckpt","ckpt":{"consumed":760,"open":2,` +
+			`"open_sum":800,"latest_end":"2026-10-08T02:20:00Z","ks":9,"return":50}}`,
+		Handoff: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":7,"kind":"handoff","holds":[{"a":"gwa-5",` +
+			`"est":500,"deadline":"2026-10-08T02:20:00Z","boot":"Ym9vdA==","hb":{"gseq":3,"hash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=",` +
+			`"usage":"eyJvdXQiOjQwfQ==","run":120,"deadline":"2026-10-08T02:20:00Z"},"snap":1,"basis":"eyJtb2RlbCI6Im0ifQ=="},` +
+			`{"a":"gwa-6","est":300,"deadline":"2026-10-08T02:20:00Z","boot":"Ym9vdA=="}]}`,
+		Manifest: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":8,"kind":"manifest","manifest":{"chunks":1,` +
+			`"holds_digest":"NHimSbLdv7cIqrwXmomrJ4yfs42LWw3s0N6JCRDyTUw=","seqs":[7]}}`,
 		Tick: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","kind":"tick","tick":1,"at":"2026-10-08T02:20:00Z"}`,
-		Heartbeat: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":1,"kind":"hb","a":"gwa-1","est":500,` +
-			`"first":true,"basis":"eyJtb2RlbCI6Im0ifQ==","hb":{"gseq":3,` +
-			`"hash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=","usage":"eyJvdXQiOjQwfQ==","run":120,` +
-			`"deadline":"2026-10-08T02:20:00Z"}}`,
 	} {
 		got, err := Encode(one()[kind])
 		if err != nil || string(got) != want {
 			t.Errorf("%s encodes as\n%s, %v; want\n%s", kind, got, err, want)
 		}
+	}
+	sum, err := HoldsDigest(one()[Handoff].Holds)
+	if err != nil || fmt.Sprintf("%x", sum) != "3478a649b2ddbfb708aabc179a89ab278c9fb38d8b5b0decd0de890910f24d4c" {
+		t.Errorf("the holds digest is %x, %v", sum, err)
 	}
 }
 
@@ -152,7 +171,9 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		"a checkpoint with an auth":            change(Checkpoint, func(r *Record) { r.Auth = "gwa-1" }),
 		"a final checkpoint with holds":        change(Checkpoint, func(r *Record) { r.Checkpoint.Final = true }),
 		"open holds with no end of life":       change(Checkpoint, func(r *Record) { r.Checkpoint.LatestEnd = time.Time{} }),
-		"no open holds with a sum":             change(Checkpoint, func(r *Record) { r.Checkpoint.Open = 0 }),
+		"no open holds with a sum": change(Checkpoint, func(r *Record) {
+			r.Checkpoint.Open, r.Checkpoint.LatestEnd = 0, time.Time{}
+		}),
 		"a checkpoint carrying a hand-off":     change(Checkpoint, func(r *Record) { r.Holds = valid[Handoff].Holds }),
 		"a settle carrying a reap's basis":     change(Settle, func(r *Record) { r.Basis = []byte("x") }),
 		"a hand-off naming a hold twice":       change(Handoff, func(r *Record) { r.Holds[1].Auth = r.Holds[0].Auth }),
@@ -162,6 +183,12 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		"a held hold with no deadline":         change(Handoff, func(r *Record) { r.Holds[1].Deadline = time.Time{} }),
 		"a held hold's two deadlines":          change(Handoff, func(r *Record) { r.Holds[0].Deadline = deadline.Add(-time.Hour) }),
 		"a held hold with a basis alone":       change(Handoff, func(r *Record) { r.Holds[1].Basis = []byte("x") }),
+		"a held hold without its boot binding": change(Handoff, func(r *Record) { r.Holds[1].Boot = nil }),
+		"a held snapshot of record -1":         change(Handoff, func(r *Record) { r.Holds[0].SnapshotSeq = -1 }),
+		"an authorization of 65 characters":    change(Settle, func(r *Record) { r.Auth = strings.Repeat("a", 65) }),
+		"a lease of 33 characters":             change(Settle, func(r *Record) { r.Lease = strings.Repeat("l", 33) }),
+		"a drain record ID of 65 characters":   change(Refund, func(r *Record) { r.Drain = strings.Repeat("d", 65) }),
+		"a held hold's authorization of 65":    change(Handoff, func(r *Record) { r.Holds[1].Auth = strings.Repeat("a", 65) }),
 		"a manifest's seqs out of order":       change(Manifest, func(r *Record) { r.Manifest.Chunks, r.Manifest.Seqs = 2, []int64{7, 6} }),
 		"a manifest's seqs miscounted":         change(Manifest, func(r *Record) { r.Manifest.Chunks = 2 }),
 		"a manifest naming itself":             change(Manifest, func(r *Record) { r.Manifest.Seqs = []int64{8} }),
