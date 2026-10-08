@@ -51,11 +51,14 @@ func (e *events) all() []string {
 type fakeOwners struct {
 	ev          *events
 	unreachable map[string]bool
-	admitted    map[int64]OwnerAdmitted
-	heartbeat   HeartbeatAnswer
-	terminal    OwnerTerminalAnswer
-	heartbeats  []OwnerHeartbeat
-	terminals   []OwnerTerminal
+	// pinging, when set, hears of each ping, which then waits for pingGate.
+	pinging    chan string
+	pingGate   chan struct{}
+	admitted   map[int64]OwnerAdmitted
+	heartbeat  HeartbeatAnswer
+	terminal   OwnerTerminalAnswer
+	heartbeats []OwnerHeartbeat
+	terminals  []OwnerTerminal
 }
 
 func (f *fakeOwners) reach(ctx context.Context, address string) error {
@@ -85,6 +88,15 @@ func (f *fakeOwners) Heartbeat(ctx context.Context, address string, req OwnerHea
 	return f.heartbeat, nil
 }
 
+func (f *fakeOwners) Ping(ctx context.Context, address string) error {
+	f.ev.add("owner %s ping", address)
+	if f.pinging != nil {
+		f.pinging <- address
+		<-f.pingGate
+	}
+	return f.reach(ctx, address)
+}
+
 func (f *fakeOwners) Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error) {
 	f.ev.add("owner %s %s", address, req.Kind)
 	f.terminals = append(f.terminals, req)
@@ -101,6 +113,12 @@ type fakeStore struct {
 	failAppend  bool
 	disposition store.Disposition
 	failDisp    bool
+	failRevoke  int
+	// With a gate, a revocation tells revoking and waits for its context
+	// to end, then a while more, and tells revoked. onRevoke runs in each.
+	gate              chan struct{}
+	revoking, revoked chan string
+	onRevoke          func()
 }
 
 func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.AppendResult, error) {
@@ -113,6 +131,24 @@ func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.Appe
 		return store.AppendResult{Refused: store.RefusedClosed}, nil
 	}
 	return store.AppendResult{CommitTS: start}, nil
+}
+
+func (f *fakeStore) Revoke(ctx context.Context, ref store.LeaseRef) (bool, time.Time, error) {
+	if f.gate != nil {
+		f.revoking <- ref.LeaseID
+		<-ctx.Done()
+		time.Sleep(100 * time.Millisecond)
+		defer func() { f.revoked <- ref.LeaseID }()
+	}
+	if f.onRevoke != nil {
+		f.onRevoke()
+	}
+	f.ev.add("revoke %s", ref.LeaseID)
+	if f.failRevoke > 0 {
+		f.failRevoke--
+		return false, time.Time{}, errInjected
+	}
+	return true, start, nil
 }
 
 func (f *fakeStore) Disposition(_ context.Context, authorization string) (store.Disposition, error) {

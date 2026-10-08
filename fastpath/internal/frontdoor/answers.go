@@ -110,11 +110,21 @@ type OwnerTerminalAnswer struct {
 
 // Owners reaches owners by address: a node's own, or another node's over
 // the network. An error is an owner not reached in time; an answer is the
-// owner's own.
+// owner's own. Ping only reaches the owner.
 type Owners interface {
 	Authorize(ctx context.Context, address string, req OwnerAuthorize) (OwnerAdmitted, error)
 	Heartbeat(ctx context.Context, address string, req OwnerHeartbeat) (HeartbeatAnswer, error)
 	Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error)
+	Ping(ctx context.Context, address string) error
+}
+
+// Peers reaches other nodes' front doors, to have one send a request to an
+// owner this front door cannot reach (§4.3). An error is the peer not
+// reached, or the owner not reached from it either; an answer is the
+// owner's own.
+type Peers interface {
+	Heartbeat(ctx context.Context, peer, owner string, req OwnerHeartbeat) (HeartbeatAnswer, error)
+	Terminal(ctx context.Context, peer, owner string, req OwnerTerminal) (OwnerTerminalAnswer, error)
 }
 
 // ErrUnreachable is an owner a front door cannot reach.
@@ -171,4 +181,10 @@ func (d Direct) Heartbeat(ctx context.Context, address string, req OwnerHeartbea
 func (d Direct) Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error) {
 	req.Digest = slices.Clone(req.Digest)
 	return call(ctx, d, address, func(l *Local) OwnerTerminalAnswer { return l.Terminal(ctx, req) })
+}
+
+// Ping reaches the owner at address.
+func (d Direct) Ping(ctx context.Context, address string) error {
+	_, err := call(ctx, d, address, func(*Local) struct{} { return struct{}{} })
+	return err
 }
