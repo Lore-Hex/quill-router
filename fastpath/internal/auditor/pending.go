@@ -19,7 +19,9 @@ type PendingStore interface {
 	LoadWinners(ctx context.Context, ref store.LeaseRef) ([]store.Pack, time.Time, error)
 	ReadStaged(ctx context.Context, authorization string, digest []byte) (store.StagedRecord, bool, error)
 	WriteRecords(ctx context.Context, records []store.LeaseRecord) error
-	MarkPackDone(ctx context.Context, ref store.LeaseRef, version int64, drop ...store.StagedKey) (bool, error)
+	MarkPackDone(ctx context.Context, ref store.LeaseRef, version int64) (bool, error)
+	DropStaged(ctx context.Context, keys ...store.StagedKey) error
+	RetiredStaged(ctx context.Context, limit int) ([]store.StagedKey, error)
 }
 
 // PendingConfig is the pending work's.
@@ -39,10 +41,11 @@ type PendingConfig struct {
 // work is not done, every winner's outcome is published to the record topic,
 // and then its records are written: a settle's or a reap's generation and
 // activity records from its staged full record, a refund's or a release's
-// disposition record. Then the pack is marked done, and the winners' staged
-// records go with it. A pack whose work cannot be done yet, a staged record
+// disposition record. Then the pack is marked done, and its winners' staged
+// records are dropped. A pack whose work cannot be done yet, a staged record
 // not there or a write that failed, waits for the next sweep, and holds up
-// none after it. Every write is idempotent on its authorization, and an outcome
+// none after it. A staged record no pack drops, such as one a crash left
+// between a mark and its drop, goes once its lease retires. Every write is idempotent on its authorization, and an outcome
 // published twice is the same message, so members that sweep at once, or a
 // sweep after a crash, do no harm.
 type Pending struct {
@@ -72,9 +75,16 @@ func (p *Pending) Run(ctx context.Context) error {
 	}
 }
 
-// sweep does the work of every pack not done, a page at a time, reading
-// each lease's packs once a page.
+// sweep does the work of every pack not done, then drops the staged records
+// of leases that have retired.
 func (p *Pending) sweep(ctx context.Context) {
+	p.sweepPacks(ctx)
+	p.dropRetired(ctx)
+}
+
+// sweepPacks does the work of every pack not done, a page at a time,
+// reading each lease's packs once a page.
+func (p *Pending) sweepPacks(ctx context.Context) {
 	var after store.PendingPack
 	for ctx.Err() == nil {
 		page, err := p.cfg.Store.PendingPacks(ctx, after, p.cfg.Limit)
@@ -101,6 +111,17 @@ func (p *Pending) sweep(ctx context.Context) {
 			return
 		}
 		after = page[len(page)-1]
+	}
+}
+
+// dropRetired drops the staged records of leases that have retired or gone
+// (store.RetiredStaged), a commit's worth at a time.
+func (p *Pending) dropRetired(ctx context.Context) {
+	for ctx.Err() == nil {
+		keys, err := p.cfg.Store.RetiredStaged(ctx, stagedBatch)
+		if err != nil || p.cfg.Store.DropStaged(ctx, keys...) != nil || len(keys) < stagedBatch {
+			return
+		}
 	}
 }
 
@@ -151,6 +172,9 @@ var recordBatch = struct {
 	rows  int
 }{16 << 20, 1000}
 
+// stagedBatch bounds the staged records one drop removes.
+var stagedBatch = store.MaxDropStaged
+
 // bootOf is the boot binding a full record states (§4.9): a gateway's, an
 // owner's reap's and an auditor's reap's each carry it, as "boot".
 func bootOf(body []byte) []byte {
@@ -168,8 +192,10 @@ func bootOf(body []byte) []byte {
 // binding, which a refund's or a release's work carries itself. Then every
 // outcome is published, so a record written can be rebuilt from the topic's
 // export once the pack is gone; once every one is acknowledged the records
-// are written, in batches; and once every one is written the pack is marked
-// done, its winners' staged records dropped in the same commit.
+// are written, in batches; once every one is written the pack is marked
+// done; and then its winners' staged records are dropped, in batches too.
+// A drop that fails leaves the pack done, and its records to go once the
+// lease retires.
 func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (bool, error) {
 	if pack.WorkDoneAt.Valid {
 		return true, nil
@@ -246,8 +272,15 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		}
 		records = records[n:]
 	}
-	if _, err := p.cfg.Store.MarkPackDone(ctx, ref, pack.CommitVersion, drop...); err != nil {
+	if _, err := p.cfg.Store.MarkPackDone(ctx, ref, pack.CommitVersion); err != nil {
 		return false, err
+	}
+	for len(drop) > 0 {
+		n := min(len(drop), stagedBatch)
+		if p.cfg.Store.DropStaged(ctx, drop[:n]...) != nil {
+			break
+		}
+		drop = drop[n:]
 	}
 	return true, nil
 }
