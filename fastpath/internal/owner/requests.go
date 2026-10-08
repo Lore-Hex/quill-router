@@ -15,14 +15,16 @@ import (
 var (
 	// ErrNoRoom: the lease has no room for the hold and its buffer.
 	ErrNoRoom = errors.New("owner: the lease has no room for the hold")
-	// ErrPastCutoff: the lease is past its cutoff. A terminal goes to the
-	// lease's drain log at once (§4.5); an admission goes elsewhere.
+	// ErrPastCutoff: the lease is past its cutoff, or its owner let it go,
+	// and no answer stands for the request. A terminal goes to the lease's
+	// drain log at once (§4.5); an admission goes elsewhere.
 	ErrPastCutoff = errors.New("owner: past the lease's cutoff")
 	// ErrPublishing: the lease's publishes are failing, so it admits
 	// nothing new until one succeeds again (§4.5).
 	ErrPublishing = errors.New("owner: the lease's publishes are failing")
 	// ErrRetry: the record was not acknowledged in time; the decision
-	// stands, and a retry finds it.
+	// stands, and a retry finds it. A heartbeat gets it too past the cutoff,
+	// which stops its stream (§4.3).
 	ErrRetry = errors.New("owner: retry")
 	// ErrUnknownHold: the lease admitted no such authorization.
 	ErrUnknownHold = errors.New("owner: no such hold under the lease")
@@ -30,7 +32,7 @@ var (
 	ErrDecided = errors.New("owner: the hold has its terminal")
 	// ErrStale, ErrRejected and ErrDeadlinePassed are a heartbeat's (§4.5).
 	ErrStale          = errors.New("owner: a stale heartbeat")
-	ErrRejected       = errors.New("owner: a heartbeat whose usage regressed or passed its cap")
+	ErrRejected       = errors.New("owner: a heartbeat the hold cannot take")
 	ErrDeadlinePassed = errors.New("owner: the heartbeat's record was acknowledged after the deadline it echoed")
 )
 
@@ -66,15 +68,22 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		return Admitted{}, fmt.Errorf("owner: minted authorization %q", auth)
 	}
 	over := l.o.cfg.overrun(a.Estimate)
+	need, ok := add(a.Estimate, over)
+	if !ok {
+		return Admitted{}, fmt.Errorf("owner: a hold of %d with a buffer of %d", a.Estimate, over)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.let {
+		return Admitted{}, ErrPastCutoff
+	}
 	if _, open := l.holds[auth]; open || l.decided[auth] != nil {
 		return Admitted{}, fmt.Errorf("owner: minted authorization %q twice", auth)
 	}
 	if l.failed {
 		return Admitted{}, ErrPublishing
 	}
-	if l.booksLocked().Free() < a.Estimate+over {
+	if l.booksLocked().Free() < need {
 		return Admitted{}, ErrNoRoom
 	}
 	h := &hold{auth: auth, estimate: a.Estimate, overrun: over, stream: a.Stream, boot: append([]byte(nil), a.Boot...)}
@@ -119,10 +128,11 @@ type HeartbeatOf struct {
 	Basis      []byte
 }
 
-// Heartbeat validates a heartbeat as today (§4.5), publishes the accepted
-// one under the lease, and answers with the deadline it grants once the
-// record is acknowledged. A replay, the same sequence and hash, is answered
-// with the deadline already granted, without a second publish.
+// Heartbeat validates a stream's heartbeat as today (§4.5), publishes the
+// accepted one under the lease, and answers with the deadline it grants once
+// the record is acknowledged before the cutoff. A replay, the same sequence
+// and hash, is answered as the heartbeat it repeats, without a second
+// publish.
 func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (time.Time, error) {
 	l.mu.Lock()
 	h := l.holds[auth]
@@ -134,6 +144,11 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		}
 		return time.Time{}, ErrUnknownHold
 	}
+	if !h.stream {
+		// Only a stream heartbeats; another hold keeps its end of life.
+		l.mu.Unlock()
+		return time.Time{}, ErrRejected
+	}
 	if h.heartbeat {
 		switch {
 		case hb.GatewaySeq < h.gatewaySeq, hb.GatewaySeq == h.gatewaySeq && !bytes.Equal(hb.Hash, h.hash):
@@ -142,10 +157,7 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		case hb.GatewaySeq == h.gatewaySeq:
 			s, granted := h.sent, h.deadline
 			l.mu.Unlock()
-			if err := l.awaitAck(ctx, s); err != nil {
-				return time.Time{}, err
-			}
-			return granted, nil
+			return l.heartbeatAnswer(ctx, s, granted, hb.Echoed)
 		}
 	}
 	if hb.GatewaySeq < 1 || len(hb.Hash) != record.DigestSize || (!h.heartbeat && len(hb.Basis) == 0) ||
@@ -184,13 +196,23 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		append([]byte(nil), hb.Hash...), hb.Usage, hb.Running, deadline, s.seq, s
 	l.buffer += h.counted()
 	l.mu.Unlock()
-	if err := l.awaitAck(ctx, s); err != nil {
+	return l.heartbeatAnswer(ctx, s, deadline, hb.Echoed)
+}
+
+// heartbeatAnswer answers a heartbeat whose record is s: the deadline it
+// granted, once s is acknowledged before the cutoff and by the deadline the
+// heartbeat echoed; deadline_passed if after that; else retry (§4.5).
+func (l *Lease) heartbeatAnswer(ctx context.Context, s *sent, granted, echoed time.Time) (time.Time, error) {
+	acked, before, err := l.awaitAck(ctx, s)
+	switch {
+	case err != nil:
 		return time.Time{}, err
-	}
-	if !hb.Echoed.IsZero() && s.ackedAt.After(hb.Echoed) {
+	case !acked || !before:
+		return time.Time{}, ErrRetry
+	case !echoed.IsZero() && s.ackedAt.After(echoed):
 		return time.Time{}, ErrDeadlinePassed
 	}
-	return deadline, nil
+	return granted, nil
 }
 
 // Outcome is a terminal's answer: the winner's kind and charge, and whether
@@ -227,11 +249,7 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		s := d.sent
 		out := Outcome{Kind: d.kind, Charge: d.charge}
 		l.mu.Unlock()
-		if err := l.awaitAck(ctx, s); err != nil {
-			return Outcome{}, err
-		}
-		out.Recorded = !s.beforeCutoff
-		return out, nil
+		return l.terminalAnswer(ctx, s, out)
 	}
 	h := l.holds[auth]
 	if h == nil {
@@ -242,12 +260,20 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		l.mu.Unlock()
 		return Outcome{}, ErrPastCutoff
 	}
-	held, consumed, allocation, shortfall, freed := l.held-h.estimate, l.consumed, l.allocation, l.shortfall, h.estimate
+	held, charged, freed := l.held-h.estimate, int64(0), h.estimate
 	if kind == record.Settle {
-		consumed += charge
-		freed = max(h.estimate-charge, 0)
+		charged, freed = charge, max(h.estimate-charge, 0)
 	}
-	if short := consumed + held - allocation; short > 0 {
+	// What is booked and held once decided. The allocation rises to it at
+	// most, and the shortfall total, never above the allocation, with it; so
+	// if it fits an int64, so do they.
+	total, ok := add(l.consumed, charged, held)
+	if !ok {
+		l.mu.Unlock()
+		return Outcome{}, fmt.Errorf("owner: a %s of %d the lease's books cannot hold", kind, charge)
+	}
+	consumed, allocation, shortfall := l.consumed+charged, l.allocation, l.shortfall
+	if short := total - allocation; short > 0 {
 		shortfall += short
 		allocation += short
 	}
@@ -267,14 +293,36 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 	delete(l.holds, auth)
 	l.decided[auth] = &decision{kind: kind, charge: charge, sent: s}
 	l.mu.Unlock()
-	if err := l.awaitAck(ctx, s); err != nil {
+	return l.terminalAnswer(ctx, s, Outcome{Kind: kind, Charge: charge})
+}
+
+// terminalAnswer answers a terminal decided as out, whose record is s: the
+// outcome once s is acknowledged, recorded if after the cutoff (§4.5);
+// past_cutoff if s is not acknowledged and the cutoff has passed, since the
+// owner may never publish it, so the front door takes it to the drain log;
+// else retry.
+func (l *Lease) terminalAnswer(ctx context.Context, s *sent, out Outcome) (Outcome, error) {
+	acked, before, err := l.awaitAck(ctx, s)
+	switch {
+	case err != nil:
 		return Outcome{}, err
+	case acked:
+		out.Recorded = !before
+		return out, nil
 	}
-	return Outcome{Kind: kind, Charge: charge, Recorded: !s.beforeCutoff}, nil
+	l.mu.Lock()
+	past := !l.withinCutoff(l.o.cfg.Clock())
+	l.mu.Unlock()
+	if past {
+		return Outcome{}, ErrPastCutoff
+	}
+	return Outcome{}, ErrRetry
 }
 
 // handOver gives a record the lease's next owner sequence number and hands
-// it to the lease's key, with l.mu held.
+// it to the lease's key, with l.mu held: at once if every record before it
+// is published since the last failure, so it follows them; else it waits for
+// the flusher's republish, which sends it in its order.
 func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	r.Version, r.Lease, r.Epoch, r.Seq = record.Version, l.id, l.o.cfg.Epoch, l.nextSeq
 	data, err := record.Encode(r)
@@ -282,8 +330,11 @@ func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 		return nil, err
 	}
 	l.nextSeq++
-	s := &sent{seq: r.Seq, data: data, freed: freed, done: make(chan struct{})}
-	s.waiter = l.o.pub.Publish(l.id, data)
+	s := &sent{seq: r.Seq, data: data, freed: freed, waiter: notSent{}, done: make(chan struct{})}
+	if l.live == len(l.inflight) {
+		s.waiter = l.o.pub.Publish(l.id, data)
+		l.live++
+	}
 	l.inflight = append(l.inflight, s)
 	select {
 	case l.kick <- struct{}{}:
@@ -292,22 +343,26 @@ func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	return s, nil
 }
 
-// awaitAck waits up to AnswerWait for a record's acknowledgement.
-func (l *Lease) awaitAck(ctx context.Context, s *sent) error {
-	timer := time.NewTimer(l.o.cfg.AnswerWait)
-	defer timer.Stop()
-	select {
-	case <-s.done:
-	case <-timer.C:
-		return ErrRetry
-	case <-ctx.Done():
-		return ctx.Err()
+// awaitAck waits up to AnswerWait for a record's acknowledgement, and
+// reports whether it came, and whether before the cutoff. It does not wait
+// for a record the flusher holds past the cutoff, nor once the owner let the
+// lease go.
+func (l *Lease) awaitAck(ctx context.Context, s *sent) (acked, beforeCutoff bool, err error) {
+	l.mu.Lock()
+	held := !s.acked && l.failed && !l.withinCutoff(l.o.cfg.Clock())
+	l.mu.Unlock()
+	if !held {
+		timer := time.NewTimer(l.o.cfg.AnswerWait)
+		defer timer.Stop()
+		select {
+		case <-s.done:
+		case <-timer.C:
+		case <-l.stop:
+		case <-ctx.Done():
+			return false, false, ctx.Err()
+		}
 	}
 	l.mu.Lock()
-	acked := s.acked
-	l.mu.Unlock()
-	if !acked {
-		return ErrRetry
-	}
-	return nil
+	defer l.mu.Unlock()
+	return s.acked, s.beforeCutoff, nil
 }

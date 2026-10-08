@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -74,6 +75,19 @@ func (c Config) overrun(estimate int64) int64 {
 	return max(0, c.Overrun(estimate))
 }
 
+// add sums amounts of money, each at least 0, and reports whether an int64
+// holds the sum.
+func add(xs ...int64) (int64, bool) {
+	var t int64
+	for _, x := range xs {
+		if x < 0 || x > math.MaxInt64-t {
+			return 0, false
+		}
+		t += x
+	}
+	return t, true
+}
+
 // Owner holds the leases its process was granted. A process uses only those
 // (§4.3): it never takes up a lease it was not granted, and answers a request
 // that names one as an owner past its cutoff does.
@@ -123,13 +137,18 @@ func (o *Owner) Lease(id string) (*Lease, bool) {
 	return l, ok
 }
 
-// Let lets a lease go: the owner holds it no more, and its flusher stops.
+// Let lets a lease go: the owner holds it no more, its flusher stops, and a
+// request that reaches it through a handle kept from before is answered as
+// one past its cutoff (§4.3).
 func (o *Owner) Let(id string) {
 	o.mu.Lock()
 	l, ok := o.leases[id]
 	delete(o.leases, id)
 	o.mu.Unlock()
 	if ok {
+		l.mu.Lock()
+		l.let = true
+		l.mu.Unlock()
 		close(l.stop)
 		<-l.stopped
 	}
@@ -165,10 +184,10 @@ type decision struct {
 	sent   *sent
 }
 
-// sent is a record handed to the lease's key: its bytes, so a failure can
-// republish the same record, what it frees once acknowledged, its waiter,
-// and done, closed once it is acknowledged (at ackedAt, before the cutoff or
-// not) or given up.
+// sent is a record handed over: its bytes, so a failure can republish the
+// same record, what it frees once acknowledged, the waiter of its latest
+// publish, and done, closed once it is acknowledged (at ackedAt, before the
+// cutoff or not).
 type sent struct {
 	seq          int64
 	data         []byte
@@ -201,10 +220,15 @@ type Lease struct {
 	nextSeq    int64
 	holds      map[string]*hold
 	decided    map[string]*decision
-	// inflight are the records handed over and not acknowledged, in order;
-	// failed is set while a publish has failed and not been republished.
+	// inflight are the records handed over and not acknowledged, in order,
+	// the first live of them published since the last failure, and the rest
+	// awaiting the flusher's republish; failed is set from a failed publish
+	// until a publish is acknowledged again. let is set once the owner let
+	// the lease go.
 	inflight []*sent
+	live     int
 	failed   bool
+	let      bool
 
 	kick    chan struct{}
 	stop    chan struct{}
@@ -234,18 +258,27 @@ func (l *Lease) Books() Books {
 		Shortfall: l.shortfall, NextSeq: l.nextSeq, Open: len(l.holds)}
 }
 
-// Renewed takes a renewal's answer: the expiry Spanner holds now. It never
-// brings a lease back: a lease the owner let go is not under its care.
+// Renewed takes a renewal's answer: the expiry Spanner holds now. A renewal
+// that moves a cutoff that has passed lets the flusher republish what waits,
+// before anything new; the owner adopts the lease's drain log before it
+// calls Renewed so (§4.2), in a later part of S5. It never brings back a
+// lease the owner let go.
 func (l *Lease) Renewed(expiry time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if expiry.After(l.expiry) {
-		l.expiry = expiry
+	if l.let || !expiry.After(l.expiry) {
+		return
+	}
+	l.expiry = expiry
+	select {
+	case l.kick <- struct{}{}:
+	default:
 	}
 }
 
-// withinCutoff: the owner's clock is before the lease's expiry less the skew
-// (LeaseLifecycle's WithinCutoff, with the owner's one reading).
+// withinCutoff: the owner holds the lease and its clock is before the
+// lease's expiry less the skew (LeaseLifecycle's WithinCutoff, with the
+// owner's one reading).
 func (l *Lease) withinCutoff(now time.Time) bool {
-	return now.Add(l.o.cfg.Skew).Before(l.expiry)
+	return !l.let && now.Add(l.o.cfg.Skew).Before(l.expiry)
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"sync"
@@ -17,20 +18,44 @@ import (
 
 // fakeLog is the settle log as Pub/Sub keeps it: each lease's records stored
 // in the order handed over; a failed publish pauses the lease's key, and
-// every publish to it fails until Resume. A test can fail publishes, and
-// hold acknowledgements back until it releases them.
+// every publish to it fails until Resume. A test can fail publishes, hold
+// acknowledgements back until it releases them, and see every publish
+// attempted, at the time of the test's clock, now. onRepublish runs at
+// each publish of a record published before.
 type fakeLog struct {
-	mu       sync.Mutex
-	stored   map[string][][]byte
-	paused   map[string]bool
-	failNext map[string]int
-	holding  bool
-	release  chan struct{}
+	mu          sync.Mutex
+	stored      map[string][][]byte
+	paused      map[string]bool
+	failNext    map[string]int
+	holding     bool
+	release     chan struct{}
+	now         func() time.Time
+	attempts    []attempt
+	published   map[string]int
+	onRepublish func()
+}
+
+type attempt struct {
+	at   time.Time
+	data string
 }
 
 func newFakeLog() *fakeLog {
 	return &fakeLog{stored: map[string][][]byte{}, paused: map[string]bool{}, failNext: map[string]int{},
-		release: make(chan struct{})}
+		release: make(chan struct{}), published: map[string]int{}}
+}
+
+// attemptsFrom are the publishes attempted at or after t.
+func (f *fakeLog) attemptsFrom(t time.Time) []attempt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []attempt
+	for _, a := range f.attempts {
+		if !a.at.Before(t) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 type waiter struct {
@@ -54,6 +79,12 @@ var errPaused = errors.New("the key is paused")
 func (f *fakeLog) Publish(lease string, data []byte) Waiter {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.now != nil {
+		f.attempts = append(f.attempts, attempt{at: f.now(), data: string(data)})
+	}
+	if f.published[string(data)]++; f.published[string(data)] > 1 && f.onRepublish != nil {
+		f.onRepublish()
+	}
 	if f.paused[lease] {
 		return waiter{err: errPaused}
 	}
@@ -149,6 +180,7 @@ type fixture struct {
 func newFixture(t *testing.T, allocation int64, overrun func(int64) int64) *fixture {
 	t.Helper()
 	f := &fixture{log: newFakeLog(), clock: &clock{now: start}}
+	f.log.now = f.clock.Now
 	n := 0
 	var mu sync.Mutex
 	o, err := New(Config{Epoch: 3, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
@@ -252,7 +284,7 @@ func TestASettleMovesTheBooks(t *testing.T) {
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("%s did not happen", what)
@@ -338,6 +370,11 @@ func TestHeartbeatValidity(t *testing.T) {
 			t.Errorf("%s: %v, want %v", name, err, c.want)
 		}
 	}
+	plain := f.admit(t, 100, false)
+	if _, err := f.lease.Heartbeat(ctx, plain, HeartbeatOf{GatewaySeq: 1, Hash: sum("p1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrRejected) {
+		t.Errorf("a heartbeat for a hold that does not stream: %v", err)
+	}
 	other := f.admit(t, 100, true)
 	for name, hb := range map[string]HeartbeatOf{
 		"a first without the reap's basis": {GatewaySeq: 1, Hash: sum("o1"), Usage: 1, Running: 1},
@@ -394,6 +431,10 @@ func TestAHeartbeatAckedAfterItsDeadline(t *testing.T) {
 	if err := <-got; !errors.Is(err, ErrDeadlinePassed) {
 		t.Fatalf("a heartbeat acknowledged past its deadline: %v", err)
 	}
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 2, Running: 2,
+		Echoed: first}); !errors.Is(err, ErrDeadlinePassed) {
+		t.Fatalf("its replay: %v", err)
+	}
 }
 
 // TestAFailedPublishIsRepublishedInOrder: a failure pauses the lease's key;
@@ -436,8 +477,9 @@ func TestAFailedPublishIsRepublishedInOrder(t *testing.T) {
 	}
 }
 
-// TestNothingIsAdmittedWhilePublishesFail and nothing is republished past
-// the cutoff.
+// TestNothingIsAdmittedWhilePublishesFailOrRepublishedPastTheCutoff: while
+// publishes fail nothing is admitted, and no publish is attempted past the
+// cutoff; a settle whose record waits there goes to the drain log.
 func TestNothingIsAdmittedWhilePublishesFailOrRepublishedPastTheCutoff(t *testing.T) {
 	f := newFixture(t, 10000, nil)
 	ctx := context.Background()
@@ -453,14 +495,17 @@ func TestNothingIsAdmittedWhilePublishesFailOrRepublishedPastTheCutoff(t *testin
 		return errors.Is(err, ErrPublishing)
 	})
 	f.clock.advance(time.Hour)
-	if err := <-got; !errors.Is(err, ErrRetry) {
+	if err := <-got; !errors.Is(err, ErrPastCutoff) {
 		t.Fatalf("a settle whose record could not be published: %v", err)
 	}
 	f.log.fail("lease-1", 0)
 	f.log.Resume("lease-1")
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(3 * lastBackoff)
 	if n := len(f.log.records(t, "lease-1")); n != 0 {
 		t.Fatalf("%d records published past the cutoff", n)
+	}
+	if late := f.log.attemptsFrom(start.Add(58 * time.Second)); len(late) != 0 {
+		t.Fatalf("%d publishes attempted past the cutoff", len(late))
 	}
 }
 
@@ -499,15 +544,17 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 		f := newFixture(t, 2000, func(e int64) int64 { return e / 20 })
 		ctx := context.Background()
 		open := map[string]int64{}
+		streams := map[string]bool{}
 		var consumed int64
 		gseq := map[string]int64{}
 		for step := 0; step < 80; step++ {
 			switch op := rng.Intn(4); {
 			case op == 0 || len(open) == 0:
 				e := int64(1 + rng.Intn(300))
-				a, err := f.lease.Admit(Admission{Estimate: e, Stream: rng.Intn(2) == 0, Boot: boot})
+				stream := rng.Intn(2) == 0
+				a, err := f.lease.Admit(Admission{Estimate: e, Stream: stream, Boot: boot})
 				if err == nil {
-					open[a.Auth] = e
+					open[a.Auth], streams[a.Auth] = e, stream
 				} else if !errors.Is(err, ErrNoRoom) {
 					t.Fatal(err)
 				}
@@ -517,6 +564,9 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 					break
 				}
 				e := open[a]
+				if op == 1 && !streams[a] {
+					op = 3
+				}
 				switch op {
 				case 1:
 					gseq[a]++
@@ -681,5 +731,200 @@ func TestAnOwnerMintsOnlyWhatItCanRecord(t *testing.T) {
 	}
 	if b := l.Books(); b.Held != 0 || b.Open != 0 {
 		t.Fatalf("the books at the end: %+v", b)
+	}
+}
+
+// TestARecordPastTheCutoffWaitsForARenewal: a record that cannot be
+// published by the cutoff is kept, not dropped; its settle and every retry
+// of it go to the drain log meanwhile, and nothing is attempted past the
+// cutoff. A renewal that moves the cutoff republishes it first, with its
+// number, before anything new, so the lease's order has no gap.
+func TestARecordPastTheCutoffWaitsForARenewal(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	a, b := f.admit(t, 100, false), f.admit(t, 100, false)
+	f.log.fail("lease-1", 1000)
+	got := make(chan error, 1)
+	go func() {
+		_, err := f.lease.Settle(ctx, a, 50, sum("a"))
+		got <- err
+	}()
+	waitFor(t, "the failure", func() bool {
+		_, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot})
+		return errors.Is(err, ErrPublishing)
+	})
+	f.clock.advance(58 * time.Second) // the cutoff
+	if err := <-got; !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a settle whose record waits past the cutoff: %v", err)
+	}
+	if _, err := f.lease.Settle(ctx, a, 50, sum("a")); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("its retry: %v", err)
+	}
+	if _, err := f.lease.Settle(ctx, b, 60, sum("b")); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a settle past the cutoff: %v", err)
+	}
+	f.log.fail("lease-1", 0)
+	time.Sleep(3 * lastBackoff)
+	if late := f.log.attemptsFrom(start.Add(58 * time.Second)); len(late) != 0 {
+		t.Fatalf("%d publishes attempted past the cutoff", len(late))
+	}
+	f.lease.Renewed(start.Add(5 * time.Minute))
+	waitFor(t, "the republish", func() bool { return len(f.log.records(t, "lease-1")) == 1 })
+	if _, err := f.lease.Settle(ctx, b, 60, sum("b")); err != nil {
+		t.Fatalf("a settle after the renewal: %v", err)
+	}
+	recs := f.log.records(t, "lease-1")
+	if len(recs) != 2 || recs[0].Seq != 1 || recs[0].Auth != a || recs[1].Seq != 2 || recs[1].Auth != b {
+		t.Fatalf("the log after the renewal: %+v", recs)
+	}
+	if out, err := f.lease.Settle(ctx, a, 50, sum("a")); err != nil || out != (Outcome{Kind: record.Settle, Charge: 50}) {
+		t.Fatalf("a retry of the first settle: %+v %v", out, err)
+	}
+}
+
+// TestEachRepublishIsBeforeTheCutoff: the cutoff is read before each record
+// is handed over again, not once for all of them, so a republish that takes
+// time stops at the cutoff; the records it did not reach wait, and their
+// settles go to the drain log. After a renewal, a new record follows them:
+// though the key was resumed, it is not published before them.
+func TestEachRepublishIsBeforeTheCutoff(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	var auths []string
+	for range 3 {
+		auths = append(auths, f.admit(t, 100, false))
+	}
+	later := f.admit(t, 100, false)
+	f.clock.advance(57*time.Second + 500*time.Millisecond) // the cutoff is at 58 s
+	f.log.mu.Lock()
+	f.log.failNext["lease-1"] = 1
+	f.log.onRepublish = func() { f.clock.advance(time.Second) } // each republish takes a second
+	f.log.mu.Unlock()
+	answers := make([]chan error, len(auths))
+	outcomes := make([]Outcome, len(auths))
+	for i, a := range auths {
+		answers[i] = make(chan error, 1)
+		go func() {
+			out, err := f.lease.Settle(ctx, a, 10, sum(a))
+			outcomes[i] = out
+			answers[i] <- err
+		}()
+		waitFor(t, "the settle's hand-over", func() bool { return f.lease.Books().NextSeq > int64(i+1) })
+	}
+	for i := range auths {
+		err := <-answers[i]
+		switch {
+		case i == 0 && (err != nil || outcomes[0] != (Outcome{Kind: record.Settle, Charge: 10, Recorded: true})):
+			t.Errorf("the settle republished at 57.5 s and acknowledged at 58.5 s: %+v %v", outcomes[0], err)
+		case i > 0 && !errors.Is(err, ErrPastCutoff):
+			t.Errorf("settle %d, not republished by the cutoff: %v", i, err)
+		}
+	}
+	if late := f.log.attemptsFrom(start.Add(58 * time.Second)); len(late) != 0 {
+		t.Fatalf("%d publishes attempted past the cutoff", len(late))
+	}
+	if recs := f.log.records(t, "lease-1"); len(recs) != 1 || recs[0].Seq != 1 {
+		t.Fatalf("the log: %+v", recs)
+	}
+	f.log.mu.Lock()
+	f.log.onRepublish = nil
+	f.log.mu.Unlock()
+	f.lease.Renewed(start.Add(5 * time.Minute))
+	if _, err := f.lease.Settle(ctx, later, 10, sum(later)); err != nil {
+		t.Fatalf("a settle after the renewal: %v", err)
+	}
+	recs := f.log.records(t, "lease-1")
+	if len(recs) != 4 {
+		t.Fatalf("the log after the renewal: %+v", recs)
+	}
+	for i, r := range recs {
+		if r.Seq != int64(i+1) {
+			t.Fatalf("record %d of the log is number %d", i, r.Seq)
+		}
+	}
+}
+
+// TestALetLeaseAnswersAsPastItsCutoff: once the owner lets a lease go, a
+// handle kept from before admits nothing, decides nothing and publishes
+// nothing, a renewal does not bring it back, and a decision acknowledged
+// before still stands (§4.3).
+func TestALetLeaseAnswersAsPastItsCutoff(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	a := f.admit(t, 100, true)
+	settled := f.admit(t, 100, false)
+	if _, err := f.lease.Settle(ctx, settled, 10, sum("s")); err != nil {
+		t.Fatal(err)
+	}
+	f.owner.Let("lease-1")
+	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("an admission: %v", err)
+	}
+	if _, err := f.lease.Refund(ctx, a); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a refund: %v", err)
+	}
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat: %v", err)
+	}
+	f.lease.Renewed(start.Add(time.Hour))
+	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("an admission after a renewal: %v", err)
+	}
+	if out, err := f.lease.Settle(ctx, settled, 10, sum("s")); err != nil || out != (Outcome{Kind: record.Settle, Charge: 10}) {
+		t.Fatalf("the settle decided before: %+v %v", out, err)
+	}
+	if n := len(f.log.records(t, "lease-1")); n != 1 {
+		t.Fatalf("%d records", n)
+	}
+}
+
+// TestAHeartbeatAckedAfterTheCutoffIsRetried: a heartbeat's answer depends
+// on the owner's decision, so it is given only for a record acknowledged
+// before the cutoff; after it, the heartbeat and its replay get retry.
+func TestAHeartbeatAckedAfterTheCutoffIsRetried(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	a := f.admit(t, 500, true)
+	f.clock.advance(57 * time.Second)
+	f.log.hold()
+	hb := HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1, Basis: []byte("terms")}
+	got := make(chan error, 1)
+	go func() {
+		_, err := f.lease.Heartbeat(ctx, a, hb)
+		got <- err
+	}()
+	waitFor(t, "the record", func() bool { return len(f.log.records(t, "lease-1")) == 1 })
+	f.clock.advance(2 * time.Second)
+	f.log.letGo()
+	if err := <-got; !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat acknowledged after the cutoff: %v", err)
+	}
+	if _, err := f.lease.Heartbeat(ctx, a, hb); !errors.Is(err, ErrRetry) {
+		t.Fatalf("its replay: %v", err)
+	}
+}
+
+// TestTheBooksRefuseWhatTheyCannotHold: an admission or a terminal whose
+// amounts an int64 cannot sum is refused, and moves nothing.
+func TestTheBooksRefuseWhatTheyCannotHold(t *testing.T) {
+	f := newFixture(t, 100, func(int64) int64 { return 1 })
+	ctx := context.Background()
+	if _, err := f.lease.Admit(Admission{Estimate: math.MaxInt64, Boot: boot}); err == nil {
+		t.Fatal("a hold whose estimate and buffer overflow")
+	}
+	a := f.admit(t, 49, false)
+	f.admit(t, 49, false)
+	before := f.lease.Books()
+	for _, charge := range []int64{math.MaxInt64, math.MaxInt64 - 48, -1} {
+		if _, err := f.lease.Settle(ctx, a, charge, sum("a")); err == nil {
+			t.Fatalf("a charge of %d", charge)
+		}
+		if after := f.lease.Books(); after != before {
+			t.Fatalf("a charge of %d moved the books: %+v, then %+v", charge, before, after)
+		}
+	}
+	if n := len(f.log.records(t, "lease-1")); n != 0 {
+		t.Fatalf("%d records", n)
 	}
 }
