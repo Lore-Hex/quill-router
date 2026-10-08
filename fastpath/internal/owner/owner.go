@@ -150,7 +150,9 @@ type Owner struct {
 	// from its start the owner takes no lease.
 	handoff    chan struct{}
 	handoffErr error
-	leases     map[string]*Lease
+	// retiring is set once the owner takes nothing new (Retire).
+	retiring bool
+	leases   map[string]*Lease
 	// retired are the leases the owner let go, each with its workers' end:
 	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
@@ -206,8 +208,8 @@ func (o *Owner) take(lease, workspace string, allocation int64, expiry time.Time
 	now := o.cfg.Clock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.stopped || o.handoff != nil {
-		return nil, errors.New("owner: stopped, or handing its leases off")
+	if o.stopped || o.handoff != nil || o.retiring {
+		return nil, errors.New("owner: stopped, retiring, or handing its leases off")
 	}
 	if _, ok := o.leases[lease]; ok {
 		return nil, fmt.Errorf("owner: lease %s is held already", lease)

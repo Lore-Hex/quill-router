@@ -367,6 +367,52 @@ func TestAClosingLeaseIsNoRoom(t *testing.T) {
 	waitFor(t, "the ask for the shard's room", func() bool { return len(sp.granted()) == 3 })
 }
 
+// TestARetiringOwnerTakesNothingNew: once the owner retires, its leases
+// admit nothing more and a request it cannot take is ErrNoRoom, with no
+// lease asked for, the cooldown past or not; and a grant asked before it
+// retired and answered after is not taken.
+func TestARetiringOwnerTakesNothingNew(t *testing.T) {
+	f, sp := shardFixture(t)
+	askedAt := func() time.Time {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return f.owner.shards[key].askedAt
+	}
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	a := f.waitLeases(t, 1)[0] // 10
+	admitTo(t, f, 5)
+	f.clock.advance(time.Minute) // the cooldown passes
+	sp.mu.Lock()
+	sp.grantGate = make(chan struct{})
+	sp.mu.Unlock()
+	_, _ = f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}) // room 0: an ask, held at the store
+	waitFor(t, "the held ask", func() bool { return len(sp.granted()) == 2 })
+	f.owner.Retire()
+	asked := askedAt()
+	f.clock.advance(time.Minute)
+	if _, err := f.owner.Admit(key, Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("a request to a retiring owner: %v", err)
+	}
+	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("a request to a retiring owner's lease: %v", err)
+	}
+	if got := askedAt(); !got.Equal(asked) {
+		t.Fatalf("an ask at %v by a retiring owner, its last at %v", got, asked)
+	}
+	sp.mu.Lock()
+	close(sp.grantGate)
+	sp.grantGate = nil
+	sp.mu.Unlock()
+	waitFor(t, "the held ask's end", func() bool {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return !f.owner.shards[key].asking
+	})
+	if ls := f.leases(key); len(ls) != 1 || ls[0] != a {
+		t.Fatalf("a retiring owner's leases: %d", len(ls))
+	}
+}
+
 // lostAsk makes the shard's next ask lose its answer, the grant made, and
 // waits for it.
 func lostAsk(t *testing.T, f *fixture, sp *fakeSpanner, asks int, admit func()) {

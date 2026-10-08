@@ -468,6 +468,10 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 		d, err := s.Disposition(ctx, e.Auth)
 		return err == nil && d.Outcome == "settled" && d.Cost.Int64 == 30, err
 	})
+	// No hand-off listed the lease's holds: it closed by time.
+	if lease, _, err := s.ReadLease(ctx, ref); err != nil || lease.HoldsListedSeq.Valid {
+		t.Fatalf("the lease of an owner gone with no hand-off: %+v %v", lease, err)
+	}
 }
 
 // twoNodes starts two admission nodes and an auditor member on a database
@@ -547,6 +551,19 @@ func TestAStoppingNodesOwnerHandsItsLeasesOff(t *testing.T) {
 	if state := memberState(t, s, b); state != store.Leaving {
 		t.Fatalf("the stopped node's row says %s", state)
 	}
+	// The auditor installs the hand-off's hold, open, as listed.
+	eventually(t, 30*time.Second, "the handed-off hold stored", func() (bool, error) {
+		loaded, err := s.Load(ctx, ref)
+		if err != nil || !loaded.Lease.HoldsListedSeq.Valid {
+			return false, err
+		}
+		for _, h := range loaded.Holds {
+			if h.AuthorizationID == e.Auth {
+				return h.Listed && h.Estimate == 40, nil
+			}
+		}
+		return false, nil
+	})
 	settled, err := gw.Settle(ctx, frontdoor.SettleOf{Envelope: sealed, Charge: 30,
 		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
 	if err != nil || settled.Status != frontdoor.Recorded {
@@ -565,8 +582,10 @@ func TestAStoppingNodesOwnerHandsItsLeasesOff(t *testing.T) {
 // TestALeavingNodeKeepsItsLeasesAndTakesNoNew: a stream admitted by one
 // node's owner, which is then marked leaving (spike plan K3). Its row says
 // so; a new request for the workspace is admitted by the other node's
-// owner; and the stream's heartbeat, through the other node's front door, is
-// its own owner's still, and accepted.
+// owner, and one sent straight to the leaving owner, as by a front door
+// whose view is old, is Busy; the stream's heartbeat and settle, through
+// the other node's front door, are its own owner's still, and taken; and
+// once its hold has ended, the leaving owner's lease drains.
 func TestALeavingNodeKeepsItsLeasesAndTakesNoNew(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
@@ -599,18 +618,39 @@ func TestALeavingNodeKeepsItsLeasesAndTakesNoNew(t *testing.T) {
 		return memberState(t, s, b) == store.Leaving, nil
 	})
 	admitted(t, gw, ws, "r2", a)
+	owners := frontdoor.HTTPOwners{Client: &http.Client{Timeout: 10 * time.Second}, Scheme: "http"}
+	got, err := owners.Authorize(ctx, b.Addr().String(), frontdoor.OwnerAuthorize{Workspace: ws, Estimate: 40,
+		Boot: []byte("boot")})
+	if err != nil || got.Status != frontdoor.Busy {
+		t.Fatalf("a request straight to the leaving owner: %+v %v", got, err)
+	}
 	hash := sha256.Sum256([]byte("r1/1"))
 	hb, err := gw.Heartbeat(ctx, frontdoor.HeartbeatOf{Envelope: stream.Envelope, GatewaySeq: 1, Hash: hash[:],
 		Basis: []byte("terms")})
 	if err != nil || hb.Status != frontdoor.Accepted {
 		t.Fatalf("the stream's heartbeat: %+v %v", hb, err)
 	}
+	settled, err := gw.Settle(ctx, frontdoor.SettleOf{Envelope: stream.Envelope, Charge: 30,
+		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
+	if err != nil || settled.Status != frontdoor.Won {
+		t.Fatalf("the stream's settle: %+v %v", settled, err)
+	}
+	e, err := frontdoor.Open(key, stream.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: e.Lease}
+	eventually(t, 30*time.Second, "the leaving owner's lease drained", func() (bool, error) {
+		lease, _, err := s.ReadLease(ctx, ref)
+		return err == nil && lease.State != "open", err
+	})
 }
 
-// TestTheClockOffsetIsTheProcesss: a process whose clock readings are
-// offset (spike plan K6), here by less than the skew allowance, gives a
-// hold its end of life by its offset clock.
-func TestTheClockOffsetIsTheProcesss(t *testing.T) {
+// TestTheClockOffsetIsTheOwners: an owner whose clock readings are offset
+// (spike plan K6), here an hour back, gives a hold its end of life by its
+// offset clock: an hour sooner than a true clock would, more than any
+// request's latency.
+func TestTheClockOffsetIsTheOwners(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
 	}
@@ -618,7 +658,7 @@ func TestTheClockOffsetIsTheProcesss(t *testing.T) {
 	ln := listen(t)
 	ws := workspace(t, 100_000)
 	cfg := config(ln)
-	cfg.ClockOffset = time.Second
+	cfg.ClockOffset = -time.Hour
 	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + ln.Addr().String()}
 	var got frontdoor.Authorized
@@ -634,6 +674,84 @@ func TestTheClockOffsetIsTheProcesss(t *testing.T) {
 	life := cfg.ClockOffset + cfg.Store.MaxLife
 	if lo, hi := asked.Add(life), answered.Add(life); got.EndOfLife.Before(lo) || got.EndOfLife.After(hi) {
 		t.Fatalf("an end of life of %v, not between %v and %v", got.EndOfLife, lo, hi)
+	}
+}
+
+// TestAStartThatBlocksEndsWithItsContext: a process whose start blocks,
+// waiting on the parts' context, stops once its own context ends, with no
+// leaving, since its parts never started.
+func TestAStartThatBlocksEndsWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	left := false
+	done := make(chan error, 1)
+	go func() {
+		done <- lifecycle(ctx, func(p *parts) {
+			p.whenLeaving(func() { left = true })
+			<-p.ctx.Done()
+			p.startFailed(ctx, p.ctx.Err())
+		})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("the process returned with its start blocked: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil || left {
+			t.Fatalf("a process stopped as its start blocked: %v, left %v", err, left)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the process did not stop")
+	}
+}
+
+// TestAProcessLeavesBeforeItsPartsStop: once a process's parts have
+// started, its context's end runs what whenLeaving was given, in order,
+// while every part still runs, and then stops them; a part's failure stops
+// them with no leaving, and is what the process returns.
+func TestAProcessLeavesBeforeItsPartsStop(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+	note := func(e string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	started := make(chan *parts, 1)
+	go func() {
+		done <- lifecycle(ctx, func(p *parts) {
+			p.run("part", func(ctx context.Context) error {
+				<-ctx.Done()
+				note("the part stopped")
+				return nil
+			})
+			p.whenLeaving(func() { note("leaving 1") })
+			p.whenLeaving(func() { note("leaving 2") })
+			started <- p
+		})
+	}()
+	<-(<-started).armed
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"leaving 1", "leaving 2", "the part stopped"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("the process's stop went %q, want %q", events, want)
+	}
+
+	events = nil
+	failed := errors.New("failed")
+	err := lifecycle(context.Background(), func(p *parts) {
+		p.run("part", func(ctx context.Context) error { return failed })
+		p.whenLeaving(func() { note("leaving") })
+	})
+	if !errors.Is(err, failed) || len(events) != 0 {
+		t.Fatalf("a failed part: %v, and %q", err, events)
 	}
 }
 

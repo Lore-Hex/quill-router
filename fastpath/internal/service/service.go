@@ -87,13 +87,15 @@ type Config struct {
 	// handed off by then drains by time. Zero hands nothing off.
 	HandOff time.Duration
 	// Leave, once it is closed or sent on, marks the admission node leaving
-	// (spike plan §4, K3): front doors send it no new requests, and it
-	// keeps serving those of the leases it has until they drain. A stopping
-	// node is marked leaving too.
+	// (spike plan §4, K3): front doors send it no new requests, and its
+	// owner retires, taking nothing new and serving the holds of the
+	// leases it has, each of which ends once its holds have. A stopping
+	// node leaves too.
 	Leave <-chan struct{}
-	// ClockOffset is added to every clock reading the process's parts
-	// take: the fault injector's offset of a node's clock (spike plan K6),
-	// zero for a true one.
+	// ClockOffset is added to the owner's clock readings: the fault
+	// injector's offset of an owner's clock (spike plan K6), zero for a true
+	// one. The front door reads its clock only for spans of time, which an
+	// offset leaves as they were, and an auditor's parts keep a true clock.
 	ClockOffset time.Duration
 }
 
@@ -217,34 +219,55 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	defer records.Stop()
 
 	if cfg.ClockOffset != 0 {
-		log.Printf("fastpath: every clock reading offset by %v", cfg.ClockOffset)
+		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
-	p := &parts{}
+	return lifecycle(ctx, func(p *parts) {
+		if cfg.Admission {
+			if err := p.admission(cfg, s, settle, records); err != nil {
+				p.startFailed(ctx, err)
+			}
+		}
+		if cfg.Auditor && p.ctx.Err() == nil {
+			if err := p.auditor(cfg, c, s, settle, records); err != nil {
+				p.startFailed(ctx, err)
+			}
+		}
+	})
+}
+
+// lifecycle starts a process's parts with start and runs them until ctx
+// ends or one fails, and returns once every part has stopped: nil if ctx
+// ended it, else the first failure. While start runs, ctx's end stops the
+// parts, a start under way too; once they have started, it begins the
+// process's leaving: what whenLeaving was given runs while every part still
+// runs, and then the parts stop. A part's failure stops them at once.
+func lifecycle(ctx context.Context, start func(p *parts)) error {
+	p := &parts{caller: ctx, armed: make(chan struct{})}
 	p.ctx, p.cancel = context.WithCancel(context.WithoutCancel(ctx))
 	defer p.cancel()
-	if cfg.Admission {
-		if err := p.admission(cfg, s, settle, records); err != nil {
-			p.startFailed(ctx, err)
-		}
+	starting := context.AfterFunc(ctx, p.cancel)
+	start(p)
+	if starting() {
+		defer context.AfterFunc(ctx, func() {
+			p.leave()
+			p.cancel()
+		})()
+		close(p.armed)
 	}
-	if cfg.Auditor && p.ctx.Err() == nil && ctx.Err() == nil {
-		if err := p.auditor(cfg, c, s, settle, records); err != nil {
-			p.startFailed(ctx, err)
-		}
-	}
-	defer context.AfterFunc(ctx, func() {
-		p.leave()
-		p.cancel()
-	})()
 	p.wait()
-	if p.err != nil {
-		return p.err
-	}
-	return nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
 }
 
 // parts are a process's running parts: the first to fail ends them all.
 type parts struct {
+	// caller is Run's context, whose end begins the process's leaving; ctx
+	// is the parts', which ends once it has left, or a part has failed.
+	// armed is closed once the parts have started and caller's end will
+	// begin their leaving.
+	caller context.Context
+	armed  chan struct{}
 	ctx    context.Context
 	cancel context.CancelFunc
 	group  sync.WaitGroup
@@ -313,9 +336,9 @@ func (p *parts) leave() {
 	}
 }
 
-// clock is a reading of the process's clock, offset as the configuration
-// says.
-func (c Config) clock() time.Time { return time.Now().Add(c.ClockOffset) }
+// ownersClock is a reading of the owner's clock, offset as the
+// configuration says.
+func (c Config) ownersClock() time.Time { return time.Now().Add(c.ClockOffset) }
 
 func (p *parts) wait() {
 	<-p.ctx.Done()
@@ -357,7 +380,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 
 	oc := cfg.Owner
 	oc.Epoch, oc.Spanner, oc.Node, oc.Records = node.Epoch(), s, cfg.Address, owner.FromRecords(records)
-	oc.NewAuthorization, oc.Clock = store.NewAuthorizationID, cfg.clock
+	oc.NewAuthorization, oc.Clock = store.NewAuthorizationID, cfg.ownersClock
 	o, err := owner.New(oc, owner.FromLog(settle))
 	if err != nil {
 		return err
@@ -385,7 +408,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	fc.Store, fc.Records, fc.Members, fc.Key = s, frontdoor.FromRecords(records), members, cfg.Key
 	fc.Shards = func(string) int64 { return cfg.Shards }
 	fc.Self, fc.Peers, fc.Node = cfg.Address, frontdoor.HTTPPeers{Client: client, Scheme: "http"}, node
-	fc.Clock = cfg.clock
+	fc.Clock = time.Now
 	door, err := frontdoor.New(fc)
 	if err != nil {
 		return err
@@ -423,10 +446,14 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		handlers.wait()
 		return nil
 	})
-	// The node is marked leaving when Leave says so, and when the process
-	// stops; a write that fails is written again with the node's next
-	// heartbeat. A stopping node's owner then hands its leases off.
+	// The node leaves when Leave says so, and when the process stops: its
+	// owner retires, and its row is marked leaving, within LiveFor; a write
+	// that fails is written again with the node's next heartbeat. A
+	// stopping node's owner then hands its leases off.
 	leave := func(ctx context.Context) {
+		o.Retire()
+		ctx, cancel := context.WithTimeout(ctx, cfg.Store.LiveFor)
+		defer cancel()
 		if err := node.SetState(ctx, store.Leaving); err != nil {
 			log.Printf("fastpath: marking %s leaving: %v", cfg.Address, err)
 		}
@@ -435,16 +462,16 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		p.run("leaving", func(ctx context.Context) error {
 			select {
 			case <-cfg.Leave:
-				leave(ctx)
+				// The write ends when the process begins to leave, which
+				// writes the row itself.
+				leave(p.caller)
 			case <-ctx.Done():
 			}
 			return nil
 		})
 	}
 	p.whenLeaving(func() {
-		lctx, cancel := context.WithTimeout(p.ctx, cfg.Store.LiveFor)
-		leave(lctx)
-		cancel()
+		leave(p.ctx)
 		if cfg.HandOff == 0 {
 			return
 		}
@@ -471,7 +498,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 // subscription, the ticker, the pending work and the record topic's stager.
 func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
 	rc := cfg.Runtime
-	rc.Store, rc.Records, rc.Alert, rc.Clock = s, auditor.FromRecords(records), cfg.Alert, cfg.clock
+	rc.Store, rc.Records, rc.Alert, rc.Clock = s, auditor.FromRecords(records), cfg.Alert, time.Now
 	rt, err := auditor.New(rc)
 	if err != nil {
 		return err
@@ -481,7 +508,7 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 	p.run("auditor", func(ctx context.Context) error { return rt.Run(ctx, src) })
 
 	tc := cfg.Ticker
-	tc.Store, tc.Log, tc.Region, tc.Clock = s, auditor.FromLog(settle), cfg.Region, cfg.clock
+	tc.Store, tc.Log, tc.Region, tc.Clock = s, auditor.FromLog(settle), cfg.Region, time.Now
 	ticker, err := auditor.NewTicker(tc)
 	if err != nil {
 		return err
