@@ -146,7 +146,8 @@ def test_retry_damage_original_class(phase, outcome, delta, original_class):
         authorize_at_us=int(dt.datetime.fromisoformat(prior).replace(tzinfo=dt.UTC).timestamp() * 1e6),
         observed_at_us=(NOW - (3 if original_class == "expired" else 1) * 86400) * 1000000)
     rows.append(dict(kind=SAMPLE, id=prior + "/prior-original", body=original))
-    assert report(rows, days, proof)["status"] == "PASS"
+    mismatch = original_class == "verified-different"
+    assert report(rows, days, proof)["status"] == ("BLOCKED" if mismatch else "PASS")
     counter = add_retry(rows, phase, outcome, delta, day_index=0)
     if delta < 0:
         with pytest.raises(ValueError, match="counter integer"):
@@ -159,8 +160,8 @@ def test_retry_damage_original_class(phase, outcome, delta, original_class):
     # the pairwise adapter test above checks the actual hash relationship.
     backed = original_class in {"verified-compatible", "verified-different"}
     assert any(g.endswith(":" + phase + ":retry_original_gap") for g in result["gaps"]) is not backed
-    assert result["status"] == ("PASS" if backed and outcome == "duplicate_samples" else "BLOCKED")
-    assert bool(result["resets"]) is (outcome == "conflicting_samples")
+    assert result["status"] == ("PASS" if backed and not mismatch and outcome == "duplicate_samples" else "BLOCKED")
+    assert bool(result["resets"]) is (mismatch or outcome == "conflicting_samples")
 
 
 @pytest.mark.parametrize("phase", ["settle", "refund"])

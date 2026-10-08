@@ -17,6 +17,26 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('retry-exclusive-expiry-inclusive', 'src/trusted_router/async_settle_shadow_binding.py', [
+        ('iat <= now < exp', 'iat <= now <= exp')],
+        'tests/test_async_settle_shadow_r11_validity.py::test_signed_expiry_report_boundary[0]'),
+    ('retry-issuance-truncation-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('iat = observed_at_us // 1000000', 'iat = observed_at_us / 1000000'),
+        ('earliest_retry // 1000000', 'earliest_retry / 1000000')],
+        'tests/test_async_settle_shadow_r11_validity.py::test_signed_expiry_report_boundary[500000]'),
+    ('retry-receipt-order-required', 'src/trusted_router/async_settle_shadow_evidence.py', [
+        ('earlier, later = sorted((original["observed_at_us"], retry["observed_at_us"]))',
+         'earlier, later = original["observed_at_us"], retry["observed_at_us"]'),
+        ('retry_identity(retry), later, later):', 'retry_identity(retry), later, later) or earlier > later:')],
+        'tests/test_async_settle_shadow_r11_validity.py::test_same_signed_payload_delayed_observation'),
+    ('lookback-sample-reset-filtered', REPORT, [
+        ('if body["classification"] in {"hash", "identity", "normalization", "evaluator_disagreement"}:',
+         'if body["authorization_day"] in requested and body["classification"] in {"hash", "identity", "normalization", "evaluator_disagreement"}:')],
+        'tests/test_async_settle_shadow_r11_validity.py::test_lookback_mismatch_requires_resolution'),
+    ('lookback-counter-reset-filtered', REPORT, [
+        ('if body["last_mismatch_at_us"] is not None or body["conflicting_samples"]:',
+         'if identity.split("/")[0] in requested and (body["last_mismatch_at_us"] is not None or body["conflicting_samples"]):')],
+        'tests/test_async_settle_shadow_r11_validity.py::test_lookback_mismatch_requires_resolution'),
     ('retry-streamed-compatibility-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
         ('original == retry', 'original._replace(streamed=retry.streamed) == retry')],
         'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_damage_original_class[other-stream-1-duplicate_samples-settle]'),
@@ -27,8 +47,7 @@ MUTATIONS = [
         ('original == retry', 'original._replace(route_type=retry.route_type) == retry')],
         'tests/test_async_settle_shadow_r8_retry_class.py::test_retry_damage_original_class[other-route-1-duplicate_samples-settle]'),
     ('retry-binding-validity-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
-        ('started_at_us - LIFETIME * 1000000 <= observed_at_us <= flushed_at_us',
-         'observed_at_us <= flushed_at_us')],
+        ('and binding_valid_at(iat, iat + LIFETIME, earliest_retry // 1000000)', '')],
         'tests/test_async_settle_shadow_r9_retry_plausibility.py::test_duplicate_cannot_outlive_binding'),
     ('retry-adapter-validity-removed', 'src/trusted_router/async_settle_shadow_evidence.py', [
         ('if not original_can_back_retry(', 'if False and not original_can_back_retry(')],

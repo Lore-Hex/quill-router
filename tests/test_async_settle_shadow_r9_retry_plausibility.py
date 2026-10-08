@@ -109,7 +109,8 @@ def test_duplicate_cannot_outlive_binding():
 
 
 @pytest.mark.parametrize('phase', ['settle', 'refund'])
-@pytest.mark.parametrize('offset,expected', [(-1, False), (0, True), (1, True)])
+@pytest.mark.parametrize('offset,expected', [(-500000, False), (-1, False), (0, False),
+    (1, False), (500000, False), (1000000, True)])
 def test_report_binding_validity_lower_boundary(phase, offset, expected):
     from tests.test_async_settle_shadow_r8_retry_class import observation
 
@@ -138,7 +139,7 @@ def test_report_binding_validity_lower_boundary(phase, offset, expected):
 
 
 @pytest.mark.parametrize('offset,expected', [(-172800_000001, False),
-    (-172800_000000, True), (-172799_999999, True), (0, True), (1, True), (2, False)])
+    (-172800_000000, False), (-172799_999999, False), (-172799_000000, True), (0, True), (1, True), (2, False)])
 def test_shared_original_window_boundaries(offset, expected):
     from trusted_router.async_settle_shadow_evidence import RetryIdentity, original_can_back_retry
 

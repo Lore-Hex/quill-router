@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Any, NamedTuple
 
-from trusted_router.async_settle_shadow_binding import FIXTURE_SHA256, LIFETIME
+from trusted_router.async_settle_shadow_binding import FIXTURE_SHA256, LIFETIME, binding_valid_at
 from trusted_router.async_settle_shadow_compare import Comparison, Context
 from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import unknown
@@ -79,13 +79,16 @@ def original_can_back_retry(original: RetryIdentity, observed_at_us: int,
                             retry: RetryIdentity, started_at_us: int, flushed_at_us: int) -> bool:
     """Necessary compatibility when exact retry hashes/expiry are unavailable.
 
-    A verified original's receipt is no earlier than binding issuance. Its
-    receipt plus LIFETIME is therefore a conservative upper bound, not proof
-    of validity. The comparator still enforces the signed, exclusive expiry.
-    Counter windows use inclusive bounds; adapter observations use a point.
+    The latest possible iat is the original receipt truncated to whole seconds,
+    exactly as the issuer truncates time.time(). Use the validator's arithmetic
+    at the earliest possible retry in the inclusive counter window. This is
+    existential backing, not re-verification of discarded signed claims.
     """
+    iat = observed_at_us // 1000000
+    earliest_retry = max(observed_at_us, started_at_us)
     return (original == retry
-            and started_at_us - LIFETIME * 1000000 <= observed_at_us <= flushed_at_us)
+            and earliest_retry <= flushed_at_us
+            and binding_valid_at(iat, iat + LIFETIME, earliest_retry // 1000000))
 
 
 def retry_classification(original: dict[str, Any], retry: dict[str, Any]) -> str:
@@ -103,8 +106,11 @@ def retry_classification(original: dict[str, Any], retry: dict[str, Any]) -> str
             or retry_identity(original) != retry_identity(retry)
             or original["payload_hash"] != retry["payload_hash"]):
         return "conflict"
-    if not original_can_back_retry(retry_identity(original), original["observed_at_us"],
-                                   retry_identity(retry), retry["observed_at_us"], retry["observed_at_us"]):
+    # Persistence order says nothing about receipt order. A common binding must
+    # be able to cover both receipts, with issuance no later than the earlier.
+    earlier, later = sorted((original["observed_at_us"], retry["observed_at_us"]))
+    if not original_can_back_retry(retry_identity(original), earlier,
+                                   retry_identity(retry), later, later):
         return "proof_expired"
     return "duplicate"
 

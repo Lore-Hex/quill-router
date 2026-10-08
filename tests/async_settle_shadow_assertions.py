@@ -9,11 +9,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = sorted((ROOT/'tests').glob('test_async_settle_shadow*.py'))
+WORKER = threading.local()
 if '--native' in sys.argv:
     FILES.append(ROOT/'tests/conformance/test_async_settle_shadow_native.py')
 
@@ -46,14 +48,22 @@ def cases():
             yield str(path.relative_to(ROOT)),node.lineno,test,mutated
 
 
+def initialize_worker(directory):
+    # Each thread owns its tree; every assertion still gets a fresh interpreter.
+    target = Path(tempfile.mkdtemp(prefix='worker-', dir=directory))
+    for name in ('src','tests','scripts'):
+        shutil.copytree(ROOT/name,target/name,ignore=shutil.ignore_patterns('__pycache__','*.pyc','.pytest_cache'))
+    shutil.copy2(ROOT/'pyproject.toml',target/'pyproject.toml')
+    WORKER.target = target
+
+
 def run(case):
     relative,line,test,mutated = case
-    with tempfile.TemporaryDirectory(prefix='f2b-assertion-') as directory:
-        target = Path(directory)
-        for name in ('src','tests','scripts'):
-            shutil.copytree(ROOT/name,target/name,ignore=shutil.ignore_patterns('__pycache__','*.pyc','.pytest_cache'))
-        shutil.copy2(ROOT/'pyproject.toml',target/'pyproject.toml')
-        (target/relative).write_text(mutated)
+    target = WORKER.target
+    path = target/relative
+    original = path.read_text()
+    try:
+        path.write_text(mutated)
         compile(mutated,relative,'exec')
         outcome = subprocess.run([sys.executable,'-m','pytest','-q','-p','no:cacheprovider','--tb=short','-x',test],  # noqa: S603
             cwd=target,capture_output=True,text=True,timeout=300,
@@ -64,11 +74,14 @@ def run(case):
         row = dict(file=relative,line=line,test=test,killed=killed,exit_code=outcome.returncode,log=str(log))
         print(json.dumps(row),flush=True)
         return row
+    finally:
+        path.write_text(original)
 
 
 def main():
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(run,cases()))
+    with tempfile.TemporaryDirectory(prefix='f2b-assertions-') as directory:
+        with ThreadPoolExecutor(max_workers=4, initializer=initialize_worker, initargs=(directory,)) as executor:
+            results = list(executor.map(run,cases()))
     Path(tempfile.gettempdir(),'f2b-assertions.json').write_text(json.dumps(results,indent=2)+'\n')
     assert all(row['killed'] for row in results), [row for row in results if not row['killed']]
 

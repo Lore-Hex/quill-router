@@ -27,6 +27,11 @@ class ShadowClaims(TicketClaims):
     async_eligible: Literal[False]
 
 
+def binding_valid_at(iat: int, exp: int, now: int) -> bool:
+    """Whole-second claims, inclusive issuance and exclusive expiration."""
+    return exp - iat == LIFETIME and iat <= now < exp
+
+
 def validate_claims(claims: dict[str, Any], now: int) -> ShadowClaims:
     try:
         parsed = ShadowClaims.model_validate(claims)
@@ -36,7 +41,7 @@ def validate_claims(claims: dict[str, Any], now: int) -> ShadowClaims:
             or parsed.exp - parsed.iat != LIFETIME
             or parsed.generation_id != generation_id_for_authorization(parsed.authorization_id)):
         raise ValueError("proof_signature")
-    if not parsed.iat <= now < parsed.exp:
+    if not binding_valid_at(parsed.iat, parsed.exp, now):
         raise ValueError("proof_expired")
     return parsed
 

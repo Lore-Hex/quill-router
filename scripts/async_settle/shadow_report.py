@@ -204,9 +204,14 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         if kind == SAMPLE:
             validate_sample(body, identity)
             samples.append(body)
+            # Correctness history survives requested-day/diagnostic filtering.
+            if body["classification"] in {"hash", "identity", "normalization", "evaluator_disagreement"}:
+                resets.append(dict(at_us=body["observed_at_us"], revision=body["deployment"]["router_revision"], reason=body["classification"]))
         elif kind == COUNTER:
             validate_counter(identity, body, partitions=False)
             counters[identity] = body
+            if body["last_mismatch_at_us"] is not None or body["conflicting_samples"]:
+                resets.append(dict(at_us=body["last_mismatch_at_us"], revision=body["router_revision"], reason="counter_mismatch"))
         elif kind == CONTROL and identity.endswith("/manifest-v1"):
             validate_manifest(body, identity)
             if set(body) != MANIFEST_FIELDS or len(canonical(body)) > 262144 or body["day"] + "/manifest-v1" != identity:
@@ -372,8 +377,6 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                     or any(row["observed_unknown"] for row in counter["counts"])
                     or any(row["count"] for row in counter["exclusions"] if row["phase"] == "worker")):
                 gap(identity+":counter_gap", day)
-            if counter["last_mismatch_at_us"] is not None or counter["conflicting_samples"]:
-                resets.append(dict(at_us=counter["last_mismatch_at_us"], revision=counter["router_revision"], reason="counter_mismatch"))
         # Only the union of actual writer lifetimes inside the flag interval
         # covers time. A boot ID in tomorrow's roster cannot bridge a shutdown.
         merged: list[tuple[int, int]] = []
@@ -419,9 +422,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 or deployment["router_revision"] not in manifest["router_revisions"]
                 or deployment["go_revision"] not in manifest["go_revisions"]):
             gap(row["authorization_id"]+":deployment_unknown", observation_day)
-        if row["classification"] in {"hash", "identity", "normalization", "evaluator_disagreement"}:
-            resets.append(dict(at_us=row["observed_at_us"], revision=row["deployment"]["router_revision"], reason=row["classification"]))
-        elif not positive_sample(row) and not known_exclusion(row):
+        if (row["classification"] not in {"hash", "identity", "normalization", "evaluator_disagreement"}
+                and not positive_sample(row) and not known_exclusion(row)):
             gap(row["authorization_id"]+":sample_gap", observation_day)
     for identity, counter in counters.items():
         day, boot = identity.split("/")
