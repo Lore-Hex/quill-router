@@ -211,21 +211,56 @@ func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 	if _, err := h.Terminal(ended, good, OwnerTerminal{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("a call whose context had ended: %v", err)
 	}
+	got := make(chan struct{})
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body) // so the server sees the caller go
-		select {
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Status":"won"}`))
+		close(got)
+		<-r.Context().Done()
 	}))
 	defer slow.Close()
-	waiting, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer cancel()
-	if _, err := h.Terminal(waiting, slow.Listener.Addr().String(), OwnerTerminal{}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("a call whose context ended while it waited: %v", err)
+	waiting, cancel := context.WithCancel(ctx)
+	go func() {
+		<-got
+		cancel()
+	}()
+	began := time.Now()
+	if _, err := h.Terminal(waiting, slow.Listener.Addr().String(), OwnerTerminal{}); !errors.Is(err, context.Canceled) ||
+		time.Since(began) > time.Second {
+		t.Fatalf("a call whose context ended while it waited: %v after %v", err, time.Since(began))
 	}
+
+	// A call whose context ends as the answer's body ends.
+	ending, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c := HTTPOwners{Client: &http.Client{Timeout: 2 * time.Second, Transport: endingAt{cancel}}, Scheme: "http"}
+	if _, err := c.Terminal(ending, good, OwnerTerminal{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a call whose context ended at its answer's end: %v", err)
+	}
+}
+
+// endingAt is a transport that ends the call's context once the answer's
+// body has been read to its end.
+type endingAt struct{ cancel context.CancelFunc }
+
+func (e endingAt) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err == nil {
+		resp.Body = endingBody{resp.Body, e.cancel}
+	}
+	return resp, err
+}
+
+type endingBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b endingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if errors.Is(err, io.EOF) {
+		b.cancel()
+	}
+	return n, err
 }
 
 // refusing is a transport that cannot reach one address.

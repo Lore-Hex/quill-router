@@ -259,5 +259,10 @@ func postURL(ctx context.Context, c *http.Client, url string, req, ans any) erro
 	if err := readOne(resp.Body, ans); err != nil {
 		return fmt.Errorf("%w: an answer that is not one JSON value of its kind: %w", ErrUnreachable, err)
 	}
+	if err := ctx.Err(); err != nil {
+		// The call ended as its answer came: as any call that ends, it is
+		// no answer.
+		return fmt.Errorf("%w: %w", ErrUnreachable, err)
+	}
 	return nil
 }
