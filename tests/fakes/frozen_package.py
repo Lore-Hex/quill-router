@@ -95,6 +95,7 @@ class SnapshotLoader(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         source = Path(module.__file__)
         assert hashlib.sha256(source.read_bytes()).hexdigest() == PINS[str(source.relative_to(ROOT))]
         exec(compile(source.read_bytes(), str(source), 'exec'), module.__dict__)  # noqa: S102
+        _register_generated(module)
 
 
 sys.meta_path.insert(0, SnapshotLoader())
@@ -119,6 +120,53 @@ _TYPE_DICT = type.__dict__['__dict__']
 _TYPE_QUALNAME = type.__dict__['__qualname__']
 _MODULE_DICT = ModuleType.__dict__['__dict__']
 _ABC_DATA = type(_TYPE_DICT.__get__(_Sized)['_abc_impl'])
+
+
+# Code identity, never instance locals, attributes generated dataclass methods.
+# Register after module execution and again at each guard entry for live modules.
+_GENERATED_NAMES = {}
+_UNSUPPORTED_INTERPRETER = (
+    'unsupported interpreter: frozen execution_guard requires CPython 3.12+; '
+    'CPython 3.11 profile/trace trampolines materialize unsafe frame locals')
+
+
+def _require_execution_support():
+    assert sys.implementation.name == 'cpython' and sys.version_info >= (3, 12), (
+        _UNSUPPORTED_INTERPRETER)
+
+
+def _register_generated(loaded):
+    namespace = _MODULE_DICT.__get__(loaded)
+    module_name = _metadata(dict.items(namespace), '__name__')
+    pending = list(dict.values(namespace))
+    visited = set()
+    while pending:
+        value = pending.pop()
+        if id(value) in visited:
+            continue
+        visited.add(id(value))
+        if issubclass(type(value), type):
+            # Only this module's classes; do not enter imported dependency graphs.
+            members = _TYPE_DICT.__get__(value)
+            owner = _metadata(members.items(), '__module__')
+            if not issubclass(type(owner), str) or str.__eq__(owner, module_name) is not True:
+                continue
+            pending.extend(members.values())
+        elif type(value) is FunctionType:
+            # dataclasses' recursive-repr wrapper holds the generated body in
+            # a closure; attribute that body to the wrapper's native qualname.
+            functions, found = [value], set()
+            while functions:
+                function = functions.pop()
+                if id(function) in found:
+                    continue
+                found.add(id(function))
+                if str.__eq__(function.__code__.co_filename, '<string>') is True:
+                    _GENERATED_NAMES[id(function.__code__)] = (function.__code__, str.__str__(value.__qualname__))
+                if function.__closure__:
+                    for cell in function.__closure__:
+                        functions.extend(held for held in gc.get_referents(cell)
+                                         if type(held) is FunctionType)
 
 
 def _metadata(items, name):
@@ -250,6 +298,13 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
                 if type(localns) is _FRAME_LOCALS_PROXY:
                     for key, held in localns.items():
                         pending.extend((key, held))
+                elif type(localns) is dict:
+                    # Non-optimized running exec/class/module frames have no
+                    # proxy or native locals GC edge. Traverse exact dicts via
+                    # the ordinary bounded walk, preserving registry boundaries.
+                    pending.append(localns)
+                elif not any(held is localns for held in gc.get_referents(value)):
+                    raise AssertionError('opaque frame locals: no safe native locals traversal')
             pending.extend((value.f_globals, value.f_back, value.f_code, value.f_trace))
         # Always retain GC edges, including frames. Registry identity boundaries
         # above apply equally to GC and supplemental edges.
@@ -427,6 +482,9 @@ def execution_guard(*harness):
     There are no production-module or omitted-definition exemptions. Module globals
     catch generated dataclass methods (<string>) as well as ordinary source code.
     """
+    _require_execution_support()
+    for loaded in _namespace_roots(ALIAS, 'trusted_router'):
+        _register_generated(loaded)
     first = {}  # Thread id -> first live event; survives a raw worker exiting.
     seen = set()
     recorded = set()
@@ -462,9 +520,10 @@ def execution_guard(*harness):
             return
         qualname = (frame.f_code.co_qualname if event == 'call'
                     else getattr(arg, '__qualname__', type(arg).__qualname__))
-        # Dataclasses compile generic qualnames; preserve the owning class.
-        if filename == '<string>' and 'self' in frame.f_locals:
-            qualname = type(frame.f_locals['self']).__qualname__ + '.' + frame.f_code.co_name
+        # Never read f_locals here, on any interpreter.
+        generated = _GENERATED_NAMES.get(id(frame.f_code))
+        if str.__eq__(filename, '<string>') is True and generated is not None:
+            qualname = generated[1]
         if live:
             first.setdefault(threading.get_ident(), f'{name}:{qualname}')
         identity = (name, qualname, frame.f_code.co_firstlineno)
@@ -474,7 +533,26 @@ def execution_guard(*harness):
             relative = str(Path(source).relative_to(ROOT))
             seen.add((name.replace(ALIAS, 'trusted_router', 1), qualname, frame.f_code.co_firstlineno, relative, PINS[relative]))
     previous, previous_thread = sys.getprofile(), threading.getprofile()
-    all_threads = getattr(threading, 'setprofile_all_threads', None)
+    monitoring = sys.monitoring if sys.version_info < (3, 13) else None
+    all_threads = getattr(threading, 'setprofile_all_threads', None) if monitoring is None else None
+    main_thread = threading.get_ident()
+    entered = False
+    tool_id = 4
+
+    def monitor_python(code, offset, *args):
+        if entered or threading.get_ident() != main_thread:
+            profile(sys._getframe(1), 'call', None)
+
+    def monitor_call(code, offset, callable, arg):
+        if entered or threading.get_ident() != main_thread:
+            if type(callable) is BuiltinFunctionType:
+                profile(sys._getframe(1), 'c_call', callable)
+
+    def install_profile():
+        # On 3.12 a Python sys.setprofile callback is unsafe even if it never
+        # reads f_locals: call_trampoline materializes them before dispatch.
+        if monitoring is None:
+            sys.setprofile(profile)
     starters = []
     active = set()
     started_threads = set()
@@ -485,7 +563,7 @@ def execution_guard(*harness):
             active.add(token)  # Register before startup, including delayed bootstraps.
             def bootstrap(*worker_args, **worker_kwargs):
                 started_threads.add(threading.get_ident())
-                sys.setprofile(profile)
+                install_profile()
                 try:
                     return function(*worker_args, **worker_kwargs)
                 finally:
@@ -509,16 +587,28 @@ def execution_guard(*harness):
                 original = getattr(namespace, name)
                 starters.append((namespace, name, original))
                 setattr(namespace, name, wrap_start(original))
-    # 3.12+ covers every existing Python thread, including raw workers. The
-    # 3.11 fallback refuses existing workers; new workers use the bootstraps.
-    threading.setprofile(profile)
-    if all_threads is not None:
-        all_threads(profile)
-    # all_threads also changes this thread. Reference preflight is test-harness
-    # work, not the frozen leg; keep worker hooks active but avoid profiling the
-    # GC walk itself. Install the main hook immediately before yielding below.
-    sys.setprofile(previous)
-    entered = False
+    # sys.monitoring dispatches directly without the legacy locals trampoline
+    # and applies interpreter-wide, including raw threads and their teardown.
+    # Refuse an occupied tool id; never displace another monitoring client.
+    if monitoring is not None:
+        try:
+            monitoring.use_tool_id(tool_id, 'frozen execution guard')
+        except BaseException:
+            for namespace, name, original in reversed(starters):
+                setattr(namespace, name, original)
+            raise
+        for event in (monitoring.events.PY_START, monitoring.events.PY_RESUME,
+                      monitoring.events.PY_THROW):
+            monitoring.register_callback(tool_id, event, monitor_python)
+        monitoring.register_callback(tool_id, monitoring.events.CALL, monitor_call)
+        monitoring.set_events(tool_id, monitoring.events.PY_START | monitoring.events.PY_RESUME
+                              | monitoring.events.PY_THROW | monitoring.events.CALL)
+    else:
+        threading.setprofile(profile)
+        if all_threads is not None:
+            all_threads(profile)
+        # Reference preflight is harness work; keep only worker hooks active.
+        sys.setprofile(previous)
     try:
         reject_existing_workers()
         # Shared runtime caches (notably typing.Annotated) retain schemas from
@@ -531,7 +621,7 @@ def execution_guard(*harness):
         for cache in caches:
             functools._lru_cache_wrapper.cache_clear(cache)
         entered = True
-        sys.setprofile(profile)
+        install_profile()
         yield seen
     finally:
         try:
@@ -547,6 +637,12 @@ def execution_guard(*harness):
                     time.sleep(.001)
                 reject_existing_workers()
         finally:
+            if monitoring is not None:
+                monitoring.set_events(tool_id, 0)
+                for event in (monitoring.events.PY_START, monitoring.events.PY_RESUME,
+                              monitoring.events.PY_THROW, monitoring.events.CALL):
+                    monitoring.register_callback(tool_id, event, None)
+                monitoring.free_tool_id(tool_id)
             if all_threads is not None:
                 all_threads(previous_thread)
             threading.setprofile(previous_thread)

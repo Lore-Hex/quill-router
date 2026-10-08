@@ -2,8 +2,8 @@
 
 BASE: `4701b1a6da9b2b05df93321a6bbd59ea82188c2b`.
 
-This oracle is a **golden against BASE**. For tests-only F1, the live `src` tree
-is byte-for-byte that main parent of the Round-12 merge. A PR that intentionally
+This oracle is a **golden against BASE**. The worktree includes later merged main changes; this tests-only round leaves
+production source and the pinned BASE unchanged. A PR that intentionally
 changes the legacy path **re-freezes from its own tree in the same PR**, and the
 reviewer reads the frozen diff as the intended behavior change.
 
@@ -66,7 +66,8 @@ allowlist**: any live router call is rejected regardless of the inventory.
 
 `proof_oracle` marks the 336 complete-entry comparisons and the two protected
 header comparisons. CI runs them without coverage in the `proof-oracle` job,
-with four xdist workers and a 45-minute limit, once for each lifecycle clock.
+with four shards per lifecycle clock, four xdist workers per shard and a
+45-minute limit per job.
 Its post-cutover clock uses the same computation as `test-post-cutover`.
 Both ordinary shard jobs deselect this marker; guards, witnesses and lock-order
 tests remain in those shards. The dedicated job has only `contents: read`
@@ -84,7 +85,11 @@ end of the walk. A code object held only by `f_trace` does not prove native
 locals traversal: that independently traversed edge is discounted. No
 interpreter-stack or global owner search is used.
 
-On 3.13+, the sealed native frame-locals proxy supplement remains. Every native
+On 3.13+, the sealed native frame-locals proxy supplement follows keys and
+values. Non-optimized running exec/class/module frames instead return a plain
+dict: an exact dict is queued into the normal bounded native walk. A custom
+locals mapping requires a demonstrated native GC identity edge from the frame
+or fails closed; no user mapping protocol is invoked. Every native
 GC edge and the existing module/process registry identity boundaries remain in
 both implementations. The colliding-key regression checks direct reference
 inspection and the full execution guard, with and without a reachable owner;
@@ -97,3 +102,40 @@ field checks. Their provenance is always `builtins`; subclasses keep the full
 metadata and reference path. This introduces no cache or state shared between
 cases. Synthetic-edge and subclass controls, with removal mutations, protect
 both boundaries of the shortcut.
+
+
+## Execution interpreter contract
+
+The frozen execution proof requires **CPython 3.12+**. On CPython 3.11 it raises
+`unsupported interpreter: frozen execution_guard requires CPython 3.12+; CPython 3.11 profile/trace trampolines materialize unsafe frame locals`
+before preflight, installing hooks, starting workers, or entering the leg. This
+is a proof-harness restriction, not a change to the application's Python support.
+The 3.11 test branches assert this exact rejection; they do not claim to have
+run the frozen leg. Independent reference-walk checks still run on 3.11.
+
+On **3.12 (CI: 3.12.3)** the guard reserves `sys.monitoring` tool ID 4 and uses
+`PY_START`, `PY_RESUME`, `PY_THROW` and builtin `CALL` events. This is an
+interpreter-wide fence, including raw workers and native exception cleanup.
+It never installs a Python `sys.setprofile`/`settrace` callback: their CPython
+trampoline itself synchronizes previously materialized locals dictionaries,
+even when the Python callback does not read locals. An occupied tool ID rejects
+entry without replacing its owner. Exit unregisters callbacks and frees the ID.
+On **3.13/3.14**, PEP 667 removed that synchronization; the existing all-thread,
+default-thread and raw-bootstrap profile paths remain.
+
+Both callbacks may read native frame code/global metadata and native builtin
+metadata. **Neither reads `f_locals`, obtains a locals proxy, nor inspects
+`self` on any interpreter.** Generated dataclass attribution uses a strong
+code-identity registry populated after frozen module execution and at guard
+entry for loaded router modules. Native function qualnames identify generated
+bodies, including bodies held by recursive-repr closures. Unknown generated
+code retains its `co_qualname`; attribution never exempts a live call. This
+registry carries attribution only, never execution results or admission state.
+
+Regression witnesses resume both `<string>` and ordinary-file generators
+*inside* the guard with a colliding key already in their locals dictionaries,
+requiring zero key protocols/live calls. Separate isolated running exec-frame
+witnesses pin exact-dict traversal and rejection of a warmed live money cache.
+Mutations restore the unsafe profile trampoline, explicitly materialize locals,
+remove unsupported-interpreter rejection, remove generated-code attribution,
+and omit the non-proxy dict edge.

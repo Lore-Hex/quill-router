@@ -11,6 +11,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import sys
 from collections import OrderedDict
 from contextlib import nullcontext
@@ -38,6 +39,18 @@ from trusted_router import (
     storage_gcp_settle_outbox,
 )
 from trusted_router.services import settle_outbox_drain
+
+
+def guard_unavailable():
+    """3.11 proves rejection, never reports a silently skipped execution proof."""
+    if sys.version_info >= (3, 12):
+        return False
+    from tests.fakes.frozen_package import _UNSUPPORTED_INTERPRETER
+    with pytest.raises(AssertionError) as error:
+        with execution_guard():
+            pytest.fail('unsupported interpreter entered the frozen leg')
+    assert str(error.value) == _UNSUPPORTED_INTERPRETER
+    return True
 
 
 def test_frozen_main_provenance():
@@ -108,6 +121,8 @@ def frozen_runtime():
 
 
 def test_guard_rejects_live_callback_even_after_return(env):
+    if guard_unavailable():
+        return
     _, auth, _ = prepare(env)
     with pytest.raises(AssertionError, match='trusted_router.storage_models:GatewayAuthorization.record_finalization'):
         with execution_guard():
@@ -117,6 +132,8 @@ def test_guard_rejects_live_callback_even_after_return(env):
 
 @pytest.mark.parametrize('target', ['native', 'partner', 'unlisted', 'generated', 'worker'])
 def test_guard_has_no_omitted_function_or_module_exemption(target):
+    if guard_unavailable():
+        return
     from threading import Thread
 
     from trusted_router import partner_billing, storage_errors, storage_models
@@ -145,6 +162,8 @@ def test_guard_has_no_omitted_function_or_module_exemption(target):
 
 
 def test_guard_rejects_cached_live_alias(monkeypatch):
+    if guard_unavailable():
+        return
     from trusted_router.storage_errors import transient_store_error_types
 
     transient_store_error_types()  # warm the C cache; no Python body on a hit
@@ -161,6 +180,8 @@ def test_guard_rejects_cached_live_alias(monkeypatch):
 @pytest.mark.parametrize('mode', ['no_header_off', 'header_off', 'no_header_protected'])
 @pytest.mark.parametrize('commit_path', ['inline', 'repair'])
 def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_path):
+    if guard_unavailable():
+        return
     store, db, _, cfg = env
     body, auth, _ = prepare(env, case, kind=kind)
     catalog(monkeypatch, body)
@@ -272,6 +293,8 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
 @pytest.mark.proof_oracle
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
+    if guard_unavailable():
+        return
     body, _, _ = prepare(env, kind=kind)
     cfg = env[3]
     # CPU-loaded xdist workers must not turn this SQL differential into an
@@ -313,6 +336,8 @@ def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
     'external_callable_class', 'bounded_cache_result', 'copied_globals', 'external_cache_result',
 ])
 def test_guard_reviewer_references(monkeypatch, bridge):
+    if guard_unavailable():
+        return
     import dataclasses
     import functools
 
@@ -387,6 +412,8 @@ def test_guard_reviewer_references(monkeypatch, bridge):
 
 @pytest.mark.parametrize('bridge', ['private_slot', 'mapping_proxy'])
 def test_guard_reviewer_separate_warmed_cache(monkeypatch, bridge):
+    if guard_unavailable():
+        return
     import functools
     from types import MappingProxyType
 
@@ -422,6 +449,8 @@ def test_guard_reviewer_separate_warmed_cache(monkeypatch, bridge):
     'threading._start_joinable_thread',
 ])
 def test_guard_raw_thread_finishes_before_exit(api):
+    if guard_unavailable():
+        return
     import _thread
     import sys
     import threading
@@ -464,6 +493,8 @@ def test_guard_raw_thread_finishes_before_exit(api):
 
 @pytest.mark.parametrize('live_at_shutdown', [False, True])
 def test_guard_joins_raw_worker_with_profiler_active(live_at_shutdown):
+    if guard_unavailable():
+        return
     import _thread
     import threading
     import time
@@ -483,6 +514,8 @@ def test_guard_joins_raw_worker_with_profiler_active(live_at_shutdown):
 
 @pytest.mark.parametrize('live_callback', [False, True])
 def test_guard_profiles_raw_exception_cleanup(monkeypatch, live_callback):
+    if guard_unavailable():
+        return
     import _thread
     import sys
     import threading
@@ -503,6 +536,8 @@ def test_guard_profiles_raw_exception_cleanup(monkeypatch, live_callback):
 
 
 def test_guard_rejects_unfinished_raw_worker():
+    if guard_unavailable():
+        return
     import _thread
     import sys
     import threading
@@ -529,6 +564,8 @@ def test_guard_rejects_unfinished_raw_worker():
 
 
 def test_guard_rejects_prebound_raw_starter():
+    if guard_unavailable():
+        return
     import _thread
     import threading
 
@@ -545,6 +582,8 @@ def test_guard_rejects_prebound_raw_starter():
     'dict', 'closure', 'bound_method',
 ])
 def test_guard_rejects_reachable_prebound_starter(monkeypatch, path):
+    if guard_unavailable():
+        return
     import _thread
     import functools
 
@@ -585,6 +624,8 @@ def test_guard_rejects_reachable_prebound_starter(monkeypatch, path):
     'threading._start_joinable_thread', 'Thread.start', 'Thread._bootstrap',
 ])
 def test_guard_rejects_each_prebound_starter(api):
+    if guard_unavailable():
+        return
     import _thread
     import sys
     import threading
@@ -612,6 +653,8 @@ def test_guard_rejects_each_prebound_starter(api):
 @pytest.mark.parametrize('use_partial', [False, True])
 @pytest.mark.parametrize('live_callback', [False, True])
 def test_guard_new_starter_paths_are_profiled(monkeypatch, api, use_partial, live_callback):
+    if guard_unavailable():
+        return
     import _thread
     import functools
     import sys
@@ -626,7 +669,9 @@ def test_guard_new_starter_paths_are_profiled(monkeypatch, api, use_partial, liv
     frozen = module('storage_errors')
     # Match the reviewer's detached worker: only the transient held callback
     # supplies live code, with no computed import or external registry lookup.
-    namespace = {'__name__': 'review_detached_worker', 'getprofile': sys.getprofile}
+    namespace = {'__name__': 'review_detached_worker', 'getprofile': (
+        (lambda: sys.monitoring.get_events(4)) if sys.version_info[:2] == (3, 12)
+        else sys.getprofile)}
     exec('def worker(callback, values, profiles, done):\n'
          ' profiles.append(getprofile())\n'
          ' values.append(callback(ValueError()))\n'
@@ -669,7 +714,7 @@ def test_guard_new_starter_paths_are_profiled(monkeypatch, api, use_partial, liv
             finally:
                 del frozen.review_live_callback
     assert values == [False]
-    assert len(profiles) == 1 and profiles[0] is not None
+    assert len(profiles) == 1 and profiles[0]
     assert _thread.start_new_thread is original
     assert sys.getprofile() is previous
     assert threading.getprofile() is previous_thread
@@ -741,6 +786,8 @@ class State:
 
 @pytest.mark.parametrize('root_kind', ['namespace', 'module', 'logger'])
 def test_guard_explicit_harness_root(root_kind):
+    if guard_unavailable():
+        return
     import functools
     import logging
     from types import ModuleType
@@ -759,12 +806,16 @@ def test_guard_explicit_harness_root(root_kind):
 
 
 def test_guard_dynamic_import():
+    if guard_unavailable():
+        return
     with pytest.raises(AssertionError, match='live callable'):
         with execution_guard():
             importlib.import_module('trusted_router.storage_errors').is_transient_store_error(ValueError())
 
 
 def test_guard_preexisting_worker_cost_bridge(monkeypatch):
+    if guard_unavailable():
+        return
     from concurrent.futures import ThreadPoolExecutor
 
     from trusted_router.routes.internal import gateway
@@ -790,6 +841,8 @@ def test_guard_preexisting_worker_cost_bridge(monkeypatch):
 
 
 def test_guard_clears_both_namespaces_and_harness_caches(monkeypatch):
+    if guard_unavailable():
+        return
     import functools
 
     from trusted_router import storage_errors
@@ -865,6 +918,8 @@ def test_production_import_fence_reviewer_witness(tmp_path):
 
 
 def test_guard_clears_shared_typing_cache_between_legs():
+    if guard_unavailable():
+        return
     import typing
     from typing import Annotated
 
@@ -925,6 +980,8 @@ def graph_witness(kind, callback):
 
 @pytest.mark.parametrize('kind', GRAPH_WITNESSES)
 def test_guard_gc_composed_witness(monkeypatch, kind):
+    if guard_unavailable():
+        return
     import functools
 
     from trusted_router.storage_errors import transient_store_error_types
@@ -973,6 +1030,8 @@ def test_reference_walk_bound_and_cycle():
 
 
 def test_guard_live_code_object_argument():
+    if guard_unavailable():
+        return
     from trusted_router.storage_errors import is_transient_store_error
 
     with pytest.raises(AssertionError, match='live reference'):
@@ -1021,6 +1080,8 @@ def test_reference_walk_does_not_execute_object_protocols():
 
 
 def test_guard_explicit_typing_cache_root_is_inspected():
+    if guard_unavailable():
+        return
     import typing
     from typing import Annotated
 
@@ -1038,6 +1099,8 @@ def test_guard_explicit_typing_cache_root_is_inspected():
 
 
 def test_guard_clears_registry_only_typing_cache(monkeypatch):
+    if guard_unavailable():
+        return
     import functools
     import typing
 
@@ -1079,6 +1142,8 @@ def test_reference_walk_atomic_tzinfo(kind):
 
 @pytest.mark.parametrize('kind', ['datetime', 'time'])
 def test_guard_atomic_tzinfo_cache(kind):
+    if guard_unavailable():
+        return
     import functools
 
     from trusted_router.storage_errors import transient_store_error_types
@@ -1142,6 +1207,8 @@ def test_reference_walk_atomic_metadata(kind):
 
 @pytest.mark.parametrize('kind', ATOMIC_METADATA)
 def test_guard_atomic_metadata_cache(kind):
+    if guard_unavailable():
+        return
     import functools
 
     from trusted_router.storage_errors import transient_store_error_types
@@ -1155,6 +1222,8 @@ def test_guard_atomic_metadata_cache(kind):
 
 
 def test_guard_live_code_filename_subclass():
+    if guard_unavailable():
+        return
     class Filename(str):
         def __contains__(self, item):
             return False
@@ -1170,6 +1239,8 @@ def test_guard_live_code_filename_subclass():
 
 
 def test_guard_provenance_property_cannot_remove_nested_cache():
+    if guard_unavailable():
+        return
     import functools
 
     from trusted_router.storage_errors import transient_store_error_types
@@ -1194,6 +1265,8 @@ def test_guard_provenance_property_cannot_remove_nested_cache():
 
 @pytest.mark.parametrize('attribute', ['__class__', '__module__'])
 def test_guard_does_not_execute_metadata_properties(attribute):
+    if guard_unavailable():
+        return
     def read(self):
         pytest.fail('guard executed a metadata property')
 
@@ -1203,6 +1276,8 @@ def test_guard_does_not_execute_metadata_properties(attribute):
 
 
 def test_guard_does_not_execute_namespace_comparisons():
+    if guard_unavailable():
+        return
     class Name(str):
         def __eq__(self, other):
             pytest.fail('guard executed namespace equality')
@@ -1217,6 +1292,8 @@ def test_guard_does_not_execute_namespace_comparisons():
 
 
 def test_guard_clears_native_cache_despite_shadowed_method():
+    if guard_unavailable():
+        return
     import functools
 
     callback = FunctionType((lambda: 42).__code__, {'__name__': 'review_external'})
@@ -1230,6 +1307,8 @@ def test_guard_clears_native_cache_despite_shadowed_method():
 
 @pytest.mark.parametrize('kind', ['dictionary_get', 'key_equality'])
 def test_guard_cache_metadata_cannot_remove_cached_live_result(kind):
+    if guard_unavailable():
+        return
     import functools
 
     code = compile("def held():\n return importlib.import_module('trusted_router.storage_errors').is_transient_store_error",
@@ -1268,6 +1347,8 @@ def test_guard_cache_metadata_cannot_remove_cached_live_result(kind):
                                  'weak_key', 'weak_set', 'weak_method', 'finalize',
                                  'proxy', 'callable_proxy'])
 def test_guard_weak_reference_targets(monkeypatch, kind):
+    if guard_unavailable():
+        return
     import functools
     import gc
     import weakref
@@ -1366,6 +1447,8 @@ def test_guard_weak_reference_targets(monkeypatch, kind):
 @pytest.mark.parametrize('kind', ['normalized', 'explicit_class', 'explicit_cache',
                                  'registered', 'owned'])
 def test_guard_shared_abc_weak_cache_normalization(monkeypatch, kind):
+    if guard_unavailable():
+        return
     import _abc
     import abc
     import sys
@@ -1421,6 +1504,8 @@ FRAME_WITNESSES = ('active_frame', 'exception_traceback', 'generator_frame',
 @pytest.mark.parametrize('kind', ['extra_local_key', 'exec_mapping', 'global_dict_key',
                                  'proxy_locals_key'])
 def test_guard_frame_mapping_edges(monkeypatch, kind):
+    if guard_unavailable():
+        return
     import functools
     import gc
     import sys
@@ -1508,6 +1593,8 @@ def test_guard_frame_mapping_edges(monkeypatch, kind):
 
 @pytest.mark.parametrize('kind', FRAME_WITNESSES)
 def test_guard_held_frame_cache(monkeypatch, kind):
+    if guard_unavailable():
+        return
     import functools
 
     from trusted_router.storage_errors import transient_store_error_types
@@ -1670,6 +1757,8 @@ def test_reference_walk_frame_registry_boundary(monkeypatch, explicit):
 @pytest.mark.parametrize('inspection', ['references', 'guard'])
 @pytest.mark.parametrize('include_owner', [False, True])
 def test_guard_frame_colliding_key(inspection, include_owner):
+    if inspection == 'guard' and guard_unavailable():
+        return
     from tests.fakes.frozen_package import _references
 
     calls = []
@@ -1746,6 +1835,8 @@ def test_reference_scalar_subclasses_keep_metadata_and_edges(base, value):
 @pytest.mark.parametrize('inspection', ['references', 'guard'])
 @pytest.mark.parametrize('owned', [False, True])
 def test_guard_frame_trace_code(inspection, owned):
+    if inspection == 'guard' and guard_unavailable():
+        return
     import gc
 
     from tests.fakes.frozen_package import _references
@@ -1774,3 +1865,194 @@ def test_guard_frame_trace_code(inspection, owned):
     finally:
         root.f_trace = None
         owner.close()
+
+
+@pytest.mark.parametrize('filename', ['<string>', '<ordinary-generator>'])
+def test_guard_resumed_owner_never_materializes_locals(filename):
+    from tests.fakes.frozen_package import _UNSUPPORTED_INTERPRETER
+
+    calls = []
+    class Key:
+        def __hash__(self):
+            calls.append('hash')
+            return hash('self')
+
+        def __eq__(self, other):
+            from trusted_router.money import microdollars_to_float
+            calls.append(microdollars_to_float(1_000_000))
+            return False
+
+    frozen = module('storage_errors')
+    namespace = {'__name__': frozen.__name__, '__builtins__': {}}
+    exec(compile('def generate():\n yield\n self=42\n yield\n yield\n', filename, 'exec'), namespace)
+    owner = namespace['generate']()
+    next(owner)
+    owner.gi_frame.f_locals[Key()] = None
+    next(owner)
+    calls.clear()
+    entered = False
+    expected = (pytest.raises(AssertionError, match=re.escape(_UNSUPPORTED_INTERPRETER))
+                if sys.version_info < (3, 12) else nullcontext())
+    try:
+        with expected:
+            with execution_guard(owner) as seen:
+                entered = True
+                next(owner)  # The vulnerable trampoline is entered HERE.
+                assert any(row[1] == 'generate' for row in seen)
+        assert entered is (sys.version_info >= (3, 12))
+        assert calls == []
+    finally:
+        owner.close()
+
+
+def test_guard_unsupported_interpreter_is_explicit(monkeypatch):
+    import threading
+
+    from tests.fakes import frozen_package
+
+    previous, previous_thread = sys.getprofile(), threading.getprofile()
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, 'version_info', (3, 11, 15))
+        with pytest.raises(AssertionError) as error:
+            with execution_guard():
+                pytest.fail('unsupported interpreter entered the frozen leg')
+        assert str(error.value) == frozen_package._UNSUPPORTED_INTERPRETER
+    assert sys.getprofile() is previous
+    assert threading.getprofile() is previous_thread
+
+
+def test_guard_running_exec_locals_cache():
+    # A fresh process isolates the running exec from pytest's frame graph.
+    import subprocess
+    import textwrap
+
+    script = textwrap.dedent("""
+        import functools, sys
+        from tests.fakes.frozen_package import execution_guard, _UNSUPPORTED_INTERPRETER
+        from trusted_router.money import microdollars_to_float
+        held = functools.lru_cache(maxsize=1)(microdollars_to_float)
+        assert held(1_000_000) == 1.0
+        namespace = {'__name__': 'detached_exec_witness', '__builtins__': {},
+                     'sys': sys, 'execution_guard': execution_guard}
+        localns = {'held': held}
+        try:
+            exec('with execution_guard(sys._getframe()):\\n result=held(1_000_000)\\n', namespace, localns)
+        except AssertionError as error:
+            reason = str(error)
+        else:
+            raise AssertionError('running exec frame consumed a hidden warmed live cache')
+        expected = (_UNSUPPORTED_INTERPRETER if sys.version_info < (3, 12) else
+                    'opaque frame' if sys.version_info < (3, 13) else
+                    'live reference in frozen namespace: trusted_router.money:microdollars_to_float')
+        assert expected in reason, reason
+        assert 'result' not in localns
+        assert held.cache_info().hits == 0
+    """)
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=60)  # noqa: S603
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_reference_running_exec_has_only_plain_locals():
+    import _thread
+    import gc
+    import threading
+
+    from tests.fakes.frozen_package import _references
+
+    marker = object()
+    found, errors = [], []
+    done = threading.Event()
+    def inspect(frame):
+        try:
+            assert frame.f_back is None
+            assert not gc.get_referents(frame)
+            if sys.version_info < (3, 13):
+                with pytest.raises(AssertionError, match='opaque frame'):
+                    list(_references([frame], namespaces=(ALIAS,)))
+            else:
+                assert type(frame.f_locals) is dict
+                found.extend(_references([frame], namespaces=(ALIAS,)))
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            done.set()
+    # Native exec is the thread target, so no Python caller holds the mapping.
+    _thread.start_new_thread(exec, ('inspect(sys._getframe())',
+        {'__name__': 'detached_running_exec', '__builtins__': {}, 'sys': sys, 'inspect': inspect},
+        {'held': marker}))
+    assert done.wait(10)
+    assert not errors, errors
+    if sys.version_info >= (3, 13):
+        assert any(value is marker for value in found)
+
+
+def test_guard_generated_inventory_uses_code_identity():
+    if guard_unavailable():
+        return
+    cls = module('storage_models').CreditAccount
+    with execution_guard() as seen:
+        cls(workspace_id='generated-inventory-witness')
+    assert any(row[0] == 'trusted_router.storage_models' and row[1] == 'CreditAccount.__init__'
+               and row[2] == cls.__init__.__code__.co_firstlineno for row in seen)
+
+
+@pytest.mark.parametrize('resume', ['next', 'throw'])
+def test_guard_audits_resumed_python_event(resume):
+    if guard_unavailable():
+        return
+    frozen = module('storage_errors')
+    namespace = {'__name__': frozen.__name__, '__builtins__': {'ValueError': ValueError}}
+    exec('def generate():\n try:\n  yield\n  yield\n except ValueError:\n  yield\n', namespace)
+    owner = namespace['generate']()
+    next(owner)
+    try:
+        with pytest.raises(AssertionError, match='live callable.*trusted_router.storage_errors:generate'):
+            with execution_guard(owner):
+                # No nested Python calls in the resumed body can mask a missing
+                # resume/throw event. Restore provenance before the final audit.
+                namespace['__name__'] = 'trusted_router.storage_errors'
+                try:
+                    next(owner) if resume == 'next' else owner.throw(ValueError())
+                finally:
+                    namespace['__name__'] = frozen.__name__
+    finally:
+        owner.close()
+
+
+def test_guard_monitoring_slot_lifecycle():
+    import _thread
+    import threading
+
+    if guard_unavailable():
+        return
+    if sys.version_info >= (3, 13):
+        # These versions retain the separately tested all-thread profile path.
+        with execution_guard():
+            assert sys.getprofile() is not None
+        return
+    monitoring = sys.monitoring
+    original = _thread.start_new_thread
+    previous, previous_thread = sys.getprofile(), threading.getprofile()
+    monitoring.use_tool_id(4, 'occupied witness')
+    try:
+        with pytest.raises(ValueError, match='already in use'):
+            with execution_guard():
+                pytest.fail('occupied monitoring slot was replaced')
+        assert monitoring.get_tool(4) == 'occupied witness'
+        assert _thread.start_new_thread is original
+    finally:
+        monitoring.free_tool_id(4)
+    for fail in (False, True):
+        with pytest.raises(ValueError, match='body witness') if fail else nullcontext():
+            with execution_guard():
+                assert monitoring.get_events(4) != 0
+                if fail:
+                    raise ValueError('body witness')
+        assert monitoring.get_tool(4) is None
+        assert monitoring.get_events(4) == 0
+        for event in (monitoring.events.PY_START, monitoring.events.PY_RESUME,
+                      monitoring.events.PY_THROW, monitoring.events.CALL):
+            assert monitoring.register_callback(4, event, None) is None
+        assert _thread.start_new_thread is original
+        assert sys.getprofile() is previous
+        assert threading.getprofile() is previous_thread

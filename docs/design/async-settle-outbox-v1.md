@@ -1297,15 +1297,19 @@ Git objects (`ls-tree` and `show`), keeps the existing text-member policy and
 repository paths, sorts tar members and normalizes their metadata and gzip time.
 Regenerate the execution inventory after a re-pin. A PR that intentionally changes
 the legacy path **re-freezes from its own tree in the same PR**; the reviewer reads
-the frozen diff as the intended behavior change. For this tests-only F1, live
-`src` is byte-for-byte BASE's tree.
+the frozen diff as the intended behavior change. The worktree includes later merged main changes; this tests-only round leaves
+production source and the pinned BASE unchanged.
 
 The local gate runs `python scripts/async_settle/freeze_reference.py --check`,
 which re-derives the archive and pins from BASE and rejects any byte difference.
 CI's shallow checkout cannot run that Git-object check; the hermetic archive,
 per-member pins, import guard and execution guard remain enforced without Git.
 The interpreter matrix is CPython **3.11, 3.12.3 (CI), 3.13 and 3.14.6** for all
-guards, native-reference witnesses and all three mutation tables (136 rows).
+guards and native-reference witnesses. CPython 3.11 asserts explicit unsupported
+execution-proof rejection while retaining independent walker checks; it does not
+claim a frozen execution proof. Mutation tables retain every Round-5–13 row;
+Round 14 results and interpreter-specific rows are recorded in
+[the Round 14 report](../async-settle-pr-f1-round14.md).
 The complete proof files also run on 3.12.3 with CI's post-cutover clock:
 `max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)`.
 Exact versions, counts and limitations are in the [validation report](../validation/async-settle-pr-f1.md).
@@ -1331,13 +1335,18 @@ constructed independently in that namespace. No live production globals seed it.
 
 `execution_guard(*harness)` profiles Python calls by module globals and source
 path and exposed C-call events in **admitted threads, including guarded raw
-`_thread` workers**. On Python 3.12+ (verified on 3.12.3, 3.13 and 3.14), entry calls
+`_thread` workers**. On Python 3.13/3.14, entry calls
 `threading.setprofile_all_threads(profile)` for already-running threads and
 `threading.setprofile(profile)` for later `threading.Thread` workers. During the
 scope it wraps `_thread.start_new_thread`, `_thread.start_joinable_thread` and
 `threading._start_joinable_thread` when present, plus the 3.11
 `threading._start_new_thread` alias and `_thread._start_joinable_thread` if present.
-Each bootstrap installs `sys.setprofile` before calling its target. The reference
+On 3.13+, each bootstrap installs `sys.setprofile` before calling its target.
+On 3.12.3 the guard instead uses interpreter-wide `sys.monitoring` events
+`PY_START`, `PY_RESUME`, `PY_THROW` and builtin `CALL`, reserving tool ID 4
+without displacing an existing client. It unregisters callbacks and frees that
+ID on exit. Monitoring covers the same worker lifetime without passing through
+the unsafe Python-level profile trampoline. The reference
 audit rejects any reachable original native starter by identity, including
 partial func/args/keywords, containers, closures and bound-method captures. It
 also rejects bound `Thread.start` / `Thread._bootstrap` methods held before
@@ -1365,10 +1374,25 @@ Pre-existing application workers still refuse the frozen leg, and frame checks
 reject leaked workers. The only infrastructure exceptions are xdist's active
 execnet receiver stack and pytest-timeout's Timer target, not application thread
 names; profiling still applies to them. The supplied worktree's resolved venv is
-Python **3.12.3**, matching CI. Python **3.11** lacks `setprofile_all_threads`, so it uses the
-existing-worker refusal plus instrumented new-worker bootstraps. The retroactive
-all-thread installation is specifically a Python 3.12+ guarantee. Live calls are
-recorded even if application error handling swallows an exception.
+Python **3.12.3**, matching CI. Python **3.11** rejects entry explicitly:
+`unsupported interpreter: frozen execution_guard requires CPython 3.12+; CPython 3.11 profile/trace trampolines materialize unsafe frame locals`.
+This restriction applies only to the frozen execution proof, not production
+Python support. CPython <=3.12's Python profile/trace trampoline synchronizes
+previously materialized fast locals and can run colliding-key equality with
+recursive profiling disabled. Removing explicit callback reads alone is
+insufficient. Direct interpreter probes show two equality calls with a no-op
+legacy callback on 3.11/3.12, versus zero under monitoring on 3.12–3.14 and
+zero under legacy profiling on 3.13/3.14. Live calls are recorded even if
+application error handling swallows an exception.
+
+Neither callback reads `f_locals` on any supported interpreter. Generated
+`<string>` dataclass definitions are attributed by a strong code-identity
+registry, populated from native function qualnames after frozen module
+execution and at guard entry for loaded router modules (including generated
+repr bodies reached through native closure cells). Unknown generated code
+retains `co_qualname`; inventory attribution never controls live-call rejection.
+Callbacks read native frame code/global metadata and builtin metadata, never
+instance `self`, frame locals, or a locals proxy.
 
 At entry and exit the reference walk starts at **every module object** in the
 frozen namespace, the fake Spanner module, explicit harness roots, and the
@@ -1395,7 +1419,7 @@ the same gap. These are held Python objects inside the existing reference scope.
 
 | Reached object | Native traversal |
 |---|---|
-| Frame | Always follow `gc.get_referents(frame)`, including extra-locals dictionary keys and values and exec-supplied locals mappings. Add `f_globals`, `f_back`, `f_code`, and `f_trace`. On CPython 3.13/3.14, when `type(f_locals)` is the sealed native `FrameLocalsProxy`, add both keys and values through native `items()` iteration, without key lookup, copying, or calling user mapping methods. On CPython 3.11/3.12, an exact `dict` from `f_locals` is the materialized snapshot of fast locals, cells and free variables: follow both keys and values with unbound `dict.items`, without user-protocol dispatch. Honor the dictionary's existing registry identity boundary before iteration (module frames can expose globals as locals); explicit module roots still override that boundary. Custom mappings still rely on GC traversal. The supplement never replaces GC edges or continues past them. Existing module-registry identity boundaries apply to every edge; the strong visited map bounds cycles. |
+| Frame | Always follow `gc.get_referents(frame)`, including extra-locals dictionary keys and values and exec-supplied locals mappings. Add `f_globals`, `f_back`, `f_code`, and `f_trace`. On CPython 3.13/3.14, when `type(f_locals)` is the sealed native `FrameLocalsProxy`, add both keys and values through native `items()` iteration, without key lookup, copying, or calling user mapping methods. On CPython 3.13+, an exact plain `dict` from a non-optimized running exec/class/module frame is enqueued into the normal bounded native walk; custom mapping types require a demonstrated native GC identity edge from the frame or reject explicitly. On CPython 3.11/3.12, never read `f_locals`: require native locals traversal through an owned finished frame or a reached generator/coroutine owner. Otherwise reject with `opaque frame`; discount any `f_trace` code edge when proving ownership. Honor the locals dictionary's registry identity boundary (module frames can expose globals as locals); explicit module roots override that boundary. The supplement never replaces GC edges or continues past them. Existing module-registry identity boundaries apply to every edge; the strong visited map bounds cycles. |
 | Traceback | Follow `tb_frame` and `tb_next`, in addition to GC edges. Every reached frame receives the frame supplement. |
 | Generator / coroutine / async generator | Follow `gi_frame` / `cr_frame` / `ag_frame`, respectively, in addition to GC edges. The native types cannot override these attributes. |
 | Exception | Follow native `BaseException` descriptors for `__traceback__`, `__context__`, and `__cause__`, in addition to GC edges, without invoking subclass properties. |
@@ -1758,7 +1782,8 @@ remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
 | Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
 
 The executable tables contain B **10**, C **112**, and D **14** mutations
-(**136 total**, retaining all 72 Round-6 rows). Round 7 added 44 reference and
+(**136 through Round 12**, retaining all 72 Round-6 rows; Round 13 added five,
+and Round 14 adds interpreter-specific profiling/locals rows). Round 7 added 44 reference and
 execution-guard mutations; Round 8 retained ten reviewer live-side edits and
 added three frame-path mutations. Round 9 adds the two frame-regression rows.
 Round 10 adds three weak-reference rows. Round 11 adds

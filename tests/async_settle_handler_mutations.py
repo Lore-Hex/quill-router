@@ -423,6 +423,30 @@ MUTATIONS += [
 ]
 
 
+# Round 14: the legacy profile trampoline itself materializes locals on 3.12.
+MUTATIONS += [
+    ('profile-remove-unsupported-interpreter-rejection', [('tests/fakes/frozen_package.py', [
+        ('    _require_execution_support()\n', ''),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_unsupported_interpreter_is_explicit'),
+    ('profile-generated-code-attribution-removed', [('tests/fakes/frozen_package.py', [
+        ("if str.__eq__(filename, '<string>') is True and generated is not None:", 'if False:'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_generated_inventory_uses_code_identity'),
+]
+MUTATIONS += [
+    ('profile-reintroduce-legacy-trampoline', [('tests/fakes/frozen_package.py', [
+        ('monitoring = sys.monitoring if sys.version_info < (3, 13) else None', 'monitoring = None'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_resumed_owner_never_materializes_locals[<ordinary-generator>]'),
+    ('profile-materialize-locals-in-callback', [('tests/fakes/frozen_package.py', [
+        ("        if event == 'call':", "        if event == 'call':\n            frame.f_locals"),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_resumed_owner_never_materializes_locals[<string>]'),
+] if sys.version_info[:2] == (3, 12) else []
+MUTATIONS += [
+    ('reference-skip-nonproxy-locals', [('tests/fakes/frozen_package.py', [
+        ('                    pending.append(localns)', '                    pass'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_running_exec_locals_cache'),
+] if sys.version_info >= (3, 13) else []
+
+
 def main() -> None:
     results = []
     evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))
