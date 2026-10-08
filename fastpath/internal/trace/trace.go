@@ -12,6 +12,7 @@ package trace
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,9 @@ import (
 	"time"
 )
 
+// maxLine bounds an event's line, which Read takes whole.
+const maxLine = 1 << 20
+
 // ID is an event's identity.
 type ID struct {
 	Node  string `json:"node"`
@@ -31,33 +35,46 @@ type ID struct {
 }
 
 // String is the identity as a message carries it: node, epoch and sequence,
-// split by slashes; a node's address has none.
+// split by slashes; a node's name has none.
 func (id ID) String() string {
 	return id.Node + "/" + strconv.FormatInt(id.Epoch, 10) + "/" + strconv.FormatInt(id.Seq, 10)
 }
 
-// ParseID reads an identity as String writes it.
+// ParseID reads an identity as String writes it, and nothing else.
 func ParseID(s string) (ID, error) {
-	parts := strings.Split(s, "/")
-	if len(parts) != 3 || parts[0] == "" {
-		return ID{}, fmt.Errorf("trace: %q is no event's identity", s)
+	if parts := strings.Split(s, "/"); len(parts) == 3 {
+		epoch, err1 := strconv.ParseInt(parts[1], 10, 64)
+		seq, err2 := strconv.ParseInt(parts[2], 10, 64)
+		id := ID{Node: parts[0], Epoch: epoch, Seq: seq}
+		if err1 == nil && err2 == nil && id.valid() && id.String() == s {
+			return id, nil
+		}
 	}
-	epoch, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || epoch < 1 {
-		return ID{}, fmt.Errorf("trace: %q is no event's identity", s)
-	}
-	seq, err := strconv.ParseInt(parts[2], 10, 64)
-	if err != nil || seq < 1 {
-		return ID{}, fmt.Errorf("trace: %q is no event's identity", s)
-	}
-	return ID{Node: parts[0], Epoch: epoch, Seq: seq}, nil
+	return ID{}, fmt.Errorf("trace: %q is no event's identity", s)
 }
 
-// Facts are what an event states that the specs' mappings read.
+// valid: an identity a recorder gives, which JSON and an HTTP header carry
+// as it is: its node's name printable ASCII with no space and no slash, its
+// epoch and sequence number at least 1.
+func (id ID) valid() bool {
+	if id.Node == "" || id.Epoch < 1 || id.Seq < 1 {
+		return false
+	}
+	for i := range len(id.Node) {
+		if c := id.Node[i]; c <= ' ' || c > '~' || c == '/' {
+			return false
+		}
+	}
+	return true
+}
+
+// Facts are what an event states that the specs' mappings read. A zero
+// time states none; OwnerSeq is set, even to zero, only when the event
+// states one.
 type Facts struct {
 	Lease    string    `json:"lease,omitempty"`
 	Auth     string    `json:"auth,omitempty"`
-	OwnerSeq int64     `json:"owner_seq,omitempty"`
+	OwnerSeq *int64    `json:"owner_seq,omitempty"`
 	Commit   time.Time `json:"commit,omitzero"`
 	Read     time.Time `json:"read,omitzero"`
 	Message  string    `json:"message,omitempty"`
@@ -65,6 +82,9 @@ type Facts struct {
 	Outcome  string    `json:"outcome,omitempty"`
 	Detail   string    `json:"detail,omitempty"`
 }
+
+// Seq is an owner sequence number a fact states.
+func Seq(n int64) *int64 { return &n }
 
 // Event is one recorded event.
 type Event struct {
@@ -88,7 +108,7 @@ type Recorder struct {
 
 	mu   sync.Mutex
 	seq  int64
-	w    *bufio.Writer
+	w    io.Writer
 	err  error
 	done bool
 }
@@ -96,15 +116,19 @@ type Recorder struct {
 // New is a process's recorder, writing to w, for the node and the epoch its
 // start took.
 func New(w io.Writer, node string, epoch int64) (*Recorder, error) {
-	if w == nil || node == "" || strings.Contains(node, "/") || epoch < 1 {
-		return nil, errors.New("trace: a recorder needs somewhere to write, a node with no slash and an epoch")
+	if w == nil || !(ID{Node: node, Epoch: epoch, Seq: 1}).valid() {
+		return nil, errors.New("trace: a recorder needs somewhere to write, a node whose name is printable " +
+			"ASCII with no space or slash, and an epoch")
 	}
-	return &Recorder{node: node, epoch: epoch, start: time.Now(), clock: time.Now, w: bufio.NewWriter(w)}, nil
+	return &Recorder{node: node, epoch: epoch, start: time.Now(), clock: time.Now, w: w}, nil
 }
 
 // Record records an event of kind, caused by cause if it has one, and
-// returns its identity, which a message it sends carries. A recorder whose
-// writer failed keeps numbering events and reports the failure at Close.
+// returns its identity, which a message it sends carries. Each event is
+// written whole, in one write, before Record returns, so a process killed
+// after loses none. A recorder whose writer failed, or that was asked for
+// an event Read could not take back, keeps numbering events and reports the
+// failure at Close.
 func (r *Recorder) Record(kind string, cause *ID, f Facts) ID {
 	if r == nil {
 		return ID{}
@@ -115,35 +139,46 @@ func (r *Recorder) Record(kind string, cause *ID, f Facts) ID {
 	// earlier time.
 	now := r.clock()
 	r.seq++
+	f.Commit, f.Read = utc(f.Commit), utc(f.Read)
 	e := Event{ID: ID{Node: r.node, Epoch: r.epoch, Seq: r.seq}, Mono: now.Sub(r.start).Nanoseconds(),
-		Wall: now.Round(0).UTC(), Kind: kind, Cause: cause, Facts: f}
+		Wall: utc(now), Kind: kind, Cause: cause, Facts: f}
 	if r.done || r.err != nil {
 		return e.ID
 	}
-	line, err := json.Marshal(e)
-	if err == nil {
-		_, err = r.w.Write(append(line, '\n'))
+	if kind == "" || (cause != nil && !cause.valid()) {
+		r.err = fmt.Errorf("trace: event %d has no kind or a cause no recorder gives", r.seq)
+		return e.ID
 	}
-	if err != nil {
+	line, err := json.Marshal(e)
+	switch {
+	case err != nil:
 		r.err = err
+	case len(line) >= maxLine:
+		r.err = fmt.Errorf("trace: event %d is %d bytes, past %d", r.seq, len(line), maxLine-1)
+	default:
+		if _, err := r.w.Write(append(line, '\n')); err != nil {
+			r.err = err
+		}
 	}
 	return e.ID
 }
 
-// Close writes what is buffered and records nothing more; it reports the
-// first write that failed.
+// utc is a time as an event states it: in UTC, as JSON keeps it exactly.
+func utc(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	return t.Round(0).UTC()
+}
+
+// Close records nothing more; it reports the first event that failed.
 func (r *Recorder) Close() error {
 	if r == nil {
 		return nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.done {
-		r.done = true
-		if err := r.w.Flush(); err != nil && r.err == nil {
-			r.err = err
-		}
-	}
+	r.done = true
 	return r.err
 }
 
@@ -165,18 +200,41 @@ func Cause(ctx context.Context) *ID {
 // Header is the HTTP header a request between nodes carries its cause in.
 const Header = "Fastpath-Cause"
 
-// Read reads a process's events, in the order recorded.
+// Read reads a process's events, in the order recorded: each line one JSON
+// object, an event as a recorder writes it, with its identity, its clocks
+// and its kind. It returns the events before the first line that is not
+// one, as a process killed as it wrote leaves its last, with that line's
+// fault.
 func Read(rd io.Reader) ([]Event, error) {
 	var out []Event
-	d := json.NewDecoder(rd)
-	d.DisallowUnknownFields()
-	for {
-		var e Event
-		if err := d.Decode(&e); errors.Is(err, io.EOF) {
-			return out, nil
-		} else if err != nil {
-			return out, fmt.Errorf("trace: event %d: %w", len(out)+1, err)
+	sc := bufio.NewScanner(rd)
+	sc.Buffer(make([]byte, 0, 64<<10), maxLine)
+	for sc.Scan() {
+		e, err := readEvent(sc.Bytes())
+		if err != nil {
+			return out, fmt.Errorf("trace: line %d: %w", len(out)+1, err)
 		}
 		out = append(out, e)
 	}
+	if err := sc.Err(); err != nil {
+		return out, fmt.Errorf("trace: line %d: %w", len(out)+1, err)
+	}
+	return out, nil
+}
+
+// readEvent reads one line as an event.
+func readEvent(line []byte) (Event, error) {
+	d := json.NewDecoder(bytes.NewReader(line))
+	d.DisallowUnknownFields()
+	var e Event
+	if err := d.Decode(&e); err != nil {
+		return Event{}, err
+	}
+	if d.InputOffset() != int64(len(line)) {
+		return Event{}, errors.New("more than one JSON value")
+	}
+	if !e.ID.valid() || (e.Cause != nil && !e.Cause.valid()) || e.Kind == "" || e.Wall.IsZero() || e.Mono < 0 {
+		return Event{}, errors.New("no event a recorder writes")
+	}
+	return e, nil
 }
