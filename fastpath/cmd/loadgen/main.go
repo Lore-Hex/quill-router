@@ -36,10 +36,11 @@ func run() error {
 	inFlight := flag.Int("in-flight", 100_000, "the most generations at once")
 	workspaces := flag.Int("workspaces", 10, "how many workspaces the load spreads over, ws-0 on")
 	heartbeat := flag.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
+	heartbeatWait := flag.Duration("heartbeat-wait", 5*time.Second, "how long a heartbeat's attempts may take, together")
 	boot := flag.String("boot", "spike-boot", "the boot binding every request carries")
-	retryEvery := flag.Duration("retry-every", 5*time.Second, "how often the retry queue sends a terminal again")
-	retryFor := flag.Duration("retry-for", 30*time.Minute, "how long the retry queue keeps a terminal")
-	callWait := flag.Duration("call-wait", 10*time.Second, "how long a call may take")
+	retryDelays := flag.String("retry-delays", "0s,500ms,1s,2s,4s,8s",
+		"the delays before each of the retry queue's attempts at a terminal, separated by commas")
+	callWait := flag.Duration("call-wait", 28*time.Second, "how long a call but a heartbeat's may take")
 	keyPath := flag.String("key", "", "a file with the fleet's envelope key, to name each generation's authorization")
 	seed := flag.Uint64("seed", uint64(time.Now().UnixNano()), "the run's seed")
 	logPath := flag.String("log", "", "a file to log each generation to, one JSON object a line")
@@ -56,8 +57,18 @@ func run() error {
 	}
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1024}}
 	cfg := loadgen.Config{Rate: *rate, Duration: *duration, MaxInFlight: *inFlight, Mix: mix,
-		HeartbeatEvery: *heartbeat, Boot: []byte(*boot), RetryEvery: *retryEvery, RetryFor: *retryFor,
-		CallWait: *callWait, Seed: *seed}
+		HeartbeatEvery: *heartbeat, HeartbeatWait: *heartbeatWait, Boot: []byte(*boot), CallWait: *callWait,
+		Seed: *seed}
+	for _, d := range strings.Split(*retryDelays, ",") {
+		if d = strings.TrimSpace(d); d == "" {
+			continue
+		}
+		delay, err := time.ParseDuration(d)
+		if err != nil {
+			return fmt.Errorf("-retry-delays: %w", err)
+		}
+		cfg.RetryDelays = append(cfg.RetryDelays, delay)
+	}
 	for _, base := range strings.Split(*front, ",") {
 		if base = strings.TrimSpace(base); base != "" {
 			cfg.Gateways = append(cfg.Gateways, frontdoor.Gateway{Client: client, Base: base})
