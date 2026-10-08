@@ -646,3 +646,50 @@ func TestStoppingEndsAReaperPass(t *testing.T) {
 		t.Fatal("Stop returned while a pass ran")
 	}
 }
+
+// TestAReapUnderWayWhenAdoptionIsLeftDecidesNothing: a reap waiting on the
+// record topic when a renewal finds its lease past the cutoff and fails to
+// read its drain log decides nothing once acknowledged; the next round
+// adopts the hold's row from the drain log.
+func TestAReapUnderWayWhenAdoptionIsLeftDecidesNothing(t *testing.T) {
+	f, sp, rec := adoptFixture(t)
+	ctx := context.Background()
+	a := f.admit(t, 100, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	renew(t, f) // the lease expires at start+10m
+	f.clock.advance(2 * time.Minute)
+	rec.mu.Lock()
+	rec.hold = make(chan struct{})
+	rec.mu.Unlock()
+	reaped := make(chan error, 1)
+	go func() { reaped <- f.owner.Reap(ctx) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if got, _ := rec.published(); len(got) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the reap published no full record")
+		}
+	}
+	f.clock.advance(9 * time.Minute) // past the cutoff
+	sp.appendRow("lease-1", store.DrainRow{AuthorizationID: a, RecordID: "d1", Kind: "settle", Charge: 90, Estimate: 100,
+		Digest: sum("d1")}, start.Add(11*time.Minute))
+	sp.mu.Lock()
+	sp.expiry, sp.failReads = start.Add(30*time.Minute), 1
+	sp.mu.Unlock()
+	renew(t, f) // renewed past its cutoff; its drain log's read fails
+	close(rec.hold)
+	if err := <-reaped; err != nil {
+		t.Fatal(err)
+	}
+	if ts := terminals(t, f); len(ts) != 0 {
+		t.Fatalf("a reap decided with the drain log left to adopt: %+v", ts)
+	}
+	renew(t, f)
+	if r := lastTerminal(t, f); r.Kind != record.Settle || r.Drain != "d1" || r.Charge != 90 {
+		t.Fatalf("the hold's row adopted: %+v", r)
+	}
+}

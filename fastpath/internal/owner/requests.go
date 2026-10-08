@@ -296,12 +296,6 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		l.mu.Unlock()
 		return l.terminalAnswer(ctx, s, out)
 	}
-	if l.unadopted {
-		// The drain log may have this hold's terminal: the front door
-		// takes this one there too, and the lease's order decides.
-		l.mu.Unlock()
-		return Outcome{}, ErrPastCutoff
-	}
 	s, err := l.decide(auth, terminalOf{kind: kind, charge: charge, digest: digest})
 	l.mu.Unlock()
 	if err != nil {
@@ -333,6 +327,13 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 		return nil, ErrUnknownHold
 	}
 	if !l.withinCutoff(l.o.cfg.Clock()) {
+		return nil, ErrPastCutoff
+	}
+	if l.unadopted && t.drain == "" {
+		// The drain log a renewal left to adopt may have this hold's
+		// terminal: only an adoption decides until it is adopted. A
+		// direct terminal goes to the drain log too, and the lease's
+		// order decides (§4.2).
 		return nil, ErrPastCutoff
 	}
 	held, charged, freed := l.held-h.estimate, int64(0), h.estimate
