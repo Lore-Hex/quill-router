@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -415,5 +416,59 @@ func TestFindLeaseFindsItsWorkspace(t *testing.T) {
 	}
 	if _, err := s.FindLease(ctx, storetest.UniqueID("l")); !errors.Is(err, ErrNoLease) {
 		t.Fatalf("finding a lease never granted: %v", err)
+	}
+}
+
+// TestScanDrainingPagesARegionsDrainingLeases: in key order, a page at a
+// time, only the region's, and only draining ones.
+func TestScanDrainingPagesARegionsDrainingLeases(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	region := storetest.UniqueID("region")
+	var want []LeaseRef
+	for i := range 5 {
+		req := grantOf(seedWorkspace(t, 100), 10)
+		req.Region = region
+		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+			t.Fatalf("the grant: %+v %v", got, err)
+		}
+		ref := LeaseRef{req.Workspace, req.LeaseID}
+		if i == 2 {
+			continue // left open
+		}
+		if ok, _, err := s.OwnerMarkDraining(ctx, req.Owner, ref); err != nil || !ok {
+			t.Fatalf("the draining write: %v %v", ok, err)
+		}
+		want = append(want, ref)
+	}
+	other := grantOf(seedWorkspace(t, 100), 10) // another region's draining lease
+	other.Region = storetest.UniqueID("region")
+	if got, err := s.Grant(ctx, other); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	if ok, _, err := s.OwnerMarkDraining(ctx, other.Owner, LeaseRef{other.Workspace, other.LeaseID}); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	slices.SortFunc(want, func(a, b LeaseRef) int {
+		if a.Workspace != b.Workspace {
+			return strings.Compare(a.Workspace, b.Workspace)
+		}
+		return strings.Compare(a.LeaseID, b.LeaseID)
+	})
+	var got []LeaseRef
+	var after LeaseRef
+	for range 10 {
+		page, err := s.ScanDraining(ctx, region, after, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, page...)
+		if len(page) < 2 {
+			break
+		}
+		after = page[len(page)-1]
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the scan: %v, want %v", got, want)
 	}
 }

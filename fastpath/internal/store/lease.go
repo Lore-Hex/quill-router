@@ -257,6 +257,33 @@ func (s *Store) ScanExpired(ctx context.Context, now time.Time, limit int) ([]Ex
 	return out, read, err
 }
 
+// ScanDraining finds up to limit of a region's draining leases past after,
+// in key order, through the leases' state index: the leases the auditor
+// ticks (§4.8). The zero LeaseRef starts from the first.
+func (s *Store) ScanDraining(ctx context.Context, region string, after LeaseRef, limit int) ([]LeaseRef, error) {
+	ro := s.client.Single()
+	defer ro.Close()
+	var out []LeaseRef
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT workspace_id, lease_id FROM tr_lease@{FORCE_INDEX=tr_lease_by_state}
+		       WHERE state = 'draining' AND region = @region
+		         AND (workspace_id > @w OR (workspace_id = @w AND lease_id > @l))
+		       ORDER BY workspace_id, lease_id LIMIT @limit`,
+		Params: map[string]any{"region": region, "w": after.Workspace, "l": after.LeaseID, "limit": int64(limit)},
+	}, spanner.QueryOptions{RequestTag: tag("scan-draining")}).Do(func(row *spanner.Row) error {
+		var r LeaseRef
+		if err := row.Columns(&r.Workspace, &r.LeaseID); err != nil {
+			return err
+		}
+		out = append(out, r)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuditorMarkDraining is the auditor's draining write for a lease a scan
 // found expired (§4.8): conditional on the lease being open still, with the
 // expiry the scan read, so a lease renewed since stays open. It stores F as

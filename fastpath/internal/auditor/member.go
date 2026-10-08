@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -428,6 +429,16 @@ func (l *Lease) ApplyRow(row store.DrainRow) error {
 	delete(l.put, row.AuthorizationID)
 	l.dirty = true
 	return nil
+}
+
+// openHolds are the open holds' rows, in order of their authorizations.
+func (l *Lease) openHolds() []store.HoldRow {
+	out := make([]store.HoldRow, 0, len(l.holds))
+	for _, h := range l.holds {
+		out = append(out, h.row)
+	}
+	slices.SortFunc(out, func(a, b store.HoldRow) int { return strings.Compare(a.AuthorizationID, b.AuthorizationID) })
+	return out
 }
 
 // Dirty reports whether the member applied anything since its last commit.

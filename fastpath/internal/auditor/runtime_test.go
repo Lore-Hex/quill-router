@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -183,12 +184,47 @@ func (d *fakeDelivery) acked() int {
 // runtimeFixture is a runtime on the emulator's store, and a lease of 1,000
 // it granted.
 type runtimeFixture struct {
-	t      *testing.T
-	s      *store.Store
-	store  *flaky
-	ref    store.LeaseRef
-	alerts []string
-	mu     sync.Mutex
+	t       *testing.T
+	s       *store.Store
+	store   *flaky
+	records *fakeRecords
+	ref     store.LeaseRef
+	alerts  []string
+	mu      sync.Mutex
+}
+
+// fakeRecords is the record topic, which keeps what is published to it;
+// failing fails that many publishes.
+type fakeRecords struct {
+	mu      sync.Mutex
+	failing int
+	got     []string // authorization/kind
+	data    [][]byte
+}
+
+type answered struct {
+	id  string
+	err error
+}
+
+func (a answered) Wait(context.Context) (string, error) { return a.id, a.err }
+
+func (r *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failing > 0 {
+		r.failing--
+		return answered{err: errInjected}
+	}
+	r.got = append(r.got, authorization+"/"+kind)
+	r.data = append(r.data, slices.Clone(data))
+	return answered{id: fmt.Sprintf("m%d", len(r.got))}
+}
+
+func (r *fakeRecords) published() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.got)
 }
 
 func newRuntimeFixture(t *testing.T) *runtimeFixture {
@@ -202,7 +238,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &runtimeFixture{t: t, s: s, store: &flaky{Store: s}}
+	f := &runtimeFixture{t: t, s: s, store: &flaky{Store: s}, records: &fakeRecords{}}
 	f.ref = f.grant()
 	return f
 }
@@ -227,7 +263,7 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 func (f *runtimeFixture) runtime(changes ...func(*Config)) *Runtime {
 	f.t.Helper()
 	cfg := Config{Store: f.store, Skew: 2 * time.Second, CommitEvery: time.Hour, MaxBatch: 10, Retry: time.Millisecond,
-		ForgetAfter: time.Hour,
+		ForgetAfter: time.Hour, Grace: time.Minute, Records: f.records, Wait: time.Second,
 		Alert: func(lease, what string) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -852,5 +888,158 @@ func TestABehindReadTellsWhatTheRowHolds(t *testing.T) {
 	handleAll(rt, tk)
 	if tk.acked() != 1 || !slices.Contains(f.alerted(), "a record of a lease the store does not have") {
 		t.Fatalf("a lease the store no longer has: acknowledged %d, alerts %v", tk.acked(), f.alerted())
+	}
+}
+
+// TestADrainedLeaseIsBookedReapedAndClosed: once its fence tick has stored
+// S, a draining lease's ticks apply its drain log after its owner records,
+// reap a hold past its deadline plus the grace at the tick, its full record
+// on the record topic first, and close the lease at a tick published after
+// the end held; every record is acknowledged.
+func TestADrainedLeaseIsBookedReapedAndClosed(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time // the member's, which says when it saw the end
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	ds := []*fakeDelivery{on(t, f.ref, hb(1, "a", 1, 10)), on(t, f.ref, settle(2, "b", 40, 0))}
+	handleAll(rt, ds...)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.s.Append(ctx, store.DrainTerminal{Ref: f.ref, AuthorizationID: "c", RecordID: "dc", Kind: "settle",
+		Charge: 5, Estimate: 10, Digest: sum("c"), Money: []byte(`{}`), Cause: "past_cutoff"}); err != nil || got.Refused != "" {
+		t.Fatalf("the front door's append: %+v %v", got, err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) *fakeDelivery {
+		n++
+		d := on(t, f.ref, tick(n, at))
+		ds = append(ds, d)
+		handleAll(rt, d)
+		return d
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	round(rt)
+	// A microsecond before a's deadline plus the grace: nothing is reaped.
+	tickAt(deadline.Add(time.Minute - time.Microsecond))
+	if got := f.records.published(); len(got) != 0 {
+		t.Fatalf("a reap before its hold was due: %v", got)
+	}
+	round(rt)
+	// Past a's deadline plus the grace, and past the expiry plus MaxLife and
+	// the grace, since the lease's holds were never listed.
+	late := row.Expiry
+	if deadline.After(late) {
+		late = deadline
+	}
+	late = late.Add(time.Hour)
+	clock = late
+	tickAt(late) // a reaped
+	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
+		t.Fatalf("the record topic: %v", got)
+	}
+	round(rt)
+	tickAt(late.Add(time.Second)) // the reap's row applied: a's winner
+	round(rt)
+	tickAt(late.Add(3 * time.Second)) // the end seen, at the member's clock: late
+	if l := f.loaded(); l.Lease.State != "draining" {
+		t.Fatalf("closed at the tick that saw the end: %+v", l.Lease)
+	}
+	tickAt(late.Add(2*time.Second - time.Microsecond)) // published within the skew allowance of it
+	if l := f.loaded(); l.Lease.State != "draining" {
+		t.Fatalf("closed at a tick within the skew allowance of the end: %+v", l.Lease)
+	}
+	tickAt(late.Add(2 * time.Second)) // the close
+	l := f.loaded()
+	if l.Lease.State != "closed" || l.Lease.Consumed != 55 || l.Lease.AppliedSeq != 2 || len(l.Holds) != 0 {
+		t.Fatalf("the closed lease: %+v", l)
+	}
+	won := map[string]string{}
+	for _, p := range l.Packs {
+		for _, w := range p.Winners {
+			won[w.AuthorizationID] = w.RecordID
+		}
+	}
+	if !reflect.DeepEqual(won, map[string]string{"a": "reap-a", "b": "o2", "c": "dc"}) {
+		t.Fatalf("the winners: %v", won)
+	}
+	for i, d := range ds {
+		if d.acked() != 1 {
+			t.Fatalf("record %d acknowledged %d times", i, d.acked())
+		}
+	}
+}
+
+// fakeLog is the settle log, which keeps the ticks published to it;
+// failing fails that many publishes.
+type fakeLog struct {
+	mu      sync.Mutex
+	failing int
+	ticks   map[string][]record.Record
+	resumed []string
+}
+
+func (l *fakeLog) Publish(lease string, data []byte) Waiter {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failing > 0 {
+		l.failing--
+		return answered{err: errInjected}
+	}
+	r, err := record.Decode(data)
+	if err != nil {
+		return answered{err: err}
+	}
+	l.ticks[lease] = append(l.ticks[lease], r)
+	return answered{id: "t"}
+}
+
+func (l *fakeLog) Resume(lease string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.resumed = append(l.resumed, lease)
+}
+
+// TestTheTickerDrainsAndTicks: it marks a lease whose expiry passed
+// draining, and publishes a tick carrying its clock's time under each
+// draining lease of its region; a lease whose tick failed has its key
+// resumed.
+func TestTheTickerDrainsAndTicks(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	now := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	log := &fakeLog{ticks: map[string][]record.Record{}}
+	tk, err := NewTicker(TickerConfig{Store: f.s, Log: log, Region: "us-central1", Every: time.Hour, Limit: 1000,
+		Wait: time.Second, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk.round(ctx)
+	if row, _, err := f.s.ReadLease(ctx, f.ref); err != nil || row.State != "draining" || row.DrainedBy.StringVal != "auditor" {
+		t.Fatalf("the expired lease: %+v %v", row, err)
+	}
+	got := log.ticks[f.ref.LeaseID]
+	if len(got) != 1 || got[0].Kind != record.Tick || !got[0].TickAt.Equal(now) || got[0].TickNumber != now.UnixMicro() {
+		t.Fatalf("the lease's ticks: %+v", got)
+	}
+	log.failing = 1000
+	tk.round(ctx)
+	if !slices.Contains(log.resumed, f.ref.LeaseID) {
+		t.Fatalf("a failed tick's key was not resumed: %v", log.resumed)
+	}
+	// A page at a time: every draining lease is ticked, whatever the page.
+	other := f.grant()
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, other); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	log.failing, log.ticks = 0, map[string][]record.Record{}
+	tk.cfg.Limit = 1
+	tk.round(ctx)
+	if len(log.ticks[f.ref.LeaseID]) != 1 || len(log.ticks[other.LeaseID]) != 1 {
+		t.Fatalf("ticks a page at a time: %d and %d", len(log.ticks[f.ref.LeaseID]), len(log.ticks[other.LeaseID]))
 	}
 }
