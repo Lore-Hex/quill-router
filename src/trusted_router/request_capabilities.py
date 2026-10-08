@@ -1,8 +1,10 @@
 """Request capabilities after gateway adaptation, alongside OR's parameter union.
 
-Reviewed effort contracts live in data/request_capabilities.json. A parameter
-name alone does not establish its enum. Unreviewed effort controls are unknown;
-see /docs#model-capabilities for the distinction between unsupported and unknown.
+Reviewed contracts live in data/request_capabilities.json. A row may carry only
+a tools contract from the provider's own documentation; evidence stays scoped
+to that provider's model routes. Missing reasoning_effort means unknown and
+preserves any declared parameter. A parameter name alone does not establish
+its enum; see /docs#model-capabilities for unsupported versus unknown.
 """
 
 from __future__ import annotations

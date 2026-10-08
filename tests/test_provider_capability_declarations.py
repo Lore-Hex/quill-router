@@ -464,7 +464,8 @@ def test_kimi_k3_efforts_match_provider_model_api():
     declared = _payload("kimi_models")["data"][0]["reasoning_efforts"]["valid_efforts"]
     contract = _reviewed_contracts()[("kimi", "moonshotai/kimi-k3")]
     assert contract["reasoning_effort"] == declared == ["low", "high", "max"]
-    assert contract["source"] == (
+    # The same row also records its tools source, appended after the effort source.
+    assert contract["source"].startswith(
         "Moonshot GET /v1/models reasoning_efforts.valid_efforts (2026-10-07); "
         "paid probe 2026-10-06 accepted low and high"
     )
