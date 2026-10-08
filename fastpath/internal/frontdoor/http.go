@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,16 +73,17 @@ type relayTerminal struct {
 	Request OwnerTerminal
 }
 
-// serve decodes a request's one JSON value, with no field its type does not
-// have, and answers f's answer: 400 for a body that is not one, and 502 for
-// f's error, an owner a relay did not reach.
+// serve reads a request's one JSON value (readOne) and answers f's answer:
+// 400 for a body that is not one, and 502 for f's error, an owner a relay
+// did not reach. A request whose caller has gone by then starts nothing.
 func serve[Req, Ans any](f func(context.Context, Req) (Ans, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
-		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-		d.DisallowUnknownFields()
-		if err := d.Decode(&req); err != nil || d.More() {
+		if err := readOne(r.Body, &req); err != nil {
 			http.Error(w, "frontdoor: a request that is not one JSON value of its kind", http.StatusBadRequest)
+			return
+		}
+		if r.Context().Err() != nil {
 			return
 		}
 		ans, err := f(r.Context(), req)
@@ -99,9 +101,44 @@ func serve[Req, Ans any](f func(context.Context, Req) (Ans, error)) http.Handler
 	}
 }
 
+// readOne reads a body whole into v: one JSON object of v's type, with no
+// field the type lacks, and nothing after it but space. A body that is not
+// that, one past maxBody, or one whose read fails, as one cut short does,
+// is an error.
+func readOne(r io.Reader, v any) error {
+	body, err := io.ReadAll(io.LimitReader(r, maxBody+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxBody {
+		return fmt.Errorf("frontdoor: a body past %d bytes", maxBody)
+	}
+	if trimmed := bytes.TrimLeft(body, " \t\r\n"); len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("frontdoor: a body that is not a JSON object")
+	}
+	d := json.NewDecoder(bytes.NewReader(body))
+	d.DisallowUnknownFields()
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	if _, err := d.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("frontdoor: a body with more than one JSON value")
+	}
+	return nil
+}
+
+// noRedirect is c following no redirect, so that an answer is the
+// addressed node's own; c is left as it is.
+func noRedirect(c *http.Client) *http.Client {
+	nc := *c
+	nc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &nc
+}
+
 // HTTPOwners reaches other nodes' owners over the network, at their
 // addresses, host and port. An answer that does not come, or is not a 200
-// with one JSON value, is an owner not reached.
+// with one JSON value (readOne) from the node addressed, is an owner not
+// reached.
 type HTTPOwners struct {
 	Client *http.Client
 	// Scheme is http or https.
@@ -132,7 +169,7 @@ func (h HTTPOwners) Ping(ctx context.Context, address string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := h.Client.Do(r)
+	resp, err := noRedirect(h.Client).Do(r)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
@@ -199,7 +236,7 @@ func post(ctx context.Context, c *http.Client, scheme, address, path string, req
 }
 
 // postURL posts req's JSON and reads the answer's into ans. Anything but a
-// 200 with one JSON value is ErrUnreachable.
+// 200 with one JSON value (readOne), from the URL itself, is ErrUnreachable.
 func postURL(ctx context.Context, c *http.Client, url string, req, ans any) error {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -210,7 +247,7 @@ func postURL(ctx context.Context, c *http.Client, url string, req, ans any) erro
 		return err
 	}
 	r.Header.Set("Content-Type", "application/json")
-	resp, err := c.Do(r)
+	resp, err := noRedirect(c).Do(r)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
@@ -219,9 +256,8 @@ func postURL(ctx context.Context, c *http.Client, url string, req, ans any) erro
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBody))
 		return fmt.Errorf("%w: %s", ErrUnreachable, resp.Status)
 	}
-	d := json.NewDecoder(io.LimitReader(resp.Body, maxBody))
-	if err := d.Decode(ans); err != nil {
-		return fmt.Errorf("%w: an answer that is not JSON: %w", ErrUnreachable, err)
+	if err := readOne(resp.Body, ans); err != nil {
+		return fmt.Errorf("%w: an answer that is not one JSON value of its kind: %w", ErrUnreachable, err)
 	}
 	return nil
 }

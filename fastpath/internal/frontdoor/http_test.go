@@ -2,8 +2,11 @@ package frontdoor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,11 +20,24 @@ import (
 // node is a node on the network: an httptest server at its address, with
 // the owner's part if it has an owner and a front door.
 type node struct {
-	srv   *httptest.Server
-	addr  string
-	local *Local
-	door  *FrontDoor
-	store *fakeStore
+	srv    *httptest.Server
+	addr   string
+	local  *Local
+	owner  *owner.Owner
+	grants *fakeGrants
+	door   *FrontDoor
+	store  *fakeStore
+}
+
+// held is what the node's owner holds under ws-1's shard 0 leases.
+func (n *node) held() int64 {
+	var held int64
+	for _, g := range n.grants.all() {
+		if l, ok := n.owner.Lease(g.LeaseID); ok && g.Workspace == "ws-1" && g.WorkspaceShard == 0 {
+			held += l.Books().Held
+		}
+	}
+	return held
 }
 
 // newNode starts a node. With an owner, its owner admits under leases its
@@ -33,12 +49,13 @@ func newNode(t *testing.T, withOwner bool, client *http.Client, peers Peers) *no
 	n.addr = n.srv.Listener.Addr().String()
 	if withOwner {
 		c := &clock{now: start}
-		o, err := owner.New(ownerConfig(c, &fakeGrants{expiry: start.Add(time.Minute)}),
-			&fakeLog{records: map[string][][]byte{}})
+		n.grants = &fakeGrants{expiry: start.Add(time.Minute)}
+		o, err := owner.New(ownerConfig(c, n.grants), &fakeLog{records: map[string][][]byte{}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(o.Stop)
+		n.owner = o
 		if n.local, err = NewLocal(o, n.addr, "us-central1", key); err != nil {
 			t.Fatal(err)
 		}
@@ -111,43 +128,103 @@ func TestANodeServesItsGatewaysOverTheNetwork(t *testing.T) {
 	}
 }
 
+// answering is a server that answers each request with status and body.
+func answering(t *testing.T, status int, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.Listener.Addr().String()
+}
+
 // TestAnOwnerNotReachedOverTheNetwork: no answer, an answer other than a
-// 200 though its body decodes, or one that is not JSON, is an owner not
-// reached.
+// 200 though its body reads, a 200 whose body is not one JSON value of the
+// answer's kind, one cut short, or an answer from a node the one addressed
+// redirects to, is an owner not reached.
 func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 	ctx := context.Background()
 	h := HTTPOwners{Client: &http.Client{Timeout: 2 * time.Second}, Scheme: "http"}
 	closed := httptest.NewServer(http.NotFoundHandler())
 	gone := closed.Listener.Addr().String()
 	closed.Close()
-	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("{}"))
+	good := answering(t, http.StatusOK, `{"Status":"won"}`)
+	redirecting := func(to string) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "http://"+to+r.URL.Path, http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.Listener.Addr().String()
+	}
+	pinged := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer failing.Close()
-	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("not json"))
+	defer pinged.Close()
+	cut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"Status":"won"}`))
+		w.(http.Flusher).Flush() // the client reads the value before the cut
+		panic(http.ErrAbortHandler)
 	}))
-	defer garbled.Close()
-	for _, addr := range []string{gone, failing.Listener.Addr().String(), garbled.Listener.Addr().String()} {
+	defer cut.Close()
+	for name, addr := range map[string]string{
+		"no answer":                gone,
+		"a 500 that reads":         answering(t, http.StatusInternalServerError, `{}`),
+		"not JSON":                 answering(t, http.StatusOK, "not json"),
+		"a field the answer lacks": answering(t, http.StatusOK, `{"Error":"owner not reached"}`),
+		"two values":               answering(t, http.StatusOK, `{} {}`),
+		"null":                     answering(t, http.StatusOK, `null`),
+		"past its bound":           answering(t, http.StatusOK, `{}`+strings.Repeat(" ", maxBody)),
+		"cut short":                cut.Listener.Addr().String(),
+		"a redirect":               redirecting(good),
+	} {
 		if _, err := h.Authorize(ctx, addr, OwnerAuthorize{}); !errors.Is(err, ErrUnreachable) {
-			t.Fatalf("an authorize to %s: %v", addr, err)
+			t.Fatalf("%s: an authorize: %v", name, err)
 		}
 		if _, err := h.Heartbeat(ctx, addr, OwnerHeartbeat{}); !errors.Is(err, ErrUnreachable) {
-			t.Fatalf("a heartbeat to %s: %v", addr, err)
+			t.Fatalf("%s: a heartbeat: %v", name, err)
 		}
 		if _, err := h.Terminal(ctx, addr, OwnerTerminal{}); !errors.Is(err, ErrUnreachable) {
-			t.Fatalf("a terminal to %s: %v", addr, err)
-		}
-		if err := h.Ping(ctx, addr); !errors.Is(err, ErrUnreachable) {
-			t.Fatalf("a ping to %s: %v", addr, err)
+			t.Fatalf("%s: a terminal: %v", name, err)
 		}
 	}
+	if got, err := h.Terminal(ctx, good, OwnerTerminal{}); err != nil || got.Status != Won {
+		t.Fatalf("an owner that answers: %+v %v", got, err)
+	}
+	for name, addr := range map[string]string{"no answer": gone, "a 500": answering(t, http.StatusInternalServerError, `{}`),
+		"a redirect": redirecting(pinged.Listener.Addr().String())} {
+		if err := h.Ping(ctx, addr); !errors.Is(err, ErrUnreachable) {
+			t.Fatalf("%s: a ping: %v", name, err)
+		}
+	}
+	if err := h.Ping(ctx, pinged.Listener.Addr().String()); err != nil {
+		t.Fatalf("a ping answered: %v", err)
+	}
+
+	// A call whose context ends, before it is sent or while it waits, ends
+	// with it, though the owner would answer.
 	ended, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := h.Terminal(ended, garbled.Listener.Addr().String(), OwnerTerminal{}); err == nil {
-		t.Fatal("a call whose context had ended answered")
+	if _, err := h.Terminal(ended, good, OwnerTerminal{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a call whose context had ended: %v", err)
+	}
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body) // so the server sees the caller go
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Status":"won"}`))
+	}))
+	defer slow.Close()
+	waiting, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := h.Terminal(waiting, slow.Listener.Addr().String(), OwnerTerminal{}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a call whose context ended while it waited: %v", err)
 	}
 }
 
@@ -209,7 +286,12 @@ func TestTheHandlerTakesOnlyItsJSON(t *testing.T) {
 	}{
 		{"POST", "/v1/refund", `{"Envelope":"x","Money":"e30=","Extra":1}`, http.StatusBadRequest},
 		{"POST", "/v1/refund", `{"Envelope":"x","Money":"e30="} {}`, http.StatusBadRequest},
+		{"POST", "/v1/refund", `{"Envelope":"x","Money":"e30="}]`, http.StatusBadRequest},
+		{"POST", "/v1/refund", `{"Envelope":"x","Money":"e30="}}`, http.StatusBadRequest},
+		{"POST", "/v1/refund", `null`, http.StatusBadRequest},
+		{"POST", "/v1/refund", ``, http.StatusBadRequest},
 		{"POST", "/v1/refund", `{"Envelope":` + strings.Repeat(" ", maxBody) + `"x"}`, http.StatusBadRequest},
+		{"POST", "/v1/refund", `{"Envelope":"x","Money":"e30="}` + strings.Repeat(" ", maxBody), http.StatusBadRequest},
 		{"GET", "/v1/refund", ``, http.StatusMethodNotAllowed},
 		{"GET", "/owner/ping", ``, http.StatusNotFound},
 		{"POST", "/v1/refund", `{"Envelope":"x","Money":"e30="}`, http.StatusOK},
@@ -226,5 +308,77 @@ func TestTheHandlerTakesOnlyItsJSON(t *testing.T) {
 		if resp.StatusCode != c.want {
 			t.Fatalf("%s %s %.40q: %d, want %d", c.method, c.path, c.body, resp.StatusCode, c.want)
 		}
+	}
+}
+
+// TestARequestCutShortOrLeftStartsNothing: a request whose body ends before
+// its length is not dispatched: a refund whose owner no one reaches appends
+// nothing. Nor is one whose caller has gone by the time it is read: an
+// owner's authorize admits nothing.
+func TestARequestCutShortOrLeftStartsNothing(t *testing.T) {
+	n := newNode(t, false, nil, nil)
+	body := fmt.Sprintf(`{"Envelope":%q,"Money":"e30="}`, sealedAt(t, "127.0.0.1:1", "lease-1", "gwa-1"))
+	appends := func() int {
+		k := 0
+		for _, e := range n.store.ev.all() {
+			if strings.HasPrefix(e, "append ") {
+				k++
+			}
+		}
+		return k
+	}
+	// send sends the refund with a length; cut, the client then closes its
+	// side, so the body ends before the length.
+	send := func(length int, cut bool) {
+		t.Helper()
+		conn, err := net.Dial("tcp", n.addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		fmt.Fprintf(conn, "POST /v1/refund HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\n"+
+			"Content-Length: %d\r\nConnection: close\r\n\r\n%s", n.addr, length, body)
+		if cut {
+			if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, _ = io.ReadAll(conn)
+	}
+	send(len(body)+10, true)
+	if k := appends(); k != 0 {
+		t.Fatalf("a request cut short appended %d times", k)
+	}
+	send(len(body), false)
+	if k := appends(); k != 1 {
+		t.Fatalf("the whole request appended %d times", k)
+	}
+
+	m := newNode(t, true, nil, nil)
+	h := Handler(nil, m.local)
+	authorize := func(ctx context.Context) OwnerAdmitted {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/owner/authorize",
+			strings.NewReader(`{"Workspace":"ws-1","Shard":0,"Estimate":7,"Boot":"Ym9vdA=="}`)).WithContext(ctx))
+		var got OwnerAdmitted
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		return got
+	}
+	// The first authorizes ask for the shard's lease, until it is granted.
+	for deadline := time.Now().Add(5 * time.Second); authorize(context.Background()).Status != Admitted; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no lease came to admit")
+		}
+	}
+	before := m.held()
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	authorize(gone)
+	if held := m.held(); held != before {
+		t.Fatalf("an authorize whose caller had gone: held %d, before %d", held, before)
+	}
+	if got := authorize(context.Background()); got.Status != Admitted || m.held() != before+7 {
+		t.Fatalf("an authorize whose caller waits: %+v, held %d, before %d", got, m.held(), before)
 	}
 }
