@@ -139,6 +139,9 @@ def fetch() -> ProviderPricingResult:
         model_id = _canonical_model_id(native_id)
         if model_id is None:
             continue
+        previous = discovered.get(model_id)
+        if previous is not None and previous["upstream_id"] != native_id:
+            raise RuntimeError(f"Chutes catalog has ambiguous upstream IDs for {model_id}")
         row: dict[str, Any] = {
             "id": model_id,
             "upstream_id": native_id,

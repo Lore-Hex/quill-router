@@ -112,6 +112,18 @@ def test_fetch_discovers_new_models_with_exact_native_ids(
     assert row["supported_features"] == ["tools", "reasoning"]
 
 
+def test_ambiguous_upstream_ids_fail_without_publishing_partial_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve(monkeypatch, _catalog(
+        _row("Qwen/Qwen3.8-27B-TEE"), _row("qwen/qwen3.8-27b-TEE"),
+    ))
+    with pytest.raises(RuntimeError, match="ambiguous upstream IDs"):
+        chutes.fetch()
+    assert chutes._DISCOVERED_MANIFEST_ROWS == {}
+    assert "qwen/qwen3.8-27b" not in chutes.UPSTREAM_ID_MAP
+
+
 def test_explicit_aliases_are_retained(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve(monkeypatch, {"data": [_row(native) for native in chutes._NATIVE_TO_MODEL_ID]})
     result = chutes.fetch()
