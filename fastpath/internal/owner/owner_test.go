@@ -21,7 +21,7 @@ import (
 // every publish to it fails until Resume. A test can fail publishes, hold
 // acknowledgements back until it releases them, and see every publish
 // attempted, at the time of the test's clock, now. onRepublish runs at
-// each publish of a record published before.
+// each publish of a record published before, onPublish at each publish.
 type fakeLog struct {
 	mu          sync.Mutex
 	stored      map[string][][]byte
@@ -33,6 +33,8 @@ type fakeLog struct {
 	attempts    []attempt
 	published   map[string]int
 	onRepublish func()
+	heldErr     error
+	onPublish   func(data []byte)
 }
 
 type attempt struct {
@@ -61,6 +63,8 @@ func (f *fakeLog) attemptsFrom(t time.Time) []attempt {
 type waiter struct {
 	err  error
 	hold chan struct{}
+	// held, for a held publish, is what it ends with once let go.
+	held func() error
 }
 
 func (w waiter) Wait(ctx context.Context) (string, error) {
@@ -69,6 +73,9 @@ func (w waiter) Wait(ctx context.Context) (string, error) {
 		case <-w.hold:
 		case <-ctx.Done():
 			return "", ctx.Err()
+		}
+		if w.held != nil {
+			return "", w.held()
 		}
 	}
 	return "", w.err
@@ -85,6 +92,9 @@ func (f *fakeLog) Publish(lease string, data []byte) Waiter {
 	if f.published[string(data)]++; f.published[string(data)] > 1 && f.onRepublish != nil {
 		f.onRepublish()
 	}
+	if f.onPublish != nil {
+		f.onPublish(data)
+	}
 	if f.paused[lease] {
 		return waiter{err: errPaused}
 	}
@@ -95,7 +105,7 @@ func (f *fakeLog) Publish(lease string, data []byte) Waiter {
 	}
 	f.stored[lease] = append(f.stored[lease], append([]byte(nil), data...))
 	if f.holding {
-		return waiter{hold: f.release}
+		return waiter{hold: f.release, held: f.heldOutcome}
 	}
 	return waiter{}
 }
@@ -127,6 +137,20 @@ func (f *fakeLog) letGo() {
 	close(f.release)
 }
 
+// letGoFailing ends every held publish with err.
+func (f *fakeLog) letGoFailing(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holding, f.heldErr = false, err
+	close(f.release)
+}
+
+func (f *fakeLog) heldOutcome() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heldErr
+}
+
 func (f *fakeLog) records(t *testing.T, lease string) []record.Record {
 	t.Helper()
 	f.mu.Lock()
@@ -147,10 +171,23 @@ type clock struct {
 	now   time.Time
 	step  time.Duration
 	reads int
+	// gate, when set, holds every reading until it closes; the first
+	// reading it holds closes waiting.
+	gate, waiting chan struct{}
 }
 
 // Now is the clock's time, which moves on by step at each reading.
 func (c *clock) Now() time.Time {
+	c.mu.Lock()
+	gate, waiting := c.gate, c.waiting
+	c.waiting = nil
+	c.mu.Unlock()
+	if gate != nil {
+		if waiting != nil {
+			close(waiting)
+		}
+		<-gate
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now
@@ -1115,24 +1152,27 @@ func TestAReplayAnswersAsTheHeartbeatItRepeats(t *testing.T) {
 // way returns only once the flusher has stopped, as the first does.
 func TestEveryLetWaitsForTheLeaseToStop(t *testing.T) {
 	f := newFixture(t, 1000, nil)
-	f.lease.mu.Lock() // the first Let waits for the lease's lock
+	f.lease.mu.Lock() // a Let waits for the lease's lock, to mark it let go
 	firstDone, secondDone := make(chan struct{}), make(chan struct{})
 	go func() {
 		f.owner.Let("lease-1")
 		close(firstDone)
 	}()
-	waitFor(t, "the first Let to begin", func() bool {
-		_, held := f.owner.Lease("lease-1")
-		return !held
-	})
 	go func() {
 		f.owner.Let("lease-1")
 		close(secondDone)
 	}()
 	select {
+	case <-firstDone:
+		t.Fatal("a Let returned while the lease's lock was held")
 	case <-secondDone:
 		t.Fatal("a second Let returned while the first is under way")
 	case <-time.After(50 * time.Millisecond):
+	}
+	// The lease leaves the owner's leases only once it is let go, so a
+	// hand-off that does not find it there leaves no lease deciding.
+	if _, held := f.owner.Lease("lease-1"); !held {
+		t.Fatal("the lease left the owner's leases before it was let go")
 	}
 	f.lease.mu.Unlock()
 	for _, done := range []chan struct{}{firstDone, secondDone} {

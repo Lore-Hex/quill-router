@@ -197,10 +197,10 @@ func (l *Lease) checkpoint() *sent {
 	}
 	c := record.CheckpointOf{Consumed: l.consumed, Open: int64(len(l.holds)), OpenSum: l.held,
 		KeyStatus: l.o.cfg.KeyStatus}
-	for _, h := range l.holds {
-		if end := h.endOfLife.UTC(); end.After(c.LatestEnd) {
-			c.LatestEnd = end
-		}
+	if len(l.ends) > 0 {
+		// The open holds are kept as a heap by end of life (endHeap), so
+		// the checkpoint holds the lease's lock no longer for many holds.
+		c.LatestEnd = l.ends[0].endOfLife.UTC()
 	}
 	if l.closing {
 		c.Return = max(l.booksLocked().Free(), 0)

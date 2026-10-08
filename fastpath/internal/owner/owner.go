@@ -81,11 +81,16 @@ type Config struct {
 	// full records of its reaps (§4.9); without it the owner reaps nothing.
 	Grace   time.Duration
 	Records RecordLog
+	// FirstHeartbeat is the first-heartbeat allowance (§4.5): a stream's
+	// hold admitted for a boot that declares the heartbeat at stream open,
+	// for which no heartbeat record was issued by its admission plus it
+	// plus Grace, is released uncharged. Zero releases none.
+	FirstHeartbeat time.Duration
 }
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
-		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 {
+		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 || c.FirstHeartbeat < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter and a clock")
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
@@ -141,7 +146,11 @@ type Owner struct {
 
 	mu      sync.Mutex
 	stopped bool
-	leases  map[string]*Lease
+	// handoff is closed once a forced exit ends, handoffErr its outcome;
+	// from its start the owner takes no lease.
+	handoff    chan struct{}
+	handoffErr error
+	leases     map[string]*Lease
 	// retired are the leases the owner let go, each with its workers' end:
 	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
@@ -197,8 +206,8 @@ func (o *Owner) take(lease, workspace string, allocation int64, expiry time.Time
 	now := o.cfg.Clock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.stopped {
-		return nil, errors.New("owner: stopped")
+	if o.stopped || o.handoff != nil {
+		return nil, errors.New("owner: stopped, or handing its leases off")
 	}
 	if _, ok := o.leases[lease]; ok {
 		return nil, fmt.Errorf("owner: lease %s is held already", lease)
@@ -260,7 +269,18 @@ func (o *Owner) Let(id string) {
 func (o *Owner) release(id string) <-chan struct{} {
 	o.mu.Lock()
 	l, ok := o.leases[id]
+	o.mu.Unlock()
 	if ok {
+		// The lease decides nothing more before it leaves the owner's
+		// leases: a hand-off that does not find it there leaves no lease
+		// of the owner's deciding.
+		l.mu.Lock()
+		l.let = true
+		l.mu.Unlock()
+	}
+	o.mu.Lock()
+	mine := ok && o.leases[id] == l
+	if mine {
 		delete(o.leases, id)
 		o.retired[id] = l.stopped
 		if l.shard != nil {
@@ -269,10 +289,7 @@ func (o *Owner) release(id string) <-chan struct{} {
 	}
 	stopped := o.retired[id]
 	o.mu.Unlock()
-	if ok {
-		l.mu.Lock()
-		l.let = true
-		l.mu.Unlock()
+	if mine {
 		close(l.stop)
 	}
 	return stopped
@@ -287,6 +304,10 @@ type hold struct {
 	endOfLife time.Time
 	stream    bool
 	boot      []byte
+	// admitted is when the hold was admitted, and openHeartbeat whether its
+	// boot declares the heartbeat at stream open (§4.5).
+	admitted      time.Time
+	openHeartbeat bool
 	// The latest valid heartbeat: the gateway's sequence and hash, the
 	// usage, the running charge, the deadline granted and the one it
 	// echoed, and the owner sequence number of its record; heartbeat is
@@ -302,6 +323,8 @@ type hold struct {
 	sent       *sent
 	// basis is what the hold's first heartbeat brought for a reap of it.
 	basis []byte
+	// endIndex is the hold's place in its lease's ends.
+	endIndex int
 }
 
 // decision is an authorization's terminal: its kind and charge, and the
@@ -348,6 +371,9 @@ type Lease struct {
 	nextSeq    int64
 	holds      map[string]*hold
 	decided    map[string]*decision
+	// ends are the open holds, the latest end of life first (endHeap), so a
+	// checkpoint takes it at once.
+	ends endHeap
 	// inflight are the records handed over and not acknowledged, in order,
 	// the first live of them published since the last failure, and the rest
 	// awaiting the flusher's republish; failed is set from a failed publish
@@ -374,9 +400,12 @@ type Lease struct {
 	// past which the next reads (adopt.go); only the renewal round uses it.
 	// unadopted is set by a renewal that found the lease past its cutoff,
 	// and cleared once its drain log is adopted: until then it admits and
-	// decides nothing and answers each heartbeat retry (§4.2).
+	// decides nothing and answers each heartbeat retry (§4.2). handedOff
+	// is set once a forced exit's manifest is handed over: the lease issues
+	// no record more (handoff.go).
 	adopted   time.Time
 	unadopted bool
+	handedOff bool
 
 	// workers are the lease's flusher and the finish of its draining, which
 	// Let waits for: stopped is closed once they end.

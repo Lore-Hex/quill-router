@@ -176,7 +176,7 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 		return
 	}
 	cooling := func(sh *shard, now time.Time) bool {
-		return o.stopped || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
+		return o.stopped || o.handoff != nil || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
 	}
 	o.mu.Lock()
 	sh := o.shardLocked(key)

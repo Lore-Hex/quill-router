@@ -13,11 +13,11 @@ import (
 var (
 	deadline = time.Date(2026, 10, 8, 2, 20, 0, 0, time.UTC)
 	digest   = bytes.Repeat([]byte{0xab}, DigestSize)
-	hash     = bytes.Repeat([]byte{0xcd}, DigestSize)
+	snapHash = bytes.Repeat([]byte{0xcd}, DigestSize)
 )
 
 func snapshot() *Snapshot {
-	return &Snapshot{GatewaySeq: 3, Hash: hash, Usage: []byte(`{"out":40}`), Running: 120, Deadline: deadline}
+	return &Snapshot{GatewaySeq: 3, Hash: snapHash, Usage: []byte(`{"out":40}`), Running: 120, Deadline: deadline}
 }
 
 // one is a valid record of each kind.

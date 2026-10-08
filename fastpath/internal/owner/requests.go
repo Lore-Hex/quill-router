@@ -2,7 +2,9 @@ package owner
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,10 +44,15 @@ var (
 // carries it in one Publish call with room to spare under Pub/Sub's 10 MB
 // request (§4.1); one larger would fail every publish and hold back the
 // lease's records after it. maxBoot is the longest boot binding an
-// admission takes, so its refund's record always fits.
+// admission takes, so its refund's record always fits. maxHeartbeat is the
+// largest heartbeat record: it leaves room for what a hand-off record of its
+// hold alone adds, the boot binding, the hold's deadline, a later snapshot's
+// and the record's numbers at their longest, so every hold the owner takes a
+// heartbeat for can be handed off (§4.2).
 const (
-	maxRecord = 1 << 20
-	maxBoot   = 1 << 10
+	maxRecord    = 1 << 20
+	maxBoot      = 1 << 10
+	maxHeartbeat = maxRecord - 4<<10
 )
 
 // Admission is an authorize's: the hold's estimate e, whether it is a
@@ -54,6 +61,10 @@ type Admission struct {
 	Estimate int64
 	Stream   bool
 	Boot     []byte
+	// OpenHeartbeat: the boot declares the heartbeat at stream open, so a
+	// stream with none issued by the first-heartbeat allowance is released
+	// (§4.5).
+	OpenHeartbeat bool
 }
 
 func (a Admission) valid() error {
@@ -109,7 +120,8 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	if l.booksLocked().Free() < need {
 		return Admitted{}, ErrNoRoom
 	}
-	h := &hold{auth: auth, estimate: a.Estimate, overrun: over, stream: a.Stream, boot: append([]byte(nil), a.Boot...)}
+	h := &hold{auth: auth, estimate: a.Estimate, overrun: over, stream: a.Stream, boot: append([]byte(nil), a.Boot...),
+		openHeartbeat: a.Stream && a.OpenHeartbeat}
 	l.held += h.estimate
 	l.buffer += h.counted()
 	l.holds[auth] = h
@@ -126,9 +138,37 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		}
 		return Admitted{}, ErrPastCutoff
 	}
-	h.endOfLife = now.Add(l.o.cfg.HoldLife)
+	h.admitted, h.endOfLife = now, now.Add(l.o.cfg.HoldLife)
+	heap.Push(&l.ends, h)
 	l.lastAdmit = now
 	return Admitted{Auth: auth, Lease: l.id, EndOfLife: h.endOfLife}, nil
+}
+
+// endHeap is a lease's open holds as a heap, the latest end of life first,
+// as the wall clock reads them: a hold joins it at its admission and leaves
+// at its decision in time in step with the log of their number, whatever
+// the owner's clock did between admissions.
+type endHeap []*hold
+
+func (e endHeap) Len() int           { return len(e) }
+func (e endHeap) Less(i, j int) bool { return e[i].endOfLife.UTC().After(e[j].endOfLife.UTC()) }
+func (e endHeap) Swap(i, j int) {
+	e[i], e[j] = e[j], e[i]
+	e[i].endIndex, e[j].endIndex = i, j
+}
+
+func (e *endHeap) Push(x any) {
+	h := x.(*hold)
+	h.endIndex = len(*e)
+	*e = append(*e, h)
+}
+
+func (e *endHeap) Pop() any {
+	old := *e
+	h := old[len(old)-1]
+	old[len(old)-1] = nil
+	*e = old[:len(old)-1]
+	return h
 }
 
 // counted is the hold's part of the lease's buffer: a stream's from its first
@@ -165,6 +205,13 @@ type HeartbeatOf struct {
 // and hash, is answered as the heartbeat it repeats, without a second
 // publish. Until the lease's drain log is adopted, each is answered retry.
 func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (time.Time, error) {
+	// A basis whose encoding alone passes a heartbeat record's size is
+	// refused before the lease's lock, at a cost that does not grow with
+	// it: encoding it under the lock would keep a hand-off waiting. The
+	// record's own size is checked once it is encoded, as before.
+	if base64.StdEncoding.EncodedLen(len(hb.Basis)) > maxHeartbeat {
+		return time.Time{}, ErrRejected
+	}
 	l.mu.Lock()
 	h := l.holds[auth]
 	if h == nil {
@@ -366,7 +413,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	}
 	r := record.Record{Kind: t.kind, Auth: auth, Estimate: h.estimate, Charge: t.charge, Shortfall: shortfall,
 		Digest: t.digest, Drain: t.drain, SnapshotSeq: t.snapSeq}
-	if t.kind == record.Refund {
+	if t.kind == record.Refund || t.kind == record.Release {
 		r.Boot = h.boot
 	}
 	s, err := l.handOver(r, freed)
@@ -382,6 +429,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	l.buffer -= h.counted()
 	l.pending += freed
 	delete(l.holds, auth)
+	heap.Remove(&l.ends, h.endIndex)
 	if raised {
 		// The shortfall writer stores the new total in Spanner (§4.2).
 		select {
@@ -429,10 +477,10 @@ func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxRecord {
+	if len(data) > maxRecord || (r.Kind == record.Heartbeat && len(data) > maxHeartbeat) {
 		return nil, fmt.Errorf("%w: %d bytes", ErrTooLarge, len(data))
 	}
-	if !l.withinCutoff(l.o.cfg.Clock()) {
+	if !l.withinCutoff(l.o.cfg.Clock()) || l.handedOff {
 		return nil, ErrPastCutoff
 	}
 	l.nextSeq++

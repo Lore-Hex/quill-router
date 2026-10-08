@@ -108,8 +108,91 @@ func (o *Owner) Reap(ctx context.Context) error {
 		for _, d := range l.due(now, o.cfg.Grace) {
 			o.reapOne(ctx, l, d)
 		}
+		l.releaseDue(now, o.cfg.FirstHeartbeat, o.cfg.Grace)
 	}
 	return nil
+}
+
+// releaseDue releases each stream's hold whose boot declares the heartbeat
+// at stream open and for which no heartbeat record was issued by its
+// admission plus the first-heartbeat allowance plus the grace (§4.5,
+// TerminalOrder's OwnerRelease): uncharged, its record naming its boot
+// binding. The test is that none was issued, not acknowledged: one issued
+// and not yet acknowledged may still be stored, so the hold is reaped at
+// its snapshot instead. With no allowance it releases none.
+func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
+	if allowance == 0 {
+		return
+	}
+	due := gather(l, func(h *hold) (string, bool) { return h.auth, released(h, now, allowance+grace) })
+	slices.Sort(due)
+	for len(due) > 0 {
+		n := min(len(due), releaseBatch)
+		if !l.releaseSome(due[:n], now, allowance+grace) {
+			return
+		}
+		due = due[n:]
+	}
+}
+
+// releaseBatch is how many releases a pass decides under one hold of the
+// lease's lock: between batches a hand-off can take it.
+const releaseBatch = 256
+
+// scanBatch is how many holds a pass over a lease's holds visits under one
+// hold of its lock.
+const scanBatch = 1024
+
+// scan calls f with each of the lease's holds under its lock, which it lets
+// go between batches of scanBatch, so a pass over many holds keeps a
+// hand-off waiting no longer than a batch takes; it stops once the lease is
+// let go or handed off. Between batches, and at the end, it calls flush
+// with the lock let go: f keeps what it finds in a buffer of scanBatch,
+// which never grows under the lock, and flush moves it out, so nothing a
+// pass gathers is copied under the lock as it grows with the holds. A map
+// may change while it is ranged over, and here each change comes under the
+// lock, between batches: a hold removed then is not visited after, and one
+// added may be visited or not, so a pass rechecks each hold as it decides
+// it.
+func (l *Lease) scan(f func(h *hold), flush func()) {
+	l.mu.Lock()
+	n := 0
+	for _, h := range l.holds {
+		if l.let || l.handedOff {
+			break
+		}
+		f(h)
+		if n++; n%scanBatch == 0 {
+			l.mu.Unlock()
+			flush()
+			l.mu.Lock()
+		}
+	}
+	l.mu.Unlock()
+	flush()
+}
+
+// released: a hold due for release at now, after the first-heartbeat
+// allowance and the grace.
+func released(h *hold, now time.Time, after time.Duration) bool {
+	return h.openHeartbeat && !h.heartbeat && !now.Before(h.admitted.Add(after))
+}
+
+// releaseSome releases each of auths still open and due, under the lease's
+// lock, and reports whether the pass goes on: not after a decision fails, as
+// every one does once the lease is let go or handed off.
+func (l *Lease) releaseSome(auths []string, now time.Time, after time.Duration) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, auth := range auths {
+		if h := l.holds[auth]; h == nil || !released(h, now, after) {
+			continue
+		}
+		if _, err := l.decide(auth, terminalOf{kind: record.Release}); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // reapable: the lease is held, within its cutoff, and its drain log
@@ -181,6 +264,23 @@ func (l *Lease) adopt(row store.DrainRow) error {
 	return nil
 }
 
+// gather is what visit takes from each of the lease's holds, in a scan: a
+// batch of at most scanBatch, made under the lock, joins the result only with
+// the lock let go, so nothing a pass gathers grows, and is copied, under the
+// lock with the lease's holds.
+func gather[T any](l *Lease, visit func(h *hold) (T, bool)) []T {
+	var out []T
+	batch := make([]T, 0, scanBatch)
+	l.scan(func(h *hold) {
+		if x, ok := visit(h); ok {
+			batch = append(batch, x)
+		}
+	}, func() {
+		out, batch = append(out, batch...), batch[:0]
+	})
+	return out
+}
+
 // dueReap is a hold the reaper reaps, as its full record states it (§4.9):
 // at its last heartbeat's snapshot, the running charge, the basis the first
 // brought, and the boot binding.
@@ -199,20 +299,18 @@ type dueReap struct {
 }
 
 // due are the lease's open holds whose last heartbeat's deadline plus the
-// grace has passed, in order of their authorizations. A hold that never
-// heartbeated has no snapshot to reap at.
+// grace has passed, in order of their authorizations, found by a scan and
+// sorted once its lock is let go. A hold that never heartbeated has no
+// snapshot to reap at.
 func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	var out []dueReap
-	for _, h := range l.holds {
+	out := gather(l, func(h *hold) (dueReap, bool) {
 		if !h.heartbeat || now.Before(h.deadline.Add(grace)) {
-			continue
+			return dueReap{}, false
 		}
-		out = append(out, dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
+		return dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
 			Deadline: h.deadline.UTC(), GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: h.usage, OwnerSeq: h.snapSeq,
-			Basis: h.basis, Boot: h.boot})
-	}
+			Basis: h.basis, Boot: h.boot}, true
+	})
 	slices.SortFunc(out, func(a, b dueReap) int { return strings.Compare(a.Auth, b.Auth) })
 	return out
 }
