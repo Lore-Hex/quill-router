@@ -277,11 +277,13 @@
 
 @media (max-width: 480px) {
   .trnav .menu { margin-left: 0; }
+  .trnav .search-count { display: none; }
 }
 
 @media (max-width: 360px) {
   .trnav .menu { margin-left: auto; }
-  .trnav .search { font-size: 13px; }
+  .trnav .search { gap: 8px; padding: 0 10px; font-size: 13px; }
+  .trnav .search-noun { display: none; }
 }
 
 /* Buttons shared with the homepage */
