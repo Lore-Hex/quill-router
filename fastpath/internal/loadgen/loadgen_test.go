@@ -1242,6 +1242,62 @@ func TestTheRetryQueueIsServedInItsOrder(t *testing.T) {
 	}
 }
 
+// TestACancelledRunAuthorizesNoMore: once a run's context ends in a batch
+// of generations due at once, no more of them call their gateway: the
+// batch stops, and a generation started before the end and not yet at its
+// authorize is recorded cancelled without one.
+func TestACancelledRunAuthorizesNoMore(t *testing.T) {
+	gw := admitting(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	calls, late := 0, 0
+	admit := gw.authorize
+	gw.authorize = func(a frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
+		mu.Lock()
+		if ctx.Err() != nil {
+			late++
+		}
+		if calls++; calls == 10 {
+			cancel()
+		}
+		mu.Unlock()
+		return admit(a)
+	}
+	cfg := config(gw)
+	cfg.Rate, cfg.Duration, cfg.MaxInFlight, cfg.Mix.StreamShare = MaxRate, 5*time.Millisecond, 10_000, 0
+	rep, err := Run(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A generation that found the run going as it came to its authorize
+	// may make it as the run ends: a few, never a batch.
+	if late > 10 || !rep.Cancelled {
+		t.Fatalf("%d of %d authorizes made once the run had ended, %+v", late, calls, rep.Outcomes)
+	}
+	if rep.Started != rep.Outcomes["generation"] ||
+		rep.Outcomes["authorize cancelled"]+int64(calls) != rep.Started {
+		t.Fatalf("%d started, %d authorizes, %+v", rep.Started, calls, rep.Outcomes)
+	}
+}
+
+// TestABatchStopsWhenTheRunEnds: a batch of generations due at once starts
+// none after the run ends.
+func TestABatchStopsWhenTheRunEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var started []int64
+	n := startDue(ctx, 4, 20, func(n int64) {
+		started = append(started, n)
+		if n == 7 {
+			cancel()
+		}
+	})
+	if n != 7 || !slices.Equal(started, []int64{5, 6, 7}) {
+		t.Fatalf("started %v, returned %d", started, n)
+	}
+}
+
 // TestACancelledRunSaysSo: a run whose context ends before its duration
 // does reports itself cancelled, whatever its generations reached; one that
 // runs its course does not.

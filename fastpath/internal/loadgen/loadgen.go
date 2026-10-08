@@ -355,8 +355,8 @@ type Generation struct {
 	// Auth and Lease are the envelope's, when Config.Key opens it.
 	Auth  string `json:"auth,omitempty"`
 	Lease string `json:"lease,omitempty"`
-	// Authorized is the authorize's status, or "error" for a call that
-	// failed.
+	// Authorized is the authorize's status, "error" for a call that
+	// failed, or "cancelled" for one the run's end kept from being made.
 	Authorized string `json:"authorized"`
 	Stream     bool   `json:"stream"`
 	Heartbeats []Beat `json:"heartbeats,omitempty"`
@@ -437,25 +437,25 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	began := time.Now()
 	var all sync.WaitGroup
 	inFlight := make(chan struct{}, cfg.MaxInFlight)
+	start := func(n int64) {
+		select {
+		case inFlight <- struct{}{}:
+			all.Add(1)
+			go func() {
+				defer all.Done()
+				defer func() { <-inFlight }()
+				r.generation(ctx, n)
+			}()
+		default:
+			r.mu.Lock()
+			r.notStarted++
+			r.mu.Unlock()
+		}
+	}
 	var n int64
 	for ctx.Err() == nil {
 		elapsed := min(time.Since(began), cfg.Duration)
-		for due := dueBy(rate, elapsed); n < due; {
-			n++
-			select {
-			case inFlight <- struct{}{}:
-				all.Add(1)
-				go func(n int64) {
-					defer all.Done()
-					defer func() { <-inFlight }()
-					r.generation(ctx, n)
-				}(n)
-			default:
-				r.mu.Lock()
-				r.notStarted++
-				r.mu.Unlock()
-			}
-		}
+		n = startDue(ctx, n, dueBy(rate, elapsed), start)
 		if elapsed == cfg.Duration {
 			break
 		}
@@ -468,6 +468,16 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	rep := r.report()
 	rep.Cancelled = ctx.Err() != nil
 	return rep, r.logErr
+}
+
+// startDue starts the generations after the n-th through the due-th, a batch
+// due at once, and returns the last it started: it stops when ctx ends.
+func startDue(ctx context.Context, n, due int64, start func(n int64)) int64 {
+	for n < due && ctx.Err() == nil {
+		n++
+		start(n)
+	}
+	return n
 }
 
 // exactly is a rate as the decimal it was written in: the shortest decimal
@@ -523,6 +533,13 @@ func (r *run) generation(ctx context.Context, n int64) {
 	estimate := r.estimates.pick(rng)
 	r.count("generation")
 	defer r.record(&g)
+	if ctx.Err() != nil {
+		// The run ended after this generation started and before it
+		// called its gateway: it calls nothing.
+		g.Authorized = "cancelled"
+		r.count("authorize cancelled")
+		return
+	}
 
 	actx, cancel := context.WithTimeout(ctx, cfg.CallWait)
 	began := time.Now()
