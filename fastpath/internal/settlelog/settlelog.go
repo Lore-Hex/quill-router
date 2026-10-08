@@ -364,6 +364,11 @@ func (r *Records) Stop() {
 // library to ask for its outstanding records again.
 var shutdownTimeout = 10 * time.Second
 
+// beforeKeeping, when a test sets it, runs as each delivery's callback
+// begins, before the delivery is kept: as when the client library, stopping,
+// stopped waiting for a callback that had not yet run.
+var beforeKeeping func()
+
 // ackExtension is how long the log holds a record for a member at a time:
 // each extension of its deadline the client library asks for, and the
 // deadline of each record the log sends on the member's stream, the one the
@@ -460,10 +465,17 @@ func (s *Subscription) settle(m *pubsub.Message, ack bool) {
 // to an hour. So when Receive returns it asks for every such record again
 // itself.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
+	// done is set, under s.mu, once Receive has asked again for what it
+	// held: a callback the library left running past its return keeps
+	// nothing, and asks for its record again too.
+	done := false
 	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		if beforeKeeping != nil {
+			beforeKeeping()
+		}
 		lease := m.OrderingKey
 		s.mu.Lock()
-		if ctx.Err() != nil || cctx.Err() != nil || s.active[lease] {
+		if done || ctx.Err() != nil || cctx.Err() != nil || s.active[lease] {
 			s.mu.Unlock()
 			m.Nack()
 			return
@@ -480,6 +492,7 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 			PublishTime: m.PublishTime, Attempt: m.DeliveryAttempt, msg: m, sub: s})
 	})
 	s.mu.Lock()
+	done = true
 	left := s.outstanding
 	s.outstanding = map[*pubsub.Message]bool{}
 	s.mu.Unlock()
@@ -556,14 +569,27 @@ func (s *RecordSubscription) settle(m *pubsub.Message, ack bool) {
 // extending its deadline for up to an hour, as Subscription's Receive
 // says; so when Receive returns it asks for each such message again itself.
 func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Context, *RecordDelivery)) error {
+	// done is as Subscription's Receive keeps it: a callback the library
+	// left running past Receive's return keeps nothing, and asks for its
+	// message again, as one that begins once ctx has ended does.
+	done := false
 	err := s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		if beforeKeeping != nil {
+			beforeKeeping()
+		}
 		s.mu.Lock()
+		if done || ctx.Err() != nil || cctx.Err() != nil {
+			s.mu.Unlock()
+			m.Nack()
+			return
+		}
 		s.outstanding[m] = true
 		s.mu.Unlock()
 		handle(cctx, &RecordDelivery{Authorization: m.Attributes[AuthorizationAttr], Kind: m.Attributes[KindAttr],
 			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m, sub: s})
 	})
 	s.mu.Lock()
+	done = true
 	left := s.outstanding
 	s.outstanding = map[*pubsub.Message]bool{}
 	s.mu.Unlock()

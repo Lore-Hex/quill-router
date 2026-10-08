@@ -628,15 +628,7 @@ func TestAStoppedRecordConsumerLetsGoOfItsMessages(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no handler ran")
 	}
-	// Both messages reach the consumer: the second waits for the place.
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
-		if m := f.srv.Messages(); len(m) == 2 && m[0].Deliveries > 0 && m[1].Deliveries > 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the second message did not reach the consumer")
-		}
-	}
+	receivedBoth(t, f)
 	cancel()
 	if err := <-received; err != nil {
 		t.Fatal(err)
@@ -663,6 +655,111 @@ func TestAStoppedRecordConsumerLetsGoOfItsMessages(t *testing.T) {
 	})
 	if err != nil || !got {
 		t.Fatalf("the next consumer did not get %s: %v", first, err)
+	}
+}
+
+// receivedBoth waits until the client has received both of the topic's
+// messages, as its receipt's deadline change shows each: the second waits
+// for the consumer's one place, and the library's stream, not blocked
+// receiving, is not what a stop ends.
+func receivedBoth(t *testing.T, f *fakeLog) {
+	t.Helper()
+	// Messages gives the server's own messages, Modacks copied under its
+	// lock: only that field is read, not the message whole.
+	receipt := func(m *pstest.Message) bool {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 {
+				return true
+			}
+		}
+		return false
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if m := f.srv.Messages(); len(m) == 2 && receipt(m[0]) && receipt(m[1]) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the consumer did not receive both messages")
+		}
+	}
+}
+
+// TestALateCallbackKeepsNothing: a callback the client library stopped
+// waiting for as the record topic's consumer stopped, and which begins only
+// once Receive has returned, keeps nothing: it asks for its message again,
+// the message is not extended after the stop, and the next consumer gets it.
+// The consumer has one place, which the paused callback's message takes,
+// while the other message waits for it.
+func TestALateCallbackKeepsNothing(t *testing.T) {
+	was := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	paused, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	beforeKeeping = func() {
+		once.Do(func() {
+			close(paused)
+			<-release
+		})
+	}
+	defer func() { shutdownTimeout, beforeKeeping = was, nil }()
+	f := newFakeLog(t, false)
+	r, err := OpenRecords(f.client, f.topic, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	for i := range 2 {
+		if err := wait(t, r.Publish(fmt.Sprint("gwa-", i), FullRecord, []byte(fmt.Sprint("record-", i)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	var handled []string
+	received := make(chan error, 1)
+	go func() {
+		received <- SubscribeRecords(f.client, f.sub, 1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+			mu.Lock()
+			defer mu.Unlock()
+			handled = append(handled, string(d.Data)) // returns, settling nothing
+		})
+	}()
+	select {
+	case <-paused:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no callback ran")
+	}
+	receivedBoth(t, f)
+	cancel()
+	if err := <-received; err != nil {
+		t.Fatal(err)
+	}
+	stopped := time.Now()
+	close(release)
+	time.Sleep(6 * time.Second) // the library extends a held message's deadline every few seconds
+	for _, m := range f.srv.Messages() {
+		for _, a := range m.Modacks {
+			if a.AckDeadline > 0 && a.ReceivedAt.After(stopped) {
+				t.Fatalf("%s's deadline was extended %v after the consumer stopped", m.Data, a.ReceivedAt.Sub(stopped))
+			}
+		}
+	}
+	mu.Lock()
+	if len(handled) != 0 {
+		t.Fatalf("handled after the consumer stopped: %v", handled)
+	}
+	mu.Unlock()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	got := map[string]bool{}
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx2, func(_ context.Context, d *RecordDelivery) {
+		d.Ack()
+		if got[string(d.Data)] = true; len(got) == 2 {
+			cancel2()
+		}
+	})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("the next consumer got %v: %v", got, err)
 	}
 }
 
