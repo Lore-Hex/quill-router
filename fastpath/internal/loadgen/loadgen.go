@@ -81,8 +81,14 @@ func ReadMix(r io.Reader) (Mix, error) {
 // maxMix bounds a mix file.
 const maxMix = 1 << 20
 
-// onceEach reports an object in data that names a field twice: the decoder
-// would take the second, onto what the first set.
+// mixNames are a mix's fields, as written: the decoder matches names
+// regardless of case, so "ESTIMATES" would be a second "estimates".
+var mixNames = map[string]bool{"stream_share": true, "heartbeats": true, "refund_share": true, "estimates": true,
+	"bill_permill": true, "value": true, "weight": true}
+
+// onceEach reports an object in data that names a field twice, or names one
+// other than as a mix writes it: the decoder would take the second, onto
+// what the first set.
 func onceEach(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	type object struct {
@@ -124,6 +130,9 @@ func onceEach(data []byte) error {
 		}
 		if top.key {
 			name := tok.(string)
+			if !mixNames[name] {
+				return fmt.Errorf("loadgen: the mix names %q, no field as a mix writes it", name)
+			}
 			if top.names[name] {
 				return fmt.Errorf("loadgen: the mix names %q twice in one object", name)
 			}
@@ -385,6 +394,9 @@ type Report struct {
 	NotStarted int64             `json:"not_started"`
 	Outcomes   map[string]int64  `json:"outcomes"`
 	Latencies  map[string]Spread `json:"latencies"`
+	// Cancelled: the run's context ended before the run did, so it started
+	// fewer generations than its rate and duration make, or cut some short.
+	Cancelled bool `json:"cancelled,omitempty"`
 }
 
 // Spread is a set of latencies' count and percentiles.
@@ -446,7 +458,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		}
 	}
 	all.Wait()
-	return r.report(), r.logErr
+	rep := r.report()
+	rep.Cancelled = ctx.Err() != nil
+	return rep, r.logErr
 }
 
 // exactly is a rate as the decimal it was written in: the shortest decimal
@@ -569,6 +583,11 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 			wait.Stop()
 			return "cancelled", 0
 		case <-wait.C:
+		}
+		// The timer and the run's end can come together: a heartbeat
+		// starts only while the run lasts.
+		if ctx.Err() != nil {
+			return "cancelled", 0
 		}
 		delivered, _ := mulDiv(bill, seq, beats)
 		snapshot := sha256.Sum256([]byte(g.Request + "/" + strconv.FormatInt(seq, 10)))

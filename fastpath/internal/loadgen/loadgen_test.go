@@ -37,6 +37,8 @@ type fakeGateway struct {
 	authorize  func(frontdoor.AuthorizeOf) (frontdoor.Authorized, error)
 	heartbeat  func(frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error)
 	terminal   func(attempt int) (frontdoor.TerminalAnswer, error)
+	// refund, when set, answers refunds in terminal's place.
+	refund func(frontdoor.RefundOf) (frontdoor.TerminalAnswer, error)
 }
 
 func (f *fakeGateway) called(kind string) {
@@ -77,6 +79,9 @@ func (f *fakeGateway) Refund(_ context.Context, r frontdoor.RefundOf) (frontdoor
 	f.called("refund")
 	n := len(f.refunds)
 	f.mu.Unlock()
+	if f.refund != nil {
+		return f.refund(r)
+	}
 	return f.terminal(n)
 }
 
@@ -712,6 +717,10 @@ func TestAMixIsRead(t *testing.T) {
 			`"estimates":[{"value":100,"weight":1}],"estimates":[{"weight":2}]`, 1),
 		"a bin's field twice": strings.Replace(good, `{"value":100,"weight":2}`,
 			`{"value":100,"value":7,"weight":2}`, 1),
+		"a field twice in another case": strings.Replace(good,
+			`"estimates":[{"value":100,"weight":2},{"value":1000,"weight":1}]`,
+			`"estimates":[{"value":100,"weight":2}],"ESTIMATES":[{"weight":3}]`, 1),
+		"a field in another case": strings.Replace(good, `"stream_share"`, `"Stream_Share"`, 1),
 		// Each beside a bin that would do alone.
 		"a null value":    strings.Replace(good, `{"value":100,"weight":2}`, `{"value":null,"weight":2}`, 1),
 		"a null weight":   strings.Replace(good, `{"value":100,"weight":2}`, `{"value":100,"weight":null}`, 1),
@@ -948,13 +957,16 @@ func TestEachGenerationCarriesItsOwnEnvelope(t *testing.T) {
 	}
 	ownEnvelopes(t, gw)
 
-	// A refund names no request: each sealed envelope's refund and its
-	// retry carry that envelope, and no other's.
+	// A refund names no request: each generation's first refund fails, and
+	// its retry, through the queue, must carry its own envelope, so each
+	// sealed envelope is sent exactly twice.
 	refunding := admitting(t)
-	refunding.terminal = func(attempt int) (frontdoor.TerminalAnswer, error) {
+	failed := map[string]bool{}
+	refunding.refund = func(r frontdoor.RefundOf) (frontdoor.TerminalAnswer, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if attempt%2 == 1 {
+		if !failed[r.Envelope] {
+			failed[r.Envelope] = true
 			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
 		}
 		return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
@@ -972,8 +984,8 @@ func TestEachGenerationCarriesItsOwnEnvelope(t *testing.T) {
 		t.Fatalf("%d envelopes refunded, %d sealed", len(tries), len(refunding.sealed))
 	}
 	for _, e := range refunding.sealed {
-		if tries[e] < 1 {
-			t.Fatalf("a generation's envelope with no refund: %v", tries)
+		if tries[e] != 2 {
+			t.Fatalf("a generation's envelope refunded %d times, not its send and its retry: %v", tries[e], tries)
 		}
 	}
 }
@@ -1033,4 +1045,46 @@ type orderedGateway struct {
 
 func (o *orderedGateway) Settle(_ context.Context, s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
 	return o.settle(s)
+}
+
+// TestACancelledRunSaysSo: a run whose context ends before its duration
+// does reports itself cancelled, whatever its generations reached; one that
+// runs its course does not.
+func TestACancelledRunSaysSo(t *testing.T) {
+	cfg := config(admitting(t))
+	cfg.Rate, cfg.Duration = 1, time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	rep, err := Run(ctx, cfg)
+	if err != nil || !rep.Cancelled {
+		t.Fatalf("a run cut short: %+v %v", rep, err)
+	}
+	if rep, err = Run(context.Background(), config(admitting(t))); err != nil || rep.Cancelled {
+		t.Fatalf("a run that ran its course: %+v %v", rep, err)
+	}
+}
+
+// TestNoHeartbeatStartsOnceTheRunEnds: a heartbeat whose time comes as the
+// run ends is not sent.
+func TestNoHeartbeatStartsOnceTheRunEnds(t *testing.T) {
+	gw := admitting(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	accept := gw.heartbeat
+	gw.heartbeat = func(hb frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
+		if hb.GatewaySeq == 1 {
+			// The run ends as the first heartbeat is answered, and the
+			// second's time comes at once.
+			cancel()
+			time.Sleep(20 * time.Millisecond)
+		}
+		return accept(hb)
+	}
+	cfg := config(gw)
+	cfg.HeartbeatEvery = time.Nanosecond
+	if _, err := Run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(gw.heartbeats) != 1 {
+		t.Fatalf("%d heartbeats sent, the run ended after the first", len(gw.heartbeats))
+	}
 }
