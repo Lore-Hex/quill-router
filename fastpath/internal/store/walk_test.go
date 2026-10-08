@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -150,6 +151,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
 		"commit below S": {RefusedBoundary},
+		"commit ahead":   {RefusedVersion},
 		"gap": {RefusedVersion, "the version alone", RefusedGap, RefusedBoundary,
 			"the record is the next after the stored progress"},
 		"reap": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTerminal, RefusedNoHold,
@@ -704,6 +706,11 @@ func (w *walker) probe() bool {
 		}
 		if want := w.commitRefusal(m); want != "" {
 			try("commit", want, func() { w.commit(m, s, s, want) })
+			if want == RefusedVersion {
+				// Its progress past the stored progress: refused for the
+				// version, it must not move the progress.
+				try("commit ahead", RefusedVersion, func() { w.commitAhead(m, s) })
+			}
 		} else if s.S != ac.NoS {
 			// Past a stored S no owner record is applied, and the progress
 			// never goes back below it: a commit of progress S + 1, or of
@@ -770,15 +777,52 @@ func (w *walker) timed(kind string, reason Refusal, f func()) {
 	}
 }
 
-// unchanged runs a write the store must refuse, and requires the
-// workspace's credit rows and the lease's donors as they were: the lease's
-// row the check after it holds to the shadow.
+// unchanged runs a write the store must refuse, and requires every row a
+// write could touch as it was, read at once after it: the workspace's credit
+// rows, the lease's donors, and its row, holds, packs, chunks and drain rows,
+// each whole.
 func (w *walker) unchanged(kind string, f func()) {
 	w.t.Helper()
-	before := w.credit()
+	before := w.snapshot()
 	f()
-	if after := w.credit(); after != before {
-		w.fatalf("a refused %s changed the credit rows and donors from %s to %s", kind, before, after)
+	if after := w.snapshot(); after != before {
+		w.fatalf("a refused %s changed the rows from %s to %s", kind, before, after)
+	}
+}
+
+// snapshot is what unchanged compares, as text.
+func (w *walker) snapshot() string {
+	w.t.Helper()
+	ctx := context.Background()
+	out := w.credit()
+	loaded, err := w.s.Load(ctx, w.ref)
+	switch {
+	case errors.Is(err, ErrNoLease):
+		out += " no lease"
+	case err != nil:
+		w.fatalf("loading the lease: %v", err)
+	default:
+		loaded.ReadTS = time.Time{}
+		out += fmt.Sprintf(" %+v", loaded)
+	}
+	drain, _, err := w.s.ReadDrainSince(ctx, w.ref, time.Time{})
+	if err != nil {
+		w.fatalf("reading the drain log: %v", err)
+	}
+	return out + fmt.Sprintf(" drain %+v", drain)
+}
+
+// commitAhead commits member m's progress past the stored progress at its
+// version, which the lease has passed: the store must refuse it for the
+// version, moving nothing, the progress least of all.
+func (w *walker) commitAhead(m int8, from ac.State) {
+	w.t.Helper()
+	w.seen["commit"]++
+	req := w.request(m, from)
+	req.AppliedSeq = int64(max(from.Mem[m].Prog, from.Prog)) + 1
+	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
+	if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
+		w.fatalf("member %s's commit ahead of the stored progress: %+v %v", w.c.Members[m], got, err)
 	}
 }
 

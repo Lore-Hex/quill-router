@@ -431,13 +431,18 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	}
 	d.note("book %s %v", l.ref.LeaseID, money)
 	if d.probes.Intn(4) == 0 {
-		// A member that read a later version than the lease's: the store
-		// refuses its commit and changes nothing, as the check after
-		// holds every row to the walk's ledger.
+		// A member that read a later version than the lease's, its
+		// progress past the stored one: the store refuses its commit and
+		// changes nothing, the lease's row read whole at once after it, and
+		// the check after holding every row to the walk's ledger.
+		before := readLease(d.t, d.s, l.ref)
 		got, _, err := d.s.Commit(ctx, []CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1, AppliedSeq: l.seq + 1,
 			Money: money}})
 		if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
 			d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
+		}
+		if after := readLease(d.t, d.s, l.ref); !reflect.DeepEqual(after, before) {
+			d.fatalf("a refused commit changed lease %s from %+v to %+v", l.ref.LeaseID, before, after)
 		}
 		d.seen["refused commit"]++
 	}
