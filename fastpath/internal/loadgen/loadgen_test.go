@@ -351,11 +351,11 @@ func TestAStreamEndsAsTheEnclaveEndsIt(t *testing.T) {
 				t.Fatalf("%s: %d heartbeats, %+v, %+v", c.name, len(gw.heartbeats), g, rep.Outcomes)
 			}
 			echoed(t, gw)
-			// A heartbeat's tries carry one snapshot.
+			// A heartbeat's tries carry it whole: its snapshot, the first's
+			// basis and a later one's echoed deadline.
 			bySeq := map[int64]frontdoor.HeartbeatOf{}
 			for _, hb := range gw.heartbeats {
-				if first, ok := bySeq[hb.GatewaySeq]; ok && (first.Running != hb.Running ||
-					!bytes.Equal(first.Hash, hb.Hash) || first.Usage != hb.Usage) {
+				if first, ok := bySeq[hb.GatewaySeq]; ok && !reflect.DeepEqual(first, hb) {
 					t.Fatalf("%s: heartbeat %d's tries differ: %+v, %+v", c.name, hb.GatewaySeq, first, hb)
 				}
 				bySeq[hb.GatewaySeq] = hb
@@ -648,6 +648,40 @@ func TestTheRateIsKept(t *testing.T) {
 	cfg.Rate, cfg.Duration, cfg.MaxInFlight, cfg.Mix.StreamShare = 100, 290*time.Millisecond, 100, 0
 	if rep, err = Run(context.Background(), cfg); err != nil || rep.Started != 29 || rep.NotStarted != 0 {
 		t.Fatalf("started %d, not %d: %v", rep.Started, rep.NotStarted, err)
+	}
+}
+
+// TestAGenerationHoldsItsSlotToTheEnd: a generation keeps its place among
+// MaxInFlight until it has ended, its stream and its terminal's retries
+// too, not only its authorize: with one place, of ten generations due over
+// 100 ms, one that streams for 210 ms, or whose settle is retried after
+// 200 ms, is the only one started.
+func TestAGenerationHoldsItsSlotToTheEnd(t *testing.T) {
+	for name, set := range map[string]func(gw *fakeGateway, cfg *Config){
+		"a stream": func(gw *fakeGateway, cfg *Config) {
+			cfg.Mix.StreamShare, cfg.HeartbeatEvery = 1, 70*time.Millisecond
+		},
+		"a terminal retried": func(gw *fakeGateway, cfg *Config) {
+			cfg.Mix.StreamShare, cfg.RetryDelays = 0, []time.Duration{200 * time.Millisecond}
+			gw.terminal = func(attempt int) (frontdoor.TerminalAnswer, error) {
+				if attempt == 1 {
+					return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+				}
+				return frontdoor.TerminalAnswer{Status: frontdoor.Won}, nil
+			}
+		},
+	} {
+		gw := admitting(t)
+		cfg := config(gw)
+		cfg.Rate, cfg.Duration, cfg.MaxInFlight = 100, 100*time.Millisecond, 1
+		set(gw, &cfg)
+		rep, err := Run(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Started != 1 || rep.NotStarted != 9 {
+			t.Fatalf("%s: started %d, not %d", name, rep.Started, rep.NotStarted)
+		}
 	}
 }
 
