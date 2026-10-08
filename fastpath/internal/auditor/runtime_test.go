@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -60,6 +61,7 @@ type flaky struct {
 	mu                             sync.Mutex
 	failFind, failLoad, failCommit int
 	lostCommits, lostStops         int
+	lostCloses                     int
 	failLoadOf                     map[string]int // by lease ID
 	// gone makes ReadLease find no lease.
 	gone    bool
@@ -149,6 +151,14 @@ func (f *flaky) Commit(ctx context.Context, reqs []store.CommitRequest) ([]store
 	return got, at, err
 }
 
+func (f *flaky) CloseLease(ctx context.Context, ref store.LeaseRef, version int64, drainRead, now time.Time) (store.CloseResult, error) {
+	got, err := f.Store.CloseLease(ctx, ref, version, drainRead, now)
+	if err == nil && f.take(&f.lostCloses) {
+		return store.CloseResult{}, errInjected
+	}
+	return got, err
+}
+
 func (f *flaky) commitCalls() [][]store.CommitRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -183,12 +193,47 @@ func (d *fakeDelivery) acked() int {
 // runtimeFixture is a runtime on the emulator's store, and a lease of 1,000
 // it granted.
 type runtimeFixture struct {
-	t      *testing.T
-	s      *store.Store
-	store  *flaky
-	ref    store.LeaseRef
-	alerts []string
-	mu     sync.Mutex
+	t       *testing.T
+	s       *store.Store
+	store   *flaky
+	records *fakeRecords
+	ref     store.LeaseRef
+	alerts  []string
+	mu      sync.Mutex
+}
+
+// fakeRecords is the record topic, which keeps what is published to it;
+// failing fails that many publishes.
+type fakeRecords struct {
+	mu      sync.Mutex
+	failing int
+	got     []string // authorization/kind
+	data    [][]byte
+}
+
+type answered struct {
+	id  string
+	err error
+}
+
+func (a answered) Wait(context.Context) (string, error) { return a.id, a.err }
+
+func (r *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failing > 0 {
+		r.failing--
+		return answered{err: errInjected}
+	}
+	r.got = append(r.got, authorization+"/"+kind)
+	r.data = append(r.data, slices.Clone(data))
+	return answered{id: fmt.Sprintf("m%d", len(r.got))}
+}
+
+func (r *fakeRecords) published() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.got)
 }
 
 func newRuntimeFixture(t *testing.T) *runtimeFixture {
@@ -202,7 +247,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &runtimeFixture{t: t, s: s, store: &flaky{Store: s}}
+	f := &runtimeFixture{t: t, s: s, store: &flaky{Store: s}, records: &fakeRecords{}}
 	f.ref = f.grant()
 	return f
 }
@@ -227,7 +272,7 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 func (f *runtimeFixture) runtime(changes ...func(*Config)) *Runtime {
 	f.t.Helper()
 	cfg := Config{Store: f.store, Skew: 2 * time.Second, CommitEvery: time.Hour, MaxBatch: 10, Retry: time.Millisecond,
-		ForgetAfter: time.Hour,
+		ForgetAfter: time.Hour, Grace: time.Minute, MaxLife: 5 * time.Minute, Records: f.records, Wait: time.Second,
 		Alert: func(lease, what string) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -852,5 +897,393 @@ func TestABehindReadTellsWhatTheRowHolds(t *testing.T) {
 	handleAll(rt, tk)
 	if tk.acked() != 1 || !slices.Contains(f.alerted(), "a record of a lease the store does not have") {
 		t.Fatalf("a lease the store no longer has: acknowledged %d, alerts %v", tk.acked(), f.alerted())
+	}
+}
+
+// TestADrainedLeaseIsBookedReapedAndClosed: once its fence tick has stored
+// S, a draining lease's ticks apply its drain log after its owner records,
+// reap a hold past its deadline plus the grace at the tick, its full record
+// on the record topic first, and close the lease at a tick published after
+// the end held; every record is acknowledged.
+func TestADrainedLeaseIsBookedReapedAndClosed(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time // the member's, which says when it saw the end
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	ds := []*fakeDelivery{on(t, f.ref, hb(1, "a", 1, 10)), on(t, f.ref, settle(2, "b", 40, 0))}
+	handleAll(rt, ds...)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.s.Append(ctx, store.DrainTerminal{Ref: f.ref, AuthorizationID: "c", RecordID: "dc", Kind: "settle",
+		Charge: 5, Estimate: 10, Digest: sum("c"), Money: []byte(`{}`), Cause: "past_cutoff"}); err != nil || got.Refused != "" {
+		t.Fatalf("the front door's append: %+v %v", got, err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) *fakeDelivery {
+		n++
+		d := on(t, f.ref, tick(n, at))
+		ds = append(ds, d)
+		handleAll(rt, d)
+		return d
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	round(rt)
+	// A microsecond before a's deadline plus the grace: nothing is reaped.
+	tickAt(deadline.Add(time.Minute - time.Microsecond))
+	if got := f.records.published(); len(got) != 0 {
+		t.Fatalf("a reap before its hold was due: %v", got)
+	}
+	round(rt)
+	// Past a's deadline plus the grace, and past the expiry plus MaxLife and
+	// the grace, since the lease's holds were never listed.
+	late := row.Expiry
+	if deadline.After(late) {
+		late = deadline
+	}
+	late = late.Add(time.Hour)
+	clock = late
+	f.records.mu.Lock()
+	f.records.failing = 1
+	f.records.mu.Unlock()
+	tickAt(late) // a's full record is not published: no reap
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 0 {
+		t.Fatalf("a reap whose full record the topic refused: %+v %v", rows, err)
+	}
+	tickAt(late) // a reaped
+	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
+		t.Fatalf("the record topic: %v", got)
+	}
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 1 || rows[0].RecordID != "reap-a" {
+		t.Fatalf("the reap's row: %+v %v", rows, err)
+	}
+	round(rt)
+	tickAt(late.Add(time.Second)) // the reap's row applied: a's winner
+	round(rt)
+	tickAt(late.Add(3 * time.Second)) // the end seen, at the member's clock: late
+	if l := f.loaded(); l.Lease.State != "draining" {
+		t.Fatalf("closed at the tick that saw the end: %+v", l.Lease)
+	}
+	tickAt(late.Add(2*time.Second - time.Microsecond)) // published within the skew allowance of it
+	if l := f.loaded(); l.Lease.State != "draining" {
+		t.Fatalf("closed at a tick within the skew allowance of the end: %+v", l.Lease)
+	}
+	tickAt(late.Add(2 * time.Second)) // the close
+	l := f.loaded()
+	if l.Lease.State != "closed" || l.Lease.Consumed != 55 || l.Lease.AppliedSeq != 2 || len(l.Holds) != 0 {
+		t.Fatalf("the closed lease: %+v", l)
+	}
+	won := map[string]string{}
+	for _, p := range l.Packs {
+		for _, w := range p.Winners {
+			won[w.AuthorizationID] = w.RecordID
+		}
+	}
+	if !reflect.DeepEqual(won, map[string]string{"a": "reap-a", "b": "o2", "c": "dc"}) {
+		t.Fatalf("the winners: %v", won)
+	}
+	for i, d := range ds {
+		if d.acked() != 1 {
+			t.Fatalf("record %d acknowledged %d times", i, d.acked())
+		}
+	}
+}
+
+// TestARejectedTickReapsNothing: a tick the member cannot apply, one that
+// names another lease under this lease's key, drains nothing, though its
+// time is past a hold's deadline plus the grace.
+func TestARejectedTickReapsNothing(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, hb(1, "a", 1, 10)))
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handleAll(rt, on(t, f.ref, tick(1, row.FenceTime.Time.Add(2*time.Second)))) // the fence tick: S
+	round(rt)
+	other := tick(2, deadline.Add(time.Hour))
+	other.Lease = "lease-2"
+	data, err := record.Encode(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.alerts = nil
+	handleAll(rt, &fakeDelivery{lease: f.ref.LeaseID, data: data, at: start})
+	if got := f.alerted(); !slices.Contains(got, "a record the auditor cannot apply") {
+		t.Fatalf("the alerts: %v", got)
+	}
+	if got := f.records.published(); len(got) != 0 {
+		t.Fatalf("a reap at a tick the member rejected: %v", got)
+	}
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 0 {
+		t.Fatalf("a reap's row at a tick the member rejected: %+v %v", rows, err)
+	}
+	handleAll(rt, on(t, f.ref, tick(2, deadline.Add(time.Hour))))
+	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
+		t.Fatalf("the record topic at the next tick: %v", got)
+	}
+}
+
+// closing drains the fixture's lease, a settle its one record, to its end:
+// the fence tick and S, then a tick at which the member sees the end. It
+// returns the delivered ticks and the time a tick closes the lease at.
+func closing(t *testing.T, f *runtimeFixture, rt *Runtime, clock *time.Time) ([]*fakeDelivery, time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	handleAll(rt, on(t, f.ref, settle(1, "b", 40, 0)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := row.Expiry.Add(time.Hour) // past the expiry plus MaxLife and the grace: no list is needed
+	*clock = late
+	ds := []*fakeDelivery{on(t, f.ref, tick(1, row.FenceTime.Time.Add(2*time.Second)))} // the fence tick: S
+	handleAll(rt, ds[0])
+	round(rt)
+	ds = append(ds, on(t, f.ref, tick(2, late))) // the end seen
+	handleAll(rt, ds[1])
+	return ds, late.Add(2 * time.Second)
+}
+
+// doneHeld reports whether the runtime holds the lease done, its member
+// dropped.
+func doneHeld(rt *Runtime, id string) bool {
+	rt.mu.Lock()
+	h := rt.leases[id]
+	rt.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.done && h.lease == nil
+}
+
+// TestACloseWhoseAnswerIsLostIsReadAgain: a close that lands but loses its
+// answer drops the member; the next round of commits reads the lease
+// again, finds it closed, and its member done, with no tick to come.
+func TestACloseWhoseAnswerIsLostIsReadAgain(t *testing.T) {
+	f := newRuntimeFixture(t)
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	ds, at := closing(t, f, rt, &clock)
+	f.store.mu.Lock()
+	f.store.lostCloses = 1
+	f.store.mu.Unlock()
+	d := on(t, f.ref, tick(3, at))
+	handleAll(rt, d)
+	if l := f.loaded(); l.Lease.State != "closed" {
+		t.Fatalf("the close did not land: %+v", l.Lease)
+	}
+	round(rt)
+	if !doneHeld(rt, f.ref.LeaseID) {
+		t.Fatal("a lease closed with its answer lost is not done")
+	}
+	for i, d := range append(ds, d) {
+		if d.acked() != 1 {
+			t.Fatalf("tick %d acknowledged %d times", i, d.acked())
+		}
+	}
+}
+
+// TestARefusedCloseIsReadAgainWithNoTick: a close refused since another
+// member closed the lease first drops the member; the next round of commits
+// reads the lease again, with no tick to come, and acknowledges its ticks.
+func TestARefusedCloseIsReadAgainWithNoTick(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	ds, at := closing(t, f, rt, &clock)
+	l := f.loaded()
+	if got, err := f.s.CloseLease(ctx, f.ref, l.Lease.CommitVersion, time.Now(), at); err != nil || got.Refused != "" {
+		t.Fatalf("another member's close: %+v %v", got, err)
+	}
+	d := on(t, f.ref, tick(3, at))
+	handleAll(rt, d)
+	if d.acked() != 0 {
+		t.Fatal("a tick acknowledged at a refused close")
+	}
+	round(rt)
+	if !doneHeld(rt, f.ref.LeaseID) {
+		t.Fatal("a lease another member closed is not done")
+	}
+	for i, d := range append(ds, d) {
+		if d.acked() != 1 {
+			t.Fatalf("tick %d acknowledged %d times", i, d.acked())
+		}
+	}
+}
+
+// fakeLog is the settle log, which keeps the ticks published to it;
+// failing fails that many publishes.
+type fakeLog struct {
+	mu      sync.Mutex
+	failing int
+	ticks   map[string][]record.Record
+	resumed []string
+}
+
+func (l *fakeLog) Publish(lease string, data []byte) Waiter {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failing > 0 {
+		l.failing--
+		return answered{err: errInjected}
+	}
+	r, err := record.Decode(data)
+	if err != nil {
+		return answered{err: err}
+	}
+	l.ticks[lease] = append(l.ticks[lease], r)
+	return answered{id: "t"}
+}
+
+func (l *fakeLog) Resume(lease string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.resumed = append(l.resumed, lease)
+}
+
+// TestTheTickerDrainsAndTicks: it marks a lease whose expiry passed
+// draining, and publishes a tick carrying its clock's time under each
+// draining lease of its region; a lease whose tick failed has its key
+// resumed.
+func TestTheTickerDrainsAndTicks(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	now := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	log := &fakeLog{ticks: map[string][]record.Record{}}
+	tk, err := NewTicker(TickerConfig{Store: f.s, Log: log, Region: "us-central1", Every: time.Hour, Limit: 1000,
+		Wait: time.Second, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk.round(ctx)
+	if row, _, err := f.s.ReadLease(ctx, f.ref); err != nil || row.State != "draining" || row.DrainedBy.StringVal != "auditor" {
+		t.Fatalf("the expired lease: %+v %v", row, err)
+	}
+	got := log.ticks[f.ref.LeaseID]
+	if len(got) != 1 || got[0].Kind != record.Tick || !got[0].TickAt.Equal(now) || got[0].TickNumber != now.UnixMicro() {
+		t.Fatalf("the lease's ticks: %+v", got)
+	}
+	log.failing = 1000
+	tk.round(ctx)
+	if !slices.Contains(log.resumed, f.ref.LeaseID) {
+		t.Fatalf("a failed tick's key was not resumed: %v", log.resumed)
+	}
+	// A page at a time: every draining lease is ticked, whatever the page.
+	other := f.grant()
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, other); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	log.failing, log.ticks = 0, map[string][]record.Record{}
+	tk.cfg.Limit = 1
+	tk.round(ctx)
+	if len(log.ticks[f.ref.LeaseID]) != 1 || len(log.ticks[other.LeaseID]) != 1 {
+		t.Fatalf("ticks a page at a time: %d and %d", len(log.ticks[f.ref.LeaseID]), len(log.ticks[other.LeaseID]))
+	}
+}
+
+// TestAMemberReadAgainReadsTheDrainLogFromItsFirstRow: rows a dropped
+// member applied and never committed are applied again by the member read
+// in its place, the first for an authorization winning still.
+func TestAMemberReadAgainReadsTheDrainLogFromItsFirstRow(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, settle(1, "b", 40, 0)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	round(rt)
+	appendRow := func(id string, charge int64) {
+		t.Helper()
+		if got, err := f.s.Append(ctx, store.DrainTerminal{Ref: f.ref, AuthorizationID: "a", RecordID: id,
+			Kind: "settle", Charge: charge, Estimate: 10, Digest: sum(id), Money: []byte(`{}`),
+			Cause: "past_cutoff"}); err != nil || got.Refused != "" {
+			t.Fatalf("the append of %s: %+v %v", id, got, err)
+		}
+	}
+	appendRow("d7", 7)
+	tickAt(row.FenceTime.Time.Add(3 * time.Second)) // d7 applied
+	f.store.mu.Lock()
+	f.store.failCommit = 1
+	f.store.mu.Unlock()
+	round(rt) // the commit fails: the member is read again
+	appendRow("d11", 11)
+	tickAt(row.FenceTime.Time.Add(4 * time.Second))
+	round(rt)
+	won := map[string]store.Winner{}
+	for _, p := range f.loaded().Packs {
+		for _, w := range p.Winners {
+			won[w.AuthorizationID] = w
+		}
+	}
+	if w := won["a"]; w.RecordID != "d7" || w.Charge != 7 {
+		t.Fatalf("a's winner: %+v", w)
+	}
+}
+
+// TestAnUnlistedLeaseClosesOnlyOnceItsHoldsCouldHaveEnded: a lease whose
+// holds no list named ends no sooner than its expiry plus their maximum
+// life plus the grace, and closes at a tick published the skew allowance
+// after the member saw that.
+func TestAnUnlistedLeaseClosesOnlyOnceItsHoldsCouldHaveEnded(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	handleAll(rt, on(t, f.ref, settle(1, "b", 40, 0)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		clock = at
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+		round(rt)
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second)) // the fence tick: S
+	end := row.Expiry.Add(5*time.Minute + time.Minute)
+	for _, at := range []time.Time{end.Add(-time.Minute), end, end.Add(2*time.Second - time.Microsecond)} {
+		tickAt(at)
+		if l := f.loaded(); l.Lease.State != "draining" {
+			t.Fatalf("closed at %v, its holds' end %v: %+v", at, end, l.Lease)
+		}
+	}
+	tickAt(end.Add(2 * time.Second))
+	if l := f.loaded(); l.Lease.State != "closed" {
+		t.Fatalf("not closed the skew allowance after its holds' end: %+v", l.Lease)
 	}
 }
