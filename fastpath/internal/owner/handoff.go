@@ -91,7 +91,7 @@ func (o *Owner) Handoff(ctx context.Context) error {
 // whether its manifest was acknowledged while ctx lasted and the lease was
 // held.
 func (l *Lease) handedOver(ctx context.Context) bool {
-	m := l.handoff()
+	m := l.handoff(ctx)
 	if m == nil {
 		return false
 	}
@@ -110,7 +110,7 @@ func (l *Lease) handedOver(ctx context.Context) bool {
 // record follows the manifest. It returns the manifest's record, or nil
 // if it handed none over: past the cutoff, or with a record the log cannot
 // take.
-func (l *Lease) handoff() *sent {
+func (l *Lease) handoff(ctx context.Context) *sent {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.closing = true
@@ -138,19 +138,35 @@ func (l *Lease) handoff() *sent {
 		return nil
 	}
 	// Each chunk is sized as it is handed over, at the sequence number it
-	// takes.
+	// takes: its first hold's record is encoded, and each hold after it adds
+	// its own encoding and a comma, as JSON writes a list, so sizing takes
+	// time in step with the holds. A hand-off whose time is up stops between
+	// chunks, and counts as none.
+	sizes := make([]int, len(holds))
+	for i, h := range holds {
+		data, err := json.Marshal(h)
+		if err != nil {
+			return nil
+		}
+		sizes[i] = len(data)
+	}
 	var seqs []int64
-	for rest := holds; len(rest) > 0; {
+	for at := 0; at < len(holds); {
+		if ctx.Err() != nil {
+			return nil
+		}
+		size := l.encodedSize(holds[at : at+1])
 		n := 1
-		for n < len(rest) && l.fits(rest[:n+1]) {
+		for at+n < len(holds) && size+1+sizes[at+n] <= maxRecord {
+			size += 1 + sizes[at+n]
 			n++
 		}
-		s, err := l.handOver(record.Record{Kind: record.Handoff, Holds: rest[:n]}, 0)
+		s, err := l.handOver(record.Record{Kind: record.Handoff, Holds: holds[at : at+n]}, 0)
 		if err != nil {
 			return nil
 		}
 		seqs = append(seqs, s.seq)
-		rest = rest[n:]
+		at += n
 	}
 	m, err := l.handOver(record.Record{Kind: record.Manifest, Manifest: &record.ManifestOf{Chunks: len(seqs),
 		HoldsDigest: digest, Seqs: seqs}}, 0)
@@ -161,10 +177,14 @@ func (l *Lease) handoff() *sent {
 	return m
 }
 
-// fits: a hand-off record of the holds, numbered as the lease's next, is
-// within the settle log's record size.
-func (l *Lease) fits(holds []record.HeldHold) bool {
+// encodedSize is the size of a hand-off record of the holds, numbered as
+// the lease's next; past the settle log's record size if it cannot be
+// encoded.
+func (l *Lease) encodedSize(holds []record.HeldHold) int {
 	data, err := record.Encode(record.Record{Version: record.Version, Lease: l.id, Epoch: l.o.cfg.Epoch,
 		Seq: l.nextSeq, Kind: record.Handoff, Holds: holds})
-	return err == nil && len(data) <= maxRecord
+	if err != nil {
+		return maxRecord + 1
+	}
+	return len(data)
 }

@@ -92,7 +92,19 @@ func TestAStreamWithNoHeartbeatIsReleased(t *testing.T) {
 			Basis: []byte("terms")})
 		answered <- err
 	}()
-	waitFor(t, "the heartbeat's record", func() bool { return len(h.log.records(t, "lease-1")) == 1 })
+	waitFor(t, "the heartbeat's record", func() bool {
+		for _, r := range h.log.records(t, "lease-1") {
+			if r.Kind == record.Heartbeat && r.Auth == issued {
+				return true
+			}
+		}
+		return false
+	})
+	select {
+	case err := <-answered:
+		t.Fatalf("the heartbeat answered with its acknowledgement held: %v", err)
+	default:
+	}
 	h.clock.advance(70 * time.Second)
 	reapPass(t, h)
 	if ts := terminals(t, h); len(ts) != 0 {
@@ -454,5 +466,80 @@ func TestAChunkIsSizedAtItsOwnSequence(t *testing.T) {
 		if err != nil || len(data) > maxRecord || len(c.Holds) != 1 || c.Holds[0].Auth != auths[i] || c.Seq != int64(9+i) {
 			t.Fatalf("chunk %d at %d: %d bytes, %d holds, %v", i, c.Seq, len(data), len(c.Holds), err)
 		}
+	}
+}
+
+// TestAnExitingOwnerAsksForNoLease: once a forced exit starts, a shard
+// whose leases take no request asks Spanner for none.
+func TestAnExitingOwnerAsksForNoLease(t *testing.T) {
+	f, sp := shardFixture(t)
+	if _, err := f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("the first request: %v", err)
+	}
+	ls := f.waitLeases(t, 1)
+	f.log.hold()
+	done := make(chan error, 1)
+	go func() { done <- f.owner.Handoff(context.Background()) }()
+	waitFor(t, "the manifest", func() bool {
+		for _, r := range f.log.records(t, ls[0].id) {
+			if r.Kind == record.Manifest {
+				return true
+			}
+		}
+		return false
+	})
+	for range 3 {
+		f.clock.advance(time.Minute) // past the cooldown
+		if _, err := f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}); err == nil {
+			t.Fatal("a request admitted during a hand-off")
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if grants := sp.granted(); len(grants) != 1 {
+		t.Fatalf("%d grants asked for during a hand-off", len(grants)-1)
+	}
+	f.log.letGo()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAHandOffKeepsToItsDeadline: one whose time is up hands nothing over
+// and lets its leases go at once; and many holds are sized in time in step
+// with them.
+func TestAHandOffKeepsToItsDeadline(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 40
+	f.lease.mu.Unlock()
+	for range 8000 {
+		f.admit(t, 1, false)
+	}
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	began := time.Now()
+	if err := f.owner.Handoff(ended); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a hand-off whose time was up: %v", err)
+	}
+	if chunks, m := handoffRecords(t, f); len(chunks) != 0 || m != nil || time.Since(began) > 2*time.Second {
+		t.Fatalf("%d chunks, manifest %v, after %v", len(chunks), m != nil, time.Since(began))
+	}
+	if _, ok := f.owner.Lease("lease-1"); ok {
+		t.Fatal("the lease held after its hand-off")
+	}
+
+	g, _ := releaseFixture(t)
+	g.lease.mu.Lock()
+	g.lease.allocation = 1 << 40
+	g.lease.mu.Unlock()
+	for range 8000 {
+		g.admit(t, 1, false)
+	}
+	began = time.Now()
+	if err := g.owner.Handoff(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if chunks, m := handoffRecords(t, g); len(chunks) == 0 || m == nil || time.Since(began) > 2*time.Second {
+		t.Fatalf("8,000 holds handed off in %d chunks, manifest %v, in %v", len(chunks), m != nil, time.Since(began))
 	}
 }
