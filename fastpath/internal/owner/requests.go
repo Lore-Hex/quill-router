@@ -163,7 +163,7 @@ type HeartbeatOf struct {
 // accepted one under the lease, and answers with the deadline it grants once
 // the record is acknowledged before the cutoff. A replay, the same sequence
 // and hash, is answered as the heartbeat it repeats, without a second
-// publish.
+// publish. Until the lease's drain log is adopted, each is answered retry.
 func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (time.Time, error) {
 	l.mu.Lock()
 	h := l.holds[auth]
@@ -179,6 +179,12 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		// Only a stream heartbeats; another hold keeps its end of life.
 		l.mu.Unlock()
 		return time.Time{}, ErrRejected
+	}
+	if l.unadopted {
+		// The drain log a renewal left to adopt may have this hold's
+		// terminal, so no deadline is answered, a replay's either.
+		l.mu.Unlock()
+		return time.Time{}, ErrRetry
 	}
 	if h.heartbeat {
 		switch {
@@ -208,7 +214,7 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		}
 	}
 	now := l.o.cfg.Clock()
-	if !l.withinCutoff(now) || l.failed || l.unadopted {
+	if !l.withinCutoff(now) || l.failed {
 		l.mu.Unlock()
 		return time.Time{}, ErrRetry
 	}

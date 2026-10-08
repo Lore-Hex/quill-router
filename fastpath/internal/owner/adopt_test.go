@@ -333,7 +333,14 @@ func TestARenewalPastTheCutoffAdoptsBeforeDecidingAgain(t *testing.T) {
 	ctx := context.Background()
 	a := f.admit(t, 10, false)
 	s := f.admit(t, 10, true)
-	f.clock.advance(59 * time.Second) // the lease's expiry is a minute away, its cutoff two seconds before
+	r := f.admit(t, 10, true)
+	f.clock.advance(55 * time.Second) // the lease's expiry is a minute away, its cutoff two seconds before
+	first := HeartbeatOf{GatewaySeq: 1, Hash: sum("r1"), Usage: 1, Running: 1, Basis: []byte("terms")}
+	granted, err := f.lease.Heartbeat(ctx, r, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(4 * time.Second)
 	if _, err := f.lease.Settle(ctx, a, 15, sum("late")); !errors.Is(err, ErrPastCutoff) {
 		t.Fatalf("a settle past the cutoff: %v", err)
 	}
@@ -352,6 +359,9 @@ func TestARenewalPastTheCutoffAdoptsBeforeDecidingAgain(t *testing.T) {
 		Basis: []byte("terms")}); !errors.Is(err, ErrRetry) {
 		t.Fatalf("a heartbeat before the adoption: %v", err)
 	}
+	if _, err := f.lease.Heartbeat(ctx, r, first); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat's replay before the adoption: %v", err)
+	}
 	if b := f.lease.Books(); b != before || len(terminals(t, f)) != n {
 		t.Fatalf("the books before the adoption: %+v, then %+v", before, b)
 	}
@@ -361,6 +371,9 @@ func TestARenewalPastTheCutoffAdoptsBeforeDecidingAgain(t *testing.T) {
 	}
 	if out, err := f.lease.Refund(ctx, a); err != nil || out.Kind != record.Settle || out.Charge != 15 {
 		t.Fatalf("a refund after the adoption: %+v %v", out, err)
+	}
+	if got, err := f.lease.Heartbeat(ctx, r, first); err != nil || !got.Equal(granted) {
+		t.Fatalf("a heartbeat's replay after the adoption: %v %v, granted %v", got, err, granted)
 	}
 	f.admit(t, 1, false)
 

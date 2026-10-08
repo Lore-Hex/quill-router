@@ -374,7 +374,7 @@ type Lease struct {
 	// past which the next reads (adopt.go); only the renewal round uses it.
 	// unadopted is set by a renewal that found the lease past its cutoff,
 	// and cleared once its drain log is adopted: until then it admits and
-	// decides nothing (§4.2).
+	// decides nothing and answers each heartbeat retry (§4.2).
 	adopted   time.Time
 	unadopted bool
 
