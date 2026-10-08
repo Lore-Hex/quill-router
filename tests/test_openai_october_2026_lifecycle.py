@@ -18,15 +18,17 @@ _RETIRING = {
     "openai/gpt-4-turbo": "gpt-4-turbo",
     "openai/gpt-4.1-nano": "gpt-4.1-nano",
     "openai/gpt-4o-2024-05-13": "gpt-4o-2024-05-13",
+    "openai/o1": "o1",
+    "openai/o1-pro": "o1-pro",
+    "openai/o3-mini": "o3-mini",
+    "openai/o4-mini": "o4-mini",
 }
 _RETAINED = {
     "openai/gpt-4.1": "gpt-4.1",
     "openai/gpt-4.1-mini": "gpt-4.1-mini",
     "openai/gpt-4o": "gpt-4o",
     "openai/gpt-4o-2024-08-06": "gpt-4o-2024-08-06",
-    "openai/o1": "o1",
-    "openai/o3-mini": "o3-mini",
-    "openai/o4-mini": "o4-mini",
+    "openai/o3": "o3",
 }
 
 
