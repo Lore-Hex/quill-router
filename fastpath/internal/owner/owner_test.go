@@ -33,6 +33,7 @@ type fakeLog struct {
 	attempts    []attempt
 	published   map[string]int
 	onRepublish func()
+	heldErr     error
 	onPublish   func(data []byte)
 }
 
@@ -62,6 +63,8 @@ func (f *fakeLog) attemptsFrom(t time.Time) []attempt {
 type waiter struct {
 	err  error
 	hold chan struct{}
+	// held, for a held publish, is what it ends with once let go.
+	held func() error
 }
 
 func (w waiter) Wait(ctx context.Context) (string, error) {
@@ -70,6 +73,9 @@ func (w waiter) Wait(ctx context.Context) (string, error) {
 		case <-w.hold:
 		case <-ctx.Done():
 			return "", ctx.Err()
+		}
+		if w.held != nil {
+			return "", w.held()
 		}
 	}
 	return "", w.err
@@ -99,7 +105,7 @@ func (f *fakeLog) Publish(lease string, data []byte) Waiter {
 	}
 	f.stored[lease] = append(f.stored[lease], append([]byte(nil), data...))
 	if f.holding {
-		return waiter{hold: f.release}
+		return waiter{hold: f.release, held: f.heldOutcome}
 	}
 	return waiter{}
 }
@@ -129,6 +135,20 @@ func (f *fakeLog) letGo() {
 	defer f.mu.Unlock()
 	f.holding = false
 	close(f.release)
+}
+
+// letGoFailing ends every held publish with err.
+func (f *fakeLog) letGoFailing(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.holding, f.heldErr = false, err
+	close(f.release)
+}
+
+func (f *fakeLog) heldOutcome() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heldErr
 }
 
 func (f *fakeLog) records(t *testing.T, lease string) []record.Record {

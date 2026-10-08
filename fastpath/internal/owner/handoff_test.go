@@ -905,3 +905,41 @@ func TestAReleaseSkipsAHoldThatHeartbeated(t *testing.T) {
 		t.Fatalf("%d holds released", released)
 	}
 }
+
+// TestAHandOffInterruptsARepublish: after a failed publish the flusher
+// hands the lease's backlog to its key again a batch at a time, so a
+// hand-off whose time is up takes the lease's lock between batches and lets
+// the lease go at once, though the backlog is 50,000 records.
+func TestAHandOffInterruptsARepublish(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 40
+	f.lease.mu.Unlock()
+	const holds = 50_000
+	for range holds {
+		if _, err := f.lease.Admit(Admission{Estimate: 1, Stream: true, Boot: boot, OpenHeartbeat: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.clock.advance(70 * time.Second)
+	// Every release is handed over behind the first's acknowledgement, held;
+	// then that acknowledgement fails, and the flusher republishes them all.
+	f.log.hold()
+	reapPass(t, f)
+	republishing := make(chan struct{})
+	var once sync.Once
+	f.log.mu.Lock()
+	f.log.onRepublish = func() { once.Do(func() { close(republishing) }) }
+	f.log.mu.Unlock()
+	f.log.letGoFailing(errors.New("the publish failed"))
+	<-republishing
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	if err := f.owner.Handoff(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a hand-off whose time ran out: %v", err)
+	}
+	if took := time.Since(began); took > 50*time.Millisecond {
+		t.Fatalf("the hand-off let its lease go %v after it began", took)
+	}
+}

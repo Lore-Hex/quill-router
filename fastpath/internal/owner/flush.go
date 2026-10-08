@@ -99,21 +99,40 @@ func (l *Lease) flush() {
 	}
 }
 
+// republishBatch is how many records republish hands over under one hold
+// of the lease's lock: between batches a hand-off can take it.
+const republishBatch = 256
+
 // republish resumes the lease's key and hands it every record not
-// acknowledged again, in order, each only before the cutoff. A record the
-// cutoff stops waits, and keeps every record after it waiting too.
+// acknowledged again, in order, each only before the cutoff, a batch at a
+// time. A record the cutoff stops waits, and keeps every record after it
+// waiting too. Between batches the records not yet handed over keep their
+// place: l.live counts those handed over since the failure, in order, and a
+// record handed over meanwhile waits behind them (handOver).
 func (l *Lease) republish() {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if len(l.inflight) == 0 || !l.withinCutoff(l.o.cfg.Clock()) {
+		l.mu.Unlock()
 		return
 	}
 	l.o.pub.Resume(l.id)
-	for _, x := range l.inflight {
-		if !l.withinCutoff(l.o.cfg.Clock()) {
-			return
+	l.mu.Unlock()
+	for l.republishSome() {
+	}
+}
+
+// republishSome hands over the next batch of records not yet republished,
+// and reports whether any remain to hand over.
+func (l *Lease) republishSome() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for n := 0; n < republishBatch; n++ {
+		if l.live == len(l.inflight) || !l.withinCutoff(l.o.cfg.Clock()) {
+			return false
 		}
+		x := l.inflight[l.live]
 		x.waiter = l.o.pub.Publish(l.id, x.data)
 		l.live++
 	}
+	return l.live < len(l.inflight)
 }
