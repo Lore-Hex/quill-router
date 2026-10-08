@@ -96,7 +96,10 @@ func Defaults() Config {
 		Ring: time.Second,
 		Owner: owner.Config{AnswerWait: 5 * time.Second, HeartbeatEvery: 30 * time.Second, RenewEvery: 5 * time.Second,
 			KeyStatus: 1, TopUps: owner.TopUps{LowWater: 1000, Cooldown: time.Second, Horizon: time.Minute, Min: 10_000,
-				Max: 10_000_000, IdleAfter: 10 * time.Minute, MaxLife: time.Hour}},
+				Max: 10_000_000, IdleAfter: 10 * time.Minute, MaxLife: time.Hour},
+			// The authorize-to-heartbeat latency, the provider's out of it:
+			// a declared stream's first heartbeat is sent at its opening.
+			FirstHeartbeat: 10 * time.Second},
 		FrontDoor: frontdoor.Config{OwnerWait: time.Second, PublishWait: 5 * time.Second, PeerWait: 800 * time.Millisecond,
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},

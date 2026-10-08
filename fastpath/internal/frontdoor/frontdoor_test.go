@@ -59,6 +59,7 @@ type fakeOwners struct {
 	terminal   OwnerTerminalAnswer
 	heartbeats []OwnerHeartbeat
 	terminals  []OwnerTerminal
+	authorizes []OwnerAuthorize
 }
 
 func (f *fakeOwners) reach(ctx context.Context, address string) error {
@@ -73,6 +74,7 @@ func (f *fakeOwners) reach(ctx context.Context, address string) error {
 
 func (f *fakeOwners) Authorize(ctx context.Context, address string, req OwnerAuthorize) (OwnerAdmitted, error) {
 	f.ev.add("owner %s authorize %d", address, req.Shard)
+	f.authorizes = append(f.authorizes, req)
 	if err := f.reach(ctx, address); err != nil {
 		return OwnerAdmitted{}, err
 	}
@@ -258,18 +260,28 @@ func checkEvents(t *testing.T, ev *events, want ...string) {
 }
 
 // TestAnAuthorizeGoesToItsShardsOwner: a request's own hash picks its
-// workspace's shard, and the shard's owner by rendezvous hashing gets it.
+// workspace's shard, and the shard's owner by rendezvous hashing gets it,
+// with all the authorize says of the hold: its estimate, whether it streams,
+// its boot binding, and whether that boot declares the heartbeat at stream
+// open.
 func TestAnAuthorizeGoesToItsShardsOwner(t *testing.T) {
 	for _, k := range []int64{1, 4} {
-		f := newDoor(t, k)
-		shard := pick("request-1", k)
-		f.owners.admitted[shard] = OwnerAdmitted{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}
-		got := f.door.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "request-1", Estimate: 40,
-			Boot: []byte("boot")})
-		if want := (Authorized{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}); got != want {
-			t.Fatalf("K=%d: %+v, want %+v", k, got, want)
+		for _, open := range []bool{false, true} {
+			f := newDoor(t, k)
+			shard := pick("request-1", k)
+			f.owners.admitted[shard] = OwnerAdmitted{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}
+			got := f.door.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "request-1",
+				Estimate: 40, Stream: open, Boot: []byte("boot"), OpenHeartbeat: open})
+			if want := (Authorized{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}); got != want {
+				t.Fatalf("K=%d: %+v, want %+v", k, got, want)
+			}
+			checkEvents(t, f.ev, fmt.Sprintf("owner %s authorize %d", f.ownerOf(shard), shard))
+			want := []OwnerAuthorize{{Workspace: "ws-1", Shard: shard, Estimate: 40, Stream: open, Boot: []byte("boot"),
+				OpenHeartbeat: open}}
+			if !reflect.DeepEqual(f.owners.authorizes, want) {
+				t.Fatalf("K=%d: the owner was sent %+v, want %+v", k, f.owners.authorizes, want)
+			}
 		}
-		checkEvents(t, f.ev, fmt.Sprintf("owner %s authorize %d", f.ownerOf(shard), shard))
 	}
 	seen := map[int64]bool{}
 	for i := 0; i < 64; i++ {
@@ -322,6 +334,30 @@ func TestAShardWithoutRoomTriesOneOtherShard(t *testing.T) {
 	f.owners.admitted[0] = OwnerAdmitted{Status: Busy}
 	if got := f.door.Authorize(ctx, a); got.Status != Busy {
 		t.Fatalf("an unsharded workspace: %+v", got)
+	}
+
+	// A declared stream's request goes to the other shard's owner with its
+	// declaration, after a busy owner and after one not reached.
+	declared := a
+	declared.Stream, declared.OpenHeartbeat = true, true
+	for _, reached := range []bool{true, false} {
+		d := newDoor(t, 4)
+		if reached {
+			d.owners.admitted[shard] = OwnerAdmitted{Status: Busy}
+		} else {
+			d.owners.unreachable[d.ownerOf(shard)] = true
+		}
+		d.owners.admitted[other] = OwnerAdmitted{Status: Admitted, Envelope: "sealed"}
+		if got := d.door.Authorize(ctx, declared); got.Status != Admitted {
+			t.Fatalf("a declared request at the other shard, the first reached %v: %+v", reached, got)
+		}
+		want := []OwnerAuthorize{
+			{Workspace: "ws-1", Shard: shard, Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
+			{Workspace: "ws-1", Shard: other, Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
+		}
+		if !reflect.DeepEqual(d.owners.authorizes, want) {
+			t.Fatalf("the first reached %v: the owners were sent %+v, want %+v", reached, d.owners.authorizes, want)
+		}
 	}
 	if n := len(f.ev.all()); n != 1 {
 		t.Fatalf("an unsharded workspace asked %d owners: %q", n, f.ev.all())

@@ -176,6 +176,13 @@ type AuthorizeOf struct {
 	Estimate int64
 	Stream   bool
 	Boot     []byte
+	// OpenHeartbeat: the boot that asked declares the heartbeat at stream
+	// open, so a stream's hold with no heartbeat record issued by the
+	// first-heartbeat allowance is released (§4.5). It is sent only when
+	// set, here and to the owner: a node from before it reads an undeclared
+	// authorize as it did, and refuses a declared one, so owners take it
+	// before front doors send it, and front doors before gateways.
+	OpenHeartbeat bool `json:",omitempty"`
 }
 
 // Authorized is an authorize's answer: Admitted with the sealed envelope and
@@ -212,7 +219,7 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 		}
 		octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
-			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot})
+			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot, OpenHeartbeat: a.OpenHeartbeat})
 		cancel()
 		switch {
 		case err == nil:

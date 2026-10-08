@@ -119,6 +119,19 @@ func TestAStreamWithNoHeartbeatIsReleased(t *testing.T) {
 	h.log.letGo()
 	<-answered
 
+	// An allowance whose sum with the grace is past the longest duration
+	// releases nothing, rather than wrapping round to release at once.
+	o, _ := releaseFixture(t)
+	o.owner.cfg.FirstHeartbeat = math.MaxInt64 - time.Second
+	if _, err := o.lease.Admit(Admission{Estimate: 40, Stream: true, Boot: boot, OpenHeartbeat: true}); err != nil {
+		t.Fatal(err)
+	}
+	o.clock.advance(70 * time.Second)
+	reapPass(t, o)
+	if ts := terminals(t, o); len(ts) != 0 {
+		t.Fatalf("a release with an allowance past the longest duration: %+v", ts)
+	}
+
 	g, _ := releaseFixture(t)
 	g.owner.cfg.FirstHeartbeat = 0
 	if _, err := g.lease.Admit(Admission{Estimate: 40, Stream: true, Boot: boot, OpenHeartbeat: true}); err != nil {

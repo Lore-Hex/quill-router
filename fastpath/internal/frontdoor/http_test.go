@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +129,158 @@ func TestANodeServesItsGatewaysOverTheNetwork(t *testing.T) {
 	}
 	if err := (HTTPOwners{Client: http.DefaultClient, Scheme: "http"}).Ping(ctx, n.addr); err != nil {
 		t.Fatalf("a ping: %v", err)
+	}
+}
+
+// TestAGatewaysAuthorizeCrossesTheNetworkWhole: a gateway's authorize over
+// the network reaches its shard's owner with all it says, the boot's
+// declaration of the heartbeat at stream open too.
+func TestAGatewaysAuthorizeCrossesTheNetworkWhole(t *testing.T) {
+	f := newDoor(t, 1)
+	f.owners.admitted[0] = OwnerAdmitted{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}
+	srv := httptest.NewServer(Handler(f.door, nil))
+	t.Cleanup(srv.Close)
+	gw := Gateway{Client: &http.Client{Timeout: 5 * time.Second}, Base: srv.URL}
+	for _, open := range []bool{true, false} {
+		got, err := gw.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 40,
+			Stream: true, Boot: []byte("boot"), OpenHeartbeat: open})
+		if err != nil || got.Status != Admitted {
+			t.Fatalf("the authorize: %+v %v", got, err)
+		}
+	}
+	want := []OwnerAuthorize{
+		{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
+		{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot")},
+	}
+	if !reflect.DeepEqual(f.owners.authorizes, want) {
+		t.Fatalf("the owner was sent %+v, want %+v", f.owners.authorizes, want)
+	}
+}
+
+// TestADeclaredStreamWithNoHeartbeatIsReleased: an authorize sent to an
+// owner, over the network or in the process, says whether its boot declares
+// the heartbeat at stream open, and the owner keeps it: once the
+// first-heartbeat allowance and the grace pass, a declared stream's hold
+// with no heartbeat issued is released, and neither an undeclared stream's
+// nor a declared stream's that heartbeated is.
+func TestADeclaredStreamWithNoHeartbeatIsReleased(t *testing.T) {
+	for _, network := range []bool{true, false} {
+		t.Run(fmt.Sprint("network=", network), func(t *testing.T) { declaredStreamReleased(t, network) })
+	}
+}
+
+func declaredStreamReleased(t *testing.T, network bool) {
+	ctx := context.Background()
+	f := newLocalWith(t, func(c *owner.Config) {
+		c.Grace, c.FirstHeartbeat, c.Records = 10*time.Second, 5*time.Second, fakeRecordTopic{}
+	})
+	var owners Owners = Direct{"node-a": f.local}
+	address := "node-a"
+	if network {
+		srv := httptest.NewServer(Handler(nil, f.local))
+		t.Cleanup(srv.Close)
+		owners, address = HTTPOwners{Client: &http.Client{Timeout: 5 * time.Second}, Scheme: "http"},
+			srv.Listener.Addr().String()
+	}
+	admit := func(open bool) Envelope {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			got, err := owners.Authorize(ctx, address, OwnerAuthorize{Workspace: "ws-1",
+				Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: open})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status == Busy {
+				continue
+			}
+			e, err := Open(key, got.Envelope)
+			if got.Status != Admitted || err != nil {
+				t.Fatalf("an authorize: %+v %v", got, err)
+			}
+			return e
+		}
+		t.Fatal("no lease came to admit the request")
+		return Envelope{}
+	}
+	declared, undeclared, beating := admit(true), admit(false), admit(true)
+	if got := f.local.Heartbeat(ctx, OwnerHeartbeat{Lease: beating.Lease, Auth: beating.Auth, GatewaySeq: 1,
+		Hash: hash("b1"), Basis: []byte("terms")}); got.Status != Accepted {
+		t.Fatalf("the heartbeat: %+v", got)
+	}
+	f.clock.advance(14 * time.Second)
+	if err := f.owner.Reap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.log.kinds(t, declared.Lease)[declared.Auth]; len(got) != 0 {
+		t.Fatalf("released before its allowance and grace passed: %v", got)
+	}
+	f.clock.advance(2 * time.Second)
+	if err := f.owner.Reap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	kinds := f.log.kinds(t, declared.Lease)
+	if declared.Lease != undeclared.Lease || declared.Lease != beating.Lease ||
+		!slices.Equal(kinds[declared.Auth], []record.Kind{record.Release}) || len(kinds[undeclared.Auth]) != 0 ||
+		!slices.Equal(kinds[beating.Auth], []record.Kind{record.Heartbeat}) {
+		t.Fatalf("the records of %s, %s and %s: %v", declared.Auth, undeclared.Auth, beating.Auth, kinds)
+	}
+}
+
+// TestAnUndeclaredAuthorizeReadsAsBefore: an authorize that declares no
+// heartbeat at stream open is sent as authorizes were before the
+// declaration, so a node from before it, which refuses a field it does not
+// know, takes it, the gateway's and the front door's both; a declared one it
+// refuses.
+func TestAnUndeclaredAuthorizeReadsAsBefore(t *testing.T) {
+	ctx := context.Background()
+	// before is a node from before the declaration, which reads the
+	// authorize into into, refusing a field it does not know, and answers
+	// answer.
+	before := func(into, answer any) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			dec := json.NewDecoder(r.Body)
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(into); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(answer)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	var gatewaysAuthorize struct {
+		Workspace, Request string
+		Estimate           int64
+		Stream             bool
+		Boot               []byte
+	}
+	door := before(&gatewaysAuthorize, Authorized{Status: Admitted, Envelope: "sealed"})
+	gw := Gateway{Client: &http.Client{Timeout: 5 * time.Second}, Base: door.URL}
+	var ownersAuthorize struct {
+		Workspace string
+		Shard     int64
+		Estimate  int64
+		Stream    bool
+		Boot      []byte
+	}
+	owner := before(&ownersAuthorize, OwnerAdmitted{Status: Admitted, Envelope: "sealed"})
+	owners := HTTPOwners{Client: &http.Client{Timeout: 5 * time.Second}, Scheme: "http"}
+	for _, open := range []bool{false, true} {
+		got, err := gw.Authorize(ctx, AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 40, Stream: true,
+			Boot: []byte("boot"), OpenHeartbeat: open})
+		if taken := err == nil && got.Status == Admitted; taken == open {
+			t.Fatalf("declared %v, the gateway's authorize to a front door from before: %+v %v", open, got, err)
+		}
+		admitted, err := owners.Authorize(ctx, owner.Listener.Addr().String(), OwnerAuthorize{Workspace: "ws-1",
+			Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: open})
+		if taken := err == nil && admitted.Status == Admitted; taken == open {
+			t.Fatalf("declared %v, the authorize to an owner from before: %+v %v", open, admitted, err)
+		}
+	}
+	if gatewaysAuthorize.Workspace != "ws-1" || ownersAuthorize.Workspace != "ws-1" || !ownersAuthorize.Stream {
+		t.Fatalf("what the nodes from before read: %+v, %+v", gatewaysAuthorize, ownersAuthorize)
 	}
 }
 

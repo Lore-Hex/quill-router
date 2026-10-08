@@ -60,6 +60,8 @@ type OwnerAuthorize struct {
 	Estimate  int64
 	Stream    bool
 	Boot      []byte
+	// OpenHeartbeat is the authorize's, sent only when set (AuthorizeOf).
+	OpenHeartbeat bool `json:",omitempty"`
 }
 
 // OwnerAdmitted is an owner's answer to an authorize: Admitted with the

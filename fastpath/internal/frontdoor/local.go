@@ -38,7 +38,7 @@ func NewLocal(o *owner.Owner, address, region string, key []byte) (*Local, error
 // owner or answers that the request should wait.
 func (l *Local) Authorize(req OwnerAuthorize) OwnerAdmitted {
 	got, err := l.owner.Admit(owner.ShardKey{Workspace: req.Workspace, Region: l.region, Shard: req.Shard},
-		owner.Admission{Estimate: req.Estimate, Stream: req.Stream, Boot: req.Boot})
+		owner.Admission{Estimate: req.Estimate, Stream: req.Stream, Boot: req.Boot, OpenHeartbeat: req.OpenHeartbeat})
 	switch {
 	case errors.Is(err, owner.ErrNoRoom):
 		return OwnerAdmitted{Status: Busy}

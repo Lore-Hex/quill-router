@@ -56,6 +56,8 @@ func run() error {
 	flag.DurationVar(&cfg.Owner.HeartbeatEvery, "heartbeat-every", cfg.Owner.HeartbeatEvery,
 		"the deadline each heartbeat's answer grants")
 	flag.DurationVar(&cfg.Owner.RenewEvery, "renew-every", cfg.Owner.RenewEvery, "how often an owner renews its leases")
+	flag.DurationVar(&cfg.Owner.FirstHeartbeat, "first-heartbeat", cfg.Owner.FirstHeartbeat,
+		"how long a declared stream's hold waits for its first heartbeat, before the grace; 0 releases none")
 	flag.Parse()
 
 	switch *roles {

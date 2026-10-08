@@ -76,6 +76,31 @@ func (f *fakeLog) Publish(lease string, data []byte) owner.Waiter {
 	return acked{f.hold}
 }
 
+// fakeRecordTopic is the record topic as an owner publishes the full
+// records of its reaps and releases to it: it takes each at once.
+type fakeRecordTopic struct{}
+
+func (fakeRecordTopic) Publish(string, string, []byte) owner.Waiter { return acked{} }
+
+// kinds are the kinds of the records published for the lease, by
+// authorization, in order.
+func (f *fakeLog) kinds(t *testing.T, lease string) map[string][]record.Kind {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string][]record.Kind{}
+	for _, data := range f.records[lease] {
+		r, err := record.Decode(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Auth != "" {
+			out[r.Auth] = append(out[r.Auth], r.Kind)
+		}
+	}
+	return out
+}
+
 func (f *fakeLog) published(lease string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -148,6 +173,12 @@ type localFixture struct {
 
 func newLocal(t *testing.T) *localFixture {
 	t.Helper()
+	return newLocalWith(t, nil)
+}
+
+// newLocalWith is newLocal with its owner's configuration changed by set.
+func newLocalWith(t *testing.T, set func(*owner.Config)) *localFixture {
+	t.Helper()
 	f := &localFixture{clock: &clock{now: start}, log: &fakeLog{records: map[string][][]byte{}},
 		grants: &fakeGrants{expiry: start.Add(time.Minute)}}
 	cfg := ownerConfig(f.clock, f.grants)
@@ -163,6 +194,9 @@ func newLocal(t *testing.T) *localFixture {
 		f.minted = append(f.minted, auth)
 		f.mu.Unlock()
 		return auth, err
+	}
+	if set != nil {
+		set(&cfg)
 	}
 	o, err := owner.New(cfg, f.log)
 	if err != nil {
