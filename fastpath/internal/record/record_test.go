@@ -195,7 +195,7 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		"a gateway sequence of zero":           change(Heartbeat, func(r *Record) { r.Snapshot.GatewaySeq = 0 }),
 		"a deadline not in UTC":                change(Heartbeat, func(r *Record) { r.Snapshot.Deadline = deadline.In(elsewhere) }),
 		"a first heartbeat without its basis":  change(Heartbeat, func(r *Record) { r.Basis = nil }),
-		"a later heartbeat with a basis":       change(Heartbeat, func(r *Record) { r.First = false }),
+		"a later heartbeat with a basis":       change(Heartbeat, func(r *Record) { r.Seq, r.First = 2, false }),
 		"the lease's first record not a first": change(Heartbeat, func(r *Record) { r.First, r.Basis = false, nil }),
 		"a gateway's first heartbeat not a first": change(Heartbeat, func(r *Record) {
 			r.Seq, r.First, r.Basis, r.Snapshot.GatewaySeq = 2, false, nil, 1
