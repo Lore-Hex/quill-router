@@ -83,12 +83,16 @@ def test_catalog_models_publish_verified_unions_and_unknown_effort(client):
         # The reviewed native V4 Flash contract must survive the union. Its
         # separately cataloged 0731 variant has no reviewed effort contract.
         "deepseek/deepseek-v4-flash": dict(reasoning_effort=["high", "max"], tools=True, seed=True, vision=False, confidential=False),
-        "deepseek/deepseek-v4-flash-0731": dict(reasoning_effort=None, tools=True, seed=True, vision=False, confidential=False),
+        "deepseek/deepseek-v4-flash-0731": dict(reasoning_effort=None, tools=True, seed=True, vision=False, confidential=True),
         "openai/gpt-oss-120b": dict(reasoning_effort=["low", "medium", "high"], tools=True, seed=True, vision=False, confidential=True),
         "google/gemini-3-flash-preview": dict(reasoning_effort=None, tools=True, seed=True, vision=True, confidential=False),
     }
     for model_id, capabilities in expected.items():
         assert rows[model_id]["trustedrouter"]["capabilities"] == capabilities, model_id
+    # The recovered, reviewed Chutes TEE route supplies this capability;
+    # an unqualified provider badge must not be its source.
+    flash_routes = rows["deepseek/deepseek-v4-flash-0731"]["trustedrouter"]["endpoints"]
+    assert {route["provider"] for route in flash_routes if route["capabilities"]["confidential"]} == {"chutes"}
     assert "capabilities" not in rows["trustedrouter/auto"]["trustedrouter"]
 
 
