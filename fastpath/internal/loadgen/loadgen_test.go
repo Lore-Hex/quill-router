@@ -454,6 +454,70 @@ func TestACallThatFailsMovesToAnotherFrontDoor(t *testing.T) {
 	echoed(t, a3, b3)
 }
 
+// TestFailuresWalkTheFrontDoorsInTurn: each call that fails moves a
+// generation to the front door after the one it called, and the last's
+// next is the first again, for its heartbeats and its terminal alike, the
+// terminal's retry queue's attempts too. Generation 1 of three front doors
+// starts at the second, d1, which admits it and fails every other call; d2
+// fails every call it gets; d0 accepts heartbeats, fails its first settle
+// and lets its second win. So the first heartbeat goes d1, d2, d0, and the
+// settle, starting at d0 where the stream left off, goes d0, d1, d2 and d0.
+func TestFailuresWalkTheFrontDoorsInTurn(t *testing.T) {
+	d0, d1, d2 := admitting(t), admitting(t), admitting(t)
+	unreachable := func(int) (frontdoor.TerminalAnswer, error) {
+		return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+	}
+	d1.heartbeat = func(frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) { return unanswered() }
+	d1.terminal = unreachable
+	d2.authorize = func(frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
+		return frontdoor.Authorized{}, errors.New("unreachable")
+	}
+	d2.heartbeat = d1.heartbeat
+	d2.terminal = unreachable
+	won := d0.terminal
+	d0.terminal = func(n int) (frontdoor.TerminalAnswer, error) {
+		if n == 1 {
+			return unreachable(n)
+		}
+		return won(n)
+	}
+	cfg := config(d0)
+	cfg.Gateways = []Gateway{d0, d1, d2}
+	var log bytes.Buffer
+	cfg.Log = &log
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	var g Generation
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil {
+		t.Fatal(err)
+	}
+	seqs := func(f *fakeGateway) []int64 {
+		var out []int64
+		for _, hb := range f.heartbeats {
+			out = append(out, hb.GatewaySeq)
+		}
+		return out
+	}
+	if len(d1.authorizes) != 1 || len(d0.authorizes)+len(d2.authorizes) != 0 {
+		t.Fatalf("authorizes: %d at d0, %d at d1, %d at d2", len(d0.authorizes), len(d1.authorizes),
+			len(d2.authorizes))
+	}
+	if !slices.Equal(seqs(d1), []int64{1}) || !slices.Equal(seqs(d2), []int64{1}) ||
+		!slices.Equal(seqs(d0), []int64{1, 2, 3}) || g.Streamed != "complete" || len(g.Heartbeats) != 3 ||
+		!slices.Equal(g.Heartbeats[0].Tries, []string{"error", "error", "accepted"}) ||
+		!slices.Equal(g.Heartbeats[1].Tries, []string{"accepted"}) ||
+		!slices.Equal(g.Heartbeats[2].Tries, []string{"accepted"}) {
+		t.Fatalf("heartbeats: %v at d0, %v at d1, %v at d2; %+v", seqs(d0), seqs(d1), seqs(d2), g)
+	}
+	if len(d0.settles) != 2 || len(d1.settles) != 1 || len(d2.settles) != 1 || g.Terminal == nil ||
+		g.Terminal.Status != "won" || !slices.Equal(g.Terminal.Tries, []string{"error", "error", "error", "won"}) {
+		t.Fatalf("settles: %d at d0, %d at d1, %d at d2; %+v", len(d0.settles), len(d1.settles), len(d2.settles),
+			g.Terminal)
+	}
+	echoed(t, d0, d1, d2)
+}
+
 // TestHeartbeatsKeepTheirSchedule: a stream's seq-th heartbeat is sent
 // HeartbeatEvery × seq after it began, however long the answers before it
 // took.
