@@ -151,6 +151,20 @@ CREATE TABLE tr_lease_hold (
 ) PRIMARY KEY (workspace_id, lease_id, authorization_id),
   INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
 
+-- The chunks of a forced exit's hand-off (§4.2) that the auditor has applied
+-- and whose manifest it has not, each the chunk's holds as its record listed
+-- them (opaque here). A member that takes the lease over mid-hand-off reads
+-- them, so the manifest can still find every chunk it names and check their
+-- digest (§4.8); Pub/Sub does not deliver a record again once acknowledged.
+-- The commit that applies the manifest, or stores S, deletes them.
+CREATE TABLE tr_lease_handoff (
+  workspace_id STRING(64) NOT NULL,
+  lease_id STRING(32) NOT NULL,
+  chunk_seq INT64 NOT NULL,
+  holds BYTES(MAX) NOT NULL,
+) PRIMARY KEY (workspace_id, lease_id, chunk_seq),
+  INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
+
 -- The winners (§4.8), one pack per lease per commit, each winner with its
 -- pending work, refunds and zero charges included. A pack goes only with its
 -- lease's row, which is kept seven days after the lease has closed with no

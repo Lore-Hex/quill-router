@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -433,4 +434,31 @@ func TestTheOwnersWritesRaceTheAuditorsCommits(t *testing.T) {
 			l.Allocation, l.CommitVersion)
 	}
 	identityHolds(t, s, ref.Workspace)
+}
+
+// TestAHandOffsChunksAreStoredUntilItEnds: a commit stores the chunks it
+// applied, a load reads them back in order, and a commit that drops them
+// deletes every one stored before it while keeping those it puts; a chunk
+// is one of the records the commit applied.
+func TestAHandOffsChunksAreStoredUntilItEnds(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := grantLease(t, s, 30, 100)
+	commitOne(t, s, CommitRequest{Ref: ref, AppliedSeq: 3, PutChunks: []Chunk{{Seq: 3, Holds: []byte("c3")},
+		{Seq: 1, Holds: []byte("c1")}}})
+	loaded, err := s.Load(ctx, ref)
+	if err != nil || !reflect.DeepEqual(loaded.Chunks, []Chunk{{1, []byte("c1")}, {3, []byte("c3")}}) {
+		t.Fatalf("the chunks loaded: %+v %v", loaded.Chunks, err)
+	}
+	commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: 1, AppliedSeq: 5, DropChunks: true,
+		PutChunks: []Chunk{{Seq: 5, Holds: []byte("c5")}}})
+	if loaded, err = s.Load(ctx, ref); err != nil || !reflect.DeepEqual(loaded.Chunks, []Chunk{{5, []byte("c5")}}) {
+		t.Fatalf("the chunks after the drop: %+v %v", loaded.Chunks, err)
+	}
+	for _, c := range [][]Chunk{{{Seq: 7, Holds: []byte("x")}}, {{Seq: 0, Holds: []byte("x")}},
+		{{Seq: 6, Holds: nil}}, {{Seq: 6, Holds: []byte("x")}, {Seq: 6, Holds: []byte("y")}}} {
+		if _, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, ReadVersion: 2, AppliedSeq: 6, PutChunks: c}}); err == nil {
+			t.Errorf("chunks %+v at progress 6", c)
+		}
+	}
 }

@@ -44,7 +44,9 @@ var walkWeights = map[string]int{"MarkDraining": 1, "Crash": 1}
 const walkWeight = 4
 
 // TestTheMemberWalksWithAuditorCommit runs FASTPATH_MEMBER_WALKS walks
-// (default 3000) from FASTPATH_WALK_SEED (default a fixed seed).
+// (default 3000) from FASTPATH_WALK_SEED (default a fixed seed). Runs of
+// the default size or more must make every kind of step; a smaller one, to
+// replay a seed, need not.
 func TestTheMemberWalksWithAuditorCommit(t *testing.T) {
 	walks, seed := 3000, int64(20261008)
 	if v := os.Getenv("FASTPATH_MEMBER_WALKS"); v != "" {
@@ -85,7 +87,7 @@ func TestTheMemberWalksWithAuditorCommit(t *testing.T) {
 		"ApplyTick with S known", "ApplyRow", "ApplyRow settle", "ApplyRow reap", "a row with a winner",
 		"Commit", "Commit with S", "Commit with a fault", "Commit from the drain log", "Commit found draining",
 		"Reread", "Crash", "Close"} {
-		if seen[k] == 0 {
+		if seen[k] == 0 && walks >= 3000 {
 			t.Errorf("no walk made a %s", k)
 		}
 	}
@@ -98,6 +100,11 @@ type memberWalk struct {
 	seed    int64
 	state   ac.State
 	members [ac.MaxMembers]*Lease
+	// knewFault: the member knows the lease has its audit fault, stored
+	// when it loaded the lease or by its own commit; a later wrong
+	// checkpoint stores none (the first stands), though the shadow's
+	// member raises it again.
+	knewFault [ac.MaxMembers]bool
 	// tick is the last tick a commit stored, which a load reads.
 	tick    int64
 	history []string
@@ -125,7 +132,7 @@ func (w *memberWalk) fatalf(format string, args ...any) {
 func (w *memberWalk) run() {
 	w.t.Helper()
 	for range walkSteps {
-		next := w.c.Next(w.state)
+		next := w.steps()
 		if len(next) == 0 {
 			return
 		}
@@ -139,6 +146,26 @@ func (w *memberWalk) run() {
 			w.compare(m)
 		}
 	}
+}
+
+// steps are the shadow's, but for a member's ApplyRow before it knows S is
+// stored. The shadow's member reads S off the lease's row there; a real
+// one knows S only from its load or its own commit, and one whose version
+// is behind, as that member's is, reads the lease again (Reread) before it
+// reads the drain log.
+func (w *memberWalk) steps() []ac.Transition {
+	var out []ac.Transition
+	for _, tr := range w.c.Next(w.state) {
+		name, args := label(tr.Action)
+		if name == "ApplyRow" {
+			if l := w.members[index(w.c.Members, args[0])]; l != nil && !l.sStored {
+				w.seen["ApplyRow left to a re-read"]++
+				continue
+			}
+		}
+		out = append(out, tr)
+	}
+	return out
 }
 
 func (w *memberWalk) choose(next []ac.Transition) ac.Transition {
@@ -199,7 +226,7 @@ func (w *memberWalk) step(tr ac.Transition) bool {
 		if err != nil {
 			w.fatalf("member %s's load: %v", args[0], err)
 		}
-		w.members[m] = got
+		w.members[m], w.knewFault[m] = got, from.Alert
 		w.seen["Load "+stateNames[from.St]]++
 	case "LoadWinners":
 		if err := l.LoadWinners(w.leaseRow(from), w.packs(from)); err != nil {
@@ -233,10 +260,10 @@ func (w *memberWalk) step(tr ac.Transition) bool {
 				w.fatalf("member %s's refused commit: %v", args[0], err)
 			}
 		}
-		w.members[m] = nil
+		w.members[m], w.knewFault[m] = nil, false
 		w.seen[name]++
 	case "Crash":
-		w.members[m] = nil
+		w.members[m], w.knewFault[m] = nil, false
 		w.seen[name]++
 	case "Close":
 		w.seen[name]++
@@ -291,7 +318,8 @@ func (w *memberWalk) commit(m int8, from, to ac.State) {
 	req := l.Request()
 	w.seen["Commit"]++
 	if req.Ref != ref || req.ReadVersion != int64(mem.Ver) || req.AppliedSeq != int64(to.Prog) ||
-		req.AuditOsum != int64(to.Osum) || (req.AuditFault != nil) != mem.Fault || req.LastTick < w.tick {
+		req.AuditOsum != int64(to.Osum) || (req.AuditFault != nil) != (mem.Fault && !w.knewFault[m]) ||
+		req.LastTick < w.tick {
 		w.fatalf("member %s commits %+v, and the shadow's commit stores %+v from %+v", w.c.Members[m], req, to, mem)
 	}
 	var booked int64
@@ -314,8 +342,12 @@ func (w *memberWalk) commit(m int8, from, to ac.State) {
 	case to.S != from.S:
 		w.fatalf("the shadow's commit stores S %d, and member %s's stores none", to.S, w.c.Members[m])
 	}
-	if req.AuditFault != nil {
+	switch {
+	case req.AuditFault != nil:
 		w.seen["Commit with a fault"]++
+		w.knewFault[m] = true
+	case mem.Fault:
+		w.seen["Commit with a fault stored before"]++
 	}
 	// The winners: the shadow's new ones, each as decided.
 	var won [ac.MaxAuths]bool
@@ -338,6 +370,9 @@ func (w *memberWalk) commit(m int8, from, to ac.State) {
 			w.fatalf("member %s puts hold %+v", w.c.Members[m], h)
 		}
 		holds[a] = int8(h.RunningCharge.Int64)
+		if want := w.holdRow(from, a, holds[a]); !reflect.DeepEqual(h, want) {
+			w.fatalf("member %s puts hold %+v, and its heartbeat's row is %+v", w.c.Members[m], h, want)
+		}
 	}
 	for a := range w.c.Auths {
 		if won[a] {
@@ -379,15 +414,16 @@ func (w *memberWalk) compare(m int8) {
 	}
 	switch {
 	case l.version != int64(mem.Ver), l.applied != int64(mem.Prog), l.osum != int64(mem.Osum),
-		l.dirty != mem.Dirty, l.winnersLoaded != mem.WL, (l.fault != nil) != mem.Fault, booked != int64(mem.Dbooked),
-		l.sKnown != (mem.S != ac.NoS), l.sKnown && l.s != int64(mem.S):
+		l.dirty != mem.Dirty, l.winnersLoaded != mem.WL, (l.fault != nil) != (mem.Fault && !w.knewFault[m]),
+		booked != int64(mem.Dbooked), l.sKnown != (mem.S != ac.NoS), l.sKnown && l.s != int64(mem.S):
 		w.fatalf("member %s: version %d, progress %d, sum %d, dirty %v, winners loaded %v, fault %v, booking %d, S %v %d; "+
 			"the shadow's %+v", w.c.Members[m], l.version, l.applied, l.osum, l.dirty, l.winnersLoaded, l.fault != nil, booked,
 			l.sKnown, l.s, mem)
 	}
 	for a, auth := range w.c.Auths {
 		h := l.holds[auth]
-		if (h != nil) != (mem.Holds[a] != ac.NoHold) || (h != nil && h.row.RunningCharge.Int64 != int64(mem.Holds[a])) {
+		if (h != nil) != (mem.Holds[a] != ac.NoHold) ||
+			(h != nil && !reflect.DeepEqual(h.row, w.holdRow(w.state, int8(a), mem.Holds[a]))) {
 			w.fatalf("member %s holds %s as %+v, and the shadow's at %d", w.c.Members[m], auth, h, mem.Holds[a])
 		}
 		if l.winners[auth] != (mem.Win[a] != ac.NoWin) {
@@ -420,6 +456,28 @@ func (w *memberWalk) record(r ac.Rec) record.Record {
 	return out
 }
 
+// holdRow is the row of a's hold at its heartbeat with running charge c:
+// the snapshot that heartbeat record carried, and the basis of the hold's
+// first, which every row has, since each began at its hold's first
+// heartbeat.
+func (w *memberWalk) holdRow(s ac.State, a, c int8) store.HoldRow {
+	w.t.Helper()
+	seq := int8(-1)
+	for _, r := range s.Log[:s.LogLen] {
+		if r.K == ac.KHb && r.A == a && r.C == c {
+			seq = r.Seq
+		}
+	}
+	if seq < 0 {
+		w.fatalf("no heartbeat of %s at %d in the log", w.c.Auths[a], c)
+	}
+	snap := hb(int64(seq), w.c.Auths[a], int64(c)+1, int64(c)).Snapshot
+	return store.HoldRow{AuthorizationID: w.c.Auths[a], Estimate: 100, Deadline: snap.Deadline,
+		SnapshotSeq: spanner.NullInt64{Int64: snap.GatewaySeq, Valid: true}, SnapshotHash: snap.Hash,
+		SnapshotUsage: snap.Usage, RunningCharge: spanner.NullInt64{Int64: snap.Running, Valid: true},
+		SnapshotOwnerSeq: spanner.NullInt64{Int64: int64(seq), Valid: true}, ReapBasis: []byte("terms")}
+}
+
 // row is the drain-log row of a shadow's: its record ID is its index.
 func (w *memberWalk) row(r ac.Rec) store.DrainRow {
 	kind := map[int8]string{ac.KSettle: "settle", ac.KReap: "reap"}[r.K]
@@ -436,16 +494,23 @@ func (w *memberWalk) winner(r ac.Rec) store.Winner {
 	if r.Idx > 0 {
 		row := w.row(r)
 		return store.Winner{AuthorizationID: row.AuthorizationID, Kind: row.Kind, Charge: row.Charge, FromDrain: true,
-			RecordID: row.RecordID}
+			RecordID: row.RecordID, Work: encoded(Work{V: 1})}
 	}
 	return store.Winner{AuthorizationID: w.c.Auths[r.A], Kind: map[int8]string{ac.KSettle: "settle",
-		ac.KRefund: "refund"}[r.K], Charge: int64(r.C), RecordID: fmt.Sprintf("o%d", r.Seq)}
+		ac.KRefund: "refund"}[r.K], Charge: int64(r.C), RecordID: fmt.Sprintf("o%d", r.Seq), Work: workOf(w.record(r))}
 }
 
-// leaseRow is the lease's row as a member reads it.
+// leaseRow is the lease's row as a member reads it. The shadow's allocation
+// is what is left of it; the row's consumption is booked up to the
+// allocation, the rest as faults.
 func (w *memberWalk) leaseRow(s ac.State) store.Lease {
-	l := store.Lease{Ref: ref, State: stateNames[s.St], Granted: int64(w.c.Grant), Allocation: int64(s.Alloc),
-		CommitVersion: int64(s.Ver), AppliedSeq: int64(s.Prog), AuditOsum: int64(s.Osum), LastTick: w.tick}
+	allocation := int64(s.Alloc) + int64(s.Booked)
+	l := store.Lease{Ref: ref, State: stateNames[s.St], Granted: int64(w.c.Grant), Allocation: allocation,
+		Consumed: min(int64(s.Booked), allocation), CommitVersion: int64(s.Ver), AppliedSeq: int64(s.Prog),
+		AuditOsum: int64(s.Osum), LastTick: w.tick}
+	if s.Alert {
+		l.AuditFaultSeq = spanner.NullInt64{Int64: 1, Valid: true}
+	}
 	if s.St != ac.Open {
 		l.FenceTime = spanner.NullTime{Time: fence, Valid: true}
 	}
@@ -470,10 +535,9 @@ func (w *memberWalk) packs(s ac.State) []store.Pack {
 // winners once the lease is not open.
 func (w *memberWalk) loaded(s ac.State) store.Loaded {
 	out := store.Loaded{Lease: w.leaseRow(s)}
-	for a, auth := range w.c.Auths {
+	for a := range w.c.Auths {
 		if s.Holds[a] != ac.NoHold {
-			out.Holds = append(out.Holds, store.HoldRow{AuthorizationID: auth, Estimate: 100, Deadline: deadline,
-				RunningCharge: spanner.NullInt64{Int64: int64(s.Holds[a]), Valid: true}})
+			out.Holds = append(out.Holds, w.holdRow(s, int8(a), s.Holds[a]))
 		}
 	}
 	if s.St != ac.Open {

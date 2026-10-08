@@ -3,7 +3,9 @@ package auditor
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -53,8 +55,8 @@ func owner(seq int64, kind record.Kind) record.Record {
 func hb(seq int64, auth string, gseq, running int64) record.Record {
 	r := owner(seq, record.Heartbeat)
 	r.Auth, r.Estimate = auth, 100
-	r.Snapshot = &record.Snapshot{GatewaySeq: gseq, Hash: sum(auth), Usage: []byte(`{"tokens":1}`), Running: running,
-		Deadline: deadline}
+	r.Snapshot = &record.Snapshot{GatewaySeq: gseq, Hash: sum(fmt.Sprintf("%s@%d", auth, gseq)),
+		Usage: fmt.Appendf(nil, `{"tokens":%d}`, gseq), Running: running, Deadline: deadline}
 	if gseq == 1 {
 		r.First, r.Basis = true, []byte("terms")
 	}
@@ -81,6 +83,32 @@ func ckpt(seq int64, c record.CheckpointOf) record.Record {
 
 func tick(n int64, at time.Time) record.Record {
 	return record.Record{Version: record.Version, Lease: "lease-1", Kind: record.Tick, TickNumber: n, TickAt: at}
+}
+
+func chunkRec(seq int64, holds ...record.HeldHold) record.Record {
+	r := owner(seq, record.Handoff)
+	r.Holds = holds
+	return r
+}
+
+func manifestRec(seq int64, d []byte, seqs ...int64) record.Record {
+	r := owner(seq, record.Manifest)
+	r.Manifest = &record.ManifestOf{Chunks: len(seqs), HoldsDigest: d, Seqs: seqs}
+	return r
+}
+
+func digestOf(t *testing.T, holds ...record.HeldHold) []byte {
+	t.Helper()
+	d, err := record.HoldsDigest(holds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// workOf is an owner terminal's pending work as its winner stores it.
+func workOf(r record.Record) []byte {
+	return encoded(Work{V: 1, Estimate: r.Estimate, Digest: r.Digest, Boot: r.Boot, SnapshotSeq: r.SnapshotSeq})
 }
 
 func apply(t *testing.T, l *Lease, want Outcome, rs ...record.Record) {
@@ -115,7 +143,8 @@ func TestTheMemberAppliesALeasesRecords(t *testing.T) {
 		t.Fatalf("the commit: %+v", req)
 	case !reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(150, 50)}):
 		t.Fatalf("the money: %+v", req.Money)
-	case !reflect.DeepEqual(req.Winners, []store.Winner{{AuthorizationID: "a", Kind: "settle", Charge: 150, RecordID: "o4"}}):
+	case !reflect.DeepEqual(req.Winners, []store.Winner{{AuthorizationID: "a", Kind: "settle", Charge: 150, RecordID: "o4",
+		Work: workOf(settle(4, "a", 150, 50))}}):
 		t.Fatalf("the winners: %+v", req.Winners)
 	case len(req.PutHolds) != 1 || !reflect.DeepEqual(req.PutHolds[0], wantHold):
 		t.Fatalf("the holds: %+v, want %+v", req.PutHolds, wantHold)
@@ -129,7 +158,8 @@ func TestTheMemberAppliesALeasesRecords(t *testing.T) {
 	apply(t, l, Applied, refund(6, "b"))
 	req = l.Request()
 	if req.ReadVersion != 4 || req.AppliedSeq != 6 || len(req.PutHolds) != 0 ||
-		!reflect.DeepEqual(req.Winners, []store.Winner{{AuthorizationID: "b", Kind: "refund", RecordID: "o6"}}) ||
+		!reflect.DeepEqual(req.Winners, []store.Winner{{AuthorizationID: "b", Kind: "refund", RecordID: "o6",
+			Work: workOf(refund(6, "b"))}}) ||
 		!reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(0, 0)}) {
 		t.Fatalf("the next commit: %+v", req)
 	}
@@ -232,28 +262,43 @@ func TestAMemberBehindReadsTheLease(t *testing.T) {
 	if got, err := l.Apply(tick(1, fence.Add(time.Hour)), start); err != nil || got != Applied {
 		t.Fatalf("the tick after: %v %v", got, err)
 	}
+	if req := l.Request(); len(req.Winners) != 2 || req.Winners[0].AuthorizationID != "a" ||
+		req.Winners[1].AuthorizationID != "b" || req.Boundary == nil {
+		t.Fatalf("the commit with S: %+v", req)
+	}
+	if err := l.Committed(store.CommitResult{Ref: ref, NewVersion: 4, State: "draining"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := l.ApplyRow(store.DrainRow{AuthorizationID: "c", RecordID: "d1", Kind: "settle", Charge: 9}); err != nil {
 		t.Fatal(err)
 	}
-	if req := l.Request(); len(req.Winners) != 2 || req.Winners[0].AuthorizationID != "a" ||
-		req.Winners[1].AuthorizationID != "b" {
+	if req := l.Request(); len(req.Winners) != 0 {
 		t.Fatalf("a row for a stored winner was decided: %+v", req.Winners)
 	}
 }
 
-// TestDrainRowsAfterS: once S is known the drain log's rows are booked in
-// order after the owner's records, the first for an authorization winning;
-// before S none is.
+// TestDrainRowsAfterS: once S is stored the drain log's rows are booked in
+// order after the owner's records, the first for an authorization winning,
+// each with its pending work; before S is stored, by a commit before the
+// rows' (AuditorCommit's StoredSFirst), none is.
 func TestDrainRowsAfterS(t *testing.T) {
 	l := load(t, "draining")
 	apply(t, l, Applied, settle(1, "a", 40, 0))
 	row := func(auth, id string, charge int64) store.DrainRow {
-		return store.DrainRow{AuthorizationID: auth, RecordID: id, Kind: "settle", Charge: charge}
+		return store.DrainRow{AuthorizationID: auth, RecordID: id, Kind: "settle", Charge: charge, Estimate: 10,
+			Digest: sum("full " + id), Money: []byte(`{"m":1}`), Cause: "past_cutoff",
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: 3, Valid: true}}
 	}
 	if err := l.ApplyRow(row("b", "d1", 5)); err == nil {
 		t.Fatal("a drain-log row before S")
 	}
 	if _, err := l.Apply(tick(1, fence.Add(time.Hour)), start); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ApplyRow(row("b", "d1", 5)); err == nil {
+		t.Fatal("a drain-log row before S is stored")
+	}
+	if err := l.Committed(store.CommitResult{Ref: ref, NewVersion: 4, State: "draining"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range []store.DrainRow{row("a", "d0", 99), row("b", "d1", 5), row("b", "d2", 7)} {
@@ -262,10 +307,10 @@ func TestDrainRowsAfterS(t *testing.T) {
 		}
 	}
 	req := l.Request()
-	want := []store.Winner{{AuthorizationID: "a", Kind: "settle", Charge: 40, RecordID: "o1"},
-		{AuthorizationID: "b", Kind: "settle", Charge: 5, FromDrain: true, RecordID: "d1"}}
-	if !reflect.DeepEqual(req.Winners, want) ||
-		!reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(40, 0), store.Book(5, 0)}) {
+	want := []store.Winner{{AuthorizationID: "b", Kind: "settle", Charge: 5, FromDrain: true, RecordID: "d1",
+		Work: encoded(Work{V: 1, Estimate: 10, Digest: sum("full d1"), Money: []byte(`{"m":1}`), Cause: "past_cutoff",
+			SnapshotSeq: 3})}}
+	if !reflect.DeepEqual(req.Winners, want) || !reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(5, 0)}) {
 		t.Fatalf("the commit: %+v", req)
 	}
 }
@@ -284,16 +329,7 @@ func TestAHandOffListsTheHoldsWhole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := func(seq int64, holds ...record.HeldHold) record.Record {
-		r := owner(seq, record.Handoff)
-		r.Holds = holds
-		return r
-	}
-	manifest := func(seq int64, d []byte, seqs ...int64) record.Record {
-		r := owner(seq, record.Manifest)
-		r.Manifest = &record.ManifestOf{Chunks: len(seqs), HoldsDigest: d, Seqs: seqs}
-		return r
-	}
+	chunk, manifest := chunkRec, manifestRec
 	for name, c := range map[string]struct {
 		rs     []record.Record
 		listed int64
@@ -308,6 +344,9 @@ func TestAHandOffListsTheHoldsWhole(t *testing.T) {
 		"a hold decided":    {[]record.Record{settle(1, "a", 9, 0), chunk(2, held...), manifest(3, digest, 2)}, 3, []string{"b"}},
 	} {
 		l := load(t, "open")
+		if err := l.LoadWinners(loaded("open").Lease, nil); err != nil {
+			t.Fatal(err)
+		}
 		for _, r := range c.rs {
 			if _, err := l.Apply(r, start); err != nil {
 				t.Fatalf("%s: %v", name, err)
@@ -428,4 +467,188 @@ func TestACommitTellsTheMemberTheLeaseDrained(t *testing.T) {
 		t.Fatal(err)
 	}
 	apply(t, l, Applied, settle(2, "b", 7, 0))
+}
+
+// TestAManifestKeepsTheNewerSnapshot: a hold whose heartbeat the member
+// applied after its chunk was cut keeps that snapshot, and its basis, when
+// the manifest lists it; one whose chunk has an older snapshot than its row
+// keeps the row's.
+func TestAManifestKeepsTheNewerSnapshot(t *testing.T) {
+	l := load(t, "open")
+	if err := l.LoadWinners(loaded("open").Lease, nil); err != nil {
+		t.Fatal(err)
+	}
+	b1 := hb(1, "b", 1, 10)
+	held := []record.HeldHold{{Auth: "a", Estimate: 100, Deadline: deadline, Boot: boot},
+		{Auth: "b", Estimate: 100, Deadline: deadline, Boot: boot, Snapshot: b1.Snapshot, SnapshotSeq: 1, Basis: b1.Basis}}
+	apply(t, l, Applied, b1, hb(2, "b", 2, 20), chunkRec(3, held...), hb(4, "a", 1, 5),
+		manifestRec(5, digestOf(t, held...), 3))
+	a4, b2 := hb(4, "a", 1, 5), hb(2, "b", 2, 20)
+	want := []store.HoldRow{
+		{AuthorizationID: "a", Estimate: 100, Deadline: deadline, Listed: true,
+			SnapshotSeq: spanner.NullInt64{Int64: 1, Valid: true}, SnapshotHash: a4.Snapshot.Hash,
+			SnapshotUsage: a4.Snapshot.Usage, RunningCharge: spanner.NullInt64{Int64: 5, Valid: true},
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: 4, Valid: true}, ReapBasis: []byte("terms")},
+		{AuthorizationID: "b", Estimate: 100, Deadline: deadline, Listed: true,
+			SnapshotSeq: spanner.NullInt64{Int64: 2, Valid: true}, SnapshotHash: b2.Snapshot.Hash,
+			SnapshotUsage: b2.Snapshot.Usage, RunningCharge: spanner.NullInt64{Int64: 20, Valid: true},
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: 2, Valid: true}, ReapBasis: []byte("terms")}}
+	if req := l.Request(); !reflect.DeepEqual(req.PutHolds, want) {
+		t.Fatalf("the listed holds:\n%+v\nwant\n%+v", req.PutHolds, want)
+	}
+}
+
+// TestAManifestWaitsForTheWinners: a member that loaded the lease open does
+// not know the winners committed before it; a manifest waits for them, and
+// a hold its chunks list that has one is not put again.
+func TestAManifestWaitsForTheWinners(t *testing.T) {
+	stored := loaded("open")
+	stored.Lease.AppliedSeq = 1 // settle(1, "a"), committed by another member
+	l, err := Load(ref, stored, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := []record.HeldHold{{Auth: "a", Estimate: 100, Deadline: deadline, Boot: boot},
+		{Auth: "b", Estimate: 50, Deadline: deadline, Boot: boot}}
+	m := manifestRec(3, digestOf(t, held...), 2)
+	apply(t, l, Applied, chunkRec(2, held...))
+	if got, _ := l.Apply(m, start); got != Behind {
+		t.Fatalf("a manifest before the winners: %v", got)
+	}
+	packs := []store.Pack{{CommitVersion: 3, Winners: []store.Winner{{AuthorizationID: "a", Kind: "settle", Charge: 9,
+		RecordID: "o1"}}}}
+	if err := l.LoadWinners(stored.Lease, packs); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, l, Applied, m)
+	if req := l.Request(); len(req.PutHolds) != 1 || req.PutHolds[0].AuthorizationID != "b" || !req.PutHolds[0].Listed ||
+		req.HoldsListedSeq == nil || *req.HoldsListedSeq != 3 {
+		t.Fatalf("the listing: %+v", req)
+	}
+}
+
+// TestAWinnerKeepsItsPendingWork: each owner terminal's winner carries what
+// writing its records needs (§4.9): a settle's or a reap's full-record
+// digest, a refund's or a release's boot binding, the heartbeat record a
+// reap charged.
+func TestAWinnerKeepsItsPendingWork(t *testing.T) {
+	l := load(t, "open")
+	reap := owner(3, record.Reap)
+	reap.Auth, reap.Estimate, reap.Charge, reap.SnapshotSeq, reap.Digest = "c", 100, 7, 2, sum("reap c")
+	release := owner(4, record.Release)
+	release.Auth, release.Estimate, release.Boot = "d", 100, []byte("boot-d")
+	apply(t, l, Applied, settle(1, "a", 40, 0), hb(2, "c", 1, 7), reap, release, refund(5, "b"))
+	want := map[string]Work{"a": {V: 1, Estimate: 100, Digest: sum("full a")},
+		"c": {V: 1, Estimate: 100, Digest: sum("reap c"), SnapshotSeq: 2},
+		"d": {V: 1, Estimate: 100, Boot: []byte("boot-d")}, "b": {V: 1, Estimate: 100, Boot: boot}}
+	req := l.Request()
+	if len(req.Winners) != len(want) {
+		t.Fatalf("the winners: %+v", req.Winners)
+	}
+	for _, w := range req.Winners {
+		var got Work
+		if err := json.Unmarshal(w.Work, &got); err != nil || !reflect.DeepEqual(got, want[w.AuthorizationID]) {
+			t.Fatalf("%s's work: %s %v, want %+v", w.AuthorizationID, w.Work, err, want[w.AuthorizationID])
+		}
+	}
+}
+
+// TestAHandOffOutlivesAReload: the chunks a commit stored come back with a
+// load, so a manifest after a takeover still finds them; the commit after
+// the manifest drops them, as does the fence tick of a hand-off cut short.
+func TestAHandOffOutlivesAReload(t *testing.T) {
+	held := []record.HeldHold{{Auth: "a", Estimate: 100, Deadline: deadline, Boot: boot},
+		{Auth: "b", Estimate: 50, Deadline: deadline, Boot: boot}}
+	l := load(t, "open")
+	apply(t, l, Applied, chunkRec(1, held[0]))
+	req := l.Request()
+	if len(req.PutChunks) != 1 || req.PutChunks[0].Seq != 1 || req.DropChunks {
+		t.Fatalf("the chunk stored: %+v", req)
+	}
+	// The commit lands, and another member takes the lease over.
+	stored := loaded("open")
+	stored.Lease.AppliedSeq, stored.Lease.CommitVersion, stored.Chunks = 1, 4, req.PutChunks
+	m, err := Load(ref, stored, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.LoadWinners(stored.Lease, nil); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, m, Applied, chunkRec(2, held[1]), manifestRec(3, digestOf(t, held...), 1, 2))
+	req = m.Request()
+	if req.HoldsListedSeq == nil || *req.HoldsListedSeq != 3 || len(req.PutHolds) != 2 || !req.DropChunks ||
+		len(req.PutChunks) != 0 {
+		t.Fatalf("the manifest after the takeover: %+v", req)
+	}
+	// A hand-off the fence tick cuts short.
+	draining := loaded("draining")
+	draining.Lease.AppliedSeq, draining.Chunks = 1, []store.Chunk{{Seq: 1, Holds: encoded(held[:1])}}
+	n, err := Load(ref, draining, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := n.Apply(tick(1, fence.Add(time.Hour)), start); err != nil || got != Applied {
+		t.Fatalf("the fence tick: %v %v", got, err)
+	}
+	if req := n.Request(); !req.DropChunks || req.Boundary == nil {
+		t.Fatalf("the fence tick's commit: %+v", req)
+	}
+}
+
+// TestTheCheckpointAuditsTheHoldsCover: the allocation less the consumption
+// booked, raised and returned as the records say in order, must cover the
+// checkpoint's open holds (§4.2): an owner that under-reported its
+// shortfall, or returned what its holds need, is at fault.
+func TestTheCheckpointAuditsTheHoldsCover(t *testing.T) {
+	open := record.CheckpointOf{Consumed: 950, Open: 1, OpenSum: 100, LatestEnd: deadline, KeyStatus: 7}
+	for _, c := range []struct {
+		shortfall int64
+		fault     bool
+	}{{0, true}, {49, true}, {50, false}} {
+		l := load(t, "open") // an allocation of 1,000
+		apply(t, l, Applied, hb(1, "a", 1, 10), hb(2, "b", 1, 10), settle(3, "a", 950, c.shortfall), ckpt(4, open))
+		if got := l.Request().AuditFault; (got != nil) != c.fault {
+			t.Errorf("a shortfall of %d: fault %v", c.shortfall, got)
+		}
+	}
+	for _, c := range []struct {
+		back  int64
+		fault bool
+	}{{901, true}, {900, false}} {
+		l := load(t, "open")
+		apply(t, l, Applied, hb(1, "a", 1, 10), ckpt(2, record.CheckpointOf{Open: 1, OpenSum: 100, LatestEnd: deadline,
+			KeyStatus: 7, Return: c.back}))
+		if got := l.Request().AuditFault; (got != nil) != c.fault {
+			t.Errorf("a return of %d: fault %v", c.back, got)
+		}
+	}
+}
+
+// TestTheFirstFaultStands: once a fault is stored, by this member's commit
+// or before it loaded the lease, a later wrong checkpoint stores none.
+func TestTheFirstFaultStands(t *testing.T) {
+	l := load(t, "open")
+	apply(t, l, Applied, settle(1, "a", 40, 0), ckpt(2, record.CheckpointOf{Consumed: 41, KeyStatus: 7}))
+	if f := l.Request().AuditFault; f == nil || *f != 2 {
+		t.Fatalf("the first fault: %v", f)
+	}
+	if err := l.Committed(store.CommitResult{Ref: ref, NewVersion: 4, State: "open"}); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, l, Applied, ckpt(3, record.CheckpointOf{Consumed: 99, KeyStatus: 7}))
+	if f := l.Request().AuditFault; f != nil {
+		t.Fatalf("a later fault after the first was committed: %d", *f)
+	}
+	stored := loaded("open")
+	stored.Lease.AppliedSeq, stored.Lease.AuditOsum = 2, 40
+	stored.Lease.AuditFaultSeq = spanner.NullInt64{Int64: 2, Valid: true}
+	m, err := Load(ref, stored, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(t, m, Applied, ckpt(3, record.CheckpointOf{Consumed: 99, KeyStatus: 7}))
+	if f := m.Request().AuditFault; f != nil {
+		t.Fatalf("a later fault on a lease loaded with one: %d", *f)
+	}
 }

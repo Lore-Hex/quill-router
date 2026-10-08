@@ -78,7 +78,9 @@ type Boundary struct {
 // them, and, optionally, S and T, the sequence number of an applied final
 // checkpoint or complete hand-off that listed the open holds, and the
 // sequence number of a checkpoint whose audit failed, which stores the alert
-// and revokes the lease with the commit.
+// and revokes the lease with the commit. A hand-off's chunks applied since
+// the last commit are stored (PutChunks) until a later commit ends the
+// hand-off and deletes every chunk stored before it (DropChunks).
 type CommitRequest struct {
 	Ref            LeaseRef
 	ReadVersion    int64
@@ -91,6 +93,15 @@ type CommitRequest struct {
 	Boundary       *Boundary
 	HoldsListedSeq *int64
 	AuditFault     *int64
+	DropChunks     bool
+	PutChunks      []Chunk
+}
+
+// Chunk is a hand-off chunk as tr_lease_handoff stores it: the owner
+// sequence number of its record, and its holds, opaque here.
+type Chunk struct {
+	Seq   int64
+	Holds []byte
 }
 
 // CommitResult is one lease's outcome: refused and why, with nothing
@@ -129,6 +140,13 @@ func (r CommitRequest) validate() error {
 			return fmt.Errorf("store: hold %s is not one open hold", h.AuthorizationID)
 		}
 		put[h.AuthorizationID] = true
+	}
+	chunks := map[int64]bool{}
+	for _, c := range r.PutChunks {
+		if c.Seq < 1 || c.Seq > r.AppliedSeq || chunks[c.Seq] || len(c.Holds) == 0 {
+			return fmt.Errorf("store: chunk %d is not one applied record's holds", c.Seq)
+		}
+		chunks[c.Seq] = true
 	}
 	return nil
 }
@@ -229,6 +247,17 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 			}
 			for _, w := range r.Winners {
 				mutations = append(mutations, spanner.Delete("tr_lease_hold", spanner.Key{r.Ref.Workspace, r.Ref.LeaseID, w.AuthorizationID}))
+			}
+			// A commit's mutations apply in order: the chunks it puts
+			// outlive the ones it drops.
+			if r.DropChunks {
+				mutations = append(mutations, spanner.Delete("tr_lease_handoff",
+					spanner.Key{r.Ref.Workspace, r.Ref.LeaseID}.AsPrefix()))
+			}
+			for _, c := range r.PutChunks {
+				mutations = append(mutations, spanner.InsertOrUpdate("tr_lease_handoff",
+					[]string{"workspace_id", "lease_id", "chunk_seq", "holds"},
+					[]any{r.Ref.Workspace, r.Ref.LeaseID, c.Seq, c.Holds}))
 			}
 			body, err := json.Marshal(pack{Version: 1, Winners: append([]Winner{}, r.Winners...)})
 			if err != nil {

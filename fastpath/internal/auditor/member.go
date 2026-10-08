@@ -10,6 +10,7 @@ package auditor
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -43,7 +44,9 @@ const (
 	// at a load, a tick or a commit, a member applies owner records without
 	// them: the spec's guard sweep finds that guard breaks no claim, since
 	// no stored winner can decide an owner record above the stored
-	// progress (proofs/AuditorCommit.guards.toml).
+	// progress (proofs/AuditorCommit.guards.toml). A hand-off's manifest
+	// needs them too, on any lease: its chunks list holds as they were
+	// when cut, and one may have a winner stored since.
 	Behind
 )
 
@@ -61,23 +64,61 @@ type Lease struct {
 	osum     int64 // what the owner's terminals applied charge, the checkpoint audit's sum
 	s        int64 // the boundary S, once stored or applied
 	sKnown   bool
+	sStored  bool // S is in the lease's row: loaded so, or committed by this member
 	listed   bool
+	faulted  bool // the lease has its audit fault, stored or about to be: the first stands
 	holds    map[string]*hold
 	winners  map[string]bool // decided: stored, or applied since
 	// winnersLoaded: the member knows every stored winner, as it does
 	// for a lease that was draining when it loaded it, or after LoadWinners.
 	winnersLoaded bool
 	shortfall     int64 // the highest shortfall total a terminal carried
+	// The lease's allocation and the consumption booked, as the commit will
+	// book the member's records in their order (§4.2): the checkpoint's
+	// coverage audit.
+	alloc, consumed int64
+	// A forced exit's hand-off under way: the chunks applied, kept in the
+	// lease's row from the commit after each until the hand-off ends.
+	chunks       map[int64][]record.HeldHold
+	storedChunks bool
 
 	// Applied and not yet committed.
-	dirty     bool
-	money     []store.MoneyOp
-	won       []store.Winner
-	put       map[string]bool
-	boundary  *store.Boundary
-	listedSeq *int64
-	fault     *int64
-	chunks    map[int64][]record.HeldHold
+	dirty      bool
+	money      []store.MoneyOp
+	won        []store.Winner
+	put        map[string]bool
+	boundary   *store.Boundary
+	listedSeq  *int64
+	fault      *int64
+	putChunks  []store.Chunk
+	dropChunks bool
+}
+
+// Work is a winner's pending work as its pack stores it (§4.8, §4.9),
+// version 1: what writing the winner's records needs once its commit has
+// landed, kept with the winner since Pub/Sub does not deliver an
+// acknowledged record again. A settle's or a reap's full record is the
+// staged one with Digest; a refund or a release writes a disposition record
+// with Boot; a reap charged the snapshot of the heartbeat record with
+// SnapshotSeq; a drain-log row's Money and Cause are its own.
+type Work struct {
+	V           int    `json:"v"`
+	Estimate    int64  `json:"est"`
+	Digest      []byte `json:"digest,omitempty"`
+	Boot        []byte `json:"boot,omitempty"`
+	SnapshotSeq int64  `json:"snap,omitempty"`
+	Money       []byte `json:"money,omitempty"`
+	Cause       string `json:"cause,omitempty"`
+}
+
+// encoded is JSON of a value with no channel, function or cyclic part,
+// which json.Marshal always encodes.
+func encoded(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 // hold is an open hold the log has shown, as its row stores it.
@@ -93,16 +134,26 @@ func Load(ref store.LeaseRef, l store.Loaded, skew time.Duration) (*Lease, error
 	}
 	out := &Lease{ref: ref, skew: skew, version: l.Lease.CommitVersion, draining: l.Lease.State == "draining",
 		applied: l.Lease.AppliedSeq, lastTick: l.Lease.LastTick, osum: l.Lease.AuditOsum,
-		listed: l.Lease.HoldsListedSeq.Valid, holds: map[string]*hold{}, winners: map[string]bool{},
-		shortfall: l.Lease.ShortfallTotal, put: map[string]bool{}, chunks: map[int64][]record.HeldHold{}}
+		listed: l.Lease.HoldsListedSeq.Valid, faulted: l.Lease.AuditFaultSeq.Valid, holds: map[string]*hold{},
+		winners: map[string]bool{}, shortfall: l.Lease.ShortfallTotal, alloc: l.Lease.Allocation,
+		consumed: l.Lease.Consumed, put: map[string]bool{}, chunks: map[int64][]record.HeldHold{}}
 	if l.Lease.FenceTime.Valid {
 		out.fence = l.Lease.FenceTime.Time
 	}
 	if l.Lease.BoundarySeq.Valid {
-		out.s, out.sKnown = l.Lease.BoundarySeq.Int64, true
+		out.s, out.sKnown, out.sStored = l.Lease.BoundarySeq.Int64, true, true
 	}
 	for _, h := range l.Holds {
 		out.holds[h.AuthorizationID] = &hold{row: h}
+	}
+	for _, c := range l.Chunks {
+		// A chunk that does not read back counts as one not applied: its
+		// hand-off as a partial one.
+		var holds []record.HeldHold
+		if json.Unmarshal(c.Holds, &holds) == nil {
+			out.chunks[c.Seq] = holds
+		}
+		out.storedChunks = true
 	}
 	if out.draining {
 		out.loadWinners(l.Packs)
@@ -120,12 +171,15 @@ func (l *Lease) Drained(lease store.Lease) error {
 	return nil
 }
 
-// LoadWinners takes the winners and fence of a lease that drained since the
-// member loaded it open (AuditorCommit's LoadWinners): the winners beside
-// the ones it decided itself.
+// LoadWinners takes the lease's stored winners, beside the ones the member
+// decided itself: for a lease that drained since the member loaded it open
+// (AuditorCommit's LoadWinners), with its fence (Drained), or for a
+// hand-off's manifest on a lease still open.
 func (l *Lease) LoadWinners(lease store.Lease, packs []store.Pack) error {
-	if err := l.Drained(lease); err != nil {
-		return err
+	if lease.FenceTime.Valid {
+		if err := l.Drained(lease); err != nil {
+			return err
+		}
 	}
 	l.loadWinners(packs)
 	return nil
@@ -154,7 +208,7 @@ func (l *Lease) Apply(r record.Record, published time.Time) (Outcome, error) {
 		return Skipped, nil
 	case r.Seq > l.applied+1:
 		return Gap, nil
-	case l.draining && !l.winnersLoaded:
+	case !l.winnersLoaded && (l.draining || r.Kind == record.Manifest):
 		return Behind, nil
 	}
 	switch r.Kind {
@@ -199,8 +253,9 @@ func (l *Lease) heartbeat(r record.Record) {
 }
 
 // terminal applies an owner terminal: the first for its authorization wins
-// and is booked, its record's shortfall total first (§4.2, §4.5); a later
-// one charges nothing. The checkpoint audit's sum counts every one.
+// and is booked, its record's shortfall total first (§4.2, §4.5), with its
+// pending work; a later one charges nothing, though its total, if higher,
+// is stored. The checkpoint audit's sum counts every one.
 func (l *Lease) terminal(r record.Record) {
 	if !l.winners[r.Auth] {
 		id := fmt.Sprintf("o%d", r.Seq)
@@ -210,52 +265,81 @@ func (l *Lease) terminal(r record.Record) {
 		}
 		l.winners[r.Auth] = true
 		l.won = append(l.won, store.Winner{AuthorizationID: r.Auth, Kind: string(r.Kind), Charge: r.Charge,
-			RecordID: id})
-		l.money = append(l.money, store.Book(r.Charge, r.Shortfall))
+			RecordID: id, Work: encoded(Work{V: 1, Estimate: r.Estimate, Digest: r.Digest, Boot: r.Boot,
+				SnapshotSeq: r.SnapshotSeq})})
+		l.book(r.Charge, r.Shortfall)
 		delete(l.holds, r.Auth)
 		delete(l.put, r.Auth)
 	} else if r.Shortfall > l.shortfall {
-		l.money = append(l.money, store.Book(0, r.Shortfall))
+		l.book(0, r.Shortfall)
 	}
-	l.shortfall = max(l.shortfall, r.Shortfall)
 	l.osum += r.Charge
 }
 
-// checkpoint audits the owner (§4.8): its consumed must be what its
-// terminals with lower numbers charged. A difference is a fault, which the
-// commit stores and which revokes the lease. A return leaves the
-// allocation; a final checkpoint lists the open holds: none.
+// book books a charge once the shortfall total is raised to total, as the
+// commit will (store.Book): the raise goes to the allocation, and the
+// charge is booked up to what the allocation has left, the rest a fault.
+func (l *Lease) book(charge, total int64) {
+	l.money = append(l.money, store.Book(charge, total))
+	if total > l.shortfall {
+		l.alloc += total - l.shortfall
+		l.shortfall = total
+	}
+	l.consumed += min(charge, max(l.alloc-l.consumed, 0))
+}
+
+// checkpoint audits the owner (§4.2, §4.8), after the return it carries
+// leaves the allocation: its consumed must be what its terminals with lower
+// numbers charged, and the allocation less the consumption booked must
+// cover its open holds, or it under-reported its shortfall. A difference
+// is a fault, which the commit stores and which revokes the lease; the
+// first stands. A final checkpoint lists the open holds: none.
 func (l *Lease) checkpoint(r record.Record) {
 	c := r.Checkpoint
-	if c.Consumed != l.osum && l.fault == nil {
-		seq := r.Seq
-		l.fault = &seq
-	}
 	if c.Return > 0 {
 		l.money = append(l.money, store.Return(c.Return))
+		l.alloc -= c.Return
+	}
+	if (c.Consumed != l.osum || l.alloc-l.consumed < c.OpenSum) && !l.faulted {
+		seq := r.Seq
+		l.fault, l.faulted = &seq, true
 	}
 	if c.Final {
 		l.list(r.Seq)
 	}
 }
 
-// handoff keeps a forced exit's chunk of open holds, until its manifest.
+// handoff keeps a forced exit's chunk of open holds until its manifest: in
+// memory, and in the lease's row from the next commit, so a member that
+// takes the lease over still has it.
 func (l *Lease) handoff(r record.Record) {
 	l.chunks[r.Seq] = slices.Clone(r.Holds)
+	l.putChunks = append(l.putChunks, store.Chunk{Seq: r.Seq, Holds: encoded(r.Holds)})
 }
 
-// manifest lists the open holds once every chunk it names is applied and
-// their holds have its digest; a partial hand-off counts as none (§4.8).
+// endHandoff ends a hand-off under way, complete or not: its chunks go, from
+// memory, and from the lease's row with the next commit.
+func (l *Lease) endHandoff() {
+	l.chunks, l.putChunks = map[int64][]record.HeldHold{}, nil
+	l.dropChunks = l.dropChunks || l.storedChunks
+}
+
+// manifest ends a hand-off. It lists the open holds once every chunk it names
+// is applied and their holds have its digest; a partial hand-off counts as
+// none (§4.8). A hold decided since its chunk was cut is not put again, and
+// one whose heartbeat the member applied since keeps that newer snapshot.
 func (l *Lease) manifest(r record.Record) {
 	m := r.Manifest
 	var holds []record.HeldHold
 	for _, seq := range m.Seqs {
 		chunk, ok := l.chunks[seq]
 		if !ok {
+			l.endHandoff()
 			return
 		}
 		holds = append(holds, chunk...)
 	}
+	l.endHandoff()
 	digest, err := record.HoldsDigest(holds)
 	if err != nil || !bytes.Equal(digest, m.HoldsDigest) {
 		return
@@ -264,7 +348,7 @@ func (l *Lease) manifest(r record.Record) {
 		if l.winners[held.Auth] {
 			continue
 		}
-		row := store.HoldRow{AuthorizationID: held.Auth, Estimate: held.Estimate, Deadline: held.Deadline, Listed: true}
+		row := store.HoldRow{AuthorizationID: held.Auth, Estimate: held.Estimate, Deadline: held.Deadline}
 		if s := held.Snapshot; s != nil {
 			row.SnapshotSeq = spanner.NullInt64{Int64: s.GatewaySeq, Valid: true}
 			row.SnapshotHash, row.SnapshotUsage = s.Hash, s.Usage
@@ -272,6 +356,19 @@ func (l *Lease) manifest(r record.Record) {
 			row.SnapshotOwnerSeq = spanner.NullInt64{Int64: held.SnapshotSeq, Valid: true}
 			row.ReapBasis = held.Basis
 		}
+		if h := l.holds[held.Auth]; h != nil {
+			if h.row.SnapshotOwnerSeq.Valid &&
+				(!row.SnapshotOwnerSeq.Valid || h.row.SnapshotOwnerSeq.Int64 > row.SnapshotOwnerSeq.Int64) {
+				basis := row.ReapBasis
+				row = h.row
+				if len(row.ReapBasis) == 0 {
+					row.ReapBasis = basis
+				}
+			} else if len(row.ReapBasis) == 0 {
+				row.ReapBasis = h.row.ReapBasis
+			}
+		}
+		row.Listed = true
 		l.holds[held.Auth] = &hold{row: row}
 		l.put[held.Auth] = true
 	}
@@ -302,27 +399,35 @@ func (l *Lease) applyTick(r record.Record, published time.Time) (Outcome, error)
 	if !l.sKnown && !r.TickAt.Before(l.fence.Add(l.skew)) {
 		l.s, l.sKnown, l.dirty = l.applied, true, true
 		l.boundary = &store.Boundary{S: l.applied, T: published}
-		// The holds' rows are stored with S: none is listed by this.
+		// No owner record past S is applied: a hand-off under way never
+		// ends whole. The holds' rows are stored with S: none is listed by
+		// this.
+		l.endHandoff()
 	}
 	return Applied, nil
 }
 
-// ApplyRow applies a draining lease's next drain-log row, once S is known
-// and every owner record up to it applied (§4.8): the first terminal for its
-// authorization wins, after the owner's records. Its booking raises no
-// shortfall total: the row's raise is the append's, already on the row, and
-// every total the member knows a booking before it in the commit carries.
+// ApplyRow applies a draining lease's next drain-log row, once S is stored
+// and every owner record up to it applied (§4.8, AuditorCommit's
+// StoredSFirst): the first terminal for its authorization wins, after the
+// owner's records, with its pending work. Its booking raises no shortfall
+// total: the row's raise is the append's, already on the row, and every
+// total the member knows a booking before it in the commit carries.
 func (l *Lease) ApplyRow(row store.DrainRow) error {
-	if !l.draining || !l.sKnown || !l.winnersLoaded {
-		return errors.New("auditor: a drain-log row before S is known")
+	if !l.draining || !l.sStored || !l.winnersLoaded {
+		return errors.New("auditor: a drain-log row before S is stored")
 	}
 	if l.winners[row.AuthorizationID] {
 		return nil
 	}
+	work := Work{V: 1, Estimate: row.Estimate, Digest: row.Digest, Money: row.Money, Cause: row.Cause}
+	if row.SnapshotOwnerSeq.Valid {
+		work.SnapshotSeq = row.SnapshotOwnerSeq.Int64
+	}
 	l.winners[row.AuthorizationID] = true
 	l.won = append(l.won, store.Winner{AuthorizationID: row.AuthorizationID, Kind: row.Kind, Charge: row.Charge,
-		FromDrain: true, RecordID: row.RecordID})
-	l.money = append(l.money, store.Book(row.Charge, 0))
+		FromDrain: true, RecordID: row.RecordID, Work: encoded(work)})
+	l.book(row.Charge, 0)
 	delete(l.holds, row.AuthorizationID)
 	delete(l.put, row.AuthorizationID)
 	l.dirty = true
@@ -339,7 +444,8 @@ func (l *Lease) Dirty() bool { return l.dirty }
 func (l *Lease) Request() store.CommitRequest {
 	req := store.CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.applied, LastTick: l.lastTick,
 		AuditOsum: l.osum, Money: slices.Clone(l.money), Winners: slices.Clone(l.won), Boundary: l.boundary,
-		HoldsListedSeq: l.listedSeq, AuditFault: l.fault}
+		HoldsListedSeq: l.listedSeq, AuditFault: l.fault, DropChunks: l.dropChunks,
+		PutChunks: slices.Clone(l.putChunks)}
 	for auth := range l.put {
 		req.PutHolds = append(req.PutHolds, l.holds[auth].row)
 	}
@@ -367,6 +473,9 @@ func (l *Lease) Committed(got store.CommitResult) error {
 	}
 	l.version = got.NewVersion
 	l.draining = l.draining || got.State != "open"
+	l.sStored = l.sStored || l.boundary != nil
+	l.storedChunks = (l.storedChunks && !l.dropChunks) || len(l.putChunks) > 0
 	l.dirty, l.money, l.won, l.put, l.boundary, l.listedSeq, l.fault = false, nil, nil, map[string]bool{}, nil, nil, nil
+	l.putChunks, l.dropChunks = nil, false
 	return nil
 }

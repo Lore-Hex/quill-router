@@ -26,6 +26,7 @@ type Loaded struct {
 	Lease  Lease
 	Holds  []HoldRow
 	Packs  []Pack
+	Chunks []Chunk
 	ReadTS time.Time
 }
 
@@ -56,6 +57,21 @@ func (s *Store) Load(ctx context.Context, ref LeaseRef) (Loaded, error) {
 			return err
 		}
 		out.Holds = append(out.Holds, h)
+		return nil
+	})
+	if err != nil {
+		return Loaded{}, err
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT chunk_seq, holds FROM tr_lease_handoff
+		       WHERE workspace_id = @w AND lease_id = @l ORDER BY chunk_seq`,
+		Params: ref.params(),
+	}, spanner.QueryOptions{RequestTag: tag("load")}).Do(func(row *spanner.Row) error {
+		var c Chunk
+		if err := row.Columns(&c.Seq, &c.Holds); err != nil {
+			return err
+		}
+		out.Chunks = append(out.Chunks, c)
 		return nil
 	})
 	if err != nil {
