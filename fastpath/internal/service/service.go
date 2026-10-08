@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -291,18 +292,21 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, rec
 		o.Run(ctx)
 		return nil
 	})
-	local, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key)
+	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key)
 	if err != nil {
 		return err
 	}
+	local := &localOwner{local: l}
+	// The owner stops only once every call to it has returned: a call can
+	// run on after its caller's context ends.
+	p.stop(local.calls.wait)
 
 	transport := &http.Transport{MaxIdleConnsPerHost: 256, IdleConnTimeout: 90 * time.Second}
 	client := &http.Client{Transport: transport}
 	// Once every caller has stopped, its idle connections close.
 	p.stop(transport.CloseIdleConnections)
 	fc := cfg.FrontDoor
-	fc.Owners = owners{self: cfg.Address, local: frontdoor.Direct{cfg.Address: local},
-		remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
+	fc.Owners = owners{self: cfg.Address, local: local, remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
 	fc.Store, fc.Records, fc.Members, fc.Key = s, frontdoor.FromRecords(records), members, cfg.Key
 	fc.Shards = func(string) int64 { return cfg.Shards }
 	fc.Self, fc.Peers, fc.Node = cfg.Address, frontdoor.HTTPPeers{Client: client, Scheme: "http"}, node
@@ -321,7 +325,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, rec
 	}
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
-	srv := &http.Server{Handler: handlers.wrap(frontdoor.Handler(door, local)), ReadHeaderTimeout: 5 * time.Second,
+	srv := &http.Server{Handler: handlers.wrap(frontdoor.Handler(door, l)), ReadHeaderTimeout: 5 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return requests }}
 	p.run("http", func(ctx context.Context) error {
 		served := make(chan error, 1)
@@ -389,9 +393,13 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 	if err != nil {
 		return err
 	}
-	staged := settlelog.SubscribeRecords(c.PubSub, cfg.RecordSubscription, cfg.MaxOutstanding)
+	staged := gatedStaged{src: auditor.FromRecordSubscription(settlelog.SubscribeRecords(c.PubSub,
+		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}}
 	p.run("stager", func(ctx context.Context) error {
-		return stager.Run(ctx, auditor.FromRecordSubscription(staged))
+		err := stager.Run(ctx, staged)
+		// The subscription can end before its callbacks have.
+		staged.calls.wait()
+		return err
 	})
 	return nil
 }
@@ -400,7 +408,7 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 // the network.
 type owners struct {
 	self   string
-	local  frontdoor.Direct
+	local  *localOwner
 	remote frontdoor.HTTPOwners
 }
 
@@ -439,17 +447,26 @@ type inFlight struct {
 	serving sync.WaitGroup
 }
 
+// enter counts a call in, unless wait has begun; leave counts it out.
+func (f *inFlight) enter() bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.ending {
+		return false
+	}
+	f.serving.Add(1)
+	return true
+}
+
+func (f *inFlight) leave() { f.serving.Done() }
+
 func (f *inFlight) wrap(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.mu.RLock()
-		if f.ending {
-			f.mu.RUnlock()
+		if !f.enter() {
 			http.Error(w, "stopping", http.StatusServiceUnavailable)
 			return
 		}
-		f.serving.Add(1)
-		f.mu.RUnlock()
-		defer f.serving.Done()
+		defer f.leave()
 		h.ServeHTTP(w, r)
 	})
 }
@@ -459,4 +476,84 @@ func (f *inFlight) wait() {
 	f.ending = true
 	f.mu.Unlock()
 	f.serving.Wait()
+}
+
+// localOwner reaches the node's own owner in the process, as
+// frontdoor.Direct does: each call's work runs in a goroutine of its own, so
+// a call ends with its context, though the owner may finish what it began.
+// Unlike Direct's, those goroutines are counted, so the owner is stopped
+// only once each has returned.
+type localOwner struct {
+	local *frontdoor.Local
+	calls inFlight
+}
+
+// callLocal runs f with the owner and returns its answer, or the context's
+// end if that comes first; f starts nothing once the context has ended, nor
+// once the process is stopping, when the owner is one no longer reached.
+func callLocal[A any](ctx context.Context, lo *localOwner, f func(*frontdoor.Local) A) (A, error) {
+	var zero A
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
+	if !lo.calls.enter() {
+		return zero, frontdoor.ErrUnreachable
+	}
+	answer := make(chan A, 1)
+	go func() {
+		defer lo.calls.leave()
+		if ctx.Err() != nil {
+			return
+		}
+		answer <- f(lo.local)
+	}()
+	select {
+	case a := <-answer:
+		return a, nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
+}
+
+func (lo *localOwner) Authorize(ctx context.Context, _ string, req frontdoor.OwnerAuthorize) (frontdoor.OwnerAdmitted,
+	error) {
+	req.Boot = slices.Clone(req.Boot)
+	return callLocal(ctx, lo, func(l *frontdoor.Local) frontdoor.OwnerAdmitted { return l.Authorize(req) })
+}
+
+func (lo *localOwner) Heartbeat(ctx context.Context, _ string, req frontdoor.OwnerHeartbeat) (frontdoor.HeartbeatAnswer,
+	error) {
+	req.Hash, req.Basis = slices.Clone(req.Hash), slices.Clone(req.Basis)
+	return callLocal(ctx, lo, func(l *frontdoor.Local) frontdoor.HeartbeatAnswer { return l.Heartbeat(ctx, req) })
+}
+
+func (lo *localOwner) Terminal(ctx context.Context, _ string, req frontdoor.OwnerTerminal) (
+	frontdoor.OwnerTerminalAnswer, error) {
+	req.Digest = slices.Clone(req.Digest)
+	return callLocal(ctx, lo, func(l *frontdoor.Local) frontdoor.OwnerTerminalAnswer { return l.Terminal(ctx, req) })
+}
+
+func (lo *localOwner) Ping(ctx context.Context, _ string) error {
+	_, err := callLocal(ctx, lo, func(*frontdoor.Local) struct{} { return struct{}{} })
+	return err
+}
+
+// gatedStaged is the record topic's subscription as the stager takes it,
+// each callback counted: the subscription can end before its callbacks
+// have, and the process stops the store they write only once each has
+// returned. A message that comes once stopping has begun is left for
+// redelivery.
+type gatedStaged struct {
+	src   auditor.StagedSource
+	calls *inFlight
+}
+
+func (g gatedStaged) Receive(ctx context.Context, handle func(context.Context, auditor.Staged)) error {
+	return g.src.Receive(ctx, func(ctx context.Context, s auditor.Staged) {
+		if !g.calls.enter() {
+			return
+		}
+		defer g.calls.leave()
+		handle(ctx, s)
+	})
 }

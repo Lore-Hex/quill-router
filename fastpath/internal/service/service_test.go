@@ -24,6 +24,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/settlelog"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
@@ -648,5 +649,124 @@ func TestAStoppingNodeEndsItsRequests(t *testing.T) {
 	answer, _ := io.ReadAll(conn)
 	if bytes.Contains(answer, []byte("200 OK")) {
 		t.Fatalf("a request was served after its node stopped: %q", answer)
+	}
+}
+
+// TestAnOwnerCallEndsBeforeItsOwnerStops: a front door's call to its own
+// owner can run on after the request that made it has ended; the process
+// stops the owner only once that call has returned.
+func TestAnOwnerCallEndsBeforeItsOwnerStops(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ln := listen(t)
+	ws := ownedBy(t, ln)
+	cfg := config(ln)
+	cfg.Auditor, cfg.Stopping = false, 100*time.Millisecond
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	cfg.Owner.Overrun = func(e int64) int64 {
+		// An admission once its lease is warm: it holds the owner's call.
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+		return 0
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg, Clients{Spanner: shared, PubSub: pubSub(t)}) }()
+	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + ln.Addr().String()}
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-entered:
+				return
+			default:
+			}
+			_, _ = gw.Authorize(context.Background(), frontdoor.AuthorizeOf{Workspace: ws, Request: fmt.Sprint(i),
+				Estimate: 40, Boot: []byte("boot")})
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("no admission reached the owner")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("the process stopped, %v, while its owner's call ran", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the process did not stop")
+	}
+}
+
+// TestTheStagerWaitsForItsCallbacks: the record topic's subscription can end
+// with a callback still under way, after its client's shutdown timeout; the
+// process stops only once the callback has returned.
+func TestTheStagerWaitsForItsCallbacks(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ps := pubSub(t)
+	cfg := config(listen(t))
+	cfg.Admission, cfg.Address, cfg.Listener = false, "", nil
+	alerted, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	cfg.Alert = func(subject, what string) {
+		if strings.Contains(what, "no lease's authorization") {
+			once.Do(func() {
+				close(alerted)
+				<-release
+			})
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg, Clients{Spanner: shared, PubSub: ps}) }()
+	records, err := settlelog.OpenRecords(ps, cfg.RecordTopic, cfg.publish())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer records.Stop()
+	wctx, wcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer wcancel()
+	// A full record of no lease's authorization: the stager tells of it.
+	if _, err := records.Publish("not-an-authorization", settlelog.FullRecord, []byte("x")).Wait(wctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-alerted:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the stager was given nothing")
+	}
+	cancel()
+	// Past the client's ten-second shutdown timeout, the callback still
+	// holds.
+	select {
+	case err := <-done:
+		t.Fatalf("the process stopped, %v, while the stager's callback ran", err)
+	case <-time.After(12 * time.Second):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the process did not stop")
 	}
 }
