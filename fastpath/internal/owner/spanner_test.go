@@ -43,9 +43,15 @@ type fakeSpanner struct {
 	deaf         bool
 	lostGrants   int
 	// drain is each lease's drain log, and cursors are the cursors its
-	// reads were given, in order.
-	drain   map[string][]store.DrainRow
-	cursors []time.Time
+	// reads were given, in order. failReads fails that many reads; a read
+	// tells reading it began, if set, then waits for readGate to close, or,
+	// with readsWait, for its context to end, and returns afterCancel later.
+	drain     map[string][]store.DrainRow
+	cursors   []time.Time
+	failReads int
+	reading   chan struct{}
+	readGate  chan struct{}
+	readsWait bool
 }
 
 func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.GrantResult, error) {
@@ -97,8 +103,29 @@ func (f *fakeSpanner) appendRow(lease string, row store.DrainRow, at time.Time) 
 
 func (f *fakeSpanner) ReadDrainSince(ctx context.Context, ref store.LeaseRef, cursor time.Time) ([]store.DrainRow, time.Time, error) {
 	f.mu.Lock()
+	reading, gate, wait := f.reading, f.readGate, f.readsWait
+	f.mu.Unlock()
+	if reading != nil {
+		reading <- struct{}{}
+	}
+	if gate != nil {
+		<-gate
+	}
+	if wait {
+		<-ctx.Done()
+		f.mu.Lock()
+		after := f.afterCancel
+		f.mu.Unlock()
+		time.Sleep(after)
+		return nil, time.Time{}, ctx.Err()
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cursors = append(f.cursors, cursor)
+	if f.failReads > 0 {
+		f.failReads--
+		return nil, time.Time{}, errors.New("the read failed")
+	}
 	read := cursor
 	var out []store.DrainRow
 	for _, r := range f.drain[ref.LeaseID] {

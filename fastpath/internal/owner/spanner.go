@@ -41,6 +41,8 @@ func (o *Owner) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-o.ctx.Done():
+			return
 		case <-ticker.C:
 		}
 		_ = o.Renew(ctx)
@@ -55,11 +57,25 @@ func (o *Owner) Run(ctx context.Context) {
 // go, and answers what names it as an owner past its cutoff does. With each
 // round every lease publishes a checkpoint record. A lease the owner no
 // longer renews, its publishes failing, is let go once past its cutoff. The
-// auditor finishes a lease let go so.
+// auditor finishes a lease let go so. Rounds run one at a time, and each
+// ends with ctx or the owner, which waits for it to end when it stops.
 func (o *Owner) Renew(ctx context.Context) error {
 	if o.cfg.Spanner == nil {
 		return errors.New("owner: no store to renew in")
 	}
+	o.mu.Lock()
+	if o.stopped {
+		o.mu.Unlock()
+		return errors.New("owner: stopped")
+	}
+	o.rounds.Add(1)
+	o.mu.Unlock()
+	defer o.rounds.Done()
+	o.round.Lock()
+	defer o.round.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(o.ctx, cancel)()
 	o.mu.Lock()
 	leases := make([]*Lease, 0, len(o.leases))
 	for _, l := range o.leases {

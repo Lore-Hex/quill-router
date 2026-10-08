@@ -37,11 +37,11 @@ func (r recordLog) Publish(authorization, kind string, data []byte) Waiter {
 }
 
 // adoptAndReap is a lease's adoption and reaper, at a renewal round (§4.5):
-// the drain-log rows committed since the last read are adopted, then each
-// open hold whose last heartbeat's deadline plus the grace has passed is
-// reaped, unless the drain log has a terminal for it, which is adopted
-// instead. What Spanner or the record topic fails is tried at the next
-// round.
+// the drain-log rows committed since the last read are adopted, and a lease
+// a renewal found past its cutoff admits and decides again; then each open
+// hold whose last heartbeat's deadline plus the grace has passed is reaped,
+// unless the drain log has a terminal for it, which is adopted instead.
+// What Spanner or the record topic fails is tried at the next round.
 func (o *Owner) adoptAndReap(ctx context.Context, l *Lease, now time.Time) {
 	if !l.adoptable() {
 		return
@@ -56,6 +56,9 @@ func (o *Owner) adoptAndReap(ctx context.Context, l *Lease, now time.Time) {
 		}
 	}
 	l.adopted = read
+	l.mu.Lock()
+	l.unadopted = false
+	l.mu.Unlock()
 	if o.cfg.Records == nil {
 		return
 	}

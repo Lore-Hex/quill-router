@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -165,19 +166,29 @@ func TestAnAdoptedRefundCarriesItsBoot(t *testing.T) {
 
 // TestTheReaperReapsAtTheLastSnapshot: a stream's hold whose last
 // heartbeat's deadline plus the grace has passed is reaped at that
-// heartbeat's running charge, its full record on the record topic first and
-// named by its digest; not a microsecond sooner.
+// heartbeat's snapshot and running charge, with the basis its first brought,
+// its full record on the record topic first and named by its digest; not a
+// microsecond sooner.
 func TestTheReaperReapsAtTheLastSnapshot(t *testing.T) {
 	f, _, rec := adoptFixture(t)
 	ctx := context.Background()
 	a := f.admit(t, 100, true)
-	granted, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+	first, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h0"), Usage: 4, Running: 8,
 		Basis: []byte("terms")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hb := f.log.records(t, "lease-1")[0]
-	f.clock.advance(granted.Add(time.Minute - time.Microsecond).Sub(start))
+	f.clock.advance(10 * time.Second)
+	granted, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 2, Hash: sum("h1"), Usage: 10, Running: 20,
+		Echoed: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !granted.After(first) {
+		t.Fatalf("the second heartbeat's deadline %v, the first's %v", granted, first)
+	}
+	hb := f.log.records(t, "lease-1")[1]
+	f.clock.advance(granted.Add(time.Minute - time.Microsecond).Sub(start.Add(10 * time.Second)))
 	renew(t, f)
 	if got, _ := rec.published(); len(got) != 0 || len(terminals(t, f)) != 0 {
 		t.Fatalf("a reap before its hold was due: %v", got)
@@ -197,7 +208,7 @@ func TestTheReaperReapsAtTheLastSnapshot(t *testing.T) {
 	if err := json.Unmarshal(data[0], &full); err != nil {
 		t.Fatal(err)
 	}
-	want := dueReap{Lease: "lease-1", Auth: a, Estimate: 100, Charge: 20, Deadline: granted.UTC(), GatewaySeq: 1,
+	want := dueReap{Lease: "lease-1", Auth: a, Estimate: 100, Charge: 20, Deadline: granted.UTC(), GatewaySeq: 2,
 		Hash: sum("h1"), Usage: 10, OwnerSeq: hb.Seq, Basis: []byte("terms"), Boot: boot}
 	if !reflect.DeepEqual(full, want) {
 		t.Fatalf("the reap's full record %+v, want %+v", full, want)
@@ -288,5 +299,121 @@ func TestAReapAtAMovedSnapshotWaits(t *testing.T) {
 	n := len(terminals(t, f))
 	if err := f.lease.reap(due[0], sum("full")); err != nil || len(terminals(t, f)) != n {
 		t.Fatalf("a reap at a moved snapshot: %v", err)
+	}
+}
+
+// TestARenewalPastTheCutoffAdoptsBeforeDecidingAgain: a renewal that finds
+// its lease past the cutoff leaves it admitting and deciding nothing until
+// its drain log is adopted, which a failed read puts off to the next round
+// (§4.2); a lease renewed within its cutoff admits on whatever the read.
+func TestARenewalPastTheCutoffAdoptsBeforeDecidingAgain(t *testing.T) {
+	f, sp, _ := adoptFixture(t)
+	ctx := context.Background()
+	a := f.admit(t, 10, false)
+	s := f.admit(t, 10, true)
+	f.clock.advance(59 * time.Second) // the lease's expiry is a minute away, its cutoff two seconds before
+	if _, err := f.lease.Settle(ctx, a, 15, sum("late")); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a settle past the cutoff: %v", err)
+	}
+	sp.appendRow("lease-1", store.DrainRow{AuthorizationID: a, RecordID: "d1", Kind: "settle", Charge: 15, Estimate: 10,
+		DoorRaise: 5, Digest: sum("late")}, start.Add(59*time.Second))
+	sp.failReads = 1
+	renew(t, f)
+	before, n := f.lease.Books(), len(terminals(t, f))
+	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("an admission before the adoption: %v", err)
+	}
+	if _, err := f.lease.Refund(ctx, a); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a refund before the adoption: %v", err)
+	}
+	if _, err := f.lease.Heartbeat(ctx, s, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat before the adoption: %v", err)
+	}
+	if b := f.lease.Books(); b != before || len(terminals(t, f)) != n {
+		t.Fatalf("the books before the adoption: %+v, then %+v", before, b)
+	}
+	renew(t, f)
+	if r := lastTerminal(t, f); r.Kind != record.Settle || r.Auth != a || r.Drain != "d1" || r.Charge != 15 {
+		t.Fatalf("the adopted settle: %+v", r)
+	}
+	if out, err := f.lease.Refund(ctx, a); err != nil || out.Kind != record.Settle || out.Charge != 15 {
+		t.Fatalf("a refund after the adoption: %+v %v", out, err)
+	}
+	f.admit(t, 1, false)
+
+	f, sp, _ = adoptFixture(t)
+	sp.failReads = 1
+	renew(t, f)
+	f.admit(t, 1, false)
+}
+
+// TestRenewalRoundsRunOneAtATime: a round waits for the one under way, so
+// each reads the drain log from the last one's read.
+func TestRenewalRoundsRunOneAtATime(t *testing.T) {
+	f, sp, _ := adoptFixture(t)
+	sp.appendRow("lease-1", store.DrainRow{AuthorizationID: "gone", RecordID: "d1", Kind: "refund"}, start.Add(time.Second))
+	sp.reading, sp.readGate = make(chan struct{}, 2), make(chan struct{})
+	done := make(chan error, 2)
+	go func() { done <- f.owner.Renew(context.Background()) }()
+	<-sp.reading
+	go func() { done <- f.owner.Renew(context.Background()) }()
+	time.Sleep(100 * time.Millisecond)
+	sp.mu.Lock()
+	rounds := len(sp.rounds)
+	sp.mu.Unlock()
+	if rounds != 1 {
+		t.Fatalf("%d rounds renewed while the first read the drain log", rounds)
+	}
+	close(sp.readGate)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	sp.mu.Lock()
+	cursors := slices.Clone(sp.cursors)
+	sp.mu.Unlock()
+	if len(cursors) != 2 || !cursors[0].IsZero() || !cursors[1].Equal(start.Add(time.Second)) {
+		t.Fatalf("the reads' cursors: %v", cursors)
+	}
+}
+
+// TestStoppingEndsARenewalRound: Stop ends a round's read and returns once
+// the round has, though the read takes a while to end; Run ends with the
+// owner.
+func TestStoppingEndsARenewalRound(t *testing.T) {
+	f, sp, _ := adoptFixture(t)
+	sp.reading, sp.readsWait, sp.afterCancel = make(chan struct{}, 1), true, 200*time.Millisecond
+	renewed := make(chan error, 1)
+	go func() { renewed <- f.owner.Renew(context.Background()) }()
+	<-sp.reading
+	ran := make(chan struct{})
+	go func() {
+		f.owner.Run(context.Background())
+		close(ran)
+	}()
+	stopped := make(chan struct{})
+	go func() {
+		f.owner.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+	select {
+	case <-renewed:
+	default:
+		t.Fatal("Stop returned while a round ran")
+	}
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not end with the owner")
+	}
+	if err := f.owner.Renew(context.Background()); err == nil {
+		t.Fatal("a round after Stop")
 	}
 }

@@ -128,11 +128,14 @@ type Owner struct {
 	pub Publisher
 
 	// ctx ends when the owner stops; writers are its shortfall writers,
-	// which outlive the leases they write for.
+	// which outlive the leases they write for. rounds are its renewal
+	// rounds under way, which round lets run one at a time.
 	ctx     context.Context
 	cancel  context.CancelFunc
 	writers sync.WaitGroup
 	grants  sync.WaitGroup
+	rounds  sync.WaitGroup
+	round   sync.Mutex
 
 	mu      sync.Mutex
 	stopped bool
@@ -158,8 +161,9 @@ func New(cfg Config, pub Publisher) (*Owner, error) {
 	return o, nil
 }
 
-// Stop ends the owner: it lets every lease go, and its shortfall writers end,
-// leaving any total they did not store to the auditor's commits.
+// Stop ends the owner: it lets every lease go, a renewal round under way
+// ends, and its shortfall writers end, leaving any total they did not store
+// to the auditor's commits.
 func (o *Owner) Stop() {
 	o.cancel()
 	o.mu.Lock()
@@ -172,6 +176,7 @@ func (o *Owner) Stop() {
 	for _, id := range ids {
 		o.Let(id)
 	}
+	o.rounds.Wait()
 	o.grants.Wait()
 	o.writers.Wait()
 }
@@ -365,7 +370,11 @@ type Lease struct {
 	lastAdmit time.Time
 	// adopted is the timestamp of the last read of the lease's drain log,
 	// past which the next reads (adopt.go); only the renewal round uses it.
-	adopted time.Time
+	// unadopted is set by a renewal that found the lease past its cutoff,
+	// and cleared once its drain log is adopted: until then it admits and
+	// decides nothing (§4.2).
+	adopted   time.Time
+	unadopted bool
 
 	// workers are the lease's flusher and the finish of its draining, which
 	// Let waits for: stopped is closed once they end.
@@ -416,6 +425,12 @@ func (l *Lease) Renewed(expiry time.Time) {
 	defer l.mu.Unlock()
 	if l.let || !expiry.After(l.expiry) {
 		return
+	}
+	if l.o.cfg.Spanner != nil && !l.withinCutoff(l.o.cfg.Clock()) {
+		// Past the cutoff, the owner answered its terminals past_cutoff,
+		// and the front doors took them to the drain log: it adopts that
+		// first (§4.2).
+		l.unadopted = true
 	}
 	l.expiry = expiry
 	select {

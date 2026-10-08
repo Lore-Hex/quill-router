@@ -94,7 +94,7 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.let {
+	if l.let || l.unadopted {
 		return Admitted{}, ErrPastCutoff
 	}
 	if l.closing {
@@ -208,7 +208,7 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		}
 	}
 	now := l.o.cfg.Clock()
-	if !l.withinCutoff(now) || l.failed {
+	if !l.withinCutoff(now) || l.failed || l.unadopted {
 		l.mu.Unlock()
 		return time.Time{}, ErrRetry
 	}
@@ -295,6 +295,12 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		out := Outcome{Kind: d.kind, Charge: d.charge}
 		l.mu.Unlock()
 		return l.terminalAnswer(ctx, s, out)
+	}
+	if l.unadopted {
+		// The drain log may have this hold's terminal: the front door
+		// takes this one there too, and the lease's order decides.
+		l.mu.Unlock()
+		return Outcome{}, ErrPastCutoff
 	}
 	s, err := l.decide(auth, terminalOf{kind: kind, charge: charge, digest: digest})
 	l.mu.Unlock()
