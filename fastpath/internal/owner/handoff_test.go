@@ -1141,8 +1141,12 @@ func TestAScanLetsTheLockGoBetweenBatches(t *testing.T) {
 		t.Fatalf("%d of %d holds visited, %d flushes", visited, holds, flushes)
 	}
 	odd := gather(l, func(h *hold) (string, bool) { return h.auth, h.estimate == 1 })
-	if len(odd) != holds/2 {
-		t.Fatalf("gathered %d of %d", len(odd), holds/2)
+	var want []string
+	for i := 1; i < holds; i += 2 {
+		want = append(want, fmt.Sprintf("auth-%05d", i))
+	}
+	if slices.Sort(odd); !slices.Equal(odd, want) {
+		t.Fatalf("gathered %d holds, %d of them the visit's, each once", len(odd), len(want))
 	}
 }
 
