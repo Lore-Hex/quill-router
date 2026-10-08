@@ -323,9 +323,8 @@ type hold struct {
 	sent       *sent
 	// basis is what the hold's first heartbeat brought for a reap of it.
 	basis []byte
-	// earlier and later link the lease's open holds in the order of their
-	// ends of life (link).
-	earlier, later *hold
+	// endIndex is the hold's place in its lease's ends.
+	endIndex int
 }
 
 // decision is an authorization's terminal: its kind and charge, and the
@@ -372,9 +371,9 @@ type Lease struct {
 	nextSeq    int64
 	holds      map[string]*hold
 	decided    map[string]*decision
-	// earliest and latest end the open holds' order by end of life, so a
-	// checkpoint takes the latest at once (link).
-	earliest, latest *hold
+	// ends are the open holds, the latest end of life first (endHeap), so a
+	// checkpoint takes it at once.
+	ends endHeap
 	// inflight are the records handed over and not acknowledged, in order,
 	// the first live of them published since the last failure, and the rest
 	// awaiting the flusher's republish; failed is set from a failed publish

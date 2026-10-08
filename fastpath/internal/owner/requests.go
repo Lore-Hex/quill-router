@@ -2,6 +2,7 @@ package owner
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"encoding/json"
 	"errors"
@@ -137,45 +138,36 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		return Admitted{}, ErrPastCutoff
 	}
 	h.admitted, h.endOfLife = now, now.Add(l.o.cfg.HoldLife)
-	l.link(h)
+	heap.Push(&l.ends, h)
 	l.lastAdmit = now
 	return Admitted{Auth: auth, Lease: l.id, EndOfLife: h.endOfLife}, nil
 }
 
-// link puts h, just admitted, among the lease's open holds in the order of
-// their ends of life, the latest last, as the wall clock reads them: from the
-// latest back, which it follows unless the owner's clock has stepped back.
-func (l *Lease) link(h *hold) {
-	at := l.latest
-	for at != nil && at.endOfLife.UTC().After(h.endOfLife.UTC()) {
-		at = at.earlier
-	}
-	h.earlier = at
-	if at == nil {
-		h.later, l.earliest = l.earliest, h
-	} else {
-		h.later, at.later = at.later, h
-	}
-	if h.later == nil {
-		l.latest = h
-	} else {
-		h.later.earlier = h
-	}
+// endHeap is a lease's open holds as a heap, the latest end of life first,
+// as the wall clock reads them: a hold joins it at its admission and leaves
+// at its decision in time in step with the log of their number, whatever
+// the owner's clock did between admissions.
+type endHeap []*hold
+
+func (e endHeap) Len() int           { return len(e) }
+func (e endHeap) Less(i, j int) bool { return e[i].endOfLife.UTC().After(e[j].endOfLife.UTC()) }
+func (e endHeap) Swap(i, j int) {
+	e[i], e[j] = e[j], e[i]
+	e[i].endIndex, e[j].endIndex = i, j
 }
 
-// unlink takes h, no longer open, out of that order.
-func (l *Lease) unlink(h *hold) {
-	if h.earlier == nil {
-		l.earliest = h.later
-	} else {
-		h.earlier.later = h.later
-	}
-	if h.later == nil {
-		l.latest = h.earlier
-	} else {
-		h.later.earlier = h.earlier
-	}
-	h.earlier, h.later = nil, nil
+func (e *endHeap) Push(x any) {
+	h := x.(*hold)
+	h.endIndex = len(*e)
+	*e = append(*e, h)
+}
+
+func (e *endHeap) Pop() any {
+	old := *e
+	h := old[len(old)-1]
+	old[len(old)-1] = nil
+	*e = old[:len(old)-1]
+	return h
 }
 
 // counted is the hold's part of the lease's buffer: a stream's from its first
@@ -429,7 +421,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	l.buffer -= h.counted()
 	l.pending += freed
 	delete(l.holds, auth)
-	l.unlink(h)
+	heap.Remove(&l.ends, h.endIndex)
 	if raised {
 		// The shortfall writer stores the new total in Spanner (§4.2).
 		select {

@@ -1006,6 +1006,78 @@ func TestACheckpointTakesItsLatestEndAtOnce(t *testing.T) {
 	}
 }
 
+// TestAnAdmissionAfterTheClockStepsBackIsBrief: a hold whose end of life
+// comes before every open hold's, its owner's clock having stepped back,
+// joins the lease's holds in time in step with the log of their number:
+// 300,000 open holds keep an admission's hold of the lease's lock brief, so
+// a hand-off whose time is up is not kept waiting.
+func TestAnAdmissionAfterTheClockStepsBackIsBrief(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 40
+	f.lease.mu.Unlock()
+	for range 300_000 {
+		f.admit(t, 1, false)
+	}
+	fastest := time.Hour
+	for range 5 {
+		f.clock.advance(-time.Millisecond)
+		began := time.Now()
+		f.admit(t, 1, false)
+		fastest = min(fastest, time.Since(began))
+	}
+	if fastest > 5*time.Millisecond {
+		t.Fatalf("an admission among 300,000 open holds, the clock stepped back, took %v", fastest)
+	}
+}
+
+// TestALetAfterTheLeaseLeftWaitsForItToStop: a Let that comes once another
+// has taken the lease out of the owner's leases still returns only once
+// the lease's workers have, a final checkpoint's draining write here.
+func TestALetAfterTheLeaseLeftWaitsForItToStop(t *testing.T) {
+	f, sp := releaseFixture(t)
+	begun := make(chan struct{}, 1)
+	sp.mu.Lock()
+	sp.drainGate, sp.afterCancel, sp.drainReturned = make(chan struct{}), 300*time.Millisecond, make(chan struct{})
+	sp.drainBegun = begun
+	sp.mu.Unlock()
+	f.lease.Close()
+	renew(t, f)
+	<-begun // the final checkpoint's draining write, a worker of the lease, is held
+	first, second := make(chan struct{}), make(chan struct{})
+	go func() {
+		f.owner.Let("lease-1")
+		close(first)
+	}()
+	waitFor(t, "the lease to leave the owner's leases", func() bool {
+		_, held := f.owner.Lease("lease-1")
+		return !held
+	})
+	go func() {
+		f.owner.Let("lease-1")
+		close(second)
+	}()
+	select {
+	case <-first:
+		t.Fatal("the first Let returned while the lease's draining write ran")
+	case <-second:
+		t.Fatal("a Let that came after the lease left returned while its draining write ran")
+	case <-time.After(100 * time.Millisecond):
+	}
+	for _, done := range []chan struct{}{first, second} {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a Let did not return")
+		}
+	}
+	select {
+	case <-sp.drainReturned:
+	default:
+		t.Fatal("a Let returned before the draining write did")
+	}
+}
+
 // TestAHandOffLetsGoDuringAFinalDrain: a lease whose final checkpoint's
 // draining write is under way is let go at the hand-off's deadline, not once
 // that write has unwound; Stop waits for it.
