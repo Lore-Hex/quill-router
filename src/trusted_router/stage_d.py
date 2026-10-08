@@ -20,19 +20,25 @@ if TYPE_CHECKING:
 PRICING_DOCUMENT_VERSION = 1
 PRICE_HISTORY_VERSION = 1
 PRICING_ROUNDING = "half_up_per_million"
+ESTIMATED_USAGE_SNAPSHOT_REASON = "abliterate_estimated_usage"
+ESTIMATED_USAGE_SNAPSHOT_MODELS = frozenset({
+    "abliterate/abliterate-0.3-fast", "abliterate/abliterate-0.3-balanced",
+    "abliterate/abliterate-0.3-clever",
+})
 
 
 def billing_pricing_snapshot(authorization: GatewayAuthorization) -> dict[str, Any] | None:
     """The single eligibility predicate for snapshot billing and its wire promise.
 
-    Stage D's frozen cohort verdict excludes nonstandard routes (partner,
+    Frozen admission verdicts exclude nonstandard routes (partner,
     orchestration, search, video, Batch, BYOK and priority). Fee-bearing and
     custom authorizations retain their existing billing contracts. Require a
     supported price for every authorized endpoint, so fallback selection cannot
-    invalidate the promise. Never consult the mutable catalog for eligibility.
+    invalidate the promise. Reviewed Abliterate routes can freeze prices without
+    joining the heartbeat cohort. Never consult the mutable catalog for eligibility.
     """
     if (
-        authorization.stage_d_reason != "ok"
+        authorization.stage_d_reason not in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON}
         or authorization.pricing_snapshot is None
         or authorization.usage_type != "Credits"
         or authorization.custom_model_id is not None
@@ -43,6 +49,12 @@ def billing_pricing_snapshot(authorization: GatewayAuthorization) -> dict[str, A
         or authorization.receipt_fee_basis_points != 0
         or authorization.app_markup_basis_points != 0
         or authorization.custom_model_markup_basis_points != 0
+    ):
+        return None
+    if authorization.stage_d_reason == ESTIMATED_USAGE_SNAPSHOT_REASON and (
+        authorization.provider != "abliterate"
+        or authorization.model_id not in ESTIMATED_USAGE_SNAPSHOT_MODELS
+        or any(model not in ESTIMATED_USAGE_SNAPSHOT_MODELS for model in authorization.candidate_model_ids)
     ):
         return None
     try:
