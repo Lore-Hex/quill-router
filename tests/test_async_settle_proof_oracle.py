@@ -1126,6 +1126,89 @@ FRAME_WITNESSES = ('active_frame', 'exception_traceback', 'generator_frame',
                    'coroutine_frame', 'exception_context')
 
 
+@pytest.mark.parametrize('kind', ['extra_local_key', 'exec_mapping', 'global_dict_key',
+                                 'proxy_locals_key'])
+def test_guard_frame_mapping_edges(monkeypatch, kind):
+    import functools
+    import gc
+    import sys
+
+    from tests.fakes.frozen_package import _FRAME_LOCALS_PROXY
+    from trusted_router.storage_errors import transient_store_error_types
+
+    held = functools.lru_cache(maxsize=2)(transient_store_error_types.__wrapped__)
+    held()
+    owner = None
+    calls = []
+    namespace = {'__name__': 'detached_frame_witness', '__builtins__': {}}
+    if kind == 'global_dict_key':
+        root = {held: None}
+    elif kind == 'exec_mapping':
+        class Locals(dict):
+            def values(self):
+                calls.append('values')
+                return ()
+
+            def keys(self):
+                calls.append('keys')
+                return ()
+
+            def items(self):
+                calls.append('items')
+                return ()
+
+            def __iter__(self):
+                calls.append('__iter__')
+                return iter(())
+
+        localns = Locals(held=held)
+        captured = []
+        namespace.update(__builtins__={'exec': exec}, capture=captured.append, sys=sys)
+        exec(compile('def generate(namespace):\n'
+                     ' exec("capture(sys._getframe())", '
+                     '{"__builtins__": {}, "capture": capture, "sys": sys}, namespace)\n'
+                     ' namespace = None\n yield\n', '<exec-mapping-witness>', 'exec'), namespace)
+        owner = namespace['generate'](localns)
+        next(owner)
+        root = captured[0]
+        assert root.f_locals is localns
+        assert root.f_back is owner.gi_frame and root.f_back.f_back is None
+        assert owner.gi_frame.f_locals['namespace'] is None
+        assert any(value is localns for value in gc.get_referents(root))
+    else:
+        if _FRAME_LOCALS_PROXY is None:
+            pytest.skip('extra locals require the native Python 3.13+ frame proxy')
+        exec(compile('def generate():\n yield\n', '<extra-local-witness>', 'exec'), namespace)
+        owner = namespace['generate']()
+        next(owner)
+        root = owner.gi_frame
+        assert root.f_back is None
+        root.f_locals[held] = None
+        assert type(root.f_locals) is _FRAME_LOCALS_PROXY
+        assert any(type(value) is dict and held in value for value in gc.get_referents(root))
+        if kind == 'proxy_locals_key':
+            # Isolate the supplement from the redundant extra-locals GC edge.
+            # CPython already omits fast locals on some frames; this controlled
+            # omission proves native proxy keys independently remain traversed.
+            native_referents = gc.get_referents
+            monkeypatch.setattr(gc, 'get_referents', lambda value: (
+                [] if value is root else native_referents(value)))
+    frozen = module('storage_errors')
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(frozen, 'review_mapping_root', root, raising=False)
+            with pytest.raises(AssertionError, match='live reference'):
+                with execution_guard():
+                    pytest.fail('undetected frame mapping reached the frozen leg')
+        assert calls == [], 'audit executed a user-container protocol method'
+        assert held.cache_info().currsize == 1
+        assert held.cache_info().misses == 1
+        assert held.cache_info().hits == 0
+    finally:
+        if owner is not None:
+            owner.close()
+
+
 @pytest.mark.parametrize('kind', FRAME_WITNESSES)
 def test_guard_held_frame_cache(monkeypatch, kind):
     import functools

@@ -1359,7 +1359,7 @@ gap. These are held Python objects inside the existing reference scope.
 
 | Reached object | Native traversal |
 |---|---|
-| Frame | Iterate `f_locals.values()` directly (the 3.13+ `FrameLocalsProxy`, without calling `locals()` or copying the traversal frame); follow `f_globals`, `f_back`, `f_code`, and `f_trace`. Skip `f_builtins`, the interpreter builtins namespace; explicit fields replace generic frame GC edges so that this skip is version independent. Globals retain the existing module-registry boundaries; the strong visited map bounds cycles. |
+| Frame | Always follow `gc.get_referents(frame)`, including extra-locals dictionary keys and values and exec-supplied locals mappings. Add `f_globals`, `f_back`, `f_code`, and `f_trace`. Only when `type(f_locals)` is the sealed native `FrameLocalsProxy`, add both keys and values through native `items()` iteration, without key lookup, copying, or calling user mapping methods. Ordinary/custom mappings rely on GC traversal. The supplement never replaces GC edges or continues past them. Existing module-registry identity boundaries apply to every edge; the strong visited map bounds cycles. |
 | Traceback | Follow `tb_frame` and `tb_next`, in addition to GC edges. Every reached frame receives the frame supplement. |
 | Generator / coroutine / async generator | Follow `gi_frame` / `cr_frame` / `ag_frame`, respectively, in addition to GC edges. The native types cannot override these attributes. |
 | Exception | Follow native `BaseException` descriptors for `__traceback__`, `__context__`, and `__cause__`, in addition to GC edges, without invoking subclass properties. |
@@ -1371,6 +1371,11 @@ reached object/frame). The deliberately live comparison leg is never an audit
 root. The separate worker-refusal/profile checks retain their existing stack
 inspection. Every reached `f_code` gets the same live-filename check as any other
 code object. Frame/traceback/generator skip mutations verify these paths.
+The sealed proxy type is discovered from a disposable unstarted generator
+because gate CPython 3.14.6 does not export it from `types`; the walker never
+looks up the current frame. There is no special frame-builtins edge exclusion:
+existing registry identities bound traversal, preserving all prior GC edges.
+The asserting **2,000,000-object** bound is unchanged.
 
 Every reached function **and code object** is checked against the live source
 path using native string comparisons; namespace provenance also rejects live
@@ -1430,7 +1435,7 @@ Python callbacks executed through these paths remain subject to the profiler in
 the guarded process. The harness and profiler infrastructure are trusted.
 Describe a missed case as an **undetected construction**.
 
-All **40** principal constructions have detecting witnesses: the earlier 14,
+All **44** principal constructions have detecting witnesses: the earlier 14,
 plus a warmed cache inside a nested mapping in a slot, a live cache held in code
 constants, a live cache in a frozen closure, a live callable in a frozen class
 dictionary via a descriptor, and a live cache in a nested tuple inside a
@@ -1449,6 +1454,14 @@ remove a cached live result if their methods were invoked. Round 8 adds an
 active frame attached to a frozen module, an exception traceback, a suspended
 generator's `gi_frame`, a coroutine's `cr_frame`, and a traceback retained only
 through exception `__context__`. All five require preflight reference detection.
+Round 9 adds an extra-local key in a detached suspended generator frame, an
+exec frame retaining a dict-subclass locals mapping whose `values()` is empty,
+a live producer used as a key in an ordinary frozen-module global dictionary,
+and a proxy-locals key with that frame's redundant GC edges deliberately omitted
+to isolate the native supplement. The first three use unmodified GC. All four
+require preflight rejection with the independent cache still warm, zero hits
+and no custom mapping protocol calls. Two mutations separately continue past
+frame GC edges and omit proxy keys (values only).
 The new cache witnesses use
 independent warmed wrappers and remain dormant
 inside the guard, so the reference layer itself must detect them. Mutation rows
@@ -1674,9 +1687,10 @@ remain Joseph's decision in §10 Q4. F1 changes no behavior or threshold.
 | Retention clearing / generation TTL | D `retention-body-clear`, `generation-future-terminal-at` |
 | Cap arithmetic | B `cap-arithmetic-exclusive`, `pilot-min-instead-of-override` |
 
-The executable tables contain B **10**, C **92**, and D **14** mutations
-(**116 total**, retaining all 72 Round-6 rows). Round 7 adds 44 reference and
-execution-guard mutations, including one for every principal construction.
+The executable tables contain B **10**, C **107**, and D **14** mutations
+(**131 total**, retaining all 72 Round-6 rows). Round 7 added 44 reference and
+execution-guard mutations; Round 8 retained ten reviewer live-side edits and
+added three frame-path mutations. Round 9 adds the two frame-regression rows.
 Round 5 incorporates the ten
 independent seed-4 reviewer edits, both money-changing thread/cache bridges,
 and the production-import witness. Round 4 added both ordinary-cost
@@ -1686,7 +1700,7 @@ and the wrong-model intent, witnessed by
 `test_async_settle_proof.py::test_four_path_billing_state[component_half_up]`.
 The generation/finalization builder and handler output corruptions remain.
 Collection/import errors never count as detected mutations. See the
-[Round-7 verification report](../async-settle-pr-f1-round7.md) for current results
+[Round-9 verification report](../async-settle-pr-f1-round9.md) for current results
 and the reviewer witness matrix; the Round-4 model-identity assertions remain.
 
 The fake now explicitly requires the claim's `NOT EXISTS`, the atomic

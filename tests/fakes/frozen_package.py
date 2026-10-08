@@ -159,6 +159,11 @@ def _live_source(filename):
 
 
 MAX_REFERENCE_OBJECTS = 2_000_000
+# CPython does not export FrameLocalsProxy from types on every 3.13+ release.
+# Discover the sealed native type from a disposable, unstarted generator;
+# never capture or enumerate the executing traversal's frame.
+_FRAME_LOCALS_PROXY = (type((item for item in ()).gi_frame.f_locals)
+                       if sys.version_info >= (3, 13) else None)
 _CODE_MEMBERS = tuple(field for field in vars(CodeType).values()
                       if isinstance(field, MemberDescriptorType))
 
@@ -200,14 +205,17 @@ def _references(roots, *, namespaces=(), max_objects=MAX_REFERENCE_OBJECTS):
         yield value
         value_type = type(value)
         if value_type is FrameType:
-            # Running frames omit their locals from GC on CPython 3.14. On
-            # 3.13+ this is a native FrameLocalsProxy: iterate values directly,
-            # never materialize the current traversal frame through locals().
-            pending.extend(value.f_locals.values())
+            # Supplement only: GC still owns extra-locals dictionaries and
+            # exec's supplied mapping, including keys and dict subclasses.
+            localns = value.f_locals
+            if type(localns) is _FRAME_LOCALS_PROXY:
+                # Exact sealed native type: no user mapping protocol dispatch,
+                # copying, or key lookup (which could call a key's __hash__).
+                for key, held in localns.items():
+                    pending.extend((key, held))
             pending.extend((value.f_globals, value.f_back, value.f_code, value.f_trace))
-            # Do not follow f_builtins into interpreter infrastructure. Use
-            # explicit native fields instead of GC edges for frames on all versions.
-            continue
+        # Always retain GC edges, including frames. Registry identity boundaries
+        # above apply equally to GC and supplemental edges.
         pending.extend(gc.get_referents(value))
         if value_type is TracebackType:
             pending.extend((value.tb_frame, value.tb_next))

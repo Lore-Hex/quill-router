@@ -351,6 +351,20 @@ MUTATIONS += [
 ]
 
 
+# Round 9: preserve frame GC edges independently of the native proxy supplement,
+# and prove proxy keys even when the interpreter omits the redundant GC edge.
+MUTATIONS += [
+    ('reference-continue-past-frame-gc', [('tests/fakes/frozen_package.py', [
+        ('        pending.extend(gc.get_referents(value))',
+         '        if value_type is FrameType:\n            continue\n'
+         '        pending.extend(gc.get_referents(value))'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_mapping_edges[exec_mapping]'),
+    ('reference-proxy-values-only', [('tests/fakes/frozen_package.py', [
+        ('pending.extend((key, held))', 'pending.append(held)'),
+    ])], 'tests/test_async_settle_proof_oracle.py::test_guard_frame_mapping_edges[proxy_locals_key]'),
+]
+
+
 def main() -> None:
     results = []
     with tempfile.TemporaryDirectory(prefix='pr-c-mutations-') as directory:
