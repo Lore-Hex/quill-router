@@ -258,6 +258,12 @@ func (p *parts) run(name string, f func(context.Context) error) {
 	}()
 }
 
+// failing fails the process with a part's failure, named as run names it,
+// for a part that learns of its failure before it returns.
+func (p *parts) failing(name string) func(error) {
+	return func(err error) { p.fail(fmt.Errorf("service: %s: %w", name, err)) }
+}
+
 // stop is run once every part has returned, latest first.
 func (p *parts) stop(f func()) { p.stops = append(p.stops, f) }
 
@@ -269,9 +275,25 @@ func (p *parts) wait() {
 	}
 }
 
-// admission starts the node's ring row, its owner, its front door and its
-// HTTP server.
-func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
+// admission starts the node's listener, its ring row, its owner, its front
+// door and its HTTP server. The listener comes first: a node that cannot
+// listen at its address, as when another serves there, takes no ring row,
+// which would stop the node that serves.
+func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
+	records *settlelog.Records) (err error) {
+	ln := cfg.Listener
+	if ln == nil {
+		if ln, err = net.Listen("tcp", cfg.Address); err != nil {
+			return err
+		}
+		// One Run made is closed with the server, or here if a part after
+		// it cannot start (Run closes one it was given).
+		defer func() {
+			if err != nil {
+				_ = ln.Close()
+			}
+		}()
+	}
 	node, err := ring.Start(p.ctx, s, cfg.Address, []string{ring.OwnerRole, "frontdoor"}, cfg.Ring)
 	if err != nil {
 		return err
@@ -320,12 +342,6 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log, rec
 	}
 	p.run("front door", door.Run)
 
-	ln := cfg.Listener
-	if ln == nil {
-		if ln, err = net.Listen("tcp", cfg.Address); err != nil {
-			return err
-		}
-	}
 	handlers := &inFlight{}
 	requests, endRequests := context.WithCancel(context.Background())
 	srv := &http.Server{Handler: handlers.wrap(frontdoor.Handler(door, l)), ReadHeaderTimeout: 5 * time.Second,
@@ -380,7 +396,8 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 		return err
 	}
 	sub := settlelog.Subscribe(c.PubSub, cfg.SettleSubscription, cfg.MaxOutstanding)
-	p.run("auditor", func(ctx context.Context) error { return rt.Run(ctx, auditor.FromSubscription(sub)) })
+	src := reporting{Source: auditor.FromSubscription(sub), fail: p.failing("auditor")}
+	p.run("auditor", func(ctx context.Context) error { return rt.Run(ctx, src) })
 
 	tc := cfg.Ticker
 	tc.Store, tc.Log, tc.Region, tc.Clock = s, auditor.FromLog(settle), cfg.Region, time.Now
@@ -403,7 +420,7 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 		return err
 	}
 	staged := gatedStaged{src: auditor.FromRecordSubscription(settlelog.SubscribeRecords(c.PubSub,
-		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}}
+		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}, fail: p.failing("stager")}
 	p.run("stager", func(ctx context.Context) error {
 		err := stager.Run(ctx, staged)
 		// The subscription can end before its callbacks have.
@@ -551,18 +568,40 @@ func (lo *localOwner) Ping(ctx context.Context, _ string) error {
 // each callback counted: the subscription can end before its callbacks
 // have, and the process stops the store they write only once each has
 // returned. A message that comes once stopping has begun is left for
-// redelivery.
+// redelivery. The subscription's failure fails the process as soon as
+// Receive returns it, before the stager waits for its callbacks.
 type gatedStaged struct {
 	src   auditor.StagedSource
 	calls *inFlight
+	fail  func(error)
 }
 
 func (g gatedStaged) Receive(ctx context.Context, handle func(context.Context, auditor.Staged)) error {
-	return g.src.Receive(ctx, func(ctx context.Context, s auditor.Staged) {
+	err := g.src.Receive(ctx, func(ctx context.Context, s auditor.Staged) {
 		if !g.calls.enter() {
 			return
 		}
 		defer g.calls.leave()
 		handle(ctx, s)
 	})
+	if err != nil && ctx.Err() == nil {
+		g.fail(err)
+	}
+	return err
+}
+
+// reporting is a settle log subscription whose failure fails the process as
+// soon as its Receive returns it: the runtime waits for its handlers before
+// it returns, and the process's context may end meanwhile.
+type reporting struct {
+	auditor.Source
+	fail func(error)
+}
+
+func (r reporting) Receive(ctx context.Context, handle func(context.Context, auditor.Delivery)) error {
+	err := r.Source.Receive(ctx, handle)
+	if err != nil && ctx.Err() == nil {
+		r.fail(err)
+	}
+	return err
 }

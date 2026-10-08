@@ -70,6 +70,13 @@ var key = bytes.Repeat([]byte("k"), frontdoor.MinKeySize)
 // auditor's subscriptions, the settle log's ordered by key.
 func pubSub(t *testing.T) *pubsub.Client {
 	t.Helper()
+	client, _ := fakePubSub(t)
+	return client
+}
+
+// fakePubSub is pubSub with its server.
+func fakePubSub(t *testing.T) (*pubsub.Client, *pstest.Server) {
+	t.Helper()
 	ctx := context.Background()
 	srv := pstest.NewServer()
 	t.Cleanup(func() { _ = srv.Close() })
@@ -97,7 +104,7 @@ func pubSub(t *testing.T) *pubsub.Client {
 			t.Fatal(err)
 		}
 	}
-	return client
+	return client, srv
 }
 
 // workspace seeds a workspace with credit, at the trust tier leases need.
@@ -631,6 +638,156 @@ func TestAServerThatFailsFailsTheProcess(t *testing.T) {
 	}
 }
 
+// TestASubscriptionThatFailsFailsTheProcess: a subscription that fails,
+// the stager's or the auditor's, fails the process as soon as its Receive
+// returns, while a callback of it still runs: the node stops serving, and
+// the failure is kept though the process's context ends before the
+// callback returns.
+func TestASubscriptionThatFailsFailsTheProcess(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	for _, c := range []struct {
+		sub, alert string
+		send       func(t *testing.T, ps *pubsub.Client, cfg Config)
+	}{
+		{"stager", "no lease's authorization", func(t *testing.T, ps *pubsub.Client, cfg Config) {
+			records, err := settlelog.OpenRecords(ps, cfg.RecordTopic, cfg.publish())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer records.Stop()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := records.Publish("not-an-authorization", settlelog.FullRecord, []byte("x")).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"auditor", "cannot read", func(t *testing.T, ps *pubsub.Client, cfg Config) {
+			log, err := settlelog.OpenLog(ps, cfg.SettleTopic, cfg.publish())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer log.Stop()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := log.Publish("no-lease", []byte("not a record"), nil).Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.sub, func(t *testing.T) {
+			ps, srv := fakePubSub(t)
+			// Streams end and open again, so the client finds a deleted
+			// subscription gone, which it does not retry.
+			srv.SetStreamTimeout(200 * time.Millisecond)
+			ln := listen(t)
+			cfg := config(ln)
+			alerted, release := make(chan struct{}), make(chan struct{})
+			letGo := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(letGo)
+			var once sync.Once
+			cfg.Alert = func(subject, what string) {
+				if strings.Contains(what, c.alert) {
+					once.Do(func() {
+						close(alerted)
+						<-release
+					})
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- Run(ctx, cfg, Clients{Spanner: shared, PubSub: ps}) }()
+			c.send(t, ps, cfg)
+			select {
+			case <-alerted:
+			case <-time.After(20 * time.Second):
+				t.Fatal("the callback was given nothing")
+			}
+			if err := ps.SubscriptionAdminClient.DeleteSubscription(context.Background(),
+				&pubsubpb.DeleteSubscriptionRequest{Subscription: "projects/spike/subscriptions/" + c.sub}); err != nil {
+				t.Fatal(err)
+			}
+			// Past the client's ten-second shutdown timeout, its Receive
+			// returns the failure; the callback still holds.
+			eventually(t, 40*time.Second, "the node stopped serving", func() (bool, error) {
+				conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
+				if err != nil {
+					return true, nil
+				}
+				_ = conn.Close()
+				return false, nil
+			})
+			cancel()
+			letGo()
+			select {
+			case err := <-done:
+				if err == nil || !strings.Contains(err.Error(), "service: "+c.sub) {
+					t.Fatalf("a process whose %s subscription failed ended with %v", c.sub, err)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the process did not stop")
+			}
+		})
+	}
+}
+
+// TestANodeThatCannotListenTakesNoRow: a node that cannot listen at its
+// address, as when another node serves there, fails before it takes the
+// ring's row, so the node that serves keeps its row and runs on.
+func TestANodeThatCannotListenTakesNoRow(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln := listen(t)
+	cfg := config(ln)
+	cfg.Auditor = false
+	run, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(run, cfg, Clients{Spanner: shared, PubSub: pubSub(t)}) }()
+	s, err := store.New(shared, cfg.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := ln.Addr().String()
+	epoch := func() int64 {
+		members, _, err := s.Members(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range members {
+			if m.Address == address {
+				return m.Epoch
+			}
+		}
+		return 0
+	}
+	eventually(t, 10*time.Second, "the node's row", func() (bool, error) { return epoch() > 0, nil })
+	serving := epoch()
+
+	second := config(ln)
+	second.Auditor, second.Listener = false, nil
+	if err := Run(ctx, second, Clients{Spanner: shared, PubSub: pubSub(t)}); err == nil {
+		t.Fatal("a second node at the same address ran")
+	}
+	if got := epoch(); got != serving {
+		t.Fatalf("the row's epoch went from %d to %d", serving, got)
+	}
+	// The node that serves runs on past a few of its ring rounds.
+	select {
+	case err := <-done:
+		t.Fatalf("the node that serves stopped: %v", err)
+	case <-time.After(3 * cfg.Ring):
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestAGivenListenerIsClosed: a listener given to Run is closed however Run
 // returns: stopped as it starts, with an owner that cannot start, or with a
 // configuration it refuses.
@@ -663,6 +820,28 @@ func TestAGivenListenerIsClosed(t *testing.T) {
 			t.Fatalf("%s: the listener was left open", c.name)
 		}
 	}
+}
+
+// TestAListenerRunMadeIsClosedOnAFailedStart: a listener Run opened at the
+// node's address is closed when a part after it cannot start, so the
+// address is free again.
+func TestAListenerRunMadeIsClosedOnAFailedStart(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	free := listen(t)
+	address := free.Addr().String()
+	_ = free.Close()
+	cfg := config(free)
+	cfg.Listener, cfg.Owner.AnswerWait = nil, 0
+	if err := Run(context.Background(), cfg, Clients{Spanner: shared, PubSub: pubSub(t)}); err == nil {
+		t.Fatal("a node whose owner cannot start ran")
+	}
+	ln, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("the address was left taken: %v", err)
+	}
+	_ = ln.Close()
 }
 
 // watchedListener is a listener whose Close calls closed first.
