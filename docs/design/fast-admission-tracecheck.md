@@ -239,12 +239,27 @@ state counts updated, and its shadow and the shadow's comparisons with it
     under the same epoch; an answer that leaves the expiry as it was still
     tells the owner what it is; and an answer that comes after its owner let
     the lease go is discarded (`AnswerDiscarded`).
+  - Revocation's bound. A renewal's statement before a revocation may read
+    up to S ahead, and the expiry it stores, which the owner's cutoff takes
+    as it is, may stand up to S later than true time would have set it: an
+    owner's last admission comes before the revocation plus `Window` plus
+    S, not plus `Window`. `RevocationBoundsAdmission` and its shadow's check
+    say `Window` plus S, and a grant's expiry, read the same way, is checked
+    the same way.
   - Decisions and their landing. The owner's decision of a hold's terminal
     takes the hold out of the owner's own holds at once (`OwnerDecides`);
     the terminal lands in the auditor's books later, or never (`HoldEnds`).
-    The owner's final checkpoint needs only its own holds gone, not every
-    terminal landed, and its completion, the auditor's commit of it, is a
-    step of its own, which may come after the owner died and restarted.
+  - The owner's last records. Its final checkpoint, and a forced exit's
+    chunks and manifest, are each published, acknowledged to the owner, and
+    committed by the auditor, three steps. The final checkpoint needs only
+    the owner's own holds gone; the manifest lists the holds the owner
+    published, not those it holds when the auditor commits it; and the
+    auditor's commit may come after the owner died, restarted or abandoned
+    the lease. The owner's draining write follows the acknowledgement, not
+    the auditor's commit; it lands at its journal row, and its answer is
+    learned later, or never. `CutoffBeforeDrain` becomes the rule the owner
+    keeps: it admits nothing once the lease is marked draining, by its own
+    write or the auditor's.
   - Abandonment. An owner whose publishes have failed for longer than the
     window stops renewing, and lets the lease go once past its cutoff,
     though the stored lease is still open and its own (`OwnerAbandons`). The
@@ -288,9 +303,13 @@ either way.
   is the rank of a runtime position among the records the spec models, 0
   ranking 0, which keeps every comparison the spec makes once the numbering
   is whole.
-- **Acknowledgements and answers.** `Ack` at the owner's acknowledgement of
-  each modeled record, in rank order; one of a record the spec does not
-  model is no step. `Answer(a)` at the gateway's receipt of an accepted
+- **Acknowledgements and answers.** `Ack` at the publish result of each
+  modeled record, in rank order: when the settle log's client had Pub/Sub's
+  acknowledgement, which it records with its reading. The owner's
+  bookkeeping of it, later, is its learning and no step, and a publish
+  deadline is checked on the result's reading, so a flusher that ran late
+  breaks nothing. An acknowledgement of a record the spec does not model is
+  no step. `Answer(a)` at the gateway's receipt of an accepted
   answer to a's first heartbeat, which the load generator records; a retry,
   a deadline passed or an answer lost is no step.
 - **The log.** `Deliver` of rank k is added: after k's publish and the
@@ -353,9 +372,12 @@ either way.
   record being modeled.
 - **The log.** The spec's log is the key's messages, ticks among them, in
   the order Pub/Sub stored them, each published copy once. `tracecheck`
-  builds it before replay from every member's deliveries, by message ID,
-  each entry added after its publish and before its first delivery and its
-  first acknowledgement. The key's deliveries then split into runs, each to
+  builds it before replay from every publisher's acknowledged publishes and
+  every member's deliveries, by message ID: a message whose publish was
+  acknowledged is in the log, delivered or not, placed by P1 after every
+  publish to the key acknowledged before its own began; each entry is added
+  after its publish and before its first delivery and its first
+  acknowledgement. The key's deliveries then split into runs, each to
   one member, each starting at a message no later than the first that no
   member had acknowledged, and going on in the log's order, skipping no
   message, acknowledged or not, until its member stopped receiving the key:
@@ -467,6 +489,12 @@ the constraints, never by putting a reading where the spec has true time:
   retried, is no breach: `HoldEnds` is then no step, the hold having ended
   by `Tick`. A request that went on past any of these is A3 broken, and
   reported, whatever the replay finds.
+- Every accepted answer was the owner's to give. `TerminalOrder` models a
+  stream's first heartbeat alone, so each accepted answer a gateway
+  received, the first or a later one, is checked directly: it follows the
+  publish result of its heartbeat's record, which came before the owner's
+  cutoff and by the deadline the heartbeat echoed, by the result's reading,
+  and it grants the deadline the owner's rule gives.
 - Every stream delivered only while permitted (A4). The load generator
   records each answer as its gateway received it and each delivery, with
   their readings. Each delivery must come, by the gateway's clock, before
@@ -590,8 +618,10 @@ fault, which is already set.
   again, apart from `tracecheck`'s and from its definition, over the raw
   events: the money ledger summed afresh per lease (§7), A3 and A4 per
   request (§5, §4.2), A4's coverage by every delivery against every answer
-  its gateway had by then, the order's cycles by search, the log and its
-  runs by trying every way the deliveries could come from one. It reports each
+  its gateway had by then, every accepted answer against its record's
+  publish result, the order's cycles by search, the log and its runs by
+  trying every way the acknowledged publishes and the deliveries could come
+  from one. It reports each
   assumption broken as §8 says, named as `tracecheck` must name it, K6's
   control both broken and violated, and goes on without it; then pass if
   every extension is a run, every timed predicate holds for every solution
@@ -633,7 +663,8 @@ fault, which is already set.
   the renewals' statement times.
 - **S6f.** The roles record their events, with the facts each mapping reads,
   under the locks that order them, their calls' requests and responses
-  apart from the database points, each attempt with its ID; the store's
-  read-write transactions write their journal rows; the load generator
+  apart from the database points, each attempt with its ID, each publish's
+  result with its message ID and reading; the store's read-write
+  transactions write their journal rows; the load generator
   records each request's answers, deliveries and end; the service's tests
   and the scenarios' traces are checked.
