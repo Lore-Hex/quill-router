@@ -180,6 +180,52 @@ def known_exclusion(row: dict[str, Any]) -> bool:
         and all(_uint(row["admission"][k]) and row["admission"][k] < 5_000_000 for k in ("workspace_age_us", "health_age_us")))
 
 
+def collect_rollbacks(resets: list[dict[str, Any]], serving: list[tuple[int, int, str]],
+                      resolutions: list[dict[str, Any]], manifests: dict[str, Any]) -> None:
+    """Invalidate fixes fleet-wide at the first incompatible serving instant.
+
+    SHAs are opaque. Reviewed A->B resolutions define a partial revision order;
+    only B and its reviewed successors establish retention of B's fix. Unknown
+    branches, predecessors and A itself cannot accrue post-fix observation.
+    """
+    successors: dict[str, set[str]] = {}
+    for item in resolutions:
+        successors.setdefault(item["revision"], set()).add(item["fixed_revision"])
+    def descendants(revision: str) -> set[str]:
+        found: set[str] = set()
+        pending = list(successors.get(revision, ()))
+        while pending:
+            current = pending.pop()
+            if current not in found:
+                found.add(current)
+                pending.extend(successors.get(current, ()))
+        return found
+    if any(revision in descendants(revision) for revision in successors):
+        raise ValueError("cyclic reset revision order")
+    processed = set()
+    # Appended rollback resets may themselves have a later reviewed resolution.
+    for reset in resets:
+        key = (reset["at_us"], reset["revision"])
+        if key in processed:
+            continue
+        processed.add(key)
+        resolved = next((item for item in resolutions if (item["at_us"], item["revision"]) == key), None)
+        if resolved is None:
+            continue
+        since = resolved["serving_since_us"]
+        fixed_day = dt.datetime.fromtimestamp(since/1e6, dt.UTC).date().isoformat()
+        manifest = manifests.get(fixed_day)
+        if manifest is None or manifest["router_revisions"] != [resolved["fixed_revision"]]:
+            continue
+        safe = {resolved["fixed_revision"], *descendants(resolved["fixed_revision"])}
+        rollback = min(((max(left, since), revision) for left, right, revision in serving
+                        if right > since and revision not in safe), default=None)
+        if rollback is not None:
+            at_us, revision = rollback
+            reset["invalidated_at_us"] = at_us
+            resets.append(dict(at_us=at_us, revision=revision, reason="revision_rollback"))
+
+
 def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -> dict[str, Any]:
     requested = sorted(set(days))
     if not requested:
@@ -195,6 +241,18 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         gap_ends.append(None if day is None else int(dt.datetime.combine(
             dt.date.fromisoformat(day)+dt.timedelta(days=1), dt.time(), dt.UTC).timestamp()*1e6))
     resets: list[dict[str, Any]] = []
+    serving: list[tuple[int, int, str]] = []
+    resolutions = proof.get("resolved_mismatches", [])
+    if not isinstance(resolutions, list) or len(resolutions) > 128:
+        raise ValueError("reset resolutions")
+    for resolution in resolutions:
+        if (not isinstance(resolution, dict) or set(resolution) != {"at_us", "revision", "fixed_revision", "serving_since_us", "artifact_sha256"}
+                or not _uint(resolution["at_us"]) or not _uint(resolution["serving_since_us"])
+                or resolution["serving_since_us"] <= resolution["at_us"]
+                or any(not isinstance(resolution[k], str) or re.fullmatch(r"[0-9a-f]{40}", resolution[k]) is None for k in ("revision", "fixed_revision"))
+                or resolution["fixed_revision"] == resolution["revision"]
+                or not isinstance(resolution["artifact_sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", resolution["artifact_sha256"]) is None):
+            raise ValueError("reset resolution schema")
     identities = set()
     for row in rows:
         if set(row) != {"kind", "id", "body"} or (row["kind"], row["id"]) in identities:
@@ -204,12 +262,14 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         if kind == SAMPLE:
             validate_sample(body, identity)
             samples.append(body)
+            serving.append((body["observed_at_us"], body["observed_at_us"] + 1, body["deployment"]["router_revision"]))
             # Correctness history survives requested-day/diagnostic filtering.
             if body["classification"] in {"hash", "identity", "normalization", "evaluator_disagreement"}:
                 resets.append(dict(at_us=body["observed_at_us"], revision=body["deployment"]["router_revision"], reason=body["classification"]))
         elif kind == COUNTER:
             validate_counter(identity, body, partitions=False)
             counters[identity] = body
+            serving.append((body["started_at_us"], body["flushed_at_us"], body["router_revision"]))
             if body["last_mismatch_at_us"] is not None or body["conflicting_samples"]:
                 resets.append(dict(at_us=body["last_mismatch_at_us"], revision=body["router_revision"], reason="counter_mismatch"))
         elif kind == CONTROL and identity.endswith("/manifest-v1"):
@@ -219,6 +279,10 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
             if len(body["instance_boot_ids"]) > 4096 or sorted(set(body["instance_boot_ids"])) != body["instance_boot_ids"] or len(body["gap_intervals"]) > 128:
                 raise ValueError("manifest bounds")
             manifests[body["day"]] = body
+            # The daily roster has no per-revision activation time: conservatively
+            # treat every listed revision as serving throughout that UTC day.
+            day_start = int(dt.datetime.combine(dt.date.fromisoformat(body["day"]), dt.time(), dt.UTC).timestamp()*1e6)
+            serving.extend((day_start, day_start + 86400_000000, revision) for revision in body["router_revisions"])
         elif kind == CONTROL and identity.endswith("/cap-v1"):
             if (set(body) != {"v", "limit", "reserved", "updated_at_us"} or type(body["v"]) is not int or body["v"] != 1
                     or body["limit"] != 100000 or not _uint(body["reserved"]) or body["reserved"] > 100000
@@ -226,6 +290,10 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 raise ValueError("invalid cap row")
         else:
             raise ValueError("unknown evidence kind")
+    # Finish correctness/reset collection over ALL supplied evidence, before any
+    # requested-day filtering. A rollback is itself a new correctness reset;
+    # restarting B alone cannot resolve it without another reviewed artifact.
+    collect_rollbacks(resets, serving, resolutions, manifests)
     # Retry counters have no authorization IDs or payload hashes. At minimum,
     # each phase needs a retained, verified original that the adapter could
     # duplicate. A different non-null retry hash could conflict with that same
@@ -474,17 +542,6 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
     # in the proof manifest; a restart or mere revision change is insufficient.
     restored_after = max((end for end in gap_ends if end is not None), default=low)
     unresolved = any(end is None for end in gap_ends)
-    resolutions = proof.get("resolved_mismatches", [])
-    if not isinstance(resolutions, list) or len(resolutions) > 128:
-        raise ValueError("reset resolutions")
-    for resolution in resolutions:
-        if (not isinstance(resolution, dict) or set(resolution) != {"at_us", "revision", "fixed_revision", "serving_since_us", "artifact_sha256"}
-                or not _uint(resolution["at_us"]) or not _uint(resolution["serving_since_us"])
-                or resolution["serving_since_us"] <= resolution["at_us"]
-                or any(not isinstance(resolution[k], str) or re.fullmatch(r"[0-9a-f]{40}", resolution[k]) is None for k in ("revision", "fixed_revision"))
-                or resolution["fixed_revision"] == resolution["revision"]
-                or not isinstance(resolution["artifact_sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", resolution["artifact_sha256"]) is None):
-            raise ValueError("reset resolution schema")
     for reset in resets:
         resolved = next((item for item in resolutions if (item["at_us"], item["revision"]) == (reset["at_us"], reset["revision"])), None)
         if resolved is None:

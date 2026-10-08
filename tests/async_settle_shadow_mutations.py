@@ -17,6 +17,17 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('skip-rollback-invalidation', REPORT, [
+        ('if rollback is not None:', 'if False:')],
+        'tests/test_async_settle_shadow_r13_rollback.py::test_rollback_invalidates_resolution'),
+    ('rollback-detected-only-on-resolution-day', REPORT, [
+        ('if right > since and revision not in safe',
+         'if right > since and left < since + 86400_000000 and revision not in safe')],
+        'tests/test_async_settle_shadow_r13_rollback.py::test_rollback_invalidates_resolution'),
+    ('rollback-ignored-in-other-region', REPORT, [
+        ('serving.append((body["started_at_us"], body["flushed_at_us"], body["router_revision"]))',
+         'if body["region"] == "us-central1":\n                serving.append((body["started_at_us"], body["flushed_at_us"], body["router_revision"]))')],
+        'tests/test_async_settle_shadow_r13_rollback.py::test_rollback_invalidates_resolution[False-other-counter-1]'),
     ('retry-exclusive-expiry-inclusive', 'src/trusted_router/async_settle_shadow_binding.py', [
         ('iat <= now < exp', 'iat <= now <= exp')],
         'tests/test_async_settle_shadow_r11_validity.py::test_signed_expiry_report_boundary[0]'),
