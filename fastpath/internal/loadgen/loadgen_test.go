@@ -856,23 +856,27 @@ func (maxSource) Uint64() uint64 { return math.MaxUint64 }
 
 // TestADrawLandsOnAWeight: a draw that rounding carries past every bin
 // lands on the last bin of any weight, never on one of none; and weights
-// however small draw in proportion.
+// however small or large draw in proportion, equal or not.
 func TestADrawLandsOnAWeight(t *testing.T) {
 	// Scaled by the heaviest, these weights' largest draw passes every bin.
 	if got := newHisto([]Weight{{1, 0.3}, {2, 0.4}, {3, 0.1}, {4, 0}}).pick(rand.New(maxSource{})); got != 3 {
 		t.Fatalf("drew %d", got)
 	}
-	for _, w := range []float64{math.SmallestNonzeroFloat64, 1e308} {
-		h := newHisto([]Weight{{1, w}, {2, w}, {3, 0}})
+	for _, c := range []struct {
+		w, ratio float64 // the first bin's weight, and the second's over it
+		ones     int     // the first bin's expected draws of 100,000
+	}{
+		{math.SmallestNonzeroFloat64, 1, 50_000}, {1e308, 1, 50_000},
+		{math.SmallestNonzeroFloat64, 9, 10_000}, {1, 9, 10_000}, {1e307, 9, 10_000},
+	} {
+		h := newHisto([]Weight{{1, c.w}, {2, c.ratio * c.w}, {3, 0}})
 		rng := rand.New(rand.NewPCG(1, 2))
-		ones := 0
+		drawn := map[int64]int{}
 		for range 100_000 {
-			if h.pick(rng) == 1 {
-				ones++
-			}
+			drawn[h.pick(rng)]++
 		}
-		if ones < 48_000 || ones > 52_000 {
-			t.Fatalf("%d of 100,000 draws on the first of two weights of %v", ones, w)
+		if d := drawn[1] - c.ones; d < -2_000 || d > 2_000 || drawn[3] != 0 {
+			t.Fatalf("weights %v and %v drew %v of 100,000, the first about %d", c.w, c.ratio*c.w, drawn, c.ones)
 		}
 	}
 }
