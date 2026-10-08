@@ -43,10 +43,6 @@ const sealVersion = "v1"
 // whole.
 var ErrSeal = errors.New("frontdoor: an envelope whose seal does not hold")
 
-// strict decodes base64url only as Seal encodes it, its unused bits zero,
-// so one envelope has one sealed form.
-var strict = base64.RawURLEncoding.Strict()
-
 // Seal signs an envelope with the fleet's key: the version, the envelope's
 // JSON and its HMAC-SHA256 over the version and the JSON, each part
 // base64url, joined by dots.
@@ -67,32 +63,42 @@ func Seal(key []byte, e Envelope) (string, error) {
 }
 
 // Open checks a sealed envelope against the fleet's key and reads it. It
-// takes only what Seal writes: a known version, each part in its one
-// encoding, a seal that holds over the envelope's exact bytes, and an
-// envelope with every field it needs and no other.
+// takes only what Seal writes, byte for byte: a known version, each part in
+// its one encoding, a seal that holds over the envelope's bytes, and those
+// bytes the envelope's one JSON form, every field there once and no other.
+// So one envelope has one sealed form, and none opens to a field it does
+// not state.
 func Open(key []byte, sealed string) (Envelope, error) {
 	parts := strings.Split(sealed, ".")
 	if len(key) < MinKeySize || len(parts) != 3 || parts[0] != sealVersion {
 		return Envelope{}, ErrSeal
 	}
-	payload, err := strict.DecodeString(parts[1])
+	payload, err := canonical(parts[1])
 	if err != nil {
 		return Envelope{}, ErrSeal
 	}
-	sum, err := strict.DecodeString(parts[2])
+	sum, err := canonical(parts[2])
 	if err != nil || !hmac.Equal(sum, mac(key, payload)) {
 		return Envelope{}, ErrSeal
 	}
 	var e Envelope
-	d := json.NewDecoder(bytes.NewReader(payload))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&e); err != nil || d.More() {
+	if err := json.Unmarshal(payload, &e); err != nil || e.valid() != nil {
 		return Envelope{}, ErrSeal
 	}
-	if err := e.valid(); err != nil {
+	if again, err := json.Marshal(e); err != nil || !bytes.Equal(again, payload) {
 		return Envelope{}, ErrSeal
 	}
 	return e, nil
+}
+
+// canonical decodes base64url without padding, and only as Seal encodes it:
+// no character the encoding does not write, its unused bits zero.
+func canonical(part string) ([]byte, error) {
+	b, err := base64.RawURLEncoding.DecodeString(part)
+	if err != nil || base64.RawURLEncoding.EncodeToString(b) != part {
+		return nil, ErrSeal
+	}
+	return b, nil
 }
 
 func (e Envelope) valid() error {

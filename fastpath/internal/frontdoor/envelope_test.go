@@ -58,6 +58,14 @@ func TestAnEnvelopeOpensOnlyUnderItsSeal(t *testing.T) {
 	if _, err := Open(key, other); !errors.Is(err, ErrSeal) {
 		t.Fatalf("the seal in another encoding of its bytes: %v", err)
 	}
+	dot := strings.LastIndexByte(sealed, '.')
+	for _, at := range []int{len(sealVersion) + 5, dot + 5} {
+		for _, extra := range []string{"\n", "\r"} {
+			if _, err := Open(key, sealed[:at]+extra+sealed[at:]); !errors.Is(err, ErrSeal) {
+				t.Fatalf("%q inserted at %d: %v", extra, at, err)
+			}
+		}
+	}
 	whole := `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"eol":"2026-10-08T12:00:00Z"}`
 	if _, err := Open(key, sealedOver(whole)); err != nil {
 		t.Fatalf("a whole envelope sealed by hand: %v", err)
@@ -71,6 +79,14 @@ func TestAnEnvelopeOpensOnlyUnderItsSeal(t *testing.T) {
 		"no end of life":       `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40}`,
 		"a negative estimate":  `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":-1,"eol":"2026-10-08T12:00:00Z"}`,
 		"a second value after": whole + ` {}`,
+		"no estimate":          `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","eol":"2026-10-08T12:00:00Z"}`,
+		"a null estimate":      `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":null,"eol":"2026-10-08T12:00:00Z"}`,
+		"a field twice":        `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":0,"e":40,"eol":"2026-10-08T12:00:00Z"}`,
+		"a field in capitals":  `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"E":0,"eol":"2026-10-08T12:00:00Z"}`,
+		"a bracket after":      whole + `]`,
+		"a brace after":        whole + `}`,
+		"spaces":               `{"a": "gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"eol":"2026-10-08T12:00:00Z"}`,
+		"another time form":    `{"a":"gwa-1","w":"ws-1","l":"lease-1","o":"node-b","e":40,"eol":"2026-10-08T12:00:00.000Z"}`,
 	} {
 		if _, err := Open(key, sealedOver(payload)); !errors.Is(err, ErrSeal) {
 			t.Fatalf("%s: %v", name, err)

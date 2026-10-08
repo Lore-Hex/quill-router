@@ -220,10 +220,22 @@ func (f *FrontDoor) Settle(ctx context.Context, s SettleOf) TerminalAnswer {
 	if err != nil {
 		return TerminalAnswer{Status: Failed}
 	}
-	// A settle's drain-log row is named by its full record, so a retry of
-	// it, through this front door or another, finds its row (§4.5).
-	return f.terminal(ctx, env, OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Settle,
-		Charge: s.Charge, Digest: digest[:]}, "settle-"+hex.EncodeToString(digest[:16]), s.Money)
+	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Settle, Charge: s.Charge, Digest: digest[:]}
+	return f.terminal(ctx, env, req, rowID(req, s.Money), s.Money)
+}
+
+// rowID names a terminal's drain-log row by all it states, its kind, charge,
+// full record's digest and money fields: a retry of it, through this front
+// door or another, finds its row, and another terminal for the hold makes
+// its own (§4.5).
+func rowID(req OwnerTerminal, money []byte) string {
+	h := sha256.New()
+	for _, part := range [][]byte{[]byte(req.Kind), binary.BigEndian.AppendUint64(nil, uint64(req.Charge)), req.Digest,
+		money} {
+		h.Write(binary.BigEndian.AppendUint64(nil, uint64(len(part))))
+		h.Write(part)
+	}
+	return string(req.Kind) + "-" + hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // Refund records a refund (§4.5).
@@ -232,13 +244,13 @@ func (f *FrontDoor) Refund(ctx context.Context, r RefundOf) TerminalAnswer {
 	if err != nil || len(r.Money) == 0 {
 		return TerminalAnswer{Status: Invalid}
 	}
-	return f.terminal(ctx, env, OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Refund}, "refund",
-		r.Money)
+	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Refund}
+	return f.terminal(ctx, env, req, rowID(req, r.Money), r.Money)
 }
 
 // terminal sends a terminal to the owner its envelope names. If the owner
 // cannot be reached, or answers that it may never publish it, the terminal
-// goes to the lease's drain log at once, under the record ID given.
+// goes to the lease's drain log at once, under the row ID given.
 func (f *FrontDoor) terminal(ctx context.Context, env Envelope, req OwnerTerminal, recordID string,
 	money []byte) TerminalAnswer {
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)

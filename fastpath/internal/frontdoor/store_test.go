@@ -2,7 +2,6 @@ package frontdoor
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
@@ -127,7 +126,8 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 		t.Fatalf("the drain log's rows for the settle: %+v", rows)
 	}
 	r := rows[0]
-	if r.RecordID != "settle-"+hex.EncodeToString(digest[:16]) || r.Kind != "settle" || r.Charge != 55 || r.Estimate != 40 ||
+	if r.RecordID != rowID(OwnerTerminal{Kind: "settle", Charge: 55, Digest: digest}, settled.Money) || r.Kind != "settle" ||
+		r.Charge != 55 || r.Estimate != 40 ||
 		r.DoorRaise != 15 || string(r.Digest) != string(digest) || string(r.Money) != `{"cost":55}` || r.Cause != "unreachable" {
 		t.Fatalf("the settle's row: %+v", r)
 	}
@@ -138,6 +138,17 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 	if after.Allocation != before.Allocation+15 || after.DoorRaised != before.DoorRaised+15 {
 		t.Fatalf("the lease's allocation %d and raises %d, before %d and %d", after.Allocation, after.DoorRaised,
 			before.Allocation, before.DoorRaised)
+	}
+	// Settles that state other money fields or another charge, with the
+	// same full record, are other terminals: each has its row.
+	for _, other := range []SettleOf{{Envelope: got.Envelope, Charge: 55, Full: full, Money: []byte(`{"cost":55,"x":1}`)},
+		{Envelope: got.Envelope, Charge: 56, Full: full, Money: settled.Money}} {
+		if ans := down.Settle(ctx, other); ans.Status != Recorded {
+			t.Fatalf("another settle: %+v", ans)
+		}
+	}
+	if rows, _, err = s.ReadHoldDrainRows(ctx, ref, e.Auth); err != nil || len(rows) != 3 {
+		t.Fatalf("the hold's rows after two other settles: %d %v", len(rows), err)
 	}
 
 	got = up.Authorize(ctx, AuthorizeOf{Workspace: ws, Request: "r2", Estimate: 40, Boot: []byte("boot")})
@@ -156,7 +167,8 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].RecordID != "refund" || rows[0].Kind != "refund" || rows[0].Charge != 0 ||
+	if len(rows) != 1 || rows[0].RecordID != rowID(OwnerTerminal{Kind: "refund"}, []byte(`{"cost":0}`)) ||
+		rows[0].Kind != "refund" || rows[0].Charge != 0 ||
 		rows[0].Estimate != 40 || rows[0].Cause != "past_cutoff" {
 		t.Fatalf("the refund's rows: %+v", rows)
 	}

@@ -13,14 +13,37 @@ import (
 )
 
 // fakeGrants is the store as an owner's top-ups see it: each grant granted,
-// to expire at expiry. These tests make no other call of it.
+// to expire at expiry, and kept. These tests make no other call of it.
 type fakeGrants struct {
 	owner.Spanner
 	expiry time.Time
+	mu     sync.Mutex
+	asked  []store.GrantRequest
 }
 
-func (f fakeGrants) Grant(context.Context, store.GrantRequest) (store.GrantResult, error) {
+func (f *fakeGrants) Grant(_ context.Context, req store.GrantRequest) (store.GrantResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, req)
 	return store.GrantResult{Expiry: f.expiry}, nil
+}
+
+func (f *fakeGrants) all() []store.GrantRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]store.GrantRequest(nil), f.asked...)
+}
+
+// granted is the grant of a lease.
+func (f *fakeGrants) granted(lease string) (store.GrantRequest, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, g := range f.asked {
+		if g.LeaseID == lease {
+			return g, true
+		}
+	}
+	return store.GrantRequest{}, false
 }
 
 // fakeLog is the settle log, acknowledging each record at once, or once
@@ -87,17 +110,31 @@ func ownerConfig(c *clock, sp owner.Spanner) owner.Config {
 }
 
 type localFixture struct {
-	clock *clock
-	log   *fakeLog
-	owner *owner.Owner
-	local *Local
+	clock  *clock
+	log    *fakeLog
+	grants *fakeGrants
+	owner  *owner.Owner
+	local  *Local
+	// minting, when set, holds each authorization minted until it closes.
+	minting chan struct{}
+	mu      sync.Mutex
 }
 
 func newLocal(t *testing.T) *localFixture {
 	t.Helper()
-	c := &clock{now: start}
-	log := &fakeLog{records: map[string][][]byte{}}
-	o, err := owner.New(ownerConfig(c, fakeGrants{expiry: start.Add(time.Minute)}), log)
+	f := &localFixture{clock: &clock{now: start}, log: &fakeLog{records: map[string][][]byte{}},
+		grants: &fakeGrants{expiry: start.Add(time.Minute)}}
+	cfg := ownerConfig(f.clock, f.grants)
+	cfg.NewAuthorization = func(lease string) (string, error) {
+		f.mu.Lock()
+		gate := f.minting
+		f.mu.Unlock()
+		if gate != nil {
+			<-gate
+		}
+		return store.NewAuthorizationID(lease)
+	}
+	o, err := owner.New(cfg, f.log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +143,20 @@ func newLocal(t *testing.T) *localFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &localFixture{clock: c, log: log, owner: o, local: l}
+	f.owner, f.local = o, l
+	return f
+}
+
+// held is what the shard 0 leases of ws-1 hold.
+func (f *localFixture) held(t *testing.T) int64 {
+	t.Helper()
+	var held int64
+	for _, g := range f.grants.all() {
+		if l, ok := f.owner.Lease(g.LeaseID); ok && g.Workspace == "ws-1" && g.WorkspaceShard == 0 {
+			held += l.Books().Held
+		}
+	}
+	return held
 }
 
 // admit authorizes until a lease the shard's top-up asked for admits it.
@@ -146,6 +196,13 @@ func TestTheOwnerSealsWhatItAdmits(t *testing.T) {
 	}
 	if l, ok := f.owner.Lease(e.Lease); !ok || l.Books().Held != 40 {
 		t.Fatalf("the hold under its lease: %v", ok)
+	}
+	if g, ok := f.grants.granted(e.Lease); !ok || g.Workspace != "ws-1" || g.WorkspaceShard != 2 || g.Region != "us-central1" {
+		t.Fatalf("the lease's grant: %+v %v", g, ok)
+	}
+	_, other := f.admit(t, OwnerAuthorize{Workspace: "ws-1", Shard: 0, Estimate: 40, Boot: []byte("boot")})
+	if g, ok := f.grants.granted(other.Lease); other.Lease == e.Lease || !ok || g.WorkspaceShard != 0 {
+		t.Fatalf("shard 0's lease %s, granted %+v; shard 2's %s", other.Lease, g, e.Lease)
 	}
 	for _, bad := range []OwnerAuthorize{{Workspace: "ws-1", Estimate: -1, Boot: []byte("boot")},
 		{Workspace: "ws-1", Estimate: 1}} {
@@ -195,6 +252,15 @@ func TestTheOwnersAnswersToATerminal(t *testing.T) {
 	}
 	if got := f.local.Terminal(ctx, OwnerTerminal{Lease: e.Lease, Auth: e.Auth, Kind: record.Reap}); got.Status != Invalid {
 		t.Fatalf("a reap from a front door: %+v", got)
+	}
+	_, open := f.admit(t, OwnerAuthorize{Workspace: "ws-1", Estimate: 40, Boot: []byte("boot")})
+	for name, bad := range map[string]OwnerTerminal{
+		"a short digest":    {Lease: open.Lease, Auth: open.Auth, Kind: record.Settle, Charge: 1, Digest: []byte("short")},
+		"a negative charge": {Lease: open.Lease, Auth: open.Auth, Kind: record.Settle, Charge: -1, Digest: hash("full")},
+	} {
+		if got := f.local.Terminal(ctx, bad); got.Status != Invalid {
+			t.Fatalf("%s: %+v", name, got)
+		}
 	}
 	_, other := f.admit(t, OwnerAuthorize{Workspace: "ws-1", Estimate: 40, Boot: []byte("boot")})
 	f.clock.advance(59 * time.Second)
@@ -275,10 +341,29 @@ func TestTheOwnersAnswersToAHeartbeat(t *testing.T) {
 }
 
 // TestDirectReachesItsOwners: an address with no owner in the process is
-// not reached, nor is any once the request has ended.
+// not reached, nor is any once the request has ended, nor one whose answer
+// takes longer than the request waits.
 func TestDirectReachesItsOwners(t *testing.T) {
 	f := newLocal(t)
 	d := Direct{"node-a": f.local}
+	f.admit(t, OwnerAuthorize{Workspace: "ws-1", Estimate: 1, Boot: []byte("boot")})
+	f.mu.Lock()
+	f.minting = make(chan struct{})
+	f.mu.Unlock()
+	wctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	began := time.Now()
+	_, err := d.Authorize(wctx, "node-a", OwnerAuthorize{Workspace: "ws-1", Estimate: 1, Boot: []byte("boot")})
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(began) > 5*time.Second {
+		t.Fatalf("an admission held past the wait: %v after %v", err, time.Since(began))
+	}
+	close(f.minting)
+	// The admission the wait gave up on lands now: two holds of 1.
+	for deadline := time.Now().Add(5 * time.Second); f.held(t) != 2; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the admission past the wait never landed: %d held", f.held(t))
+		}
+	}
 	if _, err := d.Terminal(context.Background(), "node-b", OwnerTerminal{}); !errors.Is(err, ErrUnreachable) {
 		t.Fatalf("another node: %v", err)
 	}
@@ -286,6 +371,15 @@ func TestDirectReachesItsOwners(t *testing.T) {
 	cancel()
 	if _, err := d.Heartbeat(ctx, "node-a", OwnerHeartbeat{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("an ended request: %v", err)
+	}
+	// An ended request starts nothing at the owner: no hold is admitted.
+	before := f.held(t)
+	if _, err := d.Authorize(ctx, "node-a", OwnerAuthorize{Workspace: "ws-1", Estimate: 7, Boot: []byte("boot")}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("an ended authorize: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if after := f.held(t); after != before {
+		t.Fatalf("an ended authorize held %d, before %d", after, before)
 	}
 	if got, err := d.Terminal(context.Background(), "node-a", OwnerTerminal{Lease: "another", Kind: record.Refund}); err != nil ||
 		got.Status != PastCutoff {

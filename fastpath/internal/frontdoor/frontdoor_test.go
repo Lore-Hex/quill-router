@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -392,7 +392,10 @@ func TestATerminalTheOwnerDoesNotTakeGoesToTheDrainLog(t *testing.T) {
 	ctx := context.Background()
 	e, sealed := envelope(t)
 	s := settle(sealed)
-	id := "settle-" + hex.EncodeToString(digestOf(s.Full)[:16])
+	id := rowID(OwnerTerminal{Kind: record.Settle, Charge: 55, Digest: digestOf(s.Full)}, s.Money)
+	if !strings.HasPrefix(id, "settle-") || len(id) != len("settle-")+32 {
+		t.Fatalf("a settle's row ID %q", id)
+	}
 	row := func(cause string) store.DrainTerminal {
 		return store.DrainTerminal{Ref: store.LeaseRef{Workspace: e.Workspace, LeaseID: e.Lease},
 			AuthorizationID: e.Auth, RecordID: id, Kind: "settle", Charge: 55, Estimate: 40,
@@ -426,13 +429,27 @@ func TestATerminalTheOwnerDoesNotTakeGoesToTheDrainLog(t *testing.T) {
 		}
 	}
 
-	// A retry of the settle names the same row, through any front door.
+	// A retry of the settle names the same row, through any front door;
+	// a settle that differs in anything it states names its own.
 	f = newDoor(t, 1)
 	f.owners.unreachable["node-b"] = true
 	f.door.Settle(ctx, s)
 	f.door.Settle(ctx, s)
-	if len(f.store.appended) != 2 || f.store.appended[0].RecordID != f.store.appended[1].RecordID {
-		t.Fatalf("a retried settle's rows: %+v", f.store.appended)
+	other := s
+	other.Money = []byte(`{"cost":56}`)
+	f.door.Settle(ctx, other)
+	other = s
+	other.Charge = 56
+	f.door.Settle(ctx, other)
+	other = s
+	other.Full = []byte(`{"full":"compacted"}`)
+	f.door.Settle(ctx, other)
+	ids := map[string]int{}
+	for _, row := range f.store.appended {
+		ids[row.RecordID]++
+	}
+	if len(f.store.appended) != 5 || len(ids) != 4 || ids[id] != 2 {
+		t.Fatalf("a retried settle and three others: %+v", ids)
 	}
 }
 
@@ -446,9 +463,13 @@ func TestARefundGoesToTheDrainLogWithoutAFullRecord(t *testing.T) {
 	if got := f.door.Refund(ctx, RefundOf{Envelope: sealed, Money: []byte(`{"cost":0}`)}); got.Status != Recorded {
 		t.Fatalf("a refund whose owner is not reached: %+v", got)
 	}
-	checkEvents(t, f.ev, "owner node-b refund", "append refund unreachable")
+	id := rowID(OwnerTerminal{Kind: record.Refund}, []byte(`{"cost":0}`))
+	if !strings.HasPrefix(id, "refund-") || id == rowID(OwnerTerminal{Kind: record.Refund}, []byte(`{"cost":1}`)) {
+		t.Fatalf("a refund's row ID %q", id)
+	}
+	checkEvents(t, f.ev, "owner node-b refund", "append "+id+" unreachable")
 	want := store.DrainTerminal{Ref: store.LeaseRef{Workspace: e.Workspace, LeaseID: e.Lease}, AuthorizationID: e.Auth,
-		RecordID: "refund", Kind: "refund", Estimate: 40, Money: []byte(`{"cost":0}`), Cause: "unreachable"}
+		RecordID: id, Kind: "refund", Estimate: 40, Money: []byte(`{"cost":0}`), Cause: "unreachable"}
 	if !reflect.DeepEqual(f.store.appended, []store.DrainTerminal{want}) {
 		t.Fatalf("appended %+v, want %+v", f.store.appended, want)
 	}

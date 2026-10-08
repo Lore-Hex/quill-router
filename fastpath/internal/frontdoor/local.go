@@ -83,7 +83,9 @@ func (l *Local) Heartbeat(ctx context.Context, req OwnerHeartbeat) HeartbeatAnsw
 // Terminal hands a settle or a refund to its lease: the winner's outcome
 // once its record is acknowledged before the cutoff, Recorded once it is
 // acknowledged after, and PastCutoff when the owner may never publish it. A
-// hold the lease never had is Invalid; anything else the gateway retries.
+// hold the lease never had, or a settle the record cannot carry, a negative
+// charge or a digest not SHA-256's, is Invalid; anything else the gateway
+// retries.
 func (l *Local) Terminal(ctx context.Context, req OwnerTerminal) OwnerTerminalAnswer {
 	lease, ok := l.owner.Lease(req.Lease)
 	if !ok {
@@ -91,10 +93,10 @@ func (l *Local) Terminal(ctx context.Context, req OwnerTerminal) OwnerTerminalAn
 	}
 	var out owner.Outcome
 	var err error
-	switch req.Kind {
-	case record.Settle:
+	switch {
+	case req.Kind == record.Settle && req.Charge >= 0 && len(req.Digest) == record.DigestSize:
 		out, err = lease.Settle(ctx, req.Auth, req.Charge, req.Digest)
-	case record.Refund:
+	case req.Kind == record.Refund:
 		out, err = lease.Refund(ctx, req.Auth)
 	default:
 		return OwnerTerminalAnswer{Status: Invalid}

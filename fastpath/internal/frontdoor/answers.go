@@ -119,43 +119,45 @@ type Owners interface {
 // ErrUnreachable is an owner a front door cannot reach.
 var ErrUnreachable = errors.New("frontdoor: the owner cannot be reached")
 
-// Direct reaches the owners in this process, by address.
+// Direct reaches the owners in this process, by address. A call ends with
+// its context, as one over the network would, though the owner may finish
+// what it began: an admission whose answer is lost ends uncharged at its
+// lease's close, and a terminal decided past the wait is the lease's to
+// order with what the front door then appends (§4.3, §4.5).
 type Direct map[string]*Local
 
-func (d Direct) local(ctx context.Context, address string) (*Local, error) {
+// call runs f with the owner at address, and returns its answer, or the
+// context's end if that comes first.
+func call[A any](ctx context.Context, d Direct, address string, f func(*Local) A) (A, error) {
+	var zero A
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return zero, err
 	}
 	l := d[address]
 	if l == nil {
-		return nil, ErrUnreachable
+		return zero, ErrUnreachable
 	}
-	return l, nil
+	answer := make(chan A, 1)
+	go func() { answer <- f(l) }()
+	select {
+	case a := <-answer:
+		return a, nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
 }
 
 // Authorize forwards to the owner at address.
 func (d Direct) Authorize(ctx context.Context, address string, req OwnerAuthorize) (OwnerAdmitted, error) {
-	l, err := d.local(ctx, address)
-	if err != nil {
-		return OwnerAdmitted{}, err
-	}
-	return l.Authorize(req), nil
+	return call(ctx, d, address, func(l *Local) OwnerAdmitted { return l.Authorize(req) })
 }
 
 // Heartbeat forwards to the owner at address.
 func (d Direct) Heartbeat(ctx context.Context, address string, req OwnerHeartbeat) (HeartbeatAnswer, error) {
-	l, err := d.local(ctx, address)
-	if err != nil {
-		return HeartbeatAnswer{}, err
-	}
-	return l.Heartbeat(ctx, req), nil
+	return call(ctx, d, address, func(l *Local) HeartbeatAnswer { return l.Heartbeat(ctx, req) })
 }
 
 // Terminal forwards to the owner at address.
 func (d Direct) Terminal(ctx context.Context, address string, req OwnerTerminal) (OwnerTerminalAnswer, error) {
-	l, err := d.local(ctx, address)
-	if err != nil {
-		return OwnerTerminalAnswer{}, err
-	}
-	return l.Terminal(ctx, req), nil
+	return call(ctx, d, address, func(l *Local) OwnerTerminalAnswer { return l.Terminal(ctx, req) })
 }
