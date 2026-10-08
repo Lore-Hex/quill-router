@@ -595,6 +595,10 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.fatalf("member %s's commit: refused %q, want %q", w.c.Members[m], got[0].Refused, want)
 	}
 	if want != "" {
+		// A refused commit books nothing, so it faults nothing.
+		if len(got[0].Faults) != 0 {
+			w.fatalf("member %s's commit, refused %q, faulted %v", w.c.Members[m], want, got[0].Faults)
+		}
 		return
 	}
 	if got[0].NewVersion != int64(to.Ver) || got[0].State != stateName(from.St) {
@@ -640,7 +644,7 @@ func (w *walker) commitOff(m int8, from ac.State, off int64) {
 	req := w.request(m, from)
 	req.AppliedSeq, req.Boundary = int64(from.S)+off, nil
 	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
-	if err != nil || len(got) != 1 || got[0].Refused != RefusedBoundary {
+	if err != nil || len(got) != 1 || got[0].Refused != RefusedBoundary || len(got[0].Faults) != 0 {
 		w.fatalf("member %s's commit %+d off S: %+v %v", w.c.Members[m], off, got, err)
 	}
 }
@@ -1046,15 +1050,14 @@ func (w *walker) checkPacks(packs []Pack, read string) {
 	}
 }
 
-// checkWinnerCounts holds each pack's stored winner count, which no read of
-// the packs returns, to its commit's winners.
-func (w *walker) checkWinnerCounts() {
-	w.t.Helper()
+// winnerCounts reads the stored winner count of each of a lease's packs, in
+// commit order; no read of the packs returns it.
+func winnerCounts(ref LeaseRef) ([]int64, error) {
 	var counts []int64
 	err := shared.Single().Query(context.Background(), spanner.Statement{
 		SQL: `SELECT winner_count FROM tr_lease_winners WHERE workspace_id = @w AND lease_id = @l
 		       ORDER BY commit_version`,
-		Params: w.ref.params(),
+		Params: ref.params(),
 	}).Do(func(r *spanner.Row) error {
 		var n int64
 		if err := r.Column(0, &n); err != nil {
@@ -1063,6 +1066,14 @@ func (w *walker) checkWinnerCounts() {
 		counts = append(counts, n)
 		return nil
 	})
+	return counts, err
+}
+
+// checkWinnerCounts holds each pack's stored winner count to its commit's
+// winners.
+func (w *walker) checkWinnerCounts() {
+	w.t.Helper()
+	counts, err := winnerCounts(w.ref)
 	if err != nil {
 		w.fatalf("reading the packs' winner counts: %v", err)
 	}

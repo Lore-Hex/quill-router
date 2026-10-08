@@ -71,7 +71,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"return", "drain",
 		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
 		"a booking past the first donor", "a return before the last donor", "a batch its order changes",
-		"a return its place changes"} {
+		"a return its place changes", "a pack of several winners"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -101,6 +101,7 @@ type debtLease struct {
 	raises     map[string]int64
 	stamped    map[string]time.Time // each row's commit timestamp, as its append returned it
 	committed  map[string]bool
+	packs      []int64 // each commit's winner count, in commit order
 }
 
 // donor is one of a lease's donors as the walk books it: its credit shard,
@@ -262,6 +263,7 @@ func (d *debtWalk) run() {
 			// With no lease left, a walk ends once it is granted none.
 			if !d.grant(ctx) {
 				d.check(before, headrooms(readRows(d.t, d.ws)))
+				d.checkAllPacks()
 				return
 			}
 		case op == 0 && len(live) < 4:
@@ -284,6 +286,16 @@ func (d *debtWalk) run() {
 		after := headrooms(readRows(d.t, d.ws))
 		d.check(before, after)
 		before = after
+	}
+	d.checkAllPacks()
+}
+
+// checkAllPacks holds every lease's packs, a closed one's too, at the walk's
+// end, so a pack written to the wrong lease shows.
+func (d *debtWalk) checkAllPacks() {
+	d.t.Helper()
+	for _, l := range d.leases {
+		d.checkPacks(l)
 	}
 }
 
@@ -364,6 +376,8 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 		d.fatalf("a commit that books nothing faulted %v", got[0].Faults)
 	}
 	l.version, l.seq = got[0].NewVersion, seq
+	l.packs = append(l.packs, int64(len(req.Winners)))
+	d.checkPacks(l)
 	l.stored = l.stored || boundary
 	return got[0]
 }
@@ -420,7 +434,7 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		// holds every row to the walk's ledger.
 		got, _, err := d.s.Commit(ctx, []CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1, AppliedSeq: l.seq + 1,
 			Money: money}})
-		if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion {
+		if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
 			d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
 		}
 		d.seen["refused commit"]++
@@ -547,6 +561,11 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			d.fatalf("committing the drain log's winners: %+v %v", got2, err)
 		}
 		l.version = got2[0].NewVersion
+		l.packs = append(l.packs, int64(len(winners)))
+		d.checkPacks(l)
+		if len(winners) > 1 {
+			d.seen["a pack of several winners"]++
+		}
 		pastFirst, faults := l.bookedEach(money)
 		if pastFirst {
 			d.seen["a booking past the first donor"]++
@@ -580,6 +599,20 @@ func (d *debtWalk) checkRow(l *debtLease, r DrainRow) {
 		l.stamped[r.RecordID].IsZero() || !r.CommitTS.Equal(l.stamped[r.RecordID]) {
 		d.fatalf("lease %s's drain row %+v, and the walk appended %+v raising %d", l.ref.LeaseID, r, t,
 			l.raises[r.RecordID])
+	}
+}
+
+// checkPacks holds each of the lease's packs' stored winner counts to its
+// commit's, after a commit.
+func (d *debtWalk) checkPacks(l *debtLease) {
+	d.t.Helper()
+	counts, err := winnerCounts(l.ref)
+	if err != nil {
+		d.fatalf("reading lease %s's winner counts: %v", l.ref.LeaseID, err)
+	}
+	if !slices.Equal(counts, l.packs) {
+		d.fatalf("lease %s's packs' winner counts are %v, and the walk's commits stored %v", l.ref.LeaseID, counts,
+			l.packs)
 	}
 }
 
