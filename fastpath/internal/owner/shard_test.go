@@ -657,21 +657,48 @@ func TestALeaseWhosePublishesFailAddsNoRoom(t *testing.T) {
 		t.Fatalf("a request of 101 under a lease of 100: %v", err)
 	}
 	b := f.waitLeases(t, 2)[1] // 101
-	held, err := a.Admit(Admission{Estimate: 7, Boot: boot})
+	f.owner.cfg.TopUps.Min = 1
+	f.owner.cfg.Overrun = func(e int64) int64 { return e / 4 }
+	if _, err := a.Admit(Admission{Estimate: 8, Boot: boot}); err != nil { // held through: 8 and a buffer of 2
+		t.Fatal(err)
+	}
+	settled, err := a.Admit(Admission{Estimate: 7, Boot: boot})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.log.fail(a.id, 1_000_000)
-	go func() { _, _ = a.Settle(context.Background(), held.Auth, 1, sum("a")) }()
+	go func() { _, _ = a.Settle(context.Background(), settled.Auth, 1, sum("a")) }()
 	waitFor(t, "a's publishes failing", func() bool {
-		_, err := a.Admit(Admission{Estimate: 1, Boot: boot})
-		return errors.Is(err, ErrPublishing)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.failed
 	})
 	f.clock.advance(10 * time.Second)
-	if got := admitTo(t, f, 60); got.Lease != b.id { // b's room 41, a's none
+	if got := admitTo(t, f, 60); got.Lease != b.id { // b's room 26, a's none
 		t.Fatalf("admitted under %s, and the lease whose publishes work is %s", got.Lease, b.id)
 	}
-	waitFor(t, "the ask with only b's room of 41", func() bool { return len(sp.granted()) == 3 })
+	waitFor(t, "the ask with only b's room of 26", func() bool { return len(sp.granted()) == 3 })
+	// 1 charged; a's hold of 8 and its buffer of 2; b's 60 and 15.
+	if got := sp.granted()[2].Amount; got != 1+10+75 {
+		t.Fatalf("a top-up for 1 charged and 85 held and buffered, a's 10 among them: %d", got)
+	}
+}
+
+// TestAHorizonIsWholeBuckets: top-ups whose horizon the sixty buckets
+// cannot cover exactly are refused.
+func TestAHorizonIsWholeBuckets(t *testing.T) {
+	ok := TopUps{LowWater: 50, Cooldown: time.Second, Horizon: time.Minute, Min: 1, Max: 10, IdleAfter: time.Minute,
+		MaxLife: time.Hour}
+	if err := ok.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []time.Duration{30, 61, time.Minute + 1} {
+		bad := ok
+		bad.Horizon = h
+		if err := bad.validate(); err == nil {
+			t.Errorf("a horizon of %v", h)
+		}
+	}
 }
 
 // TestATopUpCountsTheHoldsBuffers: a top-up's size has room for the open

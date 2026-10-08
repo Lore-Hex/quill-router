@@ -2,6 +2,7 @@ package owner
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"sync"
@@ -39,6 +40,12 @@ func (t TopUps) validate() error {
 	if t.LowWater < 0 || t.Cooldown <= 0 || t.Horizon <= 0 || t.Min <= 0 || t.Max < t.Min || t.IdleAfter <= 0 ||
 		t.MaxLife <= 0 {
 		return errors.New("owner: top-ups need a low-water mark, positive durations and sizes, and Min at most Max")
+	}
+	if t.Horizon%time.Duration(len(charges{}.buckets)) != 0 {
+		// The horizon is kept in sixty buckets: a whole number of
+		// nanoseconds each, so the buckets cover it exactly.
+		return fmt.Errorf("owner: a horizon of %v is not %d buckets of whole nanoseconds", t.Horizon,
+			len(charges{}.buckets))
 	}
 	return nil
 }
