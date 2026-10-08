@@ -427,7 +427,9 @@ A trace has to say enough to put every step in an order the specs can check.
   it could not order named.
 
 Traces go to a local file and then to the spike's bucket, one object per
-process per run. TLC is not fed traces (§5.1).
+process per run. TLC is not fed traces (§5.1). How `tracecheck` maps a run
+onto the shadows, which model one lease with a few authorizations, and what
+it reports, is in `fast-admission-tracecheck.md`.
 
 ## 7. Steps
 
