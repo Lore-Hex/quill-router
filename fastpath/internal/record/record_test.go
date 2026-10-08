@@ -10,9 +10,13 @@ import (
 
 var (
 	deadline = time.Date(2026, 10, 8, 2, 20, 0, 0, time.UTC)
-	digest   = bytes.Repeat([]byte{0xab}, 32)
-	snapshot = &Snapshot{GatewaySeq: 3, Hash: []byte{1, 2, 3}, Usage: []byte(`{"out":40}`), Running: 120, Deadline: deadline}
+	digest   = bytes.Repeat([]byte{0xab}, DigestSize)
+	hash     = bytes.Repeat([]byte{0xcd}, DigestSize)
 )
+
+func snapshot() *Snapshot {
+	return &Snapshot{GatewaySeq: 3, Hash: hash, Usage: []byte(`{"out":40}`), Running: 120, Deadline: deadline}
+}
 
 // one is a valid record of each kind.
 func one() map[Kind]Record {
@@ -20,21 +24,20 @@ func one() map[Kind]Record {
 		return Record{Version: Version, Lease: "L0oJBwYFBAMCAQ0ODw4ODw", Epoch: 2, Seq: seq, Kind: k}
 	}
 	hb := base(Heartbeat, 1)
-	hb.Auth, hb.Estimate, hb.Snapshot, hb.Basis = "gwa-1", 500, snapshot, []byte(`{"model":"m"}`)
+	hb.Auth, hb.Estimate, hb.Snapshot, hb.First, hb.Basis = "gwa-1", 500, snapshot(), true, []byte(`{"model":"m"}`)
 	settle := base(Settle, 2)
 	settle.Auth, settle.Estimate, settle.Charge, settle.Shortfall, settle.Digest = "gwa-1", 500, 640, 140, digest
 	adopted := base(Refund, 3)
-	adopted.Auth, adopted.Estimate, adopted.Shortfall, adopted.Drain = "gwa-2", 300, 140, "d-7"
+	adopted.Auth, adopted.Estimate, adopted.Shortfall, adopted.Drain, adopted.Boot = "gwa-2", 300, 140, "d-7", []byte("boot")
 	reap := base(Reap, 4)
 	reap.Auth, reap.Estimate, reap.Charge, reap.Shortfall, reap.Digest, reap.SnapshotSeq = "gwa-3", 500, 120, 140, digest, 1
 	release := base(Release, 5)
-	release.Auth, release.Estimate, release.Shortfall = "gwa-4", 200, 140
+	release.Auth, release.Estimate, release.Shortfall, release.Boot = "gwa-4", 200, 140, []byte("boot")
 	ckpt := base(Checkpoint, 6)
 	ckpt.Checkpoint = &CheckpointOf{Consumed: 760, Open: 2, OpenSum: 800, LatestEnd: deadline, KeyStatus: 9, Return: 50}
 	handoff := base(Handoff, 7)
-	handoff.Holds = []HeldHold{{Auth: "gwa-5", Estimate: 500, Deadline: deadline, Snapshot: snapshot, SnapshotSeq: 1,
-		Basis: []byte(`{"model":"m"}`)},
-		{Auth: "gwa-6", Estimate: 300, Deadline: deadline}}
+	handoff.Holds = []HeldHold{{Auth: "gwa-5", Estimate: 500, Deadline: deadline, Snapshot: snapshot(), SnapshotSeq: 1,
+		Basis: []byte(`{"model":"m"}`)}, {Auth: "gwa-6", Estimate: 300, Deadline: deadline}}
 	sum, err := HoldsDigest(handoff.Holds)
 	if err != nil {
 		panic(err)
@@ -43,7 +46,7 @@ func one() map[Kind]Record {
 	manifest.Manifest = &ManifestOf{Chunks: 1, HoldsDigest: sum, Seqs: []int64{7}}
 	return map[Kind]Record{Heartbeat: hb, Settle: settle, Refund: adopted, Reap: reap, Release: release,
 		Checkpoint: ckpt, Handoff: handoff, Manifest: manifest,
-		Tick: {Version: Version, Lease: "L0oJBwYFBAMCAQ0ODw4ODw", Kind: Tick}}
+		Tick: {Version: Version, Lease: "L0oJBwYFBAMCAQ0ODw4ODw", Kind: Tick, TickNumber: 1, TickAt: deadline}}
 }
 
 func TestEachKindRoundTrips(t *testing.T) {
@@ -67,9 +70,10 @@ func TestTheFormatIsPinned(t *testing.T) {
 	for kind, want := range map[Kind]string{
 		Settle: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":2,"kind":"settle","a":"gwa-1","est":500,` +
 			`"charge":640,"sf":140,"digest":"q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s="}`,
-		Tick: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","kind":"tick"}`,
+		Tick: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","kind":"tick","tick":1,"at":"2026-10-08T02:20:00Z"}`,
 		Heartbeat: `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":1,"kind":"hb","a":"gwa-1","est":500,` +
-			`"basis":"eyJtb2RlbCI6Im0ifQ==","hb":{"gseq":3,"hash":"AQID","usage":"eyJvdXQiOjQwfQ==","run":120,` +
+			`"first":true,"basis":"eyJtb2RlbCI6Im0ifQ==","hb":{"gseq":3,` +
+			`"hash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=","usage":"eyJvdXQiOjQwfQ==","run":120,` +
 			`"deadline":"2026-10-08T02:20:00Z"}}`,
 	} {
 		got, err := Encode(one()[kind])
@@ -83,53 +87,110 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 	valid := one()
 	change := func(k Kind, f func(*Record)) Record {
 		r := valid[k]
-		r.Snapshot, r.Checkpoint, r.Manifest = clone(r.Snapshot), cloneCkpt(r.Checkpoint), cloneManifest(r.Manifest)
+		if r.Snapshot != nil {
+			c := *r.Snapshot
+			r.Snapshot = &c
+		}
+		if r.Checkpoint != nil {
+			c := *r.Checkpoint
+			r.Checkpoint = &c
+		}
+		if r.Manifest != nil {
+			c := *r.Manifest
+			c.Seqs = append([]int64(nil), c.Seqs...)
+			r.Manifest = &c
+		}
 		r.Holds = append([]HeldHold(nil), r.Holds...)
+		for i := range r.Holds {
+			if r.Holds[i].Snapshot != nil {
+				c := *r.Holds[i].Snapshot
+				r.Holds[i].Snapshot = &c
+			}
+		}
 		f(&r)
 		return r
 	}
+	elsewhere := time.FixedZone("UTC-7", -7*3600)
 	for name, r := range map[string]Record{
-		"another version":                  change(Settle, func(r *Record) { r.Version = 2 }),
-		"no lease":                         change(Settle, func(r *Record) { r.Lease = "" }),
-		"no such kind":                     change(Settle, func(r *Record) { r.Kind = "bonus" }),
-		"an owner record without a seq":    change(Settle, func(r *Record) { r.Seq = 0 }),
-		"an owner record without epoch":    change(Refund, func(r *Record) { r.Epoch = 0 }),
-		"a tick with a seq":                change(Tick, func(r *Record) { r.Seq = 1 }),
-		"a tick with an authorization":     change(Tick, func(r *Record) { r.Auth = "gwa-1" }),
-		"a settle with no authorization":   change(Settle, func(r *Record) { r.Auth = "" }),
-		"a settle with no digest":          change(Settle, func(r *Record) { r.Digest = nil }),
-		"a negative charge":                change(Settle, func(r *Record) { r.Charge = -1 }),
-		"a negative shortfall":             change(Settle, func(r *Record) { r.Shortfall = -1 }),
-		"a refund that charges":            change(Refund, func(r *Record) { r.Charge = 1 }),
-		"a release that adopts":            change(Release, func(r *Record) { r.Drain = "d-1" }),
-		"a reap above its hold":            change(Reap, func(r *Record) { r.Charge = 501 }),
-		"a reap with no snapshot":          change(Reap, func(r *Record) { r.SnapshotSeq = 0 }),
-		"a reap that adopts":               change(Reap, func(r *Record) { r.Drain = "d-1" }),
-		"a heartbeat over its cap":         change(Heartbeat, func(r *Record) { r.Snapshot.Running = 501 }),
-		"a heartbeat with no hash":         change(Heartbeat, func(r *Record) { r.Snapshot.Hash = nil }),
-		"a heartbeat with a shortfall":     change(Heartbeat, func(r *Record) { r.Shortfall = 1 }),
-		"a heartbeat with a charge":        change(Heartbeat, func(r *Record) { r.Charge = 1 }),
-		"a checkpoint with an auth":        change(Checkpoint, func(r *Record) { r.Auth = "gwa-1" }),
-		"a final checkpoint with holds":    change(Checkpoint, func(r *Record) { r.Checkpoint.Final = true }),
-		"open holds with no end of life":   change(Checkpoint, func(r *Record) { r.Checkpoint.LatestEnd = time.Time{}; r.Checkpoint.OpenSum = 0 }),
-		"no open holds with a sum":         change(Checkpoint, func(r *Record) { r.Checkpoint.Open = 0 }),
-		"a hand-off naming a hold twice":   change(Handoff, func(r *Record) { r.Holds[1].Auth = r.Holds[0].Auth }),
-		"a held snapshot without its seq":  change(Handoff, func(r *Record) { r.Holds[0].SnapshotSeq = 0 }),
-		"a manifest's seqs out of order":   change(Manifest, func(r *Record) { r.Manifest.Chunks, r.Manifest.Seqs = 2, []int64{7, 6} }),
-		"a manifest's seqs miscounted":     change(Manifest, func(r *Record) { r.Manifest.Chunks = 2 }),
-		"a manifest with a short digest":   change(Manifest, func(r *Record) { r.Manifest.HoldsDigest = []byte{1} }),
-		"a checkpoint carrying a hand-off": change(Checkpoint, func(r *Record) { r.Holds = valid[Handoff].Holds }),
-		"a settle carrying a reap's basis": change(Settle, func(r *Record) { r.Basis = []byte("x") }),
+		"another version":                      change(Settle, func(r *Record) { r.Version = 2 }),
+		"no lease":                             change(Settle, func(r *Record) { r.Lease = "" }),
+		"a lease that is not printable ASCII":  change(Settle, func(r *Record) { r.Lease = "L\xff" }),
+		"no such kind":                         change(Settle, func(r *Record) { r.Kind = "bonus" }),
+		"an owner record without a seq":        change(Settle, func(r *Record) { r.Seq = 0 }),
+		"an owner record without an epoch":     change(Refund, func(r *Record) { r.Epoch = 0 }),
+		"a tick with an owner's seq":           change(Tick, func(r *Record) { r.Seq = 1 }),
+		"a tick with an authorization":         change(Tick, func(r *Record) { r.Auth = "gwa-1" }),
+		"a tick without its number":            change(Tick, func(r *Record) { r.TickNumber = 0 }),
+		"a tick without its time":              change(Tick, func(r *Record) { r.TickAt = time.Time{} }),
+		"a tick's time not in UTC":             change(Tick, func(r *Record) { r.TickAt = deadline.In(elsewhere) }),
+		"an owner record with a tick's number": change(Settle, func(r *Record) { r.TickNumber = 1 }),
+		"a settle with no authorization":       change(Settle, func(r *Record) { r.Auth = "" }),
+		"an authorization not printable ASCII": change(Settle, func(r *Record) { r.Auth = "gwa-\xff" }),
+		"a settle with no digest":              change(Settle, func(r *Record) { r.Digest = nil }),
+		"a digest of 33 bytes":                 change(Settle, func(r *Record) { r.Digest = append(r.Digest, 1) }),
+		"a negative charge":                    change(Settle, func(r *Record) { r.Charge = -1 }),
+		"a negative shortfall":                 change(Settle, func(r *Record) { r.Shortfall = -1 }),
+		"a refund that charges":                change(Refund, func(r *Record) { r.Charge = 1 }),
+		"a refund without its boot binding":    change(Refund, func(r *Record) { r.Boot = nil }),
+		"a release without its boot binding":   change(Release, func(r *Record) { r.Boot = nil }),
+		"a settle with a boot binding":         change(Settle, func(r *Record) { r.Boot = []byte("b") }),
+		"a release that adopts":                change(Release, func(r *Record) { r.Drain = "d-1" }),
+		"a reap above its hold":                change(Reap, func(r *Record) { r.Charge = 501 }),
+		"a reap with no snapshot":              change(Reap, func(r *Record) { r.SnapshotSeq = 0 }),
+		"a reap of its own record":             change(Reap, func(r *Record) { r.SnapshotSeq = r.Seq }),
+		"a reap that adopts":                   change(Reap, func(r *Record) { r.Drain = "d-1" }),
+		"a heartbeat over its cap":             change(Heartbeat, func(r *Record) { r.Snapshot.Running = 501 }),
+		"a heartbeat with no hash":             change(Heartbeat, func(r *Record) { r.Snapshot.Hash = nil }),
+		"a hash of 33 bytes":                   change(Heartbeat, func(r *Record) { r.Snapshot.Hash = append(r.Snapshot.Hash, 1) }),
+		"a heartbeat with no usage":            change(Heartbeat, func(r *Record) { r.Snapshot.Usage = nil }),
+		"a gateway sequence of zero":           change(Heartbeat, func(r *Record) { r.Snapshot.GatewaySeq = 0 }),
+		"a deadline not in UTC":                change(Heartbeat, func(r *Record) { r.Snapshot.Deadline = deadline.In(elsewhere) }),
+		"a first heartbeat without its basis":  change(Heartbeat, func(r *Record) { r.Basis = nil }),
+		"a later heartbeat with a basis":       change(Heartbeat, func(r *Record) { r.First = false }),
+		"a heartbeat with a shortfall":         change(Heartbeat, func(r *Record) { r.Shortfall = 1 }),
+		"a heartbeat with a charge":            change(Heartbeat, func(r *Record) { r.Charge = 1 }),
+		"a checkpoint with an auth":            change(Checkpoint, func(r *Record) { r.Auth = "gwa-1" }),
+		"a final checkpoint with holds":        change(Checkpoint, func(r *Record) { r.Checkpoint.Final = true }),
+		"open holds with no end of life":       change(Checkpoint, func(r *Record) { r.Checkpoint.LatestEnd = time.Time{} }),
+		"no open holds with a sum":             change(Checkpoint, func(r *Record) { r.Checkpoint.Open = 0 }),
+		"a checkpoint carrying a hand-off":     change(Checkpoint, func(r *Record) { r.Holds = valid[Handoff].Holds }),
+		"a settle carrying a reap's basis":     change(Settle, func(r *Record) { r.Basis = []byte("x") }),
+		"a hand-off naming a hold twice":       change(Handoff, func(r *Record) { r.Holds[1].Auth = r.Holds[0].Auth }),
+		"a held snapshot without its seq":      change(Handoff, func(r *Record) { r.Holds[0].SnapshotSeq = 0 }),
+		"a held snapshot from a later record":  change(Handoff, func(r *Record) { r.Holds[0].SnapshotSeq = 8 }),
+		"a held snapshot without its basis":    change(Handoff, func(r *Record) { r.Holds[0].Basis = nil }),
+		"a held hold with no deadline":         change(Handoff, func(r *Record) { r.Holds[1].Deadline = time.Time{} }),
+		"a held hold's two deadlines":          change(Handoff, func(r *Record) { r.Holds[0].Deadline = deadline.Add(-time.Hour) }),
+		"a held hold with a basis alone":       change(Handoff, func(r *Record) { r.Holds[1].Basis = []byte("x") }),
+		"a manifest's seqs out of order":       change(Manifest, func(r *Record) { r.Manifest.Chunks, r.Manifest.Seqs = 2, []int64{7, 6} }),
+		"a manifest's seqs miscounted":         change(Manifest, func(r *Record) { r.Manifest.Chunks = 2 }),
+		"a manifest naming itself":             change(Manifest, func(r *Record) { r.Manifest.Seqs = []int64{8} }),
+		"a manifest with a short digest":       change(Manifest, func(r *Record) { r.Manifest.HoldsDigest = []byte{1} }),
 	} {
 		if _, err := Encode(r); err == nil {
 			t.Errorf("%s is encoded", name)
 		}
 	}
+	refund, err := Encode(valid[Refund])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := string(refund)
 	for name, raw := range map[string]string{
-		"an unknown field": `{"v":1,"lease":"l","epoch":1,"seq":1,"kind":"refund","a":"gwa-1","bonus":1}`,
-		"two values":       `{"v":1,"lease":"l","kind":"tick"}{"v":1,"lease":"l","kind":"tick"}`,
-		"not a record":     `[1,2]`,
+		"an unknown field":          strings.Replace(r, `"v":1,`, `"v":1,"bonus":1,`, 1),
+		"a field named twice":       strings.Replace(r, `"est":300,`, `"est":300,"est":300,`, 1),
+		"a field cased otherwise":   strings.Replace(r, `"est":300`, `"Est":300`, 1),
+		"a null field":              strings.Replace(r, `"v":1,`, `"v":1,"hb":null,`, 1),
+		"a zero field Encode omits": strings.Replace(r, `"est":300,`, `"est":300,"charge":0,`, 1),
+		"a closing brace after":     r + `}`,
+		"a bracket after":           r + `]`,
+		"a second value":            r + r,
+		"white space":               " " + r,
+		"not a record":              `[1,2]`,
 	} {
+		if raw == r {
+			t.Fatalf("%s: the case left the record as it was", name)
+		}
 		if _, err := Decode([]byte(raw)); err == nil {
 			t.Errorf("%s is decoded", name)
 		}
@@ -153,32 +214,15 @@ func TestHoldsDigestIgnoresTheirOrder(t *testing.T) {
 	a, _ := HoldsDigest(holds)
 	b, _ := HoldsDigest([]HeldHold{holds[1], holds[0]})
 	c, _ := HoldsDigest(holds[:1])
-	if !bytes.Equal(a, b) || bytes.Equal(a, c) || len(a) != 32 {
+	if !bytes.Equal(a, b) || bytes.Equal(a, c) || len(a) != DigestSize {
 		t.Fatalf("digests %x, %x, %x", a, b, c)
 	}
-}
-
-func clone(s *Snapshot) *Snapshot {
-	if s == nil {
-		return nil
+	elsewhere := holds[1]
+	elsewhere.Deadline = elsewhere.Deadline.In(time.FixedZone("UTC-7", -7*3600))
+	if _, err := HoldsDigest([]HeldHold{holds[0], elsewhere}); err == nil {
+		t.Fatal("a hold whose deadline is not in UTC is digested")
 	}
-	c := *s
-	return &c
-}
-
-func cloneCkpt(c *CheckpointOf) *CheckpointOf {
-	if c == nil {
-		return nil
+	if _, err := HoldsDigest([]HeldHold{holds[1], holds[1]}); err == nil {
+		t.Fatal("a hold named twice is digested")
 	}
-	out := *c
-	return &out
-}
-
-func cloneManifest(m *ManifestOf) *ManifestOf {
-	if m == nil {
-		return nil
-	}
-	out := *m
-	out.Seqs = append([]int64(nil), m.Seqs...)
-	return &out
 }
