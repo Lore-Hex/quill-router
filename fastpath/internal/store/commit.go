@@ -79,8 +79,9 @@ type Boundary struct {
 // return in log order, the holds to store, the winners, whose holds go with
 // them, and, optionally, S and T, the sequence number of an applied final
 // checkpoint or complete hand-off that listed the open holds, and the
-// sequence number of a checkpoint whose audit failed, which stores the alert
-// and revokes the lease with the commit. A hand-off's chunks applied since
+// sequence number of a checkpoint whose audit failed, which revokes the lease
+// with the commit and stores the alert: the lease's first, since consumed is
+// cumulative and every checkpoint after a difference differs too. A hand-off's chunks applied since
 // the last commit are stored (PutChunks) until a later commit ends the
 // hand-off and deletes every chunk stored before it (DropChunks).
 type CommitRequest struct {

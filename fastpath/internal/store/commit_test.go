@@ -242,6 +242,8 @@ func TestHoldsGoWithTheirWinners(t *testing.T) {
 	}
 }
 
+// TestAnAuditFaultRevokesWithItsCommit, and the alert is the lease's first
+// fault: a later commit's fault, at a later checkpoint, leaves it.
 func TestAnAuditFaultRevokesWithItsCommit(t *testing.T) {
 	s := spikeStore(t)
 	ref := grantLease(t, s, 30, 100)
@@ -249,6 +251,11 @@ func TestAnAuditFaultRevokesWithItsCommit(t *testing.T) {
 	l := readLease(t, s, ref)
 	if got.Refused != "" || !l.Revoked || l.AuditFaultSeq.Int64 != 7 {
 		t.Fatalf("an audit fault: %+v, revoked %v, fault %v", got, l.Revoked, l.AuditFaultSeq)
+	}
+	got = commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: got.NewVersion, AppliedSeq: 9, AuditFault: ptr(int64(9))})
+	l = readLease(t, s, ref)
+	if got.Refused != "" || !l.Revoked || l.AuditFaultSeq != (spanner.NullInt64{Int64: 7, Valid: true}) {
+		t.Fatalf("a second audit fault: %+v, revoked %v, fault %v", got, l.Revoked, l.AuditFaultSeq)
 	}
 }
 

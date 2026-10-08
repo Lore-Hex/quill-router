@@ -171,6 +171,15 @@ type walker struct {
 	// consumed and faulted are what the commits booked, matched against the
 	// allocation and beyond it, as the store books (§4.2).
 	consumed, faulted int64
+	// What the projection onto the shadow leaves out, the walk keeps from
+	// what it wrote: the gap's sequence number, who marked the lease
+	// draining, each stored hold's snapshot sequence number, each reap row's,
+	// and each pack's version, one pack per commit, in order.
+	gapSeq    int64
+	drainedBy string
+	holdSeq   [ac.MaxAuths]int64
+	reapSeq   map[string]int64
+	packVers  []int64
 }
 
 func newWalker(t *testing.T, s *Store, seed int64) *walker {
@@ -187,7 +196,7 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	first := int64(rng.Intn(c.Grant + 1))
 	ref := grantLease(t, s, int64(c.Grant), first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3)))
 	return &walker{t: t, s: s, c: c, ref: ref, rng: rng, seed: seed, state: c.Init(), seen: map[string]int{},
-		tries: map[string]int{}}
+		tries: map[string]int{}, reapSeq: map[string]int64{}}
 }
 
 func (w *walker) fatalf(format string, args ...any) {
@@ -327,11 +336,13 @@ func (w *walker) markDraining(taken bool) {
 	ctx := context.Background()
 	var ok bool
 	var err error
+	by := "owner"
 	if w.rng.Intn(2) == 0 {
 		w.seen["owner-mark-draining"]++
 		ok, _, err = w.s.OwnerMarkDraining(ctx, owner, w.ref)
 	} else {
 		w.seen["auditor-mark-draining"]++
+		by = "auditor"
 		var l Lease
 		if l, _, err = w.s.ReadLease(ctx, w.ref); err == nil {
 			ok, _, err = w.s.AuditorMarkDraining(ctx, w.ref, l.Expiry)
@@ -339,6 +350,9 @@ func (w *walker) markDraining(taken bool) {
 	}
 	if err != nil || ok != taken {
 		w.fatalf("the draining write: took it %v, want %v, %v", ok, taken, err)
+	}
+	if taken {
+		w.drainedBy = by
 	}
 }
 
@@ -450,6 +464,9 @@ func (w *walker) gap(m, seq int8, taken bool) {
 	if err != nil || ok != taken {
 		w.fatalf("member %s's gap at %d: took it %v, want %v, %v", w.c.Members[m], seq, ok, taken, err)
 	}
+	if taken {
+		w.gapSeq = int64(seq)
+	}
 }
 
 func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, want Refusal) {
@@ -462,6 +479,9 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)})
 	if err != nil || got != want {
 		w.fatalf("member %s's reap of %s: %q, want %q, %v", w.c.Members[m], w.c.Auths[a], got, want, err)
+	}
+	if want == "" {
+		w.reapSeq[record] = w.members[m].holdSeq[a]
 	}
 }
 
@@ -533,9 +553,17 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.faulted += op.Charge - matched
 	}
 	w.members[m].decided, w.members[m].faultSeq = nil, 0
-	if req.AuditFault != nil && w.fault == 0 {
-		w.fault = *req.AuditFault
+	if req.AuditFault != nil {
+		if w.fault == 0 {
+			w.fault = *req.AuditFault
+		} else {
+			w.seen["a later audit fault"]++
+		}
 	}
+	for _, h := range req.PutHolds {
+		w.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotSeq.Int64
+	}
+	w.packVers = append(w.packVers, got[0].NewVersion)
 }
 
 // commitPast commits member m's progress one past the stored S, which the
@@ -810,11 +838,62 @@ func (w *walker) check() {
 		if r.DoorRaise != 0 {
 			w.fatalf("drain row %s raised %d, and its append raised nothing", r.RecordID, r.DoorRaise)
 		}
+		want := spanner.NullInt64{}
+		if r.Kind == "reap" {
+			want = spanner.NullInt64{Int64: w.reapSeq[r.RecordID], Valid: true}
+		}
+		if r.SnapshotOwnerSeq != want {
+			w.fatalf("drain row %s's snapshot is %v, and the walk's %v", r.RecordID, r.SnapshotOwnerSeq, want)
+		}
 	}
+	w.checkUnprojected(l, loaded.Holds, packs)
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
 	}
 	w.invariants()
+}
+
+// checkUnprojected holds the columns the projection leaves out to what the
+// walk wrote: the gap's and the alert's sequence numbers, S's time T, the
+// draining write's author and the fence, the close, the holds' snapshots,
+// and one pack per commit, at its version, none marked done.
+func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
+	w.t.Helper()
+	closed := w.state.St == ac.Closed
+	closeKind := spanner.NullString{}
+	if closed {
+		closeKind = spanner.NullString{StringVal: "auditor", Valid: true}
+	}
+	switch {
+	case l.GapSeq != (spanner.NullInt64{Int64: w.gapSeq, Valid: w.gapSeq != 0}):
+		w.fatalf("the gap is at %v, and the walk's at %d", l.GapSeq, w.gapSeq)
+	case l.BoundarySeq.Valid != l.BoundaryPublishTime.Valid ||
+		(l.BoundaryPublishTime.Valid && !l.BoundaryPublishTime.Time.Equal(walkTick)):
+		w.fatalf("S %v at %v, and the walk's tick was at %v", l.BoundarySeq, l.BoundaryPublishTime, walkTick)
+	case l.DrainedBy != (spanner.NullString{StringVal: w.drainedBy, Valid: w.drainedBy != ""}) ||
+		l.FenceTime.Valid != (w.drainedBy != ""):
+		w.fatalf("drained by %v with fence %v, and the walk's draining write was the %q's", l.DrainedBy, l.FenceTime,
+			w.drainedBy)
+	case l.ClosedAt.Valid != closed || l.CloseKind != closeKind:
+		w.fatalf("closed at %v by %v, and the lease is %s", l.ClosedAt, l.CloseKind, stateName(w.state.St))
+	case l.HoldsListedSeq.Valid || l.LastTick != 0:
+		w.fatalf("holds listed at %v, last tick %d, and the walk sent neither", l.HoldsListedSeq, l.LastTick)
+	case len(packs) != len(w.packVers):
+		w.fatalf("%d packs, and the walk's commits stored %d", len(packs), len(w.packVers))
+	}
+	for i, p := range packs {
+		if p.CommitVersion != w.packVers[i] || p.WorkDoneAt.Valid {
+			w.fatalf("pack %d is at version %d, done %v, and the walk's commit was at %d", i, p.CommitVersion,
+				p.WorkDoneAt, w.packVers[i])
+		}
+	}
+	for _, h := range holds {
+		seq := spanner.NullInt64{Int64: w.holdSeq[index(w.c.Auths, h.AuthorizationID)], Valid: true}
+		if h.SnapshotSeq != seq || h.SnapshotOwnerSeq != seq || h.Estimate != walkEstimate ||
+			!h.Deadline.Equal(walkDeadline) || h.Listed {
+			w.fatalf("a hold row %+v, and the walk stored its snapshot at %d", h, seq.Int64)
+		}
+	}
 }
 
 func (w *walker) invariants() {
