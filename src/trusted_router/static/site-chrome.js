@@ -1,7 +1,6 @@
 // Shared site chrome: header menu, model search dialog and footer disclosures
-// for every page outside the homepage. The homepage keeps the same behaviour in
-// static/homepage/homepage.js. Sign-in and the signed-in "Console" swap stay in
-// dashboard.js.
+// for every page, the homepage included. Sign-in and the signed-in "Console"
+// swap stay in dashboard.js.
 (() => {
   "use strict";
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -18,6 +17,11 @@
       detail.open = compactContent.matches ? (mobileOpen.get(detail.id) ?? false) : true;
       summary.tabIndex = compactContent.matches ? 0 : -1;
       if (compactContent.matches && !detail.open && detail.contains(focused)) summary.focus({ preventScroll: true });
+      // On wide screens the summary is not a control, so keyboard focus moves into the content.
+      if (!compactContent.matches && focused === summary && !detail.classList.contains("footer-disclosure")) {
+        const content = $(".disclosure-body", detail);
+        if (content) { content.tabIndex = -1; content.focus({ preventScroll: true }); }
+      }
     });
     document.documentElement.classList.add("disclosures-ready");
   }
@@ -117,6 +121,8 @@
   }
   $("#search-retry").addEventListener("click", () => void loadSearch());
   $$("[data-open-search]").forEach((button) => button.addEventListener("click", () => openSearch(button)));
+  // Buttons that name a model (the homepage logo strip) open the search prefilled with it.
+  $$("[data-search-model]").forEach((button) => button.addEventListener("click", () => openSearch(button, button.dataset.searchModel)));
   $("[data-close-search]").addEventListener("click", () => search.close());
   search.addEventListener("close", () => {
     const target = searchTrigger?.getClientRects().length ? searchTrigger : menu;

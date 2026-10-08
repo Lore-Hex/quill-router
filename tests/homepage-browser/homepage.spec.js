@@ -34,6 +34,9 @@ test("responsive navigation and customer disclosure remain usable", async ({ pag
     await expect(page.locator("#homepage-nav")).toBeVisible();
     await page.getByRole("button", { name: "Menu", exact: true }).click();
     await expect(page.locator("#homepage-nav")).not.toBeVisible();
+    await expect(page.locator(".trnav .signin")).toBeVisible();
+    await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText("Search models", { useInnerText: true });
+    await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search \d+ models/);
     await page.locator(".trnav .search").click();
     await expect(page.getByRole("dialog", { name: "Find a model" })).toBeVisible();
     await page.getByRole("searchbox").press("Escape");
@@ -52,4 +55,15 @@ test("returning-user hint restores console labels without replacing authenticati
   await expect(page.locator("#top .hero .button-primary")).toHaveText("Open console");
   await expect(page.locator("#top .hero .button-primary")).toHaveAttribute("href", "/console/api-keys");
   await expect(page.locator("#signinModal")).not.toBeVisible();
+});
+
+test.describe("smallest phones", () => {
+  test.use({ viewport: { width: 320, height: 700 } });
+  test("header keeps Sign in and a short search label at 320px", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".trnav .signin")).toBeVisible();
+    await expect(page.locator(".trnav .search span[aria-hidden='true']")).toHaveText(/^models$/i, { useInnerText: true }); // capitalised by CSS
+    await expect(page.locator(".trnav .search")).toHaveAccessibleName(/^Search \d+ models/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
 });

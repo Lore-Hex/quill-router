@@ -1,9 +1,6 @@
-/* Shared site chrome: header, model search dialog and footer for every page
- * that extends public/_base.html, plus the console and auth layouts.
- * It mirrors the homepage header and footer (templates/homepage/top.html and
- * footer.html). The homepage keeps its own copy of these rules under
- * static/homepage/ until the sheets are consolidated. Colours, type and
- * spacing come from tokens.css. */
+/* Shared site chrome: header, model search dialog and footer for every page,
+ * the homepage included (templates/public/_nav.html), plus the console and
+ * auth layouts. Colours, type and spacing come from tokens.css. */
 
 .skip-link {
   position: absolute;
@@ -90,6 +87,16 @@
   color: var(--tr-color-text-tertiary);
 }
 
+/* The full label stays in the accessibility tree while the visible words shrink on phones. */
+.trnav .search .search-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .trnav .search kbd {
   margin-left: auto;
   padding: 3px 5px;
@@ -123,17 +130,6 @@
 .trnav .signin {
   flex: none;
   white-space: nowrap;
-  font-size: 15px;
-}
-
-.trnav .drawer-signin {
-  display: none;
-  width: 100%;
-  border: 0;
-  background: none;
-  text-align: left;
-  font: 500 15px/1 var(--tr-font-family-sans);
-  cursor: pointer;
 }
 
 .trnav .menu {
@@ -259,7 +255,7 @@
   }
 
   .trnav .search { max-width: none; }
-  .trnav .signin { margin-left: 0; font-size: 13px; }
+  .trnav .signin { margin-left: 0; }
 
   .trnav .menu {
     display: inline-flex;
@@ -273,7 +269,6 @@
   html.js-off .trnav nav { display: flex; position: static; flex-direction: row; flex-wrap: wrap; flex-basis: 100%; gap: 4px 18px; padding: 0; border: 0; background: transparent; }
   html.js-off .trnav nav a { min-height: 40px; padding: 8px 0; }
   html.js-off .trnav .menu { display: none; }
-  html.js-off .trnav .drawer-signin { display: inline-flex; align-items: center; }
 }
 
 @media (max-width: 600px) {
@@ -283,24 +278,19 @@
   .brand-link > span { display: none; }
   .trnav .menu { width: 44px; padding: 0; }
   .trnav .menu > span { display: none; }
-  .trnav .signin { padding: 12px; font-size: 13px; }
+  .trnav .signin.button-primary { min-height: 44px; padding: 0 14px; font-size: 14px; }
 }
 
 @media (max-width: 480px) {
-  .trnav .signin.button-secondary { display: none; }
   .trnav .menu { margin-left: 0; }
-
-  .trnav nav.open .drawer-signin {
-    display: block;
-    min-height: 44px;
-    padding: 16px 0;
-    color: var(--tr-color-accent-base);
-  }
+  .trnav .search-count { display: none; }
 }
 
 @media (max-width: 360px) {
   .trnav .menu { margin-left: auto; }
-  .trnav .search { font-size: 13px; }
+  .trnav .search { gap: 8px; padding: 0 10px; font-size: 13px; }
+  .trnav .search-verb { display: none; }
+  .trnav .search-noun { text-transform: capitalize; }
 }
 
 /* Buttons shared with the homepage */
@@ -433,6 +423,11 @@
   height: 30px;
   border-radius: var(--tr-radius-image);
   object-fit: contain;
+}
+
+#search-results .model-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 #search-results small {

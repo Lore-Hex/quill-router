@@ -8,14 +8,6 @@
 .signin-google span[aria-hidden]{background:#fff;color:#d2452a;border:1px solid var(--line)}
 .signin-github span[aria-hidden]{background:#24292f}
 .signin-metamask span[aria-hidden]{background:linear-gradient(135deg,#e2761b,#cd6116)}
-#search-retry{padding:10px 14px;border:1px solid #526859;background:#14251c;color:var(--cream);border-radius:6px}
-
-.homepage-status{display:inline-flex;align-items:center;gap:7px}
-.homepage-status-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#adbbb2}
-.homepage-status[data-state="up"] .homepage-status-dot{background:#b8eecc}
-.homepage-status[data-state="degraded"] .homepage-status-dot{background:#edce88}
-.homepage-status[data-state="down"] .homepage-status-dot{background:#f0b3a6}
-.homepage-status:focus-visible{outline:2px solid #c0e1ff;outline-offset:5px}
 
 /* Copy-led marketing sections and a consistent, readable supporting scale. */
 .proof-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:16px}
@@ -37,7 +29,7 @@
 .trp .ph3 h2{max-width:760px;margin:0}
 .trp .terms{font-size:18px;line-height:1.65;gap:10px 0;margin:0}
 .trp .terms b{font-size:22px;font-weight:600}
-.trnav nav a,.trnav .signin{font-size:15px}
+
 .trh .sub{font-size:20px}
 .trc .m a{font-size:18px}.trc .m code{font-size:13px}
 .trc th,.trc .pc,.trc .fl .cnt{font-size:14px}
@@ -150,7 +142,6 @@
  .trf summary{padding-block:20px}
 }
 
-
 /* Final hierarchy: pricing terms and customer evidence lead; utilities recede. */
 #top .lab img{width:30px;height:30px}
 .trm .pf{justify-content:flex-end;min-height:52px}
@@ -212,10 +203,8 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .trft .footer-links a{min-height:44px;line-height:1.5}
 }
 
-
 /* Reduce competing choices: one primary action and one reading path per section. */
-.trnav .search{width:220px;justify-content:flex-start;gap:10px}
-.trnav .search svg{width:18px;height:18px;color:#adbbb2}
+
 .trm .acts{gap:20px;margin-top:4px}
 .trm .l{justify-content:center}
 .proof-source>a{margin-top:8px}
@@ -258,20 +247,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
  .closing-cta .closing-landscape{object-position:60% 70%}
 }
 
-/* The model search lives in the header row at every width. Narrow screens trade the wordmark and button labels for it. */
-@media(max-width:1200px){
- .trnav .search{display:flex;flex:1 1 120px;min-width:0;width:auto;max-width:360px;height:44px;padding:0 12px;border-radius:6px;font-size:14px;color:#adbbb2}
- .trnav .search span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
- .trnav .search kbd{display:none}
- .trnav nav{gap:12px}
-}
-@media(min-width:881px) and (max-width:1200px) and (pointer:fine){.trnav .search kbd{display:inline-block}}
-@media(max-width:880px){.trh>.tbar{gap:10px}.trnav .search{max-width:none}.trnav .signin{margin-left:0}.trnav .menu{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:44px;padding:0 12px}}
-@media(max-width:600px){.brand-link>span{display:none}.trnav .menu>span{display:none}.trnav .menu{width:44px;padding:0}.trnav .signin.button-primary{min-height:44px;padding:0 14px;font-size:14px}}
-/* Small phones: the hero's primary action opens the same sign-in dialog, so the header keeps search and moves Sign in into the drawer. */
-@media(max-width:480px){.trnav .menu{margin-left:0}}
-@media(max-width:360px){.trnav .search{font-size:13px}}
-
 /* Phones: the logo ticker follows the hero actions instead of being pinned to the viewport bottom.
    Tablets keep the desktop placement at the hero's bottom; the hero's short-window rules cover low heights at every width. */
 @media(max-width:600px){
@@ -279,12 +254,7 @@ footer{background:#070a08;border-top:1px solid #33403a}
 }
 
 /* Live status dot: saturated, glowing, and pulsing while the probe is fresh. */
-.homepage-status-dot{width:8px;height:8px;background:#6b7a72}
-.homepage-status[data-state="up"] .homepage-status-dot{background:#2ee59d;box-shadow:0 0 0 3px #2ee59d33,0 0 10px #2ee59d99}
-.homepage-status[data-state="degraded"] .homepage-status-dot{background:#ffc857;box-shadow:0 0 0 3px #ffc85733,0 0 10px #ffc85799}
-.homepage-status[data-state="down"] .homepage-status-dot{background:#ff6b5b;box-shadow:0 0 0 3px #ff6b5b33,0 0 10px #ff6b5b99}
-@keyframes status-pulse{0%,100%{box-shadow:0 0 0 2px #2ee59d40,0 0 8px #2ee59d99}50%{box-shadow:0 0 0 6px #2ee59d00,0 0 14px #2ee59dcc}}
-@media(prefers-reduced-motion:no-preference){.homepage-status[data-state="up"] .homepage-status-dot{animation:status-pulse 2.4s ease-in-out infinite}}
+
 @media(max-width:600px){#top .cta{gap:16px}}
 
 /* Final reading hierarchy: mobile actions follow headings; quotes need no rule. */
@@ -394,12 +364,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
 @media(min-width:701px){.trs .press{grid-template-columns:auto minmax(0,auto) auto;justify-content:start;gap:16px 32px;padding:20px 28px}}
 
 /* Without JavaScript the phone header shows its links inline instead of hiding them behind Menu. */
-@media(max-width:880px){
- html.no-js .trh>.tbar{height:auto;flex-wrap:wrap;padding-bottom:10px;row-gap:6px}
- html.no-js .trnav nav{display:flex;position:static;flex-direction:row;flex-wrap:wrap;gap:4px 18px;padding:0;border:0;background:transparent;flex-basis:100%}
- html.no-js .trnav nav a{padding:8px 0;min-height:40px}
- html.no-js .trnav .menu{display:none}
-}
 
 /* Catalog toolbar and columns hold still when the filter changes. The count label keeps one width on desktop (its text changes per tab) and takes its own line below 1000px, where the row is too tight for it; the table uses fixed column widths on desktop so every tab's rows fall into the same columns. */
 .trc .fl .cnt{min-width:24ch;text-align:right;white-space:nowrap}
@@ -407,6 +371,6 @@ footer{background:#070a08;border-top:1px solid #33403a}
 @media(min-width:881px){.trc table{table-layout:fixed}.trc th:nth-child(2){width:22%}.trc th:nth-child(3),.trc th:nth-child(4){width:140px}.trc th:nth-child(5){width:100px}}
 
 /* No grey dot: when status is unknown or really delayed the dot hides and the Status link stays. */
-.homepage-status[data-state="unknown"] .homepage-status-dot {
-  display: none;
-}
+
+/* The hero sizes itself against --site-header-height, so the shared header follows it on this page. */
+.trnav .tbar{height:var(--site-header-height)}
