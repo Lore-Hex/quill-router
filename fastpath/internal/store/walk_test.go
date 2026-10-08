@@ -197,13 +197,14 @@ type walker struct {
 	// What the projection onto the shadow leaves out, the walk keeps from
 	// what it wrote: the gap's sequence number, who marked the lease
 	// draining, each stored hold's snapshot sequence number, each drain
-	// row as appended or reaped, and each pack's version, one pack per
-	// commit, in order.
+	// row as appended or reaped, and each pack's version and winners, one
+	// pack per commit, in order.
 	gapSeq    int64
 	drainedBy string
 	holdSeq   [ac.MaxAuths]int64
 	rows      map[string]DrainRow
 	packVers  []int64
+	packWins  [][]Winner
 }
 
 func newWalker(t *testing.T, s *Store, seed int64) *walker {
@@ -319,20 +320,26 @@ func (w *walker) apply(tr ac.Transition) {
 		w.gap(m, from.Log[from.Pos[m]-1].Seq, true)
 	case "Reap":
 		m, a := member(), index(w.c.Auths, args[1])
-		// Before its hold's deadline plus the grace the store refuses it,
-		// though the shadow, which has no clock, allows it.
-		w.timed("reap", RefusedNotDue, func() { w.reap(m, a, from, walkDeadline, fmt.Sprintf("p%d", w.probes), RefusedNotDue) })
-		w.reap(m, a, from, walkTick, fmt.Sprintf("d%d", from.DrainLen+1), "")
+		// Until its hold's deadline plus the grace the store refuses it,
+		// though the shadow, which has no clock, allows it: a tick a
+		// microsecond before is refused, and one at it taken.
+		due := walkDeadline.Add(w.s.cfg.Grace)
+		w.timed("reap", RefusedNotDue, func() {
+			w.reap(m, a, from, due.Add(-time.Microsecond), fmt.Sprintf("p%d", w.probes), RefusedNotDue)
+		})
+		w.reap(m, a, from, due, fmt.Sprintf("d%d", from.DrainLen+1), "")
 	case "Commit":
 		w.commit(member(), from, tr.To, "")
 	case "Close":
 		m := member()
 		// Its holds were never listed, so until the expiry plus MaxLife
-		// and the grace the store refuses it.
+		// and the grace the store refuses it: a microsecond before, and
+		// it closes at it.
+		due := readLease(w.t, w.s, w.ref).Expiry.Add(w.s.cfg.MaxLife + w.s.cfg.Grace)
 		w.timed("close", RefusedTooSoon, func() {
-			w.close(m, from, from, readLease(w.t, w.s, w.ref).Expiry, RefusedTooSoon)
+			w.close(m, from, from, due.Add(-time.Microsecond), RefusedTooSoon)
 		})
-		w.close(m, from, tr.To, time.Now().Add(time.Hour), "")
+		w.close(m, from, tr.To, due, "")
 	case "Reread", "Crash":
 		w.members[member()] = memberSide{}
 	}
@@ -599,6 +606,7 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotSeq.Int64
 	}
 	w.packVers = append(w.packVers, got[0].NewVersion)
+	w.packWins = append(w.packWins, req.Winners)
 }
 
 // commitOff commits member m's progress off the stored S by off, which the
@@ -975,6 +983,11 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 		if p.CommitVersion != w.packVers[i] || p.WorkDoneAt.Valid {
 			w.fatalf("pack %d is at version %d, done %v, and the walk's commit was at %d", i, p.CommitVersion,
 				p.WorkDoneAt, w.packVers[i])
+		}
+		// Each pack holds its own commit's winners, work and all.
+		if len(p.Winners) != len(w.packWins[i]) || (len(p.Winners) > 0 && !reflect.DeepEqual(p.Winners, w.packWins[i])) {
+			w.fatalf("pack %d at version %d holds %+v, and its commit stored %+v", i, p.CommitVersion, p.Winners,
+				w.packWins[i])
 		}
 	}
 	for _, h := range holds {

@@ -507,10 +507,18 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	if len(rows) != len(l.rows) {
 		d.fatalf("lease %s's drain log reads %d rows, and the walk appended %d", l.ref.LeaseID, len(rows), len(l.rows))
 	}
+	// The holds are listed (S's commit listed them), so the lease closes
+	// before its holds' time runs out: at its expiry, long before the
+	// expiry plus MaxLife and the grace.
+	row := readLease(d.t, d.s, l.ref)
+	if row.HoldsListedSeq != (spanner.NullInt64{Int64: l.seq, Valid: true}) {
+		d.fatalf("lease %s's holds listed at %v, and S's commit listed them at %d", l.ref.LeaseID, row.HoldsListedSeq,
+			l.seq)
+	}
+	now := row.Expiry
 	if len(winners) > 0 {
-		// The holds are listed (S's commit listed them), and still a row
-		// whose winner is not stored holds the close back.
-		got, err := d.s.CloseLease(ctx, l.ref, l.version, read, time.Now().Add(time.Hour))
+		// Still, a row whose winner is not stored holds the close back.
+		got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
 		if err != nil || got.Refused != RefusedUndecided {
 			d.fatalf("a close over undecided drain rows: %+v %v", got, err)
 		}
@@ -529,7 +537,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		}
 	}
 	room := l.room()
-	got, err := d.s.CloseLease(ctx, l.ref, l.version, read, time.Now().Add(time.Hour))
+	got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
 	if err != nil || got.Refused != "" || got.Released != room {
 		d.fatalf("the close of lease %s, room %d: %+v %v", l.ref.LeaseID, room, got, err)
 	}
