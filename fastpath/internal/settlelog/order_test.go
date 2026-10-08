@@ -3,6 +3,7 @@ package settlelog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -166,5 +167,80 @@ func TestAWithheldRecordComesBack(t *testing.T) {
 	got := f.receive(t, 2, 40*time.Second, nil)
 	if !equal(got["la"], records("la", 2, 3)) {
 		t.Fatalf("the next member got %v", got)
+	}
+}
+
+// TestShutdownKeepsHandlersSerial: once a member stops, the client library
+// stops waiting for a handler still running; a lease's next record is then
+// asked for again, not handled beside it.
+func TestShutdownKeepsHandlersSerial(t *testing.T) {
+	was := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	defer func() { shutdownTimeout = was }()
+	f := newFakeLog(t, true)
+	l := f.log(t)
+	for _, r := range records("la", 1, 2) {
+		if err := wait(t, l.Publish("la", []byte(r), nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	running, overlapped := false, false
+	var handled []string
+	release := make(chan struct{})
+	received := make(chan error, 1)
+	go func() {
+		received <- Subscribe(f.client, f.sub, -1).Receive(ctx, func(_ context.Context, d *Delivery) {
+			mu.Lock()
+			overlapped = overlapped || running
+			running = true
+			handled = append(handled, string(d.Data))
+			mu.Unlock()
+			if string(d.Data) == "la#1" {
+				d.Ack()
+				// la#2 reaches the member, queued behind this handler,
+				// before the member stops.
+				for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+					if m := f.srv.Messages(); len(m) == 2 && m[1].Deliveries > 0 {
+						break
+					}
+				}
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+				<-release // still running past the shutdown's timeout
+			}
+			mu.Lock()
+			running = false
+			mu.Unlock()
+		})
+	}()
+	time.Sleep(time.Second)
+	close(release)
+	if err := <-received; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if overlapped || !equal(handled, []string{"la#1"}) {
+		t.Fatalf("handled %v, overlapping: %v", handled, overlapped)
+	}
+}
+
+// TestResumeAfterAFailedWait: by the time an owner sees a publish fail, the
+// key is paused and what was queued behind it has failed, so the owner's
+// resume and republish go through at once.
+func TestResumeAfterAFailedWait(t *testing.T) {
+	f := newFakeLog(t, true)
+	l := f.log(t)
+	for i := range 50 {
+		lease := fmt.Sprintf("l%d", i)
+		if err := wait(t, l.Publish(lease, []byte(lease+"#1"), map[string]string{"fail": "once"})); err == nil {
+			t.Fatal("the refused publish succeeds")
+		}
+		l.Resume(lease)
+		if err := wait(t, l.Publish(lease, []byte(lease+"#1"), nil)); err != nil {
+			t.Fatalf("lease %d: the republish right after the failure: %v", i, err)
+		}
 	}
 }

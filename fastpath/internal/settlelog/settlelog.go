@@ -209,10 +209,16 @@ func (l *Log) send(lease string, k *key) {
 		}
 		batch := takeBatch(&k.queue)
 		l.mu.Unlock()
-		err := l.sendBatch(batch)
+		ids, err := l.sendBatch(batch)
 		if err == nil {
+			for i, p := range batch {
+				p.finish(ids[i], nil)
+			}
 			continue
 		}
+		// The key is paused, and every record queued behind the batch
+		// failed, before anyone learns the batch failed: so a resume and a
+		// republish that follow the failure find the key paused no more.
 		l.mu.Lock()
 		k.paused = true
 		for _, p := range k.queue {
@@ -220,6 +226,9 @@ func (l *Log) send(lease string, k *key) {
 		}
 		k.queue = nil
 		k.sending = false
+		for _, p := range batch {
+			p.finish("", err)
+		}
 		l.mu.Unlock()
 		return
 	}
@@ -240,14 +249,11 @@ func takeBatch(queue *[]*Pending) []*Pending {
 	return batch
 }
 
-// sendBatch sends one batch, finishing each record, and returns its error.
-func (l *Log) sendBatch(batch []*Pending) error {
+// sendBatch sends one batch and returns its message IDs, or its error.
+func (l *Log) sendBatch(batch []*Pending) ([]string, error) {
 	deadline := batch[0].deadline
 	if !l.clock().Before(deadline) {
-		for _, p := range batch {
-			p.finish("", ErrDeadline)
-		}
-		return ErrDeadline
+		return nil, ErrDeadline
 	}
 	msgs := make([]*pubsubpb.PubsubMessage, len(batch))
 	for i, p := range batch {
@@ -259,14 +265,10 @@ func (l *Log) sendBatch(batch []*Pending) error {
 	if err == nil && len(resp.GetMessageIds()) != len(batch) {
 		err = fmt.Errorf("settlelog: %d message IDs for %d records", len(resp.GetMessageIds()), len(batch))
 	}
-	for i, p := range batch {
-		if err != nil {
-			p.finish("", err)
-		} else {
-			p.finish(resp.GetMessageIds()[i], nil)
-		}
+	if err != nil {
+		return nil, err
 	}
-	return err
+	return resp.GetMessageIds(), nil
 }
 
 // Records publishes the record topic, unordered, each record in its own
@@ -344,10 +346,17 @@ func (r *Records) Stop() {
 	r.calls.Wait()
 }
 
+// shutdownTimeout bounds how long a stopping member waits for the client
+// library to ask for its outstanding records again.
+var shutdownTimeout = 10 * time.Second
+
 // Subscription is the auditor's subscription to a region's settle log,
 // which must have message ordering on.
 type Subscription struct {
 	sub *pubsub.Subscriber
+
+	mu     sync.Mutex
+	active map[string]bool
 }
 
 // Subscribe opens it. maxOutstanding bounds the records delivered and not
@@ -358,8 +367,8 @@ func Subscribe(client *pubsub.Client, subscription string, maxOutstanding int) *
 	sub := client.Subscriber(subscription)
 	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
 	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
-		Timeout: 10 * time.Second}
-	return &Subscription{sub: sub}
+		Timeout: shutdownTimeout}
+	return &Subscription{sub: sub, active: map[string]bool{}}
 }
 
 // Delivery is one record as the log delivered it.
@@ -388,9 +397,29 @@ func (d *Delivery) Nack() { d.msg.Nack() }
 // only once handle has returned for the one before; leases concurrently.
 // handle acknowledges a record only by Ack: a record it returns without
 // acknowledging stays outstanding, and comes back if the member stops.
+//
+// The client library keeps one lease's records one at a time only until it
+// begins to shut down, when it stops waiting for a handler still running.
+// So Receive itself never hands a record over once ctx has ended, nor while
+// another of its lease's is being handled: such a record is asked for again,
+// and comes back in its order.
 func (s *Subscription) Receive(ctx context.Context, handle func(context.Context, *Delivery)) error {
-	return s.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
-		handle(ctx, &Delivery{Lease: m.OrderingKey, Data: m.Data, Attrs: m.Attributes, ID: m.ID,
+	return s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		lease := m.OrderingKey
+		s.mu.Lock()
+		if ctx.Err() != nil || cctx.Err() != nil || s.active[lease] {
+			s.mu.Unlock()
+			m.Nack()
+			return
+		}
+		s.active[lease] = true
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			delete(s.active, lease)
+			s.mu.Unlock()
+		}()
+		handle(cctx, &Delivery{Lease: lease, Data: m.Data, Attrs: m.Attributes, ID: m.ID,
 			PublishTime: m.PublishTime, Attempt: m.DeliveryAttempt, msg: m})
 	})
 }
