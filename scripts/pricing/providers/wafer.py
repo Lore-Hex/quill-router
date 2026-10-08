@@ -145,7 +145,16 @@ def _manifest_row(
         "display_name": str(wafer.get("display_name") or native_id),
         "endpoints": ["chat/completions"],
         "zdr_supported": zdr_supported,
+        "supported_features": [
+            label for field, label in (
+                ("tools", "tools"),
+                ("json_object", "json-mode"),
+                ("json_schema", "structured-outputs"),
+            ) if chat_capabilities.get(field) is True
+        ],
     }
+    if capabilities.get("reasoning") is True:
+        row["supported_features"].append("reasoning")
     context_length = _positive_int(source_row.get("max_model_len")) or _positive_int(
         wafer.get("context_length")
     )

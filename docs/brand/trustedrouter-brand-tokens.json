@@ -1,0 +1,1607 @@
+{
+  "$description": "TrustedRouter web brand system. Tokens follow the W3C Design Tokens format ($type/$value, {alias} references) and import into Style Dictionary or Tokens Studio. Values describe the trustedrouter.com homepage design; guide.homepage_exceptions lists the few places where the live homepage does not yet follow this kit.",
+  "meta": {
+    "name": "TrustedRouter web brand system",
+    "version": "2.1.0",
+    "date": "2026-10-05",
+    "source": "Computed styles of the trustedrouter.com homepage at 1440, 800, 650 and 390px wide",
+    "theme": "dark",
+    "dynamic_values": {
+      "live_model_count": "From the catalog source that renders /models",
+      "live_provider_count": "Same source"
+    },
+    "scope": "Every page on trustedrouter.com. The Token Exchange sites (nytokenexchange.com and the other city and region exchange domains) have their own design and are out of scope: do not restyle them to this kit, and do not use them as a reference for trustedrouter.com pages."
+  },
+  "tokens": {
+    "color": {
+      "surface": {
+        "bg": {
+          "$type": "color",
+          "$value": "#050706",
+          "$description": "Page canvas, header bar, default section"
+        },
+        "bg-alt": {
+          "$type": "color",
+          "$value": "#0A100D",
+          "$description": "Alternating section band"
+        },
+        "bg-deep": {
+          "$type": "color",
+          "$value": "#070A08",
+          "$description": "Footer"
+        },
+        "photo-fallback": {
+          "$type": "color",
+          "$value": "#07100E",
+          "$description": "Shown under the landscape photo while it loads (hero and closing band)"
+        },
+        "panel": {
+          "$type": "color",
+          "$value": "#0F1411",
+          "$description": "Cards, boxed modules, receipt, press card"
+        },
+        "panel-inset": {
+          "$type": "color",
+          "$value": "#121915",
+          "$description": "Fields and nested surfaces inside a panel, receipt nodes"
+        },
+        "panel-raised": {
+          "$type": "color",
+          "$value": "#141C18",
+          "$description": "Chips on a panel"
+        },
+        "control": {
+          "$type": "color",
+          "$value": "#0C1411",
+          "$description": "Catalog search input, menu drawer"
+        },
+        "hover": {
+          "$type": "color",
+          "$value": "#14251C",
+          "$description": "Hover fill for secondary buttons, icon buttons and search results"
+        },
+        "selected": {
+          "$type": "color",
+          "$value": "#18211C",
+          "$description": "Selected segmented tab"
+        },
+        "overlay-button": {
+          "$type": "color",
+          "$value": "rgba(11, 24, 20, 0.7)",
+          "$description": "Secondary button fill, readable over the photo"
+        }
+      },
+      "text": {
+        "primary": {
+          "$type": "color",
+          "$value": "#EDF8F5",
+          "$description": "Headlines, primary text, table values"
+        },
+        "secondary": {
+          "$type": "color",
+          "$value": "#C3C9C3",
+          "$description": "Body copy, ledes, nav links, code, quotes, FAQ answers"
+        },
+        "tertiary": {
+          "$type": "color",
+          "$value": "#ADBBB2",
+          "$description": "Meta, captions, mono labels, placeholders, table headers, IDs"
+        },
+        "quaternary": {
+          "$type": "color",
+          "$value": "#8FA497",
+          "$description": "Footer column headings only"
+        },
+        "on-photo": {
+          "$type": "color",
+          "$value": "#DCE9E3",
+          "$description": "Body text placed over the landscape photo"
+        }
+      },
+      "accent": {
+        "base": {
+          "$type": "color",
+          "$value": "#CCE8D7",
+          "$description": "Mint. Primary button, italic headline phrase, active filter underline, hero promises, checkmarks, open-accordion icon"
+        },
+        "hover": {
+          "$type": "color",
+          "$value": "#E5FFF2",
+          "$description": "Primary button hover"
+        },
+        "ink": {
+          "$type": "color",
+          "$value": "#10241A",
+          "$description": "Text on mint and on the tooltip"
+        }
+      },
+      "link": {
+        "base": {
+          "$type": "color",
+          "$value": "#C0E1FF",
+          "$description": "Links, action links, icon-button glyphs"
+        },
+        "underline": {
+          "$type": "color",
+          "$value": "#6F8FA8",
+          "$description": "Resting underline under action links; switches to currentColor on hover"
+        },
+        "dot": {
+          "$type": "color",
+          "$value": "#88B4E2",
+          "$description": "Separator dot between hero promises"
+        },
+        "button": {
+          "$type": "color",
+          "$value": "#D4ECFF",
+          "$description": "Secondary button labels"
+        }
+      },
+      "line": {
+        "rule": {
+          "$type": "color",
+          "$value": "#33403A",
+          "$description": "Default 1px divider and panel border"
+        },
+        "rule-soft": {
+          "$type": "color",
+          "$value": "#1E2621",
+          "$description": "Table lines, header bottom border, section-band bottom border"
+        },
+        "control": {
+          "$type": "color",
+          "$value": "#526859",
+          "$description": "Inputs, icon buttons, sign-in buttons"
+        },
+        "strong": {
+          "$type": "color",
+          "$value": "#8CAB99",
+          "$description": "Secondary button border; hover border for controls"
+        },
+        "emphasis": {
+          "$type": "color",
+          "$value": "#AAC9B6",
+          "$description": "Highlighted node in a route diagram"
+        },
+        "connector": {
+          "$type": "color",
+          "$value": "#B0CCBA",
+          "$description": "Dashed connector in route diagrams (used at 70% opacity)"
+        },
+        "quote": {
+          "$type": "color",
+          "$value": "#6B9480",
+          "$description": "2px rule beside a quote on the mint panel"
+        },
+        "tag": {
+          "$type": "color",
+          "$value": "#485B4E",
+          "$description": "Border of neutral receipt tags"
+        }
+      },
+      "focus": {
+        "$type": "color",
+        "$value": "{color.accent.base}",
+        "$description": "Focus ring on dark surfaces. 3px solid, offset 4px"
+      },
+      "error": {
+        "$type": "color",
+        "$value": "#F0B3A6"
+      },
+      "privacy": {
+        "zdr": {
+          "bg": {
+            "$type": "color",
+            "$value": "#1C1A10"
+          },
+          "border": {
+            "$type": "color",
+            "$value": "#5A4F2E"
+          },
+          "text": {
+            "$type": "color",
+            "$value": "#E2C98A"
+          }
+        },
+        "e2ee": {
+          "bg": {
+            "$type": "color",
+            "$value": "#16172A"
+          },
+          "border": {
+            "$type": "color",
+            "$value": "#6B6F8E"
+          },
+          "text": {
+            "$type": "color",
+            "$value": "#D3D6F0"
+          }
+        },
+        "neutral": {
+          "bg": {
+            "$type": "color",
+            "$value": "#132019"
+          },
+          "border": {
+            "$type": "color",
+            "$value": "#3E5A4A"
+          },
+          "text": {
+            "$type": "color",
+            "$value": "#CFE3D6"
+          }
+        },
+        "verified": {
+          "bg": {
+            "$type": "color",
+            "$value": "#17271E"
+          },
+          "border": {
+            "$type": "color",
+            "$value": "#506F5D"
+          },
+          "text": {
+            "$type": "color",
+            "$value": "#C6E5D2"
+          }
+        }
+      },
+      "status": {
+        "up": {
+          "$type": "color",
+          "$value": "#2EE59D"
+        },
+        "degraded": {
+          "$type": "color",
+          "$value": "#FFC857"
+        },
+        "down": {
+          "$type": "color",
+          "$value": "#FF6B5B"
+        },
+        "unknown": {
+          "$type": "color",
+          "$value": "#6B7A72"
+        }
+      },
+      "diff": {
+        "removed-bg": {
+          "$type": "color",
+          "$value": "#2A1512"
+        },
+        "removed-text": {
+          "$type": "color",
+          "$value": "#E6A597"
+        },
+        "added-bg": {
+          "$type": "color",
+          "$value": "#12261A"
+        },
+        "added-text": {
+          "$type": "color",
+          "$value": "#A8DDBB"
+        }
+      },
+      "panel-blue": {
+        "bg": {
+          "$type": "color",
+          "$value": "#D5E8F5",
+          "$description": "Pricing terms grid"
+        },
+        "ink": {
+          "$type": "color",
+          "$value": "#142B38"
+        },
+        "ink-2": {
+          "$type": "color",
+          "$value": "#294B60"
+        },
+        "divider": {
+          "$type": "color",
+          "$value": "#9DB8C9"
+        }
+      },
+      "panel-mint": {
+        "bg": {
+          "$type": "color",
+          "$value": "{color.accent.base}",
+          "$description": "Customer story card"
+        },
+        "ink": {
+          "$type": "color",
+          "$value": "{color.accent.ink}"
+        },
+        "ink-2": {
+          "$type": "color",
+          "$value": "#254B36"
+        },
+        "divider": {
+          "$type": "color",
+          "$value": "#9EBAA9"
+        },
+        "button-border": {
+          "$type": "color",
+          "$value": "#638573"
+        },
+        "button-fill": {
+          "$type": "color",
+          "$value": "rgba(255, 255, 255, 0.15)"
+        },
+        "button-fill-hover": {
+          "$type": "color",
+          "$value": "rgba(255, 255, 255, 0.35)"
+        }
+      },
+      "header": {
+        "link": {
+          "$type": "color",
+          "$value": "#C7D5CD",
+          "$description": "Header nav links and status label"
+        },
+        "search-bg": {
+          "$type": "color",
+          "$value": "#111512",
+          "$description": "Header search button fill"
+        },
+        "search-border": {
+          "$type": "color",
+          "$value": "#2A312C",
+          "$description": "Header search button border"
+        }
+      }
+    },
+    "font": {
+      "family": {
+        "sans": {
+          "$type": "fontFamily",
+          "$value": [
+            "Archivo",
+            "Arial",
+            "sans-serif"
+          ],
+          "$description": "Self-hosted variable woff2, wght 100-900, font-display swap"
+        },
+        "mono": {
+          "$type": "fontFamily",
+          "$value": [
+            "ui-monospace",
+            "SFMono-Regular",
+            "Consolas",
+            "monospace"
+          ],
+          "$description": "System monospace, no webfont: SF Mono on Apple devices, Consolas on Windows. Use for model IDs, prices, labels and code"
+        }
+      },
+      "weight": {
+        "regular": {
+          "$type": "fontWeight",
+          "$value": 400
+        },
+        "medium": {
+          "$type": "fontWeight",
+          "$value": 500
+        },
+        "semibold": {
+          "$type": "fontWeight",
+          "$value": 550
+        },
+        "bold": {
+          "$type": "fontWeight",
+          "$value": 600
+        },
+        "display": {
+          "$type": "fontWeight",
+          "$value": 650
+        }
+      }
+    },
+    "type": {
+      "display": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "84px",
+          "fontWeight": "{font.weight.display}",
+          "lineHeight": 1.04,
+          "letterSpacing": "-0.052em"
+        },
+        "$description": "Page H1, one per page. Max width 900px, text-wrap balance",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "clamp(39px, 10vw, 55px)",
+              "lineHeight": 1.08
+            },
+            "fluidFontSize": "clamp(52px, 5.8vw, 84px)"
+          }
+        }
+      },
+      "closing": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "56px",
+          "fontWeight": "{font.weight.bold}",
+          "lineHeight": 1.1,
+          "letterSpacing": "-0.04em"
+        },
+        "$description": "Closing-band headline, centred, max width 740px",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "38px"
+            },
+            "fluidFontSize": "clamp(36px, 4vw, 56px)"
+          }
+        }
+      },
+      "h2": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "48px",
+          "fontWeight": "{font.weight.bold}",
+          "lineHeight": 1.12,
+          "letterSpacing": "-0.045em"
+        },
+        "$description": "Section headline, text-wrap balance",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "35px"
+            },
+            "fluidFontSize": "clamp(34px, 3.6vw, 48px)"
+          }
+        }
+      },
+      "h2-side": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "34px",
+          "fontWeight": "{font.weight.bold}",
+          "lineHeight": 1.12,
+          "letterSpacing": "-0.045em"
+        },
+        "$description": "Headline in a side column (FAQ), max width 320px",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "30px"
+            }
+          }
+        }
+      },
+      "stat": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "46px",
+          "fontWeight": "{font.weight.semibold}",
+          "lineHeight": 1.1,
+          "letterSpacing": "-0.035em"
+        },
+        "$description": "Big proof number",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "32px"
+            },
+            "fluidFontSize": "clamp(34px, 3.2vw, 46px)"
+          }
+        }
+      },
+      "figure": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "38px",
+          "fontWeight": "{font.weight.bold}",
+          "lineHeight": 1.0,
+          "letterSpacing": "-0.025em"
+        },
+        "$description": "Lead number in a terms grid. Same size at every width"
+      },
+      "h3-lg": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "24px",
+          "fontWeight": "{font.weight.semibold}",
+          "lineHeight": 1.3,
+          "letterSpacing": "-0.025em"
+        },
+        "$description": "Lead card title",
+        "$extensions": {
+          "tr": {
+            "mobile_700": {
+              "fontSize": "23px"
+            }
+          }
+        }
+      },
+      "h3": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "20px",
+          "fontWeight": "{font.weight.semibold}",
+          "lineHeight": 1.3,
+          "letterSpacing": "-0.025em"
+        },
+        "$description": "Card and proof-point titles"
+      },
+      "h4": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "17px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.4,
+          "letterSpacing": "-0.01em"
+        },
+        "$description": "Node titles in route diagrams",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "16px"
+            }
+          }
+        }
+      },
+      "lede-hero": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "20px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.6,
+          "letterSpacing": "0em"
+        },
+        "$description": "Hero subhead, color text.on-photo, max width 530px",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "18px"
+            }
+          }
+        }
+      },
+      "lede": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "20px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.65,
+          "letterSpacing": "0em"
+        },
+        "$description": "Section intro, color text.secondary, max width 38ch",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "18px"
+            }
+          }
+        }
+      },
+      "lede-sm": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "18px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.65,
+          "letterSpacing": "0em"
+        },
+        "$description": "Intro inside a boxed module, max width 650px",
+        "$extensions": {
+          "tr": {
+            "mobile_600": {
+              "fontSize": "17px"
+            }
+          }
+        }
+      },
+      "body": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "16px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.6,
+          "letterSpacing": "0em"
+        },
+        "$description": "Default paragraph, color text.secondary, max width 66ch"
+      },
+      "body-sm": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "15px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.6,
+          "letterSpacing": "0em"
+        },
+        "$description": "Footnotes and table captions, color text.tertiary"
+      },
+      "quote": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "17px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.6,
+          "letterSpacing": "0em"
+        },
+        "$description": "Italic. A quote inside a quote is set upright",
+        "$extensions": {
+          "tr": {
+            "fontStyle": "italic"
+          }
+        }
+      },
+      "question": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "17px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.4,
+          "letterSpacing": "0em"
+        },
+        "$description": "FAQ question",
+        "$extensions": {
+          "tr": {
+            "mobile_700": {
+              "fontSize": "16px"
+            }
+          }
+        }
+      },
+      "row-title": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "18px",
+          "fontWeight": "{font.weight.semibold}",
+          "lineHeight": 1.6,
+          "letterSpacing": "0em"
+        },
+        "$description": "Model or provider name in a table row (link)"
+      },
+      "nav": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "15px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.0,
+          "letterSpacing": "0em"
+        },
+        "$description": "Header links"
+      },
+      "button": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "16px",
+          "fontWeight": "{font.weight.semibold}",
+          "lineHeight": 1.4,
+          "letterSpacing": "0em"
+        }
+      },
+      "tag": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "13px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.0,
+          "letterSpacing": "0em"
+        },
+        "$description": "Privacy and status tags"
+      },
+      "footer-link": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.sans}",
+          "fontSize": "14px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.45,
+          "letterSpacing": "0em"
+        }
+      },
+      "eyebrow": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "12px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.5,
+          "letterSpacing": "0.06em"
+        },
+        "$description": "Uppercase kicker above a card or panel",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase"
+          }
+        }
+      },
+      "promise": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "12px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.5,
+          "letterSpacing": "0.08em"
+        },
+        "$description": "Uppercase hero promises, color accent.base",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase",
+            "mobile_600": {
+              "fontSize": "10px",
+              "letterSpacing": "0.04em"
+            }
+          }
+        }
+      },
+      "label": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "14px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.3,
+          "letterSpacing": "0.1em"
+        },
+        "$description": "Uppercase table headers and field labels",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase"
+          }
+        }
+      },
+      "filter": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "15px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.0,
+          "letterSpacing": "0.08em"
+        },
+        "$description": "Uppercase filter tabs (All / Private / Confidential)",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase"
+          }
+        }
+      },
+      "data": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "15px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.35,
+          "letterSpacing": "0em"
+        },
+        "$description": "Prices, token counts, context length; tabular figures",
+        "$extensions": {
+          "tr": {
+            "fontVariantNumeric": "tabular-nums"
+          }
+        }
+      },
+      "data-unit": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "12px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.35,
+          "letterSpacing": "0.06em"
+        },
+        "$description": "Uppercase unit above a value ('FROM')",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase"
+          }
+        }
+      },
+      "id": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "13px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.4,
+          "letterSpacing": "0em"
+        },
+        "$description": "Model slugs, provider counts, color text.tertiary"
+      },
+      "code": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "14px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.6,
+          "letterSpacing": "0em"
+        },
+        "$description": "Code blocks. Same size at every width"
+      },
+      "mono-tag": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "11px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.4,
+          "letterSpacing": "0.06em"
+        },
+        "$description": "Uppercase receipt tags",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase",
+            "mobile_600": {
+              "fontSize": "10px",
+              "padding-inline": "5px"
+            }
+          }
+        }
+      },
+      "footer-heading": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "12px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.3,
+          "letterSpacing": "0.08em"
+        },
+        "$description": "Uppercase, color text.quaternary",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase",
+            "mobile_700": {
+              "fontSize": "13px"
+            }
+          }
+        }
+      },
+      "legal": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "12px",
+          "fontWeight": "{font.weight.regular}",
+          "lineHeight": 1.0,
+          "letterSpacing": "0em"
+        },
+        "$description": "Copyright and legal links, color text.tertiary"
+      },
+      "data-lg": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "17px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.4,
+          "letterSpacing": "0em"
+        },
+        "$description": "Cost in the route receipt; tabular figures",
+        "$extensions": {
+          "tr": {
+            "fontVariantNumeric": "tabular-nums",
+            "mobile_600": {
+              "fontSize": "16px"
+            }
+          }
+        }
+      },
+      "press-source": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "{font.family.mono}",
+          "fontSize": "11px",
+          "fontWeight": "{font.weight.medium}",
+          "lineHeight": 1.5,
+          "letterSpacing": "0.1em"
+        },
+        "$description": "Uppercase press-source label, color text.tertiary",
+        "$extensions": {
+          "tr": {
+            "textTransform": "uppercase"
+          }
+        }
+      }
+    },
+    "space": {
+      "section": {
+        "$type": "dimension",
+        "$value": "80px",
+        "$description": "Block padding of every content section"
+      },
+      "section-mobile": {
+        "$type": "dimension",
+        "$value": "56px",
+        "$description": "Block padding at <=700px"
+      },
+      "container": {
+        "$type": "dimension",
+        "$value": "1280px",
+        "$description": "Max width including gutters"
+      },
+      "content": {
+        "$type": "dimension",
+        "$value": "1160px",
+        "$description": "Max content width at 1440px"
+      },
+      "gutter": {
+        "$type": "dimension",
+        "$value": "60px"
+      },
+      "gutter-1200": {
+        "$type": "dimension",
+        "$value": "40px"
+      },
+      "gutter-600": {
+        "$type": "dimension",
+        "$value": "20px"
+      },
+      "header-inline": {
+        "$type": "dimension",
+        "$value": "max(24px, calc((100vw - 1280px) / 2))",
+        "$description": "Header side padding: lines up with the 1280px container edge; 24px at <=880px, 20px at <=600px",
+        "$extensions": {
+          "tr": {
+            "at_880": "24px",
+            "at_600": "20px"
+          }
+        }
+      },
+      "header-height": {
+        "$type": "dimension",
+        "$value": "88px"
+      },
+      "header-height-880": {
+        "$type": "dimension",
+        "$value": "78px"
+      },
+      "stack-xs": {
+        "$type": "dimension",
+        "$value": "8px"
+      },
+      "stack-sm": {
+        "$type": "dimension",
+        "$value": "12px"
+      },
+      "stack-md": {
+        "$type": "dimension",
+        "$value": "16px"
+      },
+      "stack-lg": {
+        "$type": "dimension",
+        "$value": "24px"
+      },
+      "stack-xl": {
+        "$type": "dimension",
+        "$value": "32px"
+      },
+      "stack-2xl": {
+        "$type": "dimension",
+        "$value": "40px"
+      },
+      "stack-3xl": {
+        "$type": "dimension",
+        "$value": "56px"
+      }
+    },
+    "radius": {
+      "panel": {
+        "$type": "dimension",
+        "$value": "2px",
+        "$description": "Panels, cards, tags, chips, segmented tabs, receipt nodes"
+      },
+      "control": {
+        "$type": "dimension",
+        "$value": "6px",
+        "$description": "Buttons, inputs, icon buttons, tooltips, search"
+      },
+      "image": {
+        "$type": "dimension",
+        "$value": "5px",
+        "$description": "Provider and lab icons"
+      },
+      "kbd": {
+        "$type": "dimension",
+        "$value": "3px"
+      },
+      "round": {
+        "$type": "dimension",
+        "$value": "9999px",
+        "$description": "Status dot, back-to-top button (renders as a circle on square elements)"
+      },
+      "dialog": {
+        "$type": "dimension",
+        "$value": "12px",
+        "$description": "Search and sign-in dialogs"
+      },
+      "toast": {
+        "$type": "dimension",
+        "$value": "8px",
+        "$description": "Copy confirmation toast"
+      }
+    },
+    "border": {
+      "width": {
+        "$type": "dimension",
+        "$value": "1px"
+      },
+      "quote-width": {
+        "$type": "dimension",
+        "$value": "2px"
+      }
+    },
+    "shadow": {
+      "tooltip": {
+        "$type": "shadow",
+        "$value": {
+          "offsetX": "0px",
+          "offsetY": "12px",
+          "blur": "30px",
+          "spread": "0px",
+          "color": "rgba(0, 0, 0, 0.53)"
+        }
+      },
+      "modal": {
+        "$type": "shadow",
+        "$value": {
+          "offsetX": "0px",
+          "offsetY": "24px",
+          "blur": "60px",
+          "spread": "0px",
+          "color": "rgba(0, 0, 0, 0.6)"
+        }
+      }
+    },
+    "duration": {
+      "fast": {
+        "$type": "duration",
+        "$value": "120ms",
+        "$description": "Tooltip"
+      },
+      "base": {
+        "$type": "duration",
+        "$value": "150ms",
+        "$description": "Hovers, accordion icon, link arrow"
+      },
+      "connector": {
+        "$type": "duration",
+        "$value": "1s"
+      },
+      "pulse": {
+        "$type": "duration",
+        "$value": "2.4s"
+      },
+      "marquee": {
+        "$type": "duration",
+        "$value": "32s"
+      }
+    },
+    "breakpoint": {
+      "xl": {
+        "$type": "dimension",
+        "$value": "1200px",
+        "$description": "Gutters drop to 40px"
+      },
+      "md": {
+        "$type": "dimension",
+        "$value": "1000px",
+        "$description": "Two-column modules (request, migration, FAQ) become one column; terms grid drops to 2 columns"
+      },
+      "nav": {
+        "$type": "dimension",
+        "$value": "880px",
+        "$description": "Header collapses to a Menu drawer; footer drops to 3 columns"
+      },
+      "phone": {
+        "$type": "dimension",
+        "$value": "700px",
+        "$description": "Phone layout: 56px section spacing, proof split stacks, terms-grid cells tighten, catalog search moves above the filters"
+      },
+      "sm": {
+        "$type": "dimension",
+        "$value": "600px",
+        "$description": "Phone type sizes, 20px gutters, data tables become cards, footer becomes disclosures, wordmark hides"
+      },
+      "min": {
+        "$type": "dimension",
+        "$value": "360px",
+        "$description": "Smallest supported width; no horizontal scroll"
+      }
+    },
+    "z-index": {
+      "header": {
+        "$type": "number",
+        "$value": 20,
+        "$description": "Site header"
+      },
+      "overlay": {
+        "$type": "number",
+        "$value": 100,
+        "$description": "Tooltip, toast and skip link"
+      }
+    }
+  },
+  "css_custom_properties": ":root {\n  --tr-color-surface-bg: #050706;\n  --tr-color-surface-bg-alt: #0A100D;\n  --tr-color-surface-bg-deep: #070A08;\n  --tr-color-surface-photo-fallback: #07100E;\n  --tr-color-surface-panel: #0F1411;\n  --tr-color-surface-panel-inset: #121915;\n  --tr-color-surface-panel-raised: #141C18;\n  --tr-color-surface-control: #0C1411;\n  --tr-color-surface-hover: #14251C;\n  --tr-color-surface-selected: #18211C;\n  --tr-color-surface-overlay-button: rgba(11, 24, 20, 0.7);\n  --tr-color-text-primary: #EDF8F5;\n  --tr-color-text-secondary: #C3C9C3;\n  --tr-color-text-tertiary: #ADBBB2;\n  --tr-color-text-quaternary: #8FA497;\n  --tr-color-text-on-photo: #DCE9E3;\n  --tr-color-accent-base: #CCE8D7;\n  --tr-color-accent-hover: #E5FFF2;\n  --tr-color-accent-ink: #10241A;\n  --tr-color-link-base: #C0E1FF;\n  --tr-color-link-underline: #6F8FA8;\n  --tr-color-link-dot: #88B4E2;\n  --tr-color-link-button: #D4ECFF;\n  --tr-color-line-rule: #33403A;\n  --tr-color-line-rule-soft: #1E2621;\n  --tr-color-line-control: #526859;\n  --tr-color-line-strong: #8CAB99;\n  --tr-color-line-emphasis: #AAC9B6;\n  --tr-color-line-connector: #B0CCBA;\n  --tr-color-line-quote: #6B9480;\n  --tr-color-line-tag: #485B4E;\n  --tr-color-focus: #CCE8D7;\n  --tr-color-error: #F0B3A6;\n  --tr-color-privacy-zdr-bg: #1C1A10;\n  --tr-color-privacy-zdr-border: #5A4F2E;\n  --tr-color-privacy-zdr-text: #E2C98A;\n  --tr-color-privacy-e2ee-bg: #16172A;\n  --tr-color-privacy-e2ee-border: #6B6F8E;\n  --tr-color-privacy-e2ee-text: #D3D6F0;\n  --tr-color-privacy-neutral-bg: #132019;\n  --tr-color-privacy-neutral-border: #3E5A4A;\n  --tr-color-privacy-neutral-text: #CFE3D6;\n  --tr-color-privacy-verified-bg: #17271E;\n  --tr-color-privacy-verified-border: #506F5D;\n  --tr-color-privacy-verified-text: #C6E5D2;\n  --tr-color-status-up: #2EE59D;\n  --tr-color-status-degraded: #FFC857;\n  --tr-color-status-down: #FF6B5B;\n  --tr-color-status-unknown: #6B7A72;\n  --tr-color-diff-removed-bg: #2A1512;\n  --tr-color-diff-removed-text: #E6A597;\n  --tr-color-diff-added-bg: #12261A;\n  --tr-color-diff-added-text: #A8DDBB;\n  --tr-color-panel-blue-bg: #D5E8F5;\n  --tr-color-panel-blue-ink: #142B38;\n  --tr-color-panel-blue-ink-2: #294B60;\n  --tr-color-panel-blue-divider: #9DB8C9;\n  --tr-color-panel-mint-bg: #CCE8D7;\n  --tr-color-panel-mint-ink: #10241A;\n  --tr-color-panel-mint-ink-2: #254B36;\n  --tr-color-panel-mint-divider: #9EBAA9;\n  --tr-color-panel-mint-button-border: #638573;\n  --tr-color-panel-mint-button-fill: rgba(255, 255, 255, 0.15);\n  --tr-color-panel-mint-button-fill-hover: rgba(255, 255, 255, 0.35);\n  --tr-color-header-link: #C7D5CD;\n  --tr-color-header-search-bg: #111512;\n  --tr-color-header-search-border: #2A312C;\n  --tr-font-family-sans: Archivo, Arial, sans-serif;\n  --tr-font-family-mono: ui-monospace, SFMono-Regular, Consolas, monospace;\n  --tr-font-weight-regular: 400;\n  --tr-font-weight-medium: 500;\n  --tr-font-weight-semibold: 550;\n  --tr-font-weight-bold: 600;\n  --tr-font-weight-display: 650;\n  --tr-space-section: 80px;\n  --tr-space-section-mobile: 56px;\n  --tr-space-container: 1280px;\n  --tr-space-content: 1160px;\n  --tr-space-gutter: 60px;\n  --tr-space-gutter-1200: 40px;\n  --tr-space-gutter-600: 20px;\n  --tr-space-header-inline: max(24px, calc((100vw - 1280px) / 2));\n  --tr-space-header-height: 88px;\n  --tr-space-header-height-880: 78px;\n  --tr-space-stack-xs: 8px;\n  --tr-space-stack-sm: 12px;\n  --tr-space-stack-md: 16px;\n  --tr-space-stack-lg: 24px;\n  --tr-space-stack-xl: 32px;\n  --tr-space-stack-2xl: 40px;\n  --tr-space-stack-3xl: 56px;\n  --tr-radius-panel: 2px;\n  --tr-radius-control: 6px;\n  --tr-radius-image: 5px;\n  --tr-radius-kbd: 3px;\n  --tr-radius-round: 9999px;\n  --tr-radius-dialog: 12px;\n  --tr-radius-toast: 8px;\n  --tr-shadow-tooltip: 0px 12px 30px 0px rgba(0, 0, 0, 0.53);\n  --tr-shadow-modal: 0px 24px 60px 0px rgba(0, 0, 0, 0.6);\n  --tr-duration-fast: 120ms;\n  --tr-duration-base: 150ms;\n  --tr-duration-connector: 1s;\n  --tr-duration-pulse: 2.4s;\n  --tr-duration-marquee: 32s;\n}",
+  "guide": {
+    "principles": [
+      "Near-black green canvas, cream type, one mint accent. Colour carries meaning (privacy level, status, action), never decoration.",
+      "Proof over adjectives. Show the request, the price, the label, the commit. Diagrams are built from real UI (route receipt, catalog rows, code diff), never illustration.",
+      "The landscape photo appears only in a page's opening band and closing band, always under a scrim, never behind data, tables or body copy.",
+      "Flat surfaces. Separation comes from 1px rules and the two background steps; shadows are only for floating layers (tooltip, modal).",
+      "Archivo for what people read. The system monospace for what machines read: model IDs, prices, base URLs, labels, eyebrows, table headers.",
+      "Two corner radii: 2px for surfaces, 6px for anything you press or type into (12px for dialogs).",
+      "At most one italic mint phrase per headline, used for the payoff."
+    ],
+    "imagery": {
+      "landscape_photo": {
+        "subject": "Aerial braided river valley between dark green-grey ridges at dusk. Low saturation, cool shadows.",
+        "sources": {
+          "avif": "/static/homepage/trustedrouter-landscape-{768,1152,1536}.avif",
+          "webp": "/static/homepage/trustedrouter-landscape-{768,1152,1536}.webp",
+          "intrinsic": "1536x1024",
+          "sizes": "100vw"
+        },
+        "placement": "Absolutely positioned, inset 0, z-index -2, object-fit cover, background {color.surface.photo-fallback}",
+        "hero": {
+          "object_position": "50% 62%",
+          "object_position_600": "53% 60%",
+          "min_height": "100svh minus header height",
+          "scrim": "linear-gradient(180deg, rgba(5,7,6,.61) 0%, rgba(5,7,6,.64) 48%, rgba(5,7,6,.5) 58%, rgba(5,7,6,.08) 70%, rgba(5,7,6,.66) 86%, #050706 100%)",
+          "scrim_600": "linear-gradient(180deg, rgba(5,7,6,.4) 0%, rgba(5,7,6,.4) 42%, rgba(5,7,6,.14) 58%, rgba(5,7,6,0) 74%, rgba(5,7,6,.27) 88%, rgba(5,7,6,.7) 100%)",
+          "filter_600": "brightness(1.3)",
+          "text_shadow_600": "0 2px 12px rgba(5,7,6,.7)"
+        },
+        "inner_page_band": {
+          "min_height": "400px",
+          "object_position": "50% 62%",
+          "scrim": "same as hero",
+          "use": "Optional opening band for Models, Compare and landing pages"
+        },
+        "closing_band": {
+          "min_height": "440px",
+          "min_height_600": "400px",
+          "object_position": "50% 68%",
+          "object_position_600": "60% 70%",
+          "scrim": "linear-gradient(90deg, rgba(5,7,6,.77), rgba(5,7,6,.55) 50%, rgba(5,7,6,.68))",
+          "scrim_600": "linear-gradient(180deg, rgba(5,7,6,.44) 0%, rgba(5,7,6,.35) 48%, rgba(5,7,6,.15) 100%)",
+          "filter_600": "brightness(1.4)"
+        },
+        "rules": [
+          "The hero scrim ends at #050706 so the next section starts seamlessly.",
+          "No other stock photography, people or 3D renders."
+        ]
+      },
+      "brand_mark": {
+        "file": "/static/homepage/mark.svg",
+        "size": "30px",
+        "size_600": "25px",
+        "lockup": "Mark + 'TrustedRouter' in Archivo 20px/600, letter-spacing -0.04em, gap 12px. At <=600px the wordmark hides and the mark is 25px. Footer lockup 18px."
+      },
+      "provider_icons": {
+        "files": "provider-{slug}.png, 128px source",
+        "size_marquee": "30px",
+        "size_table": "30px",
+        "size_table_600": "28px",
+        "radius": "{radius.image}",
+        "fit": "contain",
+        "treatment": "Full colour, no grayscale, no opacity change",
+        "size_marquee_600": "28px"
+      },
+      "diagram": {
+        "node": "{color.surface.panel-inset}, 1px {color.line.rule}, radius {radius.panel}, padding 14px 16px",
+        "emphasis_node_border": "{color.line.emphasis}",
+        "connector": "2px wide, repeating 4px dash / 4px gap in {color.line.connector} at 70% opacity; background-position animates over {duration.connector}, linear, infinite"
+      },
+      "icons": "Inline SVG line icons, 18px, currentColor. Tertiary links end with a '→' glyph."
+    },
+    "components": {
+      "header": {
+        "height": "{space.header-height}",
+        "height_880": "{space.header-height-880}",
+        "padding_inline": "{space.header-inline}",
+        "background": "{color.surface.bg}",
+        "border_bottom": "1px {color.line.rule-soft}",
+        "z_index": 20,
+        "links": [
+          "Models",
+          "Chat",
+          "Pricing",
+          "Trust",
+          "Docs",
+          "Status"
+        ],
+        "link_type": "{type.nav}",
+        "link_color": "{color.header.link}",
+        "search": {
+          "width": "220px; at <=1200px it flexes (max 360px)",
+          "height": "42px",
+          "background": "{color.header.search-bg}",
+          "border": "1px {color.header.search-border}",
+          "radius": "{radius.control}",
+          "type": "Archivo 13px (14px at <=1200px), {color.text.tertiary}",
+          "placeholder": "Search {live_model_count} models",
+          "shortcut_hint": "kbd, shown for fine pointers only"
+        },
+        "signin": "Secondary button 'Sign in'",
+        "mobile": "At <=880px links move into a menu drawer opened by a 44px Menu button; Sign in moves into the drawer at <=480px",
+        "status": "Status indicator sits in the nav row after Docs",
+        "note": "Every page shares this header. Match it exactly."
+      },
+      "button_primary": {
+        "background": "{color.accent.base}",
+        "hover": "{color.accent.hover}",
+        "text": "{color.accent.ink}",
+        "type": "{type.button}",
+        "radius": "{radius.control}",
+        "min_height": "48px",
+        "padding": "12px 22px",
+        "label": "Get your API key"
+      },
+      "button_secondary": {
+        "background": "{color.surface.overlay-button}",
+        "hover": "{color.surface.hover}",
+        "border": "1px {color.line.strong}",
+        "text": "{color.link.button}",
+        "type": "{type.button}",
+        "radius": "{radius.control}",
+        "min_height": "48px",
+        "padding": "12px 22px",
+        "on_panel_mint": {
+          "text": "{color.panel-mint.ink}",
+          "border": "1px {color.panel-mint.button-border}",
+          "background": "{color.panel-mint.button-fill}",
+          "hover": "{color.panel-mint.button-fill-hover}"
+        }
+      },
+      "button_pair": "Primary then secondary, gap 16px, each min-width 180px; at <=600px both share the row equally (flex 1, padding 12px 8px, 15px text)",
+      "action_link": {
+        "type": "{type.button}",
+        "color": "{color.link.base}",
+        "underline": "1px {color.link.underline}, offset 5px; currentColor on hover",
+        "suffix": "→, 8px gap, moves 3px right on hover over {duration.base}",
+        "min_height": "44px",
+        "on_panel_mint_color": "{color.panel-mint.ink}"
+      },
+      "icon_button": {
+        "size": "44px",
+        "border": "1px {color.line.control}",
+        "radius": "{radius.control}",
+        "glyph": "{color.link.base}",
+        "hover": "background {color.surface.hover}, border {color.accent.base}, glyph {color.text.primary}"
+      },
+      "search_input": {
+        "min_height": "48px",
+        "width": "280px",
+        "width_880": "100%",
+        "background": "{color.surface.control}",
+        "border": "1px {color.line.control}",
+        "radius": "{radius.control}",
+        "type": "Archivo 15px, {color.text.tertiary}",
+        "hover_focus": "border {color.line.strong}, text {color.text.primary}",
+        "shortcut_hint": "kbd, mono 11px, 1px border, radius {radius.kbd}"
+      },
+      "filter_tabs": {
+        "type": "{type.filter}",
+        "inactive": "{color.text.tertiary}",
+        "active": "{color.text.primary} with 1px {color.accent.base} underline",
+        "gap": "32px",
+        "min_height": "44px",
+        "labels": [
+          "All",
+          "Private",
+          "Confidential"
+        ],
+        "count": "Right-aligned {type.id}, e.g. 'Featured · 6 of {live_model_count}'",
+        "gap_700": "20px"
+      },
+      "segmented_tabs": {
+        "type": "mono 14px/500",
+        "padding": "8px 10px",
+        "radius": "{radius.panel}",
+        "inactive": "{color.text.tertiary}",
+        "selected": "{color.text.primary} on {color.surface.selected}",
+        "selected_special": "{color.accent.ink} on {color.accent.base} (Agent prompt tab)"
+      },
+      "tag": {
+        "type": "{type.tag}",
+        "padding": "5px 7px",
+        "min_height": "32px",
+        "radius": "{radius.panel}",
+        "border": "1px",
+        "variants": {
+          "ZDR": "{color.privacy.zdr}",
+          "E2EE": "{color.privacy.e2ee}",
+          "default": "{color.privacy.neutral}"
+        },
+        "behaviour": "Every privacy tag opens its tooltip on hover, focus and tap"
+      },
+      "chip": {
+        "use": "Copyable routing promises: trustedrouter/auto, zdr, e2e, eu, synth",
+        "type": "mono 14px/500",
+        "padding": "8px 10px",
+        "min_height": "28px",
+        "background": "{color.surface.panel-raised}",
+        "border": "1px {color.line.rule}",
+        "radius": "{radius.panel}",
+        "hover": "border and text {color.accent.base}"
+      },
+      "tooltip": {
+        "background": "{color.text.primary}",
+        "text": "{color.accent.ink}",
+        "type": "Archivo 13px/1.5",
+        "padding": "12px 14px",
+        "radius": "{radius.control}",
+        "max_width": "260px",
+        "shadow": "{shadow.tooltip}",
+        "transition": "{duration.fast}"
+      },
+      "tooltip_copy": {
+        "ZDR": "Zero data retention. The provider keeps no prompts or outputs.",
+        "E2EE": "Confidential compute with end-to-end encryption. The prompt stays encrypted until it reaches verified provider hardware.",
+        "auto": "Healthy provider rollover. For general production traffic.",
+        "zdr": "Zero-retention providers only. For legal and sensitive work.",
+        "e2e": "Confidential provider compute. For confidential workloads.",
+        "eu": "EU-focused routes. For European workloads.",
+        "synth": "Multiple models, one answer. For combination models."
+      },
+      "data_table": {
+        "head": "{type.label} in {color.text.tertiary}, padding 6px 12px 10px, bottom 1px {color.line.rule-soft}",
+        "row": "Padding 18px 12px, bottom 1px {color.line.rule-soft}, hover background {color.surface.panel} over {duration.base}",
+        "first_cell": "30px icon + {type.row-title} link + {type.id} slug 6px below; min-width 240px",
+        "numbers": "{type.data}; optional {type.data-unit} above ('FROM')",
+        "columns_desktop": "table-layout fixed: name auto, routes 22%, input 140px, output 140px, context 100px",
+        "below_600": "Each row becomes a card: grid 2 columns, gap 8px 16px, padding 16px 0, bottom 1px {color.line.rule-soft}. Name and routes span both columns; each number shows its column label in {type.data-unit} above the value. The table header is hidden. Between 601 and 880px the table keeps its columns."
+      },
+      "panel": {
+        "background": "{color.surface.panel}",
+        "border": "1px {color.line.rule}",
+        "radius": "{radius.panel}",
+        "padding": "32px",
+        "padding_600": "24px 20px"
+      },
+      "proof_split": {
+        "grid": "minmax(0,1fr) minmax(0,1.15fr), column gap 40px; one column at <=700px",
+        "lead": "{type.h3-lg} + {type.body} + checklist + secondary button; right border 1px {color.line.rule}, padding 20px 40px 20px 0",
+        "items": "Stacked, each {type.h3} + {type.body} + action link, padding 20px 0, bottom border 1px {color.line.rule}",
+        "checklist": "✓ in {color.accent.base}, 16px {color.text.secondary}, gap 10px"
+      },
+      "code_panel": {
+        "container": "Panel component with padding 0, overflow hidden",
+        "toolbar": "Segmented tabs (Python, TypeScript, cURL, Agent prompt) + source toggle (from OpenAI / OpenRouter), padding 14px, bottom 1px {color.line.rule}",
+        "body": "{type.code} in {color.text.secondary}, padding 22px (20px 16px at <=600px), min-height 330px; comments {color.text.tertiary}",
+        "diff": "Removed lines {color.diff.removed-text} on {color.diff.removed-bg} with '-'; added lines {color.diff.added-text} on {color.diff.added-bg} with '+'; both bleed to the panel edges",
+        "footer": "Hint text 14px {color.text.tertiary} left, 44px copy icon button right, min-height 52px, top 1px {color.line.rule}",
+        "copy_field": "{type.label} above a 48px field on {color.surface.panel-inset}, mono 14px value, copy icon button inside the field"
+      },
+      "route_receipt": {
+        "container": "Panel component, padding 24px 24px 20px",
+        "header": "{type.eyebrow} left ('CAPTURED REQUEST'), model slug right; 11px at <=600px",
+        "node": "Same as guide.imagery.diagram.node",
+        "node_title": "{type.h4}",
+        "node_meta": "mono 14px/1.6 {color.text.tertiary}",
+        "tags": "{type.mono-tag}, 1px {color.line.tag} border, {color.text.secondary}, padding 3px 7px; verified tags use {color.privacy.verified}",
+        "cost": "{type.data-lg} in {color.text.primary}"
+      },
+      "terms_grid": {
+        "surface": "{color.panel-blue.bg}",
+        "padding": "28px 12px",
+        "columns": "4; 2 at <=1000px (including phones)",
+        "cell": "padding 4px 24px (20px at <=1000px, 16px 12px at <=700px), left 1px {color.panel-blue.divider}; at <=1000px the second row also gets a top divider",
+        "lead": "{type.figure} in {color.panel-blue.ink}, same size on phones",
+        "title": "Archivo 25px/1.2, weight 600, letter-spacing -0.025em, in {color.panel-blue.ink} (21px at <=700px)",
+        "description": "16px/1.5 {color.panel-blue.ink-2} (15px at <=700px)"
+      },
+      "story_card": {
+        "surface": "{color.panel-mint.bg}",
+        "radius": "{radius.panel}",
+        "padding": "40px 48px 24px",
+        "padding_600": "28px 24px 16px",
+        "max_content_width": "850px",
+        "parts": [
+          "{type.eyebrow} in {color.panel-mint.ink-2}",
+          "{type.stat} in {color.panel-mint.ink}",
+          "Results line 20px/550",
+          "{type.body} in {color.panel-mint.ink-2}",
+          "{type.quote} in {color.panel-mint.ink-2} with 2px {color.line.quote} left rule, padding-left 20px (16px text and padding at <=700px)",
+          "Secondary button, panel-mint variant"
+        ]
+      },
+      "press_card": {
+        "surface": "Panel component",
+        "padding": "20px 28px",
+        "layout": "Three columns at >=701px (source, quote, link), stacked below",
+        "source": "{type.press-source} in {color.text.tertiary}",
+        "quote": "{type.quote} in {color.text.secondary}"
+      },
+      "accordion": {
+        "row": "Bottom 1px {color.line.rule}; first row also has a top rule",
+        "question": "{type.question} in {color.text.primary}, min-height 56px, padding 18px 4px; turns {color.accent.base} on hover",
+        "icon": "'+' Archivo 22px/300 in {color.text.tertiary}; rotates 45° and turns {color.accent.base} when open",
+        "answer": "{type.body} in {color.text.secondary}, max width 62ch, padding 0 48px 20px 4px"
+      },
+      "closing_band": {
+        "layout": "Centred column, gap 28px, padding 72px 24px (64px 24px at <=700px)",
+        "content": "{type.closing} with one italic {color.accent.base} phrase + button_pair",
+        "background": "guide.imagery.landscape_photo.closing_band",
+        "borders": "1px {color.line.rule} top and bottom"
+      },
+      "footer": {
+        "background": "{color.surface.bg-deep}",
+        "border_top": "1px {color.line.rule}",
+        "brand_row": "Mark lockup (18px). No status indicator; status lives in the header",
+        "columns": "5 equal columns, gap 24px 28px, ordered by traffic; 3 columns at <=880px; collapsible disclosures at <=600px",
+        "heading": "{type.footer-heading}",
+        "links": "{type.footer-link} in {color.text.primary}, gap 5px",
+        "base": "{type.legal} in {color.text.tertiary}, top 1px {color.line.rule-soft}, + 44px round back-to-top button with 1px {color.line.rule} border"
+      },
+      "marquee": {
+        "content": "Frontier lab icons (30px, 28px at <=600px) + model names, Archivo 14px/1.6 in {color.text.on-photo} with a soft dark text-shadow; each item is a button that searches that model",
+        "max_width": "980px",
+        "mask": "linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent)",
+        "animation": "translateX(-50%) over {duration.marquee}, linear, infinite; pauses on pointer hover and keyboard focus, never on tap"
+      },
+      "status_indicator": {
+        "dot": "8px circle in the matching color.status token",
+        "glow": "0 0 0 3px status colour at 20%, 0 0 10px status colour at 60%",
+        "pulse": "Up state only, {duration.pulse} ease-in-out infinite",
+        "label": "{type.nav} in {color.header.link}",
+        "placement": "Header nav row",
+        "states": "Up: 'All systems operational' (pulsing). Degraded and down use their colours. When the server marks the last check stale (about 5 minutes), the dot turns {color.status.unknown} and the label reads 'Status delayed'."
+      }
+    },
+    "layout": {
+      "container": "max-width {space.container}, margin-inline auto, padding-inline {space.gutter} ({space.gutter-1200} at <=1200px, {space.gutter-600} at <=600px). The header uses {space.header-inline} instead",
+      "section": "padding-block {space.section} ({space.section-mobile} at <=700px). Alternate {color.surface.bg} and {color.surface.bg-alt}; bg-alt bands get a 1px {color.line.rule-soft} top and bottom border",
+      "hero": "Centred column: promises, display H1, lede-hero, button_pair, marquee. Photo band, min-height 100svh minus header",
+      "grids": {
+        "intro_proof": "minmax(0,.8fr) minmax(0,1.2fr), gap 56px",
+        "proof_split": "minmax(0,1fr) minmax(0,1.15fr), gap 0 40px",
+        "boxed_module": "minmax(0,5fr) minmax(0,7fr) inside a panel",
+        "terms": "repeat(4, 1fr)",
+        "faq": "minmax(0,1fr) minmax(0,1.7fr), gap 56px",
+        "footer": "repeat(5, 1fr), gap 24px 28px",
+        "collapse": "Request, migration and FAQ grids become one column at <=1000px; proof split at <=700px; terms grid 4 → 2 at <=1000px; footer 5 → 3 at <=880px, then disclosures at <=600px"
+      }
+    },
+    "motion": {
+      "loops": "Connector, status pulse and marquee loop linearly (pulse ease-in-out)",
+      "hovers": "{duration.base}, default easing",
+      "reduced_motion": "All loops stop; the link-arrow nudge and tooltip transition are removed"
+    },
+    "accessibility": {
+      "contrast": "All text/background pairs in this file meet WCAG AA 4.5:1. Checked: primary/bg 18.6, secondary/bg 12.0, tertiary/bg 10.1, tertiary/panel 9.3, quaternary/bg-deep 7.5, link/bg 14.9, accent ink/accent 12.5, panel-blue ink-2 7.4, panel-mint ink-2 7.5, ZDR 10.8, E2EE 12.3, diff removed 8.4, diff added 10.4.",
+      "focus": "3px solid {color.focus} (mint), offset 4px, on every link, button, input, summary and tab. Inside panel-mint (the customer story card) use {color.panel-mint.ink} instead, because mint on mint is invisible.",
+      "targets": "44px minimum; 48px for primary and secondary buttons",
+      "hover_parity": "Every hover reveal also works on focus and tap",
+      "overflow": "No horizontal scroll at 360px and above",
+      "skip_link": "'Skip to content' is the first focusable element"
+    },
+    "voice": {
+      "headlines": "Short declarative sentences, often two beats, concrete over adjectival: 'Don't trust. Verify.' 'See what your AI bill is made of.'",
+      "ctas": {
+        "primary": "Get your API key",
+        "secondary": [
+          "Verify trust",
+          "See pricing",
+          "Migration guide",
+          "View source code"
+        ],
+        "tertiary": "Verb + object + →, e.g. 'Open live trust evidence →'"
+      },
+      "terms": {
+        "privacy_filters": [
+          "All",
+          "Private",
+          "Confidential"
+        ],
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "payments": "Card, ACH, PayPal or cryptocurrency"
+      },
+      "rules": [
+        "Facts, not editorial.",
+        "No curiosity-gap teasers.",
+        "Definitions live in tooltips, not footnotes.",
+        "Model and provider counts come from the live catalog, never hard-coded."
+      ]
+    },
+    "page_templates": {
+      "/models": [
+        "Optional photo band (inner_page_band) with {type.display}: '{live_model_count} models. Every route labeled.'",
+        "search_input + filter_tabs + count",
+        "data_table, full catalog, paginated",
+        "Routing-promise chip row",
+        "{type.body-sm} pricing footnote",
+        "closing_band"
+      ],
+      "/models/{lab}/{model}": [
+        "Breadcrumb in {type.id}",
+        "{type.display} model name, slug in {type.id}, privacy tags",
+        "Provider route data_table: provider, tags, input, output, context, uptime",
+        "code_panel prefilled with this slug",
+        "button_pair"
+      ],
+      "/compare/{competitor}": [
+        "{type.display} 'TrustedRouter vs {Competitor}' with an italic accent payoff",
+        "Comparison data_table: one fact per row, values in {type.data}, privacy as tags, a source action_link per row",
+        "proof_split for the verifiable differences",
+        "code_panel with the source toggle set to the competitor",
+        "accordion FAQ",
+        "closing_band"
+      ]
+    },
+    "homepage_exceptions": {
+      "_use": "The live homepage differs from this kit in these places. The kit is correct: build new pages from the kit, not from the homepage code.",
+      "items": [
+        {
+          "what": "Focus ring inside the mint customer story card",
+          "homepage": "Mint ring on the mint card, which is invisible",
+          "kit": "Ring uses {color.panel-mint.ink}"
+        },
+        {
+          "what": "Near-duplicate colours",
+          "homepage": "Slightly different greys, rules and panel fills (the values listed in migration)",
+          "kit": "One token each"
+        },
+        {
+          "what": "Icon buttons",
+          "homepage": "4px corners, hover fill #203C2C",
+          "kit": "{radius.control} corners, hover fill {color.surface.hover}"
+        },
+        {
+          "what": "Route receipt panel and nodes",
+          "homepage": "Square corners",
+          "kit": "{radius.panel}"
+        }
+      ]
+    }
+  },
+  "migration": {
+    "_use": "When restyling older trustedrouter.com pages, replace each value on the left with the token on the right.",
+    "#C4D3C9": "color.text.secondary",
+    "#BAC9BF": "color.text.secondary",
+    "#D6DCD6": "color.text.secondary",
+    "#AEB3AA": "color.text.secondary",
+    "#C9CFC8": "color.text.secondary",
+    "#D0DED7": "color.text.secondary",
+    "#98A198": "color.text.tertiary",
+    "#8F968D": "color.text.tertiary",
+    "#2A3B32": "color.line.rule",
+    "#29332D": "color.line.rule",
+    "#232B26": "color.line.rule",
+    "#2F3731": "color.line.rule",
+    "#33473B": "color.line.rule",
+    "#1A211D": "color.line.rule-soft",
+    "#1C221E": "color.line.rule-soft",
+    "#22342A": "color.line.rule-soft",
+    "#151C18": "color.surface.panel",
+    "#111713": "color.surface.panel",
+    "#07110E": "color.surface.photo-fallback",
+    "#203C2C": "color.surface.hover",
+    "#234636": "color.panel-mint.ink-2",
+    "border-radius 8px / 10px on panels": "radius.panel",
+    "border-radius 4px on icon buttons": "radius.control",
+    "--serif (Newsreader)": "remove",
+    "breakpoints 1100 / 520": "1000 / 600",
+    "--mono: \"Geist Mono\", … (older pages)": "font.family.mono"
+  }
+}

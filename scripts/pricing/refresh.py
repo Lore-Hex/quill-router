@@ -248,7 +248,7 @@ CROSS_CHECK_DISAGREE_THRESHOLD = 0.02  # 2%
 # OpenRouter is the actual serving and billing API for this deliberately
 # labelled downstream provider. Keep its provenance distinct from both direct
 # provider prices and emergency OpenRouter fallback prices.
-_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta", "openrouter"})
+_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"openrouter"})
 
 
 def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:
@@ -1226,10 +1226,9 @@ def _merge_snapshot(
     """Build the final snapshot.
 
     Policy: only models with an authoritative price from the API we actually
-    pay are in the snapshot. Almost every route is provider-direct, with OR
-    used only as a cross-check. The explicitly labelled Meta via OpenRouter
-    route is the narrow exception: its OpenRouter endpoint is both the serving
-    API and billing source. Unconfigured OR-only models still fall out.
+    pay are in the snapshot. Provider-direct routes use OR only as a cross-check.
+    Explicit OpenRouter routes use that API as their billing source.
+    Unconfigured OR-only models still fall out.
 
     A single model can have multiple provider-direct endpoints (e.g.
     meta-llama/llama-3.1-8b on both Cerebras and Novita;
@@ -1388,7 +1387,7 @@ def _merge_snapshot(
     return {
         "source": (
             "authoritative downstream APIs; provider-direct except explicitly "
-            "labelled proxy-backed routes such as Meta via OpenRouter"
+            "labelled OpenRouter routes"
         ),
         "filter": (
             "kept only models with a configured, billable downstream route; "

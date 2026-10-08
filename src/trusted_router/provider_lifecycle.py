@@ -27,6 +27,7 @@ PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
+OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -40,6 +41,7 @@ PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_2_RETIREMENT_AT = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
+FRIENDLI_MINIMAX_M25_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 CRUSOE_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 13, 4, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
@@ -325,6 +327,21 @@ _RETIREMENTS = (
             "gpt-3.5-turbo-instruct", "babbage-002", "davinci-002", "gpt-3.5-turbo-1106",
         }),
         effective_at=OPENAI_SEPTEMBER_28_RETIREMENT_AT,
+    ),
+    # OpenAI's October 8 reminder shuts these exact snapshots down in the API
+    # on 2026-10-23 (date only, so 00:00 UTC). Undated o-series aliases and
+    # newer GPT-4o/4.1 snapshots are not named and stay routable.
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({
+            "openai/gpt-3.5-turbo-0125", "openai/gpt-4-0613", "openai/gpt-4-turbo",
+            "openai/gpt-4.1-nano", "openai/gpt-4o-2024-05-13",
+        }),
+        upstream_ids=frozenset({
+            "gpt-3.5-turbo-0125", "gpt-4-0613", "gpt-4-turbo", "gpt-4.1-nano",
+            "gpt-4o-2024-05-13", "openai/gpt-4o-2024-05-13",
+        }),
+        effective_at=OPENAI_OCTOBER_23_RETIREMENT_AT,
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
@@ -927,6 +944,16 @@ _RETIREMENTS = (
         model_ids=frozenset({"lgai-exaone/k-exaone-236b-a23b"}),
         upstream_ids=frozenset({"LGAI-EXAONE/K-EXAONE-236B-A23B"}),
         effective_at=FRIENDLI_K_EXAONE_236B_RETIREMENT_AT,
+    ),
+    # Friendli announced that MiniMax M2.5 leaves its serverless Model APIs at
+    # 2026-10-22 00:00 UTC (17:00 PDT on October 21). Dedicated endpoints are
+    # unaffected; TrustedRouter uses the serverless endpoint. No replacement
+    # was named, and MiniMax M2.5 routes on other providers stay.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"minimax/minimax-m2.5"}),
+        upstream_ids=frozenset({"MiniMaxAI/MiniMax-M2.5"}),
+        effective_at=FRIENDLI_MINIMAX_M25_RETIREMENT_AT,
     ),
     # Together announced that its serverless MiniMax M2.7 route retires on
     # 2026-07-27 and named MiniMax M3 as the replacement. The announcement did

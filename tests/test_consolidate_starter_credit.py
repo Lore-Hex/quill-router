@@ -17,6 +17,7 @@ def fixture_rows() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]
         "workspace_id": "ws", "shard": i, "total_credits": 18_750,
         "total_usage": 1000, "reserved": 0,
         **{name: None for name in CREDIT_BALANCE_TRUST_COLUMNS},
+        "in_debt": False,
     } for i in range(16)]
     return workspace, credit, rows
 
@@ -38,7 +39,7 @@ def test_consolidation_conserves_totals_and_does_not_touch_keys() -> None:
     assert "api_key" not in str(changes) and "tr_key_limit" not in str(changes)
 
 
-@pytest.mark.parametrize("defect", ["hold", "negative", "debt", "missing", "extra", "identity", "trust", "typed_pause", "pause", "federated", "large", "open", "legacy", "naive", "future"])
+@pytest.mark.parametrize("defect", ["hold", "negative", "debt", "missing", "extra", "identity", "trust", "typed_pause", "pause", "federated", "large", "open", "legacy", "naive", "future", "marked"])
 def test_consolidation_fails_closed(defect: str) -> None:
     ws, account, rows = fixture_rows()
     if defect == "hold":
@@ -47,6 +48,9 @@ def test_consolidation_fails_closed(defect: str) -> None:
         rows[0]["total_usage"] = -1
     elif defect == "debt":
         rows[0]["total_usage"] = 20_000
+    elif defect == "marked":
+        for row in rows:
+            row["in_debt"] = True
     elif defect == "missing":
         rows.pop()
     elif defect == "extra":

@@ -1,0 +1,12 @@
+{
+  "data": [
+    {
+      "id": "accounts/fireworks/models/glm-5p3",
+      "supports_tools": true
+    },
+    {
+      "id": "accounts/fireworks/models/glm-5p3-flash",
+      "supports_tools": true
+    }
+  ]
+}

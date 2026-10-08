@@ -42,7 +42,7 @@ from trusted_router.wafer_policy import wafer_zdr_support
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "byteplus": (("BYTEPLUS_API_KEY",), "https://ark.ap-southeast.bytepluses.com/api/v3"),
     "abliterate": (("ABLITERATE_API_KEY",), "https://abliterate.ai/api/v1"),
-    "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
+    "meta": (("META_API_KEY",), "https://api.meta.ai/v1"),
     "openrouter": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
     "cerebras": (("CEREBRAS_API_KEY",), "https://api.cerebras.ai/v1"),
@@ -458,6 +458,15 @@ class ProviderClient:
 
     @staticmethod
     def _provider_extra_headers(model: Model) -> dict[str, str]:
+        if model.provider == "cloudflare-workers-ai":
+            # Match the enclave: use prepaid credits without retaining content
+            # in AI Gateway logs or its response cache.
+            return {
+                "cf-aig-gateway-id": "default",
+                "cf-aig-collect-log": "false",
+                "cf-aig-collect-log-payload": "false",
+                "cf-aig-skip-cache": "true",
+            }
         if model.provider == "zero-g":
             return {"X-0G-Provider-Trust-Mode": "private"}
         if model.provider == "wafer" and wafer_zdr_support(model.upstream_id or model.id) is True:

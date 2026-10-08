@@ -55,6 +55,7 @@ from scripts.pricing.providers import (
     krea,
     lyceum,
     mancer,
+    meta,
     near_ai,
     nextbit,
     nscale,
@@ -505,6 +506,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
 # available to the hourly refresh workflow, so a missing workflow secret is a
 # deployment error, not an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    meta,
     abliterate,
     upstage,
     sail_research,

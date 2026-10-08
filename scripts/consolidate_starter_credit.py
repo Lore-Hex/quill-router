@@ -52,13 +52,16 @@ def make_plan(workspace: dict[str, Any], credit: dict[str, Any], rows: list[dict
             raise ValueError("invalid counters or outstanding credit hold")
         if row.get("billing_pause_causes"):
             raise ValueError("typed credit is paused")
+        if row.get("in_debt"):
+            raise ValueError("typed credit is marked in debt")
     totals = {name: sum(int(row[name]) for row in rows) for name in ("total_credits", "total_usage", "reserved")}
     if totals["total_credits"] > MAX_STARTER_CREDITS:
         raise ValueError("not a starter account; use reviewed pause/drain reshard tooling")
     return {
         "workspace_id": ws, "current_shards": count, "totals": totals,
         "credit": {**credit, "shard_count": 1},
-        "row": {**rows[0], **totals, "shard": 0},
+        # A marked workspace was refused above, so the one row is not in debt.
+        "row": {**rows[0], **totals, "shard": 0, "in_debt": False},
     }
 
 

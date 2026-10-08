@@ -295,58 +295,6 @@ function selectSetupTab(tab) {
   });
 }
 
-// ── Theme toggle ────────────────────────────────────────────────────
-// Mirrors the marketing chrome (static/dashboard.js). Dark is the default
-// (no data-theme attribute); a stored "light" preference is applied as
-// document.documentElement.dataset.theme = "light". The inline script in
-// console/_layout.html applies the saved theme before the stylesheets load
-// to avoid a flash-of-light; these helpers drive the runtime toggle.
-const THEME_KEY = "tr-theme";
-
-function currentTheme() {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
-
-function updateThemeToggleGlyph() {
-  const dark = currentTheme() === "dark";
-  document.querySelectorAll('[data-action="toggle-theme"]').forEach((el) => {
-    el.textContent = "◐";
-    el.setAttribute("aria-pressed", String(!dark));
-    el.setAttribute("aria-label", dark ? "Switch to paper theme" : "Switch to dark theme");
-    el.setAttribute("title", dark ? "Switch to paper theme" : "Switch to dark theme");
-  });
-}
-
-function applyStoredTheme() {
-  let stored = null;
-  try {
-    stored = localStorage.getItem(THEME_KEY);
-  } catch {
-    stored = null;
-  }
-  if (stored === "light") {
-    document.documentElement.dataset.theme = "light";
-  } else {
-    delete document.documentElement.dataset.theme;
-  }
-  updateThemeToggleGlyph();
-}
-
-function toggleTheme() {
-  const next = currentTheme() === "dark" ? "light" : "dark";
-  if (next === "light") {
-    document.documentElement.dataset.theme = "light";
-  } else {
-    delete document.documentElement.dataset.theme;
-  }
-  try {
-    localStorage.setItem(THEME_KEY, next);
-  } catch {
-    /* persistence is best-effort */
-  }
-  updateThemeToggleGlyph();
-}
-
 function updateCheckoutMinimum() {
   const method = document.querySelector("[data-checkout-payment-method]");
   const amount = document.querySelector("[data-checkout-amount]");
@@ -433,7 +381,6 @@ async function loadCreditsStripeDetails() {
 }
 
 function initConsole() {
-  applyStoredTheme();
   updateCheckoutMinimum();
   loadCreditsStripeDetails();
   const checkoutMethod = document.querySelector("[data-checkout-payment-method]");
@@ -451,12 +398,6 @@ function initConsole() {
     const target = event.target;
     if (!target)
       return;
-    const themeToggle = target.closest('[data-action="toggle-theme"]');
-    if (themeToggle) {
-      event.preventDefault();
-      toggleTheme();
-      return;
-    }
     const newKeyButton = target.closest('[data-action="open-new-key"]');
     if (newKeyButton) {
       event.preventDefault();

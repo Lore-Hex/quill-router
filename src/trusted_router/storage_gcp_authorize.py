@@ -314,13 +314,18 @@ def credit_exhaustion_precheck(
     failure defers to the transaction (HEADROOM or DEFER). Like
     the key lifetime-cap precheck this may pass a request the transaction refuses
     (which re-records the workspace) but must never refuse one it would accept.
+
+    A workspace marked in debt (section 4.7) whose signed sum is negative is
+    EXHAUSTED whatever one shard holds: every marked row refuses. A mark the
+    sum no longer bears out is HEADROOM, so the transaction refuses and
+    recover_credit heals it.
     """
     pt = param_types
     try:
         with database.snapshot(multi_use=True) as snapshot:
             rows = list(
                 snapshot.execute_sql(
-                    "SELECT shard, total_credits, total_usage, reserved "
+                    "SELECT shard, total_credits, total_usage, reserved, COALESCE(in_debt, FALSE) "
                     "FROM tr_credit_balance WHERE workspace_id=@pk ORDER BY shard",
                     params={"pk": workspace_id},
                     param_types={"pk": pt.STRING},
@@ -332,9 +337,12 @@ def credit_exhaustion_precheck(
                 return HEADROOM
             available = [
                 int(total_credits) - int(total_usage) - int(reserved)
-                for _, total_credits, total_usage, reserved in rows
+                for _, total_credits, total_usage, reserved, _marked in rows
             ]
-            if max(available) >= estimate or sum(available) >= estimate:
+            if any(bool(row[4]) for row in rows):
+                if sum(available) >= 0:
+                    return HEADROOM
+            elif max(available) >= estimate or sum(available) >= estimate:
                 return HEADROOM
             if idempotency_scope is not None:
                 existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
@@ -1285,47 +1293,56 @@ def reap_expired_reservations_result(
         advisory_credit_hold_micro,
         advisory_key_hold_micro,
     ) in rows:
-        result = _finalize_reaped_reservation_atomic(
-            database,
-            pt,
-            reservation_id=str(reservation_id),
-            reap_now=now,
-            guard_outbox=guard_active,
-            snapshot_booking_enabled=snapshot_booking_enabled,
-            operational_analytics_outbox=operational_analytics_outbox,
-            async_fence=async_fence,
-        )
-        if result.outcome == SettleOutcome.AUTHORIZATION_NOT_TYPED:
-            # Rolling legacy authorizations have no heartbeat columns. Preserve
-            # their existing zero-release behavior, now with the same strong
-            # expiry predicate that protects typed Stage D reservations.
-            legacy = settle_atomic(
+        # One reservation's failure is that reservation's error, never the
+        # end of the pass: the rows after it still expire and still hold credit.
+        try:
+            result = _finalize_reaped_reservation_atomic(
                 database,
                 pt,
                 reservation_id=str(reservation_id),
-                actual_micro=0,
-                settled_usage_type="Credits",
-                success=False,
+                reap_now=now,
                 guard_outbox=guard_active,
-                outbox_available=guard_active,
-                expires_before=now,
+                snapshot_booking_enabled=snapshot_booking_enabled,
+                operational_analytics_outbox=operational_analytics_outbox,
                 async_fence=async_fence,
             )
-            if legacy["outcome"] == SettleOutcome.SETTLED:
-                result = _ReapOneResult(
-                    outcome=SettleOutcome.SETTLED,
-                    released_hold_micro=max(
-                        int(advisory_credit_hold_micro or 0),
-                        int(advisory_key_hold_micro or 0),
-                    ),
-                    out_of_cohort=True,
+            if result.outcome == SettleOutcome.AUTHORIZATION_NOT_TYPED:
+                # Rolling legacy authorizations have no heartbeat columns. Preserve
+                # their existing zero-release behavior, now with the same strong
+                # expiry predicate that protects typed Stage D reservations.
+                legacy = settle_atomic(
+                    database,
+                    pt,
+                    reservation_id=str(reservation_id),
+                    actual_micro=0,
+                    settled_usage_type="Credits",
+                    success=False,
+                    guard_outbox=guard_active,
+                    outbox_available=guard_active,
+                    expires_before=now,
+                    async_fence=async_fence,
                 )
-            elif legacy["outcome"] == SettleOutcome.OUTBOX_GUARDED:
-                result = _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
-            elif legacy["outcome"] == SettleOutcome.ERROR:
-                result = _ReapOneResult(SettleOutcome.ERROR)
-            else:
-                result = _ReapOneResult(SettleOutcome.GUARD_LOST)
+                if legacy["outcome"] == SettleOutcome.SETTLED:
+                    result = _ReapOneResult(
+                        outcome=SettleOutcome.SETTLED,
+                        released_hold_micro=max(
+                            int(advisory_credit_hold_micro or 0),
+                            int(advisory_key_hold_micro or 0),
+                        ),
+                        out_of_cohort=True,
+                    )
+                elif legacy["outcome"] == SettleOutcome.OUTBOX_GUARDED:
+                    result = _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
+                elif legacy["outcome"] == SettleOutcome.ERROR:
+                    result = _ReapOneResult(SettleOutcome.ERROR)
+                else:
+                    result = _ReapOneResult(SettleOutcome.GUARD_LOST)
+        except Exception:
+            log.exception(
+                "gateway reap failed reservation_id=%s; continuing the pass",
+                reservation_id,
+            )
+            result = _ReapOneResult(SettleOutcome.ERROR)
         if result.outcome == SettleOutcome.NOT_ELIGIBLE:
             not_eligible += 1
             continue

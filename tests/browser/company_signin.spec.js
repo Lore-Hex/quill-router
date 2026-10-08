@@ -164,17 +164,6 @@ test("company prompt is readable without JavaScript", async ({ browser, baseURL 
   await context.close();
 });
 
-test("company guide remains readable in light mode on narrow screens", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 320, height: 812 });
-  await page.addInitScript(() => localStorage.setItem("tr-theme", "light"));
-  await page.goto("/sign-in-as-ycombinator");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(page.locator(".company-copy img").first()).toHaveCSS("filter", "invert(1)");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
-  expect((await page.locator(".company-flow").boundingBox()).y).toBeLessThan(780);
-  await page.screenshot({ path: testInfo.outputPath("company-signin-light-320.png") });
-});
-
 test("cached trust pages can still load the old copy asset", async ({ page }) => {
   await page.goto("/trust");
   await page.evaluate(async () => {

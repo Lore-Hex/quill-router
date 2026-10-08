@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "kimi-k3",
+      "reasoning_efforts": {
+        "support": true,
+        "valid_efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "default_effort": "max"
+      }
+    }
+  ]
+}

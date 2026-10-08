@@ -54,6 +54,8 @@ def _model(model_id: str, default_route: str) -> Model:
         ("Tongyi-MAI/fixture-model", "siliconflow", "Alibaba Cloud Model Studio", "alibaba"),
         ("Wan-AI/fixture-model", "siliconflow", "Alibaba Cloud Model Studio", "alibaba"),
         ("nv-mistralai/fixture-model", "nvidia-nim", "Mistral", "mistral"),
+        ("meta-llama/fixture-model", "cerebras", "Meta", "meta"),
+        ("meta/fixture-model", "meta", "Meta", "meta"),
     ],
 )
 def test_a_maker_with_its_own_provider_entry_publishes_its_models_on_any_host(
@@ -66,10 +68,6 @@ def test_a_maker_with_its_own_provider_entry_publishes_its_models_on_any_host(
 @pytest.mark.parametrize(
     ("model_id", "default_route", "name"),
     [
-        # Routing sends meta-llama to Cerebras; the provider entry named for Meta
-        # is "Meta via OpenRouter", a reseller.
-        ("meta-llama/fixture-model", "cerebras", "Meta"),
-        ("meta/fixture-model", "meta", "Meta"),
         # NVIDIA NIM hosts many labs' models.
         ("nvidia/fixture-model", "nvidia-nim", "NVIDIA"),
         ("ibm-granite/fixture-model", "deepinfra", "IBM"),
@@ -115,14 +113,14 @@ def test_every_maker_entry_has_a_provider_page_and_a_logo() -> None:
 
 QWEN_ON_A_RESELLER = "qwen/fixture-publisher-on-deepinfra"
 QWEN_AT_ITS_MAKER = "qwen/fixture-publisher-on-alibaba"
-MAKER_WITHOUT_ENTRY = "meta-llama/fixture-publisher-no-entry"
+MAKER_WITHOUT_ENTRY = "ibm-granite/fixture-publisher-no-entry"
 HOST_NAMESPACE = "lightning-ai/fixture-publisher-no-maker"
 
 # Each fixture model is served by one host, which is also its default route.
 _FIXTURE_MODELS = (
     (QWEN_ON_A_RESELLER, "Fixture Qwen on DeepInfra", "deepinfra"),
     (QWEN_AT_ITS_MAKER, "Fixture Qwen on Alibaba", "alibaba"),
-    (MAKER_WITHOUT_ENTRY, "Fixture Llama on Cerebras", "cerebras"),
+    (MAKER_WITHOUT_ENTRY, "Fixture Granite on DeepInfra", "deepinfra"),
     (HOST_NAMESPACE, "Fixture model on Lightning", "lightning"),
 )
 
@@ -131,7 +129,7 @@ ALIBABA = ("Alibaba Cloud Model Studio", "/providers/alibaba", "/static/provider
 SHOWN_PUBLISHER = {
     QWEN_ON_A_RESELLER: ALIBABA,
     QWEN_AT_ITS_MAKER: ALIBABA,
-    MAKER_WITHOUT_ENTRY: ("Meta", None, None),
+    MAKER_WITHOUT_ENTRY: ("IBM", None, None),
     HOST_NAMESPACE: ("Not stated", None, None),
 }
 BRAND = {
@@ -145,7 +143,7 @@ BRAND = {
         "name": "Alibaba Cloud Model Studio",
         "logo": "https://trustedrouter.com/static/provider-logos/alibaba.png",
     },
-    MAKER_WITHOUT_ENTRY: {"@type": "Brand", "name": "Meta"},
+    MAKER_WITHOUT_ENTRY: {"@type": "Brand", "name": "IBM"},
     HOST_NAMESPACE: None,
 }
 

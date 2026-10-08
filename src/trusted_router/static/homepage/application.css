@@ -267,17 +267,16 @@ footer{background:#070a08;border-top:1px solid #33403a}
 }
 @media(min-width:881px) and (max-width:1200px) and (pointer:fine){.trnav .search kbd{display:inline-block}}
 @media(max-width:880px){.trh>.tbar{gap:10px}.trnav .search{max-width:none}.trnav .signin{margin-left:0}.trnav .menu{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:44px;padding:0 12px}}
-@media(max-width:600px){.brand-link>span{display:none}.trnav .menu>span{display:none}.trnav .menu{width:44px;padding:0}.trnav .signin{padding:12px;font-size:13px}}
+@media(max-width:600px){.brand-link>span{display:none}.trnav .menu>span{display:none}.trnav .menu{width:44px;padding:0}.trnav .signin.button-primary{min-height:44px;padding:0 14px;font-size:14px}}
 /* Small phones: the hero's primary action opens the same sign-in dialog, so the header keeps search and moves Sign in into the drawer. */
-.trnav .drawer-signin{display:none}
-@media(max-width:480px){.trnav .signin.button-secondary{display:none}.trnav nav.open .drawer-signin{display:block;padding:16px 0;min-height:44px;color:#cce8d7}.trnav .menu{margin-left:0}}
+@media(max-width:480px){.trnav .menu{margin-left:0}}
 @media(max-width:360px){.trnav .search{font-size:13px}}
 
-/* Phones and tablets: the logo ticker follows the hero actions instead of being pinned to the viewport bottom. */
-@media(max-width:1000px){
- #top .hero .labs{margin:clamp(56px,14svh,140px) -32px 0;padding:24px 0;align-self:center;width:calc(100% + 64px);max-width:none;background:linear-gradient(180deg,#05070600,#05070699 30%,#05070699 70%,#05070600)}
+/* Phones: the logo ticker follows the hero actions instead of being pinned to the viewport bottom.
+   Tablets keep the desktop placement at the hero's bottom; the hero's short-window rules cover low heights at every width. */
+@media(max-width:600px){
+ #top .hero .labs{margin:clamp(56px,14svh,140px) -20px 0;padding:24px 0;align-self:center;width:calc(100% + 40px);max-width:none;background:linear-gradient(180deg,#05070600,#05070699 30%,#05070699 70%,#05070600)}
 }
-@media(max-width:600px){#top .hero .labs{margin-inline:-20px;width:calc(100% + 40px)}}
 
 /* Live status dot: saturated, glowing, and pulsing while the probe is fresh. */
 .homepage-status-dot{width:8px;height:8px;background:#6b7a72}
@@ -400,10 +399,14 @@ footer{background:#070a08;border-top:1px solid #33403a}
  html.no-js .trnav nav{display:flex;position:static;flex-direction:row;flex-wrap:wrap;gap:4px 18px;padding:0;border:0;background:transparent;flex-basis:100%}
  html.no-js .trnav nav a{padding:8px 0;min-height:40px}
  html.no-js .trnav .menu{display:none}
- html.no-js .trnav .drawer-signin{display:inline-flex;align-items:center}
 }
 
 /* Catalog toolbar and columns hold still when the filter changes. The count label keeps one width on desktop (its text changes per tab) and takes its own line below 1000px, where the row is too tight for it; the table uses fixed column widths on desktop so every tab's rows fall into the same columns. */
 .trc .fl .cnt{min-width:24ch;text-align:right;white-space:nowrap}
 @media(max-width:1000px){.trc .fl{flex-wrap:wrap}.trc .fl .cnt{flex-basis:100%;min-width:0;margin:0;text-align:left}}
 @media(min-width:881px){.trc table{table-layout:fixed}.trc th:nth-child(2){width:22%}.trc th:nth-child(3),.trc th:nth-child(4){width:140px}.trc th:nth-child(5){width:100px}}
+
+/* No grey dot: when status is unknown or really delayed the dot hides and the Status link stays. */
+.homepage-status[data-state="unknown"] .homepage-status-dot {
+  display: none;
+}

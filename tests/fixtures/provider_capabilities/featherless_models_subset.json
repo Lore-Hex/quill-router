@@ -1,0 +1,35 @@
+{
+  "data": [
+    {
+      "id": "moonshotai/Kimi-K2.5",
+      "model_class": "kimi-k25",
+      "pricing": {
+        "prompt": "0.0000008",
+        "completion": "0.0000034",
+        "image": "0",
+        "request": "0",
+        "input": 0.8,
+        "output": 3.4
+      },
+      "features": {
+        "tool_use": true,
+        "image_input": true
+      }
+    },
+    {
+      "id": "XiaomiMiMo/MiMo-V2.5",
+      "model_class": "mimo25-311b",
+      "pricing": {
+        "prompt": "0.000000149",
+        "completion": "0.000000493",
+        "image": "0",
+        "request": "0",
+        "input": 0.149,
+        "output": 0.493
+      },
+      "features": {
+        "image_input": true
+      }
+    }
+  ]
+}

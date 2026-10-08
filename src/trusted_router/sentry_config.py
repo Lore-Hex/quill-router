@@ -46,6 +46,7 @@ SENSITIVE_KEYS = {
 # adding a new format means editing one list, not two.
 SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
     "abliterate_api_key",
+    "meta_api_key",
     "sk-tr-v1-",
     "sk-or-v1-",
     "anthropic_api_key",

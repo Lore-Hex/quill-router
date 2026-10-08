@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -14,6 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from trusted_router.catalog import MODELS
+
+logger = logging.getLogger(__name__)
+_model_count_failure_logged = False
+
 
 _ROOT = Path(__file__).parent
 _PUBLISHERS = {
@@ -33,6 +38,35 @@ def _content() -> dict[str, Any]:
     return json.loads((_ROOT / "templates/homepage/content.json").read_text())
 
 
+def publisher_icons() -> dict[str, str]:
+    """Lab icon per model publisher, shared by the homepage and the site header search."""
+    return {
+        publisher: f"/static/homepage/provider-{asset}.png"
+        for publisher, asset in _PUBLISHERS.items()
+    }
+
+
+def live_model_count() -> int:
+    """Public catalog size for the header search label; reads the cached catalog payload.
+
+    Every public page renders this, so a catalog that cannot be built must not
+    take the page down: the label falls back to "Search models" on 0.
+    """
+    global _model_count_failure_logged
+    from trusted_router.routes.catalog import _current_catalog_payload
+
+    try:
+        count = len(_current_catalog_payload().shapes)
+    except Exception:  # noqa: BLE001 - the header label is not worth a 500 on /status
+        # Every public page calls this, so log the traceback once per outage, not per request.
+        if not _model_count_failure_logged:
+            logger.exception("header model count unavailable")
+            _model_count_failure_logged = True
+        return 0
+    _model_count_failure_logged = False
+    return count
+
+
 def homepage_context(api_base_url: str) -> dict[str, Any]:
     # Lazy imports avoid the dashboard renderer's import cycle. Reuse its exact
     # Credits-only pricing/provider aggregation instead of duplicating it here.
@@ -42,10 +76,7 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
     content = _content()
     catalog = _current_catalog_payload()
     public_ids = {shape["id"] for shape in catalog.shapes}
-    icons = {
-        publisher: f"/static/homepage/provider-{asset}.png"
-        for publisher, asset in _PUBLISHERS.items()
-    }
+    icons = publisher_icons()
     views: dict[str, dict[str, Any]] = {}
     lists: dict[str, list[dict[str, Any]]] = {}
     for key, selected in content["catalog"]["lists"].items():

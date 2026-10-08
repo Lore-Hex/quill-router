@@ -424,11 +424,11 @@
   },
   "meta": {
     "card_version": 2,
-    "model_count": 0,
-    "name": "Meta via OpenRouter",
+    "model_count": 3,
+    "name": "Meta",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 3,
+    "route_mode": "Prepaid",
     "slug": "meta"
   },
   "minimax": {

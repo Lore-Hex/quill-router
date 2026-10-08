@@ -58,7 +58,6 @@ from trusted_router.credit_transfer import (
 from trusted_router.storage_codec import json_body as _json_body
 from trusted_router.storage_errors import is_duplicate_key_error
 from trusted_router.storage_gcp_counter_dml import (
-    credit_credit_shard,
     debit_credit_shard,
     delete_entity_dml,
     insert_entity_dml_at,
@@ -66,8 +65,9 @@ from trusted_router.storage_gcp_counter_dml import (
 )
 from trusted_router.storage_gcp_counters import (
     credit_shard_count,
-    distribute_credit_amount,
 )
+from trusted_router.storage_gcp_credit_debt import CreditRowsIncomplete
+from trusted_router.storage_gcp_credit_debt import take_inflow as take_credit_inflow
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_trust import insert_credit_trust_event
 from trusted_router.storage_models import CreditAccount, CreditProvenance, CreditTransfer, iso_now
@@ -211,10 +211,11 @@ def _debit_escrow(
         return False
 
     remaining = amount
-    donors = sorted(
-        ((available, shard) for shard, available in headroom.items() if available > 0),
-        reverse=True,
-    )
+    # Ascending shard order, the lock order of every multi-row credit writer
+    # (fast-admission design section 4.7), not largest first.
+    donors = [
+        (available, shard) for shard, available in sorted(headroom.items()) if available > 0
+    ]
     for available, shard in donors:
         take = min(available, remaining)
         if not debit_credit_shard(
@@ -242,26 +243,26 @@ def _credit_across_shards(
     now: dt.datetime,
     missing: Callable[[], Exception],
 ) -> None:
-    """Add `amount` back to the sharded balance, spread by the standard rule.
+    """Add `amount` back to the sharded balance: money coming in.
 
-    The spread need not mirror how the debit was taken: only the SUM is the
-    conserved quantity, and per-shard skew is exactly what the shard rebalancer
-    exists to correct. `distribute_credit_amount` totals to `amount` by
-    construction, so this returns precisely what escrow removed.
+    It repays the workspace's negative shards first, lowest first, and spreads
+    the rest by the standard rule (fast-admission design section 4.7,
+    `credit_debt`); it absorbs no payment claims, as before. Only the SUM is
+    the conserved quantity, so the spread need not mirror how the debit was
+    taken: this returns precisely what escrow removed.
 
-    Every shard must exist; a 0 row-count raises `missing`, rolling back the
-    verdict row with it, because a refund that lands nowhere would destroy the
-    escrow. The exception TYPE is the caller's to choose (see `_shard_count_tx`),
-    so it is passed in rather than decided here.
+    Every shard must exist; an incomplete shard set raises `missing`, rolling
+    back the verdict row with it, because a refund that lands nowhere would
+    destroy the escrow. The exception TYPE is the caller's to choose (see
+    `_shard_count_tx`), so it is passed in rather than decided here.
     """
-    for shard, delta in enumerate(distribute_credit_amount(amount, shard_count)):
-        if (
-            credit_credit_shard(
-                transaction, param_types, workspace_id, delta, shard=shard, now=now
-            )
-            != 1
-        ):
-            raise missing()
+    try:
+        take_credit_inflow(
+            transaction, param_types, workspace_id, amount,
+            landing_shard=None, absorb=None, now=now, shard_count=shard_count,
+        )
+    except CreditRowsIncomplete:
+        raise missing() from None
 
 
 # --------------------------------------------------------------------------

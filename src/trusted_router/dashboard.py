@@ -64,6 +64,7 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.catalog_data import AUTHORS_NAMING_NO_MAKER, maker_provider_slug
+from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.competitor_comparisons import (
     COMPETITOR_COMPARISONS,
     CompetitorComparison,
@@ -210,6 +211,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/security",
     "/trust",
     "/eu",
+    "/green-tokens",
     "/trustedos",
     "/token-exchange",
     "/token-exchange/savings",
@@ -2313,6 +2315,12 @@ def _env() -> Environment:
     # Callable, not a value: this env is lru_cached and shared across
     # requests, so it must read the per-request ContextVar at render time.
     env.globals["csp_nonce"] = current_csp_nonce
+    # Shared header: live catalog size and lab icons for the model search.
+    # Lazy import: trusted_router.homepage imports this module at call time.
+    from trusted_router.homepage import live_model_count, publisher_icons
+
+    env.globals["live_model_count"] = live_model_count
+    env.globals["publisher_icons"] = publisher_icons
     return env
 
 
@@ -5550,6 +5558,7 @@ def _model_detail_view(
         "ai_iq": ai_iq,
         "is_meta": is_meta,
         "configuration_hidden": model.hidden_public_metadata,
+        "usage_estimation": provider_usage_estimation_policy(model.provider),
         "documentation": (
             model.documentation.to_dict()
             if model.documentation is not None

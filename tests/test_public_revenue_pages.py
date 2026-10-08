@@ -379,7 +379,12 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
 
-def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:
+def test_agent_discovery_surfaces_model_advisor_skill(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The skill is discoverable from the production homepage; the legacy page
+    # served to alternate brands no longer carries it in the shared footer.
+    monkeypatch.setattr(client.app.state.settings, "homepage_landscape_enabled", True)
     for path in ["/", "/docs", "/docs/agent-setup"]:
         response = client.get(path)
         assert response.status_code == 200

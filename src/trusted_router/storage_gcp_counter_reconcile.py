@@ -502,7 +502,10 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         "SELECT COALESCE(SUM(key_reserved_micro),0) FROM tr_reservation "
         "WHERE key_hash=@kh AND key_shard=0 AND settled=false"
     )
-    credit_row_sql = "SELECT reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+    credit_row_sql = (
+        "SELECT reserved, total_credits, total_usage FROM tr_credit_balance "
+        "WHERE workspace_id=@pk AND shard=0"
+    )
     key_row_sql = "SELECT reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0"
     nonzero_key_shard_sql = (
         "SELECT COUNT(*) FROM tr_reservation "
@@ -564,13 +567,18 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
             nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]) != 0:
             return None
-        if not list(transaction.execute_sql(
+        credit_row = list(transaction.execute_sql(
             credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
-        )):
+        ))
+        if not credit_row:
             return None  # no shard-0 credit row — abort
         oc = list(transaction.execute_sql(
             open_credit_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]
+        # One shard: the repaired row is the workspace's signed sum, and it is
+        # marked in debt exactly when that is negative (section 4.7).
+        _, row_credits, row_usage = credit_row[0]
+        in_debt = int(row_credits) - int(row_usage) - int(oc) < 0
         plan: list[tuple[str, int]] = []
         for kh in key_hashes:
             key_obj = store._read_entity_tx(transaction, "api_key", kh, ApiKey)
@@ -591,8 +599,8 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         # all rows exist + validated — now write (insert_or_update UPDATES them).
         transaction.insert_or_update(
             table="tr_credit_balance",
-            columns=("workspace_id", "shard", "reserved", "updated_at"),
-            values=[(workspace_id, 0, int(oc), cts)],
+            columns=("workspace_id", "shard", "reserved", "in_debt", "updated_at"),
+            values=[(workspace_id, 0, int(oc), in_debt, cts)],
         )
         for kh, ok in plan:
             transaction.insert_or_update(
@@ -663,7 +671,8 @@ def repair_typed_usage(
     pt = store._param_types
     res = UsageRepairResult(workspace_id=workspace_id, ready=False)
     usage_row_sql = (
-        "SELECT total_usage FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+        "SELECT total_usage, total_credits, reserved FROM tr_credit_balance "
+        "WHERE workspace_id=@pk AND shard=0"
     )
     open_holds_sql = (
         "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled=false"
@@ -816,10 +825,14 @@ def repair_typed_usage(
             not allow_decrease or not retained_ledger_complete
         ):
             return None
+        # One shard: the repaired row is the workspace's signed sum, and it is
+        # marked in debt exactly when that is negative (section 4.7).
+        _, row_credits, row_reserved = current[0]
+        in_debt = int(row_credits) - recomputed - int(row_reserved) < 0
         transaction.insert_or_update(
             table="tr_credit_balance",
-            columns=("workspace_id", "shard", "total_usage", "updated_at"),
-            values=[(workspace_id, 0, recomputed, cts)],
+            columns=("workspace_id", "shard", "total_usage", "in_debt", "updated_at"),
+            values=[(workspace_id, 0, recomputed, in_debt, cts)],
         )
         return {"total_usage": recomputed}
 

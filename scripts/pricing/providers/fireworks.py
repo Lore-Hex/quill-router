@@ -232,6 +232,10 @@ def fetch() -> ProviderPricingResult:
         upstream_id_map=UPSTREAM_ID_MAP,
         preserve_unpriced_model_ids=_PRESERVE_UNPRICED_MODEL_IDS,
     )
+    for source in live_rows:
+        row = discovered.get(resolved_native_map[source["id"]])
+        if row is not None:
+            row["supported_features"] = ["tools"] if source.get("supports_tools") is True else []
     if fast_model_id in discovered:
         discovered[fast_model_id]["pricing_source"] = GLM53_PRICING_URL if used_fast_price_card else URL
     # A verified launch exception is allowed to precede the account model-list
