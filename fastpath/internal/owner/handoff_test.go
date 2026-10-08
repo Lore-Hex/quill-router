@@ -740,8 +740,9 @@ func TestAHandOffLetsGoAtItsDeadline(t *testing.T) {
 
 // TestASortStopsWhenAsked: the hand-off's gathering of its holds'
 // authorizations asks whether to stop before every sortRun of them, and its
-// sort before each run it sorts and each merge; each stops at once when
-// told, and told nothing, it sorts.
+// sort before each run it sorts and before every sortRun strings a merge
+// writes, the last merge, of all of them, too; each stops at once when told,
+// and told nothing, it sorts.
 func TestASortStopsWhenAsked(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	for _, n := range []int{0, 1, 2, sortRun, sortRun + 1, 10*sortRun + 7} {
@@ -754,7 +755,9 @@ func TestASortStopsWhenAsked(t *testing.T) {
 		gathering := (n + sortRun - 1) / sortRun
 		checks := gathering + (n+sortRun-1)/sortRun
 		for width := sortRun; width < n; width *= 2 {
-			checks += (n + 2*width - 1) / (2 * width)
+			for lo := 0; lo < n; lo += 2 * width {
+				checks += (min(lo+2*width, n) - lo + sortRun - 1) / sortRun
+			}
 		}
 		calls := 0
 		got, ok := l.sortedAuths(func() bool { calls++; return false })
@@ -881,6 +884,125 @@ func TestAHandOffInterruptsAScan(t *testing.T) {
 		case c.name == "the release scan" && left != c.holds:
 			t.Fatalf("%s: %d of %d holds left once the lease was let go", c.name, left, c.holds)
 		}
+	}
+}
+
+// TestAHandOffLeavesNoLeaseDeciding: a lease being let go while a decision
+// under it is under way stays among the owner's leases until it is let go,
+// so a hand-off begun meanwhile returns only once no lease of the owner's
+// decides, and no record follows its return.
+func TestAHandOffLeavesNoLeaseDeciding(t *testing.T) {
+	f, _ := releaseFixture(t)
+	a := f.admit(t, 10, false)
+	gate, waiting := make(chan struct{}), make(chan struct{})
+	open := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(open)
+	f.clock.mu.Lock()
+	f.clock.gate, f.clock.waiting = gate, waiting
+	f.clock.mu.Unlock()
+	rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer rcancel()
+	refunded := make(chan struct{})
+	go func() {
+		defer close(refunded)
+		_, _ = f.lease.Refund(rctx, a)
+	}()
+	<-waiting // the refund decides under the lease's lock, at its cutoff's reading
+	let := make(chan struct{})
+	go func() {
+		defer close(let)
+		f.owner.Let("lease-1")
+	}()
+	// The Let is under way: it waits for the lease's lock.
+	time.Sleep(50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	handedOff := make(chan error, 1)
+	go func() { handedOff <- f.owner.Handoff(ctx) }()
+	select {
+	case err := <-handedOff:
+		t.Fatalf("the hand-off returned, %v, while a decision under a lease being let go was under way", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	open()
+	for _, done := range []chan struct{}{refunded, let} {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the refund or the Let did not return")
+		}
+	}
+	if err := <-handedOff; err != nil {
+		t.Fatal(err)
+	}
+	issued := len(f.log.records(t, "lease-1"))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(f.log.records(t, "lease-1")); n != issued {
+		t.Fatalf("%d records after the hand-off returned, %d before", n, issued)
+	}
+}
+
+// TestACheckpointsLatestEndIsItsOpenHoldsLatest: a checkpoint's latest end
+// of life is the latest of the holds open at it, as holds are admitted and
+// decided, the latest first too, and as the owner's clock steps back.
+func TestACheckpointsLatestEndIsItsOpenHoldsLatest(t *testing.T) {
+	f, _ := releaseFixture(t)
+	ctx := context.Background()
+	life := time.Hour // releaseFixture's HoldLife
+	latest := func(want time.Time) {
+		t.Helper()
+		f.lease.checkpoint()
+		r := f.lastRecord(t)
+		if r.Kind != record.Checkpoint || !r.Checkpoint.LatestEnd.Equal(want) {
+			t.Fatalf("the checkpoint's latest end %v, want %v (%+v)", r.Checkpoint.LatestEnd, want, r)
+		}
+	}
+	at := f.clock.Now()
+	first := f.admit(t, 10, false)
+	f.clock.advance(time.Second)
+	second := f.admit(t, 10, false)
+	f.clock.advance(time.Second)
+	third := f.admit(t, 10, false)
+	latest(at.Add(2*time.Second + life))
+	if _, err := f.lease.Settle(ctx, third, 5, sum("third")); err != nil {
+		t.Fatal(err)
+	}
+	latest(at.Add(time.Second + life))
+	// The clock steps back ten seconds: the next hold ends earliest.
+	f.clock.advance(-10 * time.Second)
+	fourth := f.admit(t, 10, false)
+	latest(at.Add(time.Second + life))
+	for _, auth := range []string{second, first} {
+		if _, err := f.lease.Settle(ctx, auth, 5, sum(auth)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest(at.Add(-8*time.Second + life))
+	if _, err := f.lease.Settle(ctx, fourth, 5, sum("fourth")); err != nil {
+		t.Fatal(err)
+	}
+	latest(time.Time{})
+}
+
+// TestACheckpointTakesItsLatestEndAtOnce: a checkpoint keeps the lease's
+// lock no longer for many open holds, 300,000 here, so a hand-off whose
+// time is up is not kept waiting for it.
+func TestACheckpointTakesItsLatestEndAtOnce(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 40
+	f.lease.mu.Unlock()
+	for range 300_000 {
+		f.admit(t, 1, false)
+	}
+	fastest := time.Hour
+	for range 5 {
+		began := time.Now()
+		f.lease.checkpoint()
+		fastest = min(fastest, time.Since(began))
+	}
+	if fastest > 5*time.Millisecond {
+		t.Fatalf("a checkpoint over 300,000 open holds took %v", fastest)
 	}
 }
 

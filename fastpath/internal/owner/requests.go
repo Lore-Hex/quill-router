@@ -137,8 +137,45 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		return Admitted{}, ErrPastCutoff
 	}
 	h.admitted, h.endOfLife = now, now.Add(l.o.cfg.HoldLife)
+	l.link(h)
 	l.lastAdmit = now
 	return Admitted{Auth: auth, Lease: l.id, EndOfLife: h.endOfLife}, nil
+}
+
+// link puts h, just admitted, among the lease's open holds in the order of
+// their ends of life, the latest last, as the wall clock reads them: from the
+// latest back, which it follows unless the owner's clock has stepped back.
+func (l *Lease) link(h *hold) {
+	at := l.latest
+	for at != nil && at.endOfLife.UTC().After(h.endOfLife.UTC()) {
+		at = at.earlier
+	}
+	h.earlier = at
+	if at == nil {
+		h.later, l.earliest = l.earliest, h
+	} else {
+		h.later, at.later = at.later, h
+	}
+	if h.later == nil {
+		l.latest = h
+	} else {
+		h.later.earlier = h
+	}
+}
+
+// unlink takes h, no longer open, out of that order.
+func (l *Lease) unlink(h *hold) {
+	if h.earlier == nil {
+		l.earliest = h.later
+	} else {
+		h.earlier.later = h.later
+	}
+	if h.later == nil {
+		l.latest = h.earlier
+	} else {
+		h.later.earlier = h.earlier
+	}
+	h.earlier, h.later = nil, nil
 }
 
 // counted is the hold's part of the lease's buffer: a stream's from its first
@@ -392,6 +429,7 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 	l.buffer -= h.counted()
 	l.pending += freed
 	delete(l.holds, auth)
+	l.unlink(h)
 	if raised {
 		// The shortfall writer stores the new total in Spanner (§4.2).
 		select {

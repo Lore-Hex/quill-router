@@ -242,9 +242,9 @@ func (l *Lease) sortedAuths(stopped func() bool) ([]string, bool) {
 const sortRun = 1 << 12
 
 // sortChecked sorts xs, in runs of sortRun sorted alone and then merged in
-// pairs, asking stopped before each run and each merge. It returns the
-// sorted strings, xs or another slice, or false at once when stopped says
-// so.
+// pairs, asking stopped before each run and before every sortRun strings a
+// merge writes. It returns the sorted strings, xs or another slice, or
+// false at once when stopped says so.
 func sortChecked(xs []string, stopped func() bool) ([]string, bool) {
 	n := len(xs)
 	for lo := 0; lo < n; lo += sortRun {
@@ -256,13 +256,13 @@ func sortChecked(xs []string, stopped func() bool) ([]string, bool) {
 	src, dst := xs, make([]string, n)
 	for width := sortRun; width < n; width *= 2 {
 		for lo := 0; lo < n; lo += 2 * width {
-			if stopped() {
-				return nil, false
-			}
 			mid, hi := min(lo+width, n), min(lo+2*width, n)
 			a, b, out := src[lo:mid], src[mid:hi], dst[lo:hi]
 			i, j := 0, 0
 			for k := range out {
+				if k%sortRun == 0 && stopped() {
+					return nil, false
+				}
 				if j == len(b) || (i < len(a) && a[i] <= b[j]) {
 					out[k], i = a[i], i+1
 				} else {

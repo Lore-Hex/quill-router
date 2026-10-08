@@ -269,7 +269,18 @@ func (o *Owner) Let(id string) {
 func (o *Owner) release(id string) <-chan struct{} {
 	o.mu.Lock()
 	l, ok := o.leases[id]
+	o.mu.Unlock()
 	if ok {
+		// The lease decides nothing more before it leaves the owner's
+		// leases: a hand-off that does not find it there leaves no lease
+		// of the owner's deciding.
+		l.mu.Lock()
+		l.let = true
+		l.mu.Unlock()
+	}
+	o.mu.Lock()
+	mine := ok && o.leases[id] == l
+	if mine {
 		delete(o.leases, id)
 		o.retired[id] = l.stopped
 		if l.shard != nil {
@@ -278,10 +289,7 @@ func (o *Owner) release(id string) <-chan struct{} {
 	}
 	stopped := o.retired[id]
 	o.mu.Unlock()
-	if ok {
-		l.mu.Lock()
-		l.let = true
-		l.mu.Unlock()
+	if mine {
 		close(l.stop)
 	}
 	return stopped
@@ -315,6 +323,9 @@ type hold struct {
 	sent       *sent
 	// basis is what the hold's first heartbeat brought for a reap of it.
 	basis []byte
+	// earlier and later link the lease's open holds in the order of their
+	// ends of life (link).
+	earlier, later *hold
 }
 
 // decision is an authorization's terminal: its kind and charge, and the
@@ -361,6 +372,9 @@ type Lease struct {
 	nextSeq    int64
 	holds      map[string]*hold
 	decided    map[string]*decision
+	// earliest and latest end the open holds' order by end of life, so a
+	// checkpoint takes the latest at once (link).
+	earliest, latest *hold
 	// inflight are the records handed over and not acknowledged, in order,
 	// the first live of them published since the last failure, and the rest
 	// awaiting the flusher's republish; failed is set from a failed publish

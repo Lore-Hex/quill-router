@@ -171,10 +171,23 @@ type clock struct {
 	now   time.Time
 	step  time.Duration
 	reads int
+	// gate, when set, holds every reading until it closes; the first
+	// reading it holds closes waiting.
+	gate, waiting chan struct{}
 }
 
 // Now is the clock's time, which moves on by step at each reading.
 func (c *clock) Now() time.Time {
+	c.mu.Lock()
+	gate, waiting := c.gate, c.waiting
+	c.waiting = nil
+	c.mu.Unlock()
+	if gate != nil {
+		if waiting != nil {
+			close(waiting)
+		}
+		<-gate
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now
@@ -1139,24 +1152,27 @@ func TestAReplayAnswersAsTheHeartbeatItRepeats(t *testing.T) {
 // way returns only once the flusher has stopped, as the first does.
 func TestEveryLetWaitsForTheLeaseToStop(t *testing.T) {
 	f := newFixture(t, 1000, nil)
-	f.lease.mu.Lock() // the first Let waits for the lease's lock
+	f.lease.mu.Lock() // a Let waits for the lease's lock, to mark it let go
 	firstDone, secondDone := make(chan struct{}), make(chan struct{})
 	go func() {
 		f.owner.Let("lease-1")
 		close(firstDone)
 	}()
-	waitFor(t, "the first Let to begin", func() bool {
-		_, held := f.owner.Lease("lease-1")
-		return !held
-	})
 	go func() {
 		f.owner.Let("lease-1")
 		close(secondDone)
 	}()
 	select {
+	case <-firstDone:
+		t.Fatal("a Let returned while the lease's lock was held")
 	case <-secondDone:
 		t.Fatal("a second Let returned while the first is under way")
 	case <-time.After(50 * time.Millisecond):
+	}
+	// The lease leaves the owner's leases only once it is let go, so a
+	// hand-off that does not find it there leaves no lease deciding.
+	if _, held := f.owner.Lease("lease-1"); !held {
+		t.Fatal("the lease left the owner's leases before it was let go")
 	}
 	f.lease.mu.Unlock()
 	for _, done := range []chan struct{}{firstDone, secondDone} {
