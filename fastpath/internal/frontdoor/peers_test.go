@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
@@ -557,6 +558,177 @@ func TestRunEndsWithItsWrites(t *testing.T) {
 			t.Fatalf("a revocation after Run ended: %q", f.ev.all())
 		}
 	}
+
+	// A revocation under way when Run's context ends.
+	g := newPeers(t)
+	g.store.gate, g.store.revoking, g.store.revoked = make(chan struct{}), make(chan string, 8), make(chan string, 8)
+	g.owners.unreachable["node-b"], g.peers.unreachable["node-b"] = true, true
+	fail := func(lease string) {
+		g.door.Refund(context.Background(), RefundOf{Envelope: sealedAt(t, "node-b", lease, "gwa-"+lease), Money: []byte("{}")})
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	ran = make(chan struct{})
+	go func() {
+		_ = g.door.Run(ctx)
+		close(ran)
+	}()
+	fail("l1")
+	fail("l2")
+	g.advance(10 * time.Second)
+	fail("l1")
+	fail("l2")
+	<-g.store.revoking
+	cancel()
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not end")
+	}
+	select {
+	case <-g.store.revoked:
+	default:
+		t.Fatal("Run ended before its revocation")
+	}
+	g.advance(time.Hour)
+	fail("l2")
+	select {
+	case got := <-g.store.revoking:
+		t.Fatalf("a revocation after Run ended: %s", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestARevocationIsDecidedWhenItIsMade: the writer decides each revocation
+// as it makes it, from the failures kept then: a lease whose owner answered
+// and that failed again since starts over, however long it had failed
+// before; and the leases due go a RevokeEvery apart, however late the
+// writer runs.
+func TestARevocationIsDecidedWhenItIsMade(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
+	refund := func(lease string) {
+		t.Helper()
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", lease, "gwa-"+lease), Money: []byte("{}")})
+	}
+	refund("l1")
+	f.advance(10 * time.Second)
+	refund("l1") // due
+	f.peers.unreachable["node-b"] = false
+	refund("l2") // node-b reached through the peer
+	f.peers.unreachable["node-b"] = true
+	f.advance(time.Microsecond)
+	refund("l1") // failing again, from now
+	f.door.write(ctx)
+	if slices.Contains(f.ev.all(), "revoke l1") {
+		t.Fatalf("revoked from a failure its owner answered since: %q", f.ev.all())
+	}
+	f.advance(10 * time.Second)
+	refund("l1")
+	f.door.write(ctx)
+	if !slices.Contains(f.ev.all(), "revoke l1") {
+		t.Fatalf("not revoked ten seconds after failing again: %q", f.ev.all())
+	}
+
+	g := newPeers(t)
+	g.owners.unreachable["node-b"], g.peers.unreachable["node-b"] = true, true
+	fail := func(lease string) {
+		t.Helper()
+		g.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", lease, "gwa-"+lease), Money: []byte("{}")})
+	}
+	revoked := func() []string {
+		var out []string
+		for _, e := range g.ev.all() {
+			if lease, ok := strings.CutPrefix(e, "revoke "); ok {
+				out = append(out, lease)
+			}
+		}
+		return out
+	}
+	fail("l1")
+	g.advance(10 * time.Second)
+	fail("l1") // due, the writer late
+	g.advance(50 * time.Second)
+	fail("l2")
+	g.advance(10 * time.Second)
+	fail("l2") // due a minute later
+	g.door.write(ctx)
+	g.door.write(ctx)
+	if got := revoked(); !slices.Equal(got, []string{"l1"}) {
+		t.Fatalf("a late writer: revoked %v", got)
+	}
+	g.advance(time.Minute - time.Microsecond)
+	g.door.write(ctx)
+	if got := revoked(); !slices.Equal(got, []string{"l1"}) {
+		t.Fatalf("within a minute of the last revocation: revoked %v", got)
+	}
+	g.advance(time.Microsecond)
+	g.door.write(ctx)
+	if got := revoked(); !slices.Equal(got, []string{"l1", "l2"}) {
+		t.Fatalf("a minute after the last revocation: revoked %v", got)
+	}
+}
+
+// TestEveryAnswerIsAReach: an owner that answers a relay for a peer, an
+// authorize, or a probe has its leases start over, as one that answers a
+// heartbeat or a terminal does.
+func TestEveryAnswerIsAReach(t *testing.T) {
+	ctx := context.Background()
+	for name, reach := range map[string]func(f *peersFixture, owner string){
+		"a relay": func(f *peersFixture, owner string) {
+			if _, err := f.door.RelayTerminal(ctx, owner, OwnerTerminal{}); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"an authorize": func(f *peersFixture, owner string) {
+			f.owners.admitted[0] = OwnerAdmitted{Status: Busy}
+			f.door.Authorize(ctx, AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 1, Boot: []byte("b")})
+		},
+	} {
+		f := newPeers(t)
+		owner, _ := f.view.Owner(ring.ShardKey("ws-1", 0))
+		f.owners.unreachable[owner.Address], f.peers.unreachable[owner.Address] = true, true
+		fail := func() {
+			t.Helper()
+			f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, owner.Address, "l1", "gwa-l1"), Money: []byte("{}")})
+			f.door.write(ctx)
+		}
+		fail()
+		f.advance(9 * time.Second)
+		f.owners.unreachable[owner.Address] = false
+		reach(f, owner.Address)
+		f.owners.unreachable[owner.Address] = true
+		f.advance(time.Second)
+		fail()
+		if slices.Contains(f.ev.all(), "revoke l1") {
+			t.Fatalf("%s: revoked a second after its owner answered: %q", name, f.ev.all())
+		}
+	}
+
+	// A probe: node-b and node-c withdraw the front door, then node-b
+	// fails everywhere for l1, then a probe reaches both.
+	f := newPeers(t)
+	f.withdrawn(t)
+	f.peers.unreachable["node-b"] = true
+	fail := func() {
+		t.Helper()
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", "l1", "gwa-l1"), Money: []byte("{}")})
+		f.door.write(ctx)
+	}
+	fail()
+	f.advance(9 * time.Second)
+	f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = false, false
+	f.door.probe(ctx)
+	if f.door.Withdrawn() {
+		t.Fatal("still withdrawn")
+	}
+	f.owners.unreachable["node-b"] = true
+	f.advance(time.Second)
+	fail()
+	if slices.Contains(f.ev.all(), "revoke l1") {
+		t.Fatalf("a probe: revoked a second after its owner answered: %q", f.ev.all())
+	}
 }
 
 // TestARevocationIsCheckedJustBeforeItIsMade: a lease due for revocation
@@ -717,23 +889,31 @@ func TestAProbeKeepsWhatItDidNotTry(t *testing.T) {
 
 // TestAnEndedRequestIsNoEvidence: a request that ended before its owner
 // answered tries no peer and counts toward neither withdrawing nor
-// revoking.
+// revoking, though its owners are two within the window and a lease's
+// calls span the time to revoke it.
 func TestAnEndedRequestIsNoEvidence(t *testing.T) {
+	ctx := context.Background()
 	f := newPeers(t)
-	ended, cancel := context.WithCancel(context.Background())
+	f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = true, true
+	ended, cancel := context.WithCancel(ctx)
 	cancel()
-	for _, o := range []string{"node-b", "node-c", "node-b"} {
+	for _, o := range []string{"node-b", "node-c", "node-b", "node-c"} {
 		f.door.Refund(ended, RefundOf{Envelope: sealedAt(t, o, "lease-"+o, "gwa-"+o), Money: []byte("{}")})
 		f.door.Heartbeat(ended, HeartbeatOf{Envelope: sealedAt(t, o, "lease-"+o, "gwa-"+o), GatewaySeq: 1})
-		f.advance(11 * time.Second)
+		f.advance(4 * time.Second)
 	}
+	f.door.write(ctx)
 	for _, e := range f.ev.all() {
 		if strings.HasPrefix(e, "peer ") || strings.HasPrefix(e, "revoke ") {
 			t.Fatalf("an ended request taken as evidence: %q", f.ev.all())
 		}
 	}
-	if f.door.Withdrawn() {
-		t.Fatal("withdrawn on ended requests")
+	f.door.mu.Lock()
+	failing, unreached := len(f.door.failing), len(f.door.unreached)
+	f.door.mu.Unlock()
+	if f.door.Withdrawn() || len(f.node.written()) != 0 || failing != 0 || unreached != 0 {
+		t.Fatalf("withdrawn %v, the row %v, %d leases failing, %d owners unreached", f.door.Withdrawn(),
+			f.node.written(), failing, unreached)
 	}
 }
 

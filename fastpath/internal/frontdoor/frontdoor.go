@@ -113,10 +113,10 @@ type FrontDoor struct {
 	// node. seq numbers the reaches and failures the front door sees, so
 	// their order is known whatever the clock says. unreached are the
 	// owners whose calls last failed here while a peer reached them, and
-	// reachedAt, when each owner last answered, here or through a peer;
-	// failing, each lease whose owner no one has reached since a call
-	// first failed; revoked, the leases revoked or to be, with when,
-	// lastRevoke the last of those, and toRevoke those Run is to revoke.
+	// reachedAt, when each owner last answered, here, through a peer or for
+	// one; failing, each lease's failures since its owner last answered;
+	// revoked, the leases revoked, with when, and lastRevoke when the last
+	// revocation began.
 	withdrawn    bool
 	want, handed string
 	seq          uint64
@@ -125,7 +125,6 @@ type FrontDoor struct {
 	failing      map[store.LeaseRef]failure
 	revoked      map[store.LeaseRef]time.Time
 	lastRevoke   time.Time
-	toRevoke     []store.LeaseRef
 	// kick wakes Run for a state to hand the node or a lease to revoke.
 	kick chan struct{}
 }
@@ -137,10 +136,11 @@ type seen struct {
 	seq uint64
 }
 
-// failure is a lease's first failure since its owner last answered.
+// failure is a lease's first and last failure since its owner last
+// answered.
 type failure struct {
-	owner string
-	since seen
+	owner       string
+	first, last seen
 }
 
 // New is a front door with its configuration.
@@ -209,6 +209,9 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
 			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot})
 		cancel()
+		if err == nil {
+			f.reached(m.Address)
+		}
 		switch {
 		case err != nil, got.Status == Busy:
 		case got.Status == Admitted:

@@ -114,6 +114,10 @@ type fakeStore struct {
 	disposition store.Disposition
 	failDisp    bool
 	failRevoke  int
+	// With a gate, a revocation tells revoking and waits for its context
+	// to end, then a while more, and tells revoked.
+	gate              chan struct{}
+	revoking, revoked chan string
 }
 
 func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.AppendResult, error) {
@@ -128,7 +132,13 @@ func (f *fakeStore) Append(_ context.Context, t store.DrainTerminal) (store.Appe
 	return store.AppendResult{CommitTS: start}, nil
 }
 
-func (f *fakeStore) Revoke(_ context.Context, ref store.LeaseRef) (bool, time.Time, error) {
+func (f *fakeStore) Revoke(ctx context.Context, ref store.LeaseRef) (bool, time.Time, error) {
+	if f.gate != nil {
+		f.revoking <- ref.LeaseID
+		<-ctx.Done()
+		time.Sleep(100 * time.Millisecond)
+		defer func() { f.revoked <- ref.LeaseID }()
+	}
 	f.ev.add("revoke %s", ref.LeaseID)
 	if f.failRevoke > 0 {
 		f.failRevoke--
