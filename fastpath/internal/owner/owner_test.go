@@ -143,9 +143,10 @@ func (f *fakeLog) records(t *testing.T, lease string) []record.Record {
 }
 
 type clock struct {
-	mu   sync.Mutex
-	now  time.Time
-	step time.Duration
+	mu    sync.Mutex
+	now   time.Time
+	step  time.Duration
+	reads int
 }
 
 // Now is the clock's time, which moves on by step at each reading.
@@ -154,7 +155,15 @@ func (c *clock) Now() time.Time {
 	defer c.mu.Unlock()
 	now := c.now
 	c.now = c.now.Add(c.step)
+	c.reads++
 	return now
+}
+
+// readings is how many times the clock was read.
+func (c *clock) readings() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
 }
 
 func (c *clock) stepping(d time.Duration) {

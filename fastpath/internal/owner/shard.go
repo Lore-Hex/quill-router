@@ -79,7 +79,12 @@ func (c *charges) add(now time.Time, charged int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	b := &c.buckets[i]
-	if !b.start.Equal(start) {
+	switch {
+	case b.start.After(start):
+		// A charge decided a horizon or more before the bucket's: one
+		// that waited for the lock this long is past the horizon already.
+		return
+	case b.start.Before(start):
 		b.start, b.charged = start, 0
 	}
 	b.charged = sat(b.charged, charged)
@@ -150,13 +155,16 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	if t == (TopUps{}) {
 		return
 	}
-	now := o.cfg.Clock()
-	cooling := func(sh *shard) bool {
-		return o.stopped || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
+	// cooling reads the clock under o.mu, so an ask is timed when it is
+	// made, however long the room took to read.
+	cooling := func(sh *shard) (time.Time, bool) {
+		now := o.cfg.Clock()
+		return now, o.stopped || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
 	}
 	o.mu.Lock()
 	sh := o.shardLocked(key)
-	idle, lost := cooling(sh), sh.retry != nil
+	_, idle := cooling(sh)
+	lost := sh.retry != nil
 	leases := slices.Clone(sh.leases)
 	o.mu.Unlock()
 	if idle {
@@ -164,14 +172,15 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	}
 	var room, needs int64
 	for _, l := range leases {
-		r, n := l.roomAndNeeds(now)
+		r, n := l.roomAndNeeds()
 		room, needs = sat(room, r), sat(needs, n)
 	}
 	if room >= t.LowWater && !unmet && !lost {
 		return
 	}
 	o.mu.Lock()
-	if cooling(sh) {
+	now, idle := cooling(sh)
+	if idle {
 		o.mu.Unlock()
 		return
 	}
@@ -205,15 +214,17 @@ func (o *Owner) grant(sh *shard, req store.GrantRequest) {
 	}
 }
 
-// roomAndNeeds is what a lease adds to its shard's room, while it admits,
-// its allocation beyond what it consumed, holds and buffers (its free room
-// with pending put back), none if its buffers took it all; and to a
-// top-up's size, its open holds and their buffer.
-func (l *Lease) roomAndNeeds(now time.Time) (room, needs int64) {
+// roomAndNeeds is what a lease adds to its shard's room, while it admits
+// (not closing, within its cutoff, neither idle nor old, by the clock read
+// under its lock), its allocation beyond what it consumed, holds and
+// buffers (its free room with pending put back), none if its buffers took
+// it all; and to a top-up's size, its open holds and their buffer.
+func (l *Lease) roomAndNeeds() (room, needs int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	now := l.o.cfg.Clock()
 	b := l.booksLocked()
-	if !l.closing && l.withinCutoff(now) {
+	if !l.closing && l.withinCutoff(now) && !l.o.cfg.TopUps.over(now, l.lastAdmit, l.takenAt) {
 		if used, ok := add(b.Consumed, b.Held, b.Buffer); ok {
 			room = max(b.Allocation-used, 0)
 		}
