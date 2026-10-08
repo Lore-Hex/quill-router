@@ -69,7 +69,8 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 	t.Logf("operations: %v", seen)
 	for _, k := range []string{"grant", "refused grant", "shortfall-write", "booking", "fault", "return", "drain",
 		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
-		"a booking past the first donor", "a return before the last donor", "a batch its order changes"} {
+		"a booking past the first donor", "a return before the last donor", "a batch its order changes",
+		"a return its place changes"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -156,13 +157,30 @@ func (l *debtLease) gaveBack(amount int64) (beforeLast bool) {
 // room is what the lease holds and has not booked.
 func (l *debtLease) room() int64 { return l.allocation() - l.consumed }
 
-// bookedEach books a commit's bookings one by one, in order, and reports
-// whether a donor after the first took part.
+// bookedEach books and returns a commit's money one operation at a time,
+// in order, and reports whether a booking reached a donor after the first.
 func (l *debtLease) bookedEach(money []MoneyOp) (pastFirst bool) {
 	for _, op := range money {
-		pastFirst = l.booked(op.Charge, op.ShortfallTotal) || pastFirst
+		if op.Book {
+			pastFirst = l.booked(op.Charge, op.ShortfallTotal) || pastFirst
+		} else {
+			l.gaveBack(op.Amount)
+		}
 	}
 	return pastFirst
+}
+
+// returnsFirst is money with its returns moved before its bookings.
+func returnsFirst(money []MoneyOp) []MoneyOp {
+	var returns, books []MoneyOp
+	for _, op := range money {
+		if op.Book {
+			books = append(books, op)
+		} else {
+			returns = append(returns, op)
+		}
+	}
+	return append(returns, books...)
 }
 
 // copied is the lease's ledger, to book on apart from it.
@@ -172,15 +190,13 @@ func (l *debtLease) copied() *debtLease {
 	return &c
 }
 
-// orderMatters reports whether booking money in reverse order would book
+// orderMatters reports whether booking money in another order would book
 // other amounts, against the allocation or as faults, than in its order.
-func (l *debtLease) orderMatters(money []MoneyOp) bool {
-	inOrder, reversed := l.copied(), l.copied()
+func (l *debtLease) orderMatters(money, other []MoneyOp) bool {
+	inOrder, otherwise := l.copied(), l.copied()
 	inOrder.bookedEach(money)
-	back := slices.Clone(money)
-	slices.Reverse(back)
-	reversed.bookedEach(back)
-	return inOrder.consumed != reversed.consumed || inOrder.fault != reversed.fault
+	otherwise.bookedEach(other)
+	return inOrder.consumed != otherwise.consumed || inOrder.fault != otherwise.fault
 }
 
 type debtWalk struct {
@@ -342,11 +358,13 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 }
 
 // book books a charge, carrying a shortfall total that sometimes raises the
-// stored one, and in a third of the commits one or two more after it, each
-// carrying a total that sometimes raises the one before; in another third,
-// a charge past the room left and then a raise past the charge after it,
-// whose order shows. A charge past the allocation is a fault. A commit books
-// its charges in its order: one whose reverse would book otherwise is
+// stored one, and in a quarter of the commits one or two more after it,
+// each carrying a total that sometimes raises the one before; in another
+// quarter, a charge past the room left and then a raise past the charge
+// after it, whose order shows; in another, a charge past the room, a raise,
+// and a return of part of what the raise left, whose place shows. A charge
+// past the allocation is a fault. A commit books and returns in its order:
+// one whose reverse, or whose returns first, would book otherwise is
 // counted.
 func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	d.t.Helper()
@@ -355,7 +373,7 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		total += int64(d.rng.Intn(6))
 	}
 	money := []MoneyOp{Book(charge, total)}
-	switch d.batches.Intn(3) {
+	switch d.batches.Intn(4) {
 	case 1:
 		for range 1 + d.batches.Intn(2) {
 			charge := int64(d.batches.Intn(16))
@@ -372,6 +390,17 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		past := max(after.room(), 0) + 1 + int64(d.batches.Intn(4))
 		raise := 1 + int64(d.batches.Intn(8))
 		money = append(money, Book(past, total), Book(int64(d.batches.Intn(int(raise))), total+raise))
+	case 3:
+		// Moved before the bookings, the return would take room the charge
+		// past it had: so it may only take what both orders leave.
+		after := l.copied()
+		after.bookedEach(money)
+		room := max(after.room(), 0)
+		raise := 1 + int64(d.batches.Intn(8))
+		money = append(money, Book(room+1+int64(d.batches.Intn(4)), total), Book(0, total+raise))
+		if most := min(room, raise); most > 0 {
+			money = append(money, Return(1+d.batches.Int63n(most)))
+		}
 	}
 	d.note("book %s %v", l.ref.LeaseID, money)
 	if d.probes.Intn(4) == 0 {
@@ -385,8 +414,13 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		}
 		d.seen["refused commit"]++
 	}
-	if l.orderMatters(money) {
+	back := slices.Clone(money)
+	slices.Reverse(back)
+	if !slices.ContainsFunc(money, func(op MoneyOp) bool { return !op.Book }) && l.orderMatters(money, back) {
 		d.seen["a batch its order changes"]++
+	}
+	if l.orderMatters(money, returnsFirst(money)) {
+		d.seen["a return its place changes"]++
 	}
 	got := d.commit(ctx, l, money, false)
 	if l.bookedEach(money) {

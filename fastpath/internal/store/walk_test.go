@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -1002,8 +1003,8 @@ func (w *walker) holdsOf(rows []HoldRow) [ac.MaxAuths]int8 {
 	}
 	for _, h := range rows {
 		a := index(w.c.Auths, h.AuthorizationID)
-		if a < 0 || !h.RunningCharge.Valid {
-			w.fatalf("a hold row %+v", h)
+		if a < 0 || !h.RunningCharge.Valid || out[a] != ac.NoHold {
+			w.fatalf("a hold row %+v, none of the walk's or read twice", h)
 		}
 		out[a] = small(w, h.RunningCharge.Int64)
 	}
@@ -1043,6 +1044,8 @@ func kindOf(w *walker, name string) int8 {
 }
 
 // winnerOf is the winner a commit stores for the shadow's record r.
+// winnerOf is the winner the walk commits for the shadow's, with pending
+// work of its own (workOf), which every read of its pack must give back.
 func (w *walker) winnerOf(r ac.Rec) Winner {
 	out := Winner{AuthorizationID: w.c.Auths[r.A], Kind: kinds[r.K], Charge: int64(r.C)}
 	if r.Idx > 0 {
@@ -1050,7 +1053,14 @@ func (w *walker) winnerOf(r ac.Rec) Winner {
 	} else {
 		out.RecordID = fmt.Sprintf("o%d", r.Seq)
 	}
+	out.Work = workOf(out.AuthorizationID, out.RecordID)
 	return out
+}
+
+// workOf is the pending work the walk stores with a winner: its own for
+// each authorization and record.
+func workOf(auth, recordID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"walk":%q}`, auth+"/"+recordID))
 }
 
 func (w *walker) recOfWinner(win Winner) ac.Rec {
@@ -1060,6 +1070,10 @@ func (w *walker) recOfWinner(win Winner) ac.Rec {
 		r.Idx = w.recordNumber(win.RecordID, "d")
 	} else {
 		r.Seq = w.recordNumber(win.RecordID, "o")
+	}
+	if !bytes.Equal(win.Work, workOf(win.AuthorizationID, win.RecordID)) {
+		w.fatalf("winner %+v's pending work %s, and the walk stored %s", win, win.Work,
+			workOf(win.AuthorizationID, win.RecordID))
 	}
 	return r
 }
