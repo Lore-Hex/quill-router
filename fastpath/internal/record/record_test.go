@@ -50,15 +50,32 @@ func one() map[Kind]Record {
 		Tick: {Version: Version, Lease: "L0oJBwYFBAMCAQ0ODw4ODw", Kind: Tick, TickNumber: 1, TickAt: deadline}}
 }
 
+// others are valid records the kinds' fields allow besides one's: a later
+// heartbeat, and a final checkpoint.
+func others() map[string]Record {
+	later := one()[Heartbeat]
+	later.Seq, later.First, later.Basis = 2, false, nil
+	final := one()[Checkpoint]
+	final.Seq, final.Checkpoint = 9, &CheckpointOf{Consumed: 760, KeyStatus: 9, Return: 50, Final: true}
+	return map[string]Record{"a later heartbeat": later, "a final checkpoint": final}
+}
+
 func TestEachKindRoundTrips(t *testing.T) {
+	all := map[string]Record{}
 	for kind, r := range one() {
+		all[string(kind)] = r
+	}
+	for name, r := range others() {
+		all[name] = r
+	}
+	for name, r := range all {
 		b, err := Encode(r)
 		if err != nil {
-			t.Fatalf("%s: %v", kind, err)
+			t.Fatalf("%s: %v", name, err)
 		}
 		got, err := Decode(b)
 		if err != nil || !reflect.DeepEqual(got, r) {
-			t.Fatalf("%s came back as %+v, %v", kind, got, err)
+			t.Fatalf("%s came back as %+v, %v", name, got, err)
 		}
 	}
 	if !Settle.Terminal() || !Reap.Terminal() || Heartbeat.Terminal() || Tick.Terminal() || Checkpoint.Terminal() {
@@ -96,6 +113,18 @@ func TestTheFormatIsPinned(t *testing.T) {
 			t.Errorf("%s encodes as\n%s, %v; want\n%s", kind, got, err, want)
 		}
 	}
+	for name, want := range map[string]string{
+		"a later heartbeat": `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":2,"kind":"hb","a":"gwa-1","est":500,` +
+			`"hb":{"gseq":3,"hash":"zc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc0=","usage":"eyJvdXQiOjQwfQ==","run":120,` +
+			`"deadline":"2026-10-08T02:20:00Z"}}`,
+		"a final checkpoint": `{"v":1,"lease":"L0oJBwYFBAMCAQ0ODw4ODw","epoch":2,"seq":9,"kind":"ckpt","ckpt":{"consumed":760,` +
+			`"open":0,"open_sum":0,"ks":9,"return":50,"final":true}}`,
+	} {
+		got, err := Encode(others()[name])
+		if err != nil || string(got) != want {
+			t.Errorf("%s encodes as\n%s, %v; want\n%s", name, got, err, want)
+		}
+	}
 	sum, err := HoldsDigest(one()[Handoff].Holds)
 	if err != nil || fmt.Sprintf("%x", sum) != "3478a649b2ddbfb708aabc179a89ab278c9fb38d8b5b0decd0de890910f24d4c" {
 		t.Errorf("the holds digest is %x, %v", sum, err)
@@ -130,6 +159,7 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		return r
 	}
 	elsewhere := time.FixedZone("UTC-7", -7*3600)
+	yearZero := time.Date(0, 12, 31, 0, 0, 0, 0, time.UTC)
 	for name, r := range map[string]Record{
 		"another version":                      change(Settle, func(r *Record) { r.Version = 2 }),
 		"no lease":                             change(Settle, func(r *Record) { r.Lease = "" }),
@@ -166,11 +196,19 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		"a deadline not in UTC":                change(Heartbeat, func(r *Record) { r.Snapshot.Deadline = deadline.In(elsewhere) }),
 		"a first heartbeat without its basis":  change(Heartbeat, func(r *Record) { r.Basis = nil }),
 		"a later heartbeat with a basis":       change(Heartbeat, func(r *Record) { r.First = false }),
-		"a heartbeat with a shortfall":         change(Heartbeat, func(r *Record) { r.Shortfall = 1 }),
-		"a heartbeat with a charge":            change(Heartbeat, func(r *Record) { r.Charge = 1 }),
-		"a checkpoint with an auth":            change(Checkpoint, func(r *Record) { r.Auth = "gwa-1" }),
-		"a final checkpoint with holds":        change(Checkpoint, func(r *Record) { r.Checkpoint.Final = true }),
-		"open holds with no end of life":       change(Checkpoint, func(r *Record) { r.Checkpoint.LatestEnd = time.Time{} }),
+		"the lease's first record not a first": change(Heartbeat, func(r *Record) { r.First, r.Basis = false, nil }),
+		"a gateway's first heartbeat not a first": change(Heartbeat, func(r *Record) {
+			r.Seq, r.First, r.Basis, r.Snapshot.GatewaySeq = 2, false, nil, 1
+		}),
+		"a deadline in year 0":             change(Heartbeat, func(r *Record) { r.Snapshot.Deadline = yearZero }),
+		"a held hold's deadline in year 0": change(Handoff, func(r *Record) { r.Holds[1].Deadline = yearZero }),
+		"a tick in year 0":                 change(Tick, func(r *Record) { r.TickAt = yearZero }),
+		"a latest end in year 0":           change(Checkpoint, func(r *Record) { r.Checkpoint.LatestEnd = yearZero }),
+		"a heartbeat with a shortfall":     change(Heartbeat, func(r *Record) { r.Shortfall = 1 }),
+		"a heartbeat with a charge":        change(Heartbeat, func(r *Record) { r.Charge = 1 }),
+		"a checkpoint with an auth":        change(Checkpoint, func(r *Record) { r.Auth = "gwa-1" }),
+		"a final checkpoint with holds":    change(Checkpoint, func(r *Record) { r.Checkpoint.Final = true }),
+		"open holds with no end of life":   change(Checkpoint, func(r *Record) { r.Checkpoint.LatestEnd = time.Time{} }),
 		"no open holds with a sum": change(Checkpoint, func(r *Record) {
 			r.Checkpoint.Open, r.Checkpoint.LatestEnd = 0, time.Time{}
 		}),
@@ -251,5 +289,14 @@ func TestHoldsDigestIgnoresTheirOrder(t *testing.T) {
 	}
 	if _, err := HoldsDigest([]HeldHold{holds[1], holds[1]}); err == nil {
 		t.Fatal("a hold named twice is digested")
+	}
+	// Any hand-off the format carries has its digest.
+	high := one()[Handoff]
+	high.Seq, high.Holds[0].SnapshotSeq = 1<<62+1, 1<<62
+	if _, err := Encode(high); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := HoldsDigest(high.Holds); err != nil {
+		t.Fatalf("a hand-off the format carries has no digest: %v", err)
 	}
 }

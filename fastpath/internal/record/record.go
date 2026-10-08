@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 )
@@ -240,7 +241,10 @@ func (r Record) Validate() error {
 			return bad("a tick has its number and a UTC time")
 		}
 	case Heartbeat:
-		if r.First != (len(r.Basis) > 0) {
+		// The lease's first record, and a gateway's first heartbeat, can only
+		// be a hold's first heartbeat, since a lease has one owner and a
+		// later heartbeat's gateway sequence is above its first's.
+		if r.First != (len(r.Basis) > 0) || (!r.First && (r.Seq == 1 || r.Snapshot.GatewaySeq == 1)) {
 			return bad("a hold's first heartbeat, and only it, carries the reap's basis")
 		}
 		if err := r.Snapshot.validate(r.Estimate); err != nil {
@@ -333,9 +337,9 @@ func identifier(s string, longest int) bool {
 }
 
 // utc: a time the format carries is set and in UTC, so one instant has one
-// form.
+// form, and within the years Spanner's TIMESTAMP holds, 1 to 9999.
 func utc(t time.Time) bool {
-	return !t.IsZero() && t.Location() == time.UTC
+	return !t.IsZero() && t.Location() == time.UTC && t.Year() >= 1 && t.Year() <= 9999
 }
 
 // HoldsDigest is a hand-off's digest of its holds, across its chunks:
@@ -355,7 +359,7 @@ func HoldsDigest(holds []HeldHold) ([]byte, error) {
 	})
 	h := sha256.New()
 	for i, held := range sorted {
-		if err := held.validate(1 << 62); err != nil || (i > 0 && sorted[i-1].Auth == held.Auth) {
+		if err := held.validate(math.MaxInt64); err != nil || (i > 0 && sorted[i-1].Auth == held.Auth) {
 			return nil, fmt.Errorf("record: held hold %+v: %v", held, err)
 		}
 		b, err := json.Marshal(held)
