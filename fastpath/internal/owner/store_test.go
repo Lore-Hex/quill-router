@@ -201,3 +201,55 @@ func TestARevokedLeaseIsDropped(t *testing.T) {
 		t.Fatalf("%d records under a revoked lease", n)
 	}
 }
+
+// TestAShardIsGrantedItsLeaseByTheStore: a shard's first request finds no
+// room, and the owner's ask is a grant in Spanner, which the next request is
+// admitted under.
+func TestAShardIsGrantedItsLeaseByTheStore(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	s, err := store.New(shared, store.Config{LiveFor: time.Hour, Window: 30 * time.Second, Skew: 2 * time.Second,
+		PublishDeadline: 5 * time.Second, MaxLife: 5 * time.Minute, Grace: time.Minute, Allowance: 1_000_000,
+		RequiredTier: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := storetest.UniqueID("ws")
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := New(Config{Epoch: 4, Node: "owner-1", Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
+		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID,
+		TopUps: TopUps{LowWater: 50, Cooldown: time.Second, Horizon: time.Minute, Min: 100, Max: 500,
+			IdleAfter: time.Hour, MaxLife: time.Hour}}, newFakeLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Stop()
+	shard := ShardKey{Workspace: ws, Region: "us-central1", Shard: 0}
+	if _, err := o.Admit(shard, Admission{Estimate: 50, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("the shard's first request: %v", err)
+	}
+	var id string
+	waitFor(t, "the grant", func() bool {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if sh := o.shards[shard]; sh != nil && len(sh.leases) == 1 {
+			id = sh.leases[0].id
+			return true
+		}
+		return false
+	})
+	got, err := o.Admit(shard, Admission{Estimate: 50, Boot: boot})
+	if err != nil || got.Lease != id {
+		t.Fatalf("the next request: %+v %v", got, err)
+	}
+	row, _, err := s.ReadLease(ctx, store.LeaseRef{Workspace: ws, LeaseID: id})
+	if err != nil || row.Granted != 100 || row.Owner != (store.Owner{Node: "owner-1", Epoch: 4}) || row.State != "open" {
+		t.Fatalf("the granted lease's row: %+v %v", row, err)
+	}
+}

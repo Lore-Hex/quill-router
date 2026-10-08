@@ -56,6 +56,13 @@ type Admission struct {
 	Boot     []byte
 }
 
+func (a Admission) valid() error {
+	if a.Estimate < 0 || len(a.Boot) == 0 || len(a.Boot) > maxBoot {
+		return fmt.Errorf("owner: an estimate of %d with a boot binding of %d bytes", a.Estimate, len(a.Boot))
+	}
+	return nil
+}
+
 // Admitted is an admission's answer.
 type Admitted struct {
 	Auth      string
@@ -64,13 +71,14 @@ type Admitted struct {
 }
 
 // Admit holds e against the lease (§4.2, §4.4): only while it has room,
-// free at least e with the new hold's own buffer counted, and before its
-// cutoff, read after the hold is recorded and undone if it has passed. A
-// stream's buffer joins the lease's at its first heartbeat, since until
-// then it may never run; another hold's at once.
+// free at least e with the new hold's own buffer counted, before its cutoff,
+// and while it is neither idle nor old (TopUps.over), the clock read after
+// the hold is recorded and the hold undone if either has passed. A stream's
+// buffer joins the lease's at its first heartbeat, since until then it may
+// never run; another hold's at once.
 func (l *Lease) Admit(a Admission) (Admitted, error) {
-	if a.Estimate < 0 || len(a.Boot) == 0 || len(a.Boot) > maxBoot {
-		return Admitted{}, fmt.Errorf("owner: an estimate of %d with a boot binding of %d bytes", a.Estimate, len(a.Boot))
+	if err := a.valid(); err != nil {
+		return Admitted{}, err
 	}
 	auth, err := l.o.cfg.NewAuthorization(l.id)
 	if err != nil {
@@ -106,13 +114,20 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	l.buffer += h.counted()
 	l.holds[auth] = h
 	now := l.o.cfg.Clock()
-	if !l.withinCutoff(now) {
+	done := l.o.cfg.TopUps.over(now, l.lastAdmit, l.takenAt)
+	if done || !l.withinCutoff(now) {
 		l.held -= h.estimate
 		l.buffer -= h.counted()
 		delete(l.holds, auth)
+		if done {
+			// Gone idle or old since the last renewal round looked.
+			l.closing = true
+			return Admitted{}, ErrClosing
+		}
 		return Admitted{}, ErrPastCutoff
 	}
 	h.endOfLife = now.Add(l.o.cfg.HoldLife)
+	l.lastAdmit = now
 	return Admitted{Auth: auth, Lease: l.id, EndOfLife: h.endOfLife}, nil
 }
 
@@ -320,6 +335,9 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 		return Outcome{}, err
 	}
 	raised := shortfall > l.shortfall
+	if l.shard != nil {
+		l.shard.charges.add(l.o.cfg.Clock(), charged)
+	}
 	l.held, l.consumed, l.allocation, l.shortfall = held, consumed, allocation, shortfall
 	l.buffer -= h.counted()
 	l.pending += freed
