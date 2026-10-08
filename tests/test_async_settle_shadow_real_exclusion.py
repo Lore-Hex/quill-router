@@ -14,10 +14,11 @@ from tests.test_async_settle_shadow_accounting import synthetic_window
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_evidence import SAMPLE
+from trusted_router.services import async_settle_shadow as shadow_module
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 
 
-def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=time.monotonic):
+def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=None):
     rows, days, proof = synthetic_window()
     first = rows[0]['body']
     now = NOW + 1
@@ -40,7 +41,7 @@ def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=time.monoton
     rt.counters.clock = lambda: now
     monkeypatch.setattr(time, 'time', lambda: now)
     bg = BackgroundTasks()
-    capture = Capture(rt, ctx.body, phase, now, monotonic(), ctx.authorization, endpoint(), (endpoint(),))
+    capture = Capture(rt, ctx.body, phase, now, (monotonic or shadow_module.time.monotonic)(), ctx.authorization, endpoint(), (endpoint(),))
     try:
         rt.submit(capture, SimpleNamespace(headers=Headers({'X-TR-Settlement-Shadow': wire(envelope)[0]})),
             {'data': {'settled': True}}, bg)

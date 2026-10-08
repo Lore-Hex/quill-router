@@ -11,6 +11,7 @@ from tests.test_async_settle_shadow_accounting import Database
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_evidence import COUNTER, day_at
+from trusted_router.services import async_settle_shadow as shadow_module
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 
@@ -47,7 +48,7 @@ def test_one_primary_rejection_per_old_malformed_attempt(monkeypatch):
                 ctx.body,
                 "settle",
                 now,
-                time.monotonic(),
+                shadow_module.time.monotonic(),
                 ctx.authorization,
                 endpoint(),
                 (endpoint(),),

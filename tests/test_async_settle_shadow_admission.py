@@ -57,15 +57,30 @@ async def test_timer_populates_without_eligible(monkeypatch):
     eligible_calls = []
     monkeypatch.setattr(AdmissionCache, 'eligible', lambda *args: eligible_calls.append(args))
     calls = []
-    import time
-    observer = Observer(frozenset({'ws'}),lambda ws:calls.append(ws) or Admission(0,2),
-                        lambda:health(time.time()))
+    from types import SimpleNamespace
+
+    from trusted_router.services import async_settle_shadow_admission as module
+
+    now = 16.0
+    observer = Observer(frozenset({'ws'}), lambda ws: calls.append(ws) or Admission(0, 2),
+                        lambda: health(now), clock=lambda: now, wall=lambda: now)
+    loop = asyncio.get_running_loop()
+    jobs = []
+    def submit(executor, function, *args):
+        job = loop.run_in_executor(executor, function, *args)
+        jobs.append(job)
+        return job
+    async def tick(_):
+        # Wait for the exact jobs scheduled by this tick, without a wall budget.
+        await asyncio.gather(*jobs)
+        observer.stopped = True
+    monkeypatch.setattr(module, 'asyncio', SimpleNamespace(
+        create_task=asyncio.create_task,
+        get_running_loop=lambda: SimpleNamespace(run_in_executor=submit), sleep=tick))
     observer.start()
     try:
-        for _ in range(30):
-            await asyncio.sleep(.01)
-            if observer.peek('ws')['prediction'] == 'yes':
-                break
+        await observer.task
+        observer.stopped = False
         assert observer.peek('ws')['prediction'] == 'yes'
         assert calls == ['ws'] and observer.counts['health_reads'] == 1
     finally:

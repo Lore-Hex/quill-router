@@ -69,6 +69,8 @@ def test_opted_in_binding_is_after_hold_without_new_rpc(monkeypatch):
     import copy
     import time
 
+    monkeypatch.setattr(time, 'time', lambda: 1791244801)
+
     from trusted_router.async_settle_shadow_binding import verify_binding
     from trusted_router.services.async_settle_shadow import Runtime
     _, db, key = _seed_typed_gateway_store()

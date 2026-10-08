@@ -119,13 +119,17 @@ def test_rollback_invalidates_resolution(day_index, source, region, reverse):
     assert result['distinct_samples'] == 8
 
 
+@pytest.mark.parametrize('missing', [False, True])
 @pytest.mark.parametrize('offset', [-3, -1, 0, 8])
 @pytest.mark.parametrize('source', ['sample', 'counter'])
 @pytest.mark.parametrize('resolution', ['absent', 'same', 'wrong', 'valid'])
 @pytest.mark.parametrize('rollback_day', [None, 1, 4])
-def test_reset_resolution_rollback_matrix(offset, source, resolution, rollback_day):
+def test_reset_resolution_rollback_matrix(offset, source, resolution, rollback_day, missing):
     rows, days, proof = daily_window()
+    retained = len(rows)
     _, since = add_mismatch(rows, proof, source=source, offset=offset, resolution=resolution)
+    if missing:
+        del rows[retained:]
     if rollback_day is not None:
         instant = rollback(rows, max(0, offset+1)+rollback_day)
     seal(rows, proof)
@@ -134,12 +138,13 @@ def test_reset_resolution_rollback_matrix(offset, source, resolution, rollback_d
             report(rows, days, proof)
         return
     result = report(rows, days, proof)
-    clean = resolution == 'valid' and offset < 0 and rollback_day is None
+    clean = (resolution == 'valid' and offset < 0 and rollback_day is None and not missing
+             or resolution == 'absent' and missing)
     assert result['status'] == ('PASS' if clean else 'BLOCKED')
     rollbacks = [reset for reset in result['resets'] if reset['reason'] == 'revision_rollback']
-    expected = resolution == 'valid' and offset < 8 and rollback_day is not None
+    expected = resolution in {'valid', 'wrong'} and offset < 8 and rollback_day is not None
     assert rollbacks == ([dict(at_us=instant, revision=A, reason='revision_rollback')] if expected else [])
-    assert result['continuous_seconds'] == (691199 if clean else 604799 if resolution == 'valid' and offset == 0 and rollback_day is None else 0)
+    assert result['continuous_seconds'] == (691199 if clean else 604799 if resolution == 'valid' and offset == 0 and rollback_day is None and not missing else 0)
     assert since > START + offset*DAY + 1000000
 
 
@@ -249,10 +254,13 @@ def test_reviewed_successor_retains_fix():
     # relying on lexical SHA order or first-seen row order.
     proof['resolved_mismatches'].append(dict(at_us=at+1000000, revision=B, fixed_revision=C,
         serving_since_us=START+4*DAY, artifact_sha256='e'*64))
+    _, _, bad = signed_observation(at+1000000, phase='settle', charge=999, authorization_id='auth-b')
+    bad['deployment']['router_revision'] = B
+    append_sample(rows, bad)
     rollback(rows, 4, revision=C)
     seal(rows, proof)
     result = report(rows, days, proof)
-    assert result['status'] == 'PASS' and result['continuous_seconds'] == 691199
+    assert result['status'] == 'BLOCKED' and result['continuous_seconds'] == 345599
     assert all(reset['reason'] != 'revision_rollback' for reset in result['resets'])
 
 

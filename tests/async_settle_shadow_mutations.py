@@ -17,6 +17,16 @@ STORAGE = 'src/trusted_router/storage_gcp_async_settle_shadow.py'
 REPORT = 'scripts/async_settle/shadow_report.py'
 BASE = 'tests/test_async_settle_shadow.py::'
 MUTATIONS = [
+    ('skip-resolution-history', REPORT, [
+        ('if key not in known:', 'if False:')],
+        'tests/test_async_settle_shadow_r14_resolution.py::test_reviewer_resolution_link_witness'),
+    ('rollback-only-from-rows', REPORT, [
+        ('for reset in resets:\n        key =', 'for reset in resets:\n        if reset["reason"] == "reviewed_resolution":\n            continue\n        key =')],
+        'tests/test_async_settle_shadow_r14_resolution.py::test_reviewer_resolution_link_witness'),
+    ('missing-support-treated-as-clean', REPORT, [
+        ('if (item["at_us"], item["revision"]) not in supported:', 'if False:')],
+        'tests/test_async_settle_shadow_r14_resolution.py::test_missing_resolution_support_alone_blocks_clean_eight_days'),
+
     ('skip-rollback-invalidation', REPORT, [
         ('if rollback is not None:', 'if False:')],
         'tests/test_async_settle_shadow_r13_rollback.py::test_rollback_invalidates_resolution'),

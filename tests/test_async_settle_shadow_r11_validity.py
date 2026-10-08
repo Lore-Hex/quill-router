@@ -24,22 +24,22 @@ from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 from trusted_router.storage_models import generation_id_for_authorization
 
 
-def signed_observation(received_us, *, phase='refund', charge=0):
+def signed_observation(received_us, *, phase='refund', charge=0, authorization_id='auth-prior'):
     """Reviewer's independent auth-prior/res-prior/nonce-prior signed envelope."""
     issued = received_us // 1000000
     value = copy.deepcopy(FIXTURE)
     claims = verify_binding(value['billing_shadow_binding'], [signer().trusted], NOW).model_dump()
-    claims.update(iat=issued, exp=issued+LIFETIME, authorization_id='auth-prior',
-        generation_id=generation_id_for_authorization('auth-prior'),
+    claims.update(iat=issued, exp=issued+LIFETIME, authorization_id=authorization_id,
+        generation_id=generation_id_for_authorization(authorization_id),
         reservation_id='res-prior', invocation_nonce='nonce-prior')
     value['billing_shadow_binding'] = signer().sign(claims, issued)
-    value['terminal'].update(terminal_kind=phase, charge_micro=charge, authorization_id='auth-prior',
-        generation_id=generation_id_for_authorization('auth-prior'), invocation_nonce='nonce-prior')
+    value['terminal'].update(terminal_kind=phase, charge_micro=charge, authorization_id=authorization_id,
+        generation_id=generation_id_for_authorization(authorization_id), invocation_nonce='nonce-prior')
     value['payload_hash'] = hashlib.sha256(canonical(value['terminal'])).hexdigest()
     ctx = context(attempted_kind=phase, booking=Booking(0 if phase == 'refund' else 2,
         'refunded' if phase == 'refund' else 'settled', True))
-    ctx = replace(ctx, received_at=issued, body=ctx.body.model_copy(update={'authorization_id':'auth-prior'}),
-        authorization=replace(ctx.authorization, id='auth-prior', credit_reservation_id='res-prior',
+    ctx = replace(ctx, received_at=issued, body=ctx.body.model_copy(update={'authorization_id':authorization_id}),
+        authorization=replace(ctx.authorization, id=authorization_id, credit_reservation_id='res-prior',
             invocation_nonce='nonce-prior', created_at=dt.datetime.fromtimestamp(issued, dt.UTC).isoformat()))
     compared = compare(wire(value), ctx, [signer().trusted])
     original = sample(ctx, compared, observed_us=received_us,

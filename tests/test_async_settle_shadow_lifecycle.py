@@ -88,8 +88,7 @@ def test_missing_sample_cannot_be_hidden_by_closed_counter():
     assert result['clean_window_start_us'] is None and any(gap.endswith(':sample_count_gap') for gap in result['gaps'])
 
 
-def test_rate_admission_precedes_real_comparator_and_refills(monkeypatch):
-    import time
+def test_rate_admission_precedes_real_comparator_and_refills(monkeypatch, shadow_deadline_clock):
     from types import SimpleNamespace
 
     from starlette.datastructures import Headers
@@ -98,8 +97,8 @@ def test_rate_admission_precedes_real_comparator_and_refills(monkeypatch):
     from trusted_router.async_settle_shadow_compare import Booking
     from trusted_router.services import async_settle_shadow as module
     from trusted_router.services.async_settle_shadow import Capture
-    clock = [100.]
-    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    clock = shadow_deadline_clock
+    clock.now = 100.
     cfg = settings(async_settle_enabled=False, release='a'*40, async_settle_shadow_workspaces='ws-v1')
     store = EvidenceStore(Database())
     monkeypatch.setattr(store, 'booking', lambda *args: Booking(2,'settled',True))
@@ -117,13 +116,13 @@ def test_rate_admission_precedes_real_comparator_and_refills(monkeypatch):
             rt.queued_bytes -= size
     def submit():
         ctx = context()
-        capture = Capture(rt,ctx.body,'settle',NOW,clock[0],ctx.authorization,endpoint(),(endpoint(),))
+        capture = Capture(rt,ctx.body,'settle',NOW,clock.monotonic(),ctx.authorization,endpoint(),(endpoint(),))
         rt.submit(capture,SimpleNamespace(headers=Headers({'X-TR-Settlement-Shadow':wire()[0]})),
                   {'data':{'settled':True}},Background())
     for _ in range(12):
         submit()
     assert calls == [wire()]*10
-    clock[0] += 1
+    clock.now += 1
     submit()
     submit()
     submit()

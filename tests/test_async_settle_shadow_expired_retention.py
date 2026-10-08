@@ -16,6 +16,7 @@ from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_binding import LIFETIME
 from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_evidence import COUNTER, SAMPLE, day_at
+from trusted_router.services import async_settle_shadow as shadow_module
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 
@@ -65,7 +66,7 @@ def test_expired_replay_cannot_repopulate_deleted_authorization_day(monkeypatch,
     rt.counters.clock = lambda: now
     bg = BackgroundTasks()
     try:
-        rt.submit(Capture(rt, ctx.body, 'settle', now, time.monotonic(), ctx.authorization, endpoint(), (endpoint(),)),
+        rt.submit(Capture(rt, ctx.body, 'settle', now, shadow_module.time.monotonic(), ctx.authorization, endpoint(), (endpoint(),)),
             SimpleNamespace(headers=Headers({'X-TR-Settlement-Shadow': '!' if malformed else wire()[0]})),
             {'data': {'already_settled': True, 'finalization_outcome': 'settled'}}, bg)
         asyncio.run(bg())

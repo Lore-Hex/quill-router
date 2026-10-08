@@ -13,6 +13,7 @@ from tests.test_async_settle_shadow_expired_retention import CleanupDatabase
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_evidence import SAMPLE, day_at
+from trusted_router.services import async_settle_shadow as shadow_module
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 
@@ -64,7 +65,7 @@ def test_no_retired_sample_insert_across_midnight(monkeypatch):
                 ctx.body,
                 "settle",
                 now[0],
-                time.monotonic(),
+                shadow_module.time.monotonic(),
                 ctx.authorization,
                 endpoint(),
                 (endpoint(),),

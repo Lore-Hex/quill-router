@@ -202,6 +202,14 @@ def collect_rollbacks(resets: list[dict[str, Any]], serving: list[tuple[int, int
         return found
     if any(revision in descendants(revision) for revision in successors):
         raise ValueError("cyclic reset revision order")
+    # Every reviewed resolution is defect history, even if its raw mismatch
+    # was omitted from this export. Keep row-derived reasons when available.
+    known = {(reset["at_us"], reset["revision"]) for reset in resets}
+    for item in resolutions:
+        key = (item["at_us"], item["revision"])
+        if key not in known:
+            resets.append(dict(at_us=key[0], revision=key[1], reason="reviewed_resolution"))
+            known.add(key)
     processed = set()
     # Appended rollback resets may themselves have a later reviewed resolution.
     for reset in resets:
@@ -253,6 +261,9 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
                 or resolution["fixed_revision"] == resolution["revision"]
                 or not isinstance(resolution["artifact_sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", resolution["artifact_sha256"]) is None):
             raise ValueError("reset resolution schema")
+    resolution_keys = [(item["at_us"], item["revision"]) for item in resolutions]
+    if len(set(resolution_keys)) != len(resolution_keys):
+        raise ValueError("duplicate reset resolution")
     identities = set()
     for row in rows:
         if set(row) != {"kind", "id", "body"} or (row["kind"], row["id"]) in identities:
@@ -293,7 +304,15 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
     # Finish correctness/reset collection over ALL supplied evidence, before any
     # requested-day filtering. A rollback is itself a new correctness reset;
     # restarting B alone cannot resolve it without another reviewed artifact.
+    supported = {(reset["at_us"], reset["revision"]) for reset in resets}
     collect_rollbacks(resets, serving, resolutions, manifests)
+    # Derived rollbacks are independent support; the resolution's own synthetic
+    # reset is not. Missing support is an unbounded gap, never a clean lookback.
+    supported.update((reset["at_us"], reset["revision"]) for reset in resets
+                     if reset["reason"] == "revision_rollback")
+    for item in resolutions:
+        if (item["at_us"], item["revision"]) not in supported:
+            gap(f"resolution:{item['at_us']}:{item['revision']}:missing_support")
     # Retry counters have no authorization IDs or payload hashes. At minimum,
     # each phase needs a retained, verified original that the adapter could
     # duplicate. A different non-null retry hash could conflict with that same
