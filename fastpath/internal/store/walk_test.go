@@ -51,7 +51,7 @@ var walkConfig = ac.Config{
 const (
 	walkEstimate  = 100
 	walkSteps     = 160
-	probesPerKind = 3
+	probesPerKind = 1
 )
 
 // walkWeights favors the steps that touch Spanner; every other step weighs
@@ -114,9 +114,25 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		fmt.Fprintf(&b, " %s=%d", k, seen[k])
 	}
 	t.Logf("store calls:%s", b.String())
-	for _, k := range []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
-		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close", "refused commit",
-		"refused reap", "refused close", "refused shortfall-write", "refused append", "refused draining write"} {
+	required := []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
+		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close"}
+	// Each guard the store has, refused at least once for its own reason.
+	for kind, reasons := range map[string][]Refusal{
+		"commit": {RefusedVersion, RefusedClosed, RefusedGap},
+		"gap":    {RefusedVersion, RefusedGap, RefusedBoundary, "the record is the next after the stored progress"},
+		"reap": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTerminal, RefusedNoHold,
+			RefusedNotDue},
+		"close": {RefusedVersion, RefusedGap, RefusedNotDraining, RefusedNoBoundary, RefusedTooSoon, RefusedHoldsOpen,
+			RefusedRowsBeyond},
+		"draining write":  {"the lease is not open"},
+		"shortfall-write": {RefusedClosed},
+		"append":          {RefusedClosed},
+	} {
+		for _, r := range reasons {
+			required = append(required, "refused "+kind+": "+string(r))
+		}
+	}
+	for _, k := range required {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -149,6 +165,9 @@ type walker struct {
 	probes     int
 	tries      map[string]int
 	justClosed bool
+	// fault is the audit fault the lease's row holds: the first a commit
+	// stored, or 0.
+	fault int64
 }
 
 func newWalker(t *testing.T, s *Store, seed int64) *walker {
@@ -260,13 +279,24 @@ func (w *walker) apply(tr ac.Transition) {
 	case "ApplyRow":
 		w.applyRow(member(), from)
 	case "Gap":
-		w.gap(member(), from, true)
+		m := member()
+		w.gap(m, from.Log[from.Pos[m]-1].Seq, true)
 	case "Reap":
-		w.reap(member(), index(w.c.Auths, args[1]), from, fmt.Sprintf("d%d", from.DrainLen+1), "")
+		m, a := member(), index(w.c.Auths, args[1])
+		// Before its hold's deadline plus the grace the store refuses it,
+		// though the shadow, which has no clock, allows it.
+		w.timed("reap", RefusedNotDue, func() { w.reap(m, a, from, walkDeadline, fmt.Sprintf("p%d", w.probes), RefusedNotDue) })
+		w.reap(m, a, from, walkTick, fmt.Sprintf("d%d", from.DrainLen+1), "")
 	case "Commit":
 		w.commit(member(), from, tr.To, "")
 	case "Close":
-		w.close(member(), from, tr.To, "")
+		m := member()
+		// Its holds were never listed, so until the expiry plus MaxLife
+		// and the grace the store refuses it.
+		w.timed("close", RefusedTooSoon, func() {
+			w.close(m, from, from, readLease(w.t, w.s, w.ref).Expiry, RefusedTooSoon)
+		})
+		w.close(m, from, tr.To, time.Now().Add(time.Hour), "")
 	case "Reread", "Crash":
 		w.members[member()] = memberSide{}
 	}
@@ -410,23 +440,22 @@ func (w *walker) applyRow(m int8, from ac.State) {
 	}
 }
 
-func (w *walker) gap(m int8, from ac.State, taken bool) {
+func (w *walker) gap(m, seq int8, taken bool) {
 	w.t.Helper()
 	w.seen["stop-for-gap"]++
-	mem := from.Mem[m]
-	seq := from.Log[from.Pos[m]-1].Seq
-	ok, _, err := w.s.StopForGap(context.Background(), w.ref, int64(mem.Ver), int64(seq))
+	ok, _, err := w.s.StopForGap(context.Background(), w.ref, int64(w.state.Mem[m].Ver), int64(seq))
 	if err != nil || ok != taken {
 		w.fatalf("member %s's gap at %d: took it %v, want %v, %v", w.c.Members[m], seq, ok, taken, err)
 	}
 }
 
-func (w *walker) reap(m, a int8, from ac.State, record string, want Refusal) {
+func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, want Refusal) {
 	w.t.Helper()
 	w.seen["reap"]++
 	mem := from.Mem[m]
-	got, _, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), walkTick, ReapRow{AuthorizationID: w.c.Auths[a],
-		RecordID: record, Charge: int64(mem.Holds[a]), Estimate: walkEstimate,
+	charge := int64(max(mem.Holds[a], 0))
+	got, _, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, ReapRow{AuthorizationID: w.c.Auths[a],
+		RecordID: record, Charge: charge, Estimate: walkEstimate,
 		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)})
 	if err != nil || got != want {
 		w.fatalf("member %s's reap of %s: %q, want %q, %v", w.c.Members[m], w.c.Auths[a], got, want, err)
@@ -480,7 +509,8 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 			}
 		}
 	}
-	got, _, err := w.s.Commit(context.Background(), []CommitRequest{w.request(m, from)})
+	req := w.request(m, from)
+	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
 	if err != nil || len(got) != 1 {
 		w.fatalf("member %s's commit: %+v %v", w.c.Members[m], got, err)
 	}
@@ -494,13 +524,16 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.fatalf("member %s's commit: %+v, and the shadow's version is %d", w.c.Members[m], got[0], to.Ver)
 	}
 	w.members[m].decided, w.members[m].faultSeq = nil, 0
+	if req.AuditFault != nil && w.fault == 0 {
+		w.fault = *req.AuditFault
+	}
 }
 
-func (w *walker) close(m int8, from, to ac.State, want Refusal) {
+func (w *walker) close(m int8, from, to ac.State, now time.Time, want Refusal) {
 	w.t.Helper()
 	w.seen["close"]++
 	mem := from.Mem[m]
-	got, err := w.s.CloseLease(context.Background(), w.ref, int64(mem.Ver), w.members[m].through, time.Now().Add(time.Hour))
+	got, err := w.s.CloseLease(context.Background(), w.ref, int64(mem.Ver), w.members[m].through, now)
 	if err != nil || got.Refused != want {
 		w.fatalf("member %s's close: %+v, want %q, %v", w.c.Members[m], got, want, err)
 	}
@@ -510,80 +543,119 @@ func (w *walker) close(m int8, from, to ac.State, want Refusal) {
 	w.justClosed = want == ""
 }
 
-// probe tries each write a member would make but the shadow does not allow
-// for a reason the store holds, and some writes to a lease past the state
-// they need, up to probesPerKind of each kind in a walk; each must be
-// refused. It reports whether it tried any.
+// probe tries writes the store must refuse, up to probesPerKind of each
+// kind and reason in a walk, and reports whether it tried any. A member
+// makes only the writes the shadow allows it, but the store refuses a write
+// for its own reasons whatever the member knows; so the probes are any
+// loaded member's write, at its version, that the store's guards, read off
+// the shadow's state, refuse: a stale version, a closed lease, a gap, the
+// lease's state, S, a drain row, a hold, a row past the member's read. A
+// write the store would take is left to the shadow's own steps.
 func (w *walker) probe() bool {
 	w.t.Helper()
 	s, tried := w.state, false
-	try := func(kind string, f func()) {
-		if w.tries[kind] == probesPerKind {
-			return
+	try := func(kind string, reason Refusal, f func()) {
+		if w.quota(kind, reason) {
+			tried = true
+			f()
 		}
-		w.tries[kind]++
-		tried = true
-		w.probes++
-		w.seen["refused "+kind]++
-		f()
 	}
 	for m := range int8(len(w.c.Members)) {
 		mem := s.Mem[m]
 		if !mem.Loaded {
 			continue
 		}
-		// A member commits only what it applied, but the store refuses a
-		// stale member, or a closed or stopped lease, whatever it carries.
-		if s.Ver != mem.Ver || s.St == ac.Closed || s.Gap {
-			want := RefusedVersion
-			switch {
-			case s.Ver != mem.Ver:
-			case s.St == ac.Closed:
-				want = RefusedClosed
-			default:
-				want = RefusedGap
+		if want := w.commitRefusal(m); want != "" {
+			try("commit", want, func() { w.commit(m, s, s, want) })
+		}
+		// A gap past the member's progress, and the stored progress's next
+		// record, which is no gap.
+		for _, seq := range []int8{mem.Prog + 2, s.Prog + 1} {
+			if why := w.gapRefusal(m, seq); why != "" {
+				try("gap", why, func() { w.gap(m, seq, false) })
 			}
-			try("commit", func() { w.commit(m, s, s, want) })
 		}
-		holder := m == s.Holder
-		if holder && s.Pos[m] <= s.LogLen && mem.S == ac.NoS && !mem.Dirty &&
-			s.Log[s.Pos[m]-1].Seq > mem.Prog+1 && (s.Gap || s.Ver != mem.Ver) {
-			try("gap", func() { w.gap(m, s, false) })
-		}
-		if !holder || !mem.WL || s.Pos[m] != s.LogLen+1 {
-			continue
-		}
+		// A reap of any authorization, held or not.
 		for a := range int8(len(w.c.Auths)) {
-			if mem.Holds[a] == ac.NoHold || mem.Win[a] != ac.NoWin {
-				continue
-			}
 			if want := w.reapRefusal(m, a); want != "" {
-				try("reap", func() { w.reap(m, a, s, fmt.Sprintf("p%d", w.probes), want) })
+				try("reap", want, func() { w.reap(m, a, s, walkTick, fmt.Sprintf("p%d", w.probes), want) })
 			}
 		}
-		open := false
-		for a := range w.c.Auths {
-			open = open || mem.Holds[a] != ac.NoHold
-		}
-		if mem.S != ac.NoS && !mem.Dirty && !open {
-			if want := w.closeRefusal(m); want != "" {
-				try("close", func() { w.close(m, s, s, want) })
-			}
+		if want := w.closeRefusal(m); want != "" {
+			try("close", want, func() { w.close(m, s, s, time.Now().Add(time.Hour), want) })
 		}
 	}
 	if s.St != ac.Open && w.rng.Intn(4) == 0 {
-		try("draining write", func() { w.markDraining(false) })
+		try("draining write", "the lease is not open", func() { w.markDraining(false) })
 	}
 	if s.St == ac.Closed && (w.justClosed || w.rng.Intn(4) == 0) {
 		w.justClosed = false
-		try("shortfall-write", func() { w.raise(false) })
-		try("append", func() { w.appendDoor(int8(w.rng.Intn(len(w.c.Auths))), fmt.Sprintf("p%d", w.probes), false) })
+		try("shortfall-write", RefusedClosed, func() { w.raise(false) })
+		try("append", RefusedClosed, func() {
+			w.appendDoor(int8(w.rng.Intn(len(w.c.Auths))), fmt.Sprintf("p%d", w.probes), false)
+		})
 	}
 	return tried
 }
 
-// reapRefusal is the store's refusal of member m's reap of a, in the order
-// the store checks, or "" where the shadow allows it.
+// quota counts a refusal of a kind for a reason, and reports whether the
+// walk has room for another.
+func (w *walker) quota(kind string, reason Refusal) bool {
+	key := "refused " + kind + ": " + string(reason)
+	if w.tries[key] == probesPerKind {
+		return false
+	}
+	w.tries[key]++
+	w.seen[key]++
+	w.probes++
+	return true
+}
+
+// timed runs a probe of a guard on time, which the shadow has no clock for,
+// within the quota, then checks the store wrote nothing.
+func (w *walker) timed(kind string, reason Refusal, f func()) {
+	w.t.Helper()
+	if w.quota(kind, reason) {
+		f()
+		w.check()
+	}
+}
+
+// commitRefusal is the store's refusal of a commit from member m, in the
+// order the store checks, or "" where the store would take one.
+func (w *walker) commitRefusal(m int8) Refusal {
+	s, mem := w.state, w.state.Mem[m]
+	switch {
+	case s.Ver != mem.Ver:
+		return RefusedVersion
+	case s.St == ac.Closed:
+		return RefusedClosed
+	case s.Gap:
+		return RefusedGap
+	}
+	return ""
+}
+
+// gapRefusal is why the store would not take member m's gap at seq, or ""
+// where it would: StopForGap reports no reason, so the walk names it.
+func (w *walker) gapRefusal(m, seq int8) Refusal {
+	s, mem := w.state, w.state.Mem[m]
+	switch {
+	case s.Ver != mem.Ver:
+		return RefusedVersion
+	case s.Gap:
+		return RefusedGap
+	case s.S != ac.NoS:
+		return RefusedBoundary
+	case s.Prog >= seq-1:
+		return "the record is the next after the stored progress"
+	}
+	return ""
+}
+
+// reapRefusal is the store's refusal of member m's reap of a, at its
+// snapshot and a tick past the deadline, in the order the store checks, or
+// "" where the store would take it.
 func (w *walker) reapRefusal(m, a int8) Refusal {
 	s, mem := w.state, w.state.Mem[m]
 	switch {
@@ -601,11 +673,15 @@ func (w *walker) reapRefusal(m, a int8) Refusal {
 			return RefusedTerminal
 		}
 	}
+	if s.Holds[a] == ac.NoHold {
+		return RefusedNoHold
+	}
 	return ""
 }
 
-// closeRefusal is the store's refusal of member m's close, in the order the
-// store checks, or "" where the shadow allows it.
+// closeRefusal is the store's refusal of member m's close, long past the
+// expiry, in the order the store checks, or "" where the store would take
+// it.
 func (w *walker) closeRefusal(m int8) Refusal {
 	s, mem := w.state, w.state.Mem[m]
 	switch {
@@ -678,6 +754,23 @@ func (w *walker) check() {
 	got.DrainLen = int8(len(rows))
 	if want := viewOf(w.state); got != want {
 		w.fatalf("the store holds\n%+v\nand the shadow\n%+v", got, want)
+	}
+	// The projection adds the returned money back, so the columns are held
+	// exactly too: the shadow returns nothing until the close, raises only
+	// by the owner's shortfall write, and its front doors' appends raise
+	// nothing; the close returns all that is not booked. The alert is the
+	// first audit fault a commit stored, and only it revokes the lease.
+	raised := int64(w.state.Raised)
+	switch {
+	case l.Granted != int64(w.c.Grant) || l.ShortfallTotal != raised || l.DoorRaised != 0:
+		w.fatalf("granted %d, shortfall %d, door raises %d; the shadow granted %d and raised %d", l.Granted,
+			l.ShortfallTotal, l.DoorRaised, w.c.Grant, raised)
+	case w.state.St != ac.Closed && (l.Returned != 0 || l.Allocation != l.Granted+raised):
+		w.fatalf("an open lease returned %d, allocation %d", l.Returned, l.Allocation)
+	case w.state.St == ac.Closed && (l.Allocation != l.Consumed || l.Returned != l.Granted+raised-l.Consumed):
+		w.fatalf("a closed lease's allocation %d, consumed %d, returned %d", l.Allocation, l.Consumed, l.Returned)
+	case l.AuditFaultSeq != (spanner.NullInt64{Int64: w.fault, Valid: w.fault != 0}) || l.Revoked != (w.fault != 0):
+		w.fatalf("audit fault %v and revoked %v; the walk stored fault %d", l.AuditFaultSeq, l.Revoked, w.fault)
 	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
@@ -756,29 +849,29 @@ func (w *walker) winnerOf(r ac.Rec) Winner {
 func (w *walker) recOfWinner(win Winner) ac.Rec {
 	w.t.Helper()
 	r := ac.Rec{K: kindOf(w, win.Kind), A: index(w.c.Auths, win.AuthorizationID), C: small(w, win.Charge)}
-	prefix := "o"
 	if win.FromDrain {
-		prefix = "d"
-	}
-	n, err := strconv.Atoi(strings.TrimPrefix(win.RecordID, prefix))
-	if err != nil || !strings.HasPrefix(win.RecordID, prefix) {
-		w.fatalf("a winner's record ID %q", win.RecordID)
-	}
-	if win.FromDrain {
-		r.Idx = int8(n)
+		r.Idx = w.recordNumber(win.RecordID, "d")
 	} else {
-		r.Seq = int8(n)
+		r.Seq = w.recordNumber(win.RecordID, "o")
 	}
 	return r
 }
 
 func (w *walker) recOfRow(row DrainRow) ac.Rec {
 	w.t.Helper()
-	n, err := strconv.Atoi(strings.TrimPrefix(row.RecordID, "d"))
-	if err != nil || !strings.HasPrefix(row.RecordID, "d") {
-		w.fatalf("a drain row's record ID %q", row.RecordID)
+	return ac.Rec{K: kindOf(w, row.Kind), A: index(w.c.Auths, row.AuthorizationID), C: small(w, row.Charge),
+		Idx: w.recordNumber(row.RecordID, "d")}
+}
+
+// recordNumber is the number in a record ID the walk wrote, which must be
+// that ID exactly, so no two records read as one.
+func (w *walker) recordNumber(id, prefix string) int8 {
+	w.t.Helper()
+	n, err := strconv.Atoi(strings.TrimPrefix(id, prefix))
+	if err != nil || n < 1 || n > 127 || id != prefix+strconv.Itoa(n) {
+		w.fatalf("a record ID %q", id)
 	}
-	return ac.Rec{K: kindOf(w, row.Kind), A: index(w.c.Auths, row.AuthorizationID), C: small(w, row.Charge), Idx: int8(n)}
+	return int8(n)
 }
 
 func small(w *walker, v int64) int8 {

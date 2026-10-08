@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -68,14 +69,21 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 	}
 }
 
+// debtLease is a lease the walk holds, with the money its row must show:
+// granted, the shortfall total, the front doors' raises, what was returned,
+// and what was booked, matched or as a fault.
 type debtLease struct {
-	ref       LeaseRef
-	state     string
-	version   int64
-	seq       int64
-	shortfall int64
-	stored    bool
-	appends   int
+	ref        LeaseRef
+	state      string
+	version    int64
+	seq        int64
+	stored     bool
+	appends    int
+	granted    int64
+	shortfall  int64
+	doorRaised int64
+	returned   int64
+	booked     int64
 }
 
 type debtWalk struct {
@@ -130,6 +138,7 @@ func (d *debtWalk) run() {
 		case l == nil:
 			// With no lease left, a walk ends once it is granted none.
 			if !d.grant(ctx) {
+				d.check(before, headrooms(readRows(d.t, d.ws)))
 				return
 			}
 		case op == 0 && len(live) < 4:
@@ -164,16 +173,20 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 	d.t.Helper()
 	req := grantOf(d.ws, int64(1+d.rng.Intn(20)))
 	d.note("grant %d", req.Amount)
+	rows := readRows(d.t, d.ws)
 	got, err := d.s.Grant(ctx, req)
 	if err != nil {
 		d.fatalf("the grant: %v", err)
 	}
 	if got.Refused != "" {
 		d.seen["refused grant"]++
+		if after := readRows(d.t, d.ws); !slices.Equal(after, rows) {
+			d.fatalf("a refused grant changed the credit rows: %+v, then %+v", rows, after)
+		}
 		return false
 	}
 	d.seen["grant"]++
-	d.leases = append(d.leases, &debtLease{ref: LeaseRef{d.ws, req.LeaseID}, state: "open"})
+	d.leases = append(d.leases, &debtLease{ref: LeaseRef{d.ws, req.LeaseID}, state: "open", granted: req.Amount})
 	return true
 }
 
@@ -220,7 +233,8 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	}
 	d.note("book %s %d at %d", l.ref.LeaseID, charge, total)
 	got := d.commit(ctx, l, []MoneyOp{Book(charge, total)}, false)
-	l.shortfall = total
+	l.shortfall = max(l.shortfall, total)
+	l.booked += charge
 	d.seen["booking"]++
 	if len(got.Faults) > 0 {
 		d.seen["fault"]++
@@ -239,6 +253,7 @@ func (d *debtWalk) giveBack(ctx context.Context, l *debtLease) {
 	amount := 1 + d.rng.Int63n(room)
 	d.note("return %s %d", l.ref.LeaseID, amount)
 	d.commit(ctx, l, []MoneyOp{Return(amount)}, false)
+	l.returned += amount
 	d.seen["return"]++
 }
 
@@ -265,6 +280,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	if err != nil || got.Refused != "" || got.Raise != raise {
 		d.fatalf("the append: %+v %v", got, err)
 	}
+	l.doorRaised += raise
 	d.seen["door raise"]++
 }
 
@@ -280,11 +296,13 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	if err != nil {
 		d.fatalf("reading the drain log: %v", err)
 	}
+	row := readLease(d.t, d.s, l.ref)
 	got, err := d.s.CloseLease(ctx, l.ref, l.version, read, time.Now().Add(time.Hour))
-	if err != nil || got.Refused != "" {
-		d.fatalf("the close: %+v %v", got, err)
+	if err != nil || got.Refused != "" || got.Released != row.Allocation-row.Consumed {
+		d.fatalf("the close of %+v: %+v %v", row, got, err)
 	}
 	l.state, l.version = "closed", got.NewVersion
+	l.returned += got.Released
 	d.seen["close"]++
 }
 
@@ -342,6 +360,60 @@ func (d *debtWalk) check(before, after []int64) {
 	for shard, r := range rows {
 		if r.usage != booked[shard] {
 			d.fatalf("shard %d's usage is %d, and %d was booked on it", shard, r.usage, booked[shard])
+		}
+	}
+	// Each lease's money is what the walk did to it, column by column, and
+	// its front doors' raises are its drain rows', in two reads of the whole
+	// workspace.
+	type money struct {
+		granted, shortfall, doorRaised, returned, consumed, fault, allocation, appends, raised int64
+		state                                                                                  string
+	}
+	got := map[string]*money{}
+	err = shared.Single().Query(ctx, spanner.Statement{
+		SQL: `SELECT lease_id, granted, shortfall_total, door_raised, returned, consumed, fault_usage, allocation, state
+		        FROM tr_lease WHERE workspace_id = @w`,
+		Params: map[string]any{"w": d.ws},
+	}).Do(func(r *spanner.Row) error {
+		var lease string
+		var m money
+		if err := r.Columns(&lease, &m.granted, &m.shortfall, &m.doorRaised, &m.returned, &m.consumed, &m.fault,
+			&m.allocation, &m.state); err != nil {
+			return err
+		}
+		got[lease] = &m
+		return nil
+	})
+	if err == nil {
+		err = shared.Single().Query(ctx, spanner.Statement{
+			SQL:    `SELECT lease_id, COUNT(*), SUM(door_raise) FROM tr_lease_drain WHERE workspace_id = @w GROUP BY lease_id`,
+			Params: map[string]any{"w": d.ws},
+		}).Do(func(r *spanner.Row) error {
+			var lease string
+			var n, raised int64
+			if err := r.Columns(&lease, &n, &raised); err != nil {
+				return err
+			}
+			if m := got[lease]; m != nil {
+				m.appends, m.raised = n, raised
+			}
+			return nil
+		})
+	}
+	if err != nil {
+		d.fatalf("reading the leases: %v", err)
+	}
+	if len(got) != len(d.leases) {
+		d.fatalf("the workspace has %d leases, and the walk granted %d", len(got), len(d.leases))
+	}
+	for _, l := range d.leases {
+		m := got[l.ref.LeaseID]
+		if m == nil || m.granted != l.granted || m.shortfall != l.shortfall || m.doorRaised != l.doorRaised ||
+			m.returned != l.returned || m.consumed+m.fault != l.booked || m.state != l.state ||
+			m.allocation != l.granted+l.shortfall+l.doorRaised-l.returned ||
+			(l.state == "closed" && m.allocation != m.consumed) ||
+			m.appends != int64(l.appends) || m.raised != l.doorRaised {
+			d.fatalf("lease %s holds %+v, and the walk did %+v", l.ref.LeaseID, m, *l)
 		}
 	}
 	negative := false
