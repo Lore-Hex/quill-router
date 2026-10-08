@@ -47,13 +47,13 @@ func (s *Store) Load(ctx context.Context, ref LeaseRef) (Loaded, error) {
 	}
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT authorization_id, estimate, deadline, listed, snapshot_seq, snapshot_hash, snapshot_usage,
-		             running_charge, snapshot_owner_seq, reap_basis
+		             running_charge, snapshot_owner_seq, reap_basis, boot_binding
 		        FROM tr_lease_hold WHERE workspace_id = @w AND lease_id = @l ORDER BY authorization_id`,
 		Params: ref.params(),
 	}, spanner.QueryOptions{RequestTag: tag("load")}).Do(func(row *spanner.Row) error {
 		var h HoldRow
 		if err := row.Columns(&h.AuthorizationID, &h.Estimate, &h.Deadline, &h.Listed, &h.SnapshotSeq, &h.SnapshotHash,
-			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis); err != nil {
+			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot); err != nil {
 			return err
 		}
 		out.Holds = append(out.Holds, h)

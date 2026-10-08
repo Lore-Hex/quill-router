@@ -141,7 +141,7 @@ func TestTheMemberAppliesALeasesRecords(t *testing.T) {
 	switch {
 	case req.Ref != ref || req.ReadVersion != 3 || req.AppliedSeq != 5 || req.AuditOsum != 150 || req.AuditFault != nil:
 		t.Fatalf("the commit: %+v", req)
-	case !reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(150, 50)}):
+	case !reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(150, 50), store.Checkpoint(5, 0, 100)}):
 		t.Fatalf("the money: %+v", req.Money)
 	case !reflect.DeepEqual(req.Winners, []store.Winner{{AuthorizationID: "a", Kind: "settle", Charge: 150, RecordID: "o4",
 		Work: workOf(settle(4, "a", 150, 50))}}):
@@ -201,7 +201,7 @@ func TestTheCheckpointAudit(t *testing.T) {
 		ckpt(4, record.CheckpointOf{Consumed: 80, KeyStatus: 7, Final: true}))
 	req := l.Request()
 	if req.AuditFault == nil || *req.AuditFault != 2 || req.HoldsListedSeq == nil || *req.HoldsListedSeq != 4 ||
-		!reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(80, 0), store.Return(25)}) {
+		!reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(80, 0), store.Checkpoint(3, 25, 0)}) {
 		t.Fatalf("the commit: %+v", req)
 	}
 }
@@ -488,11 +488,11 @@ func TestAManifestKeepsTheNewerSnapshot(t *testing.T) {
 		{AuthorizationID: "a", Estimate: 100, Deadline: deadline, Listed: true,
 			SnapshotSeq: spanner.NullInt64{Int64: 1, Valid: true}, SnapshotHash: a4.Snapshot.Hash,
 			SnapshotUsage: a4.Snapshot.Usage, RunningCharge: spanner.NullInt64{Int64: 5, Valid: true},
-			SnapshotOwnerSeq: spanner.NullInt64{Int64: 4, Valid: true}, ReapBasis: []byte("terms")},
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: 4, Valid: true}, ReapBasis: []byte("terms"), Boot: boot},
 		{AuthorizationID: "b", Estimate: 100, Deadline: deadline, Listed: true,
 			SnapshotSeq: spanner.NullInt64{Int64: 2, Valid: true}, SnapshotHash: b2.Snapshot.Hash,
 			SnapshotUsage: b2.Snapshot.Usage, RunningCharge: spanner.NullInt64{Int64: 20, Valid: true},
-			SnapshotOwnerSeq: spanner.NullInt64{Int64: 2, Valid: true}, ReapBasis: []byte("terms")}}
+			SnapshotOwnerSeq: spanner.NullInt64{Int64: 2, Valid: true}, ReapBasis: []byte("terms"), Boot: boot}}
 	if req := l.Request(); !reflect.DeepEqual(req.PutHolds, want) {
 		t.Fatalf("the listed holds:\n%+v\nwant\n%+v", req.PutHolds, want)
 	}
@@ -596,34 +596,31 @@ func TestAHandOffOutlivesAReload(t *testing.T) {
 	}
 }
 
-// TestTheCheckpointAuditsTheHoldsCover: the allocation less the consumption
-// booked, raised and returned as the records say in order, must cover the
-// checkpoint's open holds (§4.2): an owner that under-reported its
-// shortfall, or returned what its holds need, is at fault.
-func TestTheCheckpointAuditsTheHoldsCover(t *testing.T) {
-	open := record.CheckpointOf{Consumed: 950, Open: 1, OpenSum: 100, LatestEnd: deadline, KeyStatus: 7}
-	for _, c := range []struct {
-		shortfall int64
-		fault     bool
-	}{{0, true}, {49, true}, {50, false}} {
-		l := load(t, "open") // an allocation of 1,000
-		apply(t, l, Applied, hb(1, "a", 1, 10), hb(2, "b", 1, 10), settle(3, "a", 950, c.shortfall), ckpt(4, open))
-		if got := l.Request().AuditFault; (got != nil) != c.fault {
-			t.Errorf("a shortfall of %d: fault %v", c.shortfall, got)
-		}
+// TestACheckpointsMoneyIsTheCommits: a checkpoint's return and its audit
+// of the open holds' cover go to the commit, in the records' order, which
+// judges them on the lease's row as it reads it (store.Checkpoint); the
+// member raises no fault of its own for them.
+func TestACheckpointsMoneyIsTheCommits(t *testing.T) {
+	l := load(t, "open")
+	apply(t, l, Applied, hb(1, "a", 1, 10), settle(2, "b", 950, 0),
+		ckpt(3, record.CheckpointOf{Consumed: 950, Open: 1, OpenSum: 100, LatestEnd: deadline, KeyStatus: 7, Return: 900}),
+		ckpt(4, record.CheckpointOf{Consumed: 950, KeyStatus: 7}))
+	req := l.Request()
+	if req.AuditFault != nil ||
+		!reflect.DeepEqual(req.Money, []store.MoneyOp{store.Book(950, 0), store.Checkpoint(3, 900, 100)}) {
+		t.Fatalf("the commit: %+v", req)
 	}
-	for _, c := range []struct {
-		back  int64
-		fault bool
-	}{{901, true}, {900, false}} {
-		l := load(t, "open")
-		apply(t, l, Applied, hb(1, "a", 1, 10), ckpt(2, record.CheckpointOf{Open: 1, OpenSum: 100, LatestEnd: deadline,
-			KeyStatus: 7, Return: c.back}))
-		if got := l.Request().AuditFault; (got != nil) != c.fault {
-			t.Errorf("a return of %d: fault %v", c.back, got)
-		}
+	// A fault the commit stored ends the member's own.
+	if err := l.Committed(store.CommitResult{Ref: ref, NewVersion: 4, State: "open", AuditFault: ptr(int64(3))}); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, l, Applied, ckpt(5, record.CheckpointOf{Consumed: 1, KeyStatus: 7}))
+	if req := l.Request(); req.AuditFault != nil {
+		t.Fatalf("a fault after the commit's: %d", *req.AuditFault)
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
 
 // TestTheFirstFaultStands: once a fault is stored, by this member's commit
 // or before it loaded the lease, a later wrong checkpoint stores none.

@@ -162,3 +162,40 @@ func TestApplyMoneyKeepsItsAccountsOnRandomRecords(t *testing.T) {
 		}
 	}
 }
+
+// TestACheckpointReturnsThenAudits: a checkpoint's return comes from the
+// last donor first; one past what the lease holds returns nothing and is
+// the checkpoint's fault; then the allocation less the consumption booked
+// must cover its open holds, or that is its fault. The first fault stands.
+func TestACheckpointReturnsThenAudits(t *testing.T) {
+	cases := []struct {
+		name     string
+		ops      []MoneyOp
+		alloc    int64
+		releases []creditRelease
+		fault    int64
+	}{
+		{"covered", []MoneyOp{Book(150, 0), Checkpoint(2, 0, 50)}, 200, nil, 0},
+		{"short of its holds", []MoneyOp{Book(150, 0), Checkpoint(2, 0, 51)}, 200, nil, 2},
+		{"covered once the shortfall is raised", []MoneyOp{Book(150, 1), Checkpoint(2, 0, 51)}, 201, nil, 0},
+		{"a return, then the audit", []MoneyOp{Checkpoint(1, 120, 80)}, 80,
+			[]creditRelease{{1, 100}, {0, 20}}, 0},
+		{"a return its holds needed", []MoneyOp{Checkpoint(1, 121, 80)}, 79,
+			[]creditRelease{{1, 100}, {0, 21}}, 1},
+		{"a return past what the lease holds", []MoneyOp{Book(10, 0), Checkpoint(3, 191, 0)}, 200, nil, 3},
+		{"the first fault stands", []MoneyOp{Checkpoint(4, 0, 201), Book(1, 0), Checkpoint(6, 0, 300)}, 200, nil, 4},
+	}
+	for _, c := range cases {
+		got, err := applyMoney(lease(donorMoney{0, 100, 0}, donorMoney{1, 100, 0}), c.ops)
+		if err != nil || got.After.Allocation != c.alloc || !reflect.DeepEqual(got.Releases, c.releases) ||
+			got.AuditFault != c.fault {
+			t.Errorf("%s: allocation %d, releases %v, fault %d, %v", c.name, got.After.Allocation, got.Releases,
+				got.AuditFault, err)
+		}
+	}
+	for _, op := range []MoneyOp{Checkpoint(0, 0, 1), Checkpoint(1, -1, 0), Checkpoint(1, 0, -1)} {
+		if _, err := applyMoney(lease(donorMoney{0, 100, 0}), []MoneyOp{op}); err == nil {
+			t.Errorf("a checkpoint %+v", op)
+		}
+	}
+}

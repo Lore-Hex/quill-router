@@ -35,14 +35,16 @@ type HoldRow struct {
 	RunningCharge    spanner.NullInt64
 	SnapshotOwnerSeq spanner.NullInt64
 	ReapBasis        []byte
+	Boot             []byte
 }
 
 var holdColumns = []string{"workspace_id", "lease_id", "authorization_id", "estimate", "deadline", "listed",
-	"snapshot_seq", "snapshot_hash", "snapshot_usage", "running_charge", "snapshot_owner_seq", "reap_basis"}
+	"snapshot_seq", "snapshot_hash", "snapshot_usage", "running_charge", "snapshot_owner_seq", "reap_basis",
+	"boot_binding"}
 
 func (h HoldRow) values(ref LeaseRef) []any {
 	return []any{ref.Workspace, ref.LeaseID, h.AuthorizationID, h.Estimate, h.Deadline, h.Listed, h.SnapshotSeq,
-		h.SnapshotHash, h.SnapshotUsage, h.RunningCharge, h.SnapshotOwnerSeq, h.ReapBasis}
+		h.SnapshotHash, h.SnapshotUsage, h.RunningCharge, h.SnapshotOwnerSeq, h.ReapBasis, h.Boot}
 }
 
 // Winner is the terminal a commit stores as its authorization's winner, with
@@ -105,14 +107,17 @@ type Chunk struct {
 }
 
 // CommitResult is one lease's outcome: refused and why, with nothing
-// written for the lease; or its new version and state, and each fault, the
-// part of a booking beyond the allocation, which the commit booked as usage.
+// written for the lease; or its new version and state, each fault, the
+// part of a booking beyond the allocation, which the commit booked as usage,
+// and the audit fault it stored, the request's or a checkpoint's (the
+// first by sequence number), if it stored one.
 type CommitResult struct {
 	Ref        LeaseRef
 	Refused    Refusal
 	NewVersion int64
 	State      string
 	Faults     []int64
+	AuditFault *int64
 }
 
 // validate checks what a request says of itself.
@@ -225,6 +230,14 @@ func (s *Store) Commit(ctx context.Context, reqs []CommitRequest) ([]CommitResul
 				return err
 			}
 			out[i].Faults = eff.Faults
+			if f := eff.AuditFault; f > 0 && (r.AuditFault == nil || f < *r.AuditFault) {
+				r.AuditFault = &f
+			}
+			if l.AuditFaultSeq.Valid {
+				// The first fault stands, and this commit stores none.
+				r.AuditFault = nil
+			}
+			out[i].AuditFault = r.AuditFault
 			if err := writeLeaseCommit(ctx, txn, r, eff.After, money, &out[i]); err != nil {
 				return err
 			}
@@ -344,7 +357,7 @@ func writeLeaseCommit(ctx context.Context, txn *spanner.ReadWriteTransaction, r 
 		             boundary_seq = COALESCE(boundary_seq, @s),
 		             boundary_publish_time = COALESCE(boundary_publish_time, @t),
 		             holds_listed_seq = COALESCE(@listed, holds_listed_seq),
-		             audit_fault_seq = COALESCE(@fault_seq, audit_fault_seq),
+		             audit_fault_seq = COALESCE(audit_fault_seq, @fault_seq),
 		             revoked = revoked OR @fault_seq IS NOT NULL
 		       WHERE workspace_id = @w AND lease_id = @l AND commit_version = @read AND state != 'closed'
 		         AND gap_seq IS NULL AND (boundary_seq IS NULL OR boundary_seq = @applied)

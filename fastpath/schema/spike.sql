@@ -132,7 +132,9 @@ CREATE TABLE tr_lease_donor (
 -- inserts and updates them, and deletes a hold's row in the commit that
 -- stores its winner. reap_basis keeps what a member that takes over needs to
 -- build a reap's full record (§4.9): the first heartbeat record's fields,
--- which Pub/Sub does not deliver again once acknowledged.
+-- which Pub/Sub does not deliver again once acknowledged. boot_binding is a
+-- listed hold's, from its hand-off chunk, which its disposition needs
+-- (§4.9) when it has no heartbeat, and so no basis.
 CREATE TABLE tr_lease_hold (
   workspace_id STRING(64) NOT NULL,
   lease_id STRING(32) NOT NULL,
@@ -147,6 +149,7 @@ CREATE TABLE tr_lease_hold (
   running_charge INT64,
   snapshot_owner_seq INT64,
   reap_basis BYTES(MAX),
+  boot_binding BYTES(MAX),
   CONSTRAINT tr_lease_hold_snapshot CHECK ((snapshot_seq IS NULL) = (running_charge IS NULL)),
 ) PRIMARY KEY (workspace_id, lease_id, authorization_id),
   INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;

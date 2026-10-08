@@ -73,10 +73,6 @@ type Lease struct {
 	// for a lease that was draining when it loaded it, or after LoadWinners.
 	winnersLoaded bool
 	shortfall     int64 // the highest shortfall total a terminal carried
-	// The lease's allocation and the consumption booked, as the commit will
-	// book the member's records in their order (§4.2): the checkpoint's
-	// coverage audit.
-	alloc, consumed int64
 	// A forced exit's hand-off under way: the chunks applied, kept in the
 	// lease's row from the commit after each until the hand-off ends.
 	chunks       map[int64][]record.HeldHold
@@ -135,8 +131,8 @@ func Load(ref store.LeaseRef, l store.Loaded, skew time.Duration) (*Lease, error
 	out := &Lease{ref: ref, skew: skew, version: l.Lease.CommitVersion, draining: l.Lease.State == "draining",
 		applied: l.Lease.AppliedSeq, lastTick: l.Lease.LastTick, osum: l.Lease.AuditOsum,
 		listed: l.Lease.HoldsListedSeq.Valid, faulted: l.Lease.AuditFaultSeq.Valid, holds: map[string]*hold{},
-		winners: map[string]bool{}, shortfall: l.Lease.ShortfallTotal, alloc: l.Lease.Allocation,
-		consumed: l.Lease.Consumed, put: map[string]bool{}, chunks: map[int64][]record.HeldHold{}}
+		winners: map[string]bool{}, shortfall: l.Lease.ShortfallTotal, put: map[string]bool{},
+		chunks: map[int64][]record.HeldHold{}}
 	if l.Lease.FenceTime.Valid {
 		out.fence = l.Lease.FenceTime.Time
 	}
@@ -276,31 +272,27 @@ func (l *Lease) terminal(r record.Record) {
 	l.osum += r.Charge
 }
 
-// book books a charge once the shortfall total is raised to total, as the
-// commit will (store.Book): the raise goes to the allocation, and the
-// charge is booked up to what the allocation has left, the rest a fault.
+// book books a charge once the shortfall total is raised to total, in the
+// commit (store.Book).
 func (l *Lease) book(charge, total int64) {
 	l.money = append(l.money, store.Book(charge, total))
-	if total > l.shortfall {
-		l.alloc += total - l.shortfall
-		l.shortfall = total
-	}
-	l.consumed += min(charge, max(l.alloc-l.consumed, 0))
+	l.shortfall = max(l.shortfall, total)
 }
 
-// checkpoint audits the owner (§4.2, §4.8), after the return it carries
-// leaves the allocation: its consumed must be what its terminals with lower
-// numbers charged, and the allocation less the consumption booked must
-// cover its open holds, or it under-reported its shortfall. A difference
-// is a fault, which the commit stores and which revokes the lease; the
-// first stands. A final checkpoint lists the open holds: none.
+// checkpoint audits the owner (§4.2, §4.8): its consumed must be what its
+// terminals with lower numbers charged. Its return, and the audit that the
+// allocation less the consumption booked covers its open holds, are the
+// commit's (store.Checkpoint), on the lease's row as the commit reads it,
+// since a raise a front door made since the member loaded the lease
+// counts. A difference is a fault, which the commit stores and which
+// revokes the lease; the first stands. A final checkpoint lists the open
+// holds: none.
 func (l *Lease) checkpoint(r record.Record) {
 	c := r.Checkpoint
-	if c.Return > 0 {
-		l.money = append(l.money, store.Return(c.Return))
-		l.alloc -= c.Return
+	if c.Return > 0 || c.OpenSum > 0 {
+		l.money = append(l.money, store.Checkpoint(r.Seq, c.Return, c.OpenSum))
 	}
-	if (c.Consumed != l.osum || l.alloc-l.consumed < c.OpenSum) && !l.faulted {
+	if c.Consumed != l.osum && !l.faulted {
 		seq := r.Seq
 		l.fault, l.faulted = &seq, true
 	}
@@ -348,7 +340,8 @@ func (l *Lease) manifest(r record.Record) {
 		if l.winners[held.Auth] {
 			continue
 		}
-		row := store.HoldRow{AuthorizationID: held.Auth, Estimate: held.Estimate, Deadline: held.Deadline}
+		row := store.HoldRow{AuthorizationID: held.Auth, Estimate: held.Estimate, Deadline: held.Deadline,
+			Boot: held.Boot}
 		if s := held.Snapshot; s != nil {
 			row.SnapshotSeq = spanner.NullInt64{Int64: s.GatewaySeq, Valid: true}
 			row.SnapshotHash, row.SnapshotUsage = s.Hash, s.Usage
@@ -357,15 +350,18 @@ func (l *Lease) manifest(r record.Record) {
 			row.ReapBasis = held.Basis
 		}
 		if h := l.holds[held.Auth]; h != nil {
+			older := row
 			if h.row.SnapshotOwnerSeq.Valid &&
 				(!row.SnapshotOwnerSeq.Valid || h.row.SnapshotOwnerSeq.Int64 > row.SnapshotOwnerSeq.Int64) {
-				basis := row.ReapBasis
-				row = h.row
-				if len(row.ReapBasis) == 0 {
-					row.ReapBasis = basis
-				}
-			} else if len(row.ReapBasis) == 0 {
-				row.ReapBasis = h.row.ReapBasis
+				row, older = h.row, row
+			} else {
+				older = h.row
+			}
+			if len(row.ReapBasis) == 0 {
+				row.ReapBasis = older.ReapBasis
+			}
+			if len(row.Boot) == 0 {
+				row.Boot = older.Boot
 			}
 		}
 		row.Listed = true
@@ -473,6 +469,7 @@ func (l *Lease) Committed(got store.CommitResult) error {
 	}
 	l.version = got.NewVersion
 	l.draining = l.draining || got.State != "open"
+	l.faulted = l.faulted || got.AuditFault != nil
 	l.sStored = l.sStored || l.boundary != nil
 	l.storedChunks = (l.storedChunks && !l.dropChunks) || len(l.putChunks) > 0
 	l.dirty, l.money, l.won, l.put, l.boundary, l.listedSeq, l.fault = false, nil, nil, map[string]bool{}, nil, nil, nil
