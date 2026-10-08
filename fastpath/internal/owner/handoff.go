@@ -99,7 +99,16 @@ func (o *Owner) Handoff(ctx context.Context) error {
 				case <-ctx.Done():
 				}
 			}
-			o.Let(l.id)
+			// The lease is let go now; its workers, such as a final
+			// checkpoint's draining write already under way, end as they
+			// unwind, writers Stop waits for.
+			if stopped := o.release(l.id); stopped != nil {
+				o.writers.Add(1)
+				go func() {
+					defer o.writers.Done()
+					<-stopped
+				}()
+			}
 		}()
 	}
 	all.Wait()

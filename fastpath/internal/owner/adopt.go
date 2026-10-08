@@ -125,19 +125,48 @@ func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
 		return
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	var due []string
 	for _, h := range l.holds {
-		if h.openHeartbeat && !h.heartbeat && !now.Before(h.admitted.Add(allowance+grace)) {
+		if released(h, now, allowance+grace) {
 			due = append(due, h.auth)
 		}
 	}
+	l.mu.Unlock()
 	slices.Sort(due)
-	for _, auth := range due {
-		if _, err := l.decide(auth, terminalOf{kind: record.Release}); err != nil {
+	for len(due) > 0 {
+		n := min(len(due), releaseBatch)
+		if !l.releaseSome(due[:n], now, allowance+grace) {
 			return
 		}
+		due = due[n:]
 	}
+}
+
+// releaseBatch is how many releases a pass decides under one hold of the
+// lease's lock: between batches a hand-off can take it.
+const releaseBatch = 256
+
+// released: a hold due for release at now, after the first-heartbeat
+// allowance and the grace.
+func released(h *hold, now time.Time, after time.Duration) bool {
+	return h.openHeartbeat && !h.heartbeat && !now.Before(h.admitted.Add(after))
+}
+
+// releaseSome releases each of auths still open and due, under the lease's
+// lock, and reports whether the pass goes on: not after a decision fails, as
+// every one does once the lease is let go or handed off.
+func (l *Lease) releaseSome(auths []string, now time.Time, after time.Duration) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, auth := range auths {
+		if h := l.holds[auth]; h == nil || !released(h, now, after) {
+			continue
+		}
+		if _, err := l.decide(auth, terminalOf{kind: record.Release}); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // reapable: the lease is held, within its cutoff, and its drain log

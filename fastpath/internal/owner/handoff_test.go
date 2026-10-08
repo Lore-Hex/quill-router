@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -761,5 +762,146 @@ func TestASortStopsWhenAsked(t *testing.T) {
 				t.Fatalf("%d strings told to stop at check %d: done %v after %d checks", n, k, ok, calls)
 			}
 		}
+	}
+}
+
+// TestAHandOffInterruptsTheReleasePass: a reaper's pass releasing many holds
+// does so a batch at a time, so a hand-off whose time is up takes the
+// lease's lock between batches and lets the lease go at once; the pass then
+// releases no more.
+func TestAHandOffInterruptsTheReleasePass(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 40
+	f.lease.mu.Unlock()
+	const holds = 50_000
+	for range holds {
+		if _, err := f.lease.Admit(Admission{Estimate: 1, Stream: true, Boot: boot, OpenHeartbeat: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.clock.advance(70 * time.Second)
+	releasing := make(chan struct{})
+	var once sync.Once
+	f.log.mu.Lock()
+	f.log.onPublish = func(data []byte) {
+		if bytes.Contains(data, []byte(`"kind":"release"`)) {
+			once.Do(func() { close(releasing) })
+		}
+	}
+	f.log.mu.Unlock()
+	passed := make(chan error, 1)
+	go func() { passed <- f.owner.Reap(context.Background()) }()
+	<-releasing
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	if err := f.owner.Handoff(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a hand-off whose time ran out: %v", err)
+	}
+	if took := time.Since(began); took > 100*time.Millisecond {
+		t.Fatalf("the hand-off let its lease go %v after it began", took)
+	}
+	if err := <-passed; err != nil {
+		t.Fatal(err)
+	}
+	released := 0
+	for _, r := range f.log.records(t, "lease-1") {
+		if r.Kind == record.Release {
+			released++
+		}
+	}
+	if released == 0 || released >= holds {
+		t.Fatalf("%d of %d holds released", released, holds)
+	}
+}
+
+// TestAHandOffLetsGoDuringAFinalDrain: a lease whose final checkpoint's
+// draining write is under way is let go at the hand-off's deadline, not once
+// that write has unwound; Stop waits for it.
+func TestAHandOffLetsGoDuringAFinalDrain(t *testing.T) {
+	f, sp := releaseFixture(t)
+	begun := make(chan struct{}, 1)
+	sp.mu.Lock()
+	sp.drainGate, sp.afterCancel, sp.drainReturned = make(chan struct{}), 500*time.Millisecond, make(chan struct{})
+	sp.drainBegun = begun
+	sp.mu.Unlock()
+	f.lease.Close()
+	renew(t, f)
+	<-begun // the final checkpoint acknowledged, its draining write held
+	// The hand-off's manifest is never acknowledged, so its own draining
+	// write never begins: the one under way is the final checkpoint's.
+	f.log.mu.Lock()
+	f.log.holding = true
+	f.log.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	_ = f.owner.Handoff(ctx)
+	if took := time.Since(began); took > 400*time.Millisecond {
+		t.Fatalf("the hand-off waited %v for a draining write", took)
+	}
+	if _, ok := f.owner.Lease("lease-1"); ok {
+		t.Fatal("the lease held past the hand-off's deadline")
+	}
+	f.owner.Stop()
+	select {
+	case <-sp.drainReturned:
+	default:
+		t.Fatal("Stop returned while a draining write ran")
+	}
+}
+
+// TestAReleaseSkipsAHoldThatHeartbeated: the release pass rechecks each hold
+// as its batch comes, so a hold whose first heartbeat was issued between the
+// pass's scan and its batch is not released.
+func TestAReleaseSkipsAHoldThatHeartbeated(t *testing.T) {
+	f, _ := releaseFixture(t)
+	f.lease.mu.Lock()
+	f.lease.allocation = 1 << 40
+	f.lease.mu.Unlock()
+	var last string
+	for range 20 * releaseBatch {
+		a, err := f.lease.Admit(Admission{Estimate: 1, Stream: true, Boot: boot, OpenHeartbeat: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = max(last, a.Auth)
+	}
+	f.clock.advance(70 * time.Second)
+	beat := make(chan error, 1)
+	var once sync.Once
+	f.log.mu.Lock()
+	f.log.onPublish = func(data []byte) {
+		if bytes.Contains(data, []byte(`"kind":"release"`)) {
+			// The first batch is being decided: the last hold, in the last
+			// batch, heartbeats as soon as the lease's lock is free.
+			once.Do(func() {
+				go func() {
+					_, err := f.lease.Heartbeat(context.Background(), last, HeartbeatOf{GatewaySeq: 1, Hash: sum(last),
+						Usage: 1, Running: 1, Basis: []byte("terms")})
+					beat <- err
+				}()
+			})
+		}
+	}
+	f.log.mu.Unlock()
+	if err := f.owner.Reap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-beat; err != nil {
+		t.Fatalf("the heartbeat: %v", err)
+	}
+	released := 0
+	for _, r := range f.log.records(t, "lease-1") {
+		if r.Kind == record.Release {
+			released++
+			if r.Auth == last {
+				t.Fatal("a hold whose heartbeat was issued was released")
+			}
+		}
+	}
+	if released != 20*releaseBatch-1 {
+		t.Fatalf("%d holds released", released)
 	}
 }

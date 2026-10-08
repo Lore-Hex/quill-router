@@ -29,9 +29,11 @@ type fakeSpanner struct {
 	drained      []string
 	// drainGate holds a draining write until closed; one cancelled takes
 	// afterCancel to return, and drainReturned is closed once it has.
+	// drainBegun, when set, is told when a held write begins.
 	drainGate     chan struct{}
 	afterCancel   time.Duration
 	drainReturned chan struct{}
+	drainBegun    chan struct{}
 	// drainHold, when set, holds a cancelled draining write until closed.
 	drainHold chan struct{}
 	// grants are the grants asked for; refuseGrants refuses them, grantGate
@@ -199,9 +201,15 @@ func (f *fakeSpanner) ShortfallWrite(ctx context.Context, owner store.Owner, ref
 
 func (f *fakeSpanner) OwnerMarkDraining(ctx context.Context, owner store.Owner, ref store.LeaseRef) (bool, time.Time, error) {
 	f.mu.Lock()
-	gate, afterCancel, returned, hold := f.drainGate, f.afterCancel, f.drainReturned, f.drainHold
+	gate, afterCancel, returned, hold, begun := f.drainGate, f.afterCancel, f.drainReturned, f.drainHold, f.drainBegun
 	f.mu.Unlock()
 	if gate != nil {
+		if begun != nil {
+			select {
+			case begun <- struct{}{}:
+			default:
+			}
+		}
 		select {
 		case <-gate:
 		case <-ctx.Done():
