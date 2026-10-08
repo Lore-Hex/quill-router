@@ -579,6 +579,23 @@ func TestATerminalKeepsItsAnswer(t *testing.T) {
 		t.Fatalf("the terminal's record: %+v %v", g.Terminal, err)
 	}
 
+	// A cost not yet known stays unknown, not a known zero.
+	pending := admitting(t)
+	pending.terminal = func(int) (frontdoor.TerminalAnswer, error) {
+		return frontdoor.TerminalAnswer{Status: frontdoor.Settled, Outcome: "pending"}, nil
+	}
+	cfg = config(pending)
+	log.Reset()
+	cfg.Log = &log
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	g = Generation{}
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil || g.Terminal == nil ||
+		g.Terminal.Status != "settled" || g.Terminal.Outcome != "pending" || g.Terminal.CostKnown {
+		t.Fatalf("a terminal whose cost is not known: %+v %v", g.Terminal, err)
+	}
+
 	// A terminal another won: the record keeps the winner's kind and
 	// charge, not its own.
 	won := admitting(t)
