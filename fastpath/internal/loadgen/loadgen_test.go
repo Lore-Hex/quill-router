@@ -595,26 +595,30 @@ func TestTheRateIsKept(t *testing.T) {
 	a, b := admitting(t), admitting(t)
 	cfg := config(a)
 	cfg.Gateways = []Gateway{a, b}
-	cfg.Rate, cfg.Duration, cfg.Mix.StreamShare = 400, 250*time.Millisecond, 0
+	cfg.Rate, cfg.Duration, cfg.Mix.StreamShare = 400, time.Second, 0
 	began := time.Now()
 	rep, err := Run(context.Background(), cfg)
 	took := time.Since(began)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Started != 100 || rep.NotStarted != 0 || len(a.authorizes) != 50 || len(b.authorizes) != 50 {
+	if rep.Started != 400 || rep.NotStarted != 0 || len(a.authorizes) != 200 || len(b.authorizes) != 200 {
 		t.Fatalf("started %d, not %d; %d and %d", rep.Started, rep.NotStarted, len(a.authorizes), len(b.authorizes))
 	}
 	// The k-th generation is due k / 400 seconds into the run, so the k-th
-	// authorize comes no sooner; and the run lasts its duration.
+	// authorize comes no sooner, and, answered at once, not long after; and
+	// the run lasts its duration, and not long past it. A pace a quarter
+	// slower is 250 ms late by the end.
+	const late = 200 * time.Millisecond
 	at := slices.Concat(a.at["authorize"], b.at["authorize"])
 	slices.SortFunc(at, func(x, y time.Time) int { return x.Compare(y) })
 	for k, when := range at {
-		if due := time.Duration(k+1) * time.Second / 400; when.Sub(began) < due {
-			t.Fatalf("authorize %d %v into the run, due at %v", k+1, when.Sub(began), due)
+		due := time.Duration(k+1) * time.Second / 400
+		if since := when.Sub(began); since < due || since > due+late {
+			t.Fatalf("authorize %d %v into the run, due at %v", k+1, since, due)
 		}
 	}
-	if took < cfg.Duration {
+	if took < cfg.Duration || took > cfg.Duration+late {
 		t.Fatalf("a run of %v ended after %v", cfg.Duration, took)
 	}
 
