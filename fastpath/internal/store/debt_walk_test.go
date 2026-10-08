@@ -67,7 +67,8 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		}
 	}
 	t.Logf("operations: %v", seen)
-	for _, k := range []string{"grant", "refused grant", "shortfall-write", "booking", "fault", "return", "drain",
+	for _, k := range []string{"grant", "refused grant", "shortfall-write", "booking", "fault", "faults in one commit",
+		"return", "drain",
 		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
 		"a booking past the first donor", "a return before the last donor", "a batch its order changes",
 		"a return its place changes"} {
@@ -117,8 +118,8 @@ func (l *debtLease) raised(rise int64) { l.donors[0].allocation += rise }
 // booked books a charge as the store does (§4.2): the shortfall total rises
 // to the record's, the rise to the first donor; the charge is matched first
 // donor first, each up to its room; the rest is a fault. It reports whether
-// a donor after the first took part.
-func (l *debtLease) booked(charge, total int64) (pastFirst bool) {
+// a donor after the first took part, and the fault.
+func (l *debtLease) booked(charge, total int64) (pastFirst bool, fault int64) {
 	if rise := total - l.shortfall; rise > 0 {
 		l.shortfall = total
 		l.raised(rise)
@@ -135,7 +136,7 @@ func (l *debtLease) booked(charge, total int64) (pastFirst bool) {
 		pastFirst = pastFirst || i > 0
 	}
 	l.fault += left
-	return pastFirst
+	return pastFirst, left
 }
 
 // gaveBack returns amount of what the lease has not booked, last donor
@@ -159,16 +160,21 @@ func (l *debtLease) gaveBack(amount int64) (beforeLast bool) {
 func (l *debtLease) room() int64 { return l.allocation() - l.consumed }
 
 // bookedEach books and returns a commit's money one operation at a time,
-// in order, and reports whether a booking reached a donor after the first.
-func (l *debtLease) bookedEach(money []MoneyOp) (pastFirst bool) {
+// in order, and reports whether a booking reached a donor after the first,
+// and each booking's fault, in order, as a commit's result lists them.
+func (l *debtLease) bookedEach(money []MoneyOp) (pastFirst bool, faults []int64) {
 	for _, op := range money {
-		if op.Book {
-			pastFirst = l.booked(op.Charge, op.ShortfallTotal) || pastFirst
-		} else {
+		if !op.Book {
 			l.gaveBack(op.Amount)
+			continue
+		}
+		past, fault := l.booked(op.Charge, op.ShortfallTotal)
+		pastFirst = pastFirst || past
+		if fault > 0 {
+			faults = append(faults, fault)
 		}
 	}
-	return pastFirst
+	return pastFirst, faults
 }
 
 // returnsFirst is money with its returns moved before its bookings.
@@ -354,6 +360,9 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	if err != nil || len(got) != 1 || got[0].Refused != "" {
 		d.fatalf("the commit %+v: %+v %v", req, got, err)
 	}
+	if !slices.ContainsFunc(money, func(op MoneyOp) bool { return op.Book }) && len(got[0].Faults) != 0 {
+		d.fatalf("a commit that books nothing faulted %v", got[0].Faults)
+	}
 	l.version, l.seq = got[0].NewVersion, seq
 	l.stored = l.stored || boundary
 	return got[0]
@@ -425,12 +434,19 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		d.seen["a return its place changes"]++
 	}
 	got := d.commit(ctx, l, money, false)
-	if l.bookedEach(money) {
+	pastFirst, faults := l.bookedEach(money)
+	if pastFirst {
 		d.seen["a booking past the first donor"]++
 	}
 	d.seen["booking"]++
-	if len(got.Faults) > 0 {
+	if !slices.Equal(got.Faults, faults) {
+		d.fatalf("the commit's faults %v, and the walk's %v", got.Faults, faults)
+	}
+	if len(faults) > 0 {
 		d.seen["fault"]++
+	}
+	if len(faults) > 1 {
+		d.seen["faults in one commit"]++
 	}
 }
 
@@ -531,10 +547,14 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			d.fatalf("committing the drain log's winners: %+v %v", got2, err)
 		}
 		l.version = got2[0].NewVersion
+		pastFirst, faults := l.bookedEach(money)
+		if pastFirst {
+			d.seen["a booking past the first donor"]++
+		}
+		if !slices.Equal(got2[0].Faults, faults) {
+			d.fatalf("the drain log's winners' commit faulted %v, and the walk's ledger %v", got2[0].Faults, faults)
+		}
 		for _, w := range winners {
-			if l.booked(w.Charge, l.shortfall) {
-				d.seen["a booking past the first donor"]++
-			}
 			l.committed[w.RecordID] = true
 		}
 	}

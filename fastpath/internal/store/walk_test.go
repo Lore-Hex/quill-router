@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -600,10 +601,20 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.fatalf("member %s's commit: %+v, and the shadow's version is %d", w.c.Members[m], got[0], to.Ver)
 	}
 	allocation := int64(w.c.Grant) + int64(from.Raised)
+	var faults []int64
 	for _, op := range req.Money {
 		matched := min(op.Charge, max(allocation-w.consumed, 0))
 		w.consumed += matched
 		w.faulted += op.Charge - matched
+		if op.Charge > matched {
+			faults = append(faults, op.Charge-matched)
+		}
+	}
+	if !slices.Equal(got[0].Faults, faults) {
+		w.fatalf("member %s's commit faulted %v, and the walk's ledger %v", w.c.Members[m], got[0].Faults, faults)
+	}
+	if len(faults) > 1 {
+		w.seen["faults in one commit"]++
 	}
 	w.members[m].decided, w.members[m].faultSeq = nil, 0
 	if req.AuditFault != nil {
@@ -1005,6 +1016,7 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 		w.fatalf("holds listed at %v, last tick %d, and the walk sent neither", l.HoldsListedSeq, l.LastTick)
 	}
 	w.checkPacks(packs, "the winners'")
+	w.checkWinnerCounts()
 	for _, h := range holds {
 		seq := spanner.NullInt64{Int64: w.holdSeq[index(w.c.Auths, h.AuthorizationID)], Valid: true}
 		if h.SnapshotOwnerSeq != seq || h.Estimate != walkEstimate ||
@@ -1031,6 +1043,35 @@ func (w *walker) checkPacks(packs []Pack, read string) {
 			w.fatalf("%s read's pack %d at version %d holds %+v, and its commit stored %+v", read, i, p.CommitVersion,
 				p.Winners, w.packWins[i])
 		}
+	}
+}
+
+// checkWinnerCounts holds each pack's stored winner count, which no read of
+// the packs returns, to its commit's winners.
+func (w *walker) checkWinnerCounts() {
+	w.t.Helper()
+	var counts []int64
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL: `SELECT winner_count FROM tr_lease_winners WHERE workspace_id = @w AND lease_id = @l
+		       ORDER BY commit_version`,
+		Params: w.ref.params(),
+	}).Do(func(r *spanner.Row) error {
+		var n int64
+		if err := r.Column(0, &n); err != nil {
+			return err
+		}
+		counts = append(counts, n)
+		return nil
+	})
+	if err != nil {
+		w.fatalf("reading the packs' winner counts: %v", err)
+	}
+	want := make([]int64, len(w.packWins))
+	for i, wins := range w.packWins {
+		want[i] = int64(len(wins))
+	}
+	if !slices.Equal(counts, want) {
+		w.fatalf("the packs' winner counts are %v, and the walk's commits stored %v", counts, want)
 	}
 }
 
