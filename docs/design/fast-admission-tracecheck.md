@@ -24,11 +24,13 @@ in one instance of each spec, with the spec's constants set from the run
 (§2), through a mapping from the runtime's events to the spec's steps (§4).
 
 The specs also abstract the runtime: `TerminalOrder` has one heartbeat per
-authorization and no checkpoints, `AuditorCommit` appends to the drain log
-only once a lease drains, `LeaseLifecycle` counts holds as units and time in
-ticks. Larger state alone does not bridge that. The mapping does, spec by
-spec, and says for each runtime behavior a spec leaves out which step it
-is, why that is sound, or what checks it instead.
+authorization and no checkpoints, `AuditorCommit` one fence tick and
+whole-commit acknowledgements, `LeaseLifecycle` holds as units, time in
+ticks and renewals as single steps. Larger state alone does not bridge
+that. Where the specs' safety arguments rest on what they leave out, the
+specs grow first, through TLC (§4.1); the rest the mapping bridges, spec by
+spec, saying for each runtime behavior a spec leaves out which step it is,
+why that is sound, or what checks it instead (§4.2).
 
 ## 2. Machines
 
@@ -108,7 +110,56 @@ two subscribers given one key's messages in different orders, and is
 reported as that. The run happened in one of the order's linear extensions,
 and `tracecheck` cannot tell which.
 
-## 4. Mappings
+## 4. The specs and the runtime
+
+### 4.1 Where the specs grow first
+
+Some runtime behavior the specs abstract is behavior their safety arguments
+rest on, so no mapping may wave it away: per-message acknowledgements and
+redelivery decide what a member applies twice, ticks before and after the
+fence decide where S falls, a refund is a terminal of its own. Before any
+machine, each spec grows to have it, through TLC at the configurations it
+checks, its guard table's state counts updated, and its shadow and the
+shadow's comparisons with it (step S6c-0, one pull request a spec):
+
+- **`TerminalOrder`**
+  - Refunds. An enclave that gave up with nothing delivered may refund. The
+    owner's refund and a front door's append of one are terminals of their
+    own, enabled for such an enclave, while a settle still needs something
+    delivered (A4).
+  - Reaps. `AuditorReap(a)` needs no drain row of a's, as `store.Reap` checks
+    in its transaction, not every row applied: the auditor reaps several
+    overdue holds before it books the rows they made.
+- **`AuditorCommit`**
+  - Hand-offs. A chunk is a record that advances progress and lists holds,
+    each a stored open hold from then on (a hold the auditor had not seen
+    with its end of life); the manifest completes the list.
+  - Acknowledgements. A member acknowledges each record it committed, in
+    order, so `acked` moves to any prefix of what is done, not only to all
+    of it.
+  - Redelivery. Pub/Sub may give the member that holds a key its
+    unacknowledged messages again, from the first, with no reassignment,
+    crash or re-read.
+  - Ticks. The ticker publishes ticks before the fence F and after it, each
+    with its time, and every one is in the log. A member applies the first
+    at or past F, which stores S, and skips the others.
+  - Gaps and reaps. A member decides a gap or a reap in memory and then
+    writes it, conditionally: the write can be refused and change nothing,
+    and only a write that lands changes the lease's row.
+- **`LeaseLifecycle`**
+  - Renewals. A renewal's statement reads Spanner's time and computes the
+    expiry, which its commit makes visible later; a renewal that timed out at
+    its owner may still commit, under the same epoch; and an answer that
+    leaves the expiry as it was still tells the owner what it is.
+  - Tickers. Several tickers may read an expired lease before one marks it;
+    each read is its own, and a refused mark ends only its own.
+  - Views. A process refreshes its view of the workspace whether or not a
+    pause came.
+
+Each change is checked by TLC like the specs are now, and the mappings
+below are written against the specs as they will be.
+
+### 4.2 Mappings
 
 Each shadow's package has a mapping from the runtime's events to its steps.
 An event maps to a sequence of steps, at its place in the order, or to none
@@ -121,118 +172,116 @@ anywhere in that interval. The mapping is tested on the runtime's own traces
 (§9), where a failure is the runtime's or the mapping's, and is found out
 either way.
 
-### TerminalOrder
+**`TerminalOrder`**
 
-- **The owner's records.** A hold's first heartbeat record is
-  `OwnerHeartbeat`; a settle or a refund the owner decides is `OwnerSettle`,
-  its reap `OwnerReap`, its release `OwnerRelease`, an adopted drain row
-  `OwnerAdopt`. Later heartbeats, checkpoints and a hand-off's chunks and
-  manifest are no step: the spec's state about a heartbeat is whether one
-  was issued, acknowledged or made durable, and the first decides all
-  three. Every position the spec compares (`OutboxLen`, `Delivered`,
-  `Acked`, `OwnerApplied`, `TickAt`, `S`, `IssuedAtCutoff`) is the rank of a
-  runtime sequence number: the count of records the spec models at or below
-  it. Ranking keeps every comparison the spec makes, and only those
-  positions enter its guards.
+- **The owner's records.** The runtime's numbering is checked first, as it
+  is: the owner's records are numbered from 1 with no number missing or
+  used twice, and every position a commit or a tick names is one of them.
+  Then a hold's first heartbeat record is `OwnerHeartbeat`; the owner's
+  settle `OwnerSettle`, its refund the refund step, its reap `OwnerReap`,
+  its release `OwnerRelease`, an adopted drain row `OwnerAdopt`. Later
+  heartbeats, checkpoints and a hand-off's records are no step: the spec's
+  state about a heartbeat is whether one was issued, acknowledged or made
+  durable, and the first decides all three. Every position the spec compares
+  is the rank of a runtime number among the records the spec models, which
+  keeps every comparison the spec makes once the numbering is whole.
 - **Acknowledgements.** `Ack` at the owner's acknowledgement of each modeled
   record, in rank order; one of a record the spec does not model is no step.
 - **The log.** `Deliver` of rank k is added: after k's publish and the
   `Deliver` of rank k-1, before k's acknowledgement and every delivery of k
-  to a member, and before the tick's publish if the key's order puts k
-  before the tick, after it otherwise. Within that interval only these
-  events read `Delivered`, so where it falls changes nothing else.
-  `PublishTick` at the tick's publish, where those edges make `Delivered`
-  the rank of the last record before the tick.
-- **Time boundaries.** `CutoffPass` is added after the owner's last record
-  and before `DeadlinePass`; `DeadlinePass` after every acknowledgement of a
-  record issued before the cutoff, and before `PublishTick`. Neither waits
-  for the owner to record it, so a killed owner's lease still reaches its
-  tick. An acknowledgement the evidence puts after the tick's publish makes
-  a cycle: the owner answered past its publish deadline, a violation of the
-  fence, reported with the clocks that bound it (§5).
-- **The enclave.** `EnclaveDeliver` at a request's provider answer. An
-  enclave that gives up maps to `EnclaveGiveUp` at its give-up, unless the
-  owner acknowledged a heartbeat of its hold: the spec's enclave learns the
-  answer at `Ack`, and one that then delivers nothing more is a state the
-  spec has, so the give-up is no step. A release's `AllowanceElapse` is added
-  just before `OwnerRelease`, since only the release reads it. For a
-  declared boot its guard needs the enclave's real give-up, never a moved
-  one, before it: a release while the enclave was still trying is the
-  spec's A3 broken, reported as that.
+  to a member, and before the fence tick's publish if the key's order puts
+  k before it, after otherwise. Within that interval only these events read
+  `Delivered`, so where it falls changes nothing else.
+- **Ticks.** The fence tick, the first tick at or past F, the one a member
+  applied to store S, is `PublishTick`; earlier and later ticks are no step,
+  since `TerminalOrder`'s state changes at the fence alone.
+- **Time boundaries.** Every record's issuance must have passed the owner's
+  cutoff test on its recorded reading, and every acknowledgement of a record
+  issued before the cutoff must precede the owner's publish deadline, for
+  every solution of §5's constraints. `CutoffPass` is added after the
+  owner's last issuance and at the latest when its clock would read its
+  known expiry less S, and `DeadlinePass` at the publish deadline after it,
+  both before the fence tick; a killed owner's lease reaches its tick all
+  the same. A late issuance or acknowledgement fails its timed check, where
+  it is, not wherever the boundary was placed.
+- **The enclave.** `EnclaveDeliver` at a request's provider answer, for a
+  request that does not stream; a stream's enclave learns its answer at
+  `Ack`. An enclave that gives up maps to `EnclaveGiveUp` at its give-up,
+  unless the owner acknowledged a heartbeat of its hold, when the spec's
+  enclave has the answer and the give-up is no step. Whatever the mapping,
+  the run's own deliveries are checked directly (A4): an enclave that gave
+  up having delivered nothing sends no settle. A release's `AllowanceElapse`
+  is added just before `OwnerRelease`, since only the release reads it, and
+  for a declared boot its guard needs the enclave's real give-up before it:
+  a release while the enclave was still trying is the spec's A3 broken.
 - **The auditor's durable steps.** `TerminalOrder`'s auditor is the lease's
-  durable progress, so its steps are the auditor's successful commits, not
-  a member's work in memory: a commit that moves the stored progress from p
-  to p' is `AuditorApplyOwner` for each modeled record of rank above rank(p)
-  through rank(p'), then `ApplyDrain` for each drain row it books, then
-  `StoreS` if it stores S, in that order. What a member applied and lost to
-  a crash or a refused commit is no step. `AuditorReap` at a reap row's
-  insert, `Close` at the close's commit, `RebuildStoreS` with the boundary a
-  rebuild stored, `MarkDraining` and `FrontDoorAppend` at their commits.
+  durable progress, so its steps are the successful commits: a commit that
+  moves the stored progress from p to p' is `AuditorApplyOwner` for each
+  modeled record of rank above rank(p) through rank(p'), then `ApplyDrain`
+  for each row it books, then `StoreS` if it stores S. What a member applied
+  and lost to a crash or a refused commit is no step. `AuditorReap` at a
+  reap row's insert, `Close` at the close's commit, `RebuildStoreS` with the
+  boundary a rebuild stored, `MarkDraining` and `FrontDoorAppend` at their
+  commits.
 
-### AuditorCommit
+**`AuditorCommit`**
 
-- **The owner's records.** `IssueHeartbeat` at each heartbeat record;
-  `IssueTerminal` at the owner's terminal, settle for a settle or a reap that
-  charges, refund for a refund or a release, an adoption as its row's kind;
-  a checkpoint is `IssueCheckpoint` or `IssueWrongCheckpoint` as the money
-  check finds it (§7). A hand-off's chunks and manifest are no step:
-  `AuditorCommit` models none, and `LeaseLifecycle` checks the lists they
-  carry. Sequence numbers are ranks among the modeled records, as above. A
-  gap the runtime declares at a record the spec does not model is outside
-  the model, and reported as Pub/Sub's or the owner's numbering broken.
-- **The log.** The spec's log is the key's messages in the order Pub/Sub
-  stored them, each published copy once. `tracecheck` builds it before
-  replay from every member's deliveries, by message ID: each entry is
-  `Store`, `StoreAhead` or `StoreLate` as its record stands to the records
-  issued and to the tick, or `StoreAgain` for a second copy of a record, and
-  each is added after its publish and before its first delivery and its
-  acknowledgement; `FenceTick` at the tick's publish, between the entries
-  the key's order puts before and after it. Deliveries that no single log
-  explains, such as one member given a later message first, break P4's
+- **The owner's records.** Each record is the step of its kind: a
+  heartbeat, a terminal (settle for a settle or a charging reap, refund for
+  a refund or a release, an adoption as its row's kind), a checkpoint
+  (`IssueCheckpoint` or `IssueWrongCheckpoint` as the money check finds it,
+  §7), a hand-off's chunk or manifest. Numbers are the runtime's own, every
+  record being modeled.
+- **The log.** The spec's log is the key's messages, ticks among them, in
+  the order Pub/Sub stored them, each published copy once. `tracecheck`
+  builds it before replay from every member's deliveries, by message ID,
+  each entry added after its publish and before its first delivery and its
+  first acknowledgement. Deliveries that no single log explains, such as one
+  member given a later message before an earlier one, break P4's
   assumption, and are reported as that.
-- **Assignment.** `Assign(m)` is added before member m's first delivery
-  after another member's last, after the acknowledgements that bring the
-  spec's `Acked` to one less than the position of that first delivery, and
-  before the next: where the redelivery starts says which acknowledgements
-  came first.
-- **Members.** `Load` and `LoadWinners` at the member's reads; `ApplyRecord`,
-  `SkipRecord`, `Gap`, `ApplyTick`, `ApplyRow` and `Reap` at the member's own
-  steps, in memory; `Commit` at a successful commit, with the version it
-  read and the one it wrote; `Reread` at the read after a refused commit;
-  `Ack(m)` at the member's acknowledgements; `Crash(m)` at the kill; `Close`
-  at the close's commit.
+- **Assignment and redelivery.** A member's deliveries say where each of its
+  runs through the log starts: a run that starts after another member's
+  last delivery is `Assign`; one that starts again at the first
+  unacknowledged message for the same member is a redelivery, or the
+  member's crash or re-read where it recorded one. Each is placed after the
+  acknowledgements that bring `acked` to one less than where the run starts,
+  and before the next one.
+- **Members.** `Load` and `LoadWinners` at the member's reads; applying,
+  skipping, a tick and a drain row at the member's own steps, in memory; a
+  gap and a reap at their conditional writes, a refused one as its refusal;
+  `Commit` at a successful commit, with the version it read and the one it
+  wrote; `Reread` at the read after a refused commit; each acknowledgement
+  at the member's acknowledgement of that record; `Crash(m)` at the kill;
+  `Close` at the close's commit.
 - **Other writers.** `Raise` at a raise's or a shortfall write's commit,
   and at an append's raise. `MarkDraining` at its commit. An append's row is
   `FrontDoorAppend` at the later of its commit and `MarkDraining`: the
   runtime appends to an open lease, and while the lease is open no step of
-  the spec reads the drain log (`ApplyRow`, `Reap` and `Close` need it
-  draining).
+  the spec reads the drain log.
 
-### LeaseLifecycle
+**`LeaseLifecycle`**
 
-- **Renewals.** The runtime sets a renewed expiry to
-  `GREATEST(expiry, CURRENT_TIMESTAMP() + window)`, at the statement's time,
-  not the commit's. `OwnerRenew` is at the renewal's database point, at
-  true time the new expiry less `Window`, which must lie between the call's
-  request and response (§5). A renewal that left the expiry as it was is no
-  step, nor is its answer, and the owner's known expiry must already be that
-  expiry. A renewal committed for a process that no longer listens, the
-  lease's epoch not its own, is `ReplayedRenew`. `RenewAnswer` at the
-  owner's receipt; `AnswerLost` at its timeout, or at its kill with an
-  answer outstanding.
+- **Renewals.** A renewal's statement at the time its result shows, the
+  new expiry less `Window` or, for an expiry it left as it was, no later than
+  the commit; its commit at its commit timestamp, where the new expiry
+  becomes visible. A renewal that commits after its owner timed out commits
+  all the same. `RenewAnswer` at the owner's receipt, whatever it says;
+  `AnswerLost` at its timeout, or at its kill with an answer outstanding;
+  `ReplayedRenew` for a renewal committed for a process the lease's epoch is
+  no longer.
 - **Holds.** `Admit` at the owner's admission, with the reading and the
   known expiry it decided on. `HoldEnds` at the hold's first terminal,
   wherever it lands; a hold whose life runs out first ends by `Tick`, and
-  §5 checks that its request had ended by then.
+  §5 checks that its request had stopped by then.
 - **The owner's ending.** `OwnerStop`, `FinalCheckpoint`, `OwnerDrains` and
   `OwnerDrops` at the owner's events; `ForcedExitStart` with the holds whose
   chunks the auditor applied, and `ForcedExitManifest` at the manifest;
   `Restart` at a new process for the node.
-- **Others.** `Revoke` at the revocation's commit; `Pause` and `RefreshView`
-  at a workspace's pause and a process's read of it; `AuditorRead`,
-  `AuditorMark` and `AuditorMarkRefused` at the ticker's read and its
-  conditional write; `CloseOnTheList` or `CloseOnTime` at the close's commit,
-  by the kind it records. `Tick` is time passing between steps (§5).
+- **Others.** `Revoke` at the revocation's commit; `Pause` at a workspace's
+  pause, and a view's refresh at a process's read of it; each ticker's read
+  and its conditional mark, a refused one as its refusal; `CloseOnTheList`
+  or `CloseOnTime` at the close's commit, by the kind it records. `Tick` is
+  time passing between steps (§5).
 - Holds are the run's, keyed by authorization, each one unit as the spec
   has them; `HoldsFitAllocation` is checked on their amounts (§7).
 
@@ -269,8 +318,10 @@ the constraints, never by putting a reading where the spec has true time:
   drains), must hold for every solution. A bound on one event is decided by
   its earliest and latest true times; a bound between two events, by the
   shortest path between them.
-- Every request ended within its hold's life (A3): its last delivery, or
-  the first send of its terminal, before its admission plus the longest
+- Every request stopped within its hold's life (A3). The load generator
+  records each request's end, the gateway's own: a stream completed, cut
+  short or given up, a request answered or failed. That end, not its last
+  delivery or its terminal, must come before its admission plus the longest
   life, for every solution. A terminal message that arrives later, retried,
   is no breach: `HoldEnds` is then no step, the hold having ended by `Tick`.
   A request that went on past its life is A3 broken, and reported, whatever
@@ -384,16 +435,21 @@ fault, which is already set.
   (all pairs' shortest paths), the verdict pass if every extension is a run
   and every timed predicate holds for every solution, violation if none is
   or one holds for none, inconclusive otherwise, with the first step that
-  fails in each extension. `tracecheck`'s verdict, and the step it names,
-  must be the oracle's.
+  fails in each extension. `tracecheck` may be more careful than the
+  oracle, never less: its pass must be the oracle's pass, its violation the
+  oracle's violation at the step it names, and it may call inconclusive a
+  trace the oracle decides, since its independence table is judged over every
+  state a pair could meet, not the states this trace does. The tests count
+  how often it does, so a table grown too careful shows.
 - **Traces from the machines.** Each step of a machine emits the events the
   runtime records for it, with their facts, clock readings within S, and
   evidence, so a random run becomes a trace. Each is checked as it is, with
   evidence removed, and altered: a fact changed, two events swapped, an event
   dropped or repeated, a reading or a timestamp moved. The small ones are
-  held to the oracle; for every one, an alteration whose verdict changes
-  must name a step the oracle shows failing, or a cycle the oracle's solver
-  finds, never just differ.
+  held to the oracle; for every one, an alteration that turns a verdict to
+  a violation must name a step the oracle shows failing, or a cycle the
+  oracle's solver finds, and one that turns it to inconclusive must name the
+  pair or the timed predicate that leaves it open.
 - **The runtime's own traces,** once the roles record events: the service's
   end-to-end tests and the scenarios of the spike plan's §5, each checked,
   K6's negative control reported as both a broken assumption and a
@@ -401,6 +457,9 @@ fault, which is already set.
 
 ## 10. Steps
 
+- **S6c-0.** Each spec grows as §4.1 says, one pull request a spec: the
+  spec, TLC at its configurations, its guard table, its shadow and the
+  shadow's comparisons.
 - **S6c.** The events and their order, the time check, and the oracle for
   small traces; `TerminalOrder`'s machine, independence table and mapping,
   and their tests.
