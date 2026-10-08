@@ -32,7 +32,6 @@ func (notSent) Wait(context.Context) (string, error) { return "", errNotSent }
 // it keeps the records and waits: a renewal that moves the cutoff lets it
 // republish them, still before anything new, and Let ends it.
 func (l *Lease) flush() {
-	defer close(l.stopped)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -66,15 +65,19 @@ func (l *Lease) flush() {
 			l.pending -= s.freed
 			l.inflight = l.inflight[1:]
 			l.live--
-			l.failed = false
+			l.failed, l.failedAt = false, time.Time{}
 			close(s.done)
 			l.mu.Unlock()
 			backoff = firstBackoff
 			continue
 		}
 		// Every record not acknowledged awaits its republish now.
+		now := l.o.cfg.Clock()
+		if !l.failed {
+			l.failedAt = now
+		}
 		l.failed, l.live = true, 0
-		within := l.withinCutoff(l.o.cfg.Clock())
+		within := l.withinCutoff(now)
 		l.mu.Unlock()
 		if !within {
 			// Past the cutoff: wait for a renewal, or the end.

@@ -7,9 +7,10 @@
 // handed over before n. Nothing waits under the lock: an answer waits for its
 // record's acknowledgement after it is released.
 //
-// The Spanner side (grants, renewals, shortfall writes, checkpoints, draining)
-// and adoption, the owner's reaper, the release and the forced exit come in
-// later parts of S5; this part takes a lease's grant and renewals as given.
+// Its Spanner side (spanner.go) renews the leases, checkpoints them, stores
+// their shortfall totals, and ends a lease that stopped admitting. Grants and
+// top-ups, adoption, the owner's reaper, the release and the forced exit come
+// in later parts of S5.
 package owner
 
 import (
@@ -58,12 +59,28 @@ type Config struct {
 	NewAuthorization func(lease string) (string, error)
 	// Clock is the owner's clock.
 	Clock func() time.Time
+
+	// Spanner is the store an owner renews its leases in and writes their
+	// shortfalls and draining to, nil for one that writes nothing there.
+	// Node is the owner's address, which with Epoch names it in the store's
+	// conditions; it renews every RenewEvery; Window is the leases' expiry
+	// window, after which an owner whose publishes for a lease keep failing
+	// stops renewing it (§4.2); KeyStatus is the key-status version it
+	// applies (§4.6), fixed in the spike.
+	Spanner    Spanner
+	Node       string
+	RenewEvery time.Duration
+	Window     time.Duration
+	KeyStatus  int64
 }
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
-		c.NewAuthorization == nil || c.Clock == nil {
+		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter and a clock")
+	}
+	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
+		return errors.New("owner: a store needs the owner's address, a renewal interval and the expiry window")
 	}
 	return nil
 }
@@ -129,9 +146,25 @@ func (o *Owner) Take(lease, workspace string, allocation int64, expiry time.Time
 	}
 	l := &Lease{o: o, id: lease, workspace: workspace, allocation: allocation, expiry: expiry, nextSeq: 1,
 		holds: map[string]*hold{}, decided: map[string]*decision{}, kick: make(chan struct{}, 1),
-		stop: make(chan struct{}), stopped: make(chan struct{})}
+		shortKick: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{})}
 	o.leases[lease] = l
-	go l.flush()
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		l.flush()
+	}()
+	if o.cfg.Spanner != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			l.writeShortfalls()
+		}()
+	}
+	go func() {
+		workers.Wait()
+		close(l.stopped)
+	}()
 	return l, nil
 }
 
@@ -144,9 +177,9 @@ func (o *Owner) Lease(id string) (*Lease, bool) {
 }
 
 // Let lets a lease go: the owner holds it no more and never takes it again,
-// its flusher stops, and a request that reaches it through a handle kept
-// from before is answered as one past its cutoff (§4.3). Every caller
-// returns once the flusher has stopped.
+// its flusher and shortfall writer stop, and a request that reaches it
+// through a handle kept from before is answered as one past its cutoff
+// (§4.3). Every caller returns once they have stopped.
 func (o *Owner) Let(id string) {
 	o.mu.Lock()
 	l, ok := o.leases[id]
@@ -244,10 +277,21 @@ type Lease struct {
 	live     int
 	failed   bool
 	let      bool
+	// failedAt is when the lease's publishes began failing, zero while they
+	// succeed. closing is set once the lease admits nothing more, refused
+	// once Spanner refused its renewal, and final is its final checkpoint's
+	// record once handed over. stored is the shortfall total Spanner has
+	// from the owner's writes.
+	failedAt time.Time
+	closing  bool
+	refused  bool
+	final    *sent
+	stored   int64
 
-	kick    chan struct{}
-	stop    chan struct{}
-	stopped chan struct{}
+	kick      chan struct{}
+	shortKick chan struct{}
+	stop      chan struct{}
+	stopped   chan struct{}
 }
 
 // ID is the lease's.

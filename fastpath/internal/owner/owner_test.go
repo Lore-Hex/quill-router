@@ -187,20 +187,24 @@ type fixture struct {
 	lease *Lease
 }
 
-func newFixture(t *testing.T, allocation int64, overrun func(int64) int64) *fixture {
+func newFixture(t *testing.T, allocation int64, overrun func(int64) int64, changes ...func(*Config)) *fixture {
 	t.Helper()
 	f := &fixture{log: newFakeLog(), clock: &clock{now: start}}
 	f.log.now = f.clock.Now
 	n := 0
 	var mu sync.Mutex
-	o, err := New(Config{Epoch: 3, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
+	cfg := Config{Epoch: 3, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
 		HeartbeatEvery: 30 * time.Second, Overrun: overrun, Clock: f.clock.Now,
 		NewAuthorization: func(lease string) (string, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			n++
 			return fmt.Sprintf("gwa-%s-%d", lease, n), nil
-		}}, f.log)
+		}}
+	for _, change := range changes {
+		change(&cfg)
+	}
+	o, err := New(cfg, f.log)
 	if err != nil {
 		t.Fatal(err)
 	}
