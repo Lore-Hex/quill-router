@@ -25,7 +25,8 @@ import (
 var key = bytes.Repeat([]byte("k"), frontdoor.MinKeySize)
 
 // fakeGateway answers as its functions say, and keeps what it was sent and
-// when.
+// when: each call's own copy, so a sender that changes a slice it sent
+// after the call does not change what was kept.
 type fakeGateway struct {
 	mu         sync.Mutex
 	authorizes []frontdoor.AuthorizeOf
@@ -51,6 +52,7 @@ func (f *fakeGateway) called(kind string) {
 }
 
 func (f *fakeGateway) Authorize(_ context.Context, a frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
+	a.Boot = slices.Clone(a.Boot)
 	f.mu.Lock()
 	f.authorizes = append(f.authorizes, a)
 	f.called("authorize")
@@ -59,6 +61,7 @@ func (f *fakeGateway) Authorize(_ context.Context, a frontdoor.AuthorizeOf) (fro
 }
 
 func (f *fakeGateway) Heartbeat(_ context.Context, hb frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
+	hb.Hash, hb.Basis = slices.Clone(hb.Hash), slices.Clone(hb.Basis)
 	f.mu.Lock()
 	f.heartbeats = append(f.heartbeats, hb)
 	f.called("heartbeat")
@@ -67,6 +70,7 @@ func (f *fakeGateway) Heartbeat(_ context.Context, hb frontdoor.HeartbeatOf) (fr
 }
 
 func (f *fakeGateway) Settle(_ context.Context, s frontdoor.SettleOf) (frontdoor.TerminalAnswer, error) {
+	s.Full, s.Money = slices.Clone(s.Full), slices.Clone(s.Money)
 	f.mu.Lock()
 	f.settles = append(f.settles, s)
 	f.called("settle")
@@ -79,6 +83,7 @@ func (f *fakeGateway) Settle(_ context.Context, s frontdoor.SettleOf) (frontdoor
 }
 
 func (f *fakeGateway) Refund(_ context.Context, r frontdoor.RefundOf) (frontdoor.TerminalAnswer, error) {
+	r.Money = slices.Clone(r.Money)
 	f.mu.Lock()
 	f.refunds = append(f.refunds, r)
 	f.called("refund")
