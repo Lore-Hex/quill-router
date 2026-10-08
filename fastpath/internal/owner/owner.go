@@ -127,6 +127,7 @@ type Owner struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	writers sync.WaitGroup
+	grants  sync.WaitGroup
 
 	mu      sync.Mutex
 	stopped bool
@@ -166,6 +167,7 @@ func (o *Owner) Stop() {
 	for _, id := range ids {
 		o.Let(id)
 	}
+	o.grants.Wait()
 	o.writers.Wait()
 }
 

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"math"
 	"slices"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
@@ -44,20 +44,59 @@ func (t TopUps) validate() error {
 }
 
 // shard is a shard's leases at the owner, oldest first; whether an ask for a
-// top-up is outstanding and when the last began; and what its leases have
-// charged, ever, with samples of it over the horizon for its rate.
+// top-up is outstanding, when the last began, and an ask to make again,
+// whose answer was lost; and what its leases charged, by when.
 type shard struct {
 	key     ShardKey
 	leases  []*Lease
 	asking  bool
 	askedAt time.Time
-	charged atomic.Int64
-	samples []sample
+	retry   *store.GrantRequest
+	charges charges
 }
 
-type sample struct {
-	at      time.Time
-	charged int64
+// charges are a shard's charges over the horizon, in sixty buckets of a
+// sixtieth of it each, by when they were decided: a top-up is sized by the
+// charges within the horizon, to within a bucket.
+type charges struct {
+	mu      sync.Mutex
+	width   time.Duration
+	buckets [60]struct {
+		start   time.Time
+		charged int64
+	}
+}
+
+func (c *charges) add(now time.Time, charged int64) {
+	if c.width <= 0 || charged <= 0 {
+		return
+	}
+	start := now.Truncate(c.width)
+	i := int((start.UnixNano() / int64(c.width)) % int64(len(c.buckets)))
+	if i < 0 {
+		i += len(c.buckets)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b := &c.buckets[i]
+	if !b.start.Equal(start) {
+		b.start, b.charged = start, 0
+	}
+	b.charged = sat(b.charged, charged)
+}
+
+// over is what was charged within the horizon before now.
+func (c *charges) over(now time.Time) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	from := now.Add(-c.width * time.Duration(len(c.buckets)))
+	var t int64
+	for _, b := range c.buckets {
+		if b.start.After(from) && !b.start.After(now) {
+			t = sat(t, b.charged)
+		}
+	}
+	return t
 }
 
 // shardLocked is the owner's shard of key, made if it has none, with o.mu
@@ -66,6 +105,7 @@ func (o *Owner) shardLocked(key ShardKey) *shard {
 	sh := o.shards[key]
 	if sh == nil {
 		sh = &shard{key: key}
+		sh.charges.width = o.cfg.TopUps.Horizon / time.Duration(len(sh.charges.buckets))
 		o.shards[key] = sh
 	}
 	return sh
@@ -73,17 +113,21 @@ func (o *Owner) shardLocked(key ShardKey) *shard {
 
 // Admit admits a request for a shard under its oldest lease with room
 // (§4.4), and asks for a top-up when the shard's room is low. With no lease
-// that takes it, it answers ErrNoRoom: the front door tries another shard's
-// owner, or answers that the request should wait.
+// that takes it, it answers ErrNoRoom, and the top-up it asks for is sized
+// to take it too: the front door tries another shard's owner, or answers
+// that the request should wait.
 func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
+	if err := a.valid(); err != nil {
+		return Admitted{}, err
+	}
 	o.mu.Lock()
 	leases := slices.Clone(o.shardLocked(key).leases)
 	o.mu.Unlock()
-	defer o.topUp(key)
 	for _, l := range leases {
 		got, err := l.Admit(a)
 		switch {
 		case err == nil:
+			o.topUp(key, 0)
 			return got, nil
 		case errors.Is(err, ErrNoRoom), errors.Is(err, ErrClosing), errors.Is(err, ErrPastCutoff),
 			errors.Is(err, ErrPublishing):
@@ -91,24 +135,30 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 			return Admitted{}, err
 		}
 	}
+	o.topUp(key, sat(a.Estimate, o.cfg.overrun(a.Estimate)))
 	return Admitted{}, ErrNoRoom
 }
 
 // topUp asks for another lease for the shard once its room is below the
-// low-water mark, unless an ask is outstanding or the last began within the
-// cooldown. The grant is a Spanner transaction off the request's path.
-func (o *Owner) topUp(key ShardKey) {
+// low-water mark, or a request found no lease to take it (unmet, the
+// request's need, which the lease is sized for too); one ask at a time, none
+// within the cooldown of the last, and none once the owner stops. The grant
+// is a Spanner transaction off the request's path.
+func (o *Owner) topUp(key ShardKey, unmet int64) {
 	t := o.cfg.TopUps
 	if t == (TopUps{}) {
 		return
 	}
 	now := o.cfg.Clock()
+	cooling := func(sh *shard) bool {
+		return o.stopped || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
+	}
 	o.mu.Lock()
 	sh := o.shardLocked(key)
-	cooling := sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
+	idle := cooling(sh)
 	leases := slices.Clone(sh.leases)
 	o.mu.Unlock()
-	if cooling {
+	if idle {
 		return
 	}
 	var room, needs int64
@@ -116,32 +166,42 @@ func (o *Owner) topUp(key ShardKey) {
 		r, n := l.roomAndNeeds(now)
 		room, needs = sat(room, r), sat(needs, n)
 	}
-	if room >= t.LowWater {
+	if room >= t.LowWater && unmet == 0 {
 		return
 	}
 	o.mu.Lock()
-	if sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown) {
+	if cooling(sh) {
 		o.mu.Unlock()
 		return
 	}
+	req := sh.retry
+	if req == nil {
+		amount := min(max(sat(sat(sh.charges.over(now), needs), unmet), t.Min), t.Max)
+		req = &store.GrantRequest{Workspace: key.Workspace, LeaseID: store.NewLeaseID(), Region: key.Region,
+			WorkspaceShard: key.Shard, Owner: o.who(), Amount: amount, KeyStatusVersion: o.cfg.KeyStatus}
+	}
 	sh.asking, sh.askedAt = true, now
-	amount := min(max(sat(sh.chargedOver(), needs), t.Min), t.Max)
+	o.grants.Add(1)
 	o.mu.Unlock()
-	go o.grant(sh, amount)
+	go o.grant(sh, *req)
 }
 
-// grant asks Spanner for a lease of amount for the shard, and takes it.
-func (o *Owner) grant(sh *shard, amount int64) {
-	id := store.NewLeaseID()
-	got, err := o.cfg.Spanner.Grant(o.ctx, store.GrantRequest{Workspace: sh.key.Workspace, LeaseID: id,
-		Region: sh.key.Region, WorkspaceShard: sh.key.Shard, Owner: o.who(), Amount: amount,
-		KeyStatusVersion: o.cfg.KeyStatus})
+// grant asks Spanner for a lease for the shard, and takes it. An ask whose
+// answer is lost may have been granted: the shard's next ask is the same,
+// lease ID and all, which the store answers with the lease it granted, so
+// none is granted and left unheld.
+func (o *Owner) grant(sh *shard, req store.GrantRequest) {
+	defer o.grants.Done()
+	got, err := o.cfg.Spanner.Grant(o.ctx, req)
 	if err == nil && got.Refused == "" {
-		_, _ = o.take(id, sh.key.Workspace, amount, got.Expiry, sh)
+		_, _ = o.take(req.LeaseID, req.Workspace, req.Amount, got.Expiry, sh)
 	}
 	o.mu.Lock()
-	sh.asking = false
-	o.mu.Unlock()
+	defer o.mu.Unlock()
+	sh.asking, sh.retry = false, nil
+	if err != nil {
+		sh.retry = &req
+	}
 }
 
 // roomAndNeeds is what a lease adds to its shard's room, its free room with
@@ -159,43 +219,20 @@ func (l *Lease) roomAndNeeds(now time.Time) (room, needs int64) {
 	return room, sat(b.Held, b.Buffer)
 }
 
-// closeIfDone stops admitting under a lease that has admitted nothing for
-// IdleAfter or is MaxLife old.
+// over: a lease that has admitted nothing for IdleAfter, or is MaxLife old,
+// admits nothing more.
+func (t TopUps) over(now, lastAdmit, takenAt time.Time) bool {
+	return t != (TopUps{}) && (now.Sub(lastAdmit) >= t.IdleAfter || now.Sub(takenAt) >= t.MaxLife)
+}
+
+// closeIfDone stops admitting under a lease gone idle or old (TopUps.over),
+// at each renewal round; an admission checks too.
 func (l *Lease) closeIfDone(now time.Time, t TopUps) {
-	if t == (TopUps{}) {
-		return
-	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if now.Sub(l.lastAdmit) >= t.IdleAfter || now.Sub(l.takenAt) >= t.MaxLife {
+	if t.over(now, l.lastAdmit, l.takenAt) {
 		l.closing = true
 	}
-}
-
-// sampleShards records each shard's charges for its rate, keeping one sample
-// at or before the horizon's start as the base.
-func (o *Owner) sampleShards(now time.Time) {
-	t := o.cfg.TopUps
-	if t == (TopUps{}) {
-		return
-	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	for _, sh := range o.shards {
-		sh.samples = append(sh.samples, sample{at: now, charged: sh.charged.Load()})
-		for len(sh.samples) > 1 && !sh.samples[1].at.After(now.Add(-t.Horizon)) {
-			sh.samples = sh.samples[1:]
-		}
-	}
-}
-
-// chargedOver is what the shard charged since its base sample, with o.mu
-// held.
-func (sh *shard) chargedOver() int64 {
-	if len(sh.samples) == 0 {
-		return 0
-	}
-	return max(sh.charged.Load()-sh.samples[0].charged, 0)
 }
 
 // sat adds two amounts, each at least 0, saturating at the largest.

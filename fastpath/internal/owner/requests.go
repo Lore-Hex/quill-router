@@ -56,6 +56,13 @@ type Admission struct {
 	Boot     []byte
 }
 
+func (a Admission) valid() error {
+	if a.Estimate < 0 || len(a.Boot) == 0 || len(a.Boot) > maxBoot {
+		return fmt.Errorf("owner: an estimate of %d with a boot binding of %d bytes", a.Estimate, len(a.Boot))
+	}
+	return nil
+}
+
 // Admitted is an admission's answer.
 type Admitted struct {
 	Auth      string
@@ -69,9 +76,10 @@ type Admitted struct {
 // stream's buffer joins the lease's at its first heartbeat, since until
 // then it may never run; another hold's at once.
 func (l *Lease) Admit(a Admission) (Admitted, error) {
-	if a.Estimate < 0 || len(a.Boot) == 0 || len(a.Boot) > maxBoot {
-		return Admitted{}, fmt.Errorf("owner: an estimate of %d with a boot binding of %d bytes", a.Estimate, len(a.Boot))
+	if err := a.valid(); err != nil {
+		return Admitted{}, err
 	}
+	began := l.o.cfg.Clock()
 	auth, err := l.o.cfg.NewAuthorization(l.id)
 	if err != nil {
 		return Admitted{}, err
@@ -88,6 +96,10 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	defer l.mu.Unlock()
 	if l.let {
 		return Admitted{}, ErrPastCutoff
+	}
+	if l.o.cfg.TopUps.over(began, l.lastAdmit, l.takenAt) {
+		// Gone idle or old since the last renewal round looked.
+		l.closing = true
 	}
 	if l.closing {
 		return Admitted{}, ErrClosing
@@ -322,7 +334,7 @@ func (l *Lease) terminal(ctx context.Context, auth string, kind record.Kind, cha
 	}
 	raised := shortfall > l.shortfall
 	if l.shard != nil {
-		l.shard.charged.Add(charged)
+		l.shard.charges.add(l.o.cfg.Clock(), charged)
 	}
 	l.held, l.consumed, l.allocation, l.shortfall = held, consumed, allocation, shortfall
 	l.buffer -= h.counted()

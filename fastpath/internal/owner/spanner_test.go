@@ -34,22 +34,29 @@ type fakeSpanner struct {
 	drainReturned chan struct{}
 	// drainHold, when set, holds a cancelled draining write until closed.
 	drainHold chan struct{}
-	// grants are the grants asked for; refuseGrants refuses them, and
-	// grantGate holds them until closed.
+	// grants are the grants asked for; refuseGrants refuses them, grantGate
+	// holds them until closed, through a cancellation when deaf; lostGrants
+	// grants that many and loses their answers.
 	grants       []store.GrantRequest
 	refuseGrants bool
 	grantGate    chan struct{}
+	deaf         bool
+	lostGrants   int
 }
 
 func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.GrantResult, error) {
 	f.mu.Lock()
 	f.grants = append(f.grants, req)
-	gate := f.grantGate
+	gate, deaf := f.grantGate, f.deaf
 	f.mu.Unlock()
 	if gate != nil {
+		cancelled := ctx.Done()
+		if deaf {
+			cancelled = nil
+		}
 		select {
 		case <-gate:
-		case <-ctx.Done():
+		case <-cancelled:
 			return store.GrantResult{}, ctx.Err()
 		}
 	}
@@ -57,6 +64,10 @@ func (f *fakeSpanner) Grant(ctx context.Context, req store.GrantRequest) (store.
 	defer f.mu.Unlock()
 	if f.refuseGrants {
 		return store.GrantResult{Refused: store.RefusedAllowance}, nil
+	}
+	if f.lostGrants > 0 {
+		f.lostGrants--
+		return store.GrantResult{}, errors.New("the answer was lost")
 	}
 	return store.GrantResult{Expiry: f.expiry}, nil
 }

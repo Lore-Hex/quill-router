@@ -73,75 +73,76 @@ func TestAShardWithNoLeaseAsksForOne(t *testing.T) {
 }
 
 // TestAShardAdmitsUnderItsOldestLeaseWithRoom, and asks for another while
-// its room is under the low-water mark: one ask at a time, none within the
-// cooldown of the last.
+// its room is under the low-water mark: one ask at a time, though the
+// cooldown has passed, and none within the cooldown of the last, though it
+// was answered.
 func TestAShardAdmitsUnderItsOldestLeaseWithRoom(t *testing.T) {
 	f, sp := shardFixture(t)
+	askedAt := func() time.Time {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return f.owner.shards[key].askedAt
+	}
 	sp.mu.Lock()
 	sp.grantGate = make(chan struct{})
 	sp.mu.Unlock()
 	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
-	waitFor(t, "the ask", func() bool { return len(sp.granted()) == 1 })
+	first := askedAt()
 	f.clock.advance(time.Minute) // the cooldown passes, and the ask is still outstanding
 	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
-	time.Sleep(20 * time.Millisecond)
-	if n := len(sp.granted()); n != 1 {
-		t.Fatalf("%d asks while one is outstanding", n)
+	if got := askedAt(); !got.Equal(first) {
+		t.Fatalf("an ask at %v while the one at %v is outstanding", got, first)
 	}
 	sp.mu.Lock()
 	close(sp.grantGate)
 	sp.grantGate = nil
 	sp.mu.Unlock()
-	first := f.waitLeases(t, 1)[0] // 10
-	admitTo(t, f, 4)
-	if n := len(sp.granted()); n != 1 {
-		t.Fatalf("%d asks within the cooldown", n)
+	a := f.waitLeases(t, 1)[0] // 10
+	admitTo(t, f, 4)           // room 6: an ask, the cooldown past
+	b := f.waitLeases(t, 2)[1] // 10, its ask answered
+	second := askedAt()
+	f.clock.advance(5 * time.Second)
+	admitTo(t, f, 4) // under a: room 2 and 10, within the cooldown
+	if got := askedAt(); !got.Equal(second) {
+		t.Fatalf("an ask at %v within the cooldown of the one at %v", got, second)
 	}
-	f.clock.advance(10 * time.Second)
-	admitTo(t, f, 4) // room 2, and the cooldown has passed
-	second := f.waitLeases(t, 2)[1]
-	if got := sp.granted()[1].Amount; got != 10 {
-		t.Fatalf("the second lease's size: %d", got)
+	if got := admitTo(t, f, 2); got.Lease != a.id {
+		t.Fatalf("admitted under %s, and the oldest with room is %s", got.Lease, a.id)
 	}
-	if got := admitTo(t, f, 2); got.Lease != first.id {
-		t.Fatalf("admitted under %s, and the oldest with room is %s", got.Lease, first.id)
+	if got := admitTo(t, f, 5); got.Lease != b.id {
+		t.Fatalf("admitted under %s, and the next with room is %s", got.Lease, b.id)
 	}
-	if got := admitTo(t, f, 5); got.Lease != second.id {
-		t.Fatalf("admitted under %s, and the next with room is %s", got.Lease, second.id)
-	}
+	f.clock.advance(5 * time.Second)
+	admitTo(t, f, 1) // the cooldown past
+	waitFor(t, "the third ask", func() bool { return len(sp.granted()) == 3 })
 }
 
-// TestATopUpIsSizedByTheShardsCharges: what the shard charged over the
-// horizon, plus its open holds' needs; charges older than the horizon do
-// not count.
+// TestATopUpIsSizedByTheShardsCharges: what the shard charged within the
+// horizon, by when each charge was decided, before any renewal round or
+// not, plus its open holds' needs.
 func TestATopUpIsSizedByTheShardsCharges(t *testing.T) {
 	f, sp := shardFixture(t)
+	f.owner.cfg.TopUps.Min = 1
 	ctx := context.Background()
-	renew := func() {
-		t.Helper()
-		if err := f.owner.Renew(ctx); err != nil {
-			t.Fatal(err)
-		}
+	_, _ = f.owner.Admit(key, Admission{Estimate: 50, Boot: boot})
+	a := f.waitLeases(t, 1)[0] // 50: for the request no lease took
+	got, err := a.Admit(Admission{Estimate: 50, Boot: boot})
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
-	a := f.waitLeases(t, 1)[0] // 10: nothing charged, nothing held
-	renew()                    // the base: nothing charged
-	got := admitTo(t, f, 6)
 	if _, err := a.Settle(ctx, got.Auth, 6, sum("a")); err != nil {
 		t.Fatal(err)
 	}
 	f.clock.advance(10 * time.Second)
-	renew()
-	admitTo(t, f, 3) // room 1: an ask, for 6 charged and 3 held
+	admitTo(t, f, 41) // room 3: an ask, for 6 charged and 41 held
 	waitFor(t, "the second ask", func() bool { return len(sp.granted()) == 2 })
-	if got := sp.granted()[1].Amount; got != 10 {
-		t.Fatalf("a top-up for 6 charged and 3 held, at least 10: %d", got)
+	if got := sp.granted()[1].Amount; got != 6+41 {
+		t.Fatalf("a top-up for 6 charged and 41 held: %d", got)
 	}
 	b := f.waitLeases(t, 2)[1]
-	// A minute on, the 6 is past the horizon; 40 charged since counts.
+	// Seventy seconds on, the 6 is past the horizon; 40 charged since counts.
 	f.clock.advance(70 * time.Second)
-	renew()
-	big, err := b.Admit(Admission{Estimate: 9, Boot: boot}) // under the lease: no ask
+	big, err := b.Admit(Admission{Estimate: 45, Boot: boot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +150,90 @@ func TestATopUpIsSizedByTheShardsCharges(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.clock.advance(time.Second)
-	renew()
 	admitTo(t, f, 1)
 	waitFor(t, "the third ask", func() bool { return len(sp.granted()) == 3 })
-	if got := sp.granted()[2].Amount; got != 40+3+1 {
-		t.Fatalf("a top-up for 40 charged and 4 held: %d", got)
+	if got := sp.granted()[2].Amount; got != 40+41+1 {
+		t.Fatalf("a top-up for 40 charged and 42 held: %d", got)
+	}
+}
+
+// TestARequestNoLeaseTakesAsksForOneThatWill: the shard's room is above
+// the low-water mark, but no one lease has room for the request; the owner
+// asks for a lease that has, within the cooldown's rule.
+func TestARequestNoLeaseTakesAsksForOneThatWill(t *testing.T) {
+	f, sp := shardFixture(t)
+	f.owner.cfg.TopUps.Min = 100
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	f.waitLeases(t, 1) // 100
+	f.clock.advance(10 * time.Second)
+	if _, err := f.owner.Admit(key, Admission{Estimate: 101, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("a request of 101 under a lease of 100: %v", err)
+	}
+	b := f.waitLeases(t, 2)[1]
+	if got := sp.granted()[1].Amount; got != 101 {
+		t.Fatalf("the lease asked for the request of 101: %d", got)
+	}
+	if got := admitTo(t, f, 101); got.Lease != b.id {
+		t.Fatalf("the request of 101 under %s, and the lease of 101 is %s", got.Lease, b.id)
+	}
+}
+
+// TestALostGrantIsAskedForAgainTheSame: an ask whose answer is lost may have
+// been granted; the next is the same, lease ID and amount, which the store
+// answers with the lease it granted.
+func TestALostGrantIsAskedForAgainTheSame(t *testing.T) {
+	f, sp := shardFixture(t)
+	sp.mu.Lock()
+	sp.lostGrants = 1
+	sp.mu.Unlock()
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	waitFor(t, "the lost answer", func() bool {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return len(sp.granted()) == 1 && !f.owner.shards[key].asking
+	})
+	f.clock.advance(10 * time.Second)
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	l := f.waitLeases(t, 1)[0]
+	grants := sp.granted()
+	if len(grants) != 2 || grants[1] != grants[0] || l.id != grants[0].LeaseID {
+		t.Fatalf("the asks: %+v, the lease taken %s", grants, l.id)
+	}
+}
+
+// TestStopWaitsForAnAsk: Stop returns only once an ask under way has ended;
+// a lease granted after Stop began is not taken.
+func TestStopWaitsForAnAsk(t *testing.T) {
+	f, sp := shardFixture(t)
+	sp.mu.Lock()
+	sp.grantGate, sp.deaf = make(chan struct{}), true
+	sp.mu.Unlock()
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	waitFor(t, "the ask", func() bool { return len(sp.granted()) == 1 })
+	stopped := make(chan struct{})
+	go func() {
+		f.owner.Stop()
+		close(stopped)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned with an ask under way")
+	default:
+	}
+	sp.mu.Lock()
+	close(sp.grantGate)
+	sp.grantGate = nil
+	sp.mu.Unlock()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not return")
+	}
+	f.owner.mu.Lock()
+	defer f.owner.mu.Unlock()
+	if n := len(f.owner.leases); n != 0 || len(f.owner.shards[key].leases) != 0 {
+		t.Fatalf("a stopped owner holds %d leases", n)
 	}
 }
 
@@ -219,21 +299,37 @@ func TestALeaseIdleOrOldCloses(t *testing.T) {
 	if ls := f.leases(key); len(ls) != 0 {
 		t.Fatalf("the shard keeps a lease let go: %v", ls)
 	}
-	// An old lease, though busy.
+	// An old lease, though busy, refuses at admission, before any renewal
+	// round looks.
 	f.clock.advance(10 * time.Second)
 	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
 	b := f.waitLeases(t, 1)[0]
-	for range 13 {
-		f.clock.advance(5 * time.Minute)
-		admitTo(t, f, 0)
+	for range 14 {
+		f.clock.advance(4 * time.Minute)
+		if _, err := b.Admit(Admission{Estimate: 0, Boot: boot}); err != nil {
+			t.Fatalf("an admission under a busy lease: %v", err)
+		}
 	}
-	if err := f.owner.Renew(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+	f.clock.advance(4 * time.Minute)
+	if _, err := b.Admit(Admission{Estimate: 0, Boot: boot}); !errors.Is(err, ErrClosing) {
 		t.Fatalf("an admission under an hour-old lease: %v", err)
 	}
 	_ = sp
+}
+
+// TestAnIdleLeaseRefusesAtAdmission: an admission after IdleAfter with none
+// between finds the lease idle, though no renewal round has looked, and does
+// not make it busy again.
+func TestAnIdleLeaseRefusesAtAdmission(t *testing.T) {
+	f, _ := shardFixture(t)
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	a := f.waitLeases(t, 1)[0]
+	f.clock.advance(5 * time.Minute)
+	for range 2 {
+		if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+			t.Fatalf("an admission under a lease idle 5 minutes: %v", err)
+		}
+	}
 }
 
 func (f *fixture) lastRecordOf(t *testing.T, lease string) record.Record {
@@ -246,16 +342,22 @@ func (f *fixture) lastRecordOf(t *testing.T, lease string) record.Record {
 }
 
 // TestAClosingLeaseIsNoRoom: a lease that admits nothing more adds nothing
-// to its shard's room, though it has not returned its free room yet.
+// to its shard's room, though it has not returned its free room yet: a
+// shard whose other lease runs low asks for a top-up.
 func TestAClosingLeaseIsNoRoom(t *testing.T) {
 	f, sp := shardFixture(t)
 	f.owner.cfg.TopUps.Min = 500
 	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
-	a := f.waitLeases(t, 1)[0]
+	a := f.waitLeases(t, 1)[0] // 500
 	f.clock.advance(time.Minute)
 	a.Close()
 	if _, err := f.owner.Admit(key, Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrNoRoom) {
 		t.Fatalf("a request for a shard whose only lease is closing: %v", err)
 	}
-	waitFor(t, "the ask", func() bool { return len(sp.granted()) == 2 })
+	b := f.waitLeases(t, 2)[1] // 500
+	f.clock.advance(time.Minute)
+	if got := admitTo(t, f, 460); got.Lease != b.id { // b's room 40, a's 500 closing
+		t.Fatalf("admitted under %s, and the open lease is %s", got.Lease, b.id)
+	}
+	waitFor(t, "the ask for the shard's room", func() bool { return len(sp.granted()) == 3 })
 }

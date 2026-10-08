@@ -105,7 +105,6 @@ func (o *Owner) Renew(ctx context.Context) error {
 			o.Let(l.id)
 		}
 	}
-	o.sampleShards(now)
 	return nil
 }
 
