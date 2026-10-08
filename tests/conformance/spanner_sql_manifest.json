@@ -25,7 +25,10 @@
     "storage_gcp_settle_outbox:intent_insert_statements": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
-    "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0"
+    "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
+    "storage_gcp_async_settle_shadow:finalization_statement": "32ac2efa5936b82f57d56e9eb2866b63565beb69488969b31372aeeabd519892",
+    "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
+    "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4340,6 +4343,44 @@
           }
         }
       ]
+    },
+    "storage_gcp_async_settle_shadow:constants:1": {
+      "fingerprint": "b3405c2645a776aa136304421b2b7c604e9ebf7eef665bb0d22f651161ae97cf",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "authorization_id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_settle_shadow:constants:2": {
+      "fingerprint": "162357c49c8591ab45f8c0d83562a7c6451a65a29bba2f69cb37369318ae4b67",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_settle_shadow:constants:3": {
+      "fingerprint": "89ad8c27b5768b784d33e06f3f0b62d74d8498f81619ebda3c4aa1fcea7ec633",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "day_start": "STRING",
+            "next_day_start": "STRING",
+            "after_id": "STRING",
+            "page_size": "INT64"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4518,7 +4559,8 @@
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
     "storage_gcp:SpannerStore._heal_stale_debt_mark": "c6e3e52d7699599f2d21d7aba9a5cdd13238e87e6251e66f6bb653b0829e3b85",
     "storage_gcp_credit_debt:read_credit_rows": "265eb91cc06b8f0d0148cf74f25dd27002f71f6113fe5627a484bc655a6c6305",
-    "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8"
+    "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8",
+    "storage_gcp_async_settle_shadow:EvidenceStore.query": "8a4bedcb675f57aafe86727fda8f26ab55539c6025b61edca42d2db62d15547f"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
