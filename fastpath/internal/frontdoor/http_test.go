@@ -1,6 +1,8 @@
 package frontdoor
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -236,6 +238,12 @@ func TestAnOwnerNotReachedOverTheNetwork(t *testing.T) {
 	if _, err := c.Terminal(ending, good, OwnerTerminal{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("a call whose context ended at its answer's end: %v", err)
 	}
+	ending, cancel = context.WithCancel(ctx)
+	defer cancel()
+	c = HTTPOwners{Client: &http.Client{Timeout: 2 * time.Second, Transport: endingAt{cancel}}, Scheme: "http"}
+	if err := c.Ping(ending, pinged.Listener.Addr().String()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a ping whose context ended at its answer's end: %v", err)
+	}
 }
 
 // endingAt is a transport that ends the call's context once the answer's
@@ -343,6 +351,29 @@ func TestTheHandlerTakesOnlyItsJSON(t *testing.T) {
 		if resp.StatusCode != c.want {
 			t.Fatalf("%s %s %.40q: %d, want %d", c.method, c.path, c.body, resp.StatusCode, c.want)
 		}
+	}
+}
+
+// TestABodyPastItsBoundIsAnsweredAtOnce: a request whose body goes past the
+// bound is answered 400 without the server waiting for the rest of it.
+func TestABodyPastItsBoundIsAnsweredAtOnce(t *testing.T) {
+	n := newNode(t, false, nil, nil)
+	conn, err := net.Dial("tcp", n.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST /v1/refund HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\n"+
+		"Content-Length: %d\r\n\r\n", n.addr, maxBody+2)
+	if _, err := conn.Write(bytes.Repeat([]byte(" "), maxBody+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, "HTTP/1.1 400") {
+		t.Fatalf("the answer to a body past its bound, its last byte not sent: %q %v", line, err)
 	}
 }
 

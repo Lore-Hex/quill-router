@@ -79,7 +79,9 @@ type relayTerminal struct {
 func serve[Req, Ans any](f func(context.Context, Req) (Ans, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req Req
-		if err := readOne(r.Body, &req); err != nil {
+		// MaxBytesReader tells the server too: past the bound it answers
+		// at once and closes the connection, reading no more of the body.
+		if err := readOne(http.MaxBytesReader(w, r.Body, maxBody), &req); err != nil {
 			http.Error(w, "frontdoor: a request that is not one JSON value of its kind", http.StatusBadRequest)
 			return
 		}
@@ -177,6 +179,10 @@ func (h HTTPOwners) Ping(ctx context.Context, address string) error {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBody))
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("%w: %s", ErrUnreachable, resp.Status)
+	}
+	if err := ctx.Err(); err != nil {
+		// The ping ended as its answer came: no answer, as for any call.
+		return fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	return nil
 }
