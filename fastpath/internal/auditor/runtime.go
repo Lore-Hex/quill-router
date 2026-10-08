@@ -145,7 +145,7 @@ type held struct {
 	id         string
 	ref        store.LeaseRef
 	lease      *Lease
-	pending    []handled
+	pending    []*handled
 	done       bool
 	doneAt     time.Time
 	recovering bool
@@ -252,7 +252,7 @@ func (rt *Runtime) handle(ctx context.Context, d Delivery) {
 		return
 	}
 	r, err := record.Decode(d.Data())
-	x := handled{d: d, r: r, bad: err != nil}
+	x := &handled{d: d, r: r, bad: err != nil}
 	if x.bad {
 		rt.cfg.Alert(h.id, "a record the auditor cannot read")
 	}
@@ -291,7 +291,7 @@ func (rt *Runtime) replay(ctx context.Context, h *held, from int) {
 		}
 		gap := -1
 		for i := from; i < len(h.pending) && gap < 0; i++ {
-			x := &h.pending[i]
+			x := h.pending[i]
 			if x.bad {
 				continue
 			}

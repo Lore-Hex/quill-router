@@ -984,6 +984,46 @@ func TestADrainedLeaseIsBookedReapedAndClosed(t *testing.T) {
 	}
 }
 
+// TestARejectedTickReapsNothing: a tick the member cannot apply, one that
+// names another lease under this lease's key, drains nothing, though its
+// time is past a hold's deadline plus the grace.
+func TestARejectedTickReapsNothing(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, hb(1, "a", 1, 10)))
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handleAll(rt, on(t, f.ref, tick(1, row.FenceTime.Time.Add(2*time.Second)))) // the fence tick: S
+	round(rt)
+	other := tick(2, deadline.Add(time.Hour))
+	other.Lease = "lease-2"
+	data, err := record.Encode(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.alerts = nil
+	handleAll(rt, &fakeDelivery{lease: f.ref.LeaseID, data: data, at: start})
+	if got := f.alerted(); !slices.Contains(got, "a record the auditor cannot apply") {
+		t.Fatalf("the alerts: %v", got)
+	}
+	if got := f.records.published(); len(got) != 0 {
+		t.Fatalf("a reap at a tick the member rejected: %v", got)
+	}
+	if rows, _, err := f.s.ReadHoldDrainRows(ctx, f.ref, "a"); err != nil || len(rows) != 0 {
+		t.Fatalf("a reap's row at a tick the member rejected: %+v %v", rows, err)
+	}
+	handleAll(rt, on(t, f.ref, tick(2, deadline.Add(time.Hour))))
+	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
+		t.Fatalf("the record topic at the next tick: %v", got)
+	}
+}
+
 // fakeLog is the settle log, which keeps the ticks published to it;
 // failing fails that many publishes.
 type fakeLog struct {
