@@ -935,6 +935,13 @@ func (w *walker) check() {
 		}
 	}
 	w.checkUnprojected(l, loaded.Holds, packs)
+	// A load gives a member the lease's packs once it is not open, closed
+	// too, as the winners' read does.
+	if l.State != "open" {
+		w.checkPacks(loaded.Packs, "the load's")
+	} else if len(loaded.Packs) != 0 {
+		w.fatalf("an open lease's load has winners: %+v", loaded.Packs)
+	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
 	}
