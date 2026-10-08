@@ -81,8 +81,8 @@ of event go into the order:
   state, is recorded under that lock, so a process's sequence orders what
   the lock orders.
 - **Database points** are where Spanner serialized an operation: a commit at
-  its commit timestamp, a read at its read timestamp, a statement at the
-  statement time its result shows. Each follows its call's request, and
+  its commit timestamp, a read at its read timestamp. Each follows its
+  call's request, and
   precedes its response when the call's outcome was confirmed; it carries no
   clock reading. A call that timed out or failed may still have committed,
   and its caller has no timestamp for it. So, when a run is traced, every
@@ -92,7 +92,12 @@ of event go into the order:
   journal row exists, at that row's timestamp, whatever its caller learned.
   Each attempt is its own: a retried append that finds its drain row writes
   only its journal row, and the original raise and timestamp it returns are
-  checked against the row, never taken as its own point.
+  checked against the row, never taken as its own point. A statement's
+  `CURRENT_TIMESTAMP` is no database point: Spanner does not take it from
+  TrueTime, and it cannot be compared with a commit timestamp. It is a
+  reading of Spanner's clock, a local event of the transaction's, between
+  the call's request and its commit, and within S of true time like any
+  other reading (A1, §5).
 - **Added events** are the environment's steps that no process records:
   Pub/Sub storing a message, a key's delivery moving to another member, a
   time boundary passing. `tracecheck` builds them from the whole trace
@@ -150,14 +155,15 @@ state counts updated, and its shadow and the shadow's comparisons with it
     owner's refund and a front door's append of one are terminals of their
     own, enabled for such an enclave, while a settle still needs something
     delivered (A4).
-  - The gateway's answer. An enclave may deliver only once its gateway has
-    an accepted answer to its first heartbeat. The owner answers accepted
-    only after the heartbeat's record is acknowledged, before its cutoff and
-    by the deadline the heartbeat echoed, and may answer retry or deadline
-    passed after the acknowledgement (`heartbeatAnswer`); the answer may
-    also be lost on its way. So `Ack` is the record's acknowledgement alone,
-    and a new `Answer(a)`, after it, lets a's enclave deliver. An enclave
-    with no such answer may give up, and refund, whatever the log holds.
+  - Permission, delivery and give-up. They are three things. The owner
+    answers a heartbeat accepted only after its record is acknowledged,
+    before its cutoff and by the deadline the heartbeat echoed, and may
+    answer retry or deadline passed after the acknowledgement
+    (`heartbeatAnswer`); the answer may also be lost on its way. So `Ack` is
+    the record's acknowledgement alone; a new `Answer(a)`, after it, permits
+    a's stream to deliver; `EnclaveDeliver(a)` is its first byte delivered,
+    which needs that permission (A4); and an enclave that delivered nothing,
+    permitted or not, may give up and refund.
   - Reaps. `AuditorReap(a)` needs no drain row of a's, as `store.Reap` checks
     in its transaction, not every row applied: the auditor reaps several
     overdue holds before it books the rows they made.
@@ -175,9 +181,11 @@ state counts updated, and its shadow and the shadow's comparisons with it
   - Views. A member's guards read its own view of the lease: the status,
     version and winners its last read or commit left it. Another member's
     or the owner's writes change the row, not the view; the member learns
-    them at its next read, or when its commit is refused. So a member may
-    apply an owner record to a lease it still sees open after the lease was
-    marked draining, and its commit, under the version it read, is refused.
+    them at its next read, at its commit's answer, or when its commit is
+    refused. So a member may apply an owner record to a lease it still sees
+    open after the lease was marked draining; the draining write leaves the
+    commit version as it was, so its commit, under the version it read,
+    lands, and its answer tells the member the lease is draining.
   - Commits, landed and learned. A commit's write (`CommitLands`) and its
     member's learning of the outcome are steps apart. A member that learns
     success moves to the version it wrote. One whose commit was refused, or
@@ -199,11 +207,16 @@ state counts updated, and its shadow and the shadow's comparisons with it
     for one that needed none, such as a copy of a record already committed,
     a tick that stores no S, or a record of a lease that is done. Pub/Sub
     may lose an acknowledgement and may deliver an acknowledged message
-    again, so a run of deliveries may start again at any message up to the
-    first not acknowledged, and `acked` is what the member sent, not a
+    again. So a run of deliveries of the key, to any member, starts at a
+    message no later than the first that no member acknowledged, and goes on
+    in the log's order, skipping none, acknowledged or not, until its member
+    stops receiving the key; and `acked` is what the members sent, not a
     frontier Pub/Sub keeps. The spec's claim is that every acknowledged
     message's effect is durable or needed none, which no redelivery can
     break.
+  - Drain-log refunds. A front door appends a refund as well as a settle:
+    `FrontDoorAppend` takes the row's kind, a refund charging nothing
+    through application, commit and the winner checks.
   - Ticks. The ticker publishes ticks throughout, each with its reading. The
     fence tick is the first in the key's order whose reading is at or past
     F plus S, the member's test, F being the fence the lease's row stores:
@@ -219,12 +232,19 @@ state counts updated, and its shadow and the shadow's comparisons with it
     writes it, conditionally: the write can be refused and change nothing,
     and only a write that lands changes the lease's row.
 - **`LeaseLifecycle`**
-  - Renewals. A renewal's statement reads Spanner's time and computes the
-    expiry, which its commit makes visible later; a renewal that timed out at
-    its owner may still commit, under the same epoch; an answer that leaves
-    the expiry as it was still tells the owner what it is; and an answer
-    that comes after its owner let the lease go is discarded
-    (`AnswerDiscarded`).
+  - Renewals. A renewal's statement computes the expiry from
+    `CURRENT_TIMESTAMP`, a reading of Spanner's clock within S of true time
+    (A1 for Spanner's clock), not true time, and its commit makes the expiry
+    visible later; a renewal that timed out at its owner may still commit,
+    under the same epoch; an answer that leaves the expiry as it was still
+    tells the owner what it is; and an answer that comes after its owner let
+    the lease go is discarded (`AnswerDiscarded`).
+  - Decisions and their landing. The owner's decision of a hold's terminal
+    takes the hold out of the owner's own holds at once (`OwnerDecides`);
+    the terminal lands in the auditor's books later, or never (`HoldEnds`).
+    The owner's final checkpoint needs only its own holds gone, not every
+    terminal landed, and its completion, the auditor's commit of it, is a
+    step of its own, which may come after the owner died and restarted.
   - Abandonment. An owner whose publishes have failed for longer than the
     window stops renewing, and lets the lease go once past its cutoff,
     though the stored lease is still open and its own (`OwnerAbandons`). The
@@ -292,14 +312,15 @@ either way.
   both before the fence tick; a killed owner's lease reaches its tick all
   the same. A late issuance or acknowledgement fails its timed check, where
   it is, not wherever the boundary was placed.
-- **The enclave.** `EnclaveDeliver` at a request's provider answer, for a
-  request that does not stream; a stream's enclave may deliver from
-  `Answer`. An enclave that gives up maps to `EnclaveGiveUp` at its give-up,
-  unless its gateway had an accepted answer to its first heartbeat, when the
-  give-up is no step. Whatever the mapping, A4 is checked directly on the
-  run's deliveries, which the load generator records: a stream delivers
-  nothing before its gateway has an accepted answer to its first heartbeat,
-  and a request that delivered nothing sends no settle. A release's
+- **The enclave.** `EnclaveDeliver` at a request's first byte delivered,
+  which the load generator records: a request that does not stream at its
+  provider's answer, a stream once `Answer` permits it. An enclave that
+  gives up having delivered nothing maps to `EnclaveGiveUp` at its give-up,
+  permitted or not; one that delivered something settles, and its give-up
+  is no step. Whatever the mapping, A4 is checked directly on the run's
+  deliveries (§5): a stream delivers only while its gateway holds an
+  accepted answer whose deadline its clock has not passed, and a request
+  that delivered nothing sends no settle. A release's
   `AllowanceElapse` is added just before `OwnerRelease`, since only the
   release reads it, and for a declared boot its guard needs the enclave's
   real give-up before it: a release while the enclave was still trying is
@@ -312,9 +333,12 @@ either way.
   for each row it books, then `StoreS` if it stores S, then `Listed(a)` for
   each hold with no durable heartbeat whose manifest it stores. A row that
   loses to a committed winner books nothing and is decided by that winner,
-  as the close's checks find: its `ApplyDrain` is at the later of its
-  member's read of it and that winner's commit. What a member applied and
-  lost to a crash or a refused commit is no step. `AuditorReap` at a
+  as the close's checks find, from the later of its member's read of it and
+  that winner's commit. `ApplyDrain` takes the rows in order, so the
+  decided rows are a prefix: each row's `ApplyDrain` is where the prefix of
+  decided rows grows past it, at the latest of its own decision and those
+  of the rows before it. What a member applied and lost to a crash or a
+  refused commit is no step. `AuditorReap` at a
   reap row's insert, `Close` at the close's commit, `RebuildStoreS` with the
   boundary a rebuild stored, `MarkDraining` and `FrontDoorAppend` at their
   commits.
@@ -331,12 +355,15 @@ either way.
   the order Pub/Sub stored them, each published copy once. `tracecheck`
   builds it before replay from every member's deliveries, by message ID,
   each entry added after its publish and before its first delivery and its
-  first acknowledgement. Each member's deliveries then split into runs, each
-  starting at a message no later than the first that member had not
-  acknowledged, and going on in the log's order, skipping none it had not
-  acknowledged. Deliveries that no single log and such runs explain break
-  P4's assumption, and are reported as that; a redelivery of an
-  acknowledged message is no break.
+  first acknowledgement. The key's deliveries then split into runs, each to
+  one member, each starting at a message no later than the first that no
+  member had acknowledged, and going on in the log's order, skipping no
+  message, acknowledged or not, until its member stopped receiving the key:
+  its stop, crash or reassignment, or the trace's end, which cut a run
+  short and are no skip. Deliveries that no single log and such runs
+  explain, a run that skips a message among them, break P4's assumption,
+  and are reported as that; a redelivery of an acknowledged message is no
+  break.
 - **Assignment, receipt and redelivery.** Each delivery is its member's
   `Receive`, and its processing is the member's steps on what it received,
   later. A run that starts after another member's last delivery begins
@@ -354,30 +381,35 @@ either way.
   `Close` at the close's commit.
 - **Other writers.** `Raise` at a raise's or a shortfall write's commit,
   and at an append's raise. `MarkDraining` at its commit. An append's row is
-  `FrontDoorAppend` at the later of its commit and `MarkDraining`: the
-  runtime appends to an open lease, and while the lease is open no step of
-  the spec reads the drain log.
+  `FrontDoorAppend`, of its kind, at the later of its commit and
+  `MarkDraining`: the runtime appends to an open lease, and while the lease
+  is open no step of the spec reads the drain log.
 
 **`LeaseLifecycle`**
 
-- **Renewals.** A renewal's statement at the time its result shows, the
-  new expiry less `Window` or, for an expiry it left as it was, no later than
-  the commit; its commit at its journal row's timestamp, where the new
-  expiry becomes visible. A renewal that commits after its owner timed out
-  commits all the same. `RenewAnswer` at the owner's receipt of an answer
-  for a lease it holds, whatever it says, and `AnswerDiscarded` for one it
-  let go; `AnswerLost` at its timeout, or at its kill with an answer
-  outstanding; `ReplayedRenew` for a renewal committed for a process the
-  lease's epoch is no longer.
+- **Renewals.** A renewal's statement at its `CURRENT_TIMESTAMP` reading,
+  the new expiry less `Window`, a reading of Spanner's clock placed, like a
+  process's, between the call's request and the commit (§3, §5), or, for an
+  expiry it left as it was, no later than the commit; its commit at its
+  journal row's timestamp, where the new expiry becomes visible. A renewal
+  that commits after its owner timed out commits all the same.
+  `RenewAnswer` at the owner's receipt of an answer for a lease it holds,
+  whatever it says, and `AnswerDiscarded` for one it let go; `AnswerLost`
+  at its timeout, or at its kill with an answer outstanding;
+  `ReplayedRenew` for a renewal committed for a process the lease's epoch
+  is no longer.
 - **Holds.** `Admit` at the owner's admission, with the reading and the
-  known expiry it decided on. `HoldEnds` at the hold's first terminal,
-  wherever it lands; a hold whose life runs out first ends by `Tick`. Either
-  way §5 checks that its request had stopped by then: the hold's end is
-  money's, the request's is its gateway's.
+  known expiry it decided on. `OwnerDecides` at the owner's decision of the
+  hold's terminal; `HoldEnds` at the commit that books its first terminal,
+  the owner's or the drain log's; a hold whose life runs out first ends by
+  `Tick`. Either way §5 checks that its request had stopped by then: the
+  hold's end is money's, the request's is its gateway's.
 - **The owner's ending.** `OwnerStop`, `FinalCheckpoint`, `OwnerDrains`,
-  `OwnerDrops` and `OwnerAbandons` at the owner's events; `ForcedExitStart`
-  with the holds whose chunks the auditor applied, and `ForcedExitManifest`
-  at the manifest; `Restart` at a new process for the node.
+  `OwnerDrops` and `OwnerAbandons` at the owner's events; the final
+  checkpoint's completion at the auditor's commit of it, wherever the owner
+  is by then; `ForcedExitStart` with the holds whose chunks the auditor
+  applied, and `ForcedExitManifest` at the manifest; `Restart` at a new
+  process for the node.
 - **Others.** `Revoke` at the revocation's commit; `Pause` at a workspace's
   pause, and a view's refresh at a process's read of it; each ticker's read
   and its conditional mark, a refused one as its refusal; `CloseOnTheList`
@@ -396,7 +428,9 @@ an unknown true time, and constrains them:
 - a true time is no earlier than its predecessors' in the order;
 - a local event's wall-clock reading is within S of its true time (A1), and
   the time between two events of one process is its monotonic clock's,
-  within a drift allowance;
+  within a drift allowance; a statement's `CURRENT_TIMESTAMP` is a reading
+  of Spanner's clock, within S of its own true time, which lies between its
+  call's request and its commit;
 - a database point is at its timestamp, which Spanner places after its
   call's request and, for a call whose outcome its caller learned, before
   its response; it has no reading of its own, so a reply recorded long after
@@ -407,7 +441,7 @@ These are difference constraints. The time check solves them by shortest
 paths over their graph. With no solution, a negative cycle names readings
 that no true times satisfy, and the report names the broken assumption: the
 clock, and the readings that show it, such as a renewal's request and
-response around its statement's time (spike plan §5, K6).
+response readings around its commit's timestamp (spike plan §5, K6).
 
 A spec's time predicate is then checked on the recorded reading and through
 the constraints, never by putting a reading where the spec has true time:
@@ -433,6 +467,13 @@ the constraints, never by putting a reading where the spec has true time:
   retried, is no breach: `HoldEnds` is then no step, the hold having ended
   by `Tick`. A request that went on past any of these is A3 broken, and
   reported, whatever the replay finds.
+- Every stream delivered only while permitted (A4). The load generator
+  records each answer as its gateway received it and each delivery, with
+  their readings. Each delivery must come, by the gateway's clock, before
+  the deadline of the latest accepted answer the gateway had received by
+  then: a stream that went on past its deadline while its next answer was
+  late is A4 broken, though the answer, when it came, granted a later
+  deadline.
 
 A timed predicate that holds for every solution passes; one that holds for
 none is a violation; one that holds for some is inconclusive, and the report
@@ -441,9 +482,10 @@ names the events whose times decide it.
 When the clocks break A1, the replay goes on without the constraints of the
 clocks the cycle names, so the run's steps are still checked. K6's negative
 control is reported twice, as the spike plan requires: as a broken
-assumption, from the offset the injector recorded and the renewals'
-brackets, and as a violation, an admission at a true time after the auditor
-marked the lease draining.
+assumption, from the offset the injector recorded and the renewals' commit
+timestamps between their owners' request and response readings, and as a
+violation, an admission at a true time after the auditor marked the lease
+draining.
 
 ## 6. Orders the evidence leaves open
 
@@ -527,10 +569,10 @@ fault, which is already set.
 - **Assumption broken:** constraints with no solution, a cycle in the order,
   deliveries no single log and runs through it explain (§4.2), a release
   before the enclave gave up, a request that went on past its time (§5), or
-  one that delivered before its gateway's answer or settled having
-  delivered nothing (A4). The report names the assumption and its evidence,
-  and the replay goes on without it, so a violation behind it is still
-  found.
+  one that delivered while no accepted answer's deadline was ahead of its
+  gateway's clock or settled having delivered nothing (A4, §5). The report
+  names the assumption and its evidence, and the replay goes on without it,
+  so a violation behind it is still found.
 
 ## 9. Tests
 
@@ -547,8 +589,9 @@ fault, which is already set.
   method (all pairs' shortest paths); and each direct check is written
   again, apart from `tracecheck`'s and from its definition, over the raw
   events: the money ledger summed afresh per lease (§7), A3 and A4 per
-  request (§5, §4.2), the order's cycles by search, the log and its runs by
-  trying every way the deliveries could come from one. It reports each
+  request (§5, §4.2), A4's coverage by every delivery against every answer
+  its gateway had by then, the order's cycles by search, the log and its
+  runs by trying every way the deliveries could come from one. It reports each
   assumption broken as §8 says, named as `tracecheck` must name it, K6's
   control both broken and violated, and goes on without it; then pass if
   every extension is a run, every timed predicate holds for every solution
