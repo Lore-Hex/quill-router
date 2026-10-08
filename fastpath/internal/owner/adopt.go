@@ -125,10 +125,13 @@ func (l *Lease) releaseDue(now time.Time, allowance, grace time.Duration) {
 		return
 	}
 	var due []string
+	batch := make([]string, 0, scanBatch)
 	l.scan(func(h *hold) {
 		if released(h, now, allowance+grace) {
-			due = append(due, h.auth)
+			batch = append(batch, h.auth)
 		}
+	}, func() {
+		due, batch = append(due, batch...), batch[:0]
 	})
 	slices.Sort(due)
 	for len(due) > 0 {
@@ -151,24 +154,30 @@ const scanBatch = 1024
 // scan calls f with each of the lease's holds under its lock, which it lets
 // go between batches of scanBatch, so a pass over many holds keeps a
 // hand-off waiting no longer than a batch takes; it stops once the lease is
-// let go or handed off. A map may change while it is ranged over, and here
-// each change comes under the lock, between batches: a hold removed then is
-// not visited after, and one added may be visited or not, so a pass
-// rechecks each hold as it decides it.
-func (l *Lease) scan(f func(h *hold)) {
+// let go or handed off. Between batches, and at the end, it calls flush
+// with the lock let go: f keeps what it finds in a buffer of scanBatch,
+// which never grows under the lock, and flush moves it out, so nothing a
+// pass gathers is copied under the lock as it grows with the holds. A map
+// may change while it is ranged over, and here each change comes under the
+// lock, between batches: a hold removed then is not visited after, and one
+// added may be visited or not, so a pass rechecks each hold as it decides
+// it.
+func (l *Lease) scan(f func(h *hold), flush func()) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	n := 0
 	for _, h := range l.holds {
 		if l.let || l.handedOff {
-			return
+			break
 		}
 		f(h)
 		if n++; n%scanBatch == 0 {
 			l.mu.Unlock()
+			flush()
 			l.mu.Lock()
 		}
 	}
+	l.mu.Unlock()
+	flush()
 }
 
 // released: a hold due for release at now, after the first-heartbeat
@@ -286,13 +295,16 @@ type dueReap struct {
 // snapshot to reap at.
 func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
 	var out []dueReap
+	batch := make([]dueReap, 0, scanBatch)
 	l.scan(func(h *hold) {
 		if !h.heartbeat || now.Before(h.deadline.Add(grace)) {
 			return
 		}
-		out = append(out, dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
+		batch = append(batch, dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
 			Deadline: h.deadline.UTC(), GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: h.usage, OwnerSeq: h.snapSeq,
 			Basis: h.basis, Boot: h.boot})
+	}, func() {
+		out, batch = append(out, batch...), batch[:0]
 	})
 	slices.SortFunc(out, func(a, b dueReap) int { return strings.Compare(a.Auth, b.Auth) })
 	return out

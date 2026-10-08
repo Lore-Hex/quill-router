@@ -1109,6 +1109,47 @@ func TestAnOversizedBasisIsRefusedBeforeTheLock(t *testing.T) {
 	}
 }
 
+// TestAReapScanCopiesNothingUnderTheLock: the reap scan keeps what it finds
+// in a batch it moves out with the lease's lock let go, so with half a
+// million holds due nothing it gathers is copied under the lock as it grows,
+// and the lock is never held long.
+func TestAReapScanCopiesNothingUnderTheLock(t *testing.T) {
+	f, _ := releaseFixture(t)
+	l := f.lease
+	const holds = 500_000
+	hash := sum("snapshot")
+	l.mu.Lock()
+	for i := range holds {
+		auth := fmt.Sprintf("auth-%07d", i)
+		l.holds[auth] = &hold{auth: auth, estimate: 1, heartbeat: true, deadline: start, hash: hash, basis: []byte("terms"),
+			boot: boot}
+	}
+	l.mu.Unlock()
+	t.Cleanup(func() {
+		l.mu.Lock()
+		clear(l.holds)
+		l.mu.Unlock()
+	})
+	scanned := make(chan int, 1)
+	go func() { scanned <- len(l.due(start.Add(time.Hour), time.Minute)) }()
+	var longest time.Duration
+	for {
+		select {
+		case n := <-scanned:
+			if n != holds || longest > 10*time.Millisecond {
+				t.Fatalf("the scan found %d of %d holds due, the lease's lock held up to %v", n, holds, longest)
+			}
+			return
+		default:
+		}
+		began := time.Now()
+		l.mu.Lock()
+		longest = max(longest, time.Since(began))
+		l.mu.Unlock()
+		runtime.Gosched()
+	}
+}
+
 // TestAHandOffLetsGoDuringAFinalDrain: a lease whose final checkpoint's
 // draining write is under way is let go at the hand-off's deadline, not once
 // that write has unwound; Stop waits for it.
