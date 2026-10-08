@@ -19,8 +19,7 @@ type PendingStore interface {
 	LoadWinners(ctx context.Context, ref store.LeaseRef) ([]store.Pack, time.Time, error)
 	ReadStaged(ctx context.Context, authorization string, digest []byte) (store.StagedRecord, bool, error)
 	WriteRecords(ctx context.Context, records []store.LeaseRecord) error
-	MarkPackDone(ctx context.Context, ref store.LeaseRef, version int64) (bool, error)
-	DropStaged(ctx context.Context, authorization string, digests ...[]byte) (bool, error)
+	MarkPackDone(ctx context.Context, ref store.LeaseRef, version int64, drop ...store.StagedKey) (bool, error)
 }
 
 // PendingConfig is the pending work's.
@@ -41,9 +40,9 @@ type PendingConfig struct {
 // and then its records are written: a settle's or a reap's generation and
 // activity records from its staged full record, a refund's or a release's
 // disposition record. Then the pack is marked done, and the winners' staged
-// records go. A pack whose work cannot be done yet, a staged record not
-// there or a write that failed, waits for the next sweep, and holds up none
-// after it. Every write is idempotent on its authorization, and an outcome
+// records go with it. A pack whose work cannot be done yet, a staged record
+// not there or a write that failed, waits for the next sweep, and holds up
+// none after it. Every write is idempotent on its authorization, and an outcome
 // published twice is the same message, so members that sweep at once, or a
 // sweep after a crash, do no harm.
 type Pending struct {
@@ -132,20 +131,45 @@ type DispositionRecord struct {
 	Boot    []byte `json:"boot,omitempty"`
 }
 
-// winnerWork is a winner with its work read.
+// winnerWork is a winner with its work read, its staged full record's body
+// and its boot binding.
 type winnerWork struct {
 	store.Winner
 	work    Work
 	outcome string
+	body    []byte
+	boot    []byte
 }
 
 // staged: a settle's and a reap's records come from a staged full record.
 func (w winnerWork) staged() bool { return w.Kind == "settle" || w.Kind == "reap" }
 
-// Do does a pack's work, and reports whether the pack is done. The outcomes
-// go first, so a record written can be rebuilt from the topic's export once
-// the pack is gone; the pack is marked done only once every record is
-// written.
+// recordBatch bounds one write of a pack's records, its bodies' bytes and
+// its rows, well within a Spanner commit's limits.
+var recordBatch = struct {
+	bytes int
+	rows  int
+}{16 << 20, 1000}
+
+// bootOf is the boot binding a full record states (§4.9): a gateway's, an
+// owner's reap's and an auditor's reap's each carry it, as "boot".
+func bootOf(body []byte) []byte {
+	var full struct {
+		Boot []byte `json:"boot"`
+	}
+	if json.Unmarshal(body, &full) != nil {
+		return nil
+	}
+	return full.Boot
+}
+
+// Do does a pack's work, and reports whether the pack is done. A settle's or
+// a reap's staged full record is read first, for its records and its boot
+// binding, which a refund's or a release's work carries itself. Then every
+// outcome is published, so a record written can be rebuilt from the topic's
+// export once the pack is gone; once every one is acknowledged the records
+// are written, in batches; and once every one is written the pack is marked
+// done, its winners' staged records dropped in the same commit.
 func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (bool, error) {
 	if pack.WorkDoneAt.Valid {
 		return true, nil
@@ -160,10 +184,32 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		}
 		winners = append(winners, ww)
 	}
+	for i := range winners {
+		w := &winners[i]
+		w.boot = w.work.Boot
+		if !w.staged() {
+			continue
+		}
+		r, ok, err := p.cfg.Store.ReadStaged(ctx, w.AuthorizationID, w.work.Digest)
+		if err != nil || !ok {
+			// Not staged yet: the record topic's consumer is behind.
+			return false, err
+		}
+		w.body = r.Body
+		if len(w.boot) == 0 {
+			w.boot = bootOf(r.Body)
+		}
+	}
+	for _, w := range winners {
+		if len(w.boot) == 0 {
+			p.cfg.Alert(w.AuthorizationID, "a winner whose boot binding no record states")
+			return false, errors.New("auditor: a winner with no boot binding")
+		}
+	}
 	waits := make([]Waiter, len(winners))
 	for i, w := range winners {
 		waits[i] = p.cfg.Records.Publish(w.AuthorizationID, settlelog.Outcome, encoded(OutcomeRecord{V: 1,
-			Auth: w.AuthorizationID, Outcome: w.outcome, Cost: w.Charge, Boot: w.work.Boot, Digest: w.work.Digest}))
+			Auth: w.AuthorizationID, Outcome: w.outcome, Cost: w.Charge, Boot: w.boot, Digest: w.work.Digest}))
 	}
 	for _, wait := range waits {
 		wctx, cancel := context.WithTimeout(ctx, p.cfg.Wait)
@@ -174,39 +220,34 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		}
 	}
 	var records []store.LeaseRecord
+	var drop []store.StagedKey
 	for _, w := range winners {
 		cost := spanner.NullInt64{Int64: w.Charge, Valid: true}
 		if !w.staged() {
 			records = append(records, store.LeaseRecord{AuthorizationID: w.AuthorizationID, Kind: "disposition",
-				Ref: ref, Outcome: w.outcome, Cost: cost, BootBinding: w.work.Boot,
-				Body: encoded(DispositionRecord{V: 1, Auth: w.AuthorizationID, Outcome: w.outcome, Boot: w.work.Boot})})
+				Ref: ref, Outcome: w.outcome, Cost: cost, BootBinding: w.boot,
+				Body: encoded(DispositionRecord{V: 1, Auth: w.AuthorizationID, Outcome: w.outcome, Boot: w.boot})})
 			continue
-		}
-		r, ok, err := p.cfg.Store.ReadStaged(ctx, w.AuthorizationID, w.work.Digest)
-		if err != nil || !ok {
-			// Not staged yet: the record topic's consumer is behind.
-			return false, err
 		}
 		for _, kind := range []string{"generation", "activity"} {
 			records = append(records, store.LeaseRecord{AuthorizationID: w.AuthorizationID, Kind: kind, Ref: ref,
-				Outcome: w.outcome, Cost: cost, WinnerDigest: w.work.Digest, Body: r.Body})
+				Outcome: w.outcome, Cost: cost, WinnerDigest: w.work.Digest, BootBinding: w.boot, Body: w.body})
 		}
+		drop = append(drop, store.StagedKey{AuthorizationID: w.AuthorizationID, Digest: w.work.Digest})
 	}
-	if len(records) > 0 {
-		if err := p.cfg.Store.WriteRecords(ctx, records); err != nil {
+	for len(records) > 0 {
+		n, size := 0, 0
+		for n < len(records) && n < recordBatch.rows && (n == 0 || size+len(records[n].Body) <= recordBatch.bytes) {
+			size += len(records[n].Body)
+			n++
+		}
+		if err := p.cfg.Store.WriteRecords(ctx, records[:n]); err != nil {
 			return false, err
 		}
+		records = records[n:]
 	}
-	if _, err := p.cfg.Store.MarkPackDone(ctx, ref, pack.CommitVersion); err != nil {
+	if _, err := p.cfg.Store.MarkPackDone(ctx, ref, pack.CommitVersion, drop...); err != nil {
 		return false, err
-	}
-	for _, w := range winners {
-		if !w.staged() {
-			continue
-		}
-		if dropped, err := p.cfg.Store.DropStaged(ctx, w.AuthorizationID, w.work.Digest); err != nil || !dropped {
-			p.cfg.Alert(w.AuthorizationID, "a winner's staged record that did not go with its pack done")
-		}
 	}
 	return true, nil
 }

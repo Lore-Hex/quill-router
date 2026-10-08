@@ -1,6 +1,7 @@
 package auditor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,11 +21,12 @@ import (
 // fakeTopic is the record topic: it keeps what is published, in order, and
 // fails that many publishes. events, when set, hears of each.
 type fakeTopic struct {
-	mu      sync.Mutex
-	failing int
-	sent    []string
-	data    [][]byte
-	events  *[]string
+	mu       sync.Mutex
+	failing  int
+	failAuth map[string]bool
+	sent     []string
+	data     [][]byte
+	events   *[]string
 }
 
 type published struct{ err error }
@@ -37,8 +39,10 @@ func (f *fakeTopic) Publish(authorization, kind string, data []byte) Waiter {
 	if f.events != nil {
 		*f.events = append(*f.events, "publish "+authorization)
 	}
-	if f.failing > 0 {
-		f.failing--
+	if f.failing > 0 || f.failAuth[authorization] {
+		if f.failing > 0 {
+			f.failing--
+		}
 		return published{errors.New("the record topic failed")}
 	}
 	f.sent = append(f.sent, authorization+"/"+kind)
@@ -112,7 +116,11 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := f.runtime()
-	handleAll(rt, on(t, f.ref, hb(1, a, 1, 10)), on(t, f.ref, settle(2, a, 40, 0)), on(t, f.ref, refund(3, b)))
+	// The settle's full record, which states the request's boot binding.
+	body := encoded(map[string]any{"a": a, "boot": boot})
+	settled2 := settle(2, a, 40, 0)
+	settled2.Digest = sum(string(body))
+	handleAll(rt, on(t, f.ref, hb(1, a, 1, 10)), on(t, f.ref, settled2), on(t, f.ref, refund(3, b)))
 	round(rt)
 	topic := &fakeTopic{}
 	var alerts []string
@@ -129,28 +137,16 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 		return packs[0]
 	}
 	p.sweep(ctx)
-	if pk := pack(); pk.WorkDoneAt.Valid || len(leaseRecords(t, db, a)) != 0 || len(leaseRecords(t, db, b)) != 0 {
-		t.Fatalf("work done with the settle's full record not staged: %+v", pk)
-	}
-	if !slices.Equal(topic.sent, []string{a + "/outcome", b + "/outcome"}) {
-		t.Fatalf("the outcomes published: %v", topic.sent)
-	}
-	var settled, refunded OutcomeRecord
-	if json.Unmarshal(topic.data[0], &settled) != nil || json.Unmarshal(topic.data[1], &refunded) != nil {
-		t.Fatalf("the outcomes: %q", topic.data)
-	}
-	if want := (OutcomeRecord{V: 1, Auth: a, Outcome: "settled", Cost: 40, Digest: sum("full " + a)}); !reflect.DeepEqual(settled, want) {
-		t.Fatalf("the settle's outcome %+v, want %+v", settled, want)
-	}
-	if want := (OutcomeRecord{V: 1, Auth: b, Outcome: "refunded", Boot: boot}); !reflect.DeepEqual(refunded, want) {
-		t.Fatalf("the refund's outcome %+v, want %+v", refunded, want)
+	if pk := pack(); pk.WorkDoneAt.Valid || len(leaseRecords(t, db, a)) != 0 || len(leaseRecords(t, db, b)) != 0 ||
+		len(topic.sent) != 0 {
+		t.Fatalf("work done with the settle's full record not staged: %+v, published %v", pk, topic.sent)
 	}
 
 	stager, err := NewStager(f.s, func(auth, what string) { alerts = append(alerts, what) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	full := &fakeStaged{auth: a, kind: settlelog.FullRecord, data: []byte("full " + a)}
+	full := &fakeStaged{auth: a, kind: settlelog.FullRecord, data: body}
 	stager.Handle(ctx, full)
 	if full.acked != 1 {
 		t.Fatalf("the full record staged, acknowledged %d", full.acked)
@@ -159,24 +155,37 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 	if pk := pack(); !pk.WorkDoneAt.Valid {
 		t.Fatalf("the pack after its full record was staged: %+v", pk)
 	}
+	if !slices.Equal(topic.sent, []string{a + "/outcome", b + "/outcome"}) {
+		t.Fatalf("the outcomes published: %v", topic.sent)
+	}
+	var settled, refunded OutcomeRecord
+	if json.Unmarshal(topic.data[0], &settled) != nil || json.Unmarshal(topic.data[1], &refunded) != nil {
+		t.Fatalf("the outcomes: %q", topic.data)
+	}
+	if want := (OutcomeRecord{V: 1, Auth: a, Outcome: "settled", Cost: 40, Boot: boot, Digest: sum(string(body))}); !reflect.DeepEqual(settled, want) {
+		t.Fatalf("the settle's outcome %+v, want %+v", settled, want)
+	}
+	if want := (OutcomeRecord{V: 1, Auth: b, Outcome: "refunded", Boot: boot}); !reflect.DeepEqual(refunded, want) {
+		t.Fatalf("the refund's outcome %+v, want %+v", refunded, want)
+	}
 	cost := spanner.NullInt64{Int64: 40, Valid: true}
 	for _, kind := range []string{"generation", "activity"} {
 		want := store.LeaseRecord{AuthorizationID: a, Kind: kind, Ref: f.ref, Outcome: "settled", Cost: cost,
-			WinnerDigest: sum("full " + a), Body: []byte("full " + a)}
+			WinnerDigest: sum(string(body)), BootBinding: boot, Body: body}
 		if got := leaseRecords(t, db, a)[kind]; !reflect.DeepEqual(got, want) {
 			t.Fatalf("the settle's %s record %+v, want %+v", kind, got, want)
 		}
 	}
-	body, err := json.Marshal(DispositionRecord{V: 1, Auth: b, Outcome: "refunded", Boot: boot})
+	disposition, err := json.Marshal(DispositionRecord{V: 1, Auth: b, Outcome: "refunded", Boot: boot})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := store.LeaseRecord{AuthorizationID: b, Kind: "disposition", Ref: f.ref, Outcome: "refunded",
-		Cost: spanner.NullInt64{Valid: true}, BootBinding: boot, Body: body}
+		Cost: spanner.NullInt64{Valid: true}, BootBinding: boot, Body: disposition}
 	if got := leaseRecords(t, db, b); len(got) != 1 || !reflect.DeepEqual(got["disposition"], want) {
 		t.Fatalf("the refund's records %+v, want %+v", got, want)
 	}
-	if _, ok, err := f.s.ReadStaged(ctx, a, sum("full "+a)); ok || err != nil {
+	if _, ok, err := f.s.ReadStaged(ctx, a, sum(string(body))); ok || err != nil {
 		t.Fatalf("the staged record after its pack was done: %v %v", ok, err)
 	}
 	if len(alerts) != 0 {
@@ -217,18 +226,24 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 }
 
 // fakePending is a store whose writes the test sees in order, and can
-// fail.
+// fail. Its staged records' bodies are body, or one that states a boot
+// binding.
 type fakePending struct {
 	PendingStore
 	events              *[]string
 	staged              bool
+	body                []byte
 	failWrite, failMark bool
-	dropped             bool
+	written             [][]store.LeaseRecord
 }
 
 func (f *fakePending) ReadStaged(_ context.Context, auth string, digest []byte) (store.StagedRecord, bool, error) {
 	*f.events = append(*f.events, "read "+auth)
-	return store.StagedRecord{AuthorizationID: auth, Digest: digest, Body: []byte("full")}, f.staged, nil
+	body := f.body
+	if body == nil {
+		body = []byte(`{"boot":"Ym9vdC0x"}`)
+	}
+	return store.StagedRecord{AuthorizationID: auth, Digest: digest, Body: body}, f.staged, nil
 }
 
 func (f *fakePending) WriteRecords(_ context.Context, records []store.LeaseRecord) error {
@@ -236,36 +251,39 @@ func (f *fakePending) WriteRecords(_ context.Context, records []store.LeaseRecor
 	if f.failWrite {
 		return errors.New("the write failed")
 	}
+	f.written = append(f.written, records)
 	return nil
 }
 
-func (f *fakePending) MarkPackDone(context.Context, store.LeaseRef, int64) (bool, error) {
-	*f.events = append(*f.events, "mark")
+func (f *fakePending) MarkPackDone(_ context.Context, _ store.LeaseRef, _ int64, drop ...store.StagedKey) (bool, error) {
+	e := "mark"
+	for _, k := range drop {
+		e += " " + k.AuthorizationID
+	}
+	*f.events = append(*f.events, e)
 	if f.failMark {
 		return false, errors.New("the mark failed")
 	}
 	return true, nil
 }
 
-func (f *fakePending) DropStaged(_ context.Context, auth string, _ ...[]byte) (bool, error) {
-	*f.events = append(*f.events, "drop "+auth)
-	return f.dropped, nil
-}
-
-// TestAPacksWorkIsDoneInItsOrder: every outcome is published before any
-// record is written, and the pack is marked done only after; a step that
-// fails ends the work there, and the pack waits for the next sweep. A
-// winner whose work cannot be read is told.
+// TestAPacksWorkIsDoneInItsOrder: a settle's and a reap's staged full
+// records are read first, for their boot binding; every outcome is then
+// published, and only once each is acknowledged are the records written, in
+// batches; the pack is marked done after, its winners' staged records
+// dropped with it. A step that fails ends the work there, and the pack
+// waits for the next sweep. A winner whose work cannot be read, or whose
+// boot binding no record states, is told.
 func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 	ctx := context.Background()
 	pack := store.Pack{CommitVersion: 4, Winners: []store.Winner{
 		{AuthorizationID: "a", Kind: "settle", Charge: 40, Work: encoded(Work{V: 1, Digest: sum("a")})},
 		{AuthorizationID: "b", Kind: "reap", Charge: 9, Work: encoded(Work{V: 1, Digest: sum("b"), SnapshotSeq: 3})},
 		{AuthorizationID: "c", Kind: "release", Work: encoded(Work{V: 1, Boot: boot})}}}
-	run := func(change func(*fakePending, *fakeTopic)) (bool, []string, []string) {
+	run := func(change func(*fakePending, *fakeTopic)) (bool, []string, []string, *fakePending, *fakeTopic) {
 		var events, alerts []string
-		s := &fakePending{events: &events, staged: true, dropped: true}
-		topic := &fakeTopic{events: &events}
+		s := &fakePending{events: &events, staged: true}
+		topic := &fakeTopic{events: &events, failAuth: map[string]bool{}}
 		change(s, topic)
 		p, err := NewPending(PendingConfig{Store: s, Records: topic, Every: time.Hour, Limit: 1, Wait: time.Second,
 			Alert: func(auth, what string) { alerts = append(alerts, auth+": "+what) }})
@@ -273,48 +291,84 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 		done, _ := p.Do(ctx, store.LeaseRef{Workspace: "ws", LeaseID: "l"}, pack)
-		return done, events, alerts
+		return done, events, alerts, s, topic
 	}
-	done, events, alerts := run(func(*fakePending, *fakeTopic) {})
-	want := []string{"publish a", "publish b", "publish c", "read a", "read b", "write", "mark", "drop a", "drop b"}
+	done, events, alerts, s, topic := run(func(*fakePending, *fakeTopic) {})
+	want := []string{"read a", "read b", "publish a", "publish b", "publish c", "write", "mark a b"}
 	if !done || !slices.Equal(events, want) || len(alerts) != 0 {
 		t.Fatalf("done %v, %v, told %v; want %v", done, events, alerts, want)
+	}
+	for i, wantBoot := range [][]byte{[]byte("boot-1"), []byte("boot-1"), boot} {
+		var out OutcomeRecord
+		if err := json.Unmarshal(topic.data[i], &out); err != nil || !bytes.Equal(out.Boot, wantBoot) {
+			t.Fatalf("outcome %d: %+v %v, want the boot binding %q", i, out, err, wantBoot)
+		}
+	}
+	for _, r := range s.written[0] {
+		if len(r.BootBinding) == 0 {
+			t.Fatalf("a record with no boot binding: %+v", r)
+		}
 	}
 	for name, c := range map[string]struct {
 		change func(*fakePending, *fakeTopic)
 		want   []string
 	}{
-		"an outcome not published": {func(_ *fakePending, tp *fakeTopic) { tp.failing = 1 },
-			[]string{"publish a", "publish b", "publish c"}},
 		"a full record not staged": {func(s *fakePending, _ *fakeTopic) { s.staged = false },
-			[]string{"publish a", "publish b", "publish c", "read a"}},
+			[]string{"read a"}},
+		"the first outcome not acknowledged": {func(_ *fakePending, tp *fakeTopic) { tp.failing = 1 },
+			[]string{"read a", "read b", "publish a", "publish b", "publish c"}},
+		"the last outcome not acknowledged": {func(_ *fakePending, tp *fakeTopic) { tp.failAuth["c"] = true },
+			[]string{"read a", "read b", "publish a", "publish b", "publish c"}},
 		"a write that failed": {func(s *fakePending, _ *fakeTopic) { s.failWrite = true },
-			[]string{"publish a", "publish b", "publish c", "read a", "read b", "write"}},
+			[]string{"read a", "read b", "publish a", "publish b", "publish c", "write"}},
 		"a mark that failed": {func(s *fakePending, _ *fakeTopic) { s.failMark = true },
-			[]string{"publish a", "publish b", "publish c", "read a", "read b", "write", "mark"}},
+			[]string{"read a", "read b", "publish a", "publish b", "publish c", "write", "mark a b"}},
 	} {
-		done, events, _ := run(c.change)
+		done, events, _, _, _ := run(c.change)
 		if done || !slices.Equal(events, c.want) {
 			t.Fatalf("%s: done %v, %v; want %v", name, done, events, c.want)
 		}
 	}
-	if _, _, alerts := run(func(s *fakePending, _ *fakeTopic) { s.dropped = false }); len(alerts) != 2 {
-		t.Fatalf("staged records that did not go: told %v", alerts)
+	if done, events, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { s.body = []byte("not json") }); done ||
+		len(alerts) != 1 || slices.Contains(events, "publish a") {
+		t.Fatalf("a full record that states no boot binding: done %v, %v, told %v", done, events, alerts)
 	}
+
+	// The records go in batches each within its bounds.
+	saved := recordBatch
+	recordBatch.bytes, recordBatch.rows = 40, 3
+	done, _, _, s, _ = run(func(s *fakePending, _ *fakeTopic) {
+		s.body = []byte(`{"boot":"Ym9vdC0x","pad":"0123456789"}`)
+	})
+	recordBatch = saved
+	var sizes []int
+	n := 0
+	for _, batch := range s.written {
+		size := 0
+		for _, r := range batch {
+			size += len(r.Body)
+		}
+		if len(batch) > 3 || (len(batch) > 1 && size > 40) {
+			t.Fatalf("a batch of %d records, %d bytes", len(batch), size)
+		}
+		sizes = append(sizes, len(batch))
+		n += len(batch)
+	}
+	if !done || n != 5 || len(s.written) < 2 {
+		t.Fatalf("the batches: %v, done %v", sizes, done)
+	}
+
 	pack.Winners = append(pack.Winners, store.Winner{AuthorizationID: "d", Kind: "settle",
 		Work: encoded(map[string]any{"v": 2, "digest": sum("d")})})
-	if done, events, alerts := run(func(*fakePending, *fakeTopic) {}); done || len(events) != 0 || len(alerts) != 1 {
+	if done, events, alerts, _, _ := run(func(*fakePending, *fakeTopic) {}); done || len(events) != 0 || len(alerts) != 1 {
 		t.Fatalf("a winner whose work cannot be read: done %v, %v, told %v", done, events, alerts)
 	}
 	pack.Winners[3].Work = encoded(Work{V: 1})
-	if done, _, alerts := run(func(*fakePending, *fakeTopic) {}); done || len(alerts) != 1 {
+	if done, _, alerts, _, _ := run(func(*fakePending, *fakeTopic) {}); done || len(alerts) != 1 {
 		t.Fatalf("a settle with no digest: done %v, told %v", done, alerts)
 	}
-	if done, events, _ := run(func(*fakePending, *fakeTopic) {}); done || len(events) != 0 {
-		t.Fatalf("again: %v %v", done, events)
-	}
 	pack.WorkDoneAt = spanner.NullTime{Time: start, Valid: true}
-	if done, events, _ := run(func(*fakePending, *fakeTopic) {}); !done || len(events) != 0 {
+	if done, events, _, _, _ := run(func(*fakePending, *fakeTopic) {}); !done || len(events) != 0 {
 		t.Fatalf("a pack done already: %v %v", done, events)
 	}
 }

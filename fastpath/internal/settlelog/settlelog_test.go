@@ -374,12 +374,13 @@ func TestTheRecordTopicIsDeliveredWithItsAttributes(t *testing.T) {
 	nacked := false
 	inside, most := 0, 0
 	both := make(chan struct{})
+	var twice sync.Once
 	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
 		mu.Lock()
 		inside++
 		most = max(most, inside)
 		if inside == 2 {
-			close(both)
+			twice.Do(func() { close(both) })
 		}
 		mu.Unlock()
 		select {

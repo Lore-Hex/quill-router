@@ -179,12 +179,21 @@ func undecidedRows(ctx context.Context, txn *spanner.ReadWriteTransaction, ref L
 	return undecided, err
 }
 
+// StagedKey names a staged record: its authorization and digest.
+type StagedKey struct {
+	AuthorizationID string
+	Digest          []byte
+}
+
 // MarkPackDone records that a pack's pending work is done (§4.8, §4.9): its
 // records are written and its outcome published. If the lease has closed and
 // this was its last pending pack, the lease's row may then go, its packs
 // with it. It reads the lease's state, which a close writes, so the two
-// settle in either order. It reports whether this call marked it.
-func (s *Store) MarkPackDone(ctx context.Context, ref LeaseRef, version int64) (bool, error) {
+// settle in either order. The staged records named go in the same commit,
+// those of the pack's winners, which nothing needs once its work is done; so
+// no crash between the two leaves one to stay. It reports whether this call
+// marked it.
+func (s *Store) MarkPackDone(ctx context.Context, ref LeaseRef, version int64, drop ...StagedKey) (bool, error) {
 	var marked bool
 	_, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		marked = false
@@ -207,6 +216,13 @@ func (s *Store) MarkPackDone(ctx context.Context, ref LeaseRef, version int64) (
 			return err
 		}
 		marked = true
+		deletes := make([]*spanner.Mutation, 0, len(drop))
+		for _, k := range drop {
+			deletes = append(deletes, spanner.Delete("tr_spike_staged", spanner.Key{k.AuthorizationID, k.Digest}))
+		}
+		if err := txn.BufferWrite(deletes); err != nil {
+			return err
+		}
 		if state != "closed" {
 			return nil
 		}
