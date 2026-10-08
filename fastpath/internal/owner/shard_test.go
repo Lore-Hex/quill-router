@@ -388,17 +388,6 @@ func TestARetiringOwnerTakesNothingNew(t *testing.T) {
 	_, _ = f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}) // room 0: an ask, held at the store
 	waitFor(t, "the held ask", func() bool { return len(sp.granted()) == 2 })
 	f.owner.Retire()
-	asked := askedAt()
-	f.clock.advance(time.Minute)
-	if _, err := f.owner.Admit(key, Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrNoRoom) {
-		t.Fatalf("a request to a retiring owner: %v", err)
-	}
-	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
-		t.Fatalf("a request to a retiring owner's lease: %v", err)
-	}
-	if got := askedAt(); !got.Equal(asked) {
-		t.Fatalf("an ask at %v by a retiring owner, its last at %v", got, asked)
-	}
 	sp.mu.Lock()
 	close(sp.grantGate)
 	sp.grantGate = nil
@@ -410,6 +399,18 @@ func TestARetiringOwnerTakesNothingNew(t *testing.T) {
 	})
 	if ls := f.leases(key); len(ls) != 1 || ls[0] != a {
 		t.Fatalf("a retiring owner's leases: %d", len(ls))
+	}
+	// No ask is outstanding and the cooldown has passed: still none is made.
+	asked := askedAt()
+	f.clock.advance(time.Minute)
+	if _, err := f.owner.Admit(key, Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("a request to a retiring owner: %v", err)
+	}
+	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("a request to a retiring owner's lease: %v", err)
+	}
+	if got := askedAt(); !got.Equal(asked) || len(sp.granted()) != 2 {
+		t.Fatalf("an ask at %v by a retiring owner, its last at %v; %d grants", got, asked, len(sp.granted()))
 	}
 }
 
