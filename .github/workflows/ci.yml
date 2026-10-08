@@ -497,6 +497,10 @@ jobs:
           exit 1
       - name: The store against the emulator
         run: go test -race -count=1 -p 1 ./internal/store/...
+      # The owner's and the auditor's tests against the store skip without
+      # the emulator, so the fastpath job runs none of them; they run here.
+      - name: The owner and the auditor against the emulator
+        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/...
 
   proofs:
     runs-on: ubuntu-latest

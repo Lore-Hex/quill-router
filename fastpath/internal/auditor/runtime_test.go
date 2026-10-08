@@ -62,6 +62,9 @@ type flaky struct {
 	lostCommits, lostStops         int
 	failLoadOf                     map[string]int // by lease ID
 	commits                        [][]store.CommitRequest
+	// finding, when set, is told of each FindLease, which then waits for
+	// found to close, whatever its context.
+	finding, found chan struct{}
 }
 
 func (f *flaky) take(n *int) bool {
@@ -77,6 +80,13 @@ func (f *flaky) take(n *int) bool {
 var errInjected = errors.New("a failure the test injected")
 
 func (f *flaky) FindLease(ctx context.Context, id string) (store.LeaseRef, error) {
+	if f.finding != nil {
+		select {
+		case f.finding <- struct{}{}:
+		default:
+		}
+		<-f.found
+	}
 	if f.take(&f.failFind) {
 		return store.LeaseRef{}, errInjected
 	}
@@ -685,5 +695,99 @@ func TestAClosedLeasesRecordsAreAcknowledged(t *testing.T) {
 	handleAll(rt, d)
 	if l := f.loaded(); d.acked() != 1 || l.Lease.AppliedSeq != 0 {
 		t.Fatalf("a record of a closed lease: acknowledged %d, the lease %+v", d.acked(), l.Lease)
+	}
+}
+
+// TestARecoveryNeverWaitsForTheLease: the round that starts a lease's read
+// again returns at once, though a handler holds the lease; the worker reads
+// it once the handler lets it go.
+func TestARecoveryNeverWaitsForTheLease(t *testing.T) {
+	f := newRuntimeFixture(t)
+	rt := f.runtime()
+	d := on(t, f.ref, settle(1, "a", 40, 0))
+	handleAll(rt, d)
+	h := rt.held(f.ref.LeaseID)
+	h.mu.Lock()
+	h.lease, h.recovering = nil, true // as the round leaves a lease whose commit was refused
+	started := make(chan struct{})
+	go func() {
+		rt.recover(context.Background(), h)
+		close(started)
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("starting a lease's read again waited for the handler that holds it")
+	}
+	h.mu.Unlock()
+	rt.workers.Wait()
+	round(rt)
+	if d.acked() != 1 {
+		t.Fatalf("the lease read again: acknowledged %d", d.acked())
+	}
+}
+
+// TestADoneLeasesReadTellsItsRow: a member that reads a lease stopped at a
+// gap, or closed, tells what its row holds: the gap, an audit fault, a
+// charge past the allocation.
+func TestADoneLeasesReadTellsItsRow(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	got, _, err := f.s.Commit(ctx, []store.CommitRequest{{Ref: f.ref, AppliedSeq: 2, AuditOsum: 1500,
+		Money: []store.MoneyOp{store.Book(1500, 0)}, AuditFault: ptr(int64(2)),
+		Winners: []store.Winner{{AuthorizationID: "a", Kind: "settle", Charge: 1500, RecordID: "o1"}}}})
+	if err != nil || len(got) != 1 || got[0].Refused != "" {
+		t.Fatalf("the commit: %+v %v", got, err)
+	}
+	if ok, _, err := f.s.StopForGap(ctx, f.ref, got[0].NewVersion, 4); err != nil || !ok {
+		t.Fatalf("the stop: %v %v", ok, err)
+	}
+	rt := f.runtime()
+	handleAll(rt, on(t, f.ref, settle(3, "c", 5, 0)))
+	alerts := f.alerted()
+	for _, want := range []string{"a gap in the lease's records stopped it",
+		"an audit fault: the owner's checkpoint disagrees with its records", "a charge past the lease's allocation"} {
+		if !slices.Contains(alerts, want) {
+			t.Fatalf("the alerts %v, without %q", alerts, want)
+		}
+	}
+}
+
+// leftSource is a source whose Receive returns once ctx ends, though a
+// handler it started still runs, as the client library's can after its
+// shutdown timeout.
+type leftSource struct{ d Delivery }
+
+func (s leftSource) Receive(ctx context.Context, handle func(context.Context, Delivery)) error {
+	go handle(ctx, s.d)
+	<-ctx.Done()
+	return nil
+}
+
+// TestRunWaitsForItsHandlers: Run returns only once a handler its source
+// left running has ended. The handler is held in a read that does not end
+// with ctx; Run waits for it past ctx's end, and returns once it ends.
+func TestRunWaitsForItsHandlers(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.store.finding, f.store.found = make(chan struct{}, 1), make(chan struct{})
+	rt := f.runtime()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- rt.Run(ctx, leftSource{d: on(t, f.ref, settle(1, "a", 40, 0))}) }()
+	<-f.store.finding
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("Run returned while its handler ran")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(f.store.found)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return once its handler ended")
 	}
 }

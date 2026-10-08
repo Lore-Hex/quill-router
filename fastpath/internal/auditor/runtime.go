@@ -93,6 +93,12 @@ type Runtime struct {
 	mu      sync.Mutex
 	leases  map[string]*held
 	workers sync.WaitGroup // leases read again after a refused or lost commit
+	// The handlers under way, which Run waits for, and whether Run is
+	// stopping, when it takes no more.
+	hmu      sync.Mutex
+	handlers int
+	stopping bool
+	idle     *sync.Cond
 }
 
 // held is a lease at the runtime: its member, and the records handled since
@@ -131,12 +137,15 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.Alert == nil {
 		cfg.Alert = func(string, string) {}
 	}
-	return &Runtime{cfg: cfg, leases: map[string]*held{}}, nil
+	rt := &Runtime{cfg: cfg, leases: map[string]*held{}}
+	rt.idle = sync.NewCond(&rt.hmu)
+	return rt, nil
 }
 
 // Run receives the settle log until ctx ends or src fails, committing what
-// it applied every CommitEvery. What it has not acknowledged when it
-// returns, src delivers again.
+// it applied every CommitEvery. Its handlers work under ctx, and it returns
+// only once each has ended, though src returned first: what it has not
+// acknowledged then, src delivers again.
 func (rt *Runtime) Run(ctx context.Context, src Source) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -154,11 +163,42 @@ func (rt *Runtime) Run(ctx context.Context, src Source) error {
 			}
 		}
 	}()
-	err := src.Receive(ctx, rt.handle)
+	err := src.Receive(ctx, func(_ context.Context, d Delivery) {
+		if !rt.enter() {
+			return
+		}
+		defer rt.exit()
+		rt.handle(ctx, d)
+	})
 	cancel()
+	rt.hmu.Lock()
+	rt.stopping = true
+	for rt.handlers > 0 {
+		rt.idle.Wait()
+	}
+	rt.hmu.Unlock()
 	<-committed
 	rt.workers.Wait()
 	return err
+}
+
+// enter admits a handler, unless Run is stopping.
+func (rt *Runtime) enter() bool {
+	rt.hmu.Lock()
+	defer rt.hmu.Unlock()
+	if rt.stopping {
+		return false
+	}
+	rt.handlers++
+	return true
+}
+
+func (rt *Runtime) exit() {
+	rt.hmu.Lock()
+	defer rt.hmu.Unlock()
+	if rt.handlers--; rt.handlers == 0 {
+		rt.idle.Broadcast()
+	}
 }
 
 // handle takes a lease's next record: it is applied to the lease's member,
@@ -281,11 +321,8 @@ func (rt *Runtime) load(ctx context.Context, h *held) bool {
 			rt.cfg.Alert(h.id, "a record of a lease the store does not have")
 			rt.finish(h)
 			return false
-		case err == nil && loaded.Lease.State == "closed":
-			rt.finish(h)
-			return false
-		case err == nil && loaded.Lease.GapSeq.Valid:
-			rt.cfg.Alert(h.id, "a gap in the lease's records stopped it")
+		case err == nil && (loaded.Lease.State == "closed" || loaded.Lease.GapSeq.Valid):
+			rt.told(h, loaded.Lease)
 			rt.finish(h)
 			return false
 		case err == nil:
@@ -314,6 +351,9 @@ func (rt *Runtime) read(ctx context.Context, h *held) (store.Loaded, error) {
 // told tells what a lease's row holds that a person needs: a write that
 // stored it may have lost its answer, or its member stopped, before telling.
 func (rt *Runtime) told(h *held, l store.Lease) {
+	if l.GapSeq.Valid {
+		rt.cfg.Alert(h.id, "a gap in the lease's records stopped it")
+	}
 	if l.AuditFaultSeq.Valid {
 		rt.cfg.Alert(h.id, "an audit fault: the owner's checkpoint disagrees with its records")
 	}
@@ -391,7 +431,10 @@ func (rt *Runtime) commitAll(ctx context.Context) {
 		rt.commit(ctx, batch)
 		var again []*held
 		for _, h := range batch {
-			if h.lease == nil {
+			// A lease to read again is claimed for its worker while the
+			// round holds it: the round never waits for it again.
+			if h.lease == nil && !h.recovering {
+				h.recovering = true
 				again = append(again, h)
 			}
 			h.mu.Unlock()
@@ -443,16 +486,11 @@ func (rt *Runtime) commit(ctx context.Context, batch []*held) {
 	}
 }
 
-// recover reads a lease that lost its member again and applies its kept
-// records again, in a goroutine of its own, so a lease whose reads keep
-// failing holds up only its own records.
+// recover reads a lease that lost its member again, claimed for it
+// (recovering), and applies its kept records again, in a goroutine of its
+// own: a lease whose reads keep failing, or whose handler holds it, holds up
+// only its own records, and never the round that started it.
 func (rt *Runtime) recover(ctx context.Context, h *held) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.recovering {
-		return
-	}
-	h.recovering = true
 	rt.workers.Add(1)
 	go func() {
 		defer rt.workers.Done()
