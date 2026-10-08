@@ -248,6 +248,13 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 	}
 	ctx := context.Background()
 	ps := pubSub(t)
+	// The nodes have a database of their own, so their ring holds them
+	// alone, not other tests' nodes' rows, live for a while after they stop.
+	db, err := emulator.Database(ctx, storetest.UniqueID("route"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
 	listen := func() net.Listener {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -265,18 +272,18 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 			break
 		}
 	}
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
 	for _, ln := range []net.Listener{a, b} {
 		cfg := config(ln)
 		cfg.Auditor = false
-		start(t, cfg, Clients{Spanner: shared, PubSub: ps})
+		start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
 	member.Admission, member.Address, member.Listener = false, "", nil
-	start(t, member, Clients{Spanner: shared, PubSub: ps})
+	start(t, member, Clients{Spanner: db, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
 	// Until the first node's view has the second, it owns the shard itself.
@@ -299,7 +306,7 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 	if err != nil || settled.Status != frontdoor.Won || settled.Charge != 30 {
 		t.Fatalf("the settle through the other node: %+v %v", settled, err)
 	}
-	s, err := store.New(shared, config(a).Store)
+	s, err := store.New(db, config(a).Store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +471,7 @@ func TestANodeWhoseRowIsTakenStops(t *testing.T) {
 
 // ownedBy is a new workspace, seeded with credit, whose one shard the node
 // at by owns among the nodes at among, by rendezvous hashing.
-func ownedBy(t *testing.T, by net.Listener, among ...net.Listener) string {
+func ownedBy(t *testing.T, db *spanner.Client, by net.Listener, among ...net.Listener) string {
 	t.Helper()
 	for {
 		ws := storetest.UniqueID("ws")
@@ -477,7 +484,7 @@ func ownedBy(t *testing.T, by net.Listener, among ...net.Listener) string {
 		if !best {
 			continue
 		}
-		if _, err := shared.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
+		if _, err := db.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
 			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000),
 				"trust_tier": int64(3)})}); err != nil {
 			t.Fatal(err)
@@ -522,7 +529,7 @@ func TestALeaseIsRenewedWhileItsOwnerRuns(t *testing.T) {
 	}
 	ctx := context.Background()
 	ln := listen(t)
-	ws := ownedBy(t, ln)
+	ws := ownedBy(t, shared, ln)
 	cfg := short(config(ln))
 	cfg.Auditor = false
 	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
@@ -553,38 +560,33 @@ func TestAnUnreachableOwnersLeaseIsRevoked(t *testing.T) {
 	}
 	ctx := context.Background()
 	ps := pubSub(t)
+	// The three nodes have a database of their own, so their ring holds
+	// them alone: the shared one keeps other tests' nodes' rows, live for a
+	// while after they stop, which a could pick to relay through.
+	db, err := emulator.Database(ctx, storetest.UniqueID("relay"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
 	// c, the third node, is the peer a sends a terminal through when it
 	// cannot reach b: its listener counts the relays it is asked for.
 	relays := &sniffed{Listener: listen(t), path: []byte("POST /peer/terminal ")}
 	a, b, c := listen(t), listen(t), net.Listener(relays)
-	ws := ownedBy(t, b, a, b, c)
+	ws := ownedBy(t, db, b, a, b, c)
 	stops := map[net.Listener]func(){}
 	for _, ln := range []net.Listener{a, b, c} {
 		cfg := short(config(ln))
 		cfg.Auditor = false
 		cfg.FrontDoor.RevokeAfter, cfg.FrontDoor.RevokeEvery = time.Second, 100*time.Millisecond
-		stops[ln] = start(t, cfg, Clients{Spanner: shared, PubSub: ps})
+		stops[ln] = start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
-	s, err := store.New(shared, short(config(a)).Store)
+	s, err := store.New(db, short(config(a)).Store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// a's view takes c in before b stops: the three members' rows are live,
-	// and then every node's watch has read them, a ring interval each.
-	eventually(t, 10*time.Second, "the three nodes live", func() (bool, error) {
-		members, _, err := s.Members(ctx)
-		live := 0
-		for _, m := range members {
-			for _, ln := range []net.Listener{a, b, c} {
-				if m.Live && m.Address == ln.Addr().String() {
-					live++
-				}
-			}
-		}
-		return live == 3, err
-	})
-	time.Sleep(2 * Defaults().Ring)
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
+	// a's view holds c before b stops: a admits a workspace c owns at c.
+	admitted(t, gw, ownedBy(t, db, c, a, b, c), "rc", c)
 	first, e := admitted(t, gw, ws, "r1", b)
 	second, _ := admitted(t, gw, ws, "r2", b)
 	stops[b]()
@@ -966,7 +968,7 @@ func TestAnOwnerCallEndsBeforeItsOwnerStops(t *testing.T) {
 		t.Skip(skipped)
 	}
 	ln := listen(t)
-	ws := ownedBy(t, ln)
+	ws := ownedBy(t, shared, ln)
 	cfg := config(ln)
 	cfg.Auditor, cfg.Stopping = false, 100*time.Millisecond
 	entered, release := make(chan struct{}), make(chan struct{})
