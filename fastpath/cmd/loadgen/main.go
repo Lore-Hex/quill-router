@@ -38,6 +38,7 @@ func run() error {
 	heartbeat := flag.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
 	heartbeatWait := flag.Duration("heartbeat-wait", 5*time.Second, "how long a heartbeat's attempts may take, together")
 	boot := flag.String("boot", "spike-boot", "the boot binding every request carries")
+	enclaves := flag.Int("enclaves", 8, "how many enclaves the load spreads over, each with its retry queue's one worker")
 	retryDelays := flag.String("retry-delays", "0s,500ms,1s,2s,4s,8s",
 		"the delays before each of the retry queue's attempts at a terminal, separated by commas")
 	callWait := flag.Duration("call-wait", 28*time.Second, "how long a call but a heartbeat's may take")
@@ -57,8 +58,8 @@ func run() error {
 	}
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1024}}
 	cfg := loadgen.Config{Rate: *rate, Duration: *duration, MaxInFlight: *inFlight, Mix: mix,
-		HeartbeatEvery: *heartbeat, HeartbeatWait: *heartbeatWait, Boot: []byte(*boot), CallWait: *callWait,
-		Seed: *seed}
+		HeartbeatEvery: *heartbeat, HeartbeatWait: *heartbeatWait, Boot: []byte(*boot), Enclaves: *enclaves,
+		CallWait: *callWait, Seed: *seed}
 	for _, d := range strings.Split(*retryDelays, ",") {
 		if d = strings.TrimSpace(d); d == "" {
 			continue

@@ -62,16 +62,51 @@ type Weight struct {
 const MaxHeartbeats = 1 << 20
 
 // ReadMix reads a mix as JSON, such as fastpath/testdata/load-mix.json: one
-// object, and nothing after it.
+// object, every field given and none null, and nothing after it.
 func ReadMix(r io.Reader) (Mix, error) {
+	type weight struct {
+		Value  *int64   `json:"value"`
+		Weight *float64 `json:"weight"`
+	}
+	var raw struct {
+		StreamShare *float64  `json:"stream_share"`
+		Heartbeats  []*weight `json:"heartbeats"`
+		RefundShare *float64  `json:"refund_share"`
+		Estimates   []*weight `json:"estimates"`
+		BillPermill []*weight `json:"bill_permill"`
+	}
 	d := json.NewDecoder(r)
 	d.DisallowUnknownFields()
-	var m Mix
-	if err := d.Decode(&m); err != nil {
+	if err := d.Decode(&raw); err != nil {
 		return Mix{}, fmt.Errorf("loadgen: the mix: %w", err)
 	}
 	if _, err := d.Token(); err != io.EOF {
 		return Mix{}, errors.New("loadgen: the mix is one JSON object, with nothing after it")
+	}
+	missing := errors.New("loadgen: the mix gives every field, and none null")
+	histogram := func(ws []*weight) ([]Weight, error) {
+		out := make([]Weight, 0, len(ws))
+		for _, w := range ws {
+			if w == nil || w.Value == nil || w.Weight == nil {
+				return nil, missing
+			}
+			out = append(out, Weight{Value: *w.Value, Weight: *w.Weight})
+		}
+		return out, nil
+	}
+	if raw.StreamShare == nil || raw.RefundShare == nil {
+		return Mix{}, missing
+	}
+	m := Mix{StreamShare: *raw.StreamShare, RefundShare: *raw.RefundShare}
+	var err error
+	if m.Heartbeats, err = histogram(raw.Heartbeats); err != nil {
+		return Mix{}, err
+	}
+	if m.Estimates, err = histogram(raw.Estimates); err != nil {
+		return Mix{}, err
+	}
+	if m.BillPermill, err = histogram(raw.BillPermill); err != nil {
+		return Mix{}, err
 	}
 	return m, m.valid()
 }
@@ -81,8 +116,8 @@ func (m Mix) valid() error {
 	if !share(m.StreamShare) || !share(m.RefundShare) || !histogram(m.Heartbeats, 1, MaxHeartbeats) ||
 		!histogram(m.Estimates, 1, math.MaxInt64) || !histogram(m.BillPermill, 0, math.MaxInt64) {
 		return errors.New("loadgen: a mix needs shares between 0 and 1, and histograms of finite weights, not " +
-			"negative, of a positive finite total, whose heartbeats are 1 to MaxHeartbeats, estimates at least 1 " +
-			"and bills at least 0")
+			"negative and one positive, whose heartbeats are 1 to MaxHeartbeats, estimates at least 1 and bills " +
+			"at least 0")
 	}
 	if _, ok := mulDiv(largest(m.Estimates), largest(m.BillPermill), 1000); !ok {
 		return errors.New("loadgen: the mix's largest estimate and bill make a charge past an int64")
@@ -90,19 +125,17 @@ func (m Mix) valid() error {
 	return nil
 }
 
-// histogram reports whether ws is one: values from least to most, weights
-// not negative, and a total that is positive and finite, so that a draw
-// lands on a value of positive weight. A weight that is not a number, or
-// is infinite, makes the total so.
+// histogram reports whether ws is one: values from least to most, and
+// weights finite and not negative, one of them positive.
 func histogram(ws []Weight, least, most int64) bool {
-	total := 0.0
+	heaviest := 0.0
 	for _, w := range ws {
-		if w.Value < least || w.Value > most || w.Weight < 0 {
+		if w.Value < least || w.Value > most || !(w.Weight >= 0) || math.IsInf(w.Weight, 1) {
 			return false
 		}
-		total += w.Weight
+		heaviest = max(heaviest, w.Weight)
 	}
-	return total > 0 && !math.IsInf(total, 1)
+	return heaviest > 0
 }
 
 func largest(ws []Weight) int64 {
@@ -124,26 +157,44 @@ func mulDiv(a, b, c int64) (int64, bool) {
 	return int64(q), q <= math.MaxInt64
 }
 
-// pick draws a value of a histogram.
-func pick(rng *rand.Rand, ws []Weight) int64 {
-	total := 0.0
+// histo is a histogram to draw from, its weights scaled so that the
+// heaviest is 1: weights however small or large then draw in proportion.
+type histo struct {
+	values  []int64
+	weights []float64
+	total   float64
+}
+
+func newHisto(ws []Weight) histo {
+	heaviest := 0.0
 	for _, w := range ws {
-		total += w.Weight
+		heaviest = max(heaviest, w.Weight)
 	}
-	x := rng.Float64() * total
+	var h histo
 	for _, w := range ws {
-		if x < w.Weight {
-			return w.Value
-		}
-		x -= w.Weight
+		h.values = append(h.values, w.Value)
+		h.weights = append(h.weights, w.Weight/heaviest)
+		h.total += w.Weight / heaviest
 	}
-	// x lands past every bin only by rounding: the last bin of any weight
-	// takes it.
-	for i := len(ws) - 1; ; i-- {
-		if ws[i].Weight > 0 {
-			return ws[i].Value
+	return h
+}
+
+// pick draws a value.
+func (h histo) pick(rng *rand.Rand) int64 {
+	x := rng.Float64() * h.total
+	var last int64
+	for i, w := range h.weights {
+		if w == 0 {
+			continue
 		}
+		if x < w {
+			return h.values[i]
+		}
+		x -= w
+		last = h.values[i]
 	}
+	// Rounding can carry x past every bin: the last of any weight takes it.
+	return last
 }
 
 // Config is a run's.
@@ -172,10 +223,14 @@ type Config struct {
 	HeartbeatWait time.Duration
 	// Boot is the boot binding every authorize and full record carries.
 	Boot []byte
-	// RetryDelays are the settle retry queue's, as the enclave's are (§4.5:
-	// 0, 0.5, 1, 2, 4 and 8 seconds): a terminal failed or not answered is
-	// sent again after each delay in turn, and is lost once the last such
-	// attempt is.
+	// Enclaves is how many enclaves the generations spread over, in turn.
+	// Each has its retry queue: a terminal failed or not answered joins its
+	// enclave's queue, whose one worker serves the queued terminals in turn,
+	// as the enclave's does (§4.5).
+	Enclaves int
+	// RetryDelays are the queue's, as the enclave's are (§4.5: 0, 0.5, 1, 2,
+	// 4 and 8 seconds): the worker sends a terminal again after each delay
+	// in turn, and it is lost once the last such attempt is.
 	RetryDelays []time.Duration
 	// CallWait bounds each call but a heartbeat's.
 	CallWait time.Duration
@@ -198,10 +253,11 @@ const heartbeatTries = 3
 func (c Config) valid() error {
 	if len(c.Gateways) == 0 || !(c.Rate > 0 && c.Rate <= MaxRate) || c.Duration <= 0 || c.MaxInFlight < 1 ||
 		len(c.Workspaces) == 0 || c.HeartbeatEvery <= 0 || c.HeartbeatWait <= 0 || len(c.Boot) == 0 ||
-		c.CallWait <= 0 || slices.ContainsFunc(c.RetryDelays, func(d time.Duration) bool { return d < 0 }) {
+		c.Enclaves < 1 || c.CallWait <= 0 ||
+		slices.ContainsFunc(c.RetryDelays, func(d time.Duration) bool { return d < 0 }) {
 		return errors.New("loadgen: a run needs gateways, a rate above 0 and at most MaxRate, a duration, room " +
-			"in flight, workspaces, a heartbeat interval and wait, a boot binding, retry delays not negative and " +
-			"a call wait")
+			"in flight, workspaces, a heartbeat interval and wait, a boot binding, enclaves, retry delays not " +
+			"negative and a call wait")
 	}
 	return c.Mix.valid()
 }
@@ -276,10 +332,17 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := cfg.valid(); err != nil {
 		return Report{}, err
 	}
-	r := &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{}}
+	r := &run{cfg: cfg, outcomes: map[string]int64{}, latencies: map[string][]time.Duration{},
+		streams: newHisto(cfg.Mix.Heartbeats), estimates: newHisto(cfg.Mix.Estimates),
+		bills: newHisto(cfg.Mix.BillPermill)}
+	workers, stop := r.startEnclaves(ctx)
+	defer func() {
+		stop()
+		workers.Wait()
+	}()
 	// Each wake starts every generation due by then, so the rate holds
 	// however late the wakes come.
-	rate := new(big.Rat).SetFloat64(cfg.Rate)
+	rate := exactly(cfg.Rate)
 	t := time.NewTicker(time.Millisecond)
 	defer t.Stop()
 	began := time.Now()
@@ -316,6 +379,14 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	return r.report(), r.logErr
 }
 
+// exactly is a rate as the decimal it was written in: the shortest decimal
+// that reads back as the float, so 100.1 is 1001/10, not the float's binary
+// value just below it.
+func exactly(rate float64) *big.Rat {
+	r, _ := new(big.Rat).SetString(strconv.FormatFloat(rate, 'g', -1, 64))
+	return r
+}
+
 // dueBy is how many generations are due elapsed into the run: the whole
 // part of rate × elapsed, worked exactly, so that none due is rounded away.
 func dueBy(rate *big.Rat, elapsed time.Duration) int64 {
@@ -324,7 +395,9 @@ func dueBy(rate *big.Rat, elapsed time.Duration) int64 {
 }
 
 type run struct {
-	cfg Config
+	cfg                       Config
+	streams, estimates, bills histo
+	enclaves                  []*enclave
 
 	mu         sync.Mutex
 	started    int64
@@ -335,10 +408,11 @@ type run struct {
 }
 
 // played is one generation's calls: the gateway it calls now, which a call
-// that fails moves on.
+// that fails moves on, and its enclave.
 type played struct {
-	r    *run
-	door int
+	r       *run
+	door    int
+	enclave *enclave
 }
 
 func (p *played) gateway() Gateway { return p.r.cfg.Gateways[p.door] }
@@ -350,12 +424,12 @@ func (p *played) failed() { p.door = (p.door + 1) % len(p.r.cfg.Gateways) }
 func (r *run) generation(ctx context.Context, n int64) {
 	rng := rand.New(rand.NewPCG(r.cfg.Seed, uint64(n)))
 	cfg := r.cfg
-	p := &played{r: r, door: int(n % int64(len(cfg.Gateways)))}
+	p := &played{r: r, door: int(n % int64(len(cfg.Gateways))), enclave: r.enclaves[n%int64(len(r.enclaves))]}
 	g := Generation{N: n, Workspace: cfg.Workspaces[rng.IntN(len(cfg.Workspaces))],
 		Stream: rng.Float64() < cfg.Mix.StreamShare, Started: time.Now().UTC()}
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%d", cfg.Seed, n)))
 	g.Request = hex.EncodeToString(sum[:8])
-	estimate := pick(rng, cfg.Mix.Estimates)
+	estimate := r.estimates.pick(rng)
 	r.count("generation")
 	defer r.record(&g)
 
@@ -382,14 +456,14 @@ func (r *run) generation(ctx context.Context, n int64) {
 	}
 	// The bill: a share of the hold, at times more than it. The mix keeps
 	// it within an int64.
-	bill, _ := mulDiv(estimate, pick(rng, cfg.Mix.BillPermill), 1000)
+	bill, _ := mulDiv(estimate, r.bills.pick(rng), 1000)
 	kind, charge := record.Settle, bill
 	if rng.Float64() < cfg.Mix.RefundShare {
 		kind, charge = record.Refund, 0
 	}
 	if g.Stream {
 		var delivered int64
-		g.Streamed, delivered = p.stream(ctx, &g, got.Envelope, estimate, bill, pick(rng, cfg.Mix.Heartbeats))
+		g.Streamed, delivered = p.stream(ctx, &g, got.Envelope, estimate, bill, r.streams.pick(rng))
 		r.count("stream " + g.Streamed)
 		switch g.Streamed {
 		case "refused", "cancelled":
@@ -479,62 +553,170 @@ func (p *played) heartbeat(ctx context.Context, g *Generation, hb frontdoor.Hear
 	return time.Time{}, false
 }
 
-// terminal sends the generation's settle or refund until it is answered, as
-// the enclave's retry queue does: again after each of RetryDelays, through
-// the next gateway after a call that failed. A Failed answer or a call that
-// fails is tried again; any other answer ends it.
+// terminal sends the generation's settle or refund, as the enclave does:
+// once, and if that fails or is not answered, through its enclave's retry
+// queue (§4.5), whose outcome it waits for.
 func (p *played) terminal(ctx context.Context, envelope string, kind record.Kind, charge int64,
 	request string) *TerminalDone {
-	r := p.r
-	done := &TerminalDone{Kind: kind, Charge: charge}
-	full, _ := json.Marshal(map[string]any{"request": request, "boot": r.cfg.Boot, "charge": charge})
+	full, _ := json.Marshal(map[string]any{"request": request, "boot": p.r.cfg.Boot, "charge": charge})
+	t := &queued{p: p, envelope: envelope, full: full, done: &TerminalDone{Kind: kind, Charge: charge},
+		served: make(chan struct{})}
+	if !p.attempt(ctx, t) {
+		p.enclave.queue(t)
+		<-t.served
+	}
+	return t.done
+}
+
+// queued is a terminal in a retry queue, served once its outcome is set.
+type queued struct {
+	p        *played
+	envelope string
+	full     []byte
+	done     *TerminalDone
+	served   chan struct{}
+}
+
+// end ends the terminal with a status no answer gave: lost or cancelled.
+func (t *queued) end(status string) {
+	t.done.Status = status
+	t.p.r.count(string(t.done.Kind) + " " + status)
+}
+
+// attempt sends the terminal once, through the generation's gateway, which
+// a call that fails moves on, and reports whether it was answered: a Failed
+// answer or a call that fails is not.
+func (p *played) attempt(ctx context.Context, t *queued) bool {
+	r, done := p.r, t.done
+	tctx, cancel := context.WithTimeout(ctx, r.cfg.CallWait)
+	defer cancel()
+	began := time.Now()
+	var got frontdoor.TerminalAnswer
+	var err error
 	money := []byte(`{}`)
-	for attempt := 0; ; attempt++ {
-		if attempt > 0 {
-			if attempt > len(r.cfg.RetryDelays) {
-				done.Status = "lost"
-				r.count(string(kind) + " lost")
-				return done
-			}
-			wait := time.NewTimer(r.cfg.RetryDelays[attempt-1])
+	if done.Kind == record.Settle {
+		got, err = p.gateway().Settle(tctx, frontdoor.SettleOf{Envelope: t.envelope, Charge: done.Charge, Full: t.full,
+			Money: money})
+	} else {
+		got, err = p.gateway().Refund(tctx, frontdoor.RefundOf{Envelope: t.envelope, Money: money})
+	}
+	status := "error"
+	if err == nil {
+		status = string(got.Status)
+		r.latency(string(done.Kind), time.Since(began))
+	} else {
+		p.failed()
+	}
+	done.Tries = append(done.Tries, status)
+	r.count(string(done.Kind) + " attempt " + status)
+	if err != nil || got.Status == frontdoor.Failed {
+		return false
+	}
+	done.Status, done.Won, done.WonFor = status, got.Kind, got.Charge
+	done.Outcome, done.Cost, done.CostKnown = got.Outcome, got.Cost, got.CostKnown
+	r.count(string(done.Kind) + " " + status)
+	return true
+}
+
+// enclave is one enclave's retry queue, and its one worker.
+type enclave struct {
+	mu    sync.Mutex
+	jobs  []*queued
+	wake  chan struct{}
+	ended bool
+}
+
+// startEnclaves starts each enclave's worker; stop ends them, and the
+// group is done once every worker has returned. A worker ends with ctx,
+// each terminal it had not served then cancelled.
+func (r *run) startEnclaves(ctx context.Context) (*sync.WaitGroup, func()) {
+	var workers sync.WaitGroup
+	stopped := make(chan struct{})
+	for range r.cfg.Enclaves {
+		e := &enclave{wake: make(chan struct{}, 1)}
+		r.enclaves = append(r.enclaves, e)
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			e.work(ctx, stopped, r.cfg.RetryDelays)
+		}()
+	}
+	return &workers, sync.OnceFunc(func() { close(stopped) })
+}
+
+func (e *enclave) queue(t *queued) {
+	e.mu.Lock()
+	if e.ended {
+		e.mu.Unlock()
+		t.end("cancelled")
+		close(t.served)
+		return
+	}
+	e.jobs = append(e.jobs, t)
+	e.mu.Unlock()
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
+}
+
+// work serves the queue's terminals in turn, each through every delay
+// until it is answered or lost, until stopped or ctx ends.
+func (e *enclave) work(ctx context.Context, stopped <-chan struct{}, delays []time.Duration) {
+	defer func() {
+		e.mu.Lock()
+		e.ended = true
+		left := e.jobs
+		e.jobs = nil
+		e.mu.Unlock()
+		for _, t := range left {
+			t.end("cancelled")
+			close(t.served)
+		}
+	}()
+	for {
+		e.mu.Lock()
+		var t *queued
+		if len(e.jobs) > 0 {
+			t, e.jobs = e.jobs[0], e.jobs[1:]
+		}
+		e.mu.Unlock()
+		if t == nil {
 			select {
+			case <-e.wake:
+				continue
+			case <-stopped:
+				return
 			case <-ctx.Done():
-				wait.Stop()
-			case <-wait.C:
-			}
-			if ctx.Err() != nil {
-				done.Status = "cancelled"
-				r.count(string(kind) + " cancelled")
-				return done
+				return
 			}
 		}
-		tctx, cancel := context.WithTimeout(ctx, r.cfg.CallWait)
-		began := time.Now()
-		var got frontdoor.TerminalAnswer
-		var err error
-		if kind == record.Settle {
-			got, err = p.gateway().Settle(tctx, frontdoor.SettleOf{Envelope: envelope, Charge: charge, Full: full,
-				Money: money})
-		} else {
-			got, err = p.gateway().Refund(tctx, frontdoor.RefundOf{Envelope: envelope, Money: money})
+		e.serve(ctx, t, delays)
+		close(t.served)
+	}
+}
+
+func (e *enclave) serve(ctx context.Context, t *queued, delays []time.Duration) {
+	for _, d := range delays {
+		wait := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			wait.Stop()
+		case <-wait.C:
 		}
-		cancel()
-		status := "error"
-		if err == nil {
-			status = string(got.Status)
-			r.latency(string(kind), time.Since(began))
-		} else {
-			p.failed()
+		if ctx.Err() != nil {
+			t.end("cancelled")
+			return
 		}
-		done.Tries = append(done.Tries, status)
-		r.count(string(kind) + " attempt " + status)
-		if err == nil && got.Status != frontdoor.Failed {
-			done.Status, done.Won, done.WonFor = status, got.Kind, got.Charge
-			done.Outcome, done.Cost, done.CostKnown = got.Outcome, got.Cost, got.CostKnown
-			r.count(string(kind) + " " + status)
-			return done
+		if t.p.attempt(ctx, t) {
+			return
 		}
 	}
+	if ctx.Err() != nil {
+		t.end("cancelled")
+		return
+	}
+	t.end("lost")
 }
 
 func (r *run) count(what string) {

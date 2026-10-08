@@ -30,6 +30,7 @@ type fakeGateway struct {
 	heartbeats []frontdoor.HeartbeatOf
 	settles    []frontdoor.SettleOf
 	refunds    []frontdoor.RefundOf
+	sealed     []string               // the envelopes its authorizes answered
 	at         map[string][]time.Time // each call's time, by kind
 	authorize  func(frontdoor.AuthorizeOf) (frontdoor.Authorized, error)
 	heartbeat  func(frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error)
@@ -82,16 +83,7 @@ func (f *fakeGateway) Refund(_ context.Context, r frontdoor.RefundOf) (frontdoor
 // on, and lets every terminal win.
 func admitting(t *testing.T) *fakeGateway {
 	t.Helper()
-	return &fakeGateway{
-		authorize: func(a frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
-			sealed, err := frontdoor.Seal(key, frontdoor.Envelope{Auth: "gwa-" + a.Request, Workspace: a.Workspace,
-				Lease: "lease-1", Owner: "node-a", Estimate: a.Estimate, Stream: a.Stream,
-				EndOfLife: time.Now().Add(time.Hour)})
-			if err != nil {
-				t.Error(err)
-			}
-			return frontdoor.Authorized{Status: frontdoor.Admitted, Envelope: sealed}, nil
-		},
+	f := &fakeGateway{
 		heartbeat: func(hb frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
 			return frontdoor.HeartbeatAnswer{Status: frontdoor.Accepted,
 				Deadline: time.Date(2026, 10, 8, 12, 0, int(hb.GatewaySeq), 0, time.UTC)}, nil
@@ -100,6 +92,49 @@ func admitting(t *testing.T) *fakeGateway {
 			return frontdoor.TerminalAnswer{Status: frontdoor.Won, Kind: record.Settle, Charge: 125}, nil
 		},
 	}
+	f.authorize = func(a frontdoor.AuthorizeOf) (frontdoor.Authorized, error) {
+		sealed, err := frontdoor.Seal(key, frontdoor.Envelope{Auth: "gwa-" + a.Request, Workspace: a.Workspace,
+			Lease: "lease-1", Owner: "node-a", Estimate: a.Estimate, Stream: a.Stream,
+			EndOfLife: time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Error(err)
+		}
+		f.mu.Lock()
+		f.sealed = append(f.sealed, sealed)
+		f.mu.Unlock()
+		return frontdoor.Authorized{Status: frontdoor.Admitted, Envelope: sealed}, nil
+	}
+	return f
+}
+
+// echoed checks that every heartbeat, settle and refund the gateways were
+// sent carries an envelope one of them sealed, and the one of its
+// generation's authorize: with one generation, there is one.
+func echoed(t *testing.T, gws ...*fakeGateway) {
+	t.Helper()
+	sealed := map[string]bool{}
+	for _, gw := range gws {
+		for _, e := range gw.sealed {
+			sealed[e] = true
+		}
+	}
+	for _, gw := range gws {
+		for _, hb := range gw.heartbeats {
+			if !sealed[hb.Envelope] {
+				t.Fatalf("a heartbeat with an envelope %q no authorize sealed", hb.Envelope)
+			}
+		}
+		for _, s := range gw.settles {
+			if !sealed[s.Envelope] {
+				t.Fatalf("a settle with an envelope %q no authorize sealed", s.Envelope)
+			}
+		}
+		for _, r := range gw.refunds {
+			if !sealed[r.Envelope] {
+				t.Fatalf("a refund with an envelope %q no authorize sealed", r.Envelope)
+			}
+		}
+	}
 }
 
 // config is a run of one generation, streaming three heartbeats, settling
@@ -107,8 +142,9 @@ func admitting(t *testing.T) *fakeGateway {
 func config(gw Gateway) Config {
 	return Config{Gateways: []Gateway{gw}, Rate: 1000, Duration: time.Millisecond, MaxInFlight: 10,
 		Workspaces: []string{"ws-1"}, HeartbeatEvery: time.Millisecond, HeartbeatWait: time.Second,
-		Boot: []byte("boot"), RetryDelays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
-		CallWait: time.Second, Key: key, Seed: 7,
+		Boot: []byte("boot"), Enclaves: 1,
+		RetryDelays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
+		CallWait:    time.Second, Key: key, Seed: 7,
 		Mix: Mix{StreamShare: 1, Heartbeats: []Weight{{3, 1}}, RefundShare: 0, Estimates: []Weight{{100, 1}},
 			BillPermill: []Weight{{1250, 1}}}}
 }
@@ -149,9 +185,10 @@ func TestAGenerationIsPlayedThrough(t *testing.T) {
 		}
 		last = hb
 	}
-	if len(gw.settles) != 1 || gw.settles[0].Charge != 125 {
+	if len(gw.settles) != 1 || gw.settles[0].Charge != 125 || len(gw.sealed) != 1 {
 		t.Fatalf("the settles: %+v", gw.settles)
 	}
+	echoed(t, gw)
 	var full struct {
 		Boot []byte `json:"boot"`
 	}
@@ -249,6 +286,7 @@ func TestAStreamEndsAsTheEnclaveEndsIt(t *testing.T) {
 			if len(gw.heartbeats) != c.sent || g.Streamed != c.streamed || rep.Outcomes["stream "+c.streamed] != 1 {
 				t.Fatalf("%s: %d heartbeats, %+v, %+v", c.name, len(gw.heartbeats), g, rep.Outcomes)
 			}
+			echoed(t, gw)
 			switch {
 			case c.settled < 0:
 				if len(gw.settles)+len(gw.refunds) != 0 || g.Terminal != nil {
@@ -293,6 +331,7 @@ func TestACallThatFailsMovesToAnotherFrontDoor(t *testing.T) {
 		!slices.Equal(g.Heartbeats[0].Tries, []string{"error", "accepted"}) {
 		t.Fatalf("heartbeats: %d at b, %d at a; %+v", len(b.heartbeats), len(a.heartbeats), g)
 	}
+	echoed(t, a, b)
 	// The terminal starts where the stream left off, at the first front
 	// door; there it fails once, and the second takes it.
 	b2, a2 := admitting(t), admitting(t)
@@ -334,6 +373,7 @@ func TestACallThatFailsMovesToAnotherFrontDoor(t *testing.T) {
 		!slices.Equal(g.Terminal.Tries, []string{"error", "won"}) {
 		t.Fatalf("settles: %d at b, %d at a; %+v", len(b3.settles), len(a3.settles), g.Terminal)
 	}
+	echoed(t, a3, b3)
 }
 
 // TestHeartbeatsKeepTheirSchedule: a stream's seq-th heartbeat is sent
@@ -388,6 +428,7 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 		rep.Outcomes["settle attempt recorded"] != 1 || rep.Outcomes["settle recorded"] != 1 {
 		t.Fatalf("%d settles, %+v", len(gw.settles), rep.Outcomes)
 	}
+	echoed(t, gw)
 
 	lost := admitting(t)
 	lost.terminal = func(int) (frontdoor.TerminalAnswer, error) {
@@ -409,6 +450,7 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 	if took := lost.at["refund"][3].Sub(lost.at["refund"][0]); took < 30*time.Millisecond {
 		t.Fatalf("the last attempt %v after the first, before the delays' 30ms", took)
 	}
+	echoed(t, lost)
 	var g Generation
 	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil || g.Terminal == nil ||
 		g.Terminal.Kind != record.Refund || g.Terminal.Charge != 0 || g.Terminal.Status != "lost" ||
@@ -512,8 +554,8 @@ func TestTheRateIsKept(t *testing.T) {
 	}
 }
 
-// TestARunNeedsARate: a rate not above 0, past MaxRate or not a number is
-// refused before anything starts.
+// TestARunNeedsARate: a rate not above 0, past MaxRate or not a number,
+// or no enclave, is refused before anything starts.
 func TestARunNeedsARate(t *testing.T) {
 	for _, rate := range []float64{0, -1, math.NaN(), math.Inf(1), 2e9} {
 		cfg := config(admitting(t))
@@ -521,6 +563,11 @@ func TestARunNeedsARate(t *testing.T) {
 		if _, err := Run(context.Background(), cfg); err == nil {
 			t.Fatalf("a rate of %v ran", rate)
 		}
+	}
+	cfg := config(admitting(t))
+	cfg.Enclaves = 0
+	if _, err := Run(context.Background(), cfg); err == nil {
+		t.Fatal("a run with no enclave ran")
 	}
 }
 
@@ -577,10 +624,10 @@ func TestTheLogHasEachGeneration(t *testing.T) {
 	}
 }
 
-// TestAMixIsRead: a mix reads from JSON, one object and nothing after it;
-// one with a share past 1, a histogram of no weight or of an infinite
-// total, or a value out of its range does not. Nor does a mix built with a
-// weight that is not a number run.
+// TestAMixIsRead: a mix reads from JSON, one object with every field given
+// and none null, and nothing after it; one with a share past 1, a histogram
+// of no weight, or a value out of its range does not. Nor does a mix built
+// with a weight that is not a number, or infinite, run.
 func TestAMixIsRead(t *testing.T) {
 	good := `{"stream_share":0.6,"heartbeats":[{"value":3,"weight":1}],"refund_share":0.1,` +
 		`"estimates":[{"value":100,"weight":2},{"value":1000,"weight":1}],"bill_permill":[{"value":800,"weight":7},{"value":1200,"weight":1}]}`
@@ -588,16 +635,21 @@ func TestAMixIsRead(t *testing.T) {
 		t.Fatalf("%+v %v", m, err)
 	}
 	for name, bad := range map[string]string{
-		"a share past 1":   strings.Replace(good, `"stream_share":0.6`, `"stream_share":1.5`, 1),
-		"no weight":        strings.Replace(good, `[{"value":3,"weight":1}]`, `[{"value":3,"weight":0}]`, 1),
-		"no heartbeat":     strings.Replace(good, `[{"value":3,"weight":1}]`, `[{"value":0,"weight":1}]`, 1),
-		"an unknown field": strings.Replace(good, `"stream_share"`, `"extra":1,"stream_share"`, 1),
-		"no estimates":     strings.Replace(good, `[{"value":100,"weight":2},{"value":1000,"weight":1}]`, `[]`, 1),
-		"an infinite total": strings.Replace(good, `[{"value":100,"weight":2},{"value":1000,"weight":1}]`,
-			`[{"value":100,"weight":1e308},{"value":1000,"weight":1e308},{"value":5,"weight":0}]`, 1),
+		"a share past 1":      strings.Replace(good, `"stream_share":0.6`, `"stream_share":1.5`, 1),
+		"no weight":           strings.Replace(good, `[{"value":3,"weight":1}]`, `[{"value":3,"weight":0}]`, 1),
+		"no heartbeat":        strings.Replace(good, `[{"value":3,"weight":1}]`, `[{"value":0,"weight":1}]`, 1),
+		"an unknown field":    strings.Replace(good, `"stream_share"`, `"extra":1,"stream_share"`, 1),
+		"no estimates":        strings.Replace(good, `[{"value":100,"weight":2},{"value":1000,"weight":1}]`, `[]`, 1),
 		"too many heartbeats": strings.Replace(good, `[{"value":3,"weight":1}]`, `[{"value":2000000,"weight":1}]`, 1),
 		"a second object":     good + ` {}`,
 		"garbage after":       good + ` x`,
+		"a null share":        strings.Replace(good, `"stream_share":0.6`, `"stream_share":null`, 1),
+		"no refund share":     strings.Replace(good, `"refund_share":0.1,`, ``, 1),
+		// Each beside a bin that would do alone.
+		"a null value":    strings.Replace(good, `{"value":100,"weight":2}`, `{"value":null,"weight":2}`, 1),
+		"a null weight":   strings.Replace(good, `{"value":100,"weight":2}`, `{"value":100,"weight":null}`, 1),
+		"a null bin":      strings.Replace(good, `{"value":100,"weight":2}`, `null`, 1),
+		"no weight given": strings.Replace(good, `{"value":100,"weight":2}`, `{"value":100}`, 1),
 	} {
 		if _, err := ReadMix(strings.NewReader(bad)); err == nil {
 			t.Fatalf("%s: read", name)
@@ -606,10 +658,19 @@ func TestAMixIsRead(t *testing.T) {
 	if _, err := ReadMix(strings.NewReader(good + "\n \n")); err != nil {
 		t.Fatalf("a mix and blank lines: %v", err)
 	}
-	cfg := config(admitting(t))
-	cfg.Mix.Estimates = []Weight{{100, math.NaN()}, {200, 1}}
-	if _, err := Run(context.Background(), cfg); err == nil {
-		t.Fatal("a weight that is not a number ran")
+	// Weights whose total would pass a float's range read, and draw in
+	// proportion (TestADrawLandsOnAWeight).
+	if _, err := ReadMix(strings.NewReader(strings.Replace(good,
+		`[{"value":100,"weight":2},{"value":1000,"weight":1}]`,
+		`[{"value":100,"weight":1e308},{"value":1000,"weight":1e308},{"value":5,"weight":0}]`, 1))); err != nil {
+		t.Fatalf("weights of 1e308: %v", err)
+	}
+	for _, w := range []float64{math.NaN(), math.Inf(1)} {
+		cfg := config(admitting(t))
+		cfg.Mix.Estimates = []Weight{{100, w}, {200, 1}}
+		if _, err := Run(context.Background(), cfg); err == nil {
+			t.Fatalf("a weight of %v ran", w)
+		}
 	}
 }
 
@@ -642,6 +703,22 @@ func TestACancelledRunSendsNoMore(t *testing.T) {
 				return frontdoor.TerminalAnswer{Status: frontdoor.Failed}, nil
 			}
 		}, "settle cancelled"},
+		{"as the queue's last attempt is made", func(gw *fakeGateway, cfg *Config, cancel func()) {
+			cfg.Mix.StreamShare, cfg.RetryDelays = 0, []time.Duration{time.Millisecond}
+			gw.terminal = func(attempt int) (frontdoor.TerminalAnswer, error) {
+				if attempt == 2 {
+					cancel()
+				}
+				return frontdoor.TerminalAnswer{}, context.Canceled
+			}
+		}, "settle cancelled"},
+		{"as the only attempt is made", func(gw *fakeGateway, cfg *Config, cancel func()) {
+			cfg.Mix.StreamShare, cfg.RetryDelays = 0, nil
+			gw.terminal = func(int) (frontdoor.TerminalAnswer, error) {
+				cancel()
+				return frontdoor.TerminalAnswer{}, context.Canceled
+			}
+		}, "settle cancelled"},
 	} {
 		gw := admitting(t)
 		cfg := config(gw)
@@ -652,11 +729,10 @@ func TestACancelledRunSendsNoMore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		attempts := 0
-		if c.want == "settle cancelled" {
-			attempts = 1
-		}
-		if rep.Outcomes[c.want] != 1 || len(gw.settles) != attempts || len(gw.refunds) != 0 {
+		attempts := map[string]int{"in the retry queue": 1, "as the queue's last attempt is made": 2,
+			"as the only attempt is made": 1}[c.name]
+		if rep.Outcomes[c.want] != 1 || len(gw.settles) != attempts || len(gw.refunds) != 0 ||
+			rep.Outcomes["settle lost"] != 0 {
 			t.Fatalf("%s: %d settles, %+v", c.name, len(gw.settles), rep.Outcomes)
 		}
 	}
@@ -668,10 +744,125 @@ type maxSource struct{}
 func (maxSource) Uint64() uint64 { return math.MaxUint64 }
 
 // TestADrawLandsOnAWeight: a draw that rounding carries past every bin
-// lands on the last bin of any weight, never on one of none.
+// lands on the last bin of any weight, never on one of none; and weights
+// however small draw in proportion.
 func TestADrawLandsOnAWeight(t *testing.T) {
-	ws := []Weight{{1, 0.1}, {2, 0.2}, {3, 0.3}, {4, 0}}
-	if got := pick(rand.New(maxSource{}), ws); got != 3 {
+	// Scaled by the heaviest, these weights' largest draw passes every bin.
+	if got := newHisto([]Weight{{1, 0.3}, {2, 0.4}, {3, 0.1}, {4, 0}}).pick(rand.New(maxSource{})); got != 3 {
 		t.Fatalf("drew %d", got)
 	}
+	for _, w := range []float64{math.SmallestNonzeroFloat64, 1e308} {
+		h := newHisto([]Weight{{1, w}, {2, w}, {3, 0}})
+		rng := rand.New(rand.NewPCG(1, 2))
+		ones := 0
+		for range 100_000 {
+			if h.pick(rng) == 1 {
+				ones++
+			}
+		}
+		if ones < 48_000 || ones > 52_000 {
+			t.Fatalf("%d of 100,000 draws on the first of two weights of %v", ones, w)
+		}
+	}
+}
+
+// TestTheRetryQueueServesInTurn: an enclave's one worker serves its queued
+// terminals in turn, each through its delays, so one queued behind another
+// is tried after it; here the first queued is lost and the second, whose
+// tries come after the outage, is not.
+func TestTheRetryQueueServesInTurn(t *testing.T) {
+	gw := admitting(t)
+	var mu sync.Mutex
+	calls := 0
+	gw.terminal = func(int) (frontdoor.TerminalAnswer, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		// Both generations' first sends, and the first queued one's three
+		// tries, fail.
+		if calls++; calls <= 5 {
+			return frontdoor.TerminalAnswer{}, errors.New("unreachable")
+		}
+		return frontdoor.TerminalAnswer{Status: frontdoor.Recorded}, nil
+	}
+	cfg := config(gw)
+	cfg.Rate, cfg.Duration, cfg.Mix.StreamShare = 2000, time.Millisecond, 0
+	rep, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Started != 2 || rep.Outcomes["settle lost"] != 1 || rep.Outcomes["settle recorded"] != 1 ||
+		len(gw.settles) != 6 {
+		t.Fatalf("%d settles, %+v", len(gw.settles), rep.Outcomes)
+	}
+	echoed(t, gw)
+}
+
+// TestARateIsTheDecimalWritten: generations due are worked from the rate as
+// written, not the float's binary value below it.
+func TestARateIsTheDecimalWritten(t *testing.T) {
+	for _, c := range []struct {
+		rate float64
+		over time.Duration
+		due  int64
+	}{{100.1, 10 * time.Second, 1001}, {0.3, 10 * time.Second, 3}, {100, 290 * time.Millisecond, 29},
+		{1e6, time.Second, 1_000_000}} {
+		if got := dueBy(exactly(c.rate), c.over); got != c.due {
+			t.Fatalf("%v a second over %v: %d due, want %d", c.rate, c.over, got, c.due)
+		}
+	}
+}
+
+// TestAHeartbeatsTriesShareItsWait: a heartbeat's attempts end together at
+// HeartbeatWait, however long a call would take, and the stream ends.
+func TestAHeartbeatsTriesShareItsWait(t *testing.T) {
+	for _, first := range []frontdoor.Status{"", frontdoor.Retry} {
+		gw := admitting(t)
+		var mu sync.Mutex
+		tries := 0
+		gw.heartbeat = nil
+		hold := &blockingGateway{fakeGateway: gw, heartbeat: func(ctx context.Context) (frontdoor.HeartbeatAnswer, error) {
+			mu.Lock()
+			tries++
+			n := tries
+			mu.Unlock()
+			if n == 1 && first != "" {
+				return frontdoor.HeartbeatAnswer{Status: first}, nil
+			}
+			<-ctx.Done()
+			return frontdoor.HeartbeatAnswer{}, ctx.Err()
+		}}
+		cfg := config(gw)
+		cfg.Gateways, cfg.HeartbeatWait = []Gateway{hold}, 100*time.Millisecond
+		var log bytes.Buffer
+		cfg.Log = &log
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		began := time.Now()
+		_, err := Run(ctx, cfg)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var g Generation
+		if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if first != "" {
+			want = 2
+		}
+		if took := time.Since(began); took > 2*time.Second || g.Streamed != "refused" || len(g.Heartbeats) != 1 ||
+			len(g.Heartbeats[0].Tries) != want {
+			t.Fatalf("first answer %q: after %v, %+v", first, took, g)
+		}
+	}
+}
+
+// blockingGateway is a fake whose heartbeats see their call's context.
+type blockingGateway struct {
+	*fakeGateway
+	heartbeat func(ctx context.Context) (frontdoor.HeartbeatAnswer, error)
+}
+
+func (b *blockingGateway) Heartbeat(ctx context.Context, _ frontdoor.HeartbeatOf) (frontdoor.HeartbeatAnswer, error) {
+	return b.heartbeat(ctx)
 }
