@@ -76,11 +76,16 @@ type Config struct {
 	// TopUps is how the owner keeps its shards' leases (shard.go); zero, it
 	// asks for none, and admits only under the leases it was given.
 	TopUps TopUps
+	// Grace is the reaper's grace (§4.5, §4.8): the owner reaps a hold
+	// whose last heartbeat's deadline plus it has passed. Records takes the
+	// full records of its reaps (§4.9); without it the owner reaps nothing.
+	Grace   time.Duration
+	Records RecordLog
 }
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
-		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 {
+		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter and a clock")
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
@@ -288,6 +293,8 @@ type hold struct {
 	deadline   time.Time
 	snapSeq    int64
 	sent       *sent
+	// basis is what the hold's first heartbeat brought for a reap of it.
+	basis []byte
 }
 
 // decision is an authorization's terminal: its kind and charge, and the
@@ -356,6 +363,9 @@ type Lease struct {
 	shard     *shard
 	takenAt   time.Time
 	lastAdmit time.Time
+	// adopted is the timestamp of the last read of the lease's drain log,
+	// past which the next reads (adopt.go); only the renewal round uses it.
+	adopted time.Time
 
 	// workers are the lease's flusher and the finish of its draining, which
 	// Let waits for: stopped is closed once they end.

@@ -23,6 +23,8 @@ type Spanner interface {
 	Renew(ctx context.Context, owner store.Owner, refs []store.LeaseRef) ([]store.RenewResult, time.Time, error)
 	ShortfallWrite(ctx context.Context, owner store.Owner, ref store.LeaseRef, total int64) (store.ShortfallResult, error)
 	OwnerMarkDraining(ctx context.Context, owner store.Owner, ref store.LeaseRef) (bool, time.Time, error)
+	ReadDrainSince(ctx context.Context, ref store.LeaseRef, cursor time.Time) ([]store.DrainRow, time.Time, error)
+	ReadHoldDrainRows(ctx context.Context, ref store.LeaseRef, authorization string) ([]store.DrainRow, time.Time, error)
 }
 
 // who is the owner as the store's conditions name it.
@@ -97,6 +99,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 	}
 	now = o.cfg.Clock()
 	for _, l := range leases {
+		o.adoptAndReap(ctx, l, now)
 		l.closeIfDone(now, o.cfg.TopUps)
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)
