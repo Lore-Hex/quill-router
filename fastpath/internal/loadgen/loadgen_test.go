@@ -475,11 +475,14 @@ func TestHeartbeatsKeepTheirSchedule(t *testing.T) {
 	if len(gw.at["heartbeat"]) != 3 {
 		t.Fatalf("%d heartbeats", len(gw.at["heartbeat"]))
 	}
-	// After each answer, a wait of HeartbeatEvery would send the third at
-	// 3 × every + 2 × answerTakes, 690 ms in.
-	third := gw.at["heartbeat"][2].Sub(gw.at["authorize"][0])
-	if third < 3*every || third >= 600*time.Millisecond {
-		t.Fatalf("the third heartbeat %v after the authorize", third)
+	// The k-th heartbeat is due k × every after the authorize, each one,
+	// the first too; after each answer, a wait of HeartbeatEvery would send
+	// the third at 3 × every + 2 × answerTakes, 690 ms in.
+	for k, at := range gw.at["heartbeat"] {
+		due := time.Duration(k+1) * every
+		if since := at.Sub(gw.at["authorize"][0]); since < due || since >= due+100*time.Millisecond {
+			t.Fatalf("heartbeat %d %v after the authorize, due at %v", k+1, since, due)
+		}
 	}
 }
 
@@ -507,6 +510,13 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 		t.Fatalf("%d settles, %+v", len(gw.settles), rep.Outcomes)
 	}
 	echoed(t, gw)
+	// Each attempt is the first whole: its envelope, charge, full record
+	// and money.
+	for i, s := range gw.settles {
+		if !reflect.DeepEqual(s, gw.settles[0]) {
+			t.Fatalf("settle attempt %d is %+v, the first %+v", i+1, s, gw.settles[0])
+		}
+	}
 
 	lost := admitting(t)
 	lost.terminal = func(int) (frontdoor.TerminalAnswer, error) {
@@ -524,6 +534,11 @@ func TestATerminalIsRetriedAsTheEnclaveDoes(t *testing.T) {
 	if n := len(lost.refunds); n != 4 || rep.Outcomes["refund attempt failed"] != 4 || rep.Outcomes["refund lost"] != 1 ||
 		len(lost.settles) != 0 {
 		t.Fatalf("%d refunds, %+v", n, rep.Outcomes)
+	}
+	for i, r := range lost.refunds {
+		if !reflect.DeepEqual(r, lost.refunds[0]) {
+			t.Fatalf("refund attempt %d is %+v, the first %+v", i+1, r, lost.refunds[0])
+		}
 	}
 	// Each queued attempt waits its own delay, in order, after the one
 	// before it: at least its delay, and less than the next one's.
@@ -562,6 +577,25 @@ func TestATerminalKeepsItsAnswer(t *testing.T) {
 		g.Terminal.Status != "settled" || g.Terminal.Outcome != "reaped_snapshot" || g.Terminal.Cost != 37 ||
 		!g.Terminal.CostKnown {
 		t.Fatalf("the terminal's record: %+v %v", g.Terminal, err)
+	}
+
+	// A terminal another won: the record keeps the winner's kind and
+	// charge, not its own.
+	won := admitting(t)
+	won.terminal = func(int) (frontdoor.TerminalAnswer, error) {
+		return frontdoor.TerminalAnswer{Status: frontdoor.Won, Kind: record.Reap, Charge: 61}, nil
+	}
+	cfg = config(won)
+	log.Reset()
+	cfg.Log = &log
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	g = Generation{}
+	if err := json.Unmarshal(bytes.TrimSpace(log.Bytes()), &g); err != nil || g.Terminal == nil ||
+		g.Terminal.Status != "won" || g.Terminal.Kind != record.Settle || g.Terminal.Charge != 125 ||
+		g.Terminal.Won != record.Reap || g.Terminal.WonFor != 61 {
+		t.Fatalf("the terminal another won: %+v %v", g.Terminal, err)
 	}
 }
 
