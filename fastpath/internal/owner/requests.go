@@ -71,15 +71,15 @@ type Admitted struct {
 }
 
 // Admit holds e against the lease (§4.2, §4.4): only while it has room,
-// free at least e with the new hold's own buffer counted, and before its
-// cutoff, read after the hold is recorded and undone if it has passed. A
-// stream's buffer joins the lease's at its first heartbeat, since until
-// then it may never run; another hold's at once.
+// free at least e with the new hold's own buffer counted, before its cutoff,
+// and while it is neither idle nor old (TopUps.over), the clock read after
+// the hold is recorded and the hold undone if either has passed. A stream's
+// buffer joins the lease's at its first heartbeat, since until then it may
+// never run; another hold's at once.
 func (l *Lease) Admit(a Admission) (Admitted, error) {
 	if err := a.valid(); err != nil {
 		return Admitted{}, err
 	}
-	began := l.o.cfg.Clock()
 	auth, err := l.o.cfg.NewAuthorization(l.id)
 	if err != nil {
 		return Admitted{}, err
@@ -96,10 +96,6 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	defer l.mu.Unlock()
 	if l.let {
 		return Admitted{}, ErrPastCutoff
-	}
-	if l.o.cfg.TopUps.over(began, l.lastAdmit, l.takenAt) {
-		// Gone idle or old since the last renewal round looked.
-		l.closing = true
 	}
 	if l.closing {
 		return Admitted{}, ErrClosing
@@ -118,10 +114,16 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	l.buffer += h.counted()
 	l.holds[auth] = h
 	now := l.o.cfg.Clock()
-	if !l.withinCutoff(now) {
+	done := l.o.cfg.TopUps.over(now, l.lastAdmit, l.takenAt)
+	if done || !l.withinCutoff(now) {
 		l.held -= h.estimate
 		l.buffer -= h.counted()
 		delete(l.holds, auth)
+		if done {
+			// Gone idle or old since the last renewal round looked.
+			l.closing = true
+			return Admitted{}, ErrClosing
+		}
 		return Admitted{}, ErrPastCutoff
 	}
 	h.endOfLife = now.Add(l.o.cfg.HoldLife)

@@ -105,6 +105,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 			o.Let(l.id)
 		}
 	}
+	o.retryLost()
 	return nil
 }
 

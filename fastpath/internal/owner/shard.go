@@ -127,7 +127,7 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 		got, err := l.Admit(a)
 		switch {
 		case err == nil:
-			o.topUp(key, 0)
+			o.topUp(key, false, 0)
 			return got, nil
 		case errors.Is(err, ErrNoRoom), errors.Is(err, ErrClosing), errors.Is(err, ErrPastCutoff),
 			errors.Is(err, ErrPublishing):
@@ -135,16 +135,17 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 			return Admitted{}, err
 		}
 	}
-	o.topUp(key, sat(a.Estimate, o.cfg.overrun(a.Estimate)))
+	o.topUp(key, true, sat(a.Estimate, o.cfg.overrun(a.Estimate)))
 	return Admitted{}, ErrNoRoom
 }
 
 // topUp asks for another lease for the shard once its room is below the
-// low-water mark, or a request found no lease to take it (unmet, the
-// request's need, which the lease is sized for too); one ask at a time, none
-// within the cooldown of the last, and none once the owner stops. The grant
-// is a Spanner transaction off the request's path.
-func (o *Owner) topUp(key ShardKey, unmet int64) {
+// low-water mark, a request found no lease to take it (unmet, with need, the
+// request's estimate and buffer, which the lease is sized for too), or an
+// ask's answer was lost, room or not; one ask at a time, none within the
+// cooldown of the last, and none once the owner stops. The grant is a
+// Spanner transaction off the request's path.
+func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	t := o.cfg.TopUps
 	if t == (TopUps{}) {
 		return
@@ -155,7 +156,7 @@ func (o *Owner) topUp(key ShardKey, unmet int64) {
 	}
 	o.mu.Lock()
 	sh := o.shardLocked(key)
-	idle := cooling(sh)
+	idle, lost := cooling(sh), sh.retry != nil
 	leases := slices.Clone(sh.leases)
 	o.mu.Unlock()
 	if idle {
@@ -166,7 +167,7 @@ func (o *Owner) topUp(key ShardKey, unmet int64) {
 		r, n := l.roomAndNeeds(now)
 		room, needs = sat(room, r), sat(needs, n)
 	}
-	if room >= t.LowWater && unmet == 0 {
+	if room >= t.LowWater && !unmet && !lost {
 		return
 	}
 	o.mu.Lock()
@@ -176,7 +177,7 @@ func (o *Owner) topUp(key ShardKey, unmet int64) {
 	}
 	req := sh.retry
 	if req == nil {
-		amount := min(max(sat(sat(sh.charges.over(now), needs), unmet), t.Min), t.Max)
+		amount := min(max(sat(sat(sh.charges.over(now), needs), need), t.Min), t.Max)
 		req = &store.GrantRequest{Workspace: key.Workspace, LeaseID: store.NewLeaseID(), Region: key.Region,
 			WorkspaceShard: key.Shard, Owner: o.who(), Amount: amount, KeyStatusVersion: o.cfg.KeyStatus}
 	}
@@ -188,8 +189,8 @@ func (o *Owner) topUp(key ShardKey, unmet int64) {
 
 // grant asks Spanner for a lease for the shard, and takes it. An ask whose
 // answer is lost may have been granted: the shard's next ask is the same,
-// lease ID and all, which the store answers with the lease it granted, so
-// none is granted and left unheld.
+// lease ID and all, at its next admission or renewal round, which the store
+// answers with the lease it granted, so none is granted and left unheld.
 func (o *Owner) grant(sh *shard, req store.GrantRequest) {
 	defer o.grants.Done()
 	got, err := o.cfg.Spanner.Grant(o.ctx, req)
@@ -204,19 +205,37 @@ func (o *Owner) grant(sh *shard, req store.GrantRequest) {
 	}
 }
 
-// roomAndNeeds is what a lease adds to its shard's room, its free room with
-// pending put back while it admits, and to a top-up's size, its open holds
-// and their buffer.
+// roomAndNeeds is what a lease adds to its shard's room, while it admits,
+// its allocation beyond what it consumed, holds and buffers (its free room
+// with pending put back), none if its buffers took it all; and to a
+// top-up's size, its open holds and their buffer.
 func (l *Lease) roomAndNeeds(now time.Time) (room, needs int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.booksLocked()
 	if !l.closing && l.withinCutoff(now) {
-		if free := b.Free(); free != math.MinInt64 {
-			room = max(sat(free, b.Pending), 0)
+		if used, ok := add(b.Consumed, b.Held, b.Buffer); ok {
+			room = max(b.Allocation-used, 0)
 		}
 	}
 	return room, sat(b.Held, b.Buffer)
+}
+
+// retryLost asks again, at a renewal round, for each shard's lease whose
+// answer was lost, so a lease the store granted is held though no request
+// comes.
+func (o *Owner) retryLost() {
+	o.mu.Lock()
+	var lost []ShardKey
+	for key, sh := range o.shards {
+		if sh.retry != nil {
+			lost = append(lost, key)
+		}
+	}
+	o.mu.Unlock()
+	for _, key := range lost {
+		o.topUp(key, false, 0)
+	}
 }
 
 // over: a lease that has admitted nothing for IdleAfter, or is MaxLife old,
