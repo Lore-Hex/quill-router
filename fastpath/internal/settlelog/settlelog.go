@@ -470,3 +470,49 @@ func (s *Subscription) Receive(ctx context.Context, handle func(context.Context,
 	}
 	return err
 }
+
+// RecordSubscription is the record topic's staging consumer's subscription
+// (§4.9): unordered, so its messages are handled concurrently, each
+// acknowledged by its handler once staged.
+type RecordSubscription struct {
+	sub *pubsub.Subscriber
+}
+
+// SubscribeRecords opens it. maxOutstanding bounds the messages delivered
+// and not yet settled; a negative one is no bound.
+func SubscribeRecords(client *pubsub.Client, subscription string, maxOutstanding int) *RecordSubscription {
+	sub := client.Subscriber(subscription)
+	sub.ReceiveSettings.MaxOutstandingMessages = maxOutstanding
+	sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{Behavior: pubsub.ShutdownBehaviorNackImmediately,
+		Timeout: shutdownTimeout}
+	return &RecordSubscription{sub: sub}
+}
+
+// RecordDelivery is one message of the record topic as it was delivered:
+// its authorization and kind, from its attributes.
+type RecordDelivery struct {
+	Authorization string
+	Kind          string
+	Data          []byte
+	ID            string
+	PublishTime   time.Time
+
+	msg *pubsub.Message
+}
+
+// Ack acknowledges the message once it is staged: it is not delivered
+// again.
+func (d *RecordDelivery) Ack() { d.msg.Ack() }
+
+// Nack asks for the message again.
+func (d *RecordDelivery) Nack() { d.msg.Nack() }
+
+// Receive delivers messages until ctx ends or the subscription fails, many
+// at once. handle settles each: Ack once it is staged, Nack to have it
+// again.
+func (s *RecordSubscription) Receive(ctx context.Context, handle func(context.Context, *RecordDelivery)) error {
+	return s.sub.Receive(ctx, func(cctx context.Context, m *pubsub.Message) {
+		handle(cctx, &RecordDelivery{Authorization: m.Attributes[AuthorizationAttr], Kind: m.Attributes[KindAttr],
+			Data: m.Data, ID: m.ID, PublishTime: m.PublishTime, msg: m})
+	})
+}

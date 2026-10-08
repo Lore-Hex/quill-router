@@ -351,3 +351,67 @@ func TestEndpointIsTheRegions(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// TestTheRecordTopicIsDeliveredWithItsAttributes: the staging consumer gets
+// each message with its authorization and kind, several at once though
+// they share no ordering key, and one it asks for again comes back.
+func TestTheRecordTopicIsDeliveredWithItsAttributes(t *testing.T) {
+	f := newFakeLog(t, false)
+	r, err := OpenRecords(f.client, f.topic, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	for i := range 4 {
+		if err := wait(t, r.Publish(fmt.Sprint("gwa-", i), FullRecord, []byte(fmt.Sprint("record-", i)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	got := map[string]string{}
+	nacked := false
+	inside, most := 0, 0
+	both := make(chan struct{})
+	err = SubscribeRecords(f.client, f.sub, -1).Receive(ctx, func(_ context.Context, d *RecordDelivery) {
+		mu.Lock()
+		inside++
+		most = max(most, inside)
+		if inside == 2 {
+			close(both)
+		}
+		mu.Unlock()
+		select {
+		case <-both:
+		case <-time.After(5 * time.Second):
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		inside--
+		if d.Kind != FullRecord || d.ID == "" || d.PublishTime.IsZero() {
+			t.Errorf("a delivery %+v", d)
+		}
+		if d.Authorization == "gwa-0" && !nacked {
+			nacked = true
+			d.Nack()
+			return
+		}
+		got[d.Authorization] = string(d.Data)
+		d.Ack()
+		if len(got) == 4 {
+			cancel()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 4 {
+		if got[fmt.Sprint("gwa-", i)] != fmt.Sprint("record-", i) {
+			t.Fatalf("delivered %v", got)
+		}
+	}
+	if most < 2 || !nacked {
+		t.Fatalf("at most %d handled at once; asked again %v", most, nacked)
+	}
+}

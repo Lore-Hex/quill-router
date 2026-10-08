@@ -64,8 +64,9 @@ type flaky struct {
 	lostCloses                     int
 	failLoadOf                     map[string]int // by lease ID
 	// gone makes ReadLease find no lease.
-	gone    bool
-	commits [][]store.CommitRequest
+	gone      bool
+	failStage int
+	commits   [][]store.CommitRequest
 	// finding, when set, is told of each FindLease, which then waits for
 	// found to close, whatever its context.
 	finding, found chan struct{}
@@ -105,6 +106,13 @@ func (f *flaky) ReadLease(ctx context.Context, ref store.LeaseRef) (store.Lease,
 		return store.Lease{}, time.Time{}, store.ErrNoLease
 	}
 	return f.Store.ReadLease(ctx, ref)
+}
+
+func (f *flaky) StageRecord(ctx context.Context, r store.StagedRecord) error {
+	if f.take(&f.failStage) {
+		return errInjected
+	}
+	return f.Store.StageRecord(ctx, r)
 }
 
 func (f *flaky) Load(ctx context.Context, ref store.LeaseRef) (store.Loaded, error) {
@@ -194,6 +202,7 @@ func (d *fakeDelivery) acked() int {
 // it granted.
 type runtimeFixture struct {
 	t       *testing.T
+	db      *spanner.Client
 	s       *store.Store
 	store   *flaky
 	records *fakeRecords
@@ -241,13 +250,20 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	if emulator == nil {
 		t.Skip(skipped)
 	}
-	s, err := store.New(shared, store.Config{LiveFor: time.Hour, Window: 30 * time.Second, Skew: 2 * time.Second,
+	return newRuntimeFixtureOn(t, shared)
+}
+
+// newRuntimeFixtureOn is the fixture on a database of its own, for a test
+// that reads every lease's rows, as a sweep does.
+func newRuntimeFixtureOn(t *testing.T, db *spanner.Client) *runtimeFixture {
+	t.Helper()
+	s, err := store.New(db, store.Config{LiveFor: time.Hour, Window: 30 * time.Second, Skew: 2 * time.Second,
 		PublishDeadline: 5 * time.Second, MaxLife: 5 * time.Minute, Grace: time.Minute, Allowance: 1_000_000,
 		RequiredTier: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &runtimeFixture{t: t, s: s, store: &flaky{Store: s}, records: &fakeRecords{}}
+	f := &runtimeFixture{t: t, db: db, s: s, store: &flaky{Store: s}, records: &fakeRecords{}}
 	f.ref = f.grant()
 	return f
 }
@@ -256,7 +272,7 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 	f.t.Helper()
 	ctx := context.Background()
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := f.db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		f.t.Fatal(err)
 	}
