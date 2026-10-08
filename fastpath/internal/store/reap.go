@@ -17,6 +17,7 @@ const (
 	RefusedTerminal    Refusal = "the authorization has a terminal in the drain log"
 	RefusedNoHold      Refusal = "the authorization has no open hold"
 	RefusedNotDue      Refusal = "the hold's deadline plus the grace has not passed"
+	RefusedUndecided   Refusal = "a terminal in the drain log has no stored winner"
 	RefusedHoldsOpen   Refusal = "the lease has open holds"
 	RefusedRowsBeyond  Refusal = "the drain log has rows past the member's read"
 	RefusedTooSoon     Refusal = "the lease's holds may not all have ended"

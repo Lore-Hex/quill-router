@@ -19,9 +19,11 @@ type CloseResult struct {
 
 // CloseLease closes a draining lease (§4.5, §4.8): conditional on the
 // version the member read, no gap, and S stored; refused while any hold row
-// remains, and while the drain log has a row committed after drainRead, the
+// remains, while the drain log has a row committed after drainRead, the
 // timestamp of the member's last read of it, which the member must apply
-// first: so no acknowledged append is left behind. The holds must all have
+// first, and while a terminal in the drain log has no stored winner, which
+// the member must commit first: so no acknowledged append is left behind,
+// read or not (AuditorCommit's Close: nothing uncommitted). The holds must all have
 // ended: an applied list named them all, or now, the auditor's clock, is
 // past the expiry plus Config.MaxLife plus Config.Grace. The close returns
 // the remaining allocation as a commit's return does (applyMoney), from the
@@ -74,6 +76,12 @@ func (s *Store) CloseLease(ctx context.Context, ref LeaseRef, readVersion int64,
 		}
 		if out.Refused != "" {
 			return nil
+		}
+		if undecided, err := undecidedRows(ctx, txn, ref); err != nil || undecided {
+			if undecided {
+				out.Refused = RefusedUndecided
+			}
+			return err
 		}
 		for _, d := range money.Donors {
 			if left := d.Allocation - d.Consumed; left > 0 {
@@ -141,6 +149,34 @@ func (s *Store) CloseLease(ctx context.Context, ref LeaseRef, readVersion int64,
 		out.CommitTS = resp.CommitTs.UTC()
 	}
 	return out, nil
+}
+
+// undecidedRows reports whether the drain log has a terminal whose
+// authorization has no stored winner, its own or an earlier terminal's.
+func undecidedRows(ctx context.Context, txn *spanner.ReadWriteTransaction, ref LeaseRef) (bool, error) {
+	packs, err := readPacks(ctx, txn, ref, "close")
+	if err != nil {
+		return false, err
+	}
+	won := map[string]bool{}
+	for _, p := range packs {
+		for _, w := range p.Winners {
+			won[w.AuthorizationID] = true
+		}
+	}
+	undecided := false
+	err = txn.QueryWithOptions(ctx, spanner.Statement{
+		SQL:    `SELECT DISTINCT authorization_id FROM tr_lease_drain WHERE workspace_id = @w AND lease_id = @l`,
+		Params: ref.params(),
+	}, spanner.QueryOptions{RequestTag: tag("close")}).Do(func(row *spanner.Row) error {
+		var a string
+		if err := row.Column(0, &a); err != nil {
+			return err
+		}
+		undecided = undecided || !won[a]
+		return nil
+	})
+	return undecided, err
 }
 
 // MarkPackDone records that a pack's pending work is done (§4.8, §4.9): its

@@ -62,12 +62,13 @@ func (s *Store) ReadStaged(ctx context.Context, authorization string, digest []b
 // DropStaged removes an authorization's staged records with the digests
 // given, once nothing can need them (§4.9): once the pack that holds the
 // authorization's winner is marked done, so the winner's records are all
-// written and its outcome published; or, for an authorization with no
-// winner, once its lease has closed, as for losing terminals. A record
-// written alone is not enough: the winner's others may not be. Until then
-// the records stay and DropStaged reports false; so too while the store
-// cannot find the lease. The lease comes from the authorization's ID, and
-// its packs from the lease.
+// written and its outcome published; for an authorization with no winner,
+// once its lease has closed, as for losing terminals; and once the lease's
+// row is gone, since it goes, with its packs, only seven days after the
+// lease has closed with no pack's work pending (§4.8). A record written
+// alone is not enough: the winner's others may not be. Until then the
+// records stay and DropStaged reports false. The lease comes from the
+// authorization's ID, which an owner mints only under a lease it holds.
 func (s *Store) DropStaged(ctx context.Context, authorization string, digests ...[]byte) (bool, error) {
 	leaseID, err := LeaseOfAuthorization(authorization)
 	if err != nil {
@@ -86,12 +87,14 @@ func (s *Store) DropStaged(ctx context.Context, authorization string, digests ..
 			found = true
 			return row.Columns(&ref.Workspace, &state)
 		})
-		if err != nil || !found {
-			return err
-		}
-		packs, err := readPacks(ctx, txn, ref, stagingTag)
 		if err != nil {
 			return err
+		}
+		var packs []Pack
+		if found {
+			if packs, err = readPacks(ctx, txn, ref, stagingTag); err != nil {
+				return err
+			}
 		}
 		won, done := false, false
 		for _, p := range packs {
@@ -101,7 +104,7 @@ func (s *Store) DropStaged(ctx context.Context, authorization string, digests ..
 				}
 			}
 		}
-		if (won && !done) || (!won && state != "closed") {
+		if found && ((won && !done) || (!won && state != "closed")) {
 			return nil
 		}
 		mutations := make([]*spanner.Mutation, 0, len(digests))

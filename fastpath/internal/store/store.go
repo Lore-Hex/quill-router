@@ -76,6 +76,14 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 				"at most MaxSetting")
 		}
 	}
+	// The ratios §4.5 rests on, which also keep the grace more than twice
+	// the skew: an auditor whose clock is at most the skew fast takes a tick
+	// past a hold's deadline plus the grace only once the deadline has
+	// passed, and every owner publish is received before the grace less
+	// twice the skew has.
+	if cfg.PublishDeadline >= cfg.Grace-2*cfg.Skew {
+		return nil, errors.New("store: the publish deadline must be less than the grace less twice the skew (§4.5)")
+	}
 	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {
 		return nil, errors.New("store: the allowance must be positive, the floor not negative, and the tier 0 to 3")
 	}

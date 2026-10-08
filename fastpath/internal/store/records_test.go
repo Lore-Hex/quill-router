@@ -88,11 +88,6 @@ func TestStagedRecordsStayUntilNothingNeedsThem(t *testing.T) {
 		}
 		return dropped
 	}
-	// Before the lease is granted, the store cannot place the records.
-	stage(LeaseRef{"ws", lease})
-	if drop("unseen") {
-		t.Fatal("a staged record goes while the store cannot find its lease")
-	}
 	req := grantOf(seedWorkspace(t, 100), 30)
 	req.LeaseID = lease
 	if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
@@ -126,6 +121,15 @@ func TestStagedRecordsStayUntilNothingNeedsThem(t *testing.T) {
 	}
 	if !drop("settled") || !drop("refunded") {
 		t.Fatal("a winner's staged records stay after its pack's work is done")
+	}
+	// A record staged again late, once retention has deleted the lease's row
+	// and its packs, can still go.
+	stage(ref)
+	execLease(t, ref, `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`)
+	for _, name := range []string{"settled", "refunded", "unseen"} {
+		if !drop(name) {
+			t.Fatalf("%s's staged records stay after the lease's row is gone", name)
+		}
 	}
 	if dropped, err := s.DropStaged(ctx, "gwa-not-one-of-ours", []byte("d")); err == nil || dropped {
 		t.Fatalf("a staged record of an authorization that names no lease: %v %v", dropped, err)

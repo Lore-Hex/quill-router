@@ -150,6 +150,57 @@ func TestMaxLifeAndGraceAreBounded(t *testing.T) {
 	}
 }
 
+// TestTheTimingsKeepTheirRatios: the publish deadline is less than the
+// grace less twice the skew (§4.5), so the grace is more than twice the
+// skew, and an auditor's clock that runs the skew fast reaps no hold before
+// its deadline.
+func TestTheTimingsKeepTheirRatios(t *testing.T) {
+	spikeStore(t)
+	for name, change := range map[string]func(*Config){
+		"a grace less than the skew": func(c *Config) { c.Skew, c.Grace, c.PublishDeadline = 2*time.Second, time.Second, time.Microsecond },
+		"a deadline at the grace less twice the skew": func(c *Config) {
+			c.Skew, c.Grace, c.PublishDeadline = 2*time.Second, time.Minute, time.Minute-4*time.Second
+		},
+	} {
+		cfg := testConfig()
+		change(&cfg)
+		if _, err := New(shared, cfg); err == nil {
+			t.Errorf("%s is taken", name)
+		}
+	}
+	cfg := testConfig()
+	cfg.Skew, cfg.Grace, cfg.PublishDeadline = 2*time.Second, time.Minute, time.Minute-4*time.Second-time.Microsecond
+	if _, err := New(shared, cfg); err != nil {
+		t.Fatalf("a deadline just under the grace less twice the skew is refused: %v", err)
+	}
+}
+
+// TestNoCloseWithAnUndecidedDrainRow: a front door's terminal the member
+// has read, but whose winner it has not committed, holds the close back,
+// though no row is past the member's read; once its winner is stored the
+// lease closes.
+func TestNoCloseWithAnUndecidedDrainRow(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref, version := drained(t, s, 100)
+	listed := int64(2)
+	got := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: version, AppliedSeq: 2, HoldsListedSeq: &listed,
+		Winners: []Winner{{AuthorizationID: "a1", Kind: "refund", RecordID: "o2"}}})
+	appendOK(t, s, terminal(ref, "a2", "r2", 4, 4))
+	_, read, err := s.ReadDrainSince(ctx, ref, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := s.CloseLease(ctx, ref, got.NewVersion, read, time.Now()); err != nil || c.Refused != RefusedUndecided {
+		t.Fatalf("a close with a read row's winner not stored: %+v %v", c, err)
+	}
+	won := commitOne(t, s, CommitRequest{Ref: ref, ReadVersion: got.NewVersion, AppliedSeq: 2, Money: []MoneyOp{Book(4, 0)},
+		Winners: []Winner{{AuthorizationID: "a2", Kind: "settle", Charge: 4, FromDrain: true, RecordID: "r2"}}})
+	if c, err := s.CloseLease(ctx, ref, won.NewVersion, read, time.Now()); err != nil || c.Refused != "" || c.Released != 26 {
+		t.Fatalf("the close once the row's winner is stored: %+v %v", c, err)
+	}
+}
+
 // TestNoCommitAfterTheClose: the close advances the version, and a commit at
 // the new version is refused and writes nothing, so nothing is booked on a
 // lease whose remainder went back, or left pending in a pack of a lease
