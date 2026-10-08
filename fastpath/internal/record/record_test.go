@@ -79,8 +79,14 @@ func TestEachKindRoundTrips(t *testing.T) {
 			t.Fatalf("%s came back as %+v, %v", name, got, err)
 		}
 	}
-	if !Settle.Terminal() || !Reap.Terminal() || Heartbeat.Terminal() || Tick.Terminal() || Checkpoint.Terminal() {
-		t.Fatal("Terminal")
+	for kind, terminal := range map[Kind]bool{Settle: true, Refund: true, Reap: true, Release: true,
+		Heartbeat: false, Checkpoint: false, Handoff: false, Manifest: false, Tick: false} {
+		if kind.Terminal() != terminal {
+			t.Errorf("%s.Terminal() is %v", kind, kind.Terminal())
+		}
+	}
+	if len(one()) != 9 {
+		t.Fatalf("%d kinds, and the test names 9", len(one()))
 	}
 }
 
@@ -189,6 +195,9 @@ func TestRecordsTheirKindsRefuse(t *testing.T) {
 		"a reap with no snapshot":              change(Reap, func(r *Record) { r.SnapshotSeq = 0 }),
 		"a reap of its own record":             change(Reap, func(r *Record) { r.SnapshotSeq = r.Seq }),
 		"a reap that adopts":                   change(Reap, func(r *Record) { r.Drain = "d-1" }),
+		"a hand-off with a charge":             change(Handoff, func(r *Record) { r.Charge = 1 }),
+		"a manifest with a shortfall":          change(Manifest, func(r *Record) { r.Shortfall = 1 }),
+		"a checkpoint with an adopted row":     change(Checkpoint, func(r *Record) { r.Drain = "d-1" }),
 		"a heartbeat over its cap":             change(Heartbeat, func(r *Record) { r.Snapshot.Running = 501 }),
 		"a heartbeat with no hash":             change(Heartbeat, func(r *Record) { r.Snapshot.Hash = nil }),
 		"a hash of 33 bytes":                   change(Heartbeat, func(r *Record) { r.Snapshot.Hash = append(r.Snapshot.Hash, 1) }),
