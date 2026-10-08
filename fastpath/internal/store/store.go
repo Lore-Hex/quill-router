@@ -32,6 +32,13 @@ type Config struct {
 	// fence F as the expiry plus both (§4.8).
 	Skew            time.Duration
 	PublishDeadline time.Duration
+	// MaxLife is a hold's longest life, and Grace the reaper's grace (§4.8):
+	// a hold is reaped only at a tick past its deadline plus the grace, and a
+	// lease whose holds were never listed closes only once its expiry plus
+	// both has passed. 2 h 20 min and the grace in production, scaled down
+	// for the spike's correctness runs.
+	MaxLife time.Duration
+	Grace   time.Duration
 	// Allowance caps a workspace's exposure, across its regions and shards;
 	// Floor is the headroom a grant leaves outside leases; RequiredTier is
 	// the trust tier that allows leases (§4.2, §4.7, §4.11). The spike has
@@ -56,17 +63,26 @@ func New(client *spanner.Client, cfg Config) (*Store, error) {
 	if client == nil {
 		return nil, errors.New("store: no client")
 	}
-	if cfg.LiveFor <= 0 || cfg.Window <= 0 || cfg.Skew <= 0 || cfg.PublishDeadline <= 0 {
-		return nil, errors.New("store: LiveFor, Window, Skew and PublishDeadline must be positive")
+	if cfg.LiveFor <= 0 || cfg.Window <= 0 || cfg.Skew <= 0 || cfg.PublishDeadline <= 0 || cfg.MaxLife <= 0 || cfg.Grace <= 0 {
+		return nil, errors.New("store: LiveFor, Window, Skew, PublishDeadline, MaxLife and Grace must be positive")
 	}
 	// Spanner's intervals here are whole microseconds; a finer duration
 	// would be cut short, and the window or the fence with it. No lease's
 	// setting is near a week, and bounding them there keeps every sum of
 	// them, and every time they are added to, in range.
-	for _, d := range []time.Duration{cfg.Window, cfg.Skew, cfg.PublishDeadline} {
+	for _, d := range []time.Duration{cfg.Window, cfg.Skew, cfg.PublishDeadline, cfg.MaxLife, cfg.Grace} {
 		if d%time.Microsecond != 0 || d > MaxSetting {
-			return nil, errors.New("store: Window, Skew and PublishDeadline must be whole microseconds, at most MaxSetting")
+			return nil, errors.New("store: Window, Skew, PublishDeadline, MaxLife and Grace must be whole microseconds, " +
+				"at most MaxSetting")
 		}
+	}
+	// The ratios §4.5 rests on, which also keep the grace more than twice
+	// the skew: an auditor whose clock is at most the skew fast takes a tick
+	// past a hold's deadline plus the grace only once the deadline has
+	// passed, and every owner publish is received before the grace less
+	// twice the skew has.
+	if cfg.PublishDeadline >= cfg.Grace-2*cfg.Skew {
+		return nil, errors.New("store: the publish deadline must be less than the grace less twice the skew (§4.5)")
 	}
 	if cfg.Allowance <= 0 || cfg.Floor < 0 || cfg.RequiredTier < 0 || cfg.RequiredTier > 3 {
 		return nil, errors.New("store: the allowance must be positive, the floor not negative, and the tier 0 to 3")

@@ -392,9 +392,10 @@ func TestTheFenceIsKeptToTheMicrosecond(t *testing.T) {
 	if _, err := New(shared, cfg); err == nil {
 		t.Fatal("a skew and a deadline that overflow together are taken")
 	}
+	// The largest settings §4.5's ratios allow under a week's grace.
 	cfg = testConfig()
-	cfg.Skew, cfg.PublishDeadline = MaxSetting, MaxSetting
+	cfg.Grace, cfg.Skew, cfg.PublishDeadline = MaxSetting, MaxSetting/8, MaxSetting/2
 	if _, err := New(shared, cfg); err != nil {
-		t.Fatalf("settings of a week each are refused: %v", err)
+		t.Fatalf("settings near a week are refused: %v", err)
 	}
 }

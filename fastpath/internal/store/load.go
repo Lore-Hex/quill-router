@@ -84,9 +84,14 @@ func (s *Store) LoadWinners(ctx context.Context, ref LeaseRef) ([]Pack, time.Tim
 	return packs, read, err
 }
 
-func readPacks(ctx context.Context, ro *spanner.ReadOnlyTransaction, ref LeaseRef, operation string) ([]Pack, error) {
+// querier is a transaction that reads, read-only or read-write.
+type querier interface {
+	QueryWithOptions(ctx context.Context, statement spanner.Statement, opts spanner.QueryOptions) *spanner.RowIterator
+}
+
+func readPacks(ctx context.Context, q querier, ref LeaseRef, operation string) ([]Pack, error) {
 	var packs []Pack
-	err := ro.QueryWithOptions(ctx, spanner.Statement{
+	err := q.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT commit_version, pack, work_done_at FROM tr_lease_winners
 		       WHERE workspace_id = @w AND lease_id = @l ORDER BY commit_version`,
 		Params: ref.params(),
