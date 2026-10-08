@@ -117,8 +117,9 @@ func (l *Lease) booksLocked() Books {
 
 // HeartbeatOf is a gateway's heartbeat: its sequence, from 1, and its
 // snapshot's SHA-256 hash, the tokens delivered so far, the running charge
-// priced from them, the deadline it echoes (zero for the first), and the
-// basis a reap of the hold needs, which the hold's first must bring.
+// priced from them, the deadline it echoes, which every heartbeat after the
+// hold's first must, and the basis a reap of the hold needs, which the
+// hold's first must bring.
 type HeartbeatOf struct {
 	GatewaySeq int64
 	Hash       []byte
@@ -155,15 +156,26 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 			l.mu.Unlock()
 			return time.Time{}, ErrStale
 		case hb.GatewaySeq == h.gatewaySeq:
-			s, granted := h.sent, h.deadline
+			// A replay is answered as the heartbeat it repeats, by the
+			// deadline that one echoed.
+			s, granted, echoed := h.sent, h.deadline, h.echoed
 			l.mu.Unlock()
-			return l.heartbeatAnswer(ctx, s, granted, hb.Echoed)
+			return l.heartbeatAnswer(ctx, s, granted, echoed)
 		}
 	}
 	if hb.GatewaySeq < 1 || len(hb.Hash) != record.DigestSize || (!h.heartbeat && len(hb.Basis) == 0) ||
-		hb.Usage < h.usage || hb.Running < h.running || hb.Running > h.estimate {
+		(h.heartbeat && hb.Echoed.IsZero()) || hb.Usage < h.usage || hb.Running < h.running || hb.Running > h.estimate {
 		l.mu.Unlock()
 		return time.Time{}, ErrRejected
+	}
+	// A stream's buffer joins the lease's at its first heartbeat.
+	buffer := l.buffer
+	if !h.heartbeat {
+		var ok bool
+		if buffer, ok = add(l.buffer, h.overrun); !ok {
+			l.mu.Unlock()
+			return time.Time{}, ErrRejected
+		}
 	}
 	now := l.o.cfg.Clock()
 	if !l.withinCutoff(now) || l.failed {
@@ -187,14 +199,16 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		r.First, r.Basis = true, hb.Basis
 	}
 	s, err := l.handOver(r, 0)
+	if errors.Is(err, ErrPastCutoff) {
+		err = ErrRetry
+	}
 	if err != nil {
 		l.mu.Unlock()
 		return time.Time{}, err
 	}
-	l.buffer -= h.counted()
-	h.heartbeat, h.gatewaySeq, h.hash, h.usage, h.running, h.deadline, h.snapSeq, h.sent = true, hb.GatewaySeq,
-		append([]byte(nil), hb.Hash...), hb.Usage, hb.Running, deadline, s.seq, s
-	l.buffer += h.counted()
+	l.buffer = buffer
+	h.heartbeat, h.echoed, h.gatewaySeq, h.hash, h.usage, h.running, h.deadline, h.snapSeq, h.sent = true, hb.Echoed,
+		hb.GatewaySeq, append([]byte(nil), hb.Hash...), hb.Usage, hb.Running, deadline, s.seq, s
 	l.mu.Unlock()
 	return l.heartbeatAnswer(ctx, s, deadline, hb.Echoed)
 }
@@ -322,12 +336,17 @@ func (l *Lease) terminalAnswer(ctx context.Context, s *sent, out Outcome) (Outco
 // handOver gives a record the lease's next owner sequence number and hands
 // it to the lease's key, with l.mu held: at once if every record before it
 // is published since the last failure, so it follows them; else it waits for
-// the flusher's republish, which sends it in its order.
+// the flusher's republish, which sends it in its order. It reads the cutoff
+// again once the record is encoded, which takes time: past it, nothing is
+// handed over, numbered or decided.
 func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 	r.Version, r.Lease, r.Epoch, r.Seq = record.Version, l.id, l.o.cfg.Epoch, l.nextSeq
 	data, err := record.Encode(r)
 	if err != nil {
 		return nil, err
+	}
+	if !l.withinCutoff(l.o.cfg.Clock()) {
+		return nil, ErrPastCutoff
 	}
 	l.nextSeq++
 	s := &sent{seq: r.Seq, data: data, freed: freed, waiter: notSent{}, done: make(chan struct{})}

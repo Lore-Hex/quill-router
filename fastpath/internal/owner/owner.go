@@ -97,6 +97,9 @@ type Owner struct {
 
 	mu     sync.Mutex
 	leases map[string]*Lease
+	// retired are the leases the owner let go, each with its flusher's
+	// end: none is taken again, since a lease's records are numbered once.
+	retired map[string]<-chan struct{}
 }
 
 // New starts an owner with no leases.
@@ -107,7 +110,7 @@ func New(cfg Config, pub Publisher) (*Owner, error) {
 	if pub == nil {
 		return nil, errors.New("owner: no publisher")
 	}
-	return &Owner{cfg: cfg, pub: pub, leases: map[string]*Lease{}}, nil
+	return &Owner{cfg: cfg, pub: pub, leases: map[string]*Lease{}, retired: map[string]<-chan struct{}{}}, nil
 }
 
 // Take puts a lease granted to this process under its care, with the
@@ -120,6 +123,9 @@ func (o *Owner) Take(lease, workspace string, allocation int64, expiry time.Time
 	defer o.mu.Unlock()
 	if _, ok := o.leases[lease]; ok {
 		return nil, fmt.Errorf("owner: lease %s is held already", lease)
+	}
+	if o.retired[lease] != nil {
+		return nil, fmt.Errorf("owner: lease %s was let go", lease)
 	}
 	l := &Lease{o: o, id: lease, workspace: workspace, allocation: allocation, expiry: expiry, nextSeq: 1,
 		holds: map[string]*hold{}, decided: map[string]*decision{}, kick: make(chan struct{}, 1),
@@ -137,20 +143,27 @@ func (o *Owner) Lease(id string) (*Lease, bool) {
 	return l, ok
 }
 
-// Let lets a lease go: the owner holds it no more, its flusher stops, and a
-// request that reaches it through a handle kept from before is answered as
-// one past its cutoff (§4.3).
+// Let lets a lease go: the owner holds it no more and never takes it again,
+// its flusher stops, and a request that reaches it through a handle kept
+// from before is answered as one past its cutoff (§4.3). Every caller
+// returns once the flusher has stopped.
 func (o *Owner) Let(id string) {
 	o.mu.Lock()
 	l, ok := o.leases[id]
-	delete(o.leases, id)
+	if ok {
+		delete(o.leases, id)
+		o.retired[id] = l.stopped
+	}
+	stopped := o.retired[id]
 	o.mu.Unlock()
 	if ok {
 		l.mu.Lock()
 		l.let = true
 		l.mu.Unlock()
 		close(l.stop)
-		<-l.stopped
+	}
+	if stopped != nil {
+		<-stopped
 	}
 }
 
@@ -164,9 +177,11 @@ type hold struct {
 	stream    bool
 	boot      []byte
 	// The latest valid heartbeat: the gateway's sequence and hash, the
-	// usage, the running charge, the deadline granted, and the owner
-	// sequence number of its record; heartbeat is whether one was issued.
+	// usage, the running charge, the deadline granted and the one it
+	// echoed, and the owner sequence number of its record; heartbeat is
+	// whether one was issued.
 	heartbeat  bool
+	echoed     time.Time
 	gatewaySeq int64
 	hash       []byte
 	usage      int64
@@ -246,9 +261,16 @@ type Books struct {
 }
 
 // Remaining is the allocation less what is booked and held; Free, Remaining
-// less pending and the buffer, is what admission reads.
+// less pending and the buffer, is what admission reads, and none if those
+// four pass an int64.
 func (b Books) Remaining() int64 { return b.Allocation - b.Consumed - b.Held }
-func (b Books) Free() int64      { return b.Remaining() - b.Pending - b.Buffer }
+func (b Books) Free() int64 {
+	used, ok := add(b.Consumed, b.Held, b.Pending, b.Buffer)
+	if !ok {
+		return math.MinInt64
+	}
+	return b.Allocation - used
+}
 
 // Books reads the lease's books under its lock.
 func (l *Lease) Books() Books {

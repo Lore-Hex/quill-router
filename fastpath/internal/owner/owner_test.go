@@ -143,14 +143,24 @@ func (f *fakeLog) records(t *testing.T, lease string) []record.Record {
 }
 
 type clock struct {
-	mu  sync.Mutex
-	now time.Time
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
 }
 
+// Now is the clock's time, which moves on by step at each reading.
 func (c *clock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.now
+	now := c.now
+	c.now = c.now.Add(c.step)
+	return now
+}
+
+func (c *clock) stepping(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.step = d
 }
 
 func (c *clock) advance(d time.Duration) {
@@ -360,11 +370,12 @@ func TestHeartbeatValidity(t *testing.T) {
 	}{
 		"a lower sequence":         {HeartbeatOf{GatewaySeq: 0, Hash: sum("h0"), Usage: 10, Running: 20}, ErrStale},
 		"the same with a new hash": {HeartbeatOf{GatewaySeq: 1, Hash: sum("x"), Usage: 10, Running: 20}, ErrStale},
-		"regressed usage":          {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 9, Running: 20}, ErrRejected},
-		"a regressed charge":       {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 19}, ErrRejected},
-		"a charge over its cap":    {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 501}, ErrRejected},
-		"no hash":                  {HeartbeatOf{GatewaySeq: 2, Usage: 11, Running: 21}, ErrRejected},
-		"a hash not SHA-256's":     {HeartbeatOf{GatewaySeq: 2, Hash: []byte("h2"), Usage: 11, Running: 21}, ErrRejected},
+		"regressed usage":          {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 9, Running: 20, Echoed: first}, ErrRejected},
+		"a regressed charge":       {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 19, Echoed: first}, ErrRejected},
+		"a charge over its cap":    {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 501, Echoed: first}, ErrRejected},
+		"no hash":                  {HeartbeatOf{GatewaySeq: 2, Usage: 11, Running: 21, Echoed: first}, ErrRejected},
+		"a hash not SHA-256's":     {HeartbeatOf{GatewaySeq: 2, Hash: []byte("h2"), Usage: 11, Running: 21, Echoed: first}, ErrRejected},
+		"a later one with no echo": {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 21}, ErrRejected},
 	} {
 		if _, err := f.lease.Heartbeat(ctx, a, c.hb); !errors.Is(err, c.want) {
 			t.Errorf("%s: %v, want %v", name, err, c.want)
@@ -472,6 +483,32 @@ func TestAFailedPublishIsRepublishedInOrder(t *testing.T) {
 			t.Fatalf("record %d has sequence number %d: %+v", i, r.Seq, recs)
 		}
 	}
+	// The same records: each stored as its first publish carried it, and
+	// their charges the books'.
+	first := map[int64]string{}
+	for _, a := range f.log.attemptsFrom(time.Time{}) {
+		r, err := record.Decode([]byte(a.data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := first[r.Seq]; !ok {
+			first[r.Seq] = a.data
+		}
+	}
+	var charged int64
+	f.log.mu.Lock()
+	for i, b := range f.log.stored["lease-1"] {
+		if string(b) != first[int64(i+1)] {
+			t.Errorf("record %d is stored as %s, and was first published as %s", i+1, b, first[int64(i+1)])
+		}
+	}
+	f.log.mu.Unlock()
+	for _, r := range recs {
+		charged += r.Charge
+	}
+	if b := f.lease.Books(); b.Consumed != charged {
+		t.Fatalf("the records charge %d, and the books consumed %d", charged, b.Consumed)
+	}
 	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); err != nil {
 		t.Fatalf("an admission once republished: %v", err)
 	}
@@ -547,6 +584,7 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 		streams := map[string]bool{}
 		var consumed int64
 		gseq := map[string]int64{}
+		granted := map[string]time.Time{}
 		for step := 0; step < 80; step++ {
 			switch op := rng.Intn(4); {
 			case op == 0 || len(open) == 0:
@@ -570,10 +608,13 @@ func TestTheBooksKeepTheirIdentities(t *testing.T) {
 				switch op {
 				case 1:
 					gseq[a]++
-					if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: gseq[a], Hash: sum(fmt.Sprint(a, gseq[a])),
-						Usage: gseq[a], Running: min(e, gseq[a]), Basis: []byte("terms")}); err != nil {
+					deadline, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: gseq[a],
+						Hash: sum(fmt.Sprint(a, gseq[a])), Usage: gseq[a], Running: min(e, gseq[a]), Echoed: granted[a],
+						Basis: []byte("terms")})
+					if err != nil {
 						t.Fatal(err)
 					}
+					granted[a] = deadline
 				case 2:
 					charge := int64(rng.Intn(int(2*e + 1)))
 					if _, err := f.lease.Settle(ctx, a, charge, sum("d")); err != nil {
@@ -926,5 +967,152 @@ func TestTheBooksRefuseWhatTheyCannotHold(t *testing.T) {
 	}
 	if n := len(f.log.records(t, "lease-1")); n != 0 {
 		t.Fatalf("%d records", n)
+	}
+}
+
+// TestAHandOverPastTheCutoffIsRefused: the cutoff is read again once the
+// record is encoded, which takes time; a decision or a heartbeat whose
+// record would be handed over past it is refused, and moves nothing.
+func TestAHandOverPastTheCutoffIsRefused(t *testing.T) {
+	f := newFixture(t, 1000, func(e int64) int64 { return e / 10 })
+	ctx := context.Background()
+	a, b := f.admit(t, 100, false), f.admit(t, 100, true)
+	f.clock.advance(57*time.Second + 500*time.Millisecond) // the cutoff is at 58 s
+	before := f.lease.Books()
+	f.clock.stepping(time.Second) // each reading a second on, as if the encoding took that long
+	if _, err := f.lease.Settle(ctx, a, 10, sum("a")); !errors.Is(err, ErrPastCutoff) {
+		t.Fatalf("a settle whose record is encoded past the cutoff: %v", err)
+	}
+	f.clock.stepping(0)
+	f.clock.mu.Lock()
+	f.clock.now = start.Add(57*time.Second + 500*time.Millisecond)
+	f.clock.mu.Unlock()
+	f.clock.stepping(time.Second)
+	if _, err := f.lease.Heartbeat(ctx, b, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")}); !errors.Is(err, ErrRetry) {
+		t.Fatalf("a heartbeat whose record is encoded past the cutoff: %v", err)
+	}
+	f.clock.stepping(0)
+	if after := f.lease.Books(); after != before {
+		t.Fatalf("the refusals moved the books: %+v, then %+v", before, after)
+	}
+	if n := len(f.log.attemptsFrom(time.Time{})); n != 0 {
+		t.Fatalf("%d publishes", n)
+	}
+}
+
+// TestALeaseLetGoIsNotTakenAgain: its records are numbered once, so the
+// owner refuses its grant again, though a grant's retry can return it.
+func TestALeaseLetGoIsNotTakenAgain(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	if _, err := f.lease.Settle(context.Background(), f.admit(t, 100, false), 10, sum("a")); err != nil {
+		t.Fatal(err)
+	}
+	f.owner.Let("lease-1")
+	if _, err := f.owner.Take("lease-1", "ws-1", 1000, start.Add(time.Minute)); err == nil {
+		t.Fatal("a lease let go is taken again")
+	}
+}
+
+// TestTheBufferNeverWraps: streams' buffers join the lease's at their first
+// heartbeats; one that would take it past an int64 is rejected, and the
+// books' free room saturates rather than wraps.
+func TestTheBufferNeverWraps(t *testing.T) {
+	f := newFixture(t, math.MaxInt64, func(int64) int64 { return math.MaxInt64 / 2 })
+	ctx := context.Background()
+	var streams []string
+	for range 3 {
+		streams = append(streams, f.admit(t, 1, true))
+	}
+	for i, a := range streams {
+		_, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum(a), Usage: 1, Running: 1,
+			Basis: []byte("terms")})
+		if i < 2 && err != nil {
+			t.Fatalf("stream %d's first heartbeat: %v", i, err)
+		}
+		if i == 2 && !errors.Is(err, ErrRejected) {
+			t.Fatalf("a first heartbeat whose buffer passes an int64: %v", err)
+		}
+		if b := f.lease.Books(); b.Buffer < 0 || b.Free() > b.Allocation-b.Held {
+			t.Fatalf("after stream %d's heartbeat: %+v, free %d", i, b, b.Free())
+		}
+	}
+	if _, err := f.lease.Admit(Admission{Estimate: math.MaxInt64 / 4, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("an admission into a full buffer: %v", err)
+	}
+	if free := (Books{Allocation: 100, Pending: math.MaxInt64, Buffer: math.MaxInt64}).Free(); free >= 0 {
+		t.Fatalf("free room of %d with more pending and buffered than an int64 holds", free)
+	}
+}
+
+// TestAReplayAnswersAsTheHeartbeatItRepeats: by the deadline the original
+// echoed, whatever the replay echoes.
+func TestAReplayAnswersAsTheHeartbeatItRepeats(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	ctx := context.Background()
+	a := f.admit(t, 500, true)
+	first, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 1, Running: 1,
+		Basis: []byte("terms")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.log.hold()
+	got := make(chan error, 1)
+	second := HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 2, Running: 2, Echoed: first}
+	go func() {
+		_, err := f.lease.Heartbeat(ctx, a, second)
+		got <- err
+	}()
+	waitFor(t, "the second record", func() bool { return len(f.log.records(t, "lease-1")) == 2 })
+	f.clock.advance(31 * time.Second)
+	f.log.letGo()
+	if err := <-got; !errors.Is(err, ErrDeadlinePassed) {
+		t.Fatalf("the second heartbeat: %v", err)
+	}
+	second.Echoed = time.Time{}
+	if _, err := f.lease.Heartbeat(ctx, a, second); !errors.Is(err, ErrDeadlinePassed) {
+		t.Fatalf("its replay echoing nothing: %v", err)
+	}
+	second.Echoed = start.Add(time.Hour)
+	if _, err := f.lease.Heartbeat(ctx, a, second); !errors.Is(err, ErrDeadlinePassed) {
+		t.Fatalf("its replay echoing a later deadline: %v", err)
+	}
+}
+
+// TestEveryLetWaitsForTheLeaseToStop: a second Let while the first is under
+// way returns only once the flusher has stopped, as the first does.
+func TestEveryLetWaitsForTheLeaseToStop(t *testing.T) {
+	f := newFixture(t, 1000, nil)
+	f.lease.mu.Lock() // the first Let waits for the lease's lock
+	firstDone, secondDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		f.owner.Let("lease-1")
+		close(firstDone)
+	}()
+	waitFor(t, "the first Let to begin", func() bool {
+		_, held := f.owner.Lease("lease-1")
+		return !held
+	})
+	go func() {
+		f.owner.Let("lease-1")
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+		t.Fatal("a second Let returned while the first is under way")
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.lease.mu.Unlock()
+	for _, done := range []chan struct{}{firstDone, secondDone} {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("a Let did not return")
+		}
+	}
+	select {
+	case <-f.lease.stopped:
+	default:
+		t.Fatal("Let returned before the flusher stopped")
 	}
 }
