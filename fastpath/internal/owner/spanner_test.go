@@ -359,6 +359,42 @@ func TestTheShortfallWriterStoresEachTotal(t *testing.T) {
 	}
 }
 
+// TestATotalRaisedDuringAWriteIsWrittenNext: a write that lands stores the
+// total it carried, not one raised while it was in flight; the next write
+// carries that.
+func TestATotalRaisedDuringAWriteIsWrittenNext(t *testing.T) {
+	f, sp := spannerFixture(t, 100, nil)
+	ctx := context.Background()
+	a, b := f.admit(t, 50, false), f.admit(t, 50, false)
+	sp.mu.Lock()
+	sp.gate = make(chan struct{})
+	sp.mu.Unlock()
+	if _, err := f.lease.Settle(ctx, a, 80, sum(a)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the write of 30", func() bool {
+		_, writes, _, _ := sp.state()
+		return slices.Equal(writes, []int64{30})
+	})
+	if _, err := f.lease.Settle(ctx, b, 90, sum(b)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.lease.Books().Shortfall; got != 70 {
+		t.Fatalf("the shortfall total after both settles: %d", got)
+	}
+	sp.mu.Lock()
+	close(sp.gate)
+	sp.gate = nil
+	sp.mu.Unlock()
+	waitFor(t, "both totals stored", func() bool {
+		_, _, landed, _ := sp.state()
+		return slices.Equal(landed, []int64{30, 70})
+	})
+	if _, writes, _, _ := sp.state(); !slices.Equal(writes, []int64{30, 70}) {
+		t.Fatalf("the writes: %v", writes)
+	}
+}
+
 // TestALeaseWhosePublishesFailIsNotRenewed: once its publishes have failed
 // for longer than the expiry window, the owner stops renewing the lease; it
 // expires and drains, and past its cutoff the owner lets it go.
