@@ -94,12 +94,25 @@ type peersFixture struct {
 	node  *fakeNode
 	now   time.Time
 	mu    sync.Mutex
+	// slowAt, once set, is the read of the clock, counted from then, that
+	// takes the time it reads and then waits for slow, telling slowed.
+	slowAt, reads int
+	slow, slowed  chan struct{}
 }
 
 func (f *peersFixture) clock() time.Time {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.now
+	now := f.now
+	if f.slowAt > 0 {
+		if f.reads++; f.reads == f.slowAt {
+			f.mu.Unlock()
+			close(f.slowed)
+			<-f.slow
+			return now
+		}
+	}
+	f.mu.Unlock()
+	return now
 }
 
 func (f *peersFixture) advance(d time.Duration) {
@@ -667,6 +680,140 @@ func TestARevocationIsDecidedWhenItIsMade(t *testing.T) {
 	g.door.write(ctx)
 	if got := revoked(); !slices.Equal(got, []string{"l1", "l2"}) {
 		t.Fatalf("a minute after the last revocation: revoked %v", got)
+	}
+}
+
+// TestTimesAreReadInTheOrderSeen: a failure whose clock is read before an
+// answer from its owner and that is numbered after it would start a
+// failure period that answer should have ended; read under the front door's
+// lock, the time and its number agree, and the lease's next failure starts
+// over.
+func TestTimesAreReadInTheOrderSeen(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Refund}
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	refund := func(lease string) {
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", lease, "gwa-"+lease), Money: []byte("{}")})
+	}
+	f.mu.Lock()
+	f.slowAt, f.slow, f.slowed = 2, make(chan struct{}), make(chan struct{}) // l1's failure everywhere
+	f.mu.Unlock()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		refund("l1") // fails here, at the peer, then reads the clock slowly
+	}()
+	<-f.slowed
+	f.advance(5 * time.Second)
+	f.peers.unreachable["node-b"] = false
+	go func() {
+		defer wg.Done()
+		refund("l2") // node-b answers through the peer
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(f.slow)
+	wg.Wait()
+	f.peers.unreachable["node-b"] = true
+	f.advance(5 * time.Second)
+	refund("l1")
+	f.door.write(ctx)
+	if slices.Contains(f.ev.all(), "revoke l1") {
+		t.Fatalf("revoked five seconds after its owner answered: %q", f.ev.all())
+	}
+}
+
+// TestRevocationsAreSpacedFromTheirEnd: a revocation that takes a while
+// holds the next a RevokeEvery from when it ended.
+func TestRevocationsAreSpacedFromTheirEnd(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	fail := func(lease string) {
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", lease, "gwa-"+lease), Money: []byte("{}")})
+	}
+	fail("l1")
+	fail("l2")
+	f.advance(10 * time.Second)
+	fail("l1")
+	fail("l2") // both due
+	f.store.onRevoke = func() { f.advance(time.Minute) }
+	f.door.write(ctx)
+	f.store.onRevoke = nil
+	revoked := func() int {
+		n := 0
+		for _, e := range f.ev.all() {
+			if strings.HasPrefix(e, "revoke ") {
+				n++
+			}
+		}
+		return n
+	}
+	if n := revoked(); n != 1 {
+		t.Fatalf("%d revocations as the first ended a minute after it began", n)
+	}
+	f.advance(time.Minute - time.Microsecond)
+	f.door.write(ctx)
+	if n := revoked(); n != 1 {
+		t.Fatalf("%d revocations within a minute of the first's end", n)
+	}
+	f.advance(time.Microsecond)
+	f.door.write(ctx)
+	if n := revoked(); n != 2 {
+		t.Fatalf("%d revocations a minute after the first's end", n)
+	}
+}
+
+// TestAProbeKeepsAnOwnerThatFailedHereAgain: an owner whose call fails here
+// during its probe keeps the front door withdrawn, though the peer could
+// not reach it either.
+func TestAProbeKeepsAnOwnerThatFailedHereAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.withdrawn(t)
+	f.owners.unreachable["node-b"], f.owners.unreachable["node-c"] = false, false
+	f.owners.pinging, f.owners.pingGate = make(chan string), make(chan struct{})
+	probed := make(chan struct{})
+	go func() {
+		f.door.probe(ctx)
+		close(probed)
+	}()
+	first := <-f.owners.pinging
+	f.owners.unreachable[first], f.peers.unreachable[first] = true, true
+	f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, first, "lease-x", "gwa-x"), Money: []byte("{}")})
+	f.owners.unreachable[first], f.peers.unreachable[first] = false, false
+	close(f.owners.pingGate)
+	go func() {
+		for range f.owners.pinging {
+		}
+	}()
+	<-probed
+	if !f.door.Withdrawn() {
+		t.Fatalf("served again with %s's call failing here during its probe", first)
+	}
+}
+
+// TestALeaseIsRevokedOnce: a revoked lease whose calls go on failing past
+// the hour the front door keeps what it saw is not revoked again.
+func TestALeaseIsRevokedOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-b"], f.peers.unreachable["node-b"] = true, true
+	for range 13 {
+		f.door.Refund(ctx, RefundOf{Envelope: sealedAt(t, "node-b", "l1", "gwa-l1"), Money: []byte("{}")})
+		f.door.write(ctx)
+		f.door.forget()
+		f.advance(20 * time.Minute)
+	}
+	n := 0
+	for _, e := range f.ev.all() {
+		if e == "revoke l1" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("l1 revoked %d times over four hours of failures", n)
 	}
 }
 

@@ -112,15 +112,17 @@ type FrontDoor struct {
 	// state its ring row should say, and handed the last Run handed the
 	// node. seq numbers the reaches and failures the front door sees, so
 	// their order is known whatever the clock says. unreached are the
-	// owners whose calls last failed here while a peer reached them, and
-	// reachedAt, when each owner last answered, here, through a peer or for
-	// one; failing, each lease's failures since its owner last answered;
-	// revoked, the leases revoked, with when, and lastRevoke when the last
-	// revocation began.
+	// owners whose calls last failed here while a peer reached them; here,
+	// when a call to each owner last failed here, whatever the peer did;
+	// and reachedAt, when each owner last answered, here, through a peer or
+	// for one; failing, each lease's failures since its owner last
+	// answered; revoked, the leases revoked, with when, and lastRevoke when
+	// the last revocation ended.
 	withdrawn    bool
 	want, handed string
 	seq          uint64
 	unreached    map[string]seen
+	here         map[string]seen
 	reachedAt    map[string]seen
 	failing      map[store.LeaseRef]failure
 	revoked      map[store.LeaseRef]time.Time
@@ -159,7 +161,7 @@ func New(cfg Config) (*FrontDoor, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
-	return &FrontDoor{cfg: cfg, unreached: map[string]seen{}, reachedAt: map[string]seen{},
+	return &FrontDoor{cfg: cfg, unreached: map[string]seen{}, here: map[string]seen{}, reachedAt: map[string]seen{},
 		failing: map[store.LeaseRef]failure{}, revoked: map[store.LeaseRef]time.Time{}, kick: make(chan struct{}, 1)}, nil
 }
 
