@@ -283,7 +283,8 @@
 @media (max-width: 360px) {
   .trnav .menu { margin-left: auto; }
   .trnav .search { gap: 8px; padding: 0 10px; font-size: 13px; }
-  .trnav .search-noun { display: none; }
+  .trnav .search-verb { display: none; }
+  .trnav .search-noun { text-transform: capitalize; }
 }
 
 /* Buttons shared with the homepage */
