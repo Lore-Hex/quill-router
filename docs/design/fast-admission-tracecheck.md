@@ -117,9 +117,11 @@ of event go into the order:
 The order's edges are the evidence the spike plan's §6 names:
 
 - a process's sequence orders its local events;
-- a cause precedes what it caused; a call's request precedes its database
-  point, which precedes the call's response when its caller learned the
-  outcome;
+- a cause precedes what it caused; a call's request precedes its response; a
+  commit's request precedes its database point, which precedes its response
+  when its caller learned the outcome; and a read's database point precedes
+  its response and follows every commit acknowledged before its request, but
+  need not follow the request (§3);
 - database points are ordered by their timestamps, the drain log's ties
   broken by record ID; a read follows every commit at or before its
   timestamp and precedes every later one, and what it returned is checked
