@@ -3667,6 +3667,9 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
         "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/old/ticket.pem",
+        "TR_ASYNC_SETTLE_TICKET_KID": "old-kid",
+        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://old.example",
+        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "old-audience",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
     }
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
@@ -3674,12 +3677,21 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
+    # Runbook step 2: the purpose signer is provisioned as literals (Secret Manager
+    # file mount plus public identity, positive epoch) while admission and
+    # protection stay off. None of it is inherited from the caller's environment.
     assert {name: rendered[name] for name in hostile} == {
         "TR_ASYNC_SETTLE_ENABLED": "false",
         "TR_ASYNC_SETTLE_PROTECTION": "false",
-        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "",
-        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "0",
+        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
+        "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
+        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
+        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
+        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
     }
+    secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
+    bindings = deploy[deploy.index(secret_flag) + 1].split(",")
+    assert "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest" in bindings
 
 
 def test_rollout_pins_dormant_drain_knobs_without_inheritance(

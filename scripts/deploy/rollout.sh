@@ -90,6 +90,11 @@ SECRET_ENVS=(
   "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
   "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
   "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+  # Async settle purpose key, design runbook step 2: the Ed25519 PEM is a Secret
+  # Manager version mounted as a FILE at this path, never an environment value.
+  # Mandatory on purpose: a missing secret must fail the deploy loudly instead of
+  # shipping a revision whose signer silently loads as absent.
+  "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest"
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
@@ -610,7 +615,8 @@ ENV_VARS=(
   "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
-  # PR B is dormant. Do not inherit a purpose key path from an old revision.
+  # Admission and protection stay off until the runbook's step 8; nothing in this
+  # block issues a ticket. Do not inherit any of these values from an old revision.
   # Shadow phase (design §8, shadow appendix §11): a non-empty list installs the
   # router-side comparator runtime (observer, counter maintenance, evidence
   # store) for the named workspaces, so it is NOT dormant. Opt the pilot
@@ -620,8 +626,17 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
-  "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="
-  "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=0"
+  # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
+  # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
+  # so no revision inherits a path. kid/issuer/audience are the public identity
+  # of that key and of the enclave keyring; epoch 1 records that authority is
+  # provisioned. The shadow binding is signed by this same signer, so without it
+  # no evaluable shadow sample can exist.
+  "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE=/secrets/async-settle/ticket.pem"
+  "TR_ASYNC_SETTLE_TICKET_KID=tr-async-settle-2026-10a"
+  "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
+  "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
+  "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
