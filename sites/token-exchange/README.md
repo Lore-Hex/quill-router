@@ -41,7 +41,7 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ### Private provider deck request page
 
-`https://nytokenexchange.com/providers.html` is a public, request-only landing
+`https://nytokenexchange.com/providers` is the shareable public, request-only landing
 page. Its email link opens a request to `providers@trustedrouter.com`; it does
 not submit a form, automatically send mail, or deliver a download. The team
 reviews requests and shares the deck privately. Never add the confidential PDF,
@@ -49,7 +49,9 @@ slide images, or a publicly resolvable deck URL to the build or storage bucket.
 The build includes this page in New York's sitemap only. Existing hosting's
 default static route serves the HTML without DNS, certificate, or URL-map changes.
 
-For a narrow update, publish only the built `providers.html` object and
+The extensionless `providers` object must be served as `text/html`; retain the
+identical `providers.html` object so previously shared links keep working.
+For a narrow update, publish only the built `providers` and `providers.html` objects and
 `new-york/sitemap.xml` after the repository and site checks. Do not sync a stale
 full build over other markets. Both objects use a five-minute public cache.
 

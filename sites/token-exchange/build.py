@@ -147,7 +147,8 @@ def build(output: Path) -> None:
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
     # Public request-only page. Never copy the confidential provider PDF or slides.
-    shutil.copyfile(HERE / "providers.html", output / "providers.html")
+    for name in ("providers", "providers.html"):
+        shutil.copyfile(HERE / "providers.html", output / name)
     for art in sorted((HERE / "art").glob("*.webp")):
         shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"

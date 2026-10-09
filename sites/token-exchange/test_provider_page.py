@@ -38,6 +38,7 @@ class ProviderPageTests(unittest.TestCase):
         cls.parser.feed(cls.page)
 
     def test_request_only_no_pdf_or_private_slides(self):
+        self.assertEqual((self.root / "providers").read_text(), self.page)
         self.assertFalse(list(self.root.rglob("*.pdf")))
         for resource in self.parser.links + self.parser.resources:
             self.assertNotIn(".pdf", resource.lower())
