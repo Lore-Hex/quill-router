@@ -56,9 +56,11 @@ switched on by merging it.
   read, is recovered from the archive (design §4.8) before the fleet stops.
 - **W3. Ceilings and their stop.** Each node's membership write, once a
   second, and the auditor's scans are measured on the emulator and stated as
-  P0's baseline load. A watcher reads production Spanner CPU, the settle
-  log's subscription backlog and the stage's spend, and stops the load
-  generator, then turns the workspace off, past stated thresholds.
+  P0's baseline load. A watcher reads production Spanner CPU, the backlog
+  of each subscription, the auditor's, the record stager's and the two
+  archives', the pending work overdue, and the stage's spend, and stops the
+  load generator, then turns the workspace off, past stated thresholds. The
+  stop is exercised for each before P1's load is raised.
 - **W4. The migration.** `scripts/deploy/migrate_fastpath.sh`, idempotent,
   every statement guarded by an `INFORMATION_SCHEMA` check, run by
   `deploy.yml`'s serialized `migrate-schema` job, with
@@ -79,8 +81,12 @@ switched on by merging it.
 - **W7. Alerts.** The service's alerts become log entries at error severity
   that Cloud Monitoring alerts on, and each is exercised once: the auditor
   making no progress, a gap, an audit fault, a drain overdue, pending work
-  overdue, and the subscriptions' and archive's lag. The archive keeps the
-  settle log's messages with their metadata for the design's retention.
+  overdue, and the subscriptions' and archives' lag. Both topics are
+  archived, the settle log and the record topic with its full records and
+  outcomes, each message with its attributes and metadata, for the design's
+  retention (§4.8, §4.9). Restoring from each archive is tested before P1:
+  a winner's pending work needs its full record, which the settle log
+  cannot rebuild.
 - **W8. Deploys that keep leases.** A new version starts beside the old;
   the old node is marked leaving (`SIGUSR1`), stays reachable until its
   holds have ended, and only then stops. A forced exit is a separate,
@@ -92,9 +98,9 @@ switched on by merging it.
 
 - **Entry:** W1 to W8 merged.
 - The migration adds the fast path's tables; Terraform adds the settle
-  log's topic, ordered by lease, the record topic, the auditor's, stager's
-  and archive's subscriptions, the archive bucket, the nodes' service
-  account and the key's secret; and two `e2-standard-2` nodes start in
+  log's topic, ordered by lease, the record topic, the auditor's and
+  stager's subscriptions, an archive subscription and bucket for each topic,
+  the nodes' service account and the key's secret; and two `e2-standard-2` nodes start in
   `us-central1`, with no external address, the allow-list empty.
 - **Exit:** both nodes are members, the auditor holds its keys and commits
   nothing, every refusal of W1 is seen from inside the network against a
