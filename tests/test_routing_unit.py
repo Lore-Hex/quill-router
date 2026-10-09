@@ -1050,6 +1050,7 @@ def test_explicit_provider_order_overrides_reliability_preference() -> None:
 
 
 def _serve_glm_52_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
     for host, prompt in (("baseten", 900_000), ("parasail", 1_000_000), ("zai", 800_000)):
         serve_on_fixture_route(
             monkeypatch, "z-ai/glm-5.2", host, author="zai",
@@ -1057,7 +1058,7 @@ def _serve_glm_52_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def test_glm_52_defaults_to_parasail_with_fallbacks_intact(
+def test_glm_52_defaults_to_parasail_without_funded_host_with_fallbacks_intact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _serve_glm_52_on_fixture_routes(monkeypatch)
