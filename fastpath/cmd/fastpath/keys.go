@@ -28,17 +28,25 @@ var quiet = slog.New(slog.DiscardHandler)
 // on; each library reads it as it makes a client's logger.
 const sdkLogging = "GOOGLE_SDK_GO_LOGGING_LEVEL"
 
-// quietLibraries keeps every Google client library the node uses from
-// logging, whatever sdkLogging says: their debug logs print each request and
-// response, with the credentials that can read the envelope keys, and the
-// keys. It runs before the node makes any client.
-func quietLibraries() {
-	if os.Getenv(sdkLogging) == "" {
-		return
+// printsSecrets says why the process's environment would print what the
+// node must keep: the client libraries' logs (sdkLogging) print each request
+// and response, the credentials that can read the envelope keys with them,
+// and HTTP/2's debugging (GODEBUG's http2debug) each frame, a Secret
+// Manager answer's key with it. Both are read as the process starts or a
+// client is made, so the node refuses to run under either, before anything
+// else: unsetting one later would be too late. "" is an environment that
+// prints neither.
+func printsSecrets(getenv func(string) string) string {
+	if v := getenv(sdkLogging); v != "" {
+		return fmt.Sprintf("%s=%s prints the client libraries' requests and responses, credentials and keys "+
+			"with them; unset it", sdkLogging, v)
 	}
-	fmt.Fprintf(os.Stderr, "fastpath: %s is ignored: the client libraries' logs print credentials and keys\n",
-		sdkLogging)
-	_ = os.Unsetenv(sdkLogging)
+	for _, setting := range strings.Split(getenv("GODEBUG"), ",") {
+		if name, value, _ := strings.Cut(strings.TrimSpace(setting), "="); name == "http2debug" && value != "0" {
+			return fmt.Sprintf("GODEBUG's %s prints every HTTP/2 frame, keys with them; remove it", setting)
+		}
+	}
+	return ""
 }
 
 // readSecret reads a pinned secret version's payload: the key's own bytes.

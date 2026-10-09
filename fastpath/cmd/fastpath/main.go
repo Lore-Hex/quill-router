@@ -29,14 +29,24 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "fastpath:", err)
-		os.Exit(1)
+	os.Exit(start(os.Getenv, run))
+}
+
+// start runs the node, and is its exit code: 1, before the node does
+// anything, if the environment would print its secrets (printsSecrets).
+func start(getenv func(string) string, node func() error) int {
+	if why := printsSecrets(getenv); why != "" {
+		fmt.Fprintln(os.Stderr, "fastpath:", why)
+		return 1
 	}
+	if err := node(); err != nil {
+		fmt.Fprintln(os.Stderr, "fastpath:", err)
+		return 1
+	}
+	return 0
 }
 
 func run() error {
-	quietLibraries()
 	cfg := service.Defaults()
 	roles := flag.String("roles", "admission", "the roles to run: admission, auditor, or both, separated by a comma")
 	flag.StringVar(&cfg.Address, "address", "", "the admission node's host and port, as other nodes reach it")

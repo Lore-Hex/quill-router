@@ -17,9 +17,20 @@ number, never `latest`, so every node and every restart reads the same key.
 A key is the secret version's raw bytes, at least 32 of them. The node's
 identity needs `roles/secretmanager.secretAccessor` on the secret.
 
+## The rule: a key stays accepted 55 hours after it last sealed
+
+A node accepts every key that any node has sealed with in the last 55
+hours, its own included. A hold sealed with a key lives up to 2 hours 20
+minutes, and the enclave's queue retries its settle for up to about 52 hours
+(design §4.8), so an envelope sealed with a key can come back that long
+after the last node sealing with it stopped. Keep, for each key, the time
+the last node sealing with it stopped. Every deploy below, a rollback
+included, accepts every key whose 55 hours have not passed.
+
 ## A rotation is three deploys
 
-OLD is the version in use and NEW the one replacing it.
+OLD is the key in use and NEW the one replacing it. EARLIER are the keys
+whose 55 hours have not passed, from rotations before, if any.
 
 1. Add NEW, 32 random bytes, without writing them to a file:
 
@@ -27,28 +38,31 @@ OLD is the version in use and NEW the one replacing it.
    head -c 32 /dev/urandom | gcloud secrets versions add S --data-file=-
    ```
 
-2. Deploy every node with `-key-secret OLD -accept-key-secrets NEW`. Wait
-   until the deploy has replaced every node, so no node refuses NEW.
-3. Deploy every node with `-key-secret NEW -accept-key-secrets OLD`. Wait
-   until the deploy has replaced every node, and note when the last node
-   sealing with OLD stopped.
-4. Keep OLD accepted for 55 hours after that: a hold sealed with OLD lives
-   up to 2 hours 20 minutes, and the enclave's queue retries its settle for
-   up to about 52 hours (design §4.8). Only then deploy every node with
-   `-key-secret NEW` and no accepted key.
-5. Once that deploy has replaced every node, disable OLD's version. A
-   rollback past this step enables it again first, below. Destroy it only
-   when no rollback would deploy it again.
+2. Prepare: deploy every node with `-key-secret OLD -accept-key-secrets
+   NEW,EARLIER`. Wait until the deploy has replaced every node, so no node
+   refuses NEW.
+3. Switch: deploy every node with `-key-secret NEW -accept-key-secrets
+   OLD,EARLIER`. Wait until the deploy has replaced every node, and note
+   when the last node sealing with OLD stopped: OLD's 55 hours start then.
+4. Retire: once a key's 55 hours have passed, deploy every node without it
+   in `-accept-key-secrets`, and once that deploy has replaced every node,
+   disable its version. Destroy a version only when no deploy would name it
+   again.
 
-Each deploy keeps its leases as W8's deploys do. Rolling a step back is
-deploying the step before it. A node reads every version its flags name as
-it starts, and one disabled stops it starting, so before rolling back,
-enable each version the step names again and check that it reads:
+## Rolling back
+
+Rolling a step back changes the sealing key, never the rule: the rollback's
+nodes accept every key whose 55 hours have not passed. Rolling back the
+switch is `-key-secret OLD -accept-key-secrets NEW,EARLIER`, and NEW, having
+sealed, stays accepted for 55 hours after the rollback stopped its last
+sealer, as OLD did.
+
+A node reads every version its flags name as it starts, and a disabled one
+stops it starting. Before any deploy that names a disabled version, enable
+it again and check that it reads:
 
 ```bash
 gcloud secrets versions access N --secret S > /dev/null && echo readable
 ```
 
-A rotation that starts within 55 hours of the last one keeps both older
-keys accepted: `-accept-key-secrets OLDER,OLD`, until each one's 55 hours
-have passed.
+Each deploy keeps its leases as W8's deploys do.
