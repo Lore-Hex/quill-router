@@ -286,7 +286,11 @@ func quoted(s string) (inside, after string, ok bool) {
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '\\':
-			i++ // the escaped character, whatever it is; at the end, no quote closes s
+			// The escaped character, whatever it is but a line's end, as the
+			// patterns' `.` took it; at the end, no quote closes s.
+			if i++; i < len(s) && s[i] == '\n' {
+				return "", "", false
+			}
 		case '"':
 			return s[:i], s[i+1:], true
 		}
