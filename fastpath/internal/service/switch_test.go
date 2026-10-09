@@ -49,4 +49,15 @@ func TestTheSwitchFailsClosed(t *testing.T) {
 	if err := w.refresh(ctx); err != nil || !w.Enabled("a") {
 		t.Fatalf("a read with a again: %v, a %v", err, w.Enabled("a"))
 	}
+	// A read that takes three intervals answers what was true at its
+	// start: the copy it makes is already as old as that, and enables
+	// nothing.
+	slow := w.read
+	w.read = func(ctx context.Context) (map[string]bool, time.Time, error) {
+		now = now.Add(3 * time.Second)
+		return slow(ctx)
+	}
+	if err := w.refresh(ctx); err != nil || w.Enabled("a") {
+		t.Fatalf("a read three intervals long: %v, a %v", err, w.Enabled("a"))
+	}
 }

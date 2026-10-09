@@ -63,6 +63,31 @@ func (s *Store) SetWorkspace(ctx context.Context, workspace string, enabled bool
 	return revoked, resp.CommitTs.UTC(), nil
 }
 
+// DisableAll turns the fast path off for every workspace, the one switch
+// that empties the allow-list, and reports how many workspaces it turned off
+// and how many open leases it revoked: every open lease, in the same
+// transaction, so none takes a renewal and none is granted after it.
+func (s *Store) DisableAll(ctx context.Context) (int64, int64, time.Time, error) {
+	var off, revoked int64
+	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		counts, err := txn.BatchUpdateWithOptions(ctx, []spanner.Statement{
+			{SQL: `UPDATE tr_fastpath_workspace SET enabled = FALSE, changed_at = PENDING_COMMIT_TIMESTAMP()
+			        WHERE enabled`},
+			{SQL: `UPDATE tr_lease SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP()
+			        WHERE state = 'open' AND NOT revoked`},
+		}, spanner.QueryOptions{RequestTag: tag("switch")})
+		if err != nil {
+			return err
+		}
+		off, revoked = counts[0], counts[1]
+		return nil
+	}, spanner.TransactionOptions{TransactionTag: tag("switch")})
+	if err != nil {
+		return 0, 0, time.Time{}, err
+	}
+	return off, revoked, resp.CommitTs.UTC(), nil
+}
+
 // EnabledWorkspaces reads, strongly, the workspaces the fast path may grant
 // leases for, and the read's timestamp.
 func (s *Store) EnabledWorkspaces(ctx context.Context) (map[string]bool, time.Time, error) {

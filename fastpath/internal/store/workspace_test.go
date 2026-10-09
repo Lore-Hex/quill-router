@@ -65,20 +65,26 @@ func TestAGrantNeedsItsWorkspaceEnabled(t *testing.T) {
 
 // TestTurningAWorkspaceOffRevokesItsOpenLeases: its open leases take no
 // renewal and its grants are refused, its draining lease is left as it was,
-// and turning it on again grants new leases but revives none.
+// another workspace's lease too; turning it on again grants new leases but
+// revives none, and a retry of a revoked lease's grant is refused, so no
+// owner takes it up, while a retry of an open one's is answered.
 func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
-	ws := seedWorkspace(t, 100)
-	grant := func() LeaseRef {
+	ws, elsewhere := seedWorkspace(t, 100), seedWorkspace(t, 100)
+	reqs := map[LeaseRef]GrantRequest{}
+	grantIn := func(w string) LeaseRef {
 		t.Helper()
-		req := grantOf(ws, 10)
+		req := grantOf(w, 10)
 		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
 			t.Fatalf("the grant: %+v %v", got, err)
 		}
-		return LeaseRef{ws, req.LeaseID}
+		ref := LeaseRef{w, req.LeaseID}
+		reqs[ref] = req
+		return ref
 	}
-	open, draining := grant(), grant()
+	grant := func() LeaseRef { return grantIn(ws) }
+	open, draining, theirs := grant(), grant(), grantIn(elsewhere)
 	if ok, _, err := s.OwnerMarkDraining(ctx, owner, draining); err != nil || !ok {
 		t.Fatalf("the draining write: %v %v", ok, err)
 	}
@@ -98,6 +104,12 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	if l := readLease(t, s, draining); l.Revoked || l.State != "draining" {
 		t.Errorf("the draining lease is %+v", l)
 	}
+	if l := readLease(t, s, theirs); l.Revoked {
+		t.Error("another workspace's lease is revoked")
+	}
+	if got := renewOne(t, s, owner, theirs); !got.Renewed {
+		t.Error("another workspace's lease took no renewal")
+	}
 	if got, err := s.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != RefusedNotEnabled {
 		t.Fatalf("a grant for the workspace turned off: %+v %v", got, err)
 	}
@@ -107,7 +119,61 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	if l := readLease(t, s, open); !l.Revoked {
 		t.Error("turning the workspace on revived a revoked lease")
 	}
+	if got, err := s.Grant(ctx, reqs[open]); err != nil || got.Refused != RefusedRevoked {
+		t.Errorf("a retry of a revoked lease's grant: %+v %v", got, err)
+	}
+	if got, err := s.Grant(ctx, reqs[theirs]); err != nil || got.Refused != "" || got.Expiry.IsZero() {
+		t.Errorf("a retry of an open lease's grant: %+v %v", got, err)
+	}
 	grant()
+}
+
+// TestDisableAllTurnsEveryWorkspaceOff, on a database of its own, since it
+// reaches every workspace: every enabled workspace turns off and every open
+// lease is revoked, in one transaction, and no grant is taken after it.
+func TestDisableAllTurnsEveryWorkspaceOff(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	db, err := emulator.Database(ctx, storetest.UniqueID("all"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	s, err := New(db, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var leases []LeaseRef
+	for _, ws := range []string{storetest.UniqueID("ws"), storetest.UniqueID("ws")} {
+		if _, err := db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
+			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
+			t.Fatal(err)
+		}
+		req := grantOf(ws, 10)
+		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+			t.Fatalf("the grant: %+v %v", got, err)
+		}
+		leases = append(leases, LeaseRef{ws, req.LeaseID})
+	}
+	off, revoked, _, err := s.DisableAll(ctx)
+	if err != nil || off != 2 || revoked != 2 {
+		t.Fatalf("turning everything off: %d workspaces, %d leases, %v; want 2 and 2", off, revoked, err)
+	}
+	enabled, _, err := s.EnabledWorkspaces(ctx)
+	if err != nil || len(enabled) != 0 {
+		t.Fatalf("enabled after: %v %v", enabled, err)
+	}
+	for _, ref := range leases {
+		got, _, err := s.Renew(ctx, owner, []LeaseRef{ref})
+		if err != nil || len(got) != 1 || got[0].Renewed {
+			t.Errorf("lease %s after everything was turned off: %+v %v", ref.LeaseID, got, err)
+		}
+		if g, err := s.Grant(ctx, grantOf(ref.Workspace, 10)); err != nil || g.Refused != RefusedNotEnabled {
+			t.Errorf("a grant for %s after: %+v %v", ref.Workspace, g, err)
+		}
+	}
 }
 
 // TestEnabledWorkspacesReadsTheSwitch: the workspaces turned on, and none
