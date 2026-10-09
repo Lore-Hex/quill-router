@@ -2,10 +2,12 @@ package schema
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,16 +46,27 @@ func ownStatements(t *testing.T) (statements, names []string, index []bool) {
 // database is the stand-in database testdata/gcloud answers from.
 type database struct{ dir string }
 
+// newDatabase is a stand-in database holding the service's objects named,
+// tables and indexes as fastpath.sql makes them.
 func newDatabase(t *testing.T, existing ...string) database {
 	t.Helper()
 	d := database{t.TempDir()}
-	for _, sub := range []string{"objects", "waits"} {
+	for _, sub := range []string{"table", "index", "waits"} {
 		if err := os.Mkdir(filepath.Join(d.dir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	_, names, index := ownStatements(t)
 	for _, name := range existing {
-		d.set(t, filepath.Join("objects", name), "")
+		i := slices.Index(names, name)
+		if i < 0 {
+			t.Fatalf("%s is none of the service's objects", name)
+		}
+		kind := "table"
+		if index[i] {
+			kind = "index"
+		}
+		d.set(t, filepath.Join(kind, name), "")
 	}
 	return d
 }
@@ -62,6 +75,15 @@ func (d database) set(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(d.dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func (d database) remove(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(d.dir, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -77,12 +99,26 @@ func (d database) read(t *testing.T, name string) string {
 	return string(b)
 }
 
-// applied is every statement the migration applied, in order.
+// events are the queries, "Q ...", and statements, "S ...", the stand-in
+// was sent, in order.
+func (d database) events(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, e := range strings.Split(d.read(t, "events"), "\n") {
+		if e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// applied is every statement the migration applied, in order, a failed one
+// too.
 func (d database) applied(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, s := range strings.Split(d.read(t, "applied"), "\n;\n") {
-		if strings.TrimSpace(s) != "" {
+	for _, e := range d.events(t) {
+		if s, ok := strings.CutPrefix(e, "S "); ok {
 			out = append(out, words(s))
 		}
 	}
@@ -93,9 +129,9 @@ func (d database) applied(t *testing.T) []string {
 func (d database) readinessChecked(t *testing.T) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	state := regexp.MustCompile(`INDEX_STATE .* index_name='(\w+)'`)
-	for _, q := range strings.Split(d.read(t, "queries"), "\n") {
-		if m := state.FindStringSubmatch(q); m != nil {
+	state := regexp.MustCompile(`^Q SELECT INDEX_STATE .* index_name='(\w+)'$`)
+	for _, e := range d.events(t) {
+		if m := state.FindStringSubmatch(e); m != nil {
 			out[m[1]]++
 		}
 	}
@@ -173,20 +209,53 @@ func TestARunStoppedPartwayIsFinished(t *testing.T) {
 	}
 }
 
-// TestAMigrationThatCannotReadOrWriteFails: a schema query that fails stops
-// the run with nothing applied, rather than reading as an object absent; a
-// statement that fails stops it after that statement; and either run exits
-// non-zero, so the deploy stops.
+// TestAMigrationThatCannotReadOrWriteFails: whichever query or statement of
+// a first run fails, the run stops there, sending nothing after it, rather
+// than reading a failed query as an object absent or going on past a failed
+// statement, and exits non-zero, so the deploy stops; run again, it applies
+// the rest, each statement once in all.
 func TestAMigrationThatCannotReadOrWriteFails(t *testing.T) {
-	d := newDatabase(t)
-	d.set(t, "fail-queries", "")
-	if ok, _ := migrate(t, d); ok || len(d.applied(t)) != 0 {
-		t.Fatalf("a run whose queries fail: succeeded %v, applied %d", ok, len(d.applied(t)))
+	want, _, _ := ownStatements(t)
+	full := newDatabase(t)
+	if ok, out := migrate(t, full); !ok {
+		t.Fatalf("a first run failed:\n%s", out)
 	}
-	d = newDatabase(t)
-	d.set(t, "fail-statements", "")
-	if ok, _ := migrate(t, d); ok || len(d.applied(t)) != 0 {
-		t.Fatalf("a run whose statements fail: succeeded %v, applied %d", ok, len(d.applied(t)))
+	counts := map[string]int{}
+	for _, e := range full.events(t) {
+		counts[e[:1]]++
+	}
+	for kind, mark := range map[string]string{"query": "Q", "statement": "S"} {
+		for n := 1; n <= counts[mark]; n++ {
+			d := newDatabase(t)
+			d.set(t, "fail-"+kind+"-at", fmt.Sprint(n))
+			if ok, out := migrate(t, d); ok {
+				t.Fatalf("a run whose %s %d failed succeeded:\n%s", kind, n, out)
+			}
+			events := d.events(t)
+			seen := 0
+			for i, e := range events {
+				if strings.HasPrefix(e, mark+" ") {
+					seen++
+				}
+				if seen == n && i != len(events)-1 {
+					t.Fatalf("the run went on after its failed %s %d: %q", kind, n, events[i+1:])
+				}
+			}
+			first := d.applied(t)
+			d.remove(t, "fail-"+kind+"-at", "count-query", "count-statement", "events")
+			if ok, out := migrate(t, d); !ok {
+				t.Fatalf("a rerun after the failed %s %d failed:\n%s", kind, n, out)
+			}
+			// The failed statement, if one failed, is applied again; every
+			// other once.
+			all := append(first, d.applied(t)...)
+			if kind == "statement" {
+				all = slices.Delete(all, n-1, n)
+			}
+			if strings.Join(all, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("after the failed %s %d and a rerun, the statements applied: %q", kind, n, all)
+			}
+		}
 	}
 }
 

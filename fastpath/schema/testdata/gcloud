@@ -2,44 +2,66 @@
 # A stand-in for gcloud in the tests of scripts/deploy/migrate_fastpath.sh
 # (fastpath/schema/migration_test.go). It answers the script's schema
 # queries from the directory $FAKE_SPANNER and records each statement it is
-# given there; it reaches no database.
+# given there; it reaches no database. It takes only what the script sends:
+# any other command, query or output format is refused, exit 4.
 #
-# $FAKE_SPANNER/objects/NAME: a table or index that exists.
-# $FAKE_SPANNER/queries: each query, a line each.
-# $FAKE_SPANNER/applied: each statement, then a line ";".
-# $FAKE_SPANNER/fail-queries, fail-statements: if present, each query, or
-# each statement, fails.
+# $FAKE_SPANNER/table/NAME, index/NAME: a table or an index that exists.
+# $FAKE_SPANNER/events: each query, "Q <query>", and each statement,
+# "S <statement>", a line each, in the order sent.
+# $FAKE_SPANNER/fail-query-at, fail-statement-at: if present, the query, or
+# the statement, of that number, from 1, fails, exit 1.
 # $FAKE_SPANNER/waits/NAME: if present, how many times more index NAME is
 # reported WRITE_ONLY before READ_WRITE; "always" keeps it WRITE_ONLY.
 #
 # Every call must name the database the tests configure: database
 # "database" of instance "instance" in project "project".
 set -euo pipefail
+set -f # a query's COUNT(*), echoed, is never a pattern
 state="${FAKE_SPANNER:?}"
 if [[ " $* " != *" database --instance=instance "* ]] || [[ " $* " != *" --project project "* ]]; then
   echo "the stand-in for gcloud was not given the configured database: $1 $2 $3 ${4:-}" >&2
   exit 3
 fi
+refuse() {
+  echo "the stand-in for gcloud refuses: $1" >&2
+  exit 4
+}
+# fails says whether the event of this kind, counted from 1, is to fail.
+fails() {
+  local kind="$1" n
+  n=$(( $(cat "$state/count-$kind" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$state/count-$kind"
+  [ -e "$state/fail-$kind-at" ] && [ "$(cat "$state/fail-$kind-at")" = "$n" ]
+}
 sql=""
 statement=""
+format=""
 for arg in "$@"; do
   case "$arg" in
     --sql=*) sql="${arg#--sql=}" ;;
     --ddl=*) statement="${arg#--ddl=}" ;;
+    --format=*) format="${arg#--format=}" ;;
   esac
 done
 command="$1 $2 $3 $4"
 case "$command" in
   "spanner databases execute-sql "*)
-    echo $sql >> "$state/queries"
-    [ ! -e "$state/fail-queries" ] || exit 1
-    name=""
-    if [[ $sql =~ _name=\'([a-z_]+)\' ]]; then
-      name="${BASH_REMATCH[1]}"
+    query=$(echo $sql)
+    echo "Q $query" >> "$state/events"
+    [ "$format" = 'value(rows[0])' ] || refuse "the output format $format"
+    if fails query; then
+      exit 1
     fi
-    if [[ $sql == *INDEX_STATE* ]]; then
+    if [[ $query =~ ^SELECT\ COUNT\(\*\)\ FROM\ INFORMATION_SCHEMA\.TABLES\ WHERE\ table_schema=\'\'\ AND\ table_name=\'([a-z_]+)\'$ ]]; then
+      if [ -e "$state/table/${BASH_REMATCH[1]}" ]; then echo 1; else echo 0; fi
+    elif [[ $query =~ ^SELECT\ COUNT\(\*\)\ FROM\ INFORMATION_SCHEMA\.INDEXES\ WHERE\ table_schema=\'\'\ AND\ index_name=\'([a-z_]+)\'$ ]]; then
+      if [ -e "$state/index/${BASH_REMATCH[1]}" ]; then echo 1; else echo 0; fi
+    elif [[ $query =~ ^SELECT\ INDEX_STATE\ FROM\ INFORMATION_SCHEMA\.INDEXES\ WHERE\ table_schema=\'\'\ AND\ index_name=\'([a-z_]+)\'$ ]]; then
+      name="${BASH_REMATCH[1]}"
       waits="$state/waits/$name"
-      if [ -e "$waits" ] && [ "$(cat "$waits")" = always ]; then
+      if [ ! -e "$state/index/$name" ]; then
+        : # no such index: no row
+      elif [ -e "$waits" ] && [ "$(cat "$waits")" = always ]; then
         echo WRITE_ONLY
       elif [ -e "$waits" ] && [ "$(cat "$waits")" -gt 0 ]; then
         echo $(( $(cat "$waits") - 1 )) > "$waits"
@@ -47,21 +69,24 @@ case "$command" in
       else
         echo READ_WRITE
       fi
-    elif [ -e "$state/objects/$name" ]; then
-      echo 1
     else
-      echo 0
+      refuse "the query $query"
     fi
     ;;
   "spanner databases ddl update")
-    [ ! -e "$state/fail-statements" ] || exit 1
-    printf '%s\n;\n' "$statement" >> "$state/applied"
-    if [[ $statement =~ ^CREATE\ (UNIQUE\ )?(TABLE|INDEX)\ ([a-z_]+) ]]; then
-      touch "$state/objects/${BASH_REMATCH[3]}"
+    echo "S $(echo $statement)" >> "$state/events"
+    if fails statement; then
+      exit 1
+    fi
+    if [[ $statement =~ ^CREATE\ TABLE\ ([a-z_]+) ]]; then
+      touch "$state/table/${BASH_REMATCH[1]}"
+    elif [[ $statement =~ ^CREATE\ (UNIQUE\ )?INDEX\ ([a-z_]+) ]]; then
+      touch "$state/index/${BASH_REMATCH[2]}"
+    else
+      refuse "the statement $statement"
     fi
     ;;
   *)
-    echo "the stand-in for gcloud has no answer for: $command" >&2
-    exit 2
+    refuse "the command $command"
     ;;
 esac
