@@ -802,6 +802,7 @@ deploy_one_region() {
       --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \
       --min "$min_instances" \
       --min-instances "$revision_min_instances" \
+      --max-instances "$TR_CLOUD_RUN_MAX_INSTANCES" \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-300}" \
       --network "${TR_CLOUD_RUN_NETWORK:-default}" \
       --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \
