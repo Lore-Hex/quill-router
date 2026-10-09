@@ -457,9 +457,16 @@ Each step is a pull request, with its tests, reviewed before the next.
   numbers, each finding, and the design changes they call for. Then
   `destroy`.
 
-S1 to S6 need no decision and no infrastructure. S7 waits for D1 to D3.
+S1 to S6 need no decision and no infrastructure. S7 and S8 are superseded:
+on 2026-10-09 Joseph chose no separate project, so the service is installed
+and tested in production a stage at a time
+(`fast-admission-production-rollout.md`), and the runs §5 describes run
+there, on a workspace of our own.
 
 ## 8. Decisions for Joseph
+
+Superseded on 2026-10-09: there is no separate project
+(`fast-admission-production-rollout.md`).
 
 - **D1. Where Spanner runs:** A, B or C in §3. The recommendation is A.
 - **D2. Compute:** a managed instance group of VMs, as in §3.
