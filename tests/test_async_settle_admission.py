@@ -212,3 +212,26 @@ def test_cache_capacity_and_lock_wait_fail_closed_without_duplicate_reads():
     finally:
         cache.lock.release()
     assert not calls
+
+
+@pytest.mark.parametrize('allowlist,expected', [('', True), (' ws-v1,other,ws-v1 ', True),
+                                               ('ws-v2', False)])
+def test_pilot_workspace_authorize(allowlist, expected):
+    config = settings(async_settle_pilot_workspaces=allowlist, async_settle_pilot_cap_micro=5000000)
+    rt = runtime()
+    result = projection(authorization=authorization(), endpoints=[endpoint()],
+                        requested=Eligibility(), runtime=rt, settings=config)
+    assert result['async_eligible'] is expected
+    if not expected:
+        assert not rt.admission.entries
+
+
+@pytest.mark.parametrize('tier', [1, 2, 3])
+@pytest.mark.parametrize('amount', [5000000, 5000001])
+def test_pilot_authorize_cap_override(tier, amount):
+    rt = runtime()
+    rt.admission.read = lambda _: Admission(amount, tier)
+    result = projection(authorization=authorization(), endpoints=[endpoint()],
+                        requested=Eligibility(), runtime=rt,
+                        settings=settings(async_settle_pilot_workspaces='ws-v1', async_settle_pilot_cap_micro=5000000))
+    assert result['async_eligible'] is (tier in {2, 3} and amount <= 5000000)

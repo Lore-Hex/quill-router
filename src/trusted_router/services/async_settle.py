@@ -248,7 +248,8 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         if not settings.async_settle_admission_enabled:
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result
-        eligible = bool(runtime.admission is not None
+        eligible = bool(settings.async_settle_pilot_allows(authorization.workspace_id)
+                        and runtime.admission is not None
                         and runtime.admission.eligible(authorization.workspace_id,
                                                        settings.async_settle_pilot_cap_micro))
         issued = int(time.time()) if now is None else now

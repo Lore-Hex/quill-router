@@ -927,3 +927,81 @@ def test_late_batch_cleanup_chain_has_one_budget(env, monkeypatch, reply_lost):
     assert tx.rolled_back is (not reply_lost)
     assert io._SPANNER_RPC_DEADLINE.get() is None
     assert not io._STRICT_RPC_DEADLINE.get()
+
+
+@pytest.mark.parametrize('allowlist,expected', [('', 202), ('ws-v1', 202), ('ws-v2', 200)])
+def test_pilot_workspace_settle(env, allowlist, expected):
+    body, _, _ = prepare(env)  # Ticket precedes pilot policy change.
+    cfg = env[3]
+    cfg.async_settle_pilot_workspaces = allowlist
+    cfg.parse_pilot_workspaces()
+    result = call(env, body)
+    assert result.status_code == expected
+    assert bool(env[1].settle_outbox) is (expected == 202)
+    if expected == 200:
+        assert json.loads(result.body)['data']['reason'] == 'not_eligible'
+
+
+@pytest.mark.parametrize('tier', [2, 3])
+@pytest.mark.parametrize('amount', [5000000, 5000001])
+def test_pilot_settle_cap_override(env, tier, amount):
+    from trusted_router.services.async_settle import Admission
+    body, _, _ = prepare(env)
+    env[3].async_settle_pilot_cap_micro = 5000000
+    env[2].admission.entries.clear()
+    env[2].admission.read = lambda _: Admission(amount, tier)
+    response = call(env, body)
+    assert response.status_code == (202 if amount <= 5000000 else 200)
+    assert bool(env[1].settle_outbox) is (amount <= 5000000)
+
+
+@pytest.mark.parametrize('flip', ['admission', 'allowlist', 'fleet_health'])
+def test_pilot_rollback_drains_truthfully(env, flip):
+    body, auth, key = prepare(env)
+    assert call(env, body).status_code == 202
+    principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
+    sid = auth.id + '.settle'
+    assert status(sid, principal)['data']['trusted_router_settlement']['settlement_status'] == 'pending'
+    if flip == 'admission':
+        env[3].async_settle_enabled = False
+    elif flip == 'allowlist':
+        env[3].async_settle_pilot_workspaces = 'ws-v2'
+        env[3].parse_pilot_workspaces()
+    else:
+        env[2].admission.health = None
+    assert call(env, body).status_code == 202
+    assert status(sid, principal)['data']['trusted_router_settlement']['settlement_status'] == 'pending'
+    assert env[3].async_settle_protection
+    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    terminal = status(sid, principal)['data']['trusted_router_settlement']
+    assert terminal['settlement_status'] == 'settled' and terminal['cost_microdollars'] == 2
+    assert call(env, body).status_code == 200
+    env[3].async_settle_enabled = False
+    env[3].async_settle_protection = False
+    assert status(sid, principal)['data']['trusted_router_settlement']['settlement_status'] == 'settled'
+
+
+def test_pilot_durable_fleet_health_flip(env):
+    from tests.test_async_settle_drain import healthy
+    from trusted_router.services.async_settle import Admission, AdmissionCache
+    from trusted_router.storage_gcp_async_admission import (
+        HEALTH_ID,
+        HEALTH_KIND,
+        publish_health,
+        read_health,
+    )
+    body, auth, key = prepare(env)
+    publish_health(env[1])
+    env[1].rows[(HEALTH_KIND, HEALTH_ID)].body = json.dumps(healthy())
+    clock = [40.]
+    cache = AdmissionCache(lambda _: Admission(0, 2), clock=lambda: clock[0],
+                           wall_clock=lambda: 100., health_read=lambda: read_health(env[1]))
+    env[2].admission = cache
+    assert call(env, body).status_code == 202
+    env[1].rows[(HEALTH_KIND, HEALTH_ID)].body = json.dumps(healthy(complete=False))
+    clock[0] += 1
+    assert not cache.eligible('ws-v1', 5000000)
+    assert call(env, body).status_code == 202
+    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
+    assert status(auth.id + '.settle', principal)['data']['trusted_router_settlement']['settlement_status'] == 'settled'
