@@ -1239,10 +1239,13 @@ new = '''
                    THEN [winner EXCEPT ![a] = [src |-> "drain", idx |-> j]]
 '''
 
-# Adoption takes the drain log's first row for its authorization.
+# Adoption takes the drain log's first row for its authorization. The main
+# configuration appends once, so only the variant with two appends has two
+# rows to choose between.
 
 [[TerminalOrder.mutants]]
 name = "adopt-a-later-row"
+cfg = "appends"
 violates = "AdoptionKeepsTheWinner"
 old = '''
     /\ LET j == Min(DrainRows(a))
@@ -1261,11 +1264,11 @@ violates = "NoAckedDrainRowLost"
 old = '''
     /\ S # NoS
     /\ drainApplied = Len(drain)
-    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
 '''
 new = '''
     /\ S # NoS
-    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
 '''
 
 [[TerminalOrder.mutants]]
@@ -1273,10 +1276,10 @@ name = "append-after-close"
 violates = "NoAckedDrainRowLost"
 old = '''
     /\ lease # "closed"
-    /\ Settles(a)
+    /\ Settles(a) \/ Refunds(a)
 '''
 new = '''
-    /\ Settles(a)
+    /\ Settles(a) \/ Refunds(a)
 '''
 
 [[TerminalOrder.mutants]]
@@ -1284,10 +1287,10 @@ name = "append-after-close-leaves-a-row"
 violates = "ClosedLeaseHasNoUnappliedRow"
 old = '''
     /\ lease # "closed"
-    /\ Settles(a)
+    /\ Settles(a) \/ Refunds(a)
 '''
 new = '''
-    /\ Settles(a)
+    /\ Settles(a) \/ Refunds(a)
 '''
 
 [[TerminalOrder.mutants]]
@@ -1297,12 +1300,12 @@ old = '''
     /\ lease = "draining"
     /\ S # NoS
     /\ drainApplied = Len(drain)
-    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
 '''
 new = '''
     /\ lease = "draining"
     /\ drainApplied = Len(drain)
-    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
 '''
 
 [[TerminalOrder.mutants]]
@@ -1310,7 +1313,7 @@ name = "close-over-a-stream"
 violates = "NoStreamClosedOver"
 old = '''
     /\ drainApplied = Len(drain)
-    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
     /\ lease' = "closed"
 '''
 new = '''
@@ -1472,6 +1475,90 @@ new = '''
 Settles(a) == TRUE
 '''
 
+# A4's other half: an enclave that delivered something sends no refund.
+
+[[TerminalOrder.mutants]]
+name = "a-refund-for-something-delivered"
+violates = "RefundOnlyWhenNothingDelivered"
+old = '''
+Refunds(a) == enc[a] = "gone"
+'''
+new = '''
+Refunds(a) == enc[a] \in {"gone", "delivered"}
+'''
+
+# A4, the permission: a stream delivers only once its first heartbeat is
+# answered, and the owner answers only once the heartbeat's record is
+# stored. Either one widened lets a stream deliver with no heartbeat the
+# auditor will ever see, and the lease closes over it.
+
+[[TerminalOrder.mutants]]
+name = "deliver-without-permission"
+violates = "NoDeliveredStreamClosedOver"
+old = '''
+    /\ enc[a] = IF a \in Streams THEN "permitted" ELSE "open"
+'''
+new = '''
+    /\ enc[a] \in {"open", "permitted"}
+'''
+
+[[TerminalOrder.mutants]]
+name = "answer-before-the-heartbeat-is-stored"
+violates = "NoDeliveredStreamClosedOver"
+old = '''
+    /\ enc[a] = "open"
+    /\ HbAcked(a)
+'''
+new = '''
+    /\ enc[a] = "open"
+    /\ HbIssued(a)
+'''
+
+# Section 4.8, hand-offs: a listed hold is the auditor's to end. The main
+# configuration lists nothing, so these run against the variant that does.
+
+[[TerminalOrder.mutants]]
+name = "close-over-a-listed-hold"
+cfg = "list"
+violates = "NoListedHoldClosedOver"
+old = '''
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
+new = '''
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
+
+[[TerminalOrder.mutants]]
+name = "a-listing-past-the-deadline"
+cfg = "list"
+violates = "NoListedHoldClosedOver"
+old = '''
+    /\ lease = "draining"
+    /\ deadlinePassed
+    /\ tickAt' = delivered
+'''
+new = '''
+    /\ lease = "draining"
+    /\ tickAt' = delivered
+'''
+
+[[TerminalOrder.mutants]]
+name = "auditor-never-reaps-a-listed-hold"
+cfg = "list"
+violates_property = "EventuallyClosed"
+old = '''
+    /\ DrainRows(a) = {}
+    /\ Known(a)
+'''
+new = '''
+    /\ DrainRows(a) = {}
+    /\ HbDurable(a)
+'''
+
 # Liveness: a lease whose stream never settles closes only because the
 # auditor reaps it.
 
@@ -1479,13 +1566,13 @@ Settles(a) == TRUE
 name = "auditor-never-reaps"
 violates_property = "EventuallyClosed"
 old = '''
-    /\ HbDurable(a)
+    /\ Known(a)
     /\ winner[a] = NoWinner
     /\ drain' = Append(drain, [auth |-> a, kind |-> "reap"])
 '''
 new = '''
     /\ FALSE
-    /\ HbDurable(a)
+    /\ Known(a)
     /\ winner[a] = NoWinner
     /\ drain' = Append(drain, [auth |-> a, kind |-> "reap"])
 '''
@@ -1494,13 +1581,13 @@ new = '''
 name = "reap-without-reading-rows"
 old = '''
     /\ S # NoS
-    /\ drainApplied = Len(drain)
-    /\ HbDurable(a)
+    /\ DrainRows(a) = {}
+    /\ Known(a)
 '''
 new = '''
     /\ S # NoS
     /\ ~\E j \in 1..Len(drain) : drain[j].auth = a /\ drain[j].kind = "reap"
-    /\ HbDurable(a)
+    /\ Known(a)
 '''
 
 [CreditDebt]
