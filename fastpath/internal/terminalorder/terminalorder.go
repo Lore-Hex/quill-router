@@ -15,20 +15,24 @@ package terminalorder
 
 import "fmt"
 
-// Bounds of a State, so that it is a small comparable value.
+// Bounds of a State, so that it is a small comparable value: an
+// authorization's records are at most its terminal, its heartbeat and its
+// listing.
 const (
 	MaxAuths  = 3
-	MaxOutbox = 2 * MaxAuths
+	MaxOutbox = 3 * MaxAuths
 	MaxDrain  = 8
 )
 
 // Config is the spec's constants. Auths are the model values' names, in the
 // order the tests use; Stream and Declared say which of them are streams and
-// which streams' boots declared the stream-open heartbeat.
+// which streams' boots declared the stream-open heartbeat, and Listable which
+// a forced exit may list.
 type Config struct {
 	Auths      []string
 	Stream     []bool
 	Declared   []bool
+	Listable   []bool
 	MaxAppends int
 }
 
@@ -39,8 +43,8 @@ func (c Config) Validate() error {
 	switch {
 	case n > MaxAuths:
 		return fmt.Errorf("%d authorizations, more than %d", n, MaxAuths)
-	case len(c.Stream) != n || len(c.Declared) != n:
-		return fmt.Errorf("Stream and Declared must say something of each authorization")
+	case len(c.Stream) != n || len(c.Declared) != n || len(c.Listable) != n:
+		return fmt.Errorf("Stream, Declared and Listable must say something of each authorization")
 	case c.MaxAppends < 0 || c.MaxAppends > MaxDrain-n:
 		return fmt.Errorf("MaxAppends %d and %d authorizations make more drain rows than %d", c.MaxAppends, n, MaxDrain)
 	}
@@ -60,11 +64,15 @@ func (c Config) Validate() error {
 }
 
 // MaxSeq is the most records the owner can issue: one terminal per
-// authorization and one heartbeat per stream.
+// authorization, one heartbeat per stream and one listing per hold a forced
+// exit may list.
 func (c Config) MaxSeq() int {
 	n := len(c.Auths)
-	for _, s := range c.Stream {
-		if s {
+	for a := range c.Auths {
+		if c.Stream[a] {
+			n++
+		}
+		if c.Listable[a] {
 			n++
 		}
 	}
@@ -85,11 +93,17 @@ const (
 	Settle
 	Reap
 	Release
+	Refund
+	List
 )
 
-var kindNames = map[int8]string{Heartbeat: "hb", Settle: "settle", Reap: "reap", Release: "release"}
+var kindNames = map[int8]string{
+	Heartbeat: "hb", Settle: "settle", Reap: "reap", Release: "release", Refund: "refund", List: "list",
+}
 
-func terminal(kind int8) bool { return kind == Settle || kind == Reap || kind == Release }
+func terminal(kind int8) bool {
+	return kind == Settle || kind == Refund || kind == Reap || kind == Release
+}
 
 // Lease states.
 const (
@@ -105,9 +119,10 @@ const (
 	EncOpen int8 = iota
 	EncDelivered
 	EncGone
+	EncPermitted
 )
 
-var encNames = map[int8]string{EncOpen: "open", EncDelivered: "delivered", EncGone: "gone"}
+var encNames = map[int8]string{EncOpen: "open", EncDelivered: "delivered", EncGone: "gone", EncPermitted: "permitted"}
 
 // Winner sources.
 const (
@@ -139,7 +154,8 @@ type Winner struct {
 var NoWinner = Winner{None, 0}
 
 // State is the spec's variables. GwAckedOwner has bit i-1 set when owner
-// record i is in gwAcked, and GwAckedDrain bit j-1 for drain row j.
+// record i is in gwAcked, and GwAckedDrain bit j-1 for drain row j; Got[a]
+// is a's membership of got.
 type State struct {
 	Lease          int8
 	OwnerUp        bool
@@ -163,6 +179,7 @@ type State struct {
 	GwAckedDrain   uint16
 	Enc            [MaxAuths]int8
 	Allowance      [MaxAuths]bool
+	Got            [MaxAuths]bool
 }
 
 // Init is the spec's Init: every authorization admitted, nothing published.
@@ -206,14 +223,15 @@ func (s *State) drain(j int8) Row {
 }
 
 // HbIssued: the owner has issued a heartbeat record for a.
-func (s *State) HbIssued(a int8) bool { return s.hbIn(a, s.OutboxLen) }
+func (s *State) HbIssued(a int8) bool { return s.recIn(a, Heartbeat, s.OutboxLen) }
 
 // HbAcked: a heartbeat for a is among the records acked to the owner.
-func (s *State) HbAcked(a int8) bool { return s.hbIn(a, s.Acked) }
+func (s *State) HbAcked(a int8) bool { return s.recIn(a, Heartbeat, s.Acked) }
 
-func (s *State) hbIn(a, n int8) bool {
+// recIn: one of outbox[1..n] is a record of kind for a.
+func (s *State) recIn(a, kind, n int8) bool {
 	for i := int8(1); i <= n; i++ {
-		if r := s.outbox(i); r.Auth == a && r.Kind == Heartbeat {
+		if r := s.outbox(i); r.Auth == a && r.Kind == kind {
 			return true
 		}
 	}
@@ -222,8 +240,23 @@ func (s *State) hbIn(a, n int8) bool {
 
 // HbDurable: a heartbeat for a that the stored boundary covers.
 func (c Config) HbDurable(s *State, a int8) bool {
-	return s.S != c.NoS() && s.hbIn(a, s.S)
+	return s.S != c.NoS() && s.recIn(a, Heartbeat, s.S)
 }
+
+// Listed: a forced exit's listing of a that the stored boundary covers; the
+// auditor knows the hold without a heartbeat.
+func (c Config) Listed(s *State, a int8) bool {
+	return s.S != c.NoS() && s.recIn(a, List, s.S)
+}
+
+// ListIssued: the owner has issued a listing of a.
+func (s *State) ListIssued(a int8) bool { return s.recIn(a, List, s.OutboxLen) }
+
+// ListAcked: a listing of a is among the records acked to the owner.
+func (s *State) ListAcked(a int8) bool { return s.recIn(a, List, s.Acked) }
+
+// Known: the auditor knows the hold, a heartbeat or a listing being durable.
+func (c Config) Known(s *State, a int8) bool { return c.HbDurable(s, a) || c.Listed(s, a) }
 
 // firstOwnerTerm is Min(OwnerTerms(a, n)), or 0 when there is none. OwnerTerms
 // is a set built from all of outbox[1..n], so it has no value when n passes
@@ -265,8 +298,10 @@ func (s *State) Canon(a, n int8) Winner {
 // OwnerActive: the owner works until its cutoff.
 func (s *State) OwnerActive() bool { return s.OwnerUp && !s.OwnerCutoff }
 
-// Settles: an enclave sends a settle only once it has delivered something (A4).
+// Settles: an enclave sends a settle only once it has delivered something,
+// and Refunds: a refund only once it gave up having delivered nothing (A4).
 func (s *State) Settles(a int8) bool { return s.Enc[a] == EncDelivered }
+func (s *State) Refunds(a int8) bool { return s.Enc[a] == EncGone }
 
 // IssuedBeforeCutoff: the fence deadline bounds only what was issued before
 // the cutoff.
@@ -297,12 +332,15 @@ func (c Config) Next(s State) []Transition {
 	}
 	each(c.OwnerHeartbeat)
 	each(c.OwnerSettle)
+	each(c.OwnerRefund)
+	each(c.OwnerList)
 	each(c.OwnerReap)
 	each(c.OwnerRelease)
 	each(c.OwnerAdopt)
 	add(c.OwnerCrash(s))
 	add(c.Deliver(s))
 	add(c.Ack(s))
+	each(c.Answer)
 	add(c.CutoffPass(s))
 	add(c.DeadlinePass(s))
 	each(c.AllowanceElapse)
@@ -352,6 +390,26 @@ func (c Config) OwnerSettle(s State, a int8) (string, bool, State) {
 	return c.label("OwnerSettle", a), ok, s
 }
 
+// OwnerRefund: a refund reaches the owner, from an enclave that gave up having
+// delivered nothing, and it decides it as it decides a settle.
+func (c Config) OwnerRefund(s State, a int8) (string, bool, State) {
+	ok := s.OwnerActive() && s.Refunds(a) && s.OwnerWinner[a] == 0
+	if ok {
+		s.decide(Rec{a, Refund, 0})
+	}
+	return c.label("OwnerRefund", a), ok, s
+}
+
+// OwnerList: a forced exit lists a hold it has not decided in its hand-off,
+// at most once.
+func (c Config) OwnerList(s State, a int8) (string, bool, State) {
+	ok := s.OwnerActive() && c.Listable[a] && s.OwnerWinner[a] == 0 && !s.ListIssued(a)
+	if ok {
+		s.appendOutbox(Rec{a, List, 0})
+	}
+	return c.label("OwnerList", a), ok, s
+}
+
 // OwnerReap: the owner's reaper may reap any undecided hold.
 func (c Config) OwnerReap(s State, a int8) (string, bool, State) {
 	ok := s.OwnerActive() && s.OwnerWinner[a] == 0
@@ -399,21 +457,26 @@ func (c Config) Deliver(s State) (string, bool, State) {
 }
 
 // Ack: the owner learns a publish was stored, and answers. An acked terminal's
-// outcome may reach a gateway; an acked first heartbeat lets the enclave
-// stream, unless it already gave up.
+// outcome may reach a gateway; an acked first heartbeat lets the owner answer
+// it accepted, which the gateway may or may not receive (Answer).
 func (c Config) Ack(s State) (string, bool, State) {
 	ok := s.Acked < s.Delivered && s.OwnerUp && !(s.DeadlinePassed && s.IssuedBeforeCutoff(s.Acked+1))
 	if ok {
-		r := s.outbox(s.Acked + 1)
-		if terminal(r.Kind) {
+		if r := s.outbox(s.Acked + 1); terminal(r.Kind) {
 			s.GwAckedOwner |= 1 << s.Acked
-		}
-		if r.Kind == Heartbeat && s.Enc[r.Auth] == EncOpen {
-			s.Enc[r.Auth] = EncDelivered
 		}
 		s.Acked++
 	}
 	return "Ack", ok, s
+}
+
+// Answer: a stream's gateway receives an accepted answer to its first
+// heartbeat, given once the heartbeat's record is acknowledged, and the
+// stream may deliver.
+func (c Config) Answer(s State, a int8) (string, bool, State) {
+	ok := s.Enc[a] == EncOpen && s.HbAcked(a)
+	s.Enc[a] = EncPermitted
+	return c.label("Answer", a), ok, s
 }
 
 // --- Time
@@ -442,28 +505,39 @@ func (c Config) AllowanceElapse(s State, a int8) (string, bool, State) {
 	return c.label("AllowanceElapse", a), ok, s
 }
 
-// EnclaveDeliver: a non-streaming request's provider answers.
+// EnclaveDeliver: the client gets its first byte, a non-streaming request's
+// provider having answered, or a stream's gateway having been permitted (A4).
 func (c Config) EnclaveDeliver(s State, a int8) (string, bool, State) {
-	ok := !c.Stream[a] && s.Enc[a] == EncOpen
+	from := EncOpen
+	if c.Stream[a] {
+		from = EncPermitted
+	}
+	ok := s.Enc[a] == from
 	s.Enc[a] = EncDelivered
+	s.Got[a] = true
 	return c.label("EnclaveDeliver", a), ok, s
 }
 
-// EnclaveGiveUp: the enclave gives up with nothing delivered.
+// EnclaveGiveUp: the enclave gives up with nothing delivered, permitted or
+// not.
 func (c Config) EnclaveGiveUp(s State, a int8) (string, bool, State) {
-	ok := s.Enc[a] == EncOpen
+	ok := s.Enc[a] == EncOpen || s.Enc[a] == EncPermitted
 	s.Enc[a] = EncGone
 	return c.label("EnclaveGiveUp", a), ok, s
 }
 
 // --- Front doors
 
-// FrontDoorAppend: a front door appends a settle the owner did not take,
-// conditional on the lease not being closed, and answers "recorded".
+// FrontDoorAppend: a front door appends a settle or a refund the owner did not
+// take, conditional on the lease not being closed, and answers "recorded".
 func (c Config) FrontDoorAppend(s State, a int8) (string, bool, State) {
-	ok := s.Lease != Closed && s.Settles(a) && int(s.Appends) < c.MaxAppends
+	ok := s.Lease != Closed && (s.Settles(a) || s.Refunds(a)) && int(s.Appends) < c.MaxAppends
 	if ok {
-		s.appendDrain(Row{a, Settle})
+		kind := Refund
+		if s.Settles(a) {
+			kind = Settle
+		}
+		s.appendDrain(Row{a, kind})
 		s.Appends++
 		s.GwAckedDrain |= 1 << (s.DrainLen - 1)
 	}
@@ -546,11 +620,12 @@ func (c Config) ApplyDrain(s State) (string, bool, State) {
 	return "ApplyDrain", ok, s
 }
 
-// AuditorReap reaps a hold the log showed through a durable heartbeat that
-// has no terminal, by inserting a reap row after reading the hold's rows.
+// AuditorReap reaps a hold the log showed, through a durable heartbeat or
+// listing, that has no terminal, by inserting a reap row once its transaction
+// finds no row of the hold's: rows of other holds may wait.
 func (c Config) AuditorReap(s State, a int8) (string, bool, State) {
-	ok := s.Lease == Draining && s.S != c.NoS() && s.DrainApplied == s.DrainLen &&
-		c.HbDurable(&s, a) && s.Winner[a] == NoWinner
+	ok := s.Lease == Draining && s.S != c.NoS() && s.firstDrainRow(a) == 0 &&
+		c.Known(&s, a) && s.Winner[a] == NoWinner
 	if ok {
 		s.appendDrain(Row{a, Reap})
 	}
@@ -562,7 +637,7 @@ func (c Config) AuditorReap(s State, a int8) (string, bool, State) {
 func (c Config) Close(s State) (string, bool, State) {
 	ok := s.Lease == Draining && s.S != c.NoS() && s.DrainApplied == s.DrainLen
 	for a := range int8(len(c.Auths)) {
-		if ok && c.HbDurable(&s, a) && s.Winner[a] == NoWinner {
+		if ok && c.Known(&s, a) && s.Winner[a] == NoWinner {
 			ok = false
 		}
 	}
@@ -578,7 +653,8 @@ type Invariant struct {
 	Holds func(State) bool
 }
 
-// Invariants are the spec's, in its .cfg's order.
+// Invariants are the spec's, in its .cfg's order, NoListedHoldClosedOver
+// where TerminalOrder.list.cfg has it.
 func (c Config) Invariants() []Invariant {
 	return []Invariant{
 		{"TypeOK", c.TypeOK},
@@ -589,9 +665,12 @@ func (c Config) Invariants() []Invariant {
 		{"AckedOwnerTerminalWins", c.AckedOwnerTerminalWins},
 		{"NoAckedDrainRowLost", c.NoAckedDrainRowLost},
 		{"NoStreamClosedOver", c.NoStreamClosedOver},
+		{"NoDeliveredStreamClosedOver", c.NoDeliveredStreamClosedOver},
+		{"NoListedHoldClosedOver", c.NoListedHoldClosedOver},
 		{"DurableHeartbeatNeverReleased", c.DurableHeartbeatNeverReleased},
 		{"NoLiveRequestReleased", c.NoLiveRequestReleased},
 		{"ReleasedHoldOwesNothing", c.ReleasedHoldOwesNothing},
+		{"RefundOnlyWhenNothingDelivered", c.RefundOnlyWhenNothingDelivered},
 		{"ClosedLeaseHasNoUnappliedRow", c.ClosedLeaseHasNoUnappliedRow},
 	}
 }
@@ -614,17 +693,17 @@ func (c Config) TypeOK(s State) bool {
 	}
 	for i := int8(1); i <= s.OutboxLen; i++ {
 		r := s.outbox(i)
-		if !in(r.Auth, 0, n-1) || !in(r.Kind, int(Heartbeat), int(Release)) || !in(r.Row, 0, maxRows) {
+		if !in(r.Auth, 0, n-1) || !in(r.Kind, int(Heartbeat), int(List)) || !in(r.Row, 0, maxRows) {
 			return false
 		}
 	}
 	for j := int8(1); j <= s.DrainLen; j++ {
-		if r := s.drain(j); !in(r.Auth, 0, n-1) || (r.Kind != Settle && r.Kind != Reap) {
+		if r := s.drain(j); !in(r.Auth, 0, n-1) || (r.Kind != Settle && r.Kind != Refund && r.Kind != Reap) {
 			return false
 		}
 	}
 	for a := range n {
-		if !c.winnerTyped(s.Winner[a]) || !in(s.OwnerWinner[a], 0, maxSeq) || !in(s.Enc[a], int(EncOpen), int(EncGone)) {
+		if !c.winnerTyped(s.Winner[a]) || !in(s.OwnerWinner[a], 0, maxSeq) || !in(s.Enc[a], int(EncOpen), int(EncPermitted)) {
 			return false
 		}
 	}
@@ -750,6 +829,34 @@ func (c Config) NoStreamClosedOver(s State) bool {
 	return true
 }
 
+// NoDeliveredStreamClosedOver: a lease never closes over a stream that
+// delivered (A4, end to end).
+func (c Config) NoDeliveredStreamClosedOver(s State) bool {
+	if s.Lease != Closed {
+		return true
+	}
+	for a := range int8(len(c.Auths)) {
+		if c.Stream[a] && s.Got[a] && s.Winner[a] == NoWinner {
+			return false
+		}
+	}
+	return true
+}
+
+// NoListedHoldClosedOver: a lease never closes over a hold a forced exit
+// listed and was told is stored.
+func (c Config) NoListedHoldClosedOver(s State) bool {
+	if s.Lease != Closed {
+		return true
+	}
+	for a := range int8(len(c.Auths)) {
+		if s.ListAcked(a) && s.Winner[a] == NoWinner {
+			return false
+		}
+	}
+	return true
+}
+
 // DurableHeartbeatNeverReleased: a hold with a heartbeat in the log is never
 // released, by a release record or by closing the lease over it.
 func (c Config) DurableHeartbeatNeverReleased(s State) bool {
@@ -808,6 +915,25 @@ func (c Config) ReleasedHoldOwesNothing(s State) bool {
 		}
 		for j := int8(1); j <= s.DrainLen; j++ {
 			if r := s.drain(j); r.Auth == a && r.Kind == Settle {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// RefundOnlyWhenNothingDelivered: a refund, the owner's or the drain log's, is
+// only for an enclave that delivered nothing, whatever it did after (A4).
+func (c Config) RefundOnlyWhenNothingDelivered(s State) bool {
+	for a := range int8(len(c.Auths)) {
+		if !s.Got[a] {
+			continue
+		}
+		if s.recIn(a, Refund, s.OutboxLen) {
+			return false
+		}
+		for j := int8(1); j <= s.DrainLen; j++ {
+			if r := s.drain(j); r.Auth == a && r.Kind == Refund {
 				return false
 			}
 		}

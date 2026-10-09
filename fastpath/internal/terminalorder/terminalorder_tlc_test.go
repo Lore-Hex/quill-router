@@ -3,6 +3,7 @@
 // The whole-graph comparisons with TLC, and the full instances' counts. They
 // are single-threaded and some ten times slower under the race detector, so
 // CI runs them in a step of their own without it (.github/workflows/ci.yml).
+// Each test reads its own graphs, so they run in parallel.
 
 package terminalorder
 
@@ -15,6 +16,7 @@ import (
 // TestTransitionsMatchTLC holds every step of the shadow against TLC's state
 // graphs of the two small instances.
 func TestTransitionsMatchTLC(t *testing.T) {
+	t.Parallel()
 	instances := map[string]Config{
 		"one stream": oneStream, "two plain": twoPlain, "two appends": twoAppends,
 		// No authorizations, which the spec allows: TLC prints the functions
@@ -32,6 +34,7 @@ func TestTransitionsMatchTLC(t *testing.T) {
 
 // TestComparisonSeesADifference shows the comparison is not vacuous.
 func TestComparisonSeesADifference(t *testing.T) {
+	t.Parallel()
 	c := oneStream
 	cases := map[string]func(State) []Transition{
 		"a step dropped": func(s State) []Transition {
@@ -84,6 +87,7 @@ func TestComparisonSeesADifference(t *testing.T) {
 // reach as many distinct states as TLC does there, as the guard table
 // records. Every invariant is checked on the way.
 func TestStateCountMatchesTLC(t *testing.T) {
+	t.Parallel()
 	counts, err := tlc.GuardTableStates("TerminalOrder")
 	if err != nil {
 		t.Fatal(err)
@@ -110,11 +114,12 @@ func TestStateCountMatchesTLC(t *testing.T) {
 }
 
 // TestWholeConfigurationsMatchTLC compares the whole state graphs of the
-// configurations proofs/ checks, 674,936 and 3,564 states, with the shadow's,
-// step for step, read as they stream. TLC runs them from cfgInstances, which
+// configurations proofs/ checks, 1,047,716, 8,324, 11,268 and 13,322 states,
+// with the shadow's, step for step, read as they stream. TLC runs them from cfgInstances, which
 // TestStateCountMatchesTLC binds to the files. So on every configuration TLC
 // checks, the shadow is the spec: a spurious step anywhere in them would show.
 func TestWholeConfigurationsMatchTLC(t *testing.T) {
+	t.Parallel()
 	for file, c := range cfgInstances {
 		got := compareWithTLC(t, c, c.Next)
 		if len(got.Diffs) > 0 {

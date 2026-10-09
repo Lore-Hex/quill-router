@@ -1,12 +1,14 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "ed6bbb023696afafe13006b6cf01129716044bd3263dc9e31dcccd942c8a99e1"
+inputs_sha256 = "a12086fa1a96959339a66b1f45a557173a82b0553df60ec620c77d058030b3f9"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
-"TerminalOrder.cfg" = 674936
-"TerminalOrder.undeclared.cfg" = 3564
+"TerminalOrder.cfg" = 1047716
+"TerminalOrder.appends.cfg" = 13322
+"TerminalOrder.list.cfg" = 11268
+"TerminalOrder.undeclared.cfg" = 8324
 
 [[guard]]
 action = "OwnerHeartbeat"
@@ -61,6 +63,61 @@ enclave did.
 action = "OwnerSettle"
 text = '''/\ ownerWinner[a] = 0'''
 breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerRefund"
+text = '''/\ OwnerActive'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "OwnerRefund"
+text = '''/\ Refunds(a)'''
+breaks = "RefundOnlyWhenNothingDelivered"
+
+[[guard]]
+action = "OwnerRefund"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerList"
+text = '''/\ OwnerActive'''
+breaks = "NoListedHoldClosedOver"
+cfg = "list"
+
+[[guard]]
+action = "OwnerList"
+text = '''/\ a \in Listable'''
+breaks = "TypeOK"
+why = '''
+A bound of the model, which TypeOK states: MaxSeq counts one listing for
+each hold Listable names. Any hold a forced exit holds may be listed; the
+constant says which the model lets be, and TerminalOrder.list.cfg lists one.
+'''
+
+[[guard]]
+action = "OwnerList"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+A forced exit lists the holds it has not decided. Listing a decided hold
+puts the listing after the hold's terminal in the owner's order, so a
+boundary that covers the listing covers the terminal, which is the hold's
+winner: the auditor has nothing to reap, and Close nothing to wait for. The
+guard keeps the hand-off to what the owner still holds.
+'''
+
+[[guard]]
+action = "OwnerList"
+text = '''/\ ~ListIssued(a)'''
+breaks = "TypeOK"
+cfg = "list"
+why = '''
+A bound of the model, which TypeOK states: MaxSeq counts one listing per
+hold. A second listing of a hold changes nothing the claims read, since
+Listed asks only for a listing within the boundary.
+'''
 
 [[guard]]
 action = "OwnerReap"
@@ -158,6 +215,16 @@ text = '''/\ ~(deadlinePassed /\ IssuedBeforeCutoff(acked + 1))'''
 breaks = "AckedOwnerRecordWithinBoundary"
 
 [[guard]]
+action = "Answer"
+text = '''/\ enc[a] = "open"'''
+breaks = "RefundOnlyWhenNothingDelivered"
+
+[[guard]]
+action = "Answer"
+text = '''/\ HbAcked(a)'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
 action = "CutoffPass"
 text = '''/\ ~ownerCutoff'''
 breaks = "nothing"
@@ -204,32 +271,14 @@ breaks = "NoLiveRequestReleased"
 
 [[guard]]
 action = "EnclaveDeliver"
-text = '''/\ a \notin Streams'''
+text = '''/\ enc[a] = IF a \in Streams THEN "permitted" ELSE "open"'''
 breaks = "NoLiveRequestReleased"
 
 [[guard]]
-action = "EnclaveDeliver"
-text = '''/\ enc[a] = "open"'''
-breaks = "nothing"
-reaches = "no new state"
-why = '''
-A fact about the enclave: it delivers once, and not after it has given up.
-Without the guard an enclave that gave up could deliver after all. That
-matters only for a hold that can be released, and a request that does not
-stream never is: OwnerRelease asks for a declared stream.
-'''
-
-[[guard]]
 action = "EnclaveGiveUp"
-text = '''/\ enc[a] = "open"'''
+text = '''/\ enc[a] \in {"open", "permitted"}'''
 breaks = "nothing"
 reaches = "new states"
-why = '''
-A fact about the enclave: one that has delivered does not go back to having
-delivered nothing. No claim reads the enclave's state for a stream that was
-answered: NoStreamClosedOver reads the owner's acknowledgement, which
-stays.
-'''
 
 [[guard]]
 action = "FrontDoorAppend"
@@ -238,8 +287,8 @@ breaks = "NoAckedDrainRowLost"
 
 [[guard]]
 action = "FrontDoorAppend"
-text = '''/\ Settles(a)'''
-breaks = "ReleasedHoldOwesNothing"
+text = '''/\ Settles(a) \/ Refunds(a)'''
+breaks = "RefundOnlyWhenNothingDelivered"
 
 [[guard]]
 action = "FrontDoorAppend"
@@ -372,30 +421,36 @@ terminal in order still decides.
 
 [[guard]]
 action = "AuditorReap"
-text = '''/\ drainApplied = Len(drain)'''
+text = '''/\ DrainRows(a) = {}'''
 breaks = "TypeOK"
 why = '''
-It models the reap transaction reading the hold's rows first. With no
-guard at all in its place the auditor could insert reap rows without end,
-which only TypeOK's bound on the drain log notices. That a reap row behind
-an unread settle row merely loses is the survivor reap-without-reading-rows.
+The store's one reap row per hold (store.Reap refuses a hold with a row in
+the drain log), which MaxRows counts and TypeOK states. Without it the
+auditor may reap a hold again before its first reap row is applied. A reap
+row behind another row of the hold's loses in the order and is safe, which
+the survivor reap-without-reading-rows checks.
 '''
 
 [[guard]]
 action = "AuditorReap"
-text = '''/\ HbDurable(a)'''
+text = '''/\ Known(a)'''
 breaks = "nothing"
 reaches = "new states"
 why = '''
-What the auditor can see, not a rule it chooses to follow: it learns of a
-hold from the log. A reap of a hold it never saw is only another terminal
-in the drain log, and first-in-order still decides.
+An enabling condition. The store reaps only a stored open hold, one the
+auditor knows from a durable heartbeat or listing, and charges its last
+snapshot; amounts are not modeled here, and a reap row of a hold it does
+not know is a terminal like any other, first in the order or behind. What
+rests on Known is Close's wait for every known hold, which the mutants
+close-over-a-stream and close-over-a-listed-hold break, and the reap's
+progress (auditor-never-reaps, auditor-never-reaps-a-listed-hold).
 '''
 
 [[guard]]
 action = "AuditorReap"
 text = '''/\ winner[a] = NoWinner'''
-breaks = "TypeOK"
+breaks = "nothing"
+reaches = "new states"
 why = '''
 One reap row per hold. Without it the auditor could append reap rows for a
 decided hold without end. Each would lose to the hold's winner, since
@@ -425,5 +480,5 @@ breaks = "NoAckedDrainRowLost"
 
 [[guard]]
 action = "Close"
-text = '''/\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner'''
+text = '''/\ \A a \in Auths : Known(a) => winner[a] # NoWinner'''
 breaks = "DurableHeartbeatNeverReleased"
