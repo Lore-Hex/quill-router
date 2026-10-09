@@ -190,6 +190,12 @@ def test_diagnostic_sink_rechecks_path_limit(warnings: list[dict[str, Any]]) -> 
     ("include", '["reasoning.encrypted_content","reasoning.encrypted_content","reasoning.encrypted_content"]',
      '["reasoning.encrypted_content","reasoning.encrypted_content","reasoning.encrypted_content"]'),
     ("modalities", '["text","audio"]', '["text","audio"]'),
+    ("tools[0].type", '"custom"', '"custom"'),
+    ("tools[12].type", '"web_search"', '"web_search"'),
+    ("tools[0].type", '"mcp"', '"mcp"'),
+    ("tools[0].type", '"private customer content"', '"[redacted:string]"'),
+    ("tools[0].function.name", '"private customer content"', '"[redacted:string]"'),
+    ("tools[0].type", '{"secret":"private customer content"}', '"[redacted:object]"'),
 ])
 @pytest.mark.parametrize(("route", "status"), [("/v1/chat/completions", 400), ("/v1/responses", 501)])
 def test_safe_value_preview_survives_sentry_scrubbing(
