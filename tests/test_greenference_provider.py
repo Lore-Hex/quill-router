@@ -120,3 +120,20 @@ def test_published_manifest_redacts_contacts_and_preserves_native_routes():
         endpoint = MODEL_ENDPOINTS[row["id"] + "@greenference/prepaid"]
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.usage_type == "Credits"
+
+
+def test_public_provider_page_and_cache_pricing(client):
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    response = client.get("/providers/greenference")
+    assert response.status_code == 200
+    assert "Greenference" in response.text
+    assert "glm-5.3-flash" in response.text
+    assert "https://greenference.com/legal/dpa" in response.text
+    assert "greenference.png" in response.text
+    assert "Cached" in response.text
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@greenference/prepaid"]
+    cached = endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+    assert f"${cached / 1_000_000:g}/1M" in response.text
+    assert "support_contact" not in response.text
+    assert "incident_contact" not in response.text

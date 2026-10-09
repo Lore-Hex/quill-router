@@ -287,6 +287,15 @@
     "route_mode": "Prepaid",
     "slug": "google-vertex"
   },
+  "greenference": {
+    "card_version": 2,
+    "model_count": 10,
+    "name": "Greenference",
+    "privacy": "Zero retention",
+    "route_count": 10,
+    "route_mode": "Prepaid",
+    "slug": "greenference"
+  },
   "grok": {
     "card_version": 2,
     "model_count": 8,
