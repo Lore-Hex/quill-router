@@ -155,8 +155,9 @@ def test_manifests_remove_only_canceled_retirement() -> None:
     assert rows["openai/gpt-3.5-turbo-1106"]["replacement_model_id"] == "openai/gpt-5.6-terra"
     rows = {row["id"]: row for row in json.loads(together.MANIFEST_PATH.read_text())["models"]}
     flash = rows[_TOGETHER_FLASH]
-    assert "retirement_at" not in flash
-    assert "replacement_model_id" not in flash
+    # The September 29 date was canceled; the route's only retirement is
+    # Together's later October 22 notice.
+    assert flash["retirement_at"] == "2026-10-22T00:00:00Z"
 
 
 @pytest.mark.provider_health
@@ -170,7 +171,9 @@ def test_together_still_lists_flash_0731() -> None:
 @pytest.mark.parametrize("at", [
     _CANCELED_TOGETHER_CUTOFF - timedelta(microseconds=1),
     _CANCELED_TOGETHER_CUTOFF,
-    datetime(2027, 1, 1, tzinfo=UTC),
+    # Together later retired the route for real on October 22; stay just
+    # before that cutoff to keep proving the canceled date never applied.
+    datetime(2026, 10, 22, tzinfo=UTC) - timedelta(microseconds=1),
 ])
 def test_together_flash_stays_routable_after_canceled_cutoff(
     monkeypatch: pytest.MonkeyPatch, at: datetime,

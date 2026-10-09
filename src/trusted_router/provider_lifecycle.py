@@ -26,6 +26,7 @@ LIFECYCLE_CLOCK_OVERRIDE_ENV = "TR_LIFECYCLE_CLOCK_OVERRIDE"
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
+TOGETHER_OCTOBER_22_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
@@ -316,8 +317,9 @@ _RETIREMENTS = (
     ),
     # Notices give dates without an exact time; stop at 00:00 UTC conservatively.
     # OpenAI: https://developers.openai.com/api/docs/deprecations
-    # Together canceled its September 29 V4 Flash 0731 retirement. Keep that
-    # exact model eligible; V4.1 remains a distinct model, never a redirect.
+    # Together canceled its September 29 V4 Flash 0731 retirement; its October
+    # 8 notice retires that route on October 22 instead (see below). V4.1
+    # remains a distinct model, never a redirect.
     _Retirement(
         provider="openai",
         model_ids=frozenset({
@@ -1012,6 +1014,23 @@ _RETIREMENTS = (
             "intfloat/multilingual-e5-large-instruct",
         }),
         effective_at=TOGETHER_SEPTEMBER_2026_RETIREMENT_AT,
+    ),
+    # Together's October 8 notices retire these serverless routes on
+    # 2026-10-22 (date only, so 00:00 UTC). Other providers keep serving both
+    # models; the recommended alternatives are quoted, never substituted.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"meta-llama/llama-3.3-70b-instruct"}),
+        upstream_ids=frozenset({"meta-llama/Llama-3.3-70B-Instruct-Turbo"}),
+        effective_at=TOGETHER_OCTOBER_22_RETIREMENT_AT,
+        replacement_model_ids=("meta-models/muse-glimmer-30b",),
+    ),
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash-0731"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Flash-0731"}),
+        effective_at=TOGETHER_OCTOBER_22_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash",),
     ),
     _Retirement(
         provider="phala",

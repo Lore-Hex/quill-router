@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -10,6 +11,7 @@ from pytest import MonkeyPatch
 
 from scripts.pricing import refresh
 from scripts.pricing.providers import together
+from trusted_router import provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
 
@@ -162,6 +164,10 @@ class _MissingM3TogetherClient(_FakeTogetherClient):
 
 
 def test_together_llama_33_turbo_price_change_is_mapped(monkeypatch: MonkeyPatch) -> None:
+    # Price mapping, not lifecycle: Together retires this route on 2026-10-22.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: datetime(2026, 10, 21, tzinfo=UTC),
+    )
     monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
     monkeypatch.setattr(together.httpx, "Client", _FakeTogetherClient)
 
