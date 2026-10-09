@@ -89,6 +89,7 @@ from trusted_router.storage_gcp_request_records import (
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     GUARD_COUNT_SQL,
+    done_retention_statements,
     intent_insert_counts,
     mark_done_unleased_tx,
     resolved_intent_statements,
@@ -2038,6 +2039,18 @@ def typed_finalize_atomic(
                 execute_batch_dml(transaction, final_writes, final_counts)
             if marked != 1:
                 raise _SettleError("gateway_authorization update row-count != 1")
+
+        if (async_fence and request_record_typed and activity_durable and resolved_outbox_available
+                and not mark_done and not one_commit):
+            # F1-001: fresh snapshot-sync has no durable intent to mark later.
+            # Reuse the legacy done-mark's guarded stamps in the money commit.
+            # Outstanding intents still defer TTL; retries never extend it.
+            retention = done_retention_statements(
+                pt, authorization_id=authorization_id,
+                intent_kind="settle" if success else "refund",
+                reservation_id=reservation_id, now=now,
+            )
+            execute_batch_dml(transaction, retention, [(0, 1)] * len(retention))
 
         # Hot-row releases LAST, in the SAME transaction (never split: separating
         # claim_reservation(settled=true) from these releases opens a crash

@@ -484,6 +484,29 @@ MUTATIONS += [
 ] if sys.version_info >= (3, 12) else []
 
 
+
+# F1-001: production retention must be complete, atomic, and clock-correct.
+FINALIZE = 'src/trusted_router/storage_gcp_authorize.py'
+RETENTION_WRITE = '            execute_batch_dml(transaction, retention, [(0, 1)] * len(retention))'
+MUTATIONS += [
+    ('F1-001-drop-terminal-' + kind, [(FINALIZE, [
+        (RETENTION_WRITE, '            if ' + condition + ':\n    ' + RETENTION_WRITE),
+    ])], 'tests/test_async_settle_proof.py::test_fresh_snapshot_sync_completes_retention[reservation-' + kind + ']')
+    for kind, condition in [('settle', 'not success'), ('refund', 'success')]
+]
+MUTATIONS += [
+    ('F1-001-terminal-outside-money-transaction', [(FINALIZE, [
+        (RETENTION_WRITE,
+         '            database.run_in_transaction(\n'
+         '                lambda separate: execute_batch_dml(separate, retention, [(0, 1)] * len(retention)))'),
+    ])], 'tests/test_async_settle_proof_faults.py::test_F1_001_retention_money_transaction[False-settle]'),
+    ('F1-001-terminal-wrong-clock', [(FINALIZE, [
+        ('reservation_id=reservation_id, now=now,\n            )\n' + RETENTION_WRITE,
+         'reservation_id=reservation_id, now=res["expires_at"],\n            )\n' + RETENTION_WRITE),
+    ])], 'tests/test_async_settle_proof.py::test_fresh_snapshot_sync_completes_retention[reservation-settle]'),
+]
+
+
 def main() -> None:
     results = []
     evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))

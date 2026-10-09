@@ -1,11 +1,11 @@
 {
-  "baseline": "4701b1a6da9b2b05df93321a6bbd59ea82188c2b",
+  "baseline": "fcbb8c4805fd6d43d5f041f85f3985b82df597c1",
   "archive": "tests/fakes/frozen_main/package.tar.gz",
-  "archive_sha256": "8ee042a19b878760da7f024c8805fc7d6f4add1bde7b8d4fd625ce5790357d93",
-  "scope": "Union of guarded frozen setup and HTTP/drain/state-capture executions in the Round-12 CPython 3.12.3 normal and post-cutover proof runs; negative controls excluded",
+  "archive_sha256": "84f0a2092090e8ebf89e7eb56bc5c5d1aabfbb5d07bc73f53fc81e616e275a91",
+  "scope": "Union of guarded frozen setup and HTTP/drain/state-capture executions in the F1-001 CPython 3.12.3 default and post-cutover proof runs; negative controls excluded",
   "modules": 330,
-  "execution_entries": 1666,
-  "callables": 1633,
+  "execution_entries": 1662,
+  "callables": 1628,
   "records": [
     {
       "module": "trusted_router",
@@ -465,16 +465,16 @@
     },
     {
       "module": "trusted_router.benchmark_scores",
-      "qualname": "BenchmarkDef.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.benchmark_scores",
       "frozen_member": "src/trusted_router/benchmark_scores.py",
       "sha256": "ea9148d3d270617ebb477ac518b03f7c42d85346bf2c71d751f6dce11747fd9b"
     },
     {
       "module": "trusted_router.benchmark_scores",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.benchmark_scores",
       "frozen_member": "src/trusted_router/benchmark_scores.py",
       "sha256": "ea9148d3d270617ebb477ac518b03f7c42d85346bf2c71d751f6dce11747fd9b"
@@ -861,31 +861,31 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "_meta_price_range",
-      "code_firstlineno": 425,
+      "code_firstlineno": 424,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "_model_max_privacy_tier",
-      "code_firstlineno": 461,
+      "code_firstlineno": 460,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "_route_provider_slugs",
-      "code_firstlineno": 540,
+      "code_firstlineno": 539,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
@@ -893,7 +893,7 @@
       "code_firstlineno": 310,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
@@ -901,7 +901,7 @@
       "code_firstlineno": 353,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
@@ -909,39 +909,47 @@
       "code_firstlineno": 389,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_eu_focused_provider_available",
-      "code_firstlineno": 590,
+      "code_firstlineno": 589,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_eu_focused_provider_available.<locals>.<genexpr>",
-      "code_firstlineno": 592,
+      "code_firstlineno": 591,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_max_privacy_tier",
-      "code_firstlineno": 487,
+      "code_firstlineno": 486,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_open_weights",
-      "code_firstlineno": 517,
+      "code_firstlineno": 516,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
+    },
+    {
+      "module": "trusted_router.catalog",
+      "qualname": "model_open_weights.<locals>.<genexpr>",
+      "code_firstlineno": 533,
+      "frozen_module": "frozen_main.catalog",
+      "frozen_member": "src/trusted_router/catalog.py",
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
@@ -949,119 +957,111 @@
       "code_firstlineno": 534,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
-    },
-    {
-      "module": "trusted_router.catalog",
-      "qualname": "model_open_weights.<locals>.<genexpr>",
-      "code_firstlineno": 535,
-      "frozen_module": "frozen_main.catalog",
-      "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape",
-      "code_firstlineno": 597,
+      "code_firstlineno": 596,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 610,
+      "code_firstlineno": 609,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 621,
+      "code_firstlineno": 620,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 629,
+      "code_firstlineno": 628,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 632,
+      "code_firstlineno": 631,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 641,
+      "code_firstlineno": 640,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 661,
+      "code_firstlineno": 660,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 664,
+      "code_firstlineno": 663,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 669,
+      "code_firstlineno": 668,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 673,
+      "code_firstlineno": 672,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_to_openrouter_shape.<locals>.<genexpr>",
-      "code_firstlineno": 755,
+      "code_firstlineno": 754,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_us_provider_available",
-      "code_firstlineno": 581,
+      "code_firstlineno": 580,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
       "qualname": "model_us_provider_available.<locals>.<genexpr>",
-      "code_firstlineno": 583,
+      "code_firstlineno": 582,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
@@ -1069,7 +1069,7 @@
       "code_firstlineno": 306,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog",
@@ -1077,7 +1077,7 @@
       "code_firstlineno": 319,
       "frozen_module": "frozen_main.catalog",
       "frozen_member": "src/trusted_router/catalog.py",
-      "sha256": "6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3"
+      "sha256": "7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3"
     },
     {
       "module": "trusted_router.catalog_capabilities",
@@ -1233,14 +1233,6 @@
     },
     {
       "module": "trusted_router.catalog_data",
-      "qualname": "ModelOrigin.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.catalog_data",
-      "frozen_member": "src/trusted_router/catalog_data.py",
-      "sha256": "8c8bb1451424a9a1859afd6e49cbbd6243a88d1cd0a83c74b3342211145e47e2"
-    },
-    {
-      "module": "trusted_router.catalog_data",
       "qualname": "ModelProviderPrivacyOverride",
       "code_firstlineno": 238,
       "frozen_module": "frozen_main.catalog_data",
@@ -1273,14 +1265,6 @@
     },
     {
       "module": "trusted_router.catalog_data",
-      "qualname": "Provider.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.catalog_data",
-      "frozen_member": "src/trusted_router/catalog_data.py",
-      "sha256": "8c8bb1451424a9a1859afd6e49cbbd6243a88d1cd0a83c74b3342211145e47e2"
-    },
-    {
-      "module": "trusted_router.catalog_data",
       "qualname": "_DecisionFallbackRoute",
       "code_firstlineno": 3270,
       "frozen_module": "frozen_main.catalog_data",
@@ -1307,6 +1291,14 @@
       "module": "trusted_router.catalog_data",
       "qualname": "__create_fn__",
       "code_firstlineno": 1,
+      "frozen_module": "frozen_main.catalog_data",
+      "frozen_member": "src/trusted_router/catalog_data.py",
+      "sha256": "8c8bb1451424a9a1859afd6e49cbbd6243a88d1cd0a83c74b3342211145e47e2"
+    },
+    {
+      "module": "trusted_router.catalog_data",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.catalog_data",
       "frozen_member": "src/trusted_router/catalog_data.py",
       "sha256": "8c8bb1451424a9a1859afd6e49cbbd6243a88d1cd0a83c74b3342211145e47e2"
@@ -1389,15 +1381,15 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_NativeEndpointCapabilities",
-      "code_firstlineno": 739,
+      "code_firstlineno": 740,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1405,7 +1397,7 @@
       "code_firstlineno": 2,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1413,15 +1405,15 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_api_reported_context_windows",
-      "code_firstlineno": 782,
+      "code_firstlineno": 783,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1429,23 +1421,23 @@
       "code_firstlineno": 213,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_author_provider",
-      "code_firstlineno": 724,
+      "code_firstlineno": 725,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_authoritative_provider_model_ids",
-      "code_firstlineno": 298,
+      "code_firstlineno": 299,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1453,55 +1445,55 @@
       "code_firstlineno": 158,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_context_window",
-      "code_firstlineno": 735,
+      "code_firstlineno": 736,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_decision_fallback_endpoints",
-      "code_firstlineno": 1457,
+      "code_firstlineno": 1458,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_decision_models",
-      "code_firstlineno": 1421,
+      "code_firstlineno": 1422,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_embedding_manifest_cost",
-      "code_firstlineno": 1605,
+      "code_firstlineno": 1606,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_embedding_models",
-      "code_firstlineno": 1500,
+      "code_firstlineno": 1501,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_embedding_models.<locals>.<genexpr>",
-      "code_firstlineno": 1576,
+      "code_firstlineno": 1577,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1509,23 +1501,23 @@
       "code_firstlineno": 127,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_filter_unserved_provider_endpoints",
-      "code_firstlineno": 1679,
+      "code_firstlineno": 1680,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_filter_unserved_provider_endpoints.<locals>._keep",
-      "code_firstlineno": 1709,
+      "code_firstlineno": 1710,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1533,23 +1525,15 @@
       "code_firstlineno": 199,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints",
-      "code_firstlineno": 811,
+      "code_firstlineno": 812,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
-    },
-    {
-      "module": "trusted_router.catalog_ingest",
-      "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 890,
-      "frozen_module": "frozen_main.catalog_ingest",
-      "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1557,79 +1541,87 @@
       "code_firstlineno": 891,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 894,
+      "code_firstlineno": 892,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 903,
+      "code_firstlineno": 895,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 914,
+      "code_firstlineno": 904,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 949,
+      "code_firstlineno": 915,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 954,
+      "code_firstlineno": 950,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
-      "code_firstlineno": 974,
+      "code_firstlineno": 955,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
+    },
+    {
+      "module": "trusted_router.catalog_ingest",
+      "qualname": "_ingested_models_and_endpoints.<locals>.<genexpr>",
+      "code_firstlineno": 975,
+      "frozen_module": "frozen_main.catalog_ingest",
+      "frozen_member": "src/trusted_router/catalog_ingest.py",
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_ingested_models_and_endpoints.<locals>.endpoint_capabilities",
-      "code_firstlineno": 829,
+      "code_firstlineno": 830,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_input_only_manifest_cost",
-      "code_firstlineno": 1612,
+      "code_firstlineno": 1613,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_is_provider_deprecated_model",
-      "code_firstlineno": 709,
+      "code_firstlineno": 710,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1637,7 +1629,7 @@
       "code_firstlineno": 90,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1645,7 +1637,7 @@
       "code_firstlineno": 94,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1653,7 +1645,7 @@
       "code_firstlineno": 107,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1661,23 +1653,23 @@
       "code_firstlineno": 111,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_native_endpoint_capabilities",
-      "code_firstlineno": 745,
+      "code_firstlineno": 746,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_native_endpoint_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 770,
+      "code_firstlineno": 771,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1685,31 +1677,31 @@
       "code_firstlineno": 80,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_provider_manifest_dark_model_ids",
-      "code_firstlineno": 1654,
+      "code_firstlineno": 1655,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_provider_manifest_dark_model_ids.<locals>.<genexpr>",
-      "code_firstlineno": 1669,
+      "code_firstlineno": 1670,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
       "qualname": "_supplemental_provider_models_and_endpoints",
-      "code_firstlineno": 1033,
+      "code_firstlineno": 1034,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_ingest",
@@ -1717,7 +1709,7 @@
       "code_firstlineno": 190,
       "frozen_module": "frozen_main.catalog_ingest",
       "frozen_member": "src/trusted_router/catalog_ingest.py",
-      "sha256": "cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57"
+      "sha256": "9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75"
     },
     {
       "module": "trusted_router.catalog_privacy",
@@ -1898,26 +1890,26 @@
     {
       "module": "trusted_router.catalog_registry",
       "qualname": "<genexpr>",
-      "code_firstlineno": 1645,
-      "frozen_module": "frozen_main.catalog_registry",
-      "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
-    },
-    {
-      "module": "trusted_router.catalog_registry",
-      "qualname": "<genexpr>",
       "code_firstlineno": 1658,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
       "qualname": "<genexpr>",
-      "code_firstlineno": 1661,
+      "code_firstlineno": 1671,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
+    },
+    {
+      "module": "trusted_router.catalog_registry",
+      "qualname": "<genexpr>",
+      "code_firstlineno": 1674,
+      "frozen_module": "frozen_main.catalog_registry",
+      "frozen_member": "src/trusted_router/catalog_registry.py",
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1925,7 +1917,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1933,7 +1925,7 @@
       "code_firstlineno": 1365,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1941,7 +1933,7 @@
       "code_firstlineno": 1432,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1949,7 +1941,7 @@
       "code_firstlineno": 1437,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1957,7 +1949,7 @@
       "code_firstlineno": 1438,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1965,31 +1957,31 @@
       "code_firstlineno": 1443,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
       "qualname": "_named_decision_model_with_chain_prices",
-      "code_firstlineno": 1667,
+      "code_firstlineno": 1680,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
       "qualname": "_named_decision_model_with_chain_prices.<locals>.<genexpr>",
-      "code_firstlineno": 1695,
+      "code_firstlineno": 1708,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
       "qualname": "_named_decision_model_with_chain_prices.<locals>.<genexpr>",
-      "code_firstlineno": 1696,
+      "code_firstlineno": 1709,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -1997,7 +1989,7 @@
       "code_firstlineno": 1489,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -2005,7 +1997,7 @@
       "code_firstlineno": 1507,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -2013,7 +2005,7 @@
       "code_firstlineno": 980,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_registry",
@@ -2021,7 +2013,7 @@
       "code_firstlineno": 1007,
       "frozen_module": "frozen_main.catalog_registry",
       "frozen_member": "src/trusted_router/catalog_registry.py",
-      "sha256": "c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c"
+      "sha256": "68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a"
     },
     {
       "module": "trusted_router.catalog_usage_policy",
@@ -2209,24 +2201,8 @@
     },
     {
       "module": "trusted_router.competitor_comparisons",
-      "qualname": "ComparisonSource.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.competitor_comparisons",
-      "frozen_member": "src/trusted_router/competitor_comparisons.py",
-      "sha256": "d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d"
-    },
-    {
-      "module": "trusted_router.competitor_comparisons",
       "qualname": "CompetitorComparison",
       "code_firstlineno": 16,
-      "frozen_module": "frozen_main.competitor_comparisons",
-      "frozen_member": "src/trusted_router/competitor_comparisons.py",
-      "sha256": "d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d"
-    },
-    {
-      "module": "trusted_router.competitor_comparisons",
-      "qualname": "CompetitorComparison.__init__",
-      "code_firstlineno": 2,
       "frozen_module": "frozen_main.competitor_comparisons",
       "frozen_member": "src/trusted_router/competitor_comparisons.py",
       "sha256": "d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d"
@@ -2243,6 +2219,14 @@
       "module": "trusted_router.competitor_comparisons",
       "qualname": "__create_fn__",
       "code_firstlineno": 1,
+      "frozen_module": "frozen_main.competitor_comparisons",
+      "frozen_member": "src/trusted_router/competitor_comparisons.py",
+      "sha256": "d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d"
+    },
+    {
+      "module": "trusted_router.competitor_comparisons",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.competitor_comparisons",
       "frozen_member": "src/trusted_router/competitor_comparisons.py",
       "sha256": "d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d"
@@ -2269,7 +2253,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
@@ -2277,7 +2261,7 @@
       "code_firstlineno": 108,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
@@ -2285,127 +2269,159 @@
       "code_firstlineno": 368,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.async_settle_admission_enabled",
-      "code_firstlineno": 1292,
+      "code_firstlineno": 1306,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.async_settle_requires_protection",
-      "code_firstlineno": 1297,
+      "code_firstlineno": 1311,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
+    },
+    {
+      "module": "trusted_router.config",
+      "qualname": "Settings.async_settle_shadow_workspace_ids",
+      "code_firstlineno": 1302,
+      "frozen_module": "frozen_main.config",
+      "frozen_member": "src/trusted_router/config.py",
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.drain_budget_within_lease",
-      "code_firstlineno": 1285,
+      "code_firstlineno": 1287,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
+    },
+    {
+      "module": "trusted_router.config",
+      "qualname": "Settings.parse_shadow_workspaces",
+      "code_firstlineno": 1294,
+      "frozen_module": "frozen_main.config",
+      "frozen_member": "src/trusted_router/config.py",
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
+    },
+    {
+      "module": "trusted_router.config",
+      "qualname": "Settings.parse_shadow_workspaces.<locals>.<genexpr>",
+      "code_firstlineno": 1296,
+      "frozen_module": "frozen_main.config",
+      "frozen_member": "src/trusted_router/config.py",
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
+    },
+    {
+      "module": "trusted_router.config",
+      "qualname": "Settings.parse_shadow_workspaces.<locals>.<genexpr>",
+      "code_firstlineno": 1297,
+      "frozen_module": "frozen_main.config",
+      "frozen_member": "src/trusted_router/config.py",
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.production_is_fail_closed",
-      "code_firstlineno": 1303,
+      "code_firstlineno": 1317,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.production_is_fail_closed.<locals>.<genexpr>",
-      "code_firstlineno": 1472,
+      "code_firstlineno": 1486,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.production_is_fail_closed.<locals>.<genexpr>",
-      "code_firstlineno": 1571,
+      "code_firstlineno": 1585,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.remediator_mode_is_known",
-      "code_firstlineno": 1271,
+      "code_firstlineno": 1273,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.settings_customise_sources",
-      "code_firstlineno": 1251,
+      "code_firstlineno": 1253,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.trust_qualifying_provider_set",
-      "code_firstlineno": 2072,
+      "code_firstlineno": 2086,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "Settings.trust_qualifying_provider_set.<locals>.<genexpr>",
-      "code_firstlineno": 2074,
+      "code_firstlineno": 2088,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "_LocalKeyFileSource",
-      "code_firstlineno": 2192,
+      "code_firstlineno": 2206,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "_LocalKeyFileSource.__call__",
-      "code_firstlineno": 2221,
+      "code_firstlineno": 2235,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "_LocalKeyFileSource.__init__",
-      "code_firstlineno": 2199,
+      "code_firstlineno": 2213,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "_running_under_pytest",
-      "code_firstlineno": 2225,
+      "code_firstlineno": 2239,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
       "qualname": "get_settings",
-      "code_firstlineno": 2229,
+      "code_firstlineno": 2243,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
@@ -2413,7 +2429,7 @@
       "code_firstlineno": 132,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.config",
@@ -2421,7 +2437,7 @@
       "code_firstlineno": 58,
       "frozen_module": "frozen_main.config",
       "frozen_member": "src/trusted_router/config.py",
-      "sha256": "08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872"
+      "sha256": "4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824"
     },
     {
       "module": "trusted_router.content",
@@ -2449,16 +2465,16 @@
     },
     {
       "module": "trusted_router.content.blog",
-      "qualname": "BlogPost.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.content.blog",
       "frozen_member": "src/trusted_router/content/blog.py",
       "sha256": "8cc18c4591cbd7aa4a116140b62dd8a096237e642b05e44ae9674f3e0ffb6f7a"
     },
     {
       "module": "trusted_router.content.blog",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.content.blog",
       "frozen_member": "src/trusted_router/content/blog.py",
       "sha256": "8cc18c4591cbd7aa4a116140b62dd8a096237e642b05e44ae9674f3e0ffb6f7a"
@@ -2641,24 +2657,8 @@
     },
     {
       "module": "trusted_router.dashboard",
-      "qualname": "OpenRouterLandingVariant.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.dashboard",
-      "frozen_member": "src/trusted_router/dashboard.py",
-      "sha256": "d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc"
-    },
-    {
-      "module": "trusted_router.dashboard",
       "qualname": "PublicPage",
       "code_firstlineno": 413,
-      "frozen_module": "frozen_main.dashboard",
-      "frozen_member": "src/trusted_router/dashboard.py",
-      "sha256": "d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc"
-    },
-    {
-      "module": "trusted_router.dashboard",
-      "qualname": "PublicPage.__init__",
-      "code_firstlineno": 2,
       "frozen_module": "frozen_main.dashboard",
       "frozen_member": "src/trusted_router/dashboard.py",
       "sha256": "d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc"
@@ -2683,6 +2683,14 @@
       "module": "trusted_router.dashboard",
       "qualname": "__create_fn__",
       "code_firstlineno": 1,
+      "frozen_module": "frozen_main.dashboard",
+      "frozen_member": "src/trusted_router/dashboard.py",
+      "sha256": "d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc"
+    },
+    {
+      "module": "trusted_router.dashboard",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.dashboard",
       "frozen_member": "src/trusted_router/dashboard.py",
       "sha256": "d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc"
@@ -3221,7 +3229,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.main",
@@ -3229,7 +3237,7 @@
       "code_firstlineno": 147,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.main",
@@ -3237,7 +3245,7 @@
       "code_firstlineno": 176,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.main",
@@ -3245,23 +3253,23 @@
       "code_firstlineno": 194,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.main",
       "qualname": "_control_plane_inference_enabled",
-      "code_firstlineno": 877,
+      "code_firstlineno": 880,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.main",
       "qualname": "_make_api_router",
-      "code_firstlineno": 757,
+      "code_firstlineno": 760,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.main",
@@ -3269,7 +3277,7 @@
       "code_firstlineno": 209,
       "frozen_module": "frozen_main.main",
       "frozen_member": "src/trusted_router/main.py",
-      "sha256": "33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde"
+      "sha256": "59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5"
     },
     {
       "module": "trusted_router.markdown_negotiation",
@@ -3321,24 +3329,8 @@
     },
     {
       "module": "trusted_router.marketing_experiments",
-      "qualname": "Audience.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.marketing_experiments",
-      "frozen_member": "src/trusted_router/marketing_experiments.py",
-      "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
-    },
-    {
-      "module": "trusted_router.marketing_experiments",
       "qualname": "CallToAction",
       "code_firstlineno": 57,
-      "frozen_module": "frozen_main.marketing_experiments",
-      "frozen_member": "src/trusted_router/marketing_experiments.py",
-      "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
-    },
-    {
-      "module": "trusted_router.marketing_experiments",
-      "qualname": "CallToAction.__init__",
-      "code_firstlineno": 2,
       "frozen_module": "frozen_main.marketing_experiments",
       "frozen_member": "src/trusted_router/marketing_experiments.py",
       "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
@@ -3353,24 +3345,8 @@
     },
     {
       "module": "trusted_router.marketing_experiments",
-      "qualname": "GoogleSearchExperimentCell.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.marketing_experiments",
-      "frozen_member": "src/trusted_router/marketing_experiments.py",
-      "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
-    },
-    {
-      "module": "trusted_router.marketing_experiments",
       "qualname": "Promise",
       "code_firstlineno": 38,
-      "frozen_module": "frozen_main.marketing_experiments",
-      "frozen_member": "src/trusted_router/marketing_experiments.py",
-      "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
-    },
-    {
-      "module": "trusted_router.marketing_experiments",
-      "qualname": "Promise.__init__",
-      "code_firstlineno": 2,
       "frozen_module": "frozen_main.marketing_experiments",
       "frozen_member": "src/trusted_router/marketing_experiments.py",
       "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
@@ -3385,16 +3361,16 @@
     },
     {
       "module": "trusted_router.marketing_experiments",
-      "qualname": "Proof.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.marketing_experiments",
       "frozen_member": "src/trusted_router/marketing_experiments.py",
       "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
     },
     {
       "module": "trusted_router.marketing_experiments",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.marketing_experiments",
       "frozen_member": "src/trusted_router/marketing_experiments.py",
       "sha256": "98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e"
@@ -3689,16 +3665,16 @@
     },
     {
       "module": "trusted_router.model_regions",
-      "qualname": "ModelRegion.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.model_regions",
       "frozen_member": "src/trusted_router/model_regions.py",
       "sha256": "9bb09d9b9121b7b19cf9ca7975f903c361a3cd56148124d65c7522b01f9f8ea3"
     },
     {
       "module": "trusted_router.model_regions",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.model_regions",
       "frozen_member": "src/trusted_router/model_regions.py",
       "sha256": "9bb09d9b9121b7b19cf9ca7975f903c361a3cd56148124d65c7522b01f9f8ea3"
@@ -3785,14 +3761,6 @@
     },
     {
       "module": "trusted_router.oauth_provider",
-      "qualname": "OAuthProvider.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.oauth_provider",
-      "frozen_member": "src/trusted_router/oauth_provider.py",
-      "sha256": "bce1e4ba95f39ba5f24d4b88c3a77ea9c5b4c21043db0f9682f8b107ac4d2ef1"
-    },
-    {
-      "module": "trusted_router.oauth_provider",
       "qualname": "OAuthUserInfo",
       "code_firstlineno": 20,
       "frozen_module": "frozen_main.oauth_provider",
@@ -3803,6 +3771,14 @@
       "module": "trusted_router.oauth_provider",
       "qualname": "__create_fn__",
       "code_firstlineno": 1,
+      "frozen_module": "frozen_main.oauth_provider",
+      "frozen_member": "src/trusted_router/oauth_provider.py",
+      "sha256": "bce1e4ba95f39ba5f24d4b88c3a77ea9c5b4c21043db0f9682f8b107ac4d2ef1"
+    },
+    {
+      "module": "trusted_router.oauth_provider",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.oauth_provider",
       "frozen_member": "src/trusted_router/oauth_provider.py",
       "sha256": "bce1e4ba95f39ba5f24d4b88c3a77ea9c5b4c21043db0f9682f8b107ac4d2ef1"
@@ -3833,16 +3809,16 @@
     },
     {
       "module": "trusted_router.openai_service_tiers",
-      "qualname": "OpenAIPriorityPricing.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.openai_service_tiers",
       "frozen_member": "src/trusted_router/openai_service_tiers.py",
       "sha256": "28928c57283a77ce19fbaed1e3bebb2acfbccea0ff26dcb0ab26275b97195cdf"
     },
     {
       "module": "trusted_router.openai_service_tiers",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.openai_service_tiers",
       "frozen_member": "src/trusted_router/openai_service_tiers.py",
       "sha256": "28928c57283a77ce19fbaed1e3bebb2acfbccea0ff26dcb0ab26275b97195cdf"
@@ -4249,16 +4225,16 @@
     },
     {
       "module": "trusted_router.provider_branding",
-      "qualname": "ProviderBrand.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.provider_branding",
       "frozen_member": "src/trusted_router/provider_branding.py",
       "sha256": "f0b624ee7ae31c9490cb9f6323dc8e81cc8142159d64bd53f15bbedbe7adaf5d"
     },
     {
       "module": "trusted_router.provider_branding",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.provider_branding",
       "frozen_member": "src/trusted_router/provider_branding.py",
       "sha256": "f0b624ee7ae31c9490cb9f6323dc8e81cc8142159d64bd53f15bbedbe7adaf5d"
@@ -4317,15 +4293,15 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "ProviderPrice",
-      "code_firstlineno": 97,
+      "code_firstlineno": 98,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
@@ -4333,23 +4309,15 @@
       "code_firstlineno": 2,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_Retirement",
-      "code_firstlineno": 151,
+      "code_firstlineno": 152,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
-    },
-    {
-      "module": "trusted_router.provider_lifecycle",
-      "qualname": "_Retirement.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.provider_lifecycle",
-      "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
@@ -4357,119 +4325,127 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
+    },
+    {
+      "module": "trusted_router.provider_lifecycle",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
+      "frozen_module": "frozen_main.provider_lifecycle",
+      "frozen_member": "src/trusted_router/provider_lifecycle.py",
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_clock_override_permitted",
-      "code_firstlineno": 1007,
+      "code_firstlineno": 1035,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_deepseek_prices",
-      "code_firstlineno": 1123,
+      "code_firstlineno": 1151,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_deepseek_v41_effective_at",
-      "code_firstlineno": 1115,
+      "code_firstlineno": 1143,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_deepseek_v4_family",
-      "code_firstlineno": 1082,
+      "code_firstlineno": 1110,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_deepseek_v4_period",
-      "code_firstlineno": 1092,
+      "code_firstlineno": 1120,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_deepseek_v4_period.<locals>.<genexpr>",
-      "code_firstlineno": 1107,
+      "code_firstlineno": 1135,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_effective_time",
-      "code_firstlineno": 1052,
+      "code_firstlineno": 1080,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_tencent_period",
-      "code_firstlineno": 113,
+      "code_firstlineno": 114,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "_utc_now",
-      "code_firstlineno": 1015,
+      "code_firstlineno": 1043,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "provider_catalog_revision",
-      "code_firstlineno": 1039,
+      "code_firstlineno": 1067,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "provider_catalog_revision.<locals>.<genexpr>",
-      "code_firstlineno": 1047,
+      "code_firstlineno": 1075,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "provider_catalog_revision.<locals>.<genexpr>",
-      "code_firstlineno": 1049,
+      "code_firstlineno": 1077,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "provider_model_retired",
-      "code_firstlineno": 1064,
+      "code_firstlineno": 1092,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_lifecycle",
       "qualname": "provider_price_microdollars",
-      "code_firstlineno": 1221,
+      "code_firstlineno": 1249,
       "frozen_module": "frozen_main.provider_lifecycle",
       "frozen_member": "src/trusted_router/provider_lifecycle.py",
-      "sha256": "e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f"
+      "sha256": "b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403"
     },
     {
       "module": "trusted_router.provider_locations",
@@ -4483,14 +4459,6 @@
       "module": "trusted_router.provider_locations",
       "qualname": "Headquarters",
       "code_firstlineno": 233,
-      "frozen_module": "frozen_main.provider_locations",
-      "frozen_member": "src/trusted_router/provider_locations.py",
-      "sha256": "ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8"
-    },
-    {
-      "module": "trusted_router.provider_locations",
-      "qualname": "Headquarters.__init__",
-      "code_firstlineno": 2,
       "frozen_module": "frozen_main.provider_locations",
       "frozen_member": "src/trusted_router/provider_locations.py",
       "sha256": "ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8"
@@ -4531,6 +4499,14 @@
       "module": "trusted_router.provider_locations",
       "qualname": "__create_fn__",
       "code_firstlineno": 1,
+      "frozen_module": "frozen_main.provider_locations",
+      "frozen_member": "src/trusted_router/provider_locations.py",
+      "sha256": "ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8"
+    },
+    {
+      "module": "trusted_router.provider_locations",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.provider_locations",
       "frozen_member": "src/trusted_router/provider_locations.py",
       "sha256": "ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8"
@@ -4977,16 +4953,16 @@
     },
     {
       "module": "trusted_router.regions",
-      "qualname": "RegionGeo.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.regions",
       "frozen_member": "src/trusted_router/regions.py",
       "sha256": "38d491f63e99b96e33e99a9e38195ce29c45137c513bb5dafd0195e2d279ab42"
     },
     {
       "module": "trusted_router.regions",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.regions",
       "frozen_member": "src/trusted_router/regions.py",
       "sha256": "38d491f63e99b96e33e99a9e38195ce29c45137c513bb5dafd0195e2d279ab42"
@@ -5277,111 +5253,111 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "RequestCapabilities",
-      "code_firstlineno": 25,
+      "code_firstlineno": 27,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "_reviewed_contracts",
-      "code_firstlineno": 33,
+      "code_firstlineno": 35,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "endpoint_capabilities",
-      "code_firstlineno": 100,
+      "code_firstlineno": 102,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "model_capabilities",
-      "code_firstlineno": 116,
+      "code_firstlineno": 118,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "model_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 125,
+      "code_firstlineno": 127,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "model_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 136,
+      "code_firstlineno": 138,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities",
-      "code_firstlineno": 44,
+      "code_firstlineno": 46,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 68,
+      "code_firstlineno": 70,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 69,
+      "code_firstlineno": 71,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 76,
+      "code_firstlineno": 78,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 83,
+      "code_firstlineno": 85,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 90,
+      "code_firstlineno": 92,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_capabilities",
       "qualname": "normalize_request_capabilities.<locals>.<genexpr>",
-      "code_firstlineno": 93,
+      "code_firstlineno": 95,
       "frozen_module": "frozen_main.request_capabilities",
       "frozen_member": "src/trusted_router/request_capabilities.py",
-      "sha256": "55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b"
+      "sha256": "c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239"
     },
     {
       "module": "trusted_router.request_limits",
@@ -6333,231 +6309,231 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_actual_service_tier_or_error",
-      "code_firstlineno": 5053,
+      "code_firstlineno": 5145,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_authorization_is_synthetic",
-      "code_firstlineno": 4772,
+      "code_firstlineno": 4864,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_authorized_user_model_pair",
-      "code_firstlineno": 4870,
+      "code_firstlineno": 4962,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_endpoint_cost_microdollars",
-      "code_firstlineno": 5253,
+      "code_firstlineno": 5345,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_endpoint_cost_microdollars_from_document",
-      "code_firstlineno": 5294,
+      "code_firstlineno": 5386,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_endpoint_for_id_compat",
-      "code_firstlineno": 5007,
+      "code_firstlineno": 5099,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_intent_durable_gateway_data",
-      "code_firstlineno": 4658,
+      "code_firstlineno": 4750,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_is_native_batch_idempotency_key",
-      "code_firstlineno": 5178,
+      "code_firstlineno": 5270,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_is_native_batch_route",
-      "code_firstlineno": 5099,
+      "code_firstlineno": 5191,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_is_synthetic_settlement",
-      "code_firstlineno": 4777,
+      "code_firstlineno": 4869,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_native_batch_cost_or_error",
-      "code_firstlineno": 5198,
+      "code_firstlineno": 5290,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_partner_billing_mode_or_error",
-      "code_firstlineno": 5316,
+      "code_firstlineno": 5408,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_provider_price_tier_input_tokens",
-      "code_firstlineno": 5242,
+      "code_firstlineno": 5334,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_record_user_model_gateway_outcome_safely",
-      "code_firstlineno": 4549,
+      "code_firstlineno": 4641,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_refund_benchmark_sample_safely",
-      "code_firstlineno": 3319,
+      "code_firstlineno": 3385,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_release_user_model_slot_safely",
-      "code_firstlineno": 4534,
+      "code_firstlineno": 4626,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_schedule_auto_refill",
-      "code_firstlineno": 5332,
+      "code_firstlineno": 5424,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_select_authorized_endpoint",
-      "code_firstlineno": 4963,
+      "code_firstlineno": 5055,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_settle_body_with_safe_attribution",
-      "code_firstlineno": 4680,
+      "code_firstlineno": 4772,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_settle_body_with_safe_client_context",
-      "code_firstlineno": 4717,
+      "code_firstlineno": 4809,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_settle_gateway_authorization",
-      "code_firstlineno": 3409,
+      "code_firstlineno": 3481,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_settle_gateway_authorization.<locals>.<genexpr>",
-      "code_firstlineno": 4267,
+      "code_firstlineno": 4359,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_settle_gateway_with_admission_sync",
-      "code_firstlineno": 3367,
+      "code_firstlineno": 3433,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "_settle_repair_metadata",
-      "code_firstlineno": 4748,
+      "code_firstlineno": 4840,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "register",
-      "code_firstlineno": 2200,
+      "code_firstlineno": 2234,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "register.<locals>.gateway_refund",
-      "code_firstlineno": 2308,
+      "code_firstlineno": 2342,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "register.<locals>.gateway_settle",
-      "code_firstlineno": 2299,
+      "code_firstlineno": 2333,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.gateway",
       "qualname": "settle_gateway",
-      "code_firstlineno": 524,
+      "code_firstlineno": 527,
       "frozen_module": "frozen_main.routes.internal.gateway",
       "frozen_member": "src/trusted_router/routes/internal/gateway.py",
-      "sha256": "3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f"
+      "sha256": "baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5"
     },
     {
       "module": "trusted_router.routes.internal.lightning",
@@ -7405,15 +7381,15 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.routing",
       "frozen_member": "src/trusted_router/routing.py",
-      "sha256": "b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c"
+      "sha256": "aecc2d0cf6b593878d0815b1b216663252cccd76eb1410fbeaff74f7bf1f3649"
     },
     {
       "module": "trusted_router.routing",
       "qualname": "NormalizedRoutingInputs",
-      "code_firstlineno": 75,
+      "code_firstlineno": 76,
       "frozen_module": "frozen_main.routing",
       "frozen_member": "src/trusted_router/routing.py",
-      "sha256": "b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c"
+      "sha256": "aecc2d0cf6b593878d0815b1b216663252cccd76eb1410fbeaff74f7bf1f3649"
     },
     {
       "module": "trusted_router.routing",
@@ -7421,15 +7397,15 @@
       "code_firstlineno": 49,
       "frozen_module": "frozen_main.routing",
       "frozen_member": "src/trusted_router/routing.py",
-      "sha256": "b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c"
+      "sha256": "aecc2d0cf6b593878d0815b1b216663252cccd76eb1410fbeaff74f7bf1f3649"
     },
     {
       "module": "trusted_router.routing",
       "qualname": "RoutingCandidates",
-      "code_firstlineno": 247,
+      "code_firstlineno": 248,
       "frozen_module": "frozen_main.routing",
       "frozen_member": "src/trusted_router/routing.py",
-      "sha256": "b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c"
+      "sha256": "aecc2d0cf6b593878d0815b1b216663252cccd76eb1410fbeaff74f7bf1f3649"
     },
     {
       "module": "trusted_router.routing",
@@ -7437,7 +7413,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.routing",
       "frozen_member": "src/trusted_router/routing.py",
-      "sha256": "b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c"
+      "sha256": "aecc2d0cf6b593878d0815b1b216663252cccd76eb1410fbeaff74f7bf1f3649"
     },
     {
       "module": "trusted_router.routing_candidates",
@@ -7645,7 +7621,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7653,7 +7629,7 @@
       "code_firstlineno": 193,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7661,7 +7637,7 @@
       "code_firstlineno": 209,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7669,7 +7645,7 @@
       "code_firstlineno": 163,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7677,7 +7653,7 @@
       "code_firstlineno": 66,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7685,7 +7661,7 @@
       "code_firstlineno": 139,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7693,7 +7669,7 @@
       "code_firstlineno": 62,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7701,7 +7677,7 @@
       "code_firstlineno": 277,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7709,7 +7685,7 @@
       "code_firstlineno": 219,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7717,7 +7693,7 @@
       "code_firstlineno": 228,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7725,7 +7701,7 @@
       "code_firstlineno": 271,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7733,7 +7709,7 @@
       "code_firstlineno": 330,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7741,7 +7717,7 @@
       "code_firstlineno": 365,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7749,7 +7725,7 @@
       "code_firstlineno": 350,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7757,7 +7733,7 @@
       "code_firstlineno": 299,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7765,55 +7741,55 @@
       "code_firstlineno": 311,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayClientContext",
-      "code_firstlineno": 534,
+      "code_firstlineno": 536,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayContractRejection",
-      "code_firstlineno": 482,
+      "code_firstlineno": 484,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayFetchImageRequest",
-      "code_firstlineno": 425,
+      "code_firstlineno": 427,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayHeartbeatRequest",
-      "code_firstlineno": 670,
+      "code_firstlineno": 672,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayHeartbeatUsage",
-      "code_firstlineno": 637,
+      "code_firstlineno": 639,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayResolveCustomModelRequest",
-      "code_firstlineno": 515,
+      "code_firstlineno": 517,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7821,55 +7797,55 @@
       "code_firstlineno": 354,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewaySettleRequest",
-      "code_firstlineno": 558,
+      "code_firstlineno": 560,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewaySettleRequest.cache_creation_count",
-      "code_firstlineno": 624,
+      "code_firstlineno": 626,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewaySettleRequest.cache_read_count",
-      "code_firstlineno": 620,
+      "code_firstlineno": 622,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewaySettleRequest.input_count",
-      "code_firstlineno": 608,
+      "code_firstlineno": 610,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewaySettleRequest.output_count",
-      "code_firstlineno": 614,
+      "code_firstlineno": 616,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewaySettleRequest.selected_endpoint_id",
-      "code_firstlineno": 632,
+      "code_firstlineno": 634,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7877,7 +7853,7 @@
       "code_firstlineno": 361,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7885,55 +7861,55 @@
       "code_firstlineno": 319,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayValidateRequest",
-      "code_firstlineno": 502,
+      "code_firstlineno": 504,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayVideoJobClaimRequest",
-      "code_firstlineno": 464,
+      "code_firstlineno": 466,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayVideoJobLookupRequest",
-      "code_firstlineno": 460,
+      "code_firstlineno": 462,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayVideoJobPrepareRequest",
-      "code_firstlineno": 432,
+      "code_firstlineno": 434,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayVideoJobQueuedRequest",
-      "code_firstlineno": 449,
+      "code_firstlineno": 451,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "GatewayVideoJobUpdateRequest",
-      "code_firstlineno": 470,
+      "code_firstlineno": 472,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7941,15 +7917,15 @@
       "code_firstlineno": 167,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
       "qualname": "ReconcileGenerationActivityRequest",
-      "code_firstlineno": 528,
+      "code_firstlineno": 530,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7957,7 +7933,7 @@
       "code_firstlineno": 57,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7965,7 +7941,7 @@
       "code_firstlineno": 186,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7973,7 +7949,7 @@
       "code_firstlineno": 237,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7981,7 +7957,7 @@
       "code_firstlineno": 254,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7989,7 +7965,7 @@
       "code_firstlineno": 107,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -7997,7 +7973,7 @@
       "code_firstlineno": 123,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -8005,7 +7981,7 @@
       "code_firstlineno": 51,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.schemas",
@@ -8013,7 +7989,7 @@
       "code_firstlineno": 45,
       "frozen_module": "frozen_main.schemas",
       "frozen_member": "src/trusted_router/schemas.py",
-      "sha256": "4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386"
+      "sha256": "f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332"
     },
     {
       "module": "trusted_router.scopes",
@@ -8065,24 +8041,8 @@
     },
     {
       "module": "trusted_router.sentry_config",
-      "qualname": "SentryFloodgateConfig.__init__",
-      "code_firstlineno": 2,
-      "frozen_module": "frozen_main.sentry_config",
-      "frozen_member": "src/trusted_router/sentry_config.py",
-      "sha256": "23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae"
-    },
-    {
-      "module": "trusted_router.sentry_config",
       "qualname": "_FloodBucket",
       "code_firstlineno": 113,
-      "frozen_module": "frozen_main.sentry_config",
-      "frozen_member": "src/trusted_router/sentry_config.py",
-      "sha256": "23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae"
-    },
-    {
-      "module": "trusted_router.sentry_config",
-      "qualname": "_FloodBucket.__init__",
-      "code_firstlineno": 2,
       "frozen_module": "frozen_main.sentry_config",
       "frozen_member": "src/trusted_router/sentry_config.py",
       "sha256": "23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae"
@@ -8107,6 +8067,14 @@
       "module": "trusted_router.sentry_config",
       "qualname": "__create_fn__",
       "code_firstlineno": 1,
+      "frozen_module": "frozen_main.sentry_config",
+      "frozen_member": "src/trusted_router/sentry_config.py",
+      "sha256": "23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae"
+    },
+    {
+      "module": "trusted_router.sentry_config",
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.sentry_config",
       "frozen_member": "src/trusted_router/sentry_config.py",
       "sha256": "23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae"
@@ -8205,7 +8173,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8213,7 +8181,7 @@
       "code_firstlineno": 39,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8221,7 +8189,7 @@
       "code_firstlineno": 52,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8229,7 +8197,7 @@
       "code_firstlineno": 53,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8237,7 +8205,7 @@
       "code_firstlineno": 45,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8245,7 +8213,7 @@
       "code_firstlineno": 2,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8253,7 +8221,7 @@
       "code_firstlineno": 178,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8261,7 +8229,7 @@
       "code_firstlineno": 2,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8269,7 +8237,7 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle",
@@ -8277,7 +8245,7 @@
       "code_firstlineno": 186,
       "frozen_module": "frozen_main.services.async_settle",
       "frozen_member": "src/trusted_router/services/async_settle.py",
-      "sha256": "1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297"
+      "sha256": "2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31"
     },
     {
       "module": "trusted_router.services.async_settle_handler",
@@ -9389,63 +9357,63 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "billing_pricing_snapshot",
-      "code_firstlineno": 25,
+      "code_firstlineno": 30,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "endpoint_cost_microdollars_from_candidate",
-      "code_firstlineno": 161,
+      "code_firstlineno": 173,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "endpoint_cost_microdollars_from_document",
-      "code_firstlineno": 221,
+      "code_firstlineno": 233,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "endpoint_pricing_candidate",
-      "code_firstlineno": 83,
+      "code_firstlineno": 95,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "endpoint_pricing_candidate.<locals>.rates",
-      "code_firstlineno": 86,
+      "code_firstlineno": 98,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "endpoint_pricing_document",
-      "code_firstlineno": 127,
+      "code_firstlineno": 139,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d",
       "qualname": "pricing_candidate_for_endpoint",
-      "code_firstlineno": 149,
+      "code_firstlineno": 161,
       "frozen_module": "frozen_main.stage_d",
       "frozen_member": "src/trusted_router/stage_d.py",
-      "sha256": "fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b"
+      "sha256": "78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5"
     },
     {
       "module": "trusted_router.stage_d_policy",
@@ -10165,55 +10133,55 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "AuthorizeOutcome",
-      "code_firstlineno": 136,
+      "code_firstlineno": 137,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "AuthorizeVerdict",
-      "code_firstlineno": 146,
+      "code_firstlineno": 147,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "ExhaustedKeyCache",
-      "code_firstlineno": 200,
+      "code_firstlineno": 201,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "ExhaustedKeyCache.__init__",
-      "code_firstlineno": 203,
+      "code_firstlineno": 204,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "OneCommitSettleDeclined",
-      "code_firstlineno": 819,
+      "code_firstlineno": 820,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "ReapPassResult",
-      "code_firstlineno": 834,
+      "code_firstlineno": 835,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
@@ -10221,87 +10189,87 @@
       "code_firstlineno": 2,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "ReapPassResult.out_of_cohort_share",
-      "code_firstlineno": 862,
+      "code_firstlineno": 863,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "ReapPassResult.started_marker_share",
-      "code_firstlineno": 858,
+      "code_firstlineno": 859,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "SettleOutcome",
-      "code_firstlineno": 799,
+      "code_firstlineno": 800,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_ReapGuardLost",
-      "code_firstlineno": 815,
+      "code_firstlineno": 816,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_ReapOneResult",
-      "code_firstlineno": 867,
+      "code_firstlineno": 868,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_Reject",
-      "code_firstlineno": 162,
+      "code_firstlineno": 163,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_RetrySequentialCreditReserve",
-      "code_firstlineno": 169,
+      "code_firstlineno": 170,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_RetrySequentialFinalize",
-      "code_firstlineno": 186,
+      "code_firstlineno": 187,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_RetrySequentialKeyReserve",
-      "code_firstlineno": 176,
+      "code_firstlineno": 177,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_SettleError",
-      "code_firstlineno": 810,
+      "code_firstlineno": 811,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
@@ -10309,119 +10277,119 @@
       "code_firstlineno": 1,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_cached_outbox_availability",
-      "code_firstlineno": 1128,
+      "code_firstlineno": 1129,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_log_missing_key_releases",
-      "code_firstlineno": 937,
+      "code_firstlineno": 938,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_outbox_cache_key",
-      "code_firstlineno": 1107,
+      "code_firstlineno": 1108,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_outbox_table_available",
-      "code_firstlineno": 1157,
+      "code_firstlineno": 1158,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_release_key_or_skip_deleted",
-      "code_firstlineno": 877,
+      "code_firstlineno": 878,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "_remember_outbox_availability",
-      "code_firstlineno": 1143,
+      "code_firstlineno": 1144,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "reap_expired_reservations_result",
-      "code_firstlineno": 1223,
+      "code_firstlineno": 1224,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic",
-      "code_firstlineno": 1691,
+      "code_firstlineno": 1692,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic.<locals>.run",
-      "code_firstlineno": 2082,
+      "code_firstlineno": 2095,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic.<locals>.run.<locals>.tracked",
-      "code_firstlineno": 2089,
+      "code_firstlineno": 2102,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic.<locals>.speculative_batch",
-      "code_firstlineno": 1800,
+      "code_firstlineno": 1801,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic.<locals>.speculative_batch.<locals>.<genexpr>",
-      "code_firstlineno": 1890,
+      "code_firstlineno": 1891,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic.<locals>.speculative_batch.<locals>.check_prefix",
-      "code_firstlineno": 1872,
+      "code_firstlineno": 1873,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_authorize",
       "qualname": "typed_finalize_atomic.<locals>.txn",
-      "code_firstlineno": 1893,
+      "code_firstlineno": 1894,
       "frozen_module": "frozen_main.storage_gcp_authorize",
       "frozen_member": "src/trusted_router/storage_gcp_authorize.py",
-      "sha256": "ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e"
+      "sha256": "f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe"
     },
     {
       "module": "trusted_router.storage_gcp_batch_dml",
@@ -13225,16 +13193,16 @@
     },
     {
       "module": "trusted_router.user_model_rules",
-      "qualname": "DispatchBudget.__init__",
-      "code_firstlineno": 2,
+      "qualname": "__create_fn__",
+      "code_firstlineno": 1,
       "frozen_module": "frozen_main.user_model_rules",
       "frozen_member": "src/trusted_router/user_model_rules.py",
       "sha256": "afd0bc3e37723312f972ecf1cd09d05a1ecd933158f1b9a38d817002ed8952ec"
     },
     {
       "module": "trusted_router.user_model_rules",
-      "qualname": "__create_fn__",
-      "code_firstlineno": 1,
+      "qualname": "__create_fn__.<locals>.__init__",
+      "code_firstlineno": 2,
       "frozen_module": "frozen_main.user_model_rules",
       "frozen_member": "src/trusted_router/user_model_rules.py",
       "sha256": "afd0bc3e37723312f972ecf1cd09d05a1ecd933158f1b9a38d817002ed8952ec"

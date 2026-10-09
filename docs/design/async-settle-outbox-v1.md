@@ -1247,23 +1247,25 @@ strict exposure cap; PR D does not resolve the policy questions in §6/§10.
 ### PR F proof set, D3 propagation audit and cap semantics
 
 This is **F1**, a golden against **BASE**
-`4701b1a6da9b2b05df93321a6bbd59ea82188c2b` (the main parent merged for Round 12). F2 owns the shadow comparator and
+`fcbb8c4805fd6d43d5f041f85f3985b82df597c1` plus the F1-001 source diff in `worktree-pins.json`. F2 owns the shadow comparator and
 seven-day traffic report. This appendix is local correctness evidence, not
 permission to activate async admission, a production measurement, or an
-assertion that F/G's rollout gates have passed. Production code, schemas and
-routes are unchanged. No git writes or deployments are part of F1.
+assertion that F/G's rollout gates have passed. F1-001 changes the typed finalizer to complete retention in the money transaction.
+Schemas and routes are unchanged. No Git writes or deployments are part of this fix.
 
 #### Findings and literal corrections
 
-- **F1-001 (four strict xfails: both records × settle/refund):** fresh snapshot-bearing sync
-  fallback applies through the frozen outbox finalizer, which defers retention,
-  but inserts no outbox row. Both reservation and authorization remain `terminal_at=NULL` after
-  successful finalization. `finish()` calls `_resolve_row()` on the ephemeral
-  row, so there is no durable mark to complete retention. Reproducer:
-  `test_fresh_snapshot_sync_completes_retention`. Money is booked once; the
-  missing retention completion needs a separate reviewed production fix. TTL
-  cannot expire NULL timestamps; the unsettled-only reaper cannot repair these
-  already-settled rows.
+- **F1-001 (fixed; four former strict xfails now pass):** fresh snapshot-bearing
+  sync fallback completes reservation and authorization retention in the same
+  typed-finalizer transaction as the money commit, using the existing
+  `storage_gcp_settle_outbox.done_retention_statements` producer. Both settle
+  and refund use the finalizer's `now`; duplicate retries preserve the winner's
+  timestamps. The async protection gate preserves flag-off statement bytes.
+  Outstanding intent guards remain intact. The four-path matrix compares both
+  timestamps for every positive pricing case; faults prove rollback, same-commit
+  writes and deleted-key sequential recovery. Four mutations remove settle or
+  refund stamps, move them outside the money transaction, or use reservation
+  expiry as the timestamp source. See [the fix report](../async-settle-f1-001.md).
 - The actual settle sync JSONResponse bytes, compacted with the literal's
   original key order, match the enclave #472 copy exactly, including
   `payload_hash=f5a8699841e40582b2c8d49702092328ba9e63991166b95da60c90f7da5fdf32`.
@@ -1289,21 +1291,23 @@ routes are unchanged. No git writes or deployments are part of F1.
 
 #### Frozen-main coverage
 
-The oracle is a **golden against BASE**, not an assertion that legacy behavior
-never changes. `tests/fakes/frozen_main/BASE` records the full commit. Re-pin with
-`python scripts/async_settle/freeze_reference.py --base <commit>` and paste its
-printed archive digest into `tests/fakes/frozen_package.py`. The script reads only
-Git objects (`ls-tree` and `show`), keeps the existing text-member policy and
-repository paths, sorts tar members and normalizes their metadata and gzip time.
-Regenerate the execution inventory after a re-pin. A PR that intentionally changes
-the legacy path **re-freezes from its own tree in the same PR**; the reviewer reads
-the frozen diff as the intended behavior change. The worktree includes later merged main changes; this tests-only round leaves
-production source and the pinned BASE unchanged.
+The oracle is a **golden against BASE plus the recorded F1-001 source diff**.
+`tests/fakes/frozen_main/BASE` records this worktree's HEAD commit, and
+`worktree-pins.json` records only the changed `storage_gcp_authorize.py` member.
+Re-pin local source without Git writes using
+`python scripts/async_settle/freeze_reference.py --base HEAD --worktree`, then
+paste the printed digest into `tests/fakes/frozen_package.py`. The frozen diff
+relative to BASE equals the production source diff. Advancing BASE from Round 12
+also incorporates already-merged main changes. Archive ordering, metadata,
+member policy, independent pins and guards are unchanged; no drift allowlist changes.
 
-The local gate runs `python scripts/async_settle/freeze_reference.py --check`,
-which re-derives the archive and pins from BASE and rejects any byte difference.
-CI's shallow checkout cannot run that Git-object check; the hermetic archive,
-per-member pins, import guard and execution guard remain enforced without Git.
+Regenerate both execution inventories from the default and post-cutover oracle
+output directories using `scripts/async_settle/frozen_inventory.py`, as documented
+in the frozen package README. `freeze_reference.py --check` re-derives local
+source against BASE, checks the archive and changed-member pins, and verifies
+inventory hashes, counts and its Markdown rendering. Commit-only references
+still re-derive from Git objects. CI's shallow checkout cannot run this Git-object
+check; hermetic archive, member pins and execution guards need no Git access.
 The interpreter matrix is CPython **3.11, 3.12.3 (CI), 3.13 and 3.14.6** for all
 guards and native-reference witnesses. CPython 3.11 asserts explicit unsupported
 execution-proof rejection while retaining independent walker checks; it does not
@@ -1321,7 +1325,7 @@ and their exemption list with **one package snapshot** in
 `tests/fakes/frozen_main/package.tar.gz`.
 
 The archive contains every Python module and text resource from the
-`src/trusted_router` subtree at **BASE** (Python, JSON/JSONL, HTML, TXT,
+`src/trusted_router` subtree at **BASE plus the recorded source diff** (Python, JSON/JSONL, HTML, TXT,
 SQL, CSS and JavaScript). Static binary media are omitted; they are not used by
 these requests. `pins.json` records the SHA-256 of the original bytes of each
 file. `tests/fakes/frozen_package.py` independently pins the archive digest,
