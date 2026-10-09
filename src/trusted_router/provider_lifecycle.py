@@ -44,6 +44,7 @@ FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_2_RETIREMENT_AT = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
 FRIENDLI_MINIMAX_M25_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
+FRIENDLI_DEEPSEEK_V32_RETIREMENT_AT = datetime(2026, 10, 24, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 CRUSOE_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 13, 4, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
@@ -984,6 +985,16 @@ _RETIREMENTS = (
         model_ids=frozenset({"minimax/minimax-m2.5"}),
         upstream_ids=frozenset({"MiniMaxAI/MiniMax-M2.5"}),
         effective_at=FRIENDLI_MINIMAX_M25_RETIREMENT_AT,
+    ),
+    # Friendli announced that DeepSeek V3.2 leaves its serverless Model APIs
+    # at 2026-10-24 00:00 UTC (17:00 PDT on October 23). Dedicated endpoints
+    # are unaffected; TrustedRouter uses the serverless endpoint. No
+    # replacement was named, and DeepSeek V3.2 routes on other providers stay.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"deepseek/deepseek-v3.2"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V3.2"}),
+        effective_at=FRIENDLI_DEEPSEEK_V32_RETIREMENT_AT,
     ),
     # Together announced that its serverless MiniMax M2.7 route retires on
     # 2026-07-27 and named MiniMax M3 as the replacement. The announcement did

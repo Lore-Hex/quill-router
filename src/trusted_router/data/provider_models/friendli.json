@@ -144,6 +144,7 @@
     {
       "id": "deepseek/deepseek-v3.2",
       "upstream_id": "deepseek-ai/DeepSeek-V3.2",
+      "retirement_at": "2026-10-24T00:00:00Z",
       "display_name": "deepseek-ai/DeepSeek-V3.2",
       "title": "deepseek-ai/DeepSeek-V3.2",
       "context_length": 163840,
