@@ -992,7 +992,7 @@ pending exposure with all traffic synchronous is not async-load capacity proof.
 “One transaction” is not “one RPC”: dedup uses a read and mutation commit;
 SDK begin/commit overhead must be included in measured cost. All shadow storage
 work has a shared **1 second** worker I/O budget, individual RPC deadlines at
-most 500 ms and no longer than the remaining budget, LOW priority and no
+most 200 ms and no longer than the remaining budget, LOW priority and no
 application retry; skip when budget is gone. Use a dedicated single-worker
 executor so shadow cannot fill the money executor's queue. Queueing adds no
 per-request storage. This budget must be measured in every pilot region;
