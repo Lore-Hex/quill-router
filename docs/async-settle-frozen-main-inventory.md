@@ -2,11 +2,11 @@
 
 F1-001 observed inventory: **330 modules, 1628 distinct qualified names, 1662 execution entries**.
 
-BASE: `c4c95e0f2a94b33ec3928daa10d769b78859a944` plus the source changes in `worktree-pins.json`. CPython 3.12.3.
+BASE: `fcbb8c4805fd6d43d5f041f85f3985b82df597c1` plus the source changes in `worktree-pins.json`. CPython 3.12.3.
 
 Union of guarded frozen setup and HTTP/drain/state-capture executions in the F1-001 CPython 3.12.3 default and post-cutover proof runs; negative controls excluded. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; module/class bodies and comprehensions are included. No observed live router call is permitted.
 
-Archive SHA-256: `65cb42f7f8065ffcc173645a21c1a856068608d7ec40cb8a66f2aa795d5b8566`.
+Archive SHA-256: `84f0a2092090e8ebf89e7eb56bc5c5d1aabfbb5d07bc73f53fc81e616e275a91`.
 
 [Machine-readable records](../tests/fakes/frozen_main/execution-inventory.json) · [all file pins](../tests/fakes/frozen_main/pins.json) · [regeneration instructions](../tests/fakes/frozen_main/README.md) · [guard coverage and scope](design/async-settle-outbox-v1.md#frozen-main-coverage)
 
@@ -386,51 +386,51 @@ SHA-256: `a336e64d7e10608f9dba4881a2462ea9e3352923755c2830cafefaeac9d2610a`.
 
 Frozen alias: `frozen_main.catalog_ingest`. Member: `src/trusted_router/catalog_ingest.py`.
 
-SHA-256: `cb3cee1feb314e1d7d57959609a9d1c9f6da7f333ced00008cae4ef9124a8c57`.
+SHA-256: `9346e3f8b713e1ed8a4f288b5e041556fd01b7234e192a9177d8656f36999a75`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `_NativeEndpointCapabilities` | 739 |
+| `_NativeEndpointCapabilities` | 740 |
 | `_NativeEndpointCapabilities.__init__` | 2 |
 | `__create_fn__` | 1 |
-| `_api_reported_context_windows` | 782 |
+| `_api_reported_context_windows` | 783 |
 | `_apply_provider_manifest_expiry` | 213 |
-| `_author_provider` | 724 |
-| `_authoritative_provider_model_ids` | 298 |
+| `_author_provider` | 725 |
+| `_authoritative_provider_model_ids` | 299 |
 | `_build_endpoints` | 158 |
-| `_context_window` | 735 |
-| `_decision_fallback_endpoints` | 1457 |
-| `_decision_models` | 1421 |
-| `_embedding_manifest_cost` | 1605 |
-| `_embedding_models` | 1500 |
-| `_embedding_models.<locals>.<genexpr>` | 1576 |
+| `_context_window` | 736 |
+| `_decision_fallback_endpoints` | 1458 |
+| `_decision_models` | 1422 |
+| `_embedding_manifest_cost` | 1606 |
+| `_embedding_models` | 1501 |
+| `_embedding_models.<locals>.<genexpr>` | 1577 |
 | `_endpoint` | 127 |
-| `_filter_unserved_provider_endpoints` | 1679 |
-| `_filter_unserved_provider_endpoints.<locals>._keep` | 1709 |
+| `_filter_unserved_provider_endpoints` | 1680 |
+| `_filter_unserved_provider_endpoints.<locals>._keep` | 1710 |
 | `_has_token_prices` | 199 |
-| `_ingested_models_and_endpoints` | 811 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 890 |
+| `_ingested_models_and_endpoints` | 812 |
 | `_ingested_models_and_endpoints.<locals>.<genexpr>` | 891 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 894 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 903 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 914 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 949 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 954 |
-| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 974 |
-| `_ingested_models_and_endpoints.<locals>.endpoint_capabilities` | 829 |
-| `_input_only_manifest_cost` | 1612 |
-| `_is_provider_deprecated_model` | 709 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 892 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 895 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 904 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 915 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 950 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 955 |
+| `_ingested_models_and_endpoints.<locals>.<genexpr>` | 975 |
+| `_ingested_models_and_endpoints.<locals>.endpoint_capabilities` | 830 |
+| `_input_only_manifest_cost` | 1613 |
+| `_is_provider_deprecated_model` | 710 |
 | `_modalities` | 90 |
 | `_modalities.<locals>.<genexpr>` | 94 |
 | `_model_documentation` | 107 |
 | `_model_documentation.<locals>.<genexpr>` | 111 |
-| `_native_endpoint_capabilities` | 745 |
-| `_native_endpoint_capabilities.<locals>.<genexpr>` | 770 |
+| `_native_endpoint_capabilities` | 746 |
+| `_native_endpoint_capabilities.<locals>.<genexpr>` | 771 |
 | `_positive_float` | 80 |
-| `_provider_manifest_dark_model_ids` | 1654 |
-| `_provider_manifest_dark_model_ids.<locals>.<genexpr>` | 1669 |
-| `_supplemental_provider_models_and_endpoints` | 1033 |
+| `_provider_manifest_dark_model_ids` | 1655 |
+| `_provider_manifest_dark_model_ids.<locals>.<genexpr>` | 1670 |
+| `_supplemental_provider_models_and_endpoints` | 1034 |
 | `report_refused_manifest_rows` | 190 |
 
 ## `trusted_router.catalog_privacy`

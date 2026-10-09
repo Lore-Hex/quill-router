@@ -1247,7 +1247,7 @@ strict exposure cap; PR D does not resolve the policy questions in §6/§10.
 ### PR F proof set, D3 propagation audit and cap semantics
 
 This is **F1**, a golden against **BASE**
-`c4c95e0f2a94b33ec3928daa10d769b78859a944` plus the F1-001 source diff in `worktree-pins.json`. F2 owns the shadow comparator and
+`fcbb8c4805fd6d43d5f041f85f3985b82df597c1` plus the F1-001 source diff in `worktree-pins.json`. F2 owns the shadow comparator and
 seven-day traffic report. This appendix is local correctness evidence, not
 permission to activate async admission, a production measurement, or an
 assertion that F/G's rollout gates have passed. F1-001 changes the typed finalizer to complete retention in the money transaction.

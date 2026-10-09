@@ -1,6 +1,6 @@
 # Frozen-main package snapshot
 
-BASE: `c4c95e0f2a94b33ec3928daa10d769b78859a944`, plus the source changes recorded in `worktree-pins.json`.
+BASE: `fcbb8c4805fd6d43d5f041f85f3985b82df597c1`, plus the source changes recorded in `worktree-pins.json`.
 
 The F1-001 golden was frozen from this worktree without Git writes. Relative to
 BASE, the frozen source diff equals the production source diff: only
