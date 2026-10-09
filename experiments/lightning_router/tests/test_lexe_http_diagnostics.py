@@ -36,7 +36,7 @@ def test_http_failure_logs_only_static_operation_and_status(status, method, path
             lexe.request(method, path, params={"index": "private-payment-index"},
                          headers={"Authorization": "Bearer private-token"})
 
-    expected_calls = 3 if method == "GET" and operation != "unknown" and status in {500, 502, 503, 504} else 1
+    expected_calls = 5 if method == "GET" and operation != "unknown" and status in {500, 502, 503, 504} else 1
     assert len(calls) == expected_calls
     assert lexe._checked == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "lightning_router"]

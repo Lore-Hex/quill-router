@@ -5,6 +5,11 @@ import pytest
 from lightning_router.lexe import PERMISSIONS, SCOPES, Lexe, LexeReadinessError
 
 
+@pytest.fixture(autouse=True)
+def no_real_backoff(monkeypatch):
+    monkeypatch.setattr("lightning_router.lexe.time.sleep", lambda _: None)
+
+
 @pytest.mark.parametrize("error", [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout,
                                   httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError])
 @pytest.mark.parametrize("path", [
@@ -46,7 +51,7 @@ def test_persistent_read_timeout_still_fails_closed(caplog):
                              transport=httpx.MockTransport(handle)), "a" * 64)
     with pytest.raises(httpx.ReadTimeout):
         lexe.ready()
-    assert len(attempts) == 3
+    assert len(attempts) == 5
     assert lexe._checked == 0
     assert "lightning.lexe_read_failed" in caplog.text
     assert "operation=client_info" in caplog.text
@@ -101,7 +106,7 @@ def test_exhausted_retry_preserves_receiving_alert_and_reconciliation(funding, c
     funding.check_capacity = True
     funding._last_health_log = -1000
     assert funding.reconcile() == {"checked": 0, "failed": 0}
-    assert len(calls) == 3
+    assert len(calls) == 5
     assert "lightning.liquidity_check_failed error_type=ReadTimeout" in caplog.text
     assert '"receive_authority_ready": true' not in caplog.text
     assert "secret diagnostics" not in caplog.text

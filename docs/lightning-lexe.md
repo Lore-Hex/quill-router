@@ -63,11 +63,15 @@ exhausted liquidity balance.
 
 The initial repair retried the four allowlisted GET operations once after a
 transport timeout/disconnect. Following Lexe's October 4 guidance, these reads
-now share a three-attempt total budget for transport failures and HTTP 500,
-502, 503, and 504. Backoff uses equal jitter: 125-250ms before the first retry,
-then 250-500ms before the second. Retry read/write deadlines are five seconds
-and connection/pool deadlines one second; normal first-attempt deadlines are
-unchanged. These are per-I/O timeouts, not a total request-duration promise.
+shared a three-attempt total budget for transport failures and HTTP 500,
+502, 503, and 504. The October 9 repair expands this to at most five attempts
+with a 15-second recovery window starting at the first failure. Equal-jitter
+backoff ranges are 0.5-1, 1-2, 2-4, and 4-8 seconds. No retry starts after that
+window, including after a delayed scheduler wakeup. Retry read/write timeouts
+are at most five seconds and connection/pool timeouts at most one second,
+each also capped to the remaining recovery window. Normal first-attempt
+timeouts are unchanged. These are per-I/O timeouts and retry-admission bounds,
+not a hard total request-duration promise.
 
 Recovered attempts emit warning-level retry/recovery events. Exhaustion emits
 an error and leaves readiness closed; a short retry budget is not intended to
@@ -75,6 +79,31 @@ hide an extended outage. HTTP 4xx, other statuses, invalid data, wrong
 wallet/authority and expired credentials still fail closed without replay.
 Invoice create/cancel POSTs and unknown endpoints are never replayed. Existing
 receiving and funding alert policies and thresholds are unchanged.
+
+### Repeated client-info failure (October 8 and 9)
+
+At 2026-10-08 05:26:53 UTC and 2026-10-09 12:44:14 UTC, the sidecar returned
+HTTP 500/code 100 for `GET /v2/node/client_info` on all three attempts. The
+October 9 failure exhausted retries in about 700ms; the next scheduled check
+passed at 12:45:18 UTC. No customer requests appeared in the surrounding
+eight-minute window and funding delivery reported zero uncredited or reviewed
+payments. The deployed revision was unchanged.
+
+The reviewed sidecar handler wraps `wallet.client_info()` failures with
+`SdkApiError::command`, whose code is 100. This does not distinguish a backend
+restart, authentication transport failure, or another node error. Do not claim
+an attestation failure, exhausted liquidity, or a proven vendor root cause from
+that code. Lexe can investigate trace `sMF2uxX7RZBu7914` (October 9) and
+`MZr6bLI39HvfUmR7` (October 8); retained logs omit the potentially sensitive
+error body.
+
+The local resilience defect was spending every retry in less than a second.
+The expanded recovery window handles short multi-second interruptions without
+replaying writes, accepting invalid authority, or hiding sustained failures.
+Elapsed milliseconds are logged on retry, recovery, and exhaustion. Fake-clock
+regressions fail on the old implementation for two- and five-second outages,
+slow failures consuming the window, and scheduler oversleep. This is a bounded
+mitigation, not proof that Lexe's underlying interruption is fixed.
 
 ## Node 0.10.5 permission expansion (October 1)
 

@@ -19,7 +19,7 @@ def test_two_transient_http_failures_recover_with_bounded_jitter(path, status, m
     with httpx.Client(base_url="http://127.0.0.1:5393", timeout=20, transport=httpx.MockTransport(handle)) as client:
         assert Lexe(client, "a" * 64).request("GET", "/v2/node/" + path, params={"index": "private-index"}) == {"ok": True}
     assert len(calls) == 3
-    assert len(sleeps) == 2 and .125 <= sleeps[0] <= .25 and .25 <= sleeps[1] <= .5
+    assert len(sleeps) == 2 and .5 <= sleeps[0] <= 1 and 1 <= sleeps[1] <= 2
     assert len({str(call.url) for call in calls}) == 1
     trace_ids = {call.headers["lexe-trace-id"] for call in calls}
     assert len(trace_ids) == 1 and re.fullmatch(r"[A-Za-z0-9]{16}", trace_ids.pop())
@@ -44,11 +44,11 @@ def test_persistent_http_failure_keeps_only_safe_diagnostics(monkeypatch, caplog
         with pytest.raises(RuntimeError):
             lexe.ready()
         assert lexe._checked == 0
-    assert len(calls) == 3 and len(sleeps) == 2
+    assert len(calls) == 5 and len(sleeps) == 4
     failures = [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
     assert len(failures) == 1
     for value in ("lightning.lexe_http_failed", "method=GET", "path=/v2/node/client_info", "http_status=503", "lexe_code=123",
-                  "trace_id=" + calls[0].headers["lexe-trace-id"], "attempts=3"):
+                  "trace_id=" + calls[0].headers["lexe-trace-id"], "attempts=5"):
         assert value in failures[0]
     assert "private-message" not in caplog.text and "private-preimage" not in caplog.text
 
@@ -130,7 +130,7 @@ def test_stream_diagnostics_are_bounded_and_close_response(monkeypatch, caplog):
     assert body.closed and "lexe_code=unknown" in caplog.text
 
 
-@pytest.mark.parametrize("status,attempts", [(401, 1), (503, 3)])
+@pytest.mark.parametrize("status,attempts", [(401, 1), (503, 5)])
 def test_unreadable_diagnostics_do_not_change_status_retry_policy(status, attempts, monkeypatch, caplog):
     calls = []
     monkeypatch.setattr("lightning_router.lexe.time.sleep", lambda _: None)
@@ -177,7 +177,7 @@ def test_mixed_http_and_transport_failures_share_one_attempt_budget(monkeypatch)
     with httpx.Client(base_url="http://127.0.0.1:5393", transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(RuntimeError):
             Lexe(client, "a" * 64).ready()
-    assert len(calls) == 3 and len(sleeps) == 2
+    assert len(calls) == 5 and len(sleeps) == 4
 
 
 def test_transient_response_followed_by_invalid_authority_stays_closed(monkeypatch):
