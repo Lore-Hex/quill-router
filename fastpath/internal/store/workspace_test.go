@@ -279,3 +279,17 @@ func TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft(t *testing.T) {
 	}
 	status("its work done", WorkspaceStatus{Closed: 1}, true)
 }
+
+// TestDoneNamesEachThingLeft: each thing left of a workspace keeps it from
+// done alone, and is the one reason given; with nothing left it is done.
+func TestDoneNamesEachThingLeft(t *testing.T) {
+	if done, why := (WorkspaceStatus{Closed: 3, CreditReserved: 7}).Done(); !done || len(why) != 0 {
+		t.Fatalf("nothing of the fast path left: done %v, %v", done, why)
+	}
+	for _, left := range []WorkspaceStatus{{Enabled: true}, {Open: 1}, {Open: 1, Revoked: 1}, {Draining: 1},
+		{LeaseReserved: 1}, {LeaseReserved: -1}, {PendingPacks: 1}} {
+		if done, why := left.Done(); done || len(why) != 1 {
+			t.Errorf("%+v: done %v, %v; want one reason", left, done, why)
+		}
+	}
+}
