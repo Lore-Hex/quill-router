@@ -1256,13 +1256,13 @@ new = '''
        IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
 '''
 
-# Its own hold's first row, not the drain log's: only TerminalOrder.adopt.cfg
+# Its own hold's first row, not the drain log's: only TerminalOrder.rows.cfg
 # has a hold whose first row comes after another hold's while the owner is
 # active.
 
 [[TerminalOrder.mutants]]
 name = "adopt-another-holds-row"
-cfg = "adopt"
+cfg = "rows"
 violates = "AdoptionKeepsTheWinner"
 old = '''
     /\ LET j == Min(DrainRows(a))
@@ -1271,6 +1271,29 @@ old = '''
 new = '''
     /\ LET j == 1
        IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
+'''
+
+# The drain log is read one row at a time. A cursor that leapt to the end
+# after two rows of one hold would skip a row of another's, which the close
+# then loses: TerminalOrder.rows.cfg has the auditor's reap of the listed
+# hold, then a row of its own and one of the other's.
+
+[[TerminalOrder.mutants]]
+name = "drain-cursor-leaps-after-a-repeat"
+cfg = "rows"
+violates = "NoAckedDrainRowLost"
+old = '''
+    /\ drainApplied' = drainApplied + 1
+    /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
+                    deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
+'''
+new = '''
+    /\ drainApplied' =
+           IF drainApplied > 0
+              /\ drain[drainApplied].auth = drain[drainApplied + 1].auth
+               THEN Len(drain) ELSE drainApplied + 1
+    /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
+                    deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
 '''
 
 # Close against appends.
@@ -1534,7 +1557,22 @@ new = '''
 # Section 4.8, hand-offs: a hold a stored hand-off named is the auditor's to
 # end, and the close waits for it, so a lease whose listed hold no terminal
 # reaches closes only because the auditor reaps it. The main configuration
-# lists nothing, so this runs against the variant that does.
+# lists nothing, so these run against the variant that does.
+
+[[TerminalOrder.mutants]]
+name = "close-over-a-listed-hold"
+cfg = "list"
+violates = "NoListedHoldClosedOver"
+old = '''
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
+new = '''
+    /\ drainApplied = Len(drain)
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
 
 [[TerminalOrder.mutants]]
 name = "auditor-never-reaps-a-listed-hold"

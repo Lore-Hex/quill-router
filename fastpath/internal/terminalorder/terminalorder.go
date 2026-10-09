@@ -635,7 +635,8 @@ type Invariant struct {
 	Holds func(State) bool
 }
 
-// Invariants are the spec's, in its .cfg's order.
+// Invariants are the spec's, in its .cfg's order, NoListedHoldClosedOver
+// where TerminalOrder.list.cfg has it.
 func (c Config) Invariants() []Invariant {
 	return []Invariant{
 		{"TypeOK", c.TypeOK},
@@ -647,6 +648,7 @@ func (c Config) Invariants() []Invariant {
 		{"NoAckedDrainRowLost", c.NoAckedDrainRowLost},
 		{"NoStreamClosedOver", c.NoStreamClosedOver},
 		{"NoDeliveredStreamClosedOver", c.NoDeliveredStreamClosedOver},
+		{"NoListedHoldClosedOver", c.NoListedHoldClosedOver},
 		{"DurableHeartbeatNeverReleased", c.DurableHeartbeatNeverReleased},
 		{"NoLiveRequestReleased", c.NoLiveRequestReleased},
 		{"ReleasedHoldOwesNothing", c.ReleasedHoldOwesNothing},
@@ -817,6 +819,20 @@ func (c Config) NoDeliveredStreamClosedOver(s State) bool {
 	}
 	for a := range int8(len(c.Auths)) {
 		if c.Stream[a] && s.Got[a] && s.Winner[a] == NoWinner {
+			return false
+		}
+	}
+	return true
+}
+
+// NoListedHoldClosedOver: a lease never closes over a hold a stored hand-off
+// named.
+func (c Config) NoListedHoldClosedOver(s State) bool {
+	if s.Lease != Closed {
+		return true
+	}
+	for a := range int8(len(c.Auths)) {
+		if s.Listed[a] && s.Winner[a] == NoWinner {
 			return false
 		}
 	}

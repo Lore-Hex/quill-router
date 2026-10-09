@@ -17,8 +17,8 @@ import (
 // graphs of the two small instances.
 func TestTransitionsMatchTLC(t *testing.T) {
 	t.Parallel()
-	// twoAppends is TerminalOrder.adopt.cfg's, which
-	// TestWholeConfigurationsMatchTLC compares.
+	// twoAppends is the negative control's, and TerminalOrder.rows.cfg,
+	// which TestWholeConfigurationsMatchTLC compares, has its steps and more.
 	instances := map[string]Config{
 		"one stream": oneStream, "two plain": twoPlain,
 		// No authorizations, which the spec allows: TLC prints the functions
@@ -116,8 +116,8 @@ func TestStateCountMatchesTLC(t *testing.T) {
 }
 
 // TestWholeConfigurationsMatchTLC compares the whole state graphs of the
-// configurations proofs/ checks, 1,047,716, 8,324, 5,256, 13,322 and 692,648
-// states, with the shadow's, step for step, read as they stream. TLC runs
+// configurations proofs/ checks, 1,047,716, 8,324, 5,256, 13,322 and
+// 1,594,624 states, with the shadow's, step for step, read as they stream. TLC runs
 // them from cfgInstances, which TestStateCountMatchesTLC binds to the files.
 // So on every configuration TLC checks, the shadow is the spec: a spurious
 // step anywhere in them would show.

@@ -811,6 +811,12 @@ NoDeliveredStreamClosedOver ==
     lease = "closed" =>
         \A a \in Streams : a \in got => winner[a] # NoWinner
 
+\* Section 4.8, hand-offs. A lease never closes over a hold a stored hand-off
+\* named: the store's close waits for every stored open hold, so the hold
+\* ends with a terminal first, its reap if nothing else.
+NoListedHoldClosedOver ==
+    lease = "closed" => \A a \in listed : winner[a] # NoWinner
+
 \* Section 4.5. A hold with a heartbeat in the log is never released: not by
 \* a release record, and not by closing the lease over it.
 DurableHeartbeatNeverReleased ==

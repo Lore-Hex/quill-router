@@ -397,8 +397,11 @@ text = '''/\ lease = "draining"'''
 breaks = "nothing"
 reaches = "no new state"
 why = '''
-No claim here rests on the draining mark (see PublishTick's row). A reap
-needs a durable heartbeat, which needs S, which needs a tick.
+No claim here rests on the draining mark (see PublishTick's row), and the
+reap's other guards keep it to a draining lease anyway: it needs S, which is
+stored only from a tick, published only for a draining lease; and after the
+close every known hold has its winner, Close's own guard, and no hold
+becomes known, since S does not move and Listed needs an unclosed lease.
 '''
 
 [[guard]]
@@ -447,11 +450,12 @@ text = '''/\ winner[a] = NoWinner'''
 breaks = "nothing"
 reaches = "new states"
 why = '''
-Without it the auditor may reap a hold whose winner is stored already, the
-owner's record or a row before, when the hold has no drain row: one row
-more, since DrainRows(a) = {} still allows one reap a hold, and it loses to
-the stored winner, as ApplyDrain keeps the first. The guard saves the row,
-which the store's transaction refuses (RefusedTerminal), not a claim.
+Without it the auditor may reap a hold whose winner is an owner record
+already booked, when the hold has no drain row (DrainRows(a) = {} rules out
+a drain row's winner): one row more, since that guard still allows one reap
+a hold, and it loses to the stored winner, as ApplyDrain keeps the first.
+The store refuses that reap (RefusedNoHold: booking the owner's terminal
+deleted the hold); the guard saves the row, not a claim.
 '''
 
 [[guard]]
