@@ -819,7 +819,9 @@ func (w *walker) commitAhead(m int8, from ac.State) {
 	w.t.Helper()
 	w.seen["commit"]++
 	req := w.request(m, from)
-	req.AppliedSeq = int64(max(from.Mem[m].Prog, from.Prog)) + 1
+	// No boundary: a request storing S must end its progress there, which
+	// the store holds before it reads the lease.
+	req.AppliedSeq, req.Boundary = int64(max(from.Mem[m].Prog, from.Prog))+1, nil
 	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
 	if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
 		w.fatalf("member %s's commit ahead of the stored progress: %+v %v", w.c.Members[m], got, err)
