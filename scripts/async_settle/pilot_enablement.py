@@ -214,7 +214,9 @@ def fleet_budgets_pre(bundle: dict[str, Any]) -> dict[str, Any]:
         serving_interval=all(item[5] <= start < end <= item[6] for item in coverage),
         dormant=all((r['pins'].get('TR_ASYNC_SETTLE_ENABLED') == 'false'
                      and r['pins'].get('TR_ASYNC_SETTLE_PROTECTION') == 'false'
-                     and r['pins'].get('TR_ASYNC_SETTLE_SHADOW_WORKSPACES') == '')
+                     and r['pins'].get('TR_ASYNC_SETTLE_SHADOW_WORKSPACES') == ''
+                     # Fast drain is enabled only at runbook step 8, after protection.
+                     and r['pins'].get('TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED') == 'false')
                     if r['role'] == 'router' else
                     (r['pins'].get('TR_ASYNC_SETTLE_NEGOTIATE') == 'off'
                      and r['pins'].get('TR_ASYNC_SETTLE_SHADOW') == 'off')

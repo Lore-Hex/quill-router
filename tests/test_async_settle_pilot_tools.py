@@ -44,7 +44,8 @@ def bundle(tmp_path):
             body['instance_boot_ids'] = [boot]
             proof['instance_boot_ids_by_day'][body['day']] = [boot]
     serving = [dict(instance=boot, revision='a'*40, region='us-central1', role='router', intervals=copy.deepcopy(intervals), pins={
-        'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': pilot.PILOT}),
+        'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': pilot.PILOT,
+        'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false'}),
         dict(instance='enclave', revision=rows[-1]['body']['deployment']['go_revision'], region='us-central1', role='enclave', intervals=copy.deepcopy(intervals), pins={
             'TR_ASYNC_SETTLE_NEGOTIATE': 'off', 'TR_ASYNC_SETTLE_SHADOW': 'on',
             'TR_ASYNC_SETTLE_TICKET_PUBLIC_KEYS': json.dumps({'kid': 'issuer~' + FIXTURE['public_key']})})]
@@ -418,7 +419,8 @@ def pre_enable_bundle(tmp_path, serving=None):
     for row in data['serving']:
         row['intervals'] = [dict(day='2026-10-06', started_at_us=start, flushed_at_us=end)]
         if row['role'] == 'router':
-            row['pins'].update(TR_ASYNC_SETTLE_SHADOW_WORKSPACES='', TR_ASYNC_SETTLE_PROTECTION='false')
+            row['pins'].update(TR_ASYNC_SETTLE_SHADOW_WORKSPACES='', TR_ASYNC_SETTLE_PROTECTION='false',
+                               TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED='false')
         else:
             row['pins']['TR_ASYNC_SETTLE_SHADOW'] = 'off'
     data.update(started_at_us=start, flushed_at_us=end, workspace_count=1,
@@ -516,3 +518,17 @@ def test_serving_lifetimes_must_fit_control_flag_intervals(tmp_path, boundary):
     assert pilot.control_coverage(data)
     data['rows'][1]['body'][boundary] += 1 if boundary.endswith('from_us') else -1
     assert not pilot.control_coverage(data)
+
+
+def test_pre_enable_rejects_fast_drain_already_enabled(tmp_path):
+    # Round-2 review: the dormant pre-enable gate must refuse a router whose
+    # fast drain is already on; the runbook enables it only at step 8.
+    data = pre_enable_bundle(tmp_path)
+    assert pilot.fleet_budgets_pre(data)['status'] == 'PASS'
+    data['serving'][0]['pins']['TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED'] = 'true'
+    deployment = json.loads(Path(data['deployment']['path']).read_text())
+    deployment['serving'] = copy.deepcopy(data['serving'])
+    data['deployment'] = artifact(tmp_path, 'deployment.json', deployment)
+    result = pilot.fleet_budgets_pre(data)
+    assert result['status'] == 'BLOCKED', result
+    assert result['checklist']['dormant'] == 'BLOCKED'
