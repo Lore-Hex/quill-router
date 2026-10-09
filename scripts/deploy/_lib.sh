@@ -47,6 +47,15 @@ TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us
 # worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
 # cold-starting dozens of instances for a short burst.
 TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"
+# Autoscaling ceiling per revision for the main service. Cloud Run's default (100)
+# was never a sizing decision; the async-settle §5 fleet budget projects Spanner
+# load from the declared maximum router count (two revisions can overlap during a
+# rollout, so the budget cap is twice this value). Observed 2026-10-09: 8 warm
+# instances per primary region, 16 only while a rollout overlaps, and the measured
+# admission-read CPU (SPANNER_SYS, 1.6 ms/exec) fits under the 45% Spanner alarm
+# only up to a declared cap of 24 per region. 12 keeps 1.5x the warm floor
+# (96 request slots at concurrency 8) for bursts.
+TR_CLOUD_RUN_MAX_INSTANCES="${TR_CLOUD_RUN_MAX_INSTANCES:-12}"
 TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"
 # Cloud Run memory limit. 2Gi as of 2026-05-10.
 #
