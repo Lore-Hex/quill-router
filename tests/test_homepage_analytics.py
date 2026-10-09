@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
     "home.catalog_filter", "home.alias_copied", "home.migration_tab",
     "home.agent_prompt_opened", "home.base_url_copied", "home.agent_prompt_copied",
     "home.code_copied", "home.faq_opened", "home.catalog_row_clicked", "home.cta_clicked",
+    "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
 ])
 def test_homepage_events_use_existing_attributed_pipeline(
     client: TestClient, caplog: pytest.LogCaptureFixture, event: str,
