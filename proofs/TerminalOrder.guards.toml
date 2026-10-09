@@ -1,7 +1,7 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "a12086fa1a96959339a66b1f45a557173a82b0553df60ec620c77d058030b3f9"
+inputs_sha256 = "e9232c933ba9910adf357a5fe6921c29ab49d46df27a9383e6ce88b2306d4c1f"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
@@ -277,8 +277,7 @@ breaks = "NoLiveRequestReleased"
 [[guard]]
 action = "EnclaveGiveUp"
 text = '''/\ enc[a] \in {"open", "permitted"}'''
-breaks = "nothing"
-reaches = "new states"
+breaks = "RefundOnlyWhenNothingDelivered"
 
 [[guard]]
 action = "FrontDoorAppend"
