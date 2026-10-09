@@ -75,15 +75,19 @@ switched on by merging it.
   reach of each other are checked before the nodes start. The service's
   HTTP routes accept only the fleet's own callers.
 - **W6. The key.** Each node reads the envelope key from Secret Manager at a
-  pinned version at startup. A rotation seals with the new key and still
-  verifies with the previous one for at least the window in which a
-  terminal may be retried, about 52 hours, the enclave queue's longest
-  hold of a settle (design §4.8), since a settle booked whose answer was
-  lost may come back after its
-  lease has closed and must get its stored outcome, not Invalid. A test
-  holds that: a closed lease's late terminal retry, sealed with the old key,
-  answered from the store after a rotation. Until verification of the
-  previous key is in, the key is not rotated.
+  pinned version at startup. A rotation has two phases, each a deploy that
+  W8 completes before the next begins. First every node verifies with both
+  keys and still seals with the old one, so no node seals with a key some
+  reachable node cannot verify. Then every node seals with the new key and
+  still verifies with the old one, for at least the window in which a
+  terminal may be retried, about 52 hours, the enclave queue's longest hold
+  of a settle (design §4.8): a settle booked whose answer was lost may come
+  back after its lease has closed and must get its stored outcome, not
+  Invalid. Tests hold both directions during a deploy's overlap, an
+  envelope sealed by a node of either phase verified by a node of the
+  other, and a closed lease's late terminal retry sealed with the old key
+  answered from the store after the rotation. Until both keys' verification
+  is in, the key is not rotated.
 - **W7. Alerts.** The service's alerts become log entries at error severity
   that Cloud Monitoring alerts on, and each is exercised once: the auditor
   making no progress, a gap, an audit fault, a drain overdue, pending work
