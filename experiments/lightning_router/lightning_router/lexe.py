@@ -42,7 +42,8 @@ TRANSIENT_READ_ERRORS = (
     httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError,
 )
 TRANSIENT_READ_STATUSES = {500, 502, 503, 504}
-READ_RETRY_DELAYS = (.25, .5)
+READ_RETRY_DELAYS = (1., 2., 4., 8.)
+READ_RECOVERY_SECONDS = 15.
 
 
 class LexeHTTPError(RuntimeError):
@@ -124,6 +125,8 @@ class Lexe:
         context = (f"operation={operation} method={method if operation != 'unknown' else 'unknown'} "
                    f"path={path if operation != 'unknown' else 'unknown'} trace_id={trace_id}")
         attempt = 1
+        started = time.monotonic()
+        recovery_deadline: float | None = None
         while True:
             try:
                 result = self._request_once(method, path, **kwargs)
@@ -134,13 +137,20 @@ class Lexe:
                 retryable = safe_read and (not is_http or status in TRANSIENT_READ_STATUSES)
                 detail = f"{context} error_type={type(exc).__name__} http_status={status} lexe_code={code}"
                 if retryable and attempt <= len(READ_RETRY_DELAYS):
+                    if recovery_deadline is None:
+                        recovery_deadline = time.monotonic() + READ_RECOVERY_SECONDS
                     cap = READ_RETRY_DELAYS[attempt - 1]
                     delay = secrets.SystemRandom().uniform(cap / 2, cap)
-                    logger.warning("lightning.lexe_read_retry %s attempt=%d delay_ms=%d", detail, attempt, int(delay * 1000))
-                    time.sleep(delay)
-                    kwargs = {**kwargs, "timeout": httpx.Timeout(5, connect=1, pool=1)}
-                    attempt += 1
-                    continue
+                    if delay < recovery_deadline - time.monotonic():
+                        logger.warning("lightning.lexe_read_retry %s attempt=%d delay_ms=%d elapsed_ms=%d", detail, attempt,
+                                       int(delay * 1000), int((time.monotonic() - started) * 1000))
+                        time.sleep(delay)
+                        remaining = recovery_deadline - time.monotonic()
+                        if remaining > 0:
+                            kwargs = {**kwargs, "timeout": httpx.Timeout(min(5, remaining), connect=min(1, remaining), pool=min(1, remaining))}
+                            attempt += 1
+                            continue
+                detail += f" elapsed_ms={int((time.monotonic() - started) * 1000)}"
                 if is_http:
                     logger.error("lightning.lexe_http_failed %s attempts=%d", detail, attempt)
                     if status == 404 and method == "GET" and path == "/v2/node/payment":
@@ -149,7 +159,8 @@ class Lexe:
                     logger.error("lightning.lexe_read_failed %s attempts=%d", detail, attempt)
                 raise
             if attempt > 1:
-                logger.warning("lightning.lexe_read_recovered %s attempts=%d", context, attempt)
+                logger.warning("lightning.lexe_read_recovered %s attempts=%d elapsed_ms=%d", context, attempt,
+                               int((time.monotonic() - started) * 1000))
             return result
 
     def _request_once(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
