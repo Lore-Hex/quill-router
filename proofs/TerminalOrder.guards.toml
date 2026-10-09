@@ -1,13 +1,14 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "e9232c933ba9910adf357a5fe6921c29ab49d46df27a9383e6ce88b2306d4c1f"
+inputs_sha256 = "3b3944c8dd01e73b224b2af2682966b3d781f6d477733f73e166bfe7d2940665"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
 "TerminalOrder.cfg" = 1047716
+"TerminalOrder.adopt.cfg" = 692648
 "TerminalOrder.appends.cfg" = 13322
-"TerminalOrder.list.cfg" = 11268
+"TerminalOrder.list.cfg" = 5256
 "TerminalOrder.undeclared.cfg" = 8324
 
 [[guard]]
@@ -78,46 +79,6 @@ breaks = "RefundOnlyWhenNothingDelivered"
 action = "OwnerRefund"
 text = '''/\ ownerWinner[a] = 0'''
 breaks = "AckedOwnerTerminalWins"
-
-[[guard]]
-action = "OwnerList"
-text = '''/\ OwnerActive'''
-breaks = "NoListedHoldClosedOver"
-cfg = "list"
-
-[[guard]]
-action = "OwnerList"
-text = '''/\ a \in Listable'''
-breaks = "TypeOK"
-why = '''
-A bound of the model, which TypeOK states: MaxSeq counts one listing for
-each hold Listable names. Any hold a forced exit holds may be listed; the
-constant says which the model lets be, and TerminalOrder.list.cfg lists one.
-'''
-
-[[guard]]
-action = "OwnerList"
-text = '''/\ ownerWinner[a] = 0'''
-breaks = "nothing"
-reaches = "new states"
-why = '''
-A forced exit lists the holds it has not decided. Listing a decided hold
-puts the listing after the hold's terminal in the owner's order, so a
-boundary that covers the listing covers the terminal, which is the hold's
-winner: the auditor has nothing to reap, and Close nothing to wait for. The
-guard keeps the hand-off to what the owner still holds.
-'''
-
-[[guard]]
-action = "OwnerList"
-text = '''/\ ~ListIssued(a)'''
-breaks = "TypeOK"
-cfg = "list"
-why = '''
-A bound of the model, which TypeOK states: MaxSeq counts one listing per
-hold. A second listing of a hold changes nothing the claims read, since
-Listed asks only for a listing within the boundary.
-'''
 
 [[guard]]
 action = "OwnerReap"
@@ -397,6 +358,40 @@ It keeps drain[drainApplied + 1] defined: there is no next row to apply.
 '''
 
 [[guard]]
+action = "Listed"
+text = '''/\ a \in Listable'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+The model's bound on which holds a hand-off may name, which each
+configuration chooses. The claims hold whichever holds are listed: a listing
+makes a hold known, so the close waits for it and the auditor may reap it,
+and neither changes a winner the claims read. TerminalOrder.list.cfg lists
+one.
+'''
+
+[[guard]]
+action = "Listed"
+text = '''/\ a \notin listed'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Listing a hold already listed leaves listed as it was: a step to the same
+state, which the specification's stuttering allows anyway.
+'''
+
+[[guard]]
+action = "Listed"
+text = '''/\ lease # "closed"'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+No commit lands after the close, so the runtime lists nothing then. A
+listing after the close changes listed and nothing that reads it: the
+auditor reaps only a draining lease and the close is behind it.
+'''
+
+[[guard]]
 action = "AuditorReap"
 text = '''/\ lease = "draining"'''
 breaks = "nothing"
@@ -410,12 +405,13 @@ needs a durable heartbeat, which needs S, which needs a tick.
 action = "AuditorReap"
 text = '''/\ S # NoS'''
 breaks = "nothing"
-reaches = "no new state"
+reaches = "new states"
 why = '''
-No claim rests on "no reap before S". HbDurable(a) is false until S is
-stored, and even without both a reap row appended early only waits in the
-drain log: ApplyDrain reads the log once S is stored, and the first
-terminal in order still decides.
+No claim rests on "no reap before S". Known(a) needs S for a heartbeat but
+not for a listing, so without the guard the auditor may reap a listed hold
+before S is stored; the reap row only waits in the drain log, which
+ApplyDrain reads once S is stored, and the first terminal in order still
+decides.
 '''
 
 [[guard]]

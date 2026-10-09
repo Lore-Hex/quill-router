@@ -124,11 +124,15 @@ func TestStateCountMatchesTLC(t *testing.T) {
 func TestWholeConfigurationsMatchTLC(t *testing.T) {
 	t.Parallel()
 	for file, c := range cfgInstances {
-		got := compareWithTLC(t, c, c.Next)
-		if len(got.Diffs) > 0 {
-			t.Errorf("%s: differences from TLC, the first: %v", file, got.Diffs)
-		}
-		t.Logf("%s: %d states and %d steps, as TLC has them", file, got.States, got.Steps)
+		// Each configuration's graph is its own, so they are read at once.
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			got := compareWithTLC(t, c, c.Next)
+			if len(got.Diffs) > 0 {
+				t.Errorf("%s: differences from TLC, the first: %v", file, got.Diffs)
+			}
+			t.Logf("%s: %d states and %d steps, as TLC has them", file, got.States, got.Steps)
+		})
 	}
 }
 
