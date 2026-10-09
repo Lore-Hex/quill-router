@@ -226,6 +226,9 @@ func sum(s string) []byte {
 	return h[:]
 }
 
+// everyWorkspace is a switch that enables every workspace.
+func everyWorkspace(string) bool { return true }
+
 type fixture struct {
 	log   *fakeLog
 	clock *clock
@@ -240,7 +243,7 @@ func newFixture(t *testing.T, allocation int64, overrun func(int64) int64, chang
 	n := 0
 	var mu sync.Mutex
 	cfg := Config{Epoch: 3, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
-		HeartbeatEvery: 30 * time.Second, Overrun: overrun, Clock: f.clock.Now,
+		HeartbeatEvery: 30 * time.Second, Overrun: overrun, Clock: f.clock.Now, Enabled: everyWorkspace,
 		NewAuthorization: func(lease string) (string, error) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -800,7 +803,7 @@ func TestAnOwnerMintsOnlyWhatItCanRecord(t *testing.T) {
 	ctx := context.Background()
 	id := "gwa-0"
 	o, err := New(Config{Epoch: 1, Skew: time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
-		HeartbeatEvery: time.Minute, Clock: func() time.Time { return start },
+		HeartbeatEvery: time.Minute, Clock: func() time.Time { return start }, Enabled: everyWorkspace,
 		NewAuthorization: func(string) (string, error) { return id, nil }}, newFakeLog())
 	if err != nil {
 		t.Fatal(err)

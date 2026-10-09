@@ -65,7 +65,7 @@ func TestTheOwnerAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestTheOwnerAgainstTheStore(t *testing.T) {
 		t.Fatalf("the grant: %+v %v", granted, err)
 	}
 	log := newFakeLog()
-	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second, Enabled: everyWorkspace,
 		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
 		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID}, log)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestARevokedLeaseIsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestARevokedLeaseIsDropped(t *testing.T) {
 		t.Fatalf("the grant: %+v %v", granted, err)
 	}
 	log := newFakeLog()
-	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second, Enabled: everyWorkspace,
 		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
 		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID}, log)
 	if err != nil {
@@ -217,11 +217,11 @@ func TestAShardIsGrantedItsLeaseByTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
-	o, err := New(Config{Epoch: 4, Node: "owner-1", Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+	o, err := New(Config{Epoch: 4, Node: "owner-1", Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second, Enabled: everyWorkspace,
 		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
 		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID,
 		TopUps: TopUps{LowWater: 50, Cooldown: time.Second, Horizon: time.Minute, Min: 100, Max: 500,
@@ -270,7 +270,7 @@ func TestTheOwnerAdoptsAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestTheOwnerAdoptsAgainstTheStore(t *testing.T) {
 		t.Fatalf("the grant: %+v %v", granted, err)
 	}
 	log := newFakeLog()
-	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second,
+	o, err := New(Config{Epoch: who.Epoch, Node: who.Node, Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second, Enabled: everyWorkspace,
 		KeyStatus: 7, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
 		HeartbeatEvery: 30 * time.Second, Clock: time.Now, NewAuthorization: store.NewAuthorizationID,
 		Grace: time.Minute, Records: &fakeRecords{}}, log)

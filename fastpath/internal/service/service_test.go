@@ -114,7 +114,7 @@ func fakePubSub(t *testing.T) (*pubsub.Client, *pstest.Server) {
 func workspace(t *testing.T, credits int64) string {
 	t.Helper()
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
 		map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": credits, "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 			break
 		}
 	}
-	if _, err := db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 			break
 		}
 	}
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -891,7 +891,7 @@ func ownedBy(t *testing.T, db *spanner.Client, by net.Listener, among ...net.Lis
 		if !best {
 			continue
 		}
-		if _, err := db.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
+		if _, err := db.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
 			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000),
 				"trust_tier": int64(3)})}); err != nil {
 			t.Fatal(err)
@@ -1484,4 +1484,106 @@ func TestTheStagerWaitsForItsCallbacks(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the process did not stop")
 	}
+}
+
+// TestTheSwitchTurnsANodeOffAndOn: a node admits nothing for a workspace
+// its switch does not enable, on the gateway's route or the owner's own;
+// enabled, it admits on both; turned off, both answer off within the
+// switch's bound, three intervals and a read, and stay off; and a request
+// admitted before still settles and is booked.
+func TestTheSwitchTurnsANodeOffAndOn(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln := listen(t)
+	ws := storetest.UniqueID("ws")
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := short(config(ln))
+	// Each read of the switch has an interval to finish; the emulator's can
+	// take a few hundred milliseconds.
+	cfg.Switch = 500 * time.Millisecond
+	start(t, cfg, Clients{Spanner: shared, PubSub: pubSub(t)})
+	s, err := store.New(shared, cfg.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	gw := frontdoor.Gateway{Client: client, Base: "http://" + ln.Addr().String()}
+	direct := frontdoor.HTTPOwners{Client: client, Scheme: "http"}
+	authorize := func(request string) (frontdoor.Authorized, frontdoor.OwnerAdmitted) {
+		t.Helper()
+		got, err := gw.Authorize(ctx, frontdoor.AuthorizeOf{Workspace: ws, Request: request, Estimate: 40,
+			Boot: []byte("boot")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned, err := direct.Authorize(ctx, ln.Addr().String(), frontdoor.OwnerAuthorize{Workspace: ws, Estimate: 40,
+			Boot: []byte("boot")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got, owned
+	}
+	staysOff := func(when string) {
+		t.Helper()
+		for until := time.Now().Add(4 * cfg.Switch); time.Now().Before(until); time.Sleep(cfg.Switch / 2) {
+			if got, owned := authorize("r-off"); got.Status != frontdoor.Off || owned.Status != frontdoor.Off {
+				t.Fatalf("%s: the gateway's route %+v, the owner's %+v", when, got, owned)
+			}
+		}
+	}
+	staysOff("never enabled")
+
+	if _, _, err := s.SetWorkspace(ctx, ws, true); err != nil {
+		t.Fatal(err)
+	}
+	var admitted frontdoor.Authorized
+	var owned frontdoor.OwnerAdmitted
+	eventually(t, 20*time.Second, "admitted on both routes", func() (bool, error) {
+		if admitted.Status != frontdoor.Admitted || owned.Status != frontdoor.Admitted {
+			a, o := authorize("r1")
+			if admitted.Status != frontdoor.Admitted {
+				admitted = a
+			}
+			if owned.Status != frontdoor.Admitted {
+				owned = o
+			}
+		}
+		return admitted.Status == frontdoor.Admitted && owned.Status == frontdoor.Admitted, nil
+	})
+	e, err := frontdoor.Open(key, admitted.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := s.SetWorkspace(ctx, ws, false); err != nil {
+		t.Fatal(err)
+	}
+	off := time.Now()
+	eventually(t, 10*time.Second, "off on both routes", func() (bool, error) {
+		got, o := authorize("r2")
+		return got.Status == frontdoor.Off && o.Status == frontdoor.Off, nil
+	})
+	if took := time.Since(off); took > 3*cfg.Switch+2*time.Second {
+		t.Fatalf("off on both routes %v after the switch turned off", took)
+	}
+	staysOff("turned off")
+
+	if refunded, err := gw.Refund(ctx, frontdoor.RefundOf{Envelope: owned.Envelope, Money: []byte(`{"cost":0}`)}); err != nil ||
+		(refunded.Status != frontdoor.Won && refunded.Status != frontdoor.Recorded) {
+		t.Fatalf("the owner's route's request refunded after the switch turned off: %+v %v", refunded, err)
+	}
+	settled, err := gw.Settle(ctx, frontdoor.SettleOf{Envelope: admitted.Envelope, Charge: 30,
+		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
+	if err != nil || (settled.Status != frontdoor.Won && settled.Status != frontdoor.Recorded) {
+		t.Fatalf("a request admitted before the switch turned off, settled after: %+v %v", settled, err)
+	}
+	eventually(t, 60*time.Second, "the settle booked", func() (bool, error) {
+		d, err := s.Disposition(ctx, e.Auth)
+		return err == nil && d.Outcome == "settled" && d.Cost.Int64 == 30, err
+	})
 }

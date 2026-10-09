@@ -35,11 +35,15 @@ func NewLocal(o *owner.Owner, address, region string, key []byte) (*Local, error
 // Authorize holds the estimate under one of the shard's leases (§4.4) and
 // seals the envelope the gateway echoes. A request no lease takes is Busy:
 // the owner asks for a top-up, and the front door tries another shard's
-// owner or answers that the request should wait.
+// owner or answers that the request should wait. One for a workspace the
+// owner's switch does not enable is Off: a caller that reaches the owner
+// directly admits nothing for it either.
 func (l *Local) Authorize(req OwnerAuthorize) OwnerAdmitted {
 	got, err := l.owner.Admit(owner.ShardKey{Workspace: req.Workspace, Region: l.region, Shard: req.Shard},
 		owner.Admission{Estimate: req.Estimate, Stream: req.Stream, Boot: req.Boot, OpenHeartbeat: req.OpenHeartbeat})
 	switch {
+	case errors.Is(err, owner.ErrOff):
+		return OwnerAdmitted{Status: Off}
 	case errors.Is(err, owner.ErrNoRoom):
 		return OwnerAdmitted{Status: Busy}
 	case err != nil:

@@ -24,12 +24,14 @@ type Refusal string
 
 // Why a grant is refused (§4.2, §4.7, §4.11).
 const (
-	RefusedInDebt    Refusal = "the workspace is in debt"
-	RefusedPaused    Refusal = "the workspace's billing is paused"
-	RefusedTier      Refusal = "the workspace is below the tier that allows leases"
-	RefusedAllowance Refusal = "the lease would take the workspace's exposure past its allowance"
-	RefusedFloor     Refusal = "the lease would leave less headroom outside leases than the floor"
-	RefusedLeaseID   Refusal = "the lease ID is another lease's"
+	RefusedNotEnabled Refusal = "the workspace is not enabled for the fast path"
+	RefusedRevoked    Refusal = "the lease was granted and is revoked or no longer open since"
+	RefusedInDebt     Refusal = "the workspace is in debt"
+	RefusedPaused     Refusal = "the workspace's billing is paused"
+	RefusedTier       Refusal = "the workspace is below the tier that allows leases"
+	RefusedAllowance  Refusal = "the lease would take the workspace's exposure past its allowance"
+	RefusedFloor      Refusal = "the lease would leave less headroom outside leases than the floor"
+	RefusedLeaseID    Refusal = "the lease ID is another lease's"
 )
 
 // GrantRequest asks for a lease of Amount, L, for a workspace's shard. The
@@ -81,6 +83,15 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil || existing != nil {
 			if existing != nil {
 				out = *existing
+			}
+			return err
+		}
+		// The switch first: no lease for a workspace not enabled, read in
+		// this transaction, so a grant and its workspace's disabling are
+		// one before the other.
+		if enabled, err := workspaceEnabled(ctx, txn, req.Workspace); err != nil || !enabled {
+			if !enabled {
+				out.Refused = RefusedNotEnabled
 			}
 			return err
 		}
@@ -196,7 +207,8 @@ var errRollback = errors.New("store: rolled back")
 // workspace shard and key-status version alike.
 func readGranted(ctx context.Context, txn *spanner.ReadWriteTransaction, req GrantRequest) (*GrantResult, error) {
 	row, err := txn.ReadRowWithOptions(ctx, "tr_lease", spanner.Key{req.Workspace, req.LeaseID},
-		[]string{"owner_node", "owner_epoch", "granted", "region", "workspace_shard", "key_status_version", "expiry"},
+		[]string{"owner_node", "owner_epoch", "granted", "region", "workspace_shard", "key_status_version", "expiry",
+			"state", "revoked"},
 		&spanner.ReadOptions{RequestTag: tag("grant")})
 	if spanner.ErrCode(err) == codes.NotFound {
 		return nil, nil
@@ -204,15 +216,22 @@ func readGranted(ctx context.Context, txn *spanner.ReadWriteTransaction, req Gra
 	if err != nil {
 		return nil, err
 	}
-	var node, region string
+	var node, region, state string
 	var epoch, granted, shard, ksv int64
+	var revoked bool
 	var out GrantResult
-	if err := row.Columns(&node, &epoch, &granted, &region, &shard, &ksv, &out.Expiry); err != nil {
+	if err := row.Columns(&node, &epoch, &granted, &region, &shard, &ksv, &out.Expiry, &state, &revoked); err != nil {
 		return nil, err
 	}
 	if node != req.Owner.Node || epoch != req.Owner.Epoch || granted != req.Amount || region != req.Region ||
 		shard != req.WorkspaceShard || ksv != req.KeyStatusVersion {
 		return &GrantResult{Refused: RefusedLeaseID}, nil
+	}
+	// A retry finds its lease revoked, its workspace turned off since, or
+	// no longer open: the owner must not take it up to admit under, so it is
+	// refused, and the lease expires, drains and closes by itself.
+	if revoked || state != "open" {
+		return &GrantResult{Refused: RefusedRevoked}, nil
 	}
 	iter := txn.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT credit_shard, allocation FROM tr_lease_donor

@@ -69,7 +69,7 @@ func newNode(t *testing.T, withOwner bool, client *http.Client, peers Peers) *no
 	}
 	ev := &events{}
 	n.store = &fakeStore{ev: ev}
-	door, err := New(Config{Owners: HTTPOwners{Client: client, Scheme: "http"}, Store: n.store,
+	door, err := New(Config{Enabled: everyWorkspace, Owners: HTTPOwners{Client: client, Scheme: "http"}, Store: n.store,
 		Records: &fakeRecords{ev: ev}, Members: fakeMembers{owners(n.addr)}, Key: key,
 		Shards: func(string) int64 { return 1 }, OwnerWait: 2 * time.Second, PublishWait: time.Second, Self: n.addr,
 		Peers: peers, PeerWait: time.Second})
