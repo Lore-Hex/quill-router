@@ -151,38 +151,23 @@
   gap: 7px;
 }
 
+/* The dot shows only while the status feed is fresh and up. Every other
+   state (degraded, down, unknown, delayed, failed refresh, before the first
+   fetch, no JS) hides it; the Status link stays in place and /status explains. */
 .homepage-status-dot {
+  display: none;
   flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--tr-color-status-unknown);
-}
-
-/* No grey dot: when status is unknown or really delayed the dot hides and the Status link stays. */
-.homepage-status[data-state="unknown"] .homepage-status-dot {
-  display: none;
 }
 
 .homepage-status[data-state="up"] .homepage-status-dot {
+  display: block;
   background: var(--tr-color-status-up);
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--tr-color-status-up) 20%, transparent),
     0 0 10px color-mix(in srgb, var(--tr-color-status-up) 60%, transparent);
-}
-
-.homepage-status[data-state="degraded"] .homepage-status-dot {
-  background: var(--tr-color-status-degraded);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--tr-color-status-degraded) 20%, transparent),
-    0 0 10px color-mix(in srgb, var(--tr-color-status-degraded) 60%, transparent);
-}
-
-.homepage-status[data-state="down"] .homepage-status-dot {
-  background: var(--tr-color-status-down);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--tr-color-status-down) 20%, transparent),
-    0 0 10px color-mix(in srgb, var(--tr-color-status-down) 60%, transparent);
 }
 
 @keyframes status-pulse {

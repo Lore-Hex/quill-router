@@ -39,6 +39,11 @@ BROWSER_EVENTS = frozenset(
         "landing_engaged", "sign_in_opened", "first_call_started", "first_call_failed",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
         "experiment_exposed",
+        "home.catalog_filter", "home.alias_copied", "home.migration_tab",
+        "home.agent_prompt_opened", "home.base_url_copied", "home.agent_prompt_copied",
+        "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
+        "home.cta_clicked", "home.cta_clicked.hero", "home.cta_clicked.migration",
+        "home.cta_clicked.closing",
     )
 )
 CONVERSION_EVENTS = frozenset(

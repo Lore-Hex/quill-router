@@ -28,7 +28,7 @@ Static files are loaded into memory at process start, so restart the server afte
 - **Supporting links** are underlined with a trailing arrow added by CSS (`.action-link`).
 - **Header.** Model search is in the header row at every width ("Search N models", live count). Below 600px the wordmark drops to the mark and Menu is an icon; below 480px Sign in moves into the drawer. Short landscape phones keep a 64px header.
 - **Hero ticker.** Items are buttons that open the model search prefilled. The marquee pauses for pointer hover and keyboard focus only. On phones and tablets it follows the hero actions on a gradient band; on desktop it sits at the hero's bottom.
-- **Status dot** reflects `/status.json` (`status.js`, 60s refresh): green pulse when fresh, amber degraded, red down, grey unknown or stale. Locally it is grey because the memory backend has no probes.
+- **Status dot** reflects `/status.json` (`status.js`, 60s refresh): a green pulse only while the feed is fresh (last check inside 30 minutes) and up. Every other state (degraded, down, unknown, delayed, failed refresh, no JS) hides the dot and leaves the plain Status link; /status carries the detail. Locally there is no dot because the memory backend has no probes.
 - **Sign-in** reuses the shared dialog unchanged: Google, GitHub and MetaMask with their provider badges, labels per Google's sign-in branding guidance.
 - **Social proof** is a customer story card followed by a sibling press card (Featured in · Axios).
 - **No-JS:** `<html class="no-js">` is cleared by the first inline script; without scripts the phone header shows its links inline.

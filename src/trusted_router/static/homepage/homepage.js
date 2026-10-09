@@ -114,7 +114,9 @@ $$('.trc .m a').forEach(a=>a.addEventListener('click',()=>track('home.catalog_ro
 // Shared auth-aware chrome replaces signed-in links; delegate so tracking survives.
 function trackHomepageCta(event){
  const a=event.target.closest('.button-primary[href="/console/api-keys"]:not(.signin)');
- if(a)track('home.cta_clicked',{module:a.closest('#get-started')?'closing':a.closest('#migrate')?'migration':'hero',cta:'api_key'});
+ if(!a)return;
+ const module=a.closest('#get-started')?'closing':a.closest('#migrate')?'migration':'hero';
+ track('home.cta_clicked.'+module,{module,cta:'api_key'});
 }
 document.addEventListener('click',trackHomepageCta);
 
