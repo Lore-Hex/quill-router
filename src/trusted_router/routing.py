@@ -226,6 +226,10 @@ _PROVIDER_PREFERENCE = {
     "gmi": 5,
 }
 
+# Prefer operator-funded capacity only for default prepaid routing. BYOK,
+# caller-supplied order/sort, eligibility filters, and published prices stay unchanged.
+_PREPAID_PROVIDER_PREFERENCE = {"cloudflare-workers-ai": -2}
+
 # Narrow, evidence-backed exceptions to the global provider preference. These
 # affect only default routing; caller-supplied provider.order/sort still wins.
 _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
@@ -1192,10 +1196,12 @@ def _sort_endpoint_candidates(
             model_preference = (
                 _MODEL_PROVIDER_PREFERENCE.get(model.id, {}) if model.id == single_model_id else {}
             )
-            sort_rank = model_preference.get(
-                endpoint.provider,
-                _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE),
+            default_rank = _PROVIDER_PREFERENCE.get(
+                endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE,
             )
+            if endpoint.usage_type == "Credits":
+                default_rank = _PREPAID_PROVIDER_PREFERENCE.get(endpoint.provider, default_rank)
+            sort_rank = model_preference.get(endpoint.provider, default_rank)
         return model_rank, order_rank, sort_rank, original_index
 
     return [candidate for _, candidate in sorted(with_index, key=key)]
