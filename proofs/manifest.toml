@@ -1514,37 +1514,10 @@ new = '''
     /\ HbIssued(a)
 '''
 
-# Section 4.8, hand-offs: a listed hold is the auditor's to end. The main
-# configuration lists nothing, so these run against the variant that does.
-
-[[TerminalOrder.mutants]]
-name = "close-over-a-listed-hold"
-cfg = "list"
-violates = "NoListedHoldClosedOver"
-old = '''
-    /\ drainApplied = Len(drain)
-    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
-    /\ lease' = "closed"
-'''
-new = '''
-    /\ drainApplied = Len(drain)
-    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
-    /\ lease' = "closed"
-'''
-
-[[TerminalOrder.mutants]]
-name = "a-listing-past-the-deadline"
-cfg = "list"
-violates = "NoListedHoldClosedOver"
-old = '''
-    /\ lease = "draining"
-    /\ deadlinePassed
-    /\ tickAt' = delivered
-'''
-new = '''
-    /\ lease = "draining"
-    /\ tickAt' = delivered
-'''
+# Section 4.8, hand-offs: a hold a stored hand-off named is the auditor's to
+# end, and the close waits for it, so a lease whose listed hold no terminal
+# reaches closes only because the auditor reaps it. The main configuration
+# lists nothing, so this runs against the variant that does.
 
 [[TerminalOrder.mutants]]
 name = "auditor-never-reaps-a-listed-hold"

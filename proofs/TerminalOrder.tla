@@ -47,7 +47,7 @@
 (*   and may send a refund, never a settle). A stream delivers only once    *)
 (*   permitted. A non-streaming request never heartbeats, and delivers when *)
 (*   its provider answers: the auditor learns of its hold only from its     *)
-(*   terminal, or from a forced exit's listing of it.                       *)
+(*   terminal, or from a forced exit's hand-off that names it.              *)
 (*                                                                          *)
 (* WHAT IS ABSTRACTED                                                       *)
 (*                                                                          *)
@@ -66,10 +66,13 @@
 (*     auditor applies each record once.                                    *)
 (*   - Every authorization is admitted before the model starts, and         *)
 (*     admissions are not published: the log shows a hold only through its  *)
-(*     heartbeats, a forced exit's listing of it, and its terminal.         *)
-(*   - A forced exit's hand-off is one record per hold it lists. Its chunks *)
-(*     and manifest, and how a member installs them, are AuditorCommit's:   *)
-(*     here a listing is known once the boundary covers it (Listed).        *)
+(*     heartbeats, a forced exit's hand-off, and its terminal.              *)
+(*   - A forced exit's hand-off is the auditor's step Listed(a), at the     *)
+(*     commit that stores the manifest naming the hold: the hold is known   *)
+(*     from then without a heartbeat. The hand-off's records themselves,    *)
+(*     its chunks and manifest, take no place in the owner's order here, as *)
+(*     the trace-check design's mapping has it; how a member installs them, *)
+(*     and the owner's part, are AuditorCommit's and LeaseLifecycle's.      *)
 (*   - The owner's answer to a first heartbeat is decided when the          *)
 (*     heartbeat's record is acknowledged, and accepted only before its     *)
 (*     cutoff; the gateway receives it later, or never. The model lets an   *)
@@ -154,7 +157,7 @@ CONSTANTS
     Auths,       \* the lease's authorizations
     Streams,     \* those that are streams; the rest never heartbeat
     Declared,    \* streams whose boot declared the stream-open heartbeat
-    Listable,    \* holds a forced exit may list
+    Listable,    \* holds a forced exit's hand-off may name
     MaxAppends   \* front-door appends to the drain log
 
 ASSUME /\ Streams \subseteq Auths
@@ -164,7 +167,7 @@ ASSUME /\ Streams \subseteq Auths
 
 \* The owner issues at most one terminal per authorization, and one heartbeat
 \* per stream, so at most this many records.
-MaxSeq == Cardinality(Auths) + Cardinality(Streams) + Cardinality(Listable)
+MaxSeq == Cardinality(Auths) + Cardinality(Streams)
 \* Front-door rows, plus at most one auditor reap per authorization.
 MaxRows == MaxAppends + Cardinality(Auths)
 
@@ -194,12 +197,14 @@ VARIABLES
     gwAcked,        \* terminals whose outcome a gateway may have been told
     enc,            \* the enclave: "open", "permitted", "delivered", "gone"
     allowance,      \* the first-heartbeat allowance has elapsed
-    got             \* authorizations whose client got something, never
+    got,            \* authorizations whose client got something, never
                     \* forgotten: what the claims about delivery read
+    listed          \* holds a stored hand-off named
 
 vars == << lease, ownerUp, ownerCutoff, issuedAtCutoff, deadlinePassed, outbox,
            delivered, acked, tickAt, S, drain, appends, ownerApplied,
-           drainApplied, winner, ownerWinner, gwAcked, enc, allowance, got >>
+           drainApplied, winner, ownerWinner, gwAcked, enc, allowance, got,
+           listed >>
 
 ----------------------------------------------------------------------------
 \* Helpers
@@ -219,20 +224,9 @@ HbDurable(a) ==
     /\ S # NoS
     /\ \E i \in 1..S : outbox[i].auth = a /\ outbox[i].kind = "hb"
 
-\* A forced exit's listing of the hold, which the stored boundary covers: the
-\* auditor knows the hold without a heartbeat.
-Listed(a) ==
-    /\ S # NoS
-    /\ \E i \in 1..S : outbox[i].auth = a /\ outbox[i].kind = "list"
-
-ListIssued(a) ==
-    \E i \in 1..Len(outbox) : outbox[i].auth = a /\ outbox[i].kind = "list"
-
-ListAcked(a) ==
-    \E i \in 1..acked : outbox[i].auth = a /\ outbox[i].kind = "list"
-
-\* The auditor knows the hold: a heartbeat or a listing is durable.
-Known(a) == HbDurable(a) \/ Listed(a)
+\* The auditor knows the hold: its heartbeat is durable, or a stored
+\* hand-off named it.
+Known(a) == HbDurable(a) \/ a \in listed
 
 OwnerTerms(a, n) ==
     { i \in 1..n : outbox[i].auth = a /\ outbox[i].kind \in Terminal }
@@ -282,6 +276,7 @@ Init ==
     /\ enc = [a \in Auths |-> "open"]
     /\ allowance = [a \in Auths |-> FALSE]
     /\ got = {}
+    /\ listed = {}
 
 ----------------------------------------------------------------------------
 \* The owner
@@ -298,7 +293,7 @@ OwnerHeartbeat(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, enc, allowance, got >>
+                    gwAcked, enc, allowance, got, listed >>
 
 \* A settle reaches the owner. It decides under the authorization's lock and
 \* publishes only that winner; a later terminal is answered from memory.
@@ -311,7 +306,7 @@ OwnerSettle(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 \* A refund reaches the owner: from an enclave that gave up having delivered
 \* nothing. It decides it as it decides a settle.
@@ -324,22 +319,7 @@ OwnerRefund(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, gwAcked, enc,
-                    allowance, got >>
-
-\* A forced exit lists a hold it has not decided in its hand-off: once the
-\* boundary covers the listing, the auditor knows the hold without a
-\* heartbeat (Listed), and must end it before the lease closes. A hold is
-\* listed at most once.
-OwnerList(a) ==
-    /\ OwnerActive
-    /\ a \in Listable
-    /\ ownerWinner[a] = 0
-    /\ ~ListIssued(a)
-    /\ outbox' = Append(outbox, Rec(a, "list", 0))
-    /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
-                    deadlinePassed, delivered, acked, tickAt, S, drain,
-                    appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, enc, allowance, got >>
+                    allowance, got, listed >>
 
 \* The owner's reaper. When the hold's deadline passes is not modeled, so it
 \* may reap any undecided hold.
@@ -351,7 +331,7 @@ OwnerReap(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 \* Releasing a stream's hold before its first heartbeat. Only for a boot that
 \* declared the stream-open heartbeat, and only if no heartbeat for the hold
@@ -367,7 +347,7 @@ OwnerRelease(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 \* Adoption at a renewal: the owner takes the first drain row of an undecided
 \* hold and publishes it as its own record, carrying the row's identity.
@@ -381,7 +361,7 @@ OwnerAdopt(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 OwnerCrash ==
     /\ ownerUp
@@ -389,7 +369,7 @@ OwnerCrash ==
     /\ UNCHANGED << lease, ownerCutoff, issuedAtCutoff, deadlinePassed, outbox,
                     delivered, acked, tickAt, S, drain, appends, ownerApplied,
                     drainApplied, winner, ownerWinner, gwAcked, enc, allowance,
-                    got >>
+                    got, listed >>
 
 ----------------------------------------------------------------------------
 \* The log
@@ -404,7 +384,7 @@ Deliver ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, acked, tickAt, S, drain, appends,
                     ownerApplied, drainApplied, winner, ownerWinner, gwAcked,
-                    enc, allowance, got >>
+                    enc, allowance, got, listed >>
 
 \* The owner learns a publish was stored, and answers. A publish issued
 \* before the cutoff is acked within its deadline, so before the fence
@@ -428,7 +408,7 @@ Ack ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    enc, allowance, got >>
+                    enc, allowance, got, listed >>
 
 \* A stream's gateway receives an accepted answer to its first heartbeat,
 \* which the owner gives only once that heartbeat's record is acknowledged
@@ -444,7 +424,7 @@ Answer(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, allowance, got >>
+                    gwAcked, allowance, got, listed >>
 
 ----------------------------------------------------------------------------
 \* Time
@@ -455,7 +435,8 @@ CutoffPass ==
     /\ issuedAtCutoff' = Len(outbox)
     /\ UNCHANGED << lease, ownerUp, deadlinePassed, outbox, delivered, acked,
                     tickAt, S, drain, appends, ownerApplied, drainApplied,
-                    winner, ownerWinner, gwAcked, enc, allowance, got >>
+                    winner, ownerWinner, gwAcked, enc, allowance, got, listed
+                    >>
 
 DeadlinePass ==
     /\ ownerCutoff
@@ -464,7 +445,7 @@ DeadlinePass ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff, outbox,
                     delivered, acked, tickAt, S, drain, appends, ownerApplied,
                     drainApplied, winner, ownerWinner, gwAcked, enc, allowance,
-                    got >>
+                    got, listed >>
 
 \* A3: for a declared boot the allowance elapses only once its stream-open
 \* heartbeat has reached the owner or the enclave has given up.
@@ -475,7 +456,7 @@ AllowanceElapse(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, enc, got >>
+                    gwAcked, enc, got, listed >>
 
 \* The client gets its first byte: a non-streaming request's provider
 \* answered, with no owner involved until the settle; a stream's gateway was
@@ -487,7 +468,7 @@ EnclaveDeliver(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, allowance >>
+                    gwAcked, allowance, listed >>
 
 \* The enclave gives up with nothing delivered, permitted or not: a stream's
 \* first heartbeat failed in transit, or its answer was lost, or its
@@ -498,7 +479,7 @@ EnclaveGiveUp(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, allowance, got >>
+                    gwAcked, allowance, got, listed >>
 
 ----------------------------------------------------------------------------
 \* Front doors
@@ -518,7 +499,7 @@ FrontDoorAppend(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S,
                     ownerApplied, drainApplied, winner, ownerWinner, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 ----------------------------------------------------------------------------
 \* The auditor and the rebuild
@@ -531,7 +512,7 @@ MarkDraining ==
     /\ UNCHANGED << ownerUp, ownerCutoff, issuedAtCutoff, deadlinePassed,
                     outbox, delivered, acked, tickAt, S, drain, appends,
                     ownerApplied, drainApplied, winner, ownerWinner, gwAcked,
-                    enc, allowance, got >>
+                    enc, allowance, got, listed >>
 
 \* The auditor applies the next owner record the log received before the
 \* tick. The first terminal for an authorization becomes its stored winner.
@@ -550,7 +531,7 @@ AuditorApplyOwner ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
                     appends, drainApplied, ownerWinner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 \* A tick, published once the lease drains and every owner publish has
 \* passed its deadline (A1). It is received after `delivered` records. The
@@ -574,7 +555,7 @@ PublishTick ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, S, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, enc, allowance, got >>
+                    gwAcked, enc, allowance, got, listed >>
 
 \* The auditor stores S when it applies the tick: in the commit that has
 \* booked every record up to S, and only if S is unset.
@@ -586,7 +567,7 @@ StoreS ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, drain,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, enc, allowance, got >>
+                    gwAcked, enc, allowance, got, listed >>
 
 \* A rebuild finds S unset. Its archive holds every record received before
 \* the tick (A2) and perhaps later ones. It books every record it holds and
@@ -605,7 +586,7 @@ RebuildStoreS ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, drain,
                     appends, drainApplied, ownerWinner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
 
 \* The drain log is read only after S is stored: owner records up to S come
 \* first. Rows are decided in commit order.
@@ -622,7 +603,22 @@ ApplyDrain ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
                     appends, ownerApplied, ownerWinner, gwAcked, enc,
-                    allowance, got >>
+                    allowance, got, listed >>
+
+\* The commit that stores a forced exit's manifest names the hold, which is
+\* known from then without a heartbeat: the auditor may reap it, and Close
+\* waits for it, as the store's close waits for every stored open hold. The
+\* manifest is the owner's, applied where the log has it, which the trace
+\* check's evidence places; here it may come at any time before the close.
+Listed(a) ==
+    /\ a \in Listable
+    /\ a \notin listed
+    /\ lease # "closed"
+    /\ listed' = listed \cup {a}
+    /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
+                    deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
+                    appends, ownerApplied, drainApplied, winner, ownerWinner,
+                    gwAcked, enc, allowance, got >>
 
 \* The auditor reaps a hold the log showed (a durable heartbeat or listing)
 \* that has no terminal, by inserting a reap row once its transaction finds
@@ -637,7 +633,7 @@ AuditorReap(a) ==
     /\ UNCHANGED << lease, ownerUp, ownerCutoff, issuedAtCutoff,
                     deadlinePassed, outbox, delivered, acked, tickAt, S,
                     appends, ownerApplied, drainApplied, winner, ownerWinner,
-                    gwAcked, enc, allowance, got >>
+                    gwAcked, enc, allowance, got, listed >>
 
 \* Close reads the drain log beyond what was applied, in its transaction, and
 \* needs every hold the log showed to have ended. A hold with no durable
@@ -651,14 +647,13 @@ Close ==
     /\ UNCHANGED << ownerUp, ownerCutoff, issuedAtCutoff, deadlinePassed,
                     outbox, delivered, acked, tickAt, S, drain, appends,
                     ownerApplied, drainApplied, winner, ownerWinner, gwAcked,
-                    enc, allowance, got >>
+                    enc, allowance, got, listed >>
 
 ----------------------------------------------------------------------------
 Next ==
     \/ \E a \in Auths : OwnerHeartbeat(a)
     \/ \E a \in Auths : OwnerSettle(a)
     \/ \E a \in Auths : OwnerRefund(a)
-    \/ \E a \in Auths : OwnerList(a)
     \/ \E a \in Auths : OwnerReap(a)
     \/ \E a \in Auths : OwnerRelease(a)
     \/ \E a \in Auths : OwnerAdopt(a)
@@ -678,6 +673,7 @@ Next ==
     \/ StoreS
     \/ RebuildStoreS
     \/ ApplyDrain
+    \/ \E a \in Auths : Listed(a)
     \/ \E a \in Auths : AuditorReap(a)
     \/ Close
 
@@ -711,7 +707,7 @@ TypeOK ==
     /\ Len(outbox) <= MaxSeq
     /\ \A i \in 1..Len(outbox) :
            /\ outbox[i].auth \in Auths
-           /\ outbox[i].kind \in Terminal \cup {"hb", "list"}
+           /\ outbox[i].kind \in Terminal \cup {"hb"}
            /\ outbox[i].row \in 0..MaxRows
     /\ acked \in 0..MaxSeq
     /\ delivered \in 0..MaxSeq
@@ -730,6 +726,7 @@ TypeOK ==
     /\ enc \in [Auths -> {"open", "permitted", "delivered", "gone"}]
     /\ allowance \in [Auths -> BOOLEAN]
     /\ got \subseteq Auths
+    /\ listed \subseteq Auths
 
 \* The counts follow one another. Three of these are rules of the protocol:
 \* the owner answers only once its publish is stored, the auditor books
@@ -813,14 +810,6 @@ NoStreamClosedOver ==
 NoDeliveredStreamClosedOver ==
     lease = "closed" =>
         \A a \in Streams : a \in got => winner[a] # NoWinner
-
-\* Section 4.8, hand-offs. A lease never closes over a hold a forced exit
-\* listed and was told is stored: the owner forgets the holds its hand-off
-\* acknowledged, so the auditor ends each with a terminal, its reap if
-\* nothing else. Like NoStreamClosedOver, it reads what the owner was told.
-NoListedHoldClosedOver ==
-    lease = "closed" =>
-        \A a \in Auths : ListAcked(a) => winner[a] # NoWinner
 
 \* Section 4.5. A hold with a heartbeat in the log is never released: not by
 \* a release record, and not by closing the lease over it.

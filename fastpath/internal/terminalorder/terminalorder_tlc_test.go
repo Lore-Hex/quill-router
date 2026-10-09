@@ -114,7 +114,7 @@ func TestStateCountMatchesTLC(t *testing.T) {
 }
 
 // TestWholeConfigurationsMatchTLC compares the whole state graphs of the
-// configurations proofs/ checks, 1,047,716, 8,324, 11,268 and 13,322 states,
+// configurations proofs/ checks, 1,047,716, 8,324, 5,256 and 13,322 states,
 // with the shadow's, step for step, read as they stream. TLC runs them from cfgInstances, which
 // TestStateCountMatchesTLC binds to the files. So on every configuration TLC
 // checks, the shadow is the spec: a spurious step anywhere in them would show.

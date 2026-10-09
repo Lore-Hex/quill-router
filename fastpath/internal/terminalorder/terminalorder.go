@@ -16,18 +16,17 @@ package terminalorder
 import "fmt"
 
 // Bounds of a State, so that it is a small comparable value: an
-// authorization's records are at most its terminal, its heartbeat and its
-// listing.
+// authorization's records are at most its terminal and its heartbeat.
 const (
 	MaxAuths  = 3
-	MaxOutbox = 3 * MaxAuths
+	MaxOutbox = 2 * MaxAuths
 	MaxDrain  = 8
 )
 
 // Config is the spec's constants. Auths are the model values' names, in the
 // order the tests use; Stream and Declared say which of them are streams and
 // which streams' boots declared the stream-open heartbeat, and Listable which
-// a forced exit may list.
+// a forced exit's hand-off may name.
 type Config struct {
 	Auths      []string
 	Stream     []bool
@@ -64,15 +63,11 @@ func (c Config) Validate() error {
 }
 
 // MaxSeq is the most records the owner can issue: one terminal per
-// authorization, one heartbeat per stream and one listing per hold a forced
-// exit may list.
+// authorization and one heartbeat per stream.
 func (c Config) MaxSeq() int {
 	n := len(c.Auths)
 	for a := range c.Auths {
 		if c.Stream[a] {
-			n++
-		}
-		if c.Listable[a] {
 			n++
 		}
 	}
@@ -94,11 +89,10 @@ const (
 	Reap
 	Release
 	Refund
-	List
 )
 
 var kindNames = map[int8]string{
-	Heartbeat: "hb", Settle: "settle", Reap: "reap", Release: "release", Refund: "refund", List: "list",
+	Heartbeat: "hb", Settle: "settle", Reap: "reap", Release: "release", Refund: "refund",
 }
 
 func terminal(kind int8) bool {
@@ -155,7 +149,7 @@ var NoWinner = Winner{None, 0}
 
 // State is the spec's variables. GwAckedOwner has bit i-1 set when owner
 // record i is in gwAcked, and GwAckedDrain bit j-1 for drain row j; Got[a]
-// is a's membership of got.
+// and Listed[a] are a's memberships of got and listed.
 type State struct {
 	Lease          int8
 	OwnerUp        bool
@@ -180,6 +174,7 @@ type State struct {
 	Enc            [MaxAuths]int8
 	Allowance      [MaxAuths]bool
 	Got            [MaxAuths]bool
+	Listed         [MaxAuths]bool
 }
 
 // Init is the spec's Init: every authorization admitted, nothing published.
@@ -243,20 +238,9 @@ func (c Config) HbDurable(s *State, a int8) bool {
 	return s.S != c.NoS() && s.recIn(a, Heartbeat, s.S)
 }
 
-// Listed: a forced exit's listing of a that the stored boundary covers; the
-// auditor knows the hold without a heartbeat.
-func (c Config) Listed(s *State, a int8) bool {
-	return s.S != c.NoS() && s.recIn(a, List, s.S)
-}
-
-// ListIssued: the owner has issued a listing of a.
-func (s *State) ListIssued(a int8) bool { return s.recIn(a, List, s.OutboxLen) }
-
-// ListAcked: a listing of a is among the records acked to the owner.
-func (s *State) ListAcked(a int8) bool { return s.recIn(a, List, s.Acked) }
-
-// Known: the auditor knows the hold, a heartbeat or a listing being durable.
-func (c Config) Known(s *State, a int8) bool { return c.HbDurable(s, a) || c.Listed(s, a) }
+// Known: the auditor knows the hold: its heartbeat is durable, or a stored
+// hand-off named it.
+func (c Config) Known(s *State, a int8) bool { return c.HbDurable(s, a) || s.Listed[a] }
 
 // firstOwnerTerm is Min(OwnerTerms(a, n)), or 0 when there is none. OwnerTerms
 // is a set built from all of outbox[1..n], so it has no value when n passes
@@ -333,7 +317,6 @@ func (c Config) Next(s State) []Transition {
 	each(c.OwnerHeartbeat)
 	each(c.OwnerSettle)
 	each(c.OwnerRefund)
-	each(c.OwnerList)
 	each(c.OwnerReap)
 	each(c.OwnerRelease)
 	each(c.OwnerAdopt)
@@ -355,6 +338,7 @@ func (c Config) Next(s State) []Transition {
 		out = append(out, Transition{"RebuildStoreS", to})
 	}
 	add(c.ApplyDrain(s))
+	each(c.Listed)
 	each(c.AuditorReap)
 	add(c.Close(s))
 	return out
@@ -398,16 +382,6 @@ func (c Config) OwnerRefund(s State, a int8) (string, bool, State) {
 		s.decide(Rec{a, Refund, 0})
 	}
 	return c.label("OwnerRefund", a), ok, s
-}
-
-// OwnerList: a forced exit lists a hold it has not decided in its hand-off,
-// at most once.
-func (c Config) OwnerList(s State, a int8) (string, bool, State) {
-	ok := s.OwnerActive() && c.Listable[a] && s.OwnerWinner[a] == 0 && !s.ListIssued(a)
-	if ok {
-		s.appendOutbox(Rec{a, List, 0})
-	}
-	return c.label("OwnerList", a), ok, s
 }
 
 // OwnerReap: the owner's reaper may reap any undecided hold.
@@ -620,6 +594,14 @@ func (c Config) ApplyDrain(s State) (string, bool, State) {
 	return "ApplyDrain", ok, s
 }
 
+// Listed: the commit that stores a forced exit's manifest names the hold, which
+// is known from then without a heartbeat.
+func (c Config) Listed(s State, a int8) (string, bool, State) {
+	ok := c.Listable[a] && !s.Listed[a] && s.Lease != Closed
+	s.Listed[a] = true
+	return c.label("Listed", a), ok, s
+}
+
 // AuditorReap reaps a hold the log showed, through a durable heartbeat or
 // listing, that has no terminal, by inserting a reap row once its transaction
 // finds no row of the hold's: rows of other holds may wait.
@@ -653,8 +635,7 @@ type Invariant struct {
 	Holds func(State) bool
 }
 
-// Invariants are the spec's, in its .cfg's order, NoListedHoldClosedOver
-// where TerminalOrder.list.cfg has it.
+// Invariants are the spec's, in its .cfg's order.
 func (c Config) Invariants() []Invariant {
 	return []Invariant{
 		{"TypeOK", c.TypeOK},
@@ -666,7 +647,6 @@ func (c Config) Invariants() []Invariant {
 		{"NoAckedDrainRowLost", c.NoAckedDrainRowLost},
 		{"NoStreamClosedOver", c.NoStreamClosedOver},
 		{"NoDeliveredStreamClosedOver", c.NoDeliveredStreamClosedOver},
-		{"NoListedHoldClosedOver", c.NoListedHoldClosedOver},
 		{"DurableHeartbeatNeverReleased", c.DurableHeartbeatNeverReleased},
 		{"NoLiveRequestReleased", c.NoLiveRequestReleased},
 		{"ReleasedHoldOwesNothing", c.ReleasedHoldOwesNothing},
@@ -693,7 +673,7 @@ func (c Config) TypeOK(s State) bool {
 	}
 	for i := int8(1); i <= s.OutboxLen; i++ {
 		r := s.outbox(i)
-		if !in(r.Auth, 0, n-1) || !in(r.Kind, int(Heartbeat), int(List)) || !in(r.Row, 0, maxRows) {
+		if !in(r.Auth, 0, n-1) || !in(r.Kind, int(Heartbeat), int(Refund)) || !in(r.Row, 0, maxRows) {
 			return false
 		}
 	}
@@ -837,20 +817,6 @@ func (c Config) NoDeliveredStreamClosedOver(s State) bool {
 	}
 	for a := range int8(len(c.Auths)) {
 		if c.Stream[a] && s.Got[a] && s.Winner[a] == NoWinner {
-			return false
-		}
-	}
-	return true
-}
-
-// NoListedHoldClosedOver: a lease never closes over a hold a forced exit
-// listed and was told is stored.
-func (c Config) NoListedHoldClosedOver(s State) bool {
-	if s.Lease != Closed {
-		return true
-	}
-	for a := range int8(len(c.Auths)) {
-		if s.ListAcked(a) && s.Winner[a] == NoWinner {
 			return false
 		}
 	}

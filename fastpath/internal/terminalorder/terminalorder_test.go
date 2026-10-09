@@ -264,7 +264,7 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 	}
 	r = rec(r, "lease", "ownerUp", "ownerCutoff", "issuedAtCutoff", "deadlinePassed", "outbox", "delivered",
 		"acked", "tickAt", "S", "drain", "appends", "ownerApplied", "drainApplied", "winner", "ownerWinner",
-		"gwAcked", "enc", "allowance", "got")
+		"gwAcked", "enc", "allowance", "got", "listed")
 	s.Lease = enum(r["lease"], leaseNames)
 	s.OwnerUp, s.OwnerCutoff = flag(r["ownerUp"]), flag(r["ownerCutoff"])
 	s.IssuedAtCutoff, s.DeadlinePassed = num(r["issuedAtCutoff"]), flag(r["deadlinePassed"])
@@ -304,6 +304,18 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 				fail("got holds %v twice", v)
 			}
 			s.Got[a] = true
+		}
+	}
+	listed, ok := r["listed"].(tlc.Set)
+	if !ok {
+		fail("listed is not a set: %v", r["listed"])
+	}
+	for _, v := range listed {
+		if a := auth(v); a >= 0 {
+			if s.Listed[a] {
+				fail("listed holds %v twice", v)
+			}
+			s.Listed[a] = true
 		}
 	}
 	acked, ok := r["gwAcked"].(tlc.Set)
@@ -406,9 +418,6 @@ func TestUndefinedWhereTLCHasNoValue(t *testing.T) {
 	acked.Lease, acked.Acked = Closed, 1
 	if !undefined(func() bool { return oneStream.NoStreamClosedOver(acked) }) {
 		t.Error("NoStreamClosedOver reads past the end of the outbox and answers")
-	}
-	if !undefined(func() bool { return oneStream.NoListedHoldClosedOver(acked) }) {
-		t.Error("NoListedHoldClosedOver reads past the end of the outbox and answers")
 	}
 	adopted := oneStream.Init()
 	adopted.Outbox[0] = Rec{0, Settle, 1}
