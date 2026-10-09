@@ -98,14 +98,20 @@ func (c Ceilings) Past(r Reading) []string {
 	return out
 }
 
-// Sources read what the ceilings bound. Each is read once a look; one that
-// fails fails the look.
+// Sources read what the ceilings bound. Each read is its own: one that
+// fails, or does not answer, leaves the others' readings standing.
 type Sources interface {
 	// SpannerCPU is the instance's high-priority CPU over the last window.
 	SpannerCPU(ctx context.Context) (float64, error)
-	// Backlogs are the watched subscriptions', every one of them: one
-	// missing is a failed read, not an empty backlog.
-	Backlogs(ctx context.Context) (map[string]Backlog, error)
+	// Subscriptions are the subscriptions watched, every one of which must
+	// be read: one with nothing to read is a failed read, not an empty
+	// backlog.
+	Subscriptions() []string
+	// Undelivered is a subscription's messages not yet delivered.
+	Undelivered(ctx context.Context, sub string) (int64, error)
+	// OldestAge is the age of a subscription's oldest message not
+	// acknowledged.
+	OldestAge(ctx context.Context, sub string) (time.Duration, error)
 	// Pending are the packs whose work is not done, each by a name of its
 	// own, as of the read.
 	Pending(ctx context.Context) ([]string, error)
@@ -175,94 +181,79 @@ func New(ctx context.Context, cfg Config) (*Watcher, error) {
 	return &Watcher{cfg: cfg, start: start, firstSaw: map[string]time.Time{}}, nil
 }
 
-// Look reads once, its four reads at once, each within Timeout, so a look
-// takes at most Timeout. It reports why the stage must stop, if it must: the
-// ceilings past by any read that succeeded, whatever the others did; else,
-// once Misses looks in a row have had a read fail, that it cannot see. A
-// read that fails leaves its part of the reading at zero, which is past no
-// ceiling.
+// Look reads once, every read at once, each within Timeout, so a look takes
+// at most Timeout: Spanner's CPU, each subscription's undelivered messages
+// and oldest message's age, the pending work and the bookings. It reports
+// why the stage must stop, if it must: the ceilings past by any read that
+// answered, whatever the others did; else, once Misses looks in a row have
+// had a read fail, that it cannot see. A read that fails leaves its part of
+// the reading at zero, which is past no ceiling.
 func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
-	// Each read's result is its own, sent once it ends; one that ends after
-	// its timeout is never taken, so nothing it does reaches the reading.
-	type result struct {
-		cpu      float64
-		backlogs map[string]Backlog
-		pending  []string
-		booked   int64
-		err      error
+	// A read answers with what it does to the reading, applied here once it
+	// has answered in time; one that answers after its timeout is never
+	// taken, so nothing it does reaches the reading.
+	type read struct {
+		what string
+		run  func(context.Context) (func(*Reading), error)
 	}
-	reads := []func(context.Context) result{
-		func(ctx context.Context) result {
-			v, err := w.cfg.Sources.SpannerCPU(ctx)
-			return result{cpu: v, err: err}
-		},
-		func(ctx context.Context) result {
-			v, err := w.cfg.Sources.Backlogs(ctx)
-			return result{backlogs: v, err: err}
-		},
-		func(ctx context.Context) result {
-			v, err := w.cfg.Sources.Pending(ctx)
-			return result{pending: v, err: err}
-		},
-		func(ctx context.Context) result {
-			v, err := w.cfg.Sources.Booked(ctx)
-			return result{booked: v, err: err}
-		},
+	reads := []read{{"Spanner's CPU", func(ctx context.Context) (func(*Reading), error) {
+		v, err := w.cfg.Sources.SpannerCPU(ctx)
+		return func(r *Reading) { r.SpannerCPU = v }, err
+	}}}
+	for _, sub := range w.cfg.Sources.Subscriptions() {
+		reads = append(reads, read{sub + "'s undelivered messages", func(ctx context.Context) (func(*Reading), error) {
+			v, err := w.cfg.Sources.Undelivered(ctx, sub)
+			return func(r *Reading) { b := r.Backlogs[sub]; b.Undelivered = v; r.Backlogs[sub] = b }, err
+		}}, read{sub + "'s oldest message", func(ctx context.Context) (func(*Reading), error) {
+			v, err := w.cfg.Sources.OldestAge(ctx, sub)
+			return func(r *Reading) { b := r.Backlogs[sub]; b.OldestAge = v; r.Backlogs[sub] = b }, err
+		}})
 	}
-	results := make([]result, len(reads))
+	reads = append(reads, read{"the pending work", func(ctx context.Context) (func(*Reading), error) {
+		pending, err := w.cfg.Sources.Pending(ctx)
+		return func(r *Reading) { r.PendingOverdue = w.overdue(pending) }, err
+	}}, read{"what is booked", func(ctx context.Context) (func(*Reading), error) {
+		booked, err := w.cfg.Sources.Booked(ctx)
+		return func(r *Reading) { r.Spend = booked - w.start }, err
+	}})
+	type answer struct {
+		apply func(*Reading)
+		err   error
+	}
+	answers := make([]answer, len(reads))
 	var wg sync.WaitGroup
-	for i, read := range reads {
+	for i, rd := range reads {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			rctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 			defer cancel()
-			done := make(chan result, 1)
-			go func() { done <- read(rctx) }()
+			done := make(chan answer, 1)
+			go func() {
+				apply, err := rd.run(rctx)
+				done <- answer{apply, err}
+			}()
 			select {
-			case results[i] = <-done:
+			case answers[i] = <-done:
 			case <-rctx.Done():
 				// An answer that came as the time ran out is taken.
 				select {
-				case results[i] = <-done:
+				case answers[i] = <-done:
 				default:
-					results[i] = result{err: fmt.Errorf("no answer within %v", w.cfg.Timeout)}
+					answers[i] = answer{err: fmt.Errorf("no answer within %v", w.cfg.Timeout)}
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	var r Reading
+	r := Reading{Backlogs: map[string]Backlog{}}
 	var failed []string
-	for i, what := range []string{"Spanner's CPU", "the backlogs", "the pending work", "what is booked"} {
-		if results[i].err != nil {
-			failed = append(failed, fmt.Sprintf("%s: %v", what, results[i].err))
+	for i, a := range answers {
+		if a.err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", reads[i].what, a.err))
+			continue
 		}
-	}
-	if results[0].err == nil {
-		r.SpannerCPU = results[0].cpu
-	}
-	if results[1].err == nil {
-		r.Backlogs = results[1].backlogs
-	}
-	if results[2].err == nil {
-		pending := results[2].pending
-		now := w.cfg.Clock()
-		seen := make(map[string]time.Time, len(pending))
-		for _, p := range pending {
-			first, ok := w.firstSaw[p]
-			if !ok {
-				first = now
-			}
-			seen[p] = first
-			if now.Sub(first) > w.cfg.Ceilings.Overdue {
-				r.PendingOverdue++
-			}
-		}
-		w.firstSaw = seen
-	}
-	if results[3].err == nil {
-		r.Spend = results[3].booked - w.start
+		a.apply(&r)
 	}
 	if past := w.cfg.Ceilings.Past(r); len(past) > 0 {
 		return r, past
@@ -276,6 +267,26 @@ func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
 	}
 	w.misses = 0
 	return r, nil
+}
+
+// overdue counts the packs pending longer than the ceiling allows, by when
+// each was first seen pending, and forgets those no longer pending.
+func (w *Watcher) overdue(pending []string) int {
+	now := w.cfg.Clock()
+	seen := make(map[string]time.Time, len(pending))
+	n := 0
+	for _, p := range pending {
+		first, ok := w.firstSaw[p]
+		if !ok {
+			first = now
+		}
+		seen[p] = first
+		if now.Sub(first) > w.cfg.Ceilings.Overdue {
+			n++
+		}
+	}
+	w.firstSaw = seen
+	return n
 }
 
 // Watch looks every interval until ctx ends, and once a look says the stage

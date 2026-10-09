@@ -35,15 +35,23 @@ that has stopped reporting is not taken to be as it was.
 
 ## How soon it stops
 
-- A ceiling passed in Spanner's CPU or a backlog: once Monitoring shows it,
-  up to four minutes after it happened, within `-every` and a look, about
-  five minutes at the defaults.
-- Pending work or spend, read from the database: within `-every` and a
-  look, a minute at the defaults; pending work counts as overdue once seen
-  pending across looks for longer than `-overdue`.
-- A source that stops answering: `-misses` looks after, at most
-  `-misses` times `-every` plus `-timeout`, three minutes at the defaults;
-  Monitoring's series stopping takes `-fresh` more before its reads fail.
+A look takes at most `-timeout`. Looks start every `-every`, or at once
+after a look that took longer, so they start at most the larger of the two
+apart: one interval, 30 seconds at the defaults. From what the watch sees
+to its decision:
+
+- A ceiling passed in the pending work or the spend, read from the
+  database: within an interval and a look, a minute at the defaults.
+- A ceiling passed in Spanner's CPU or a backlog: within the same once
+  Monitoring shows it, which can be four minutes after it happened.
+- A source that stops answering: within `-misses` intervals and a look,
+  two minutes at the defaults. Monitoring's series stopping takes
+  `-fresh` more, four minutes, before its reads fail.
+
+Then the stop: the load generator is told at once and stops sending, and
+has `-stop-wait`, a minute, to exit; the workspace is turned off after,
+its write given 30 seconds. So the workspace is off at most a minute and a
+half after the decision, its leases revoked with it.
 
 ## Running it
 

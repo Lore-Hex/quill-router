@@ -23,13 +23,13 @@ import (
 // fails, as of a source that has stopped reporting, not a reading that
 // stays as it was.
 type Monitoring struct {
-	Client        *monitoring.MetricClient
-	Project       string
-	Instance      string
-	Subscriptions []string
-	Window        time.Duration
-	Fresh         time.Duration
-	Clock         func() time.Time
+	Client   *monitoring.MetricClient
+	Project  string
+	Instance string
+	Subs     []string
+	Window   time.Duration
+	Fresh    time.Duration
+	Clock    func() time.Time
 }
 
 // align is how Monitoring's points are aligned: a minute, their sampling.
@@ -43,27 +43,26 @@ func (m Monitoring) SpannerCPU(ctx context.Context) (float64, error) {
 		m.Instance))
 }
 
-// Backlogs are each subscription's undelivered messages and oldest
-// unacknowledged message's age; a subscription Monitoring reports nothing
-// for fails the read.
-func (m Monitoring) Backlogs(ctx context.Context) (map[string]Backlog, error) {
-	out := make(map[string]Backlog, len(m.Subscriptions))
-	for _, sub := range m.Subscriptions {
-		of := func(metric string) string {
-			return fmt.Sprintf(`resource.type = "pubsub_subscription" AND resource.labels.subscription_id = %q AND `+
-				`metric.type = "pubsub.googleapis.com/subscription/%s"`, sub, metric)
-		}
-		undelivered, err := m.highest(ctx, of("num_undelivered_messages"))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", sub, err)
-		}
-		age, err := m.highest(ctx, of("oldest_unacked_message_age"))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", sub, err)
-		}
-		out[sub] = Backlog{Undelivered: int64(undelivered), OldestAge: time.Duration(age * float64(time.Second))}
-	}
-	return out, nil
+// Subscriptions are the subscriptions watched.
+func (m Monitoring) Subscriptions() []string { return m.Subs }
+
+// Undelivered is a subscription's messages not yet delivered, at their
+// highest over the window.
+func (m Monitoring) Undelivered(ctx context.Context, sub string) (int64, error) {
+	v, err := m.highest(ctx, subscriptionFilter(sub, "num_undelivered_messages"))
+	return int64(v), err
+}
+
+// OldestAge is the age of a subscription's oldest unacknowledged message,
+// at its highest over the window.
+func (m Monitoring) OldestAge(ctx context.Context, sub string) (time.Duration, error) {
+	v, err := m.highest(ctx, subscriptionFilter(sub, "oldest_unacked_message_age"))
+	return time.Duration(v * float64(time.Second)), err
+}
+
+func subscriptionFilter(sub, metric string) string {
+	return fmt.Sprintf(`resource.type = "pubsub_subscription" AND resource.labels.subscription_id = %q AND `+
+		`metric.type = "pubsub.googleapis.com/subscription/%s"`, sub, metric)
 }
 
 // highest is the highest value of the series the filter names over the
@@ -123,11 +122,12 @@ func (m Monitoring) highest(ctx context.Context, filter string) (float64, error)
 // Store reads the pending work and what the stage's workspace has booked
 // from the service's store. Limit bounds the pending packs one read takes:
 // more than that fails the read, so the watch stops a stage whose pending
-// work it cannot count.
+// work it cannot count. The packs are read Page at a time, 1000 if unset.
 type Store struct {
 	Store     *store.Store
 	Workspace string
 	Limit     int
+	Page      int
 }
 
 // Pending names every pack whose work is not done, by its lease and
@@ -135,7 +135,11 @@ type Store struct {
 func (s Store) Pending(ctx context.Context) ([]string, error) {
 	var out []string
 	var after store.PendingPack
-	page := min(1000, s.Limit+1)
+	page := s.Page
+	if page <= 0 {
+		page = 1000
+	}
+	page = min(page, s.Limit+1)
 	for {
 		packs, err := s.Store.PendingPacks(ctx, after, page)
 		if err != nil {

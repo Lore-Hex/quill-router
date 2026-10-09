@@ -83,7 +83,7 @@ var production = deps{
 		}
 		src := watch.Production{
 			Monitoring: watch.Monitoring{Client: metrics, Project: t.project, Instance: t.instance,
-				Subscriptions: t.subscriptions, Window: t.window, Fresh: t.fresh, Clock: time.Now},
+				Subs: t.subscriptions, Window: t.window, Fresh: t.fresh, Clock: time.Now},
 			Store: watch.Store{Store: s, Workspace: t.workspace, Limit: t.limit},
 		}
 		return src, s, func() { _ = metrics.Close(); client.Close() }, nil
@@ -151,6 +151,10 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	w, err := watch.New(ctx, watch.Config{Ceilings: c, Sources: src, Every: *every, Timeout: *timeout, Misses: *misses,
 		Clock: d.clock})
 	if err != nil {
+		if ctx.Err() != nil {
+			// Stopped as it began: it has stopped nothing.
+			return 0, nil
+		}
 		return 1, err
 	}
 	why := w.Watch(ctx, func([]string) {})

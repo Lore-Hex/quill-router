@@ -104,6 +104,20 @@ func TestTheStoreReadsPendingWorkAndBookings(t *testing.T) {
 	if _, err := src.Pending(ctx); err == nil {
 		t.Fatal("more pending packs than the limit were read")
 	}
+	// A page at a time: every pack across the pages, and the limit across
+	// them too.
+	src = Store{Store: s, Workspace: ws, Limit: 10, Page: 1}
+	if pending, err = src.Pending(ctx); err != nil || len(pending) != len(want) {
+		t.Fatalf("the pending packs a page of one at a time: %v %v", pending, err)
+	}
+	slices.Sort(pending)
+	if !slices.Equal(pending, want) {
+		t.Fatalf("the pending packs a page of one at a time: %v, want %v", pending, want)
+	}
+	src.Limit = 1
+	if _, err := src.Pending(ctx); err == nil {
+		t.Fatal("more pending packs than the limit were read, a page at a time")
+	}
 	if booked, err := src.Booked(ctx); err != nil || booked != 42 {
 		t.Fatalf("the workspace's bookings: %d %v", booked, err)
 	}

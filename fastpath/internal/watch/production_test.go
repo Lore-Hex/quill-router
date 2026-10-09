@@ -68,7 +68,7 @@ func served(t *testing.T, m *metrics, subs ...string) Monitoring {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	return Monitoring{Client: client, Project: "proj", Instance: "trusted-router-nam6", Subscriptions: subs,
+	return Monitoring{Client: client, Project: "proj", Instance: "trusted-router-nam6", Subs: subs,
 		Window: 5 * time.Minute, Fresh: 4 * time.Minute, Clock: func() time.Time { return start }}
 }
 
@@ -105,29 +105,31 @@ func TestMonitoringReadsAsTheAlarmDoes(t *testing.T) {
 }
 
 // TestMonitoringReadsEachBacklog: each subscription's undelivered messages
-// and oldest message's age, at their highest; a subscription with no
-// series, or a metric with none, fails the read, as does Spanner's CPU
-// with none.
+// and oldest message's age, at their highest; a metric with no series
+// fails its read, as does Spanner's CPU with none.
 func TestMonitoringReadsEachBacklog(t *testing.T) {
 	m := &metrics{points: map[string][]*monitoringpb.TypedValue{
 		subFilter("auditor", "num_undelivered_messages"):   {integer(3), integer(7)},
 		subFilter("auditor", "oldest_unacked_message_age"): {integer(12)},
-		subFilter("stager", "num_undelivered_messages"):    {integer(0)},
-		subFilter("stager", "oldest_unacked_message_age"):  {integer(0)},
 	}}
-	got, err := served(t, m, "auditor", "stager").Backlogs(context.Background())
-	if err != nil || got["auditor"] != (Backlog{7, 12 * time.Second}) || got["stager"] != (Backlog{}) || len(got) != 2 {
-		t.Fatalf("the backlogs: %v %v", got, err)
+	src := served(t, m, "auditor", "archive")
+	ctx := context.Background()
+	if subs := src.Subscriptions(); len(subs) != 2 || subs[0] != "auditor" || subs[1] != "archive" {
+		t.Fatalf("the subscriptions: %v", subs)
 	}
-	if _, err := served(t, m, "auditor", "archive").Backlogs(context.Background()); err == nil ||
-		!strings.Contains(err.Error(), "archive") {
+	if n, err := src.Undelivered(ctx, "auditor"); err != nil || n != 7 {
+		t.Fatalf("the auditor's undelivered: %v %v", n, err)
+	}
+	if age, err := src.OldestAge(ctx, "auditor"); err != nil || age != 12*time.Second {
+		t.Fatalf("the auditor's oldest: %v %v", age, err)
+	}
+	if _, err := src.Undelivered(ctx, "archive"); err == nil || !strings.Contains(err.Error(), "archive") {
 		t.Fatalf("a subscription with no series: %v", err)
 	}
-	delete(m.points, subFilter("stager", "oldest_unacked_message_age"))
-	if _, err := served(t, m, "stager").Backlogs(context.Background()); err == nil {
+	if _, err := src.OldestAge(ctx, "archive"); err == nil {
 		t.Fatal("a subscription with no age series is read")
 	}
-	if _, err := served(t, &metrics{}).SpannerCPU(context.Background()); err == nil {
+	if _, err := served(t, &metrics{}).SpannerCPU(ctx); err == nil {
 		t.Fatal("Spanner's CPU with no series is read")
 	}
 }

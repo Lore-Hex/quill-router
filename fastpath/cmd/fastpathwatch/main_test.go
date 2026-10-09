@@ -54,12 +54,12 @@ func TestMain(m *testing.M) {
 // sources are fixed readings.
 type sources struct{ cpu float64 }
 
-func (s sources) SpannerCPU(context.Context) (float64, error) { return s.cpu, nil }
-func (s sources) Backlogs(context.Context) (map[string]watch.Backlog, error) {
-	return map[string]watch.Backlog{"auditor": {}}, nil
-}
-func (s sources) Pending(context.Context) ([]string, error) { return nil, nil }
-func (s sources) Booked(context.Context) (int64, error)     { return 0, nil }
+func (s sources) SpannerCPU(context.Context) (float64, error)              { return s.cpu, nil }
+func (s sources) Subscriptions() []string                                  { return []string{"auditor"} }
+func (s sources) Undelivered(context.Context, string) (int64, error)       { return 0, nil }
+func (s sources) OldestAge(context.Context, string) (time.Duration, error) { return 0, nil }
+func (s sources) Pending(context.Context) ([]string, error)                { return nil, nil }
+func (s sources) Booked(context.Context) (int64, error)                    { return 0, nil }
 
 var flags = []string{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "auditor",
 	"-max-cpu", "0.35", "-every", "10ms", "-stop-wait", "5s"}
@@ -93,10 +93,11 @@ func stage(t *testing.T, src watch.Sources) (string, store.LeaseRef, deps) {
 	return ws, store.LeaseRef{Workspace: ws, LeaseID: req.LeaseID}, d
 }
 
-// load is a process standing for the load generator, reaped as it exits.
+// load is a process standing for the load generator, which takes a second
+// to exit once told to stop, as a run ending does, reaped as it exits.
 func load(t *testing.T) (*exec.Cmd, chan struct{}) {
 	t.Helper()
-	cmd := exec.Command("sleep", "60")
+	cmd := exec.Command("sh", "-c", `trap 'sleep 1; exit 0' TERM; while :; do sleep 0.1; done`)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -118,12 +119,23 @@ func load(t *testing.T) (*exec.Cmd, chan struct{}) {
 func TestAStagePastACeilingIsStopped(t *testing.T) {
 	ws, ref, d := stage(t, sources{cpu: 0.5})
 	cmd, exited := load(t)
-	term := d.term
+	term, alive := d.term, d.alive
 	d.term = func(pid int) error {
 		if !enabled(t, ws) {
 			t.Error("the workspace was turned off before the load generator was told to stop")
 		}
 		return term(pid)
+	}
+	waited := 0
+	d.alive = func(pid int) bool {
+		a := alive(pid)
+		if a {
+			waited++
+			if !enabled(t, ws) {
+				t.Error("the workspace was turned off while the load generator still ran")
+			}
+		}
+		return a
 	}
 	var out bytes.Buffer
 	code, err := run(context.Background(), append(flags, "-workspace", ws, "-stop-pid", fmt.Sprint(cmd.Process.Pid)),
@@ -146,6 +158,9 @@ func TestAStagePastACeilingIsStopped(t *testing.T) {
 	}
 	if enabled(t, ws) {
 		t.Fatal("the workspace is still enabled after the stop")
+	}
+	if waited == 0 {
+		t.Fatal("the load generator was never waited for as it exited")
 	}
 	s, _ := store.New(shared, service.Defaults().Store)
 	if l, _, err := s.ReadLease(context.Background(), ref); err != nil || !l.Revoked {
@@ -260,5 +275,33 @@ func TestTheWorkspaceIsTurnedOffThoughTheWatchIsStopping(t *testing.T) {
 		if enabled(t, ws) {
 			t.Fatalf("SIGTERM failing %v: the workspace is still enabled", failTerm)
 		}
+	}
+}
+
+// cancelling are readings whose first read of the bookings is the moment
+// the watch is itself stopped.
+type cancelling struct {
+	sources
+	cancel func()
+}
+
+func (c cancelling) Booked(ctx context.Context) (int64, error) {
+	c.cancel()
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+// TestAWatchStoppedAsItBeginsExitsZero: stopped while it reads what the
+// stage has booked, as it begins, the watch exits 0, having stopped
+// nothing, as the runbook says.
+func TestAWatchStoppedAsItBeginsExitsZero(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ws, _, d := stage(t, cancelling{sources{cpu: 0.5}, cancel})
+	code, err := run(ctx, append(slices.Clone(flags), "-workspace", ws), &bytes.Buffer{}, d)
+	if code != 0 || err != nil {
+		t.Fatalf("exit %d, %v", code, err)
+	}
+	if !enabled(t, ws) {
+		t.Fatal("the workspace was turned off")
 	}
 }

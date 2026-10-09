@@ -21,27 +21,42 @@ type fake struct {
 	backlogs map[string]Backlog
 	pending  []string
 	booked   int64
+	mu       sync.Mutex // guards fail, hang and during, which a test may change as a watch runs
 	fail     map[string]bool
 	hang     map[string]bool
 	during   func()
 }
 
 func (f *fake) err(what string) error {
-	if f.during != nil {
-		f.during()
+	f.mu.Lock()
+	during, hang, fail := f.during, f.hang[what], f.fail[what]
+	f.mu.Unlock()
+	if during != nil {
+		during()
 	}
-	if f.hang[what] {
+	if hang {
 		select {} // a read that never answers
 	}
-	if f.fail[what] {
+	if fail {
 		return errors.New(what + " failed")
 	}
 	return nil
 }
 
 func (f *fake) SpannerCPU(context.Context) (float64, error) { return f.cpu, f.err("cpu") }
-func (f *fake) Backlogs(context.Context) (map[string]Backlog, error) {
-	return f.backlogs, f.err("backlogs")
+func (f *fake) Subscriptions() []string {
+	subs := make([]string, 0, len(f.backlogs))
+	for sub := range f.backlogs {
+		subs = append(subs, sub)
+	}
+	slices.Sort(subs)
+	return subs
+}
+func (f *fake) Undelivered(_ context.Context, sub string) (int64, error) {
+	return f.backlogs[sub].Undelivered, f.err("undelivered:" + sub)
+}
+func (f *fake) OldestAge(_ context.Context, sub string) (time.Duration, error) {
+	return f.backlogs[sub].OldestAge, f.err("oldest:" + sub)
 }
 func (f *fake) Pending(context.Context) ([]string, error) { return f.pending, f.err("pending") }
 func (f *fake) Booked(context.Context) (int64, error)     { return f.booked, f.err("booked") }
@@ -144,8 +159,8 @@ func TestSpendIsFromTheStagesStart(t *testing.T) {
 // of them fail in a row, whichever read fails; one that succeeds starts the
 // count again.
 func TestAWatchThatCannotSeeStops(t *testing.T) {
-	for _, what := range []string{"cpu", "backlogs", "pending", "booked"} {
-		f, c := &fake{}, &clock{now: start}
+	for _, what := range []string{"cpu", "undelivered:auditor", "oldest:auditor", "pending", "booked"} {
+		f, c := &fake{backlogs: map[string]Backlog{"auditor": {}}}, &clock{now: start}
 		w := watcher(t, f, c, 3)
 		f.fail = map[string]bool{what: true}
 		for i := 1; i <= 2; i++ {
@@ -249,5 +264,52 @@ func TestAWatchStoppedDuringALookStopsNothing(t *testing.T) {
 	f.hang = map[string]bool{"cpu": true}
 	if why := w.Watch(ctx, func(why []string) { t.Errorf("stopped: %v", why) }); why != nil {
 		t.Fatalf("a watch stopped during a look: %v", why)
+	}
+}
+
+// TestABacklogBreachStopsThoughAnotherSubscriptionFails: one subscription's
+// undelivered messages past their ceiling stop the stage at once, though
+// another subscription's reads fail, or this one's age cannot be read.
+func TestABacklogBreachStopsThoughAnotherSubscriptionFails(t *testing.T) {
+	for _, failing := range []string{"undelivered:archive", "oldest:archive", "oldest:auditor"} {
+		f := &fake{backlogs: map[string]Backlog{"auditor": {Undelivered: 1001}, "archive": {}}}
+		w := watcher(t, f, &clock{now: start}, 3)
+		f.fail = map[string]bool{failing: true}
+		if _, why := w.Look(context.Background()); len(why) != 1 || !strings.Contains(why[0], "auditor has 1001") {
+			t.Errorf("%s failing: %v", failing, why)
+		}
+	}
+}
+
+// TestAWatchThatCannotSeeStopsWithinItsBound: once every read stops
+// answering, each taking its whole timeout, the watch decides to stop within
+// misses times the larger of the interval and the timeout, plus a timeout,
+// as the runbook states, with the interval shorter than the timeout.
+func TestAWatchThatCannotSeeStopsWithinItsBound(t *testing.T) {
+	f := &fake{backlogs: map[string]Backlog{"auditor": {}}}
+	every, timeout, misses := 10*time.Millisecond, 60*time.Millisecond, 3
+	w, err := New(context.Background(), Config{Ceilings: ceilings, Sources: f, Every: every, Timeout: timeout,
+		Misses: misses, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stoppedAt time.Time
+	var failedAt time.Time
+	done := make(chan []string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { done <- w.Watch(ctx, func([]string) { stoppedAt = time.Now() }) }()
+	time.Sleep(5 * every)
+	failedAt = time.Now()
+	f.mu.Lock()
+	f.hang = map[string]bool{"cpu": true, "undelivered:auditor": true, "oldest:auditor": true, "pending": true,
+		"booked": true}
+	f.mu.Unlock()
+	if why := <-done; len(why) != 1 {
+		t.Fatalf("the watch returned %v", why)
+	}
+	bound := time.Duration(misses)*max(every, timeout) + timeout
+	if took := stoppedAt.Sub(failedAt); took > bound+300*time.Millisecond {
+		t.Fatalf("decided to stop %v after the reads stopped answering, past its bound of %v", took, bound)
 	}
 }
