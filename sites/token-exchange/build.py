@@ -146,6 +146,8 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
+    # Public request-only page. Never copy the confidential provider PDF or slides.
+    shutil.copyfile(HERE / "providers.html", output / "providers.html")
     for art in sorted((HERE / "art").glob("*.webp")):
         shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"
@@ -169,8 +171,12 @@ def build(output: Path) -> None:
         (folder / "robots.txt").write_text(
             f"User-agent: *\nAllow: /\nSitemap: https://{market['domain']}/sitemap.xml\n"
         )
+        provider_page = (
+            '<url><loc>https://nytokenexchange.com/providers.html</loc></url>'
+            if market["slug"] == "new-york" else ""
+        )
         (folder / "sitemap.xml").write_text(
-            f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{market["domain"]}/</loc></url></urlset>'
+            f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{market["domain"]}/</loc></url>{provider_page}</urlset>'
         )
     print(
         f"Built {len(markets)} markets / {sum(1 + len(m['aliases']) for m in markets)} domains into {output}"
