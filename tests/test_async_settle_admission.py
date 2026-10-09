@@ -180,7 +180,7 @@ def test_admission_read_budget_and_bounded_sum():
     assert "workspace_id=@ws AND status IN ('pending', 'dead') LIMIT 1001" in sql
     assert 'FORCE_INDEX=tr_settle_outbox_workspace_status' in sql
     assert "leased_until" not in sql
-    assert kwargs['timeout'] == 0.2 and kwargs['retry'] is None
+    assert kwargs['timeout'] == 0.5 and kwargs['retry'] is None
     assert kwargs['params'] == {'ws': 'ws'}
     assert sql == admission_statement('ws')[0]
 

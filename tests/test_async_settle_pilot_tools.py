@@ -185,8 +185,8 @@ def fleet_fields(tmp_path, serving):
     pre = pilot.fleet_budgets_pre(pre_enable_bundle(tmp_path, serving))
     return dict(pre_enable=artifact(tmp_path, 'pre-enable.json', dict(pre, completed_at_us=1)), workspace_count=1, router_instance_ids=[r['instance'] for r in serving if r['role'] == 'router'],
         freshness_maxima_seconds=dict(publisher_period=2, publisher_jitter=.25, publication=.5,
-            poll_period=1, poll_jitter=.25, install=.2, skew=.25,
-            workspace_period=4, workspace_jitter=.25, workspace_install=.2),
+            poll_period=1, poll_jitter=.25, install=.5, skew=.25,
+            workspace_period=4, workspace_jitter=.25, workspace_install=.5),
         approved_fleet_reads_per_second=2, maximum_router_instances=1, maximum_router_instances_by_region={'us-central1': 1},
         regional_budgets={'us-central1': dict(reads_per_second=2, pending_rows_per_second=300)},
         headroom=artifact(tmp_path, 'headroom.json', {'measured_cpu': 20}))
@@ -202,7 +202,7 @@ def test_fleet_counter_rates_freshness_and_roster(tmp_path):
     data = fleet_bundle(tmp_path)
     result = pilot.fleet_budgets(data)
     assert result['status'] == 'PASS' and result['fleet_reads_per_second'] == 1.25
-    data['freshness_maxima_seconds']['install'] = .3
+    data['freshness_maxima_seconds']['install'] = .55
     assert pilot.fleet_budgets(data)['status'] == 'BLOCKED'
     data = fleet_bundle(tmp_path)
     data['rows'][0]['body']['admission_observer']['prediction_unknown'] = 1
@@ -210,6 +210,14 @@ def test_fleet_counter_rates_freshness_and_roster(tmp_path):
     data = fleet_bundle(tmp_path)
     data['router_instance_ids'].append('missing')
     assert pilot.fleet_budgets(data)['status'] == 'BLOCKED'
+
+
+@pytest.mark.parametrize('field', ['install', 'workspace_install'])
+@pytest.mark.parametrize('seconds,status', [(.5, 'PASS'), (.55, 'BLOCKED')])
+def test_fleet_install_deadline_boundary(tmp_path, field, seconds, status):
+    data = fleet_bundle(tmp_path)
+    data['freshness_maxima_seconds'][field] = seconds
+    assert pilot.fleet_budgets(data)['status'] == status
 
 
 def test_pre_flip_seven_days_artifacts_and_chosen_settings(tmp_path):
@@ -447,6 +455,15 @@ def test_pre_enable_passes_without_observer_or_opt_in(tmp_path, monkeypatch, cap
     assert json.loads(capsys.readouterr().out)['mode'] == 'pre-enable'
 
 
+@pytest.mark.parametrize('seconds,status', [(.45, 'PASS'), (.5, 'PASS'), (.55, 'BLOCKED')])
+def test_pre_enable_health_deadline_boundary(tmp_path, seconds, status):
+    data = pre_enable_bundle(tmp_path)
+    value = json.loads(Path(data['read_health']['path']).read_text())
+    value['regions']['us-central1'] = [seconds]
+    data['read_health'] = artifact(tmp_path, 'read-health.json', value)
+    assert pilot.fleet_budgets_pre(data)['status'] == status
+
+
 @pytest.mark.parametrize('damage', ['opted_in', 'descriptor_pins', 'missing_region', 'instance', 'cpu', 'reads', 'rows', 'latency', 'interval', 'workspace_count', 'hash'])
 def test_pre_enable_blocks_unbounded_or_unapproved_measurement(tmp_path, damage):
     data = pre_enable_bundle(tmp_path)
@@ -470,7 +487,7 @@ def test_pre_enable_blocks_unbounded_or_unapproved_measurement(tmp_path, damage)
         elif damage == 'interval':
             value['flushed_at_us'] += 1
         elif damage == 'latency':
-            value['regions']['us-central1'] = [.201]
+            value['regions']['us-central1'] = [.55]
         else:
             field = {'cpu': 'cpu_peak_percent', 'reads': 'read_headroom_per_second', 'rows': 'pending_row_headroom_per_second'}[damage]
             value['regions']['us-central1'][field] = 44 if damage == 'cpu' else 0

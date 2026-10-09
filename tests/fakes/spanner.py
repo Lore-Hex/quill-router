@@ -552,7 +552,7 @@ class _FakeTransaction:
         **rpc_options: Any,
     ) -> list[list[str]]:
         if rpc_options:
-            assert 0 < rpc_options["timeout"] <= 0.2
+            assert 0 < rpc_options["timeout"] <= 0.5
             assert rpc_options["retry"] is None
             assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self.db.transaction_execute_sql_calls += 1
@@ -2291,7 +2291,7 @@ class _FakeSnapshot:
         **rpc_options: Any,
     ) -> list[list[str]]:
         if rpc_options:
-            assert 0 < rpc_options["timeout"] <= 0.2
+            assert 0 < rpc_options["timeout"] <= 0.5
             assert rpc_options["retry"] is None
             assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self._reads += 1
