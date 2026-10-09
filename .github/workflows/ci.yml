@@ -148,7 +148,10 @@ jobs:
       TR_CONFORMANCE_SPANNER_PG_DSN: postgresql://localhost:5434/tr-conformance
     services:
       postgres:
-        image: postgres:17
+        # Same Docker Official Image as postgres:17, verified 2026-10-09.
+        # ECR avoids Docker Hub's shared-runner anonymous pull limit. Pin the
+        # multi-architecture index so changing registries cannot change bytes.
+        image: public.ecr.aws/docker/library/postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
         env:
           POSTGRES_PASSWORD: tr
         ports:
