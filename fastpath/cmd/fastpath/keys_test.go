@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/api/option"
 	secretmanager "google.golang.org/api/secretmanager/v1"
@@ -175,7 +177,8 @@ func logged(t *testing.T, read func()) string {
 func TestTheEnvironmentsThatPrintSecrets(t *testing.T) {
 	env := func(vars map[string]string) func(string) string { return func(k string) string { return vars[k] } }
 	for _, vars := range []map[string]string{{sdkLogging: "debug"}, {sdkLogging: "info"},
-		{"GODEBUG": "http2debug=1"}, {"GODEBUG": "http2debug=2"}, {"GODEBUG": "netdns=go, http2debug=2"}} {
+		{"GODEBUG": "http2debug=1"}, {"GODEBUG": "http2debug=2"}, {"GODEBUG": "netdns=go, http2debug=2"},
+		{"GODEBUG": "disabled_http2debug=2"}, {"GODEBUG": "http2debug=10"}} {
 		if printsSecrets(env(vars)) == "" {
 			t.Errorf("%v is taken", vars)
 		}
@@ -216,6 +219,10 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv("FASTPATH_TEST_HELPER") {
 	case "node":
 		os.Args = []string{"fastpath"}
+		main()
+	case "node-with-flags":
+		os.Args = []string{"fastpath", "-database", "projects/p/instances/i/databases/d", "-project", "p", "-key",
+			os.Getenv("FASTPATH_TEST_KEY")}
 		main()
 	case "secret":
 		key := bytes.Repeat([]byte{7}, 32)
@@ -268,5 +275,74 @@ func TestTheNodeRefusesAnEnvironmentThatPrintsSecrets(t *testing.T) {
 	}
 	if out, ok := helper(t, "node", "GODEBUG=http2debug=0", sdkLogging+"="); ok || !strings.Contains(out, "-database") {
 		t.Errorf("the node with nothing printing secrets did not get on to its flags: exit 0 %v, %q", ok, out)
+	}
+}
+
+// reachesItsDatabase starts the node, through main, with flags that take it
+// to its database, which is a listener the test holds (the client takes
+// SPANNER_EMULATOR_HOST for its database), with the environment's extra
+// settings, and says whether the node reached it before it exited or ten
+// seconds passed.
+func reachesItsDatabase(t *testing.T, env ...string) bool {
+	t.Helper()
+	keyFile := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyFile, bytes.Repeat([]byte{7}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	reached := make(chan struct{}, 1)
+	go func() {
+		if conn, err := ln.Accept(); err == nil {
+			reached <- struct{}{}
+			_ = conn.Close()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperProcess$")
+	cmd.Env = append(os.Environ(), append([]string{"FASTPATH_TEST_HELPER=node-with-flags",
+		"FASTPATH_TEST_KEY=" + keyFile, "SPANNER_EMULATOR_HOST=" + ln.Addr().String()}, env...)...)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+	defer func() {
+		cancel()
+		<-exited
+	}()
+	select {
+	case <-reached:
+		return true
+	case <-exited:
+		select {
+		case <-reached:
+			return true
+		default:
+			return false
+		}
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// TestTheNodeChecksItsEnvironmentBeforeAnything: started through main where
+// HTTP/2's debugging is on, the node exits without reaching its database;
+// with it off, the same node reaches it, so the test sees a node that ran.
+func TestTheNodeChecksItsEnvironmentBeforeAnything(t *testing.T) {
+	if !reachesItsDatabase(t, "GODEBUG=http2debug=0", sdkLogging+"=") {
+		t.Fatal("the node with nothing printing secrets did not reach its database, so this test would see nothing")
+	}
+	for _, env := range []string{"GODEBUG=http2debug=2", sdkLogging + "=debug"} {
+		if reachesItsDatabase(t, env) {
+			t.Errorf("the node with %s reached its database", env)
+		}
 	}
 }

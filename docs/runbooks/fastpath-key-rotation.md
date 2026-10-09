@@ -51,11 +51,18 @@ whose 55 hours have not passed, from rotations before, if any.
 
 ## Rolling back
 
-Rolling a step back changes the sealing key, never the rule: the rollback's
-nodes accept every key whose 55 hours have not passed. Rolling back the
-switch is `-key-secret OLD -accept-key-secrets NEW,EARLIER`, and NEW, having
-sealed, stays accepted for 55 hours after the rollback stopped its last
-sealer, as OLD did.
+A rollback keeps both rules. Its nodes accept every key whose 55 hours have
+not passed. And no node seals with a key until every node accepts it, which
+is why a rotation prepares before it switches.
+
+- Rolling back the switch while every node still accepts OLD, within OLD's
+  55 hours, is one deploy: `-key-secret OLD -accept-key-secrets
+  NEW,EARLIER`. NEW, having sealed, stays accepted for 55 hours after the
+  rollback stopped its last sealer, as OLD did.
+- Rolling back to a key some node no longer accepts, one retired, is a
+  rotation to it: first prepare, every node sealing with NEW and accepting
+  OLD (`-key-secret NEW -accept-key-secrets OLD,EARLIER`), and once that
+  deploy has replaced every node, switch.
 
 A node reads every version its flags name as it starts, and a disabled one
 stops it starting. Before any deploy that names a disabled version, enable

@@ -41,9 +41,13 @@ func printsSecrets(getenv func(string) string) string {
 		return fmt.Sprintf("%s=%s prints the client libraries' requests and responses, credentials and keys "+
 			"with them; unset it", sdkLogging, v)
 	}
-	for _, setting := range strings.Split(getenv("GODEBUG"), ",") {
-		if name, value, _ := strings.Cut(strings.TrimSpace(setting), "="); name == "http2debug" && value != "0" {
-			return fmt.Sprintf("GODEBUG's %s prints every HTTP/2 frame, keys with them; remove it", setting)
+	// Go's HTTP/2 code, the standard library's and golang.org/x/net's,
+	// turns its debugging on where GODEBUG holds either text anywhere, so
+	// the node refuses the same.
+	godebug := getenv("GODEBUG")
+	for _, on := range []string{"http2debug=1", "http2debug=2"} {
+		if strings.Contains(godebug, on) {
+			return fmt.Sprintf("GODEBUG holds %s, which prints every HTTP/2 frame, keys with them; remove it", on)
 		}
 	}
 	return ""
