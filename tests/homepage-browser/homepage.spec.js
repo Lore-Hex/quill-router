@@ -2,7 +2,7 @@ const { test, expect } = require("@playwright/test");
 
 test("new homepage searches models and opens the existing sign-in dialog", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("The AI router that shows its work.");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Encrypt all your AI chats");
   const search = page.locator("#models [data-open-search]");
   await search.click();
   const dialog = page.getByRole("dialog", { name: "Find a model" });

@@ -190,3 +190,39 @@ footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px
 @media(min-width:601px){
  :root:not(.hero-landscape) .trh .hero .labs{margin-bottom:clamp(32px,calc(var(--hero-vh,1svh) * 8),88px)}
 }
+
+/* Homepage v2 hero. Kept last on purpose: these rules override the hero
+   sizing above. The --hero-vh script in index.html stays as it is. */
+/* Note under the hero buttons. */
+.trh .cta-note{margin:16px 0 0;color:#e4eee9;font-size:14px;font-weight:500;line-height:1.4;letter-spacing:.005em;text-align:center;text-shadow:0 1px 2px #000c}
+/* "Copy base URL" is a <button> styled like the secondary link button. */
+.trh button.button{font:inherit;cursor:pointer}
+#top .cta button.button-secondary{font-weight:500}
+/* Desktop: the content block sits in the upper third of the free space between
+   the header and the model strip (1 part above, 2 parts below). */
+@media(min-width:601px){
+ .trh .hero{padding-top:24px}
+ .trh .hero>.copy{top:0}
+ .trh .copy::before{content:"";flex:1 1 0}
+ .trh .copy>.cta-note{flex:2 1 auto}
+ .trh .labs{margin-top:0}
+}
+/* Subtitle-to-button gap is about 1.5x the headline-to-subtitle gap. */
+.trh .copy .sub{margin-bottom:40px}
+:root.hero-compact .trh .copy .sub{margin-bottom:28px}
+:root.hero-short .trh .copy .sub{margin-bottom:16px}
+/* Phones: one-line white note, eyebrow never wider than the headline, and the
+   model strip pinned to the bottom of the hero, clear of bottom address bars. */
+@media(max-width:600px){
+ .trh .cta-note{margin-top:14px;color:#fff;font-size:clamp(12.5px,3.6vw,14px);font-weight:500;letter-spacing:0;white-space:nowrap;text-shadow:0 1px 3px #000}
+ .hero-promises{font-size:clamp(10px,3.1vw,12px);letter-spacing:.06em;gap:12px 22px}
+ .hero-promises li+li::before{left:-12px;top:calc(50% - 1px)}
+ :root .trh .copy h1{font-size:clamp(36px,12.4vw,60px)}
+ .trh .hero>.copy{position:static;top:auto;padding-top:min(var(--hero-lower-target),max(0px,calc(var(--hero-bottom-room) + var(--hero-marquee-room) - 16px)))}
+ :root .trh .hero .labs{position:absolute;left:0;right:0;bottom:max(28px,calc(env(safe-area-inset-bottom) + 16px));width:auto;max-width:none;margin:0}
+}
+/* "Copy base URL" lands on the migration block and flashes its Base URL field. */
+#migrate{scroll-margin-top:24px}
+@keyframes base-url-flash{0%{box-shadow:0 0 0 0 #cce8d700}25%{box-shadow:0 0 0 3px #cce8d7}100%{box-shadow:0 0 0 0 #cce8d700}}
+.trm .field.is-flashing{animation:base-url-flash 1.8s ease-out;border-radius:8px}
+@media(prefers-reduced-motion:reduce){.trm .field.is-flashing{animation:none;outline:2px solid #cce8d7;outline-offset:2px}}

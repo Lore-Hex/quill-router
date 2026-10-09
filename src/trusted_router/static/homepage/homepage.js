@@ -90,6 +90,20 @@ $('[data-copycode]').addEventListener('click',async e=>{
  if(await copyText(text,e.currentTarget))track(lang==='agent'?'home.agent_prompt_copied':'home.code_copied',{tab:lang,from:source});
 });
 renderCode();
+// Hero "Copy base URL": copy, then bring the visitor to the migration block and flash its Base URL field.
+const heroCopy=$('[data-copy-base-url]');
+heroCopy?.addEventListener('click',async()=>{
+ const ok=await copyText(TRB,heroCopy);
+ if(ok)feedback('Base URL copied');
+ else feedback(`Base URL: ${TRB}`);
+ const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ $('#migrate')?.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});
+ const field=$('.trm .field');
+ if(field){
+  setTimeout(()=>{field.classList.remove('is-flashing');void field.offsetWidth;field.classList.add('is-flashing');},reduce?0:650);
+  setTimeout(()=>field.classList.remove('is-flashing'),3000);
+ }
+});
 const labs=$('.trh .labs');let keyboardInput=false;
 document.addEventListener('keydown',()=>{keyboardInput=true;},true);document.addEventListener('pointerdown',()=>{keyboardInput=false;},true);
 if(labs){labs.addEventListener('focusin',()=>{labs.classList.toggle('paused',keyboardInput);});labs.addEventListener('focusout',()=>{labs.classList.remove('paused');});}

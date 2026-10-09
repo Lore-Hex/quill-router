@@ -32,7 +32,7 @@ function setup(cookie) {
 test('signed-out homepage keeps its API key links with a normal navigation fallback', () => {
  const links = setup('');
  assert.equal(links.length, 3);
- assert.deepEqual(links.map(a => a.textContent), ['Get your API key', 'Get your API key', 'Get your API key']);
+ assert.deepEqual(links.map(a => a.textContent), ['Create my API key', 'Create my API key', 'Create my API key']);
 });
 test('returning visitors get console labels and retain button styles', () => {
  const links = setup('other=1; tr_signed_in=1');

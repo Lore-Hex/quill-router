@@ -52,9 +52,9 @@
     "mobile": "Collapse links, search and toggle into a Menu button below 880px."
   },
   "hero": {
-    "headline": "The AI router that",
-    "headline_emphasis": "shows its work.",
-    "subtitle": "Verifiably confidential compute through a single OpenAI-compatible API.",
+    "headline": "Encrypt all your",
+    "headline_emphasis": "AI chats",
+    "subtitle": "Access hundreds of models confidentially through a single OpenAI-compatible API.",
     "four_words": [
       {
         "word": "Secure",
