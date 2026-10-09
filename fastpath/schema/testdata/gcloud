@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# A stand-in for gcloud in the tests of scripts/deploy/migrate_fastpath.sh
+# (fastpath/schema/migration_test.go). It answers the script's schema
+# queries from the directory $FAKE_SPANNER and records each statement it is
+# given there; it reaches no database.
+#
+# $FAKE_SPANNER/objects/NAME: a table or index that exists.
+# $FAKE_SPANNER/queries: each query, a line each.
+# $FAKE_SPANNER/applied: each statement, then a line ";".
+# $FAKE_SPANNER/fail-queries, fail-statements: if present, each query, or
+# each statement, fails.
+# $FAKE_SPANNER/waits/NAME: if present, how many times more index NAME is
+# reported WRITE_ONLY before READ_WRITE; "always" keeps it WRITE_ONLY.
+#
+# Every call must name the database the tests configure: database
+# "database" of instance "instance" in project "project".
+set -euo pipefail
+state="${FAKE_SPANNER:?}"
+if [[ " $* " != *" database --instance=instance "* ]] || [[ " $* " != *" --project project "* ]]; then
+  echo "the stand-in for gcloud was not given the configured database: $1 $2 $3 ${4:-}" >&2
+  exit 3
+fi
+sql=""
+statement=""
+for arg in "$@"; do
+  case "$arg" in
+    --sql=*) sql="${arg#--sql=}" ;;
+    --ddl=*) statement="${arg#--ddl=}" ;;
+  esac
+done
+command="$1 $2 $3 $4"
+case "$command" in
+  "spanner databases execute-sql "*)
+    echo $sql >> "$state/queries"
+    [ ! -e "$state/fail-queries" ] || exit 1
+    name=""
+    if [[ $sql =~ _name=\'([a-z_]+)\' ]]; then
+      name="${BASH_REMATCH[1]}"
+    fi
+    if [[ $sql == *INDEX_STATE* ]]; then
+      waits="$state/waits/$name"
+      if [ -e "$waits" ] && [ "$(cat "$waits")" = always ]; then
+        echo WRITE_ONLY
+      elif [ -e "$waits" ] && [ "$(cat "$waits")" -gt 0 ]; then
+        echo $(( $(cat "$waits") - 1 )) > "$waits"
+        echo WRITE_ONLY
+      else
+        echo READ_WRITE
+      fi
+    elif [ -e "$state/objects/$name" ]; then
+      echo 1
+    else
+      echo 0
+    fi
+    ;;
+  "spanner databases ddl update")
+    [ ! -e "$state/fail-statements" ] || exit 1
+    printf '%s\n;\n' "$statement" >> "$state/applied"
+    if [[ $statement =~ ^CREATE\ (UNIQUE\ )?(TABLE|INDEX)\ ([a-z_]+) ]]; then
+      touch "$state/objects/${BASH_REMATCH[3]}"
+    fi
+    ;;
+  *)
+    echo "the stand-in for gcloud has no answer for: $command" >&2
+    exit 2
+    ;;
+esac

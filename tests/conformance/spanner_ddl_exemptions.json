@@ -34,6 +34,16 @@
         "reason": "A test's pattern that reads production's CREATE TABLE tr_credit_balance out of scripts/deploy/migrate_typed_counters.sh to hold the fast path's copy equal to it; it dispatches no DDL."
       }
     },
+    "fastpath/schema/testdata/gcloud": {
+      "--ddl=*) statement=\"${arg#--ddl=}\" ;;": {
+        "count": 1,
+        "reason": "A test double for gcloud in the tests of scripts/deploy/migrate_fastpath.sh (fastpath/schema/migration_test.go): it records the statements the migration gives it in a temporary directory and answers its schema queries from there; it reaches no database and dispatches no DDL."
+      },
+      "\"spanner databases ddl update\")": {
+        "count": 1,
+        "reason": "A test double for gcloud in the tests of scripts/deploy/migrate_fastpath.sh (fastpath/schema/migration_test.go): it records the statements the migration gives it in a temporary directory and answers its schema queries from there; it reaches no database and dispatches no DDL."
+      }
+    },
     "scripts/cleanup_smoke_signups.py": {
       "Run as a project Owner (needs Spanner DDL/DML perms):": {
         "count": 1,

@@ -9,7 +9,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_async_settle_admission.sh': '1fac3e0df16cfa720f4d385a4018e2b350c08a346d4951cf53ca6d8e863aeb1b',
  'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
- 'scripts/deploy/migrate_fastpath.sh': 'bacb09afa4054f5d39031e0b75715d6b1ee0f8719843cf4277bb73a7a3720a2a',
+ 'scripts/deploy/migrate_fastpath.sh': 'f73e196c14a44ec5efc2b033fc98b11c1657c3d68ec2b88b4e0152e4376cc14b',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
  'scripts/deploy/migrate_money_primitives.sh': 'a35e4012706fa88f48be8f8d6b5abc7a3f828d36bceea59191784b58007d7e41',

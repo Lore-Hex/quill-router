@@ -15,6 +15,14 @@
 # A check that cannot read the schema fails the run, rather than being taken
 # for an object that is not there.
 #
+# Each statement is its own schema update, as in the other migrations: the
+# conformance extractor (tests/conformance/spanner_schema_source.py) reads
+# one statement per dispatch. So on the first run each index is added to a
+# table made by an earlier update, five index updates with Spanner's
+# validation, which count once toward its limit of about thirty such
+# statements a week, on tables nothing reads or writes yet. Reruns apply
+# nothing.
+#
 # Usage:
 #   SPANNER_INSTANCE_ID=... SPANNER_DATABASE_ID=... [GCP_PROJECT_ID=...] \
 #     scripts/deploy/migrate_fastpath.sh
