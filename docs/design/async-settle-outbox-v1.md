@@ -1856,10 +1856,10 @@ legacy settlement SQL changes in PR G.
 ### Evidence bundle and read boundaries
 
 `pilot_enablement.py` has `shadow-serving`, `header-probe`, `fleet-budgets`,
-`pre-flip`, and `post-flip` subcommands. The four checklist commands take
+`fleet-budgets-pre`, `pre-flip`, and `post-flip` subcommands. All checklist commands take
 `--bundle /absolute/evidence.json`; optional `--live` replaces exported database
 rows with fresh reads using explicit `--project`, `--instance`, `--database`
-arguments. The tool creates only a database handle, never initializes a schema. Default is offline
+arguments (`fleet-budgets-pre` is offline-only and has no `--live` option). The tool creates only a database handle, never initializes a schema. Default is offline
 replay of exports, **not a claim of current production state**. Obtain the
 complete serving inventory through the reviewed deployment exports, including
 old/new revisions during rollout, not from a service template or process logs.
@@ -1868,7 +1868,7 @@ Common bundle fields:
 
 | Field | Required content |
 | --- | --- |
-| `serving_instance_ids`, `serving` | Complete explicit roster and rows with `instance`, `role` (`router`/`enclave`), `revision`, `region`, `pins` (literal env strings). No missing role/instance or mixed flag values. |
+| `serving_instance_ids`, `serving` | Complete explicit roster and rows with `instance`, `role` (`router`/`enclave`), `revision`, `region`, `pins` (literal env strings), and `intervals` containing `{day,started_at_us,flushed_at_us}`. Include every boot ID/lifetime during the requested days, including retired instances and overlapping revisions. Router intervals must equal counter intervals exactly; daily instance/revision sets must equal the control manifests. Gate rosters must have exactly the same instance/role/revision/region identities and their measured intervals must lie inside these lifetimes. Additions, omissions and uncovered intervals block. No missing role/instance or mixed flag values. |
 | `rows`, `days`, `proof` | Exact shadow_report exported `{kind,id,body}` rows, requested UTC days and reviewed proof manifest. Its existing validation, coverage, positive seed, reset and seven-day rules are reused, not reimplemented. |
 | `evidence_keys` | For `--live`, explicit `{kind,id}` keys, ≤10,000. Sample authorization-day IDs, instance/day counters and daily control manifests must cover the proof roster. Missing rows block. |
 | Artifact reference | `{ "path": "/absolute/export.json", "sha256": "<64 hex SHA-256>" }`; tools recompute actual file hashes. Artifact provenance/CI success must be independently reviewed. A hash is an integrity check, not attestation. |
@@ -1894,8 +1894,11 @@ explicit window and coverage before running the offline checklist.
    and `TR_ASYNC_SETTLE_AUTHORITY_EPOCH` (positive) land in a reviewed rollout.
    The shadow binding is signed by the same runtime signer (`ShadowSigner`
    wraps the ticket signer), so without this step no evaluable sample can ever
-   start the clock. The enclave keyring stays empty and
-   `TR_ASYNC_SETTLE_NEGOTIATE=off` until step 8.
+   start the clock. Install the **public** enclave keyring through a reviewed
+   admission-off rollout in this step and verify it on every serving revision.
+   Keep `TR_ASYNC_SETTLE_NEGOTIATE=off`, enclave shadow off, router admission
+   and protection off, and the router shadow workspace list empty. Installing
+   public verification material does not enable negotiation; that waits until step 8.
 3. Before any opt-in, run the actual-hop §2.2 header check against the still
    dormant router (it ignores the header for non-opted workspaces) and the §5
    fleet check; retain the outputs and authorization-size distributions:
@@ -1904,9 +1907,8 @@ explicit window and coverage before running the offline checklist.
    PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.pilot_enablement header-probe \
      --base-url https://REVIEWED-HOP/v1 --model PILOT-MODEL \
      --pilot-key-env PILOT_API_KEY --gateway-token-env TR_INTERNAL_GATEWAY_TOKEN
-   PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.pilot_enablement fleet-budgets \
-     --bundle /absolute/fleet-evidence.json --live \
-     --project PROJECT --instance INSTANCE --database DATABASE
+   PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.pilot_enablement fleet-budgets-pre \
+     --bundle /absolute/pre-enable-evidence.json
    ```
 
    `header-probe` is the **only non-read-only check**: one authorize with zero
@@ -1925,18 +1927,42 @@ explicit window and coverage before running the offline checklist.
    single route/model probe alone is not the full §2.2 distribution/fragmentation
    evidence; keep those artifacts in the shadow proof manifest.
 
-   Fleet bundle additions: `workspace_count`, `router_instance_ids`,
-   `maximum_router_instances`, `maximum_router_instances_by_region`,
-   `approved_fleet_reads_per_second`,
-   `regional_budgets` keyed by region with `reads_per_second` and
-   `pending_rows_per_second`, and `headroom` artifact. Include closed observer
-   counters for every instance and `freshness_maxima_seconds` with measured
-   `publisher_period`, `publisher_jitter`, `publication`, `poll_period`,
-   `poll_jitter`, `install`, `skew`, `workspace_period`, `workspace_jitter`,
-   `workspace_install`. The §5 component limits and both 4.45-second combined
-   limits are checked; unknown predictions, missed ticks, absent readers,
-   cadence gaps or unapproved fleet cost block. Regional budgets must account
-   for peak roster including overlapping revisions and existing Spanner load.
+   **Dormant pre-enable evidence (`fleet-budgets-pre`):** no observer counters,
+   predictions or cadence are required or obtainable yet. Supply `serving`,
+   `serving_instance_ids`, intended `workspace_count` (1–32), integer
+   `started_at_us`/`flushed_at_us` defining a positive interval of at most one
+   hour, and three hash-checked artifact references:
+
+   - `deployment`: reviewed deploy-descriptor export containing `serving`
+     (same identities, regions, revisions and intervals) and
+     `maximum_router_instances_by_region`. Caps include autoscaling and
+     overlapping rollout revisions and must cover the observed fleet.
+   - `monitoring`: bounded Cloud Monitoring export plus reviewed capacity
+     allowances, with the same interval, `approved_fleet_reads_per_second`,
+     and `regions`. Each router region contains `cpu_peak_percent`,
+     `approved_incremental_cpu_percent`, `approved_reads_per_second`,
+     `read_headroom_per_second`, `approved_pending_rows_per_second`, and
+     `pending_row_headroom_per_second`. Include existing publisher/other load.
+     The incremental CPU allowance must be positive, backed by reviewed sizing
+     evidence for the projected load; peak CPU plus that allowance must remain
+     strictly below the existing 45% alarm. The tool checks the supplied
+     arithmetic, not the provenance or adequacy of the reviewed sizing model.
+   - `read_health`: same interval and `regions`, each with 1–100 measured
+     latency samples in seconds, all finite and ≤0.2. Obtain these with the
+     existing fixed-key `read_health` reader, LOW priority, 200 ms, no retries,
+     at most one sample per second per region, without installing a shadow
+     runtime. This is bounded latency evidence, not observer cadence evidence.
+
+   All regional sets must match exactly and every serving lifetime must cover
+   the measurement interval. Nonfinite, missing, over-budget or mismatched
+   measurements block. For N intended workspaces and maximum I routers, the
+   tool computes I×(N/4+1) reads/s, I×N/4×1001 pending-row visits/s, I×N/4 trust
+   rows/s and I health rows/s, per region and summed fleet reads. Projected
+   rates must fit approved allowances, which must fit measured headroom.
+   Router shadow lists must still be empty; admission/protection and enclave
+   shadow/negotiation must be off. Preserve the PASS output and timestamp as
+   `pre_enable`; this is the mandatory §5/§10 pre-opt-in budget gate.
+
 4. In a reviewed rollout, pin router
    `TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`.
    A non-empty list installs the comparator runtime, observer and evidence
@@ -1944,16 +1970,43 @@ explicit window and coverage before running the offline checklist.
    that is why steps 2 and 3 precede it. Then pin enclave
    `TR_ASYNC_SETTLE_SHADOW=on` everywhere serving this pilot. Admission and
    enclave negotiation remain off on every serving revision.
-5. Run `shadow-serving --bundle /absolute/shadow-evidence.json --live` (with the
-   same explicit database arguments) with
-   `transport` and `fleet` artifact references to passing gate outputs. Their
-   hashes must match `maximum_header_hops`, `fleet_load_budget` and
-   `publisher_poll_freshness` in the reviewed shadow proof manifest. It
-   reuses `shadow_report.report` for manifest/coverage and prints the first
-   durable evaluable sample and clock start. Neither empty evidence nor a
-   counter-only interval starts the clock. **PR G may land dormant during this
-   window**, provided admission/negotiation remain off everywhere and revisions
-   stay covered. A reset/gap follows the existing shadow report rules.
+5. After opt-in, run `fleet-budgets --bundle /absolute/fleet-evidence.json
+   --live` with explicit database arguments. This **post-opt-in** mode requires
+   `pre_enable` pointing to the step-3 PASS output, the same workspace count,
+   regional caps/budgets and approved fleet read allowance, and a pre-enable
+   completion timestamp preceding all observer intervals. Add
+   `router_instance_ids`, `maximum_router_instances`,
+   `maximum_router_instances_by_region`, `approved_fleet_reads_per_second`,
+   `regional_budgets` (`reads_per_second`, `pending_rows_per_second`), and a
+   hash-checked measured `headroom` artifact. Closed observer counters must
+   exactly cover all reviewed router instances, regions, revisions and
+   intervals, with positive known predictions, no failures/missed ticks, and
+   the N/4 workspace plus 1/s health cadence. Repeated intervals use each
+   instance's peak rate; instances are summed conservatively. Include measured
+   `freshness_maxima_seconds`: `publisher_period`, `publisher_jitter`,
+   `publication`, `poll_period`, `poll_jitter`, `install`, `skew`,
+   `workspace_period`, `workspace_jitter`, `workspace_install`. All §5 component
+   and combined 4.45-second limits must pass.
+
+   Then run `shadow-serving --bundle /absolute/shadow-evidence.json --live`
+   (same database arguments). Include these post-opt-in budget fields under
+   `observer`; the command rechecks them against the actual shadow rows and
+   serving roster before starting the clock. `transport` and `fleet` reference
+   passing gate outputs with their explicit measured `serving` rosters and
+   original `completed_at_us` timestamps. The fleet output must be post-opt-in;
+   a pre-enable PASS alone cannot start the clock. Retain step-3 transport
+   evidence and review its coverage for the opt-in serving revisions/instances;
+   repeat measurements for new identities before certifying their coverage.
+   Gate intervals may be bounded subsets of the same reviewed lifetimes;
+   extending an existing lifetime does not rewrite the original gate timestamp.
+   New instances/regions or revisions need reviewed gate coverage, never a
+   revision-set substitution. The output hashes match `maximum_header_hops`,
+   `fleet_load_budget`, `publisher_poll_freshness` in the shadow proof manifest.
+   The report prints the first durable evaluable sample after both gates and
+   its clock start; empty/counter-only evidence cannot start the clock.
+   **PR G may land dormant during this window**, with admission/negotiation
+   off everywhere. A reset/gap follows the existing shadow report rules.
+
 6. Require shadow report PASS for **≥604,800 continuous seconds**. Keep F1,
    F2b and F2c successful exact-revision CI artifacts, the versioned 759-case
    contract and wire fixtures. The missing October 5 timing export and the
@@ -1964,15 +2017,17 @@ explicit window and coverage before running the offline checklist.
    output; and `signer` with `kid`, `issuer`, `audience`, unpadded `public_key`, positive `epoch`,
    `mounted:true` and `verification` artifact proving the serving mount/keyring.
    Router signing pins/file paths and enclave keyrings must match on every
-   serving revision. Stage the signing material/pins with admission still off.
+   serving revision, including the public keyring installed in step 2. An empty
+   keyring blocks; do not defer its installation to step 8. Admission and
+   negotiation remain off during this verification.
    The checklist prints chosen pins and source export paths/hashes. PASS is
    contingent on every external proof/measurement gate, not merely elapsed time.
 8. Through reviewed config-as-code releases, in this order: pin
    `TR_ASYNC_SETTLE_PROTECTION=true`; verify accepted-work fencing; apply the
    **entire measured drain output**, including
    `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=true`; verify healthy fresh fleet
-   publication; apply signer/epoch pins and enclave public keyring; verify
-   signature roundtrip on all serving revisions. Then pin
+   publication; reverify the already-installed signer/epoch pins, enclave public
+   keyring and signature roundtrip on all serving revisions. Then pin
    `TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`,
    `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000`, and finally
    `TR_ASYNC_SETTLE_ENABLED=true`. Enable enclave
@@ -2050,7 +2105,9 @@ secret/version under the release operator's restricted access. Grant only the
 router runtime access, and mount a pinned version as a file at the exact
 `TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE` path. Never place PEM in rollout env
 values, source, logs or GitHub Actions text outputs. The enclave receives only
-the public keyring through its reviewed measured runtime/bootstrap configuration.
+the public keyring through its reviewed measured runtime/bootstrap configuration
+in step 2, with negotiation off. Step 7 verifies that installed keyring; step 8
+turns negotiation on only after all earlier gates pass.
 Extend the release's `.github/workflows/deploy.yml` `sync-runtime-secrets` job
 in the later activation change to validate the dedicated secret/version and
 runtime mount prerequisite before deploy, using the existing CI/cloud-admission
@@ -2081,8 +2138,9 @@ Clock prerequisite timestamps are retained as `completed_at_us` in gate outputs.
 PR G passes their maximum to `shadow_report.report(not_before_us=...)`; this
 only restricts eligible clock seeds and retains all earlier correctness resets
 and coverage accounting. It does not discard inconvenient history. Fleet
-budget exports should cover one closed measurement interval per named serving
-instance; peak regional caps must sum to the approved whole-fleet cap.
+budget exports must cover every reviewed router interval with closed counters;
+peak regional caps must sum to the approved whole-fleet cap. Keep the dormant
+pre-enable budget output as well as the subsequent observer verification.
 
 ### PR G frozen-reference provenance
 
@@ -2093,5 +2151,8 @@ BASE `8d781cf096c43cdc29aa54c37f8d3820b80cf587` plus exactly those three source
 files in `worktree-pins.json`, without Git writes. Archive SHA-256:
 `886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345`.
 No changed storage SQL or unexpected baseline behavior was absorbed. The new
-execution inventory is scoped to the requested default-clock shard 1/4, not
-the full/post-cutover F1 runs. See the round-1 report for execution results.
+execution inventory is the union of all eight worker JSON files from both
+CPython 3.12.3 full runs (default and post-cutover): **330 modules, 1,630
+qualified names, 1,665 execution entries**. Sources are `/tmp/pr-g-inv-default`
+and `/tmp/pr-g-inv-post` (four JSON files each); both clocks independently
+contain the same 1,665 entries. See the round-1 report for execution results.

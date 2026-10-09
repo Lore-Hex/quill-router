@@ -2,7 +2,7 @@
   "baseline": "8d781cf096c43cdc29aa54c37f8d3820b80cf587",
   "archive": "tests/fakes/frozen_main/package.tar.gz",
   "archive_sha256": "886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345",
-  "scope": "Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 default-clock proof_oracle shard 1/4; negative controls excluded",
+  "scope": "Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 full proof_oracle runs, default and post-cutover clocks (union of eight worker JSON files); negative controls excluded",
   "modules": 330,
   "execution_entries": 1665,
   "callables": 1630,

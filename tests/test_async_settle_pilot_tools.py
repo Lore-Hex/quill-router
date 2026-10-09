@@ -31,19 +31,34 @@ def artifact(tmp_path, name, value):
 
 def bundle(tmp_path):
     rows, days, proof = synthetic_window()
-    serving = [dict(instance='router', revision='a'*40, region='us-central1', role='router', pins={
+    boot = rows[0]['body']['instance']
+    intervals = []
+    for row in rows:
+        body = row['body']
+        if row['kind'] == COUNTER:
+            body['instance'] = boot
+            row['id'] = row['id'].split('/')[0] + '/' + boot
+            body['admission_observer'].update(workspace_reads=21600, health_reads=86400, prediction_yes=1)
+            intervals.append(dict(day=row['id'].split('/')[0], started_at_us=body['started_at_us'], flushed_at_us=body['flushed_at_us']))
+        elif row['id'].endswith('/manifest-v1'):
+            body['instance_boot_ids'] = [boot]
+            proof['instance_boot_ids_by_day'][body['day']] = [boot]
+    serving = [dict(instance=boot, revision='a'*40, region='us-central1', role='router', intervals=copy.deepcopy(intervals), pins={
         'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': pilot.PILOT}),
-        dict(instance='enclave', revision=rows[-1]['body']['deployment']['go_revision'], region='us-central1', role='enclave', pins={
-            'TR_ASYNC_SETTLE_NEGOTIATE': 'off', 'TR_ASYNC_SETTLE_SHADOW': 'on'})]
-    transport = artifact(tmp_path, 'transport.json', dict(status='PASS', completed_at_us=1))
-    fleet = artifact(tmp_path, 'fleet.json', dict(status='PASS', completed_at_us=1))
+        dict(instance='enclave', revision=rows[-1]['body']['deployment']['go_revision'], region='us-central1', role='enclave', intervals=copy.deepcopy(intervals), pins={
+            'TR_ASYNC_SETTLE_NEGOTIATE': 'off', 'TR_ASYNC_SETTLE_SHADOW': 'on',
+            'TR_ASYNC_SETTLE_TICKET_PUBLIC_KEYS': json.dumps({'kid': 'issuer~' + FIXTURE['public_key']})})]
+    transport = artifact(tmp_path, 'transport.json', dict(status='PASS', completed_at_us=1, serving=serving))
+    observer = fleet_fields(tmp_path, serving)
+    fleet_result = pilot.fleet_budgets(dict(observer, serving=serving, rows=rows))
+    fleet = artifact(tmp_path, 'fleet.json', dict(fleet_result, completed_at_us=1))
     proof.update(maximum_header_hops=transport['sha256'], fleet_load_budget=fleet['sha256'],
                  publisher_poll_freshness=fleet['sha256'])
     for row in rows:
         if row['id'].endswith('/manifest-v1'):
             row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
-    return dict(rows=rows, days=days, proof=proof, serving=serving,
-                serving_instance_ids=['router', 'enclave'], transport=transport, fleet=fleet)
+    return dict(rows=rows, days=days, proof=proof, serving=serving, observer=observer,
+                serving_instance_ids=[boot, 'enclave'], transport=transport, fleet=fleet)
 
 
 def test_shadow_serving_reuses_report_and_blocks_pins_gaps(tmp_path):
@@ -165,18 +180,20 @@ def test_bounded_production_reads_are_point_or_workspace_index():
         pilot.workspace_outbox(db, 'other', 10)
 
 
-def fleet_bundle(tmp_path):
-    data = bundle(tmp_path)
-    row = copy.deepcopy(data['rows'][0])
-    obs = row['body']['admission_observer']
-    obs.update(workspace_reads=21600, health_reads=86400, prediction_yes=1)
-    data.update(rows=[row], workspace_count=1, router_instance_ids=[row['body']['instance']],
+def fleet_fields(tmp_path, serving):
+    pre = pilot.fleet_budgets_pre(pre_enable_bundle(tmp_path, serving))
+    return dict(pre_enable=artifact(tmp_path, 'pre-enable.json', dict(pre, completed_at_us=1)), workspace_count=1, router_instance_ids=[r['instance'] for r in serving if r['role'] == 'router'],
         freshness_maxima_seconds=dict(publisher_period=2, publisher_jitter=.25, publication=.5,
             poll_period=1, poll_jitter=.25, install=.2, skew=.25,
             workspace_period=4, workspace_jitter=.25, workspace_install=.2),
         approved_fleet_reads_per_second=2, maximum_router_instances=1, maximum_router_instances_by_region={'us-central1': 1},
         regional_budgets={'us-central1': dict(reads_per_second=2, pending_rows_per_second=300)},
         headroom=artifact(tmp_path, 'headroom.json', {'measured_cpu': 20}))
+
+
+def fleet_bundle(tmp_path):
+    data = bundle(tmp_path)
+    data.update(data['observer'])
     return data
 
 
@@ -238,7 +255,7 @@ def test_post_flip_real_timings_rollback_and_missing_data(tmp_path):
     assert pilot.post_flip(data)['status'] == 'BLOCKED'
 
 
-@pytest.mark.parametrize('command', ['shadow-serving', 'fleet-budgets', 'pre-flip', 'post-flip'])
+@pytest.mark.parametrize('command', ['shadow-serving', 'fleet-budgets', 'fleet-budgets-pre', 'pre-flip', 'post-flip'])
 def test_cli_missing_evidence_fails_closed(command, tmp_path, monkeypatch, capsys):
     path = tmp_path / 'empty.json'
     path.write_text('{}')
@@ -311,7 +328,7 @@ def test_live_database_requires_explicit_target_and_never_initializes(monkeypatc
 def test_clock_cannot_start_before_transport_and_fleet_gates(tmp_path):
     data = bundle(tmp_path)
     first = pilot.shadow_serving(data)['clock_start_us']
-    transport = artifact(tmp_path, 'transport.json', dict(status='PASS', completed_at_us=first + 1))
+    transport = artifact(tmp_path, 'transport.json', dict(status='PASS', completed_at_us=first + 1, serving=data['serving']))
     data['transport'] = transport
     data['proof']['maximum_header_hops'] = transport['sha256']
     for row in data['rows']:
@@ -333,3 +350,169 @@ def test_probe_malformed_reply_retains_recovery_identity(malformed):
     assert result['cleanup'].startswith('UNKNOWN:')
     if malformed == 'refund':
         assert result['authorization_id'] == 'recover-this'
+
+
+@pytest.mark.parametrize('damage', ['addition', 'addition_same_region', 'omission', 'region', 'revision', 'interval', 'gate_roster', 'gate_interval', 'observer'])
+def test_shadow_serving_exact_roster_and_observer_coverage(tmp_path, damage):
+    data = bundle(tmp_path)
+    if damage in {'addition', 'addition_same_region'}:
+        added = copy.deepcopy(data['serving'][0])
+        added.update(instance='unobserved-router', region='europe-west1' if damage == 'addition' else added['region'])
+        data['serving'].append(added)
+        data['serving_instance_ids'].append(added['instance'])
+    elif damage == 'omission':
+        data['rows'] = data['rows'][2:]
+    elif damage in {'region', 'revision'}:
+        data['serving'][0][damage] = 'unreviewed'
+    elif damage == 'interval':
+        data['serving'][0]['intervals'][0]['started_at_us'] += 1
+    elif damage in {'gate_roster', 'gate_interval'}:
+        output = json.loads(Path(data['transport']['path']).read_text())
+        if damage == 'gate_roster':
+            output['serving'].pop()
+        else:
+            output['serving'][0]['intervals'][0]['started_at_us'] -= 1
+        data['transport'] = artifact(tmp_path, 'transport.json', output)
+    else:
+        data['rows'][0]['body']['admission_observer']['health_reads'] = 0
+    result = pilot.shadow_serving(data)
+    assert result['status'] == 'BLOCKED' and result['clock_start_us'] is None
+
+
+@pytest.mark.parametrize('damage', ['addition', 'addition_same_region', 'empty_keyring', 'negotiation'])
+def test_pre_flip_rejects_unobserved_region_and_requires_installed_admission_off_keyring(tmp_path, damage):
+    data = bundle(tmp_path)
+    source = artifact(tmp_path, 'export.json', [])
+    selected = select([trial()])
+    selected['exports'] = {source['path']: source['sha256']}
+    data.update(drain=artifact(tmp_path, 'drain.json', selected),
+        ci={name: artifact(tmp_path, name, {'passed': True}) for name in ('F1', 'F2b', 'F2c')},
+        signer=dict(epoch=1, audience='router-settlement', kid='kid', issuer='issuer', mounted=True,
+                    public_key=FIXTURE['public_key'], verification=artifact(tmp_path, 'signer.json', {'passed': True})))
+    data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_TICKET_KID='kid', TR_ASYNC_SETTLE_TICKET_ISSUER='issuer',
+        TR_ASYNC_SETTLE_TICKET_AUDIENCE='router-settlement', TR_ASYNC_SETTLE_AUTHORITY_EPOCH='1',
+        TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE='/mounted/key.pem')
+    assert pilot.pre_flip(data)['status'] == 'PASS'
+    if damage in {'addition', 'addition_same_region'}:
+        added = copy.deepcopy(data['serving'][0])
+        added.update(instance='new-instance-with-no-counters', region='new-region-with-no-budget' if damage == 'addition' else added['region'])
+        data['serving'].append(added)
+        data['serving_instance_ids'].append(added['instance'])
+    elif damage == 'empty_keyring':
+        data['serving'][1]['pins']['TR_ASYNC_SETTLE_TICKET_PUBLIC_KEYS'] = '{}'
+    else:
+        data['serving'][1]['pins']['TR_ASYNC_SETTLE_NEGOTIATE'] = 'on'
+    assert pilot.pre_flip(data)['status'] == 'BLOCKED'
+
+
+def pre_enable_bundle(tmp_path, serving=None):
+    if serving is None:
+        serving = [dict(instance='router', revision='a'*40, role='router', region='us-central1', pins={'TR_ASYNC_SETTLE_ENABLED': 'false'},
+                        intervals=[dict(started_at_us=1791244800000000)]),
+                   dict(instance='enclave', revision='b'*40, role='enclave', region='us-central1', pins={'TR_ASYNC_SETTLE_NEGOTIATE': 'off'},
+                        intervals=[dict(started_at_us=1791244800000000)])]
+    data = dict(serving=copy.deepcopy(serving), serving_instance_ids=[r['instance'] for r in serving])
+    data['rows'] = []  # No observer exists on the dormant fleet.
+    start = data['serving'][0]['intervals'][0]['started_at_us']
+    end = start + 60_000000
+    for row in data['serving']:
+        row['intervals'] = [dict(day='2026-10-06', started_at_us=start, flushed_at_us=end)]
+        if row['role'] == 'router':
+            row['pins'].update(TR_ASYNC_SETTLE_SHADOW_WORKSPACES='', TR_ASYNC_SETTLE_PROTECTION='false')
+        else:
+            row['pins']['TR_ASYNC_SETTLE_SHADOW'] = 'off'
+    data.update(started_at_us=start, flushed_at_us=end, workspace_count=1,
+        deployment=artifact(tmp_path, 'deployment.json', dict(serving=data['serving'], maximum_router_instances_by_region={'us-central1': 1})),
+        monitoring=artifact(tmp_path, 'monitoring.json', dict(started_at_us=start, flushed_at_us=end,
+            approved_fleet_reads_per_second=2, regions={'us-central1': dict(cpu_peak_percent=20,
+                approved_incremental_cpu_percent=5, approved_reads_per_second=2, read_headroom_per_second=4,
+                approved_pending_rows_per_second=300, pending_row_headroom_per_second=700)})),
+        read_health=artifact(tmp_path, 'read-health.json', dict(started_at_us=start, flushed_at_us=end, regions={'us-central1': [.01, .02]})))
+    return data
+
+
+def test_pre_enable_passes_without_observer_or_opt_in(tmp_path, monkeypatch, capsys):
+    data = pre_enable_bundle(tmp_path)
+    result = pilot.fleet_budgets_pre(data)
+    assert result['status'] == 'PASS' and result['fleet_reads_per_second'] == 1.25
+    path = tmp_path / 'pre.json'
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr('sys.argv', ['pilot_enablement', 'fleet-budgets-pre', '--bundle', str(path)])
+    monkeypatch.setattr(pilot, 'live_database', lambda *args: pytest.fail('pre-enable must not open a database'))
+    with pytest.raises(SystemExit) as exc:
+        pilot.main()
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out)['mode'] == 'pre-enable'
+
+
+@pytest.mark.parametrize('damage', ['opted_in', 'descriptor_pins', 'missing_region', 'instance', 'cpu', 'reads', 'rows', 'latency', 'interval', 'workspace_count', 'hash'])
+def test_pre_enable_blocks_unbounded_or_unapproved_measurement(tmp_path, damage):
+    data = pre_enable_bundle(tmp_path)
+    if damage == 'opted_in':
+        data['serving'][0]['pins']['TR_ASYNC_SETTLE_SHADOW_WORKSPACES'] = pilot.PILOT
+    elif damage == 'descriptor_pins':
+        value = json.loads(Path(data['deployment']['path']).read_text())
+        value['serving'][0]['pins']['TR_ASYNC_SETTLE_ENABLED'] = 'true'
+        data['deployment'] = artifact(tmp_path, 'deployment.json', value)
+    elif damage == 'instance':
+        data['serving'][0]['instance'] = 'unreviewed'
+    elif damage == 'workspace_count':
+        data['workspace_count'] = 33
+    elif damage == 'hash':
+        Path(data['monitoring']['path']).write_text('{}')
+    else:
+        key = 'read_health' if damage == 'latency' else 'monitoring'
+        value = json.loads(Path(data[key]['path']).read_text())
+        if damage == 'missing_region':
+            value['regions']['extra-region'] = value['regions']['us-central1']
+        elif damage == 'interval':
+            value['flushed_at_us'] += 1
+        elif damage == 'latency':
+            value['regions']['us-central1'] = [.201]
+        else:
+            field = {'cpu': 'cpu_peak_percent', 'reads': 'read_headroom_per_second', 'rows': 'pending_row_headroom_per_second'}[damage]
+            value['regions']['us-central1'][field] = 44 if damage == 'cpu' else 0
+        data[key] = artifact(tmp_path, key+'.json', value)
+    if damage == 'hash':
+        with pytest.raises(KeyError):
+            pilot.fleet_budgets_pre(data)
+    else:
+        assert pilot.fleet_budgets_pre(data)['status'] == 'BLOCKED'
+
+
+@pytest.mark.parametrize('damage', ['missing', 'late', 'workspace', 'caps', 'status'])
+def test_post_opt_in_requires_matching_earlier_pre_enable_gate(tmp_path, damage):
+    data = fleet_bundle(tmp_path)
+    if damage == 'missing':
+        data['pre_enable']['sha256'] = '0'*64
+    else:
+        value = json.loads(Path(data['pre_enable']['path']).read_text())
+        if damage == 'late':
+            value['completed_at_us'] = data['rows'][0]['body']['started_at_us'] + 1
+        elif damage == 'workspace':
+            value['workspace_count'] = 2
+        elif damage == 'caps':
+            value['maximum_router_instances_by_region']['us-central1'] += 1
+        else:
+            value['status'] = 'BLOCKED'
+        data['pre_enable'] = artifact(tmp_path, 'pre-enable.json', value)
+    assert pilot.fleet_budgets(data)['status'] == 'BLOCKED'
+
+
+def test_gate_measurement_may_be_bounded_within_reviewed_lifetime(tmp_path):
+    data = bundle(tmp_path)
+    measured = copy.deepcopy(data['serving'])
+    for row in measured:
+        row['intervals'] = [row['intervals'][0]]
+        row['intervals'][0]['flushed_at_us'] -= 1
+    assert pilot.gate_roster_coverage(measured, data['serving'])
+    measured[0]['intervals'][0]['flushed_at_us'] += 2
+    assert not pilot.gate_roster_coverage(measured, data['serving'])
+
+
+@pytest.mark.parametrize('boundary', ['admission_disabled_from_us', 'admission_disabled_until_us'])
+def test_serving_lifetimes_must_fit_control_flag_intervals(tmp_path, boundary):
+    data = bundle(tmp_path)
+    assert pilot.control_coverage(data)
+    data['rows'][1]['body'][boundary] += 1 if boundary.endswith('from_us') else -1
+    assert not pilot.control_coverage(data)

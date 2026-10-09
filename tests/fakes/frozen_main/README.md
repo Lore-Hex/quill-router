@@ -7,8 +7,17 @@ without Git writes. The original F1-001 archive (`84f0a2092090e8ebf89e7eb56bc5c5
 passed all 85 comparisons in default-clock oracle shard 1/4 before re-freezing.
 The new BASE incorporates merged main through 8d781cf0; the worktree manifest
 contains only the three PR G admission-scoping source files. No storage SQL
-changes were absorbed. The regenerated inventory covers this same requested
-shard on CPython 3.12.3; it does not claim a full or post-cutover run.
+changes were absorbed. The regenerated inventory is the union of all eight
+worker JSON files from both CPython 3.12.3 full runs, default and post-cutover:
+**330 modules, 1,630 qualified names, 1,665 execution entries**. The source
+directories `/tmp/pr-g-inv-default` and `/tmp/pr-g-inv-post` each contain four
+JSON files; both clocks independently contain the same 1,665 entries.
+
+Pilot sequencing: install the public enclave keyring in the reviewed
+admission-off step 2, verify it on every serving revision at pre-flip step 7,
+and enable negotiation only in step 8 after the earlier gates pass. The
+dormant `fleet-budgets-pre` gate precedes opt-in; post-opt-in observer evidence
+is separately required by `shadow-serving` before the clock starts.
 
 Re-pin from the repository root without committing local edits:
 

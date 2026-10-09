@@ -119,6 +119,139 @@ def serving(bundle: dict[str, Any], *, admitted: bool) -> bool:
     return {row['role'] for row in roster} == {'router', 'enclave'}
 
 
+def roster_coverage(rows: list[dict[str, Any]]) -> set[tuple[Any, ...]]:
+    """Reviewed deployment lifetimes, including retired/overlapping instances."""
+    result = set()
+    instances = set()
+    for row in rows:
+        if row['instance'] in instances or not row['instance'] or not row['region'] or not row['revision']:
+            raise ValueError('duplicate or incomplete serving instance')
+        instances.add(row['instance'])
+        if row['role'] not in {'router', 'enclave'} or not row['intervals']:
+            raise ValueError('serving role and intervals required')
+        for interval in row['intervals']:
+            start, end = interval['started_at_us'], interval['flushed_at_us']
+            if type(start) is not int or type(end) is not int or not 0 < start < end:
+                raise ValueError('serving interval')
+            item = (row['instance'], row['role'], row['revision'], row['region'],
+                    interval['day'], start, end)
+            if item in result:
+                raise ValueError('duplicate serving interval')
+            result.add(item)
+    if not result:
+        raise ValueError('empty serving roster')
+    return result
+
+
+def gate_roster_coverage(gate: list[dict[str, Any]], serving_rows: list[dict[str, Any]]) -> bool:
+    measured, reviewed = roster_coverage(gate), roster_coverage(serving_rows)
+    # Each gate measures a bounded slice of the same reviewed lifetimes. Extending
+    # a lifetime does not move the original gate completion/clock prerequisite.
+    return ({item[:4] for item in measured} == {item[:4] for item in reviewed}
+            and all(any(m[:5] == r[:5] and r[5] <= m[5] < m[6] <= r[6]
+                        for r in reviewed) for m in measured))
+
+
+def counter_coverage(bundle: dict[str, Any]) -> bool:
+    expected = {item for item in roster_coverage(bundle['serving']) if item[1] == 'router'}
+    actual = []
+    for row in bundle['rows']:
+        if row['kind'] == COUNTER:
+            body = row['body']
+            shadow_report.validate_counter(row['id'], body)
+            actual.append((body['instance'], 'router', body['router_revision'], body['region'],
+                           row['id'].split('/')[0], body['started_at_us'], body['flushed_at_us']))
+    return bool(expected) and len(actual) == len(set(actual)) and set(actual) == expected
+
+
+def control_coverage(bundle: dict[str, Any]) -> bool:
+    coverage = roster_coverage(bundle['serving'])
+    manifests = [row['body'] for row in bundle['rows'] if row['kind'] == CONTROL]
+    if {item[4] for item in coverage} != set(bundle['days']):
+        return False
+    for manifest in manifests:
+        day = manifest['day']
+        routers = [item for item in coverage if item[4] == day and item[1] == 'router']
+        enclaves = [item for item in coverage if item[4] == day and item[1] == 'enclave']
+        if (set(manifest['instance_boot_ids']) != {item[0] for item in routers}
+                or set(manifest['router_revisions']) != {item[2] for item in routers}
+                or set(manifest['go_revisions']) != {item[2] for item in enclaves}
+                or not enclaves):
+            return False
+        # Counter flushes may overlap midnight; the portion belonging to this
+        # UTC day must still lie inside its reviewed admission-off interval.
+        day_start = int(timestamp(day + 'T00:00:00Z') * 1e6)
+        day_end = day_start + 86400_000000
+        if any(not (manifest['admission_disabled_from_us'] <= max(day_start, item[5])
+                    < min(day_end, item[6]) <= manifest['admission_disabled_until_us'])
+               for item in routers + enclaves):
+            return False
+    return {m['day'] for m in manifests} == set(bundle['days'])
+
+
+def fleet_budgets_pre(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Offline, bounded dormant measurements; no observer or pilot activation needed."""
+    deploy = json.loads(Path(bundle['deployment']['path']).read_text())
+    monitoring = json.loads(Path(bundle['monitoring']['path']).read_text())
+    health = json.loads(Path(bundle['read_health']['path']).read_text())
+    coverage = roster_coverage(bundle['serving'])
+    n = bundle['workspace_count']
+    caps = deploy['maximum_router_instances_by_region']
+    regions = {row['region'] for row in bundle['serving'] if row['role'] == 'router'}
+    start, end = bundle['started_at_us'], bundle['flushed_at_us']
+    checks = dict(
+        artifacts=all(artifact(bundle[k]) for k in ('deployment', 'monitoring', 'read_health')),
+        reviewed_roster=coverage == roster_coverage(deploy['serving'])
+            and len(bundle['serving_instance_ids']) == len(bundle['serving'])
+            and set(bundle['serving_instance_ids']) == {r['instance'] for r in bundle['serving']},
+        reviewed_pins={r['instance']: r['pins'] for r in bundle['serving']}
+            == {r['instance']: r['pins'] for r in deploy['serving']},
+        bounded_interval=type(start) is int and type(end) is int and 0 < end-start <= 3600_000000,
+        workspace_count=type(n) is int and 1 <= n <= 32,
+        regional_coverage=regions == set(caps) == set(monitoring['regions']) == set(health['regions']),
+        monitoring_interval=monitoring['started_at_us'] == start and monitoring['flushed_at_us'] == end,
+        health_interval=health['started_at_us'] == start and health['flushed_at_us'] == end,
+        serving_interval=all(item[5] <= start < end <= item[6] for item in coverage),
+        dormant=all((r['pins'].get('TR_ASYNC_SETTLE_ENABLED') == 'false'
+                     and r['pins'].get('TR_ASYNC_SETTLE_PROTECTION') == 'false'
+                     and r['pins'].get('TR_ASYNC_SETTLE_SHADOW_WORKSPACES') == '')
+                    if r['role'] == 'router' else
+                    (r['pins'].get('TR_ASYNC_SETTLE_NEGOTIATE') == 'off'
+                     and r['pins'].get('TR_ASYNC_SETTLE_SHADOW') == 'off')
+                    for r in bundle['serving']),
+        both_roles={r['role'] for r in bundle['serving']} == {'router', 'enclave'})
+    projected = {}
+    for region in regions:
+        maximum = caps[region]
+        measured = monitoring['regions'][region]
+        samples = health['regions'][region]
+        observed = sum(r['role'] == 'router' and r['region'] == region for r in bundle['serving'])
+        reads, pending = maximum * (n / 4 + 1), maximum * n / 4 * 1001
+        projected[region] = dict(reads_per_second=reads, pending_rows_per_second=pending,
+                                 trust_rows_per_second=maximum*n/4, health_rows_per_second=maximum)
+        checks[region + '_finite_measurements'] = all(type(v) in (int, float) and math.isfinite(v) and v >= 0
+            for v in measured.values())
+        checks[region + '_capacity'] = (type(maximum) is int and maximum >= observed
+            and measured['cpu_peak_percent'] + measured['approved_incremental_cpu_percent'] < 45
+            and 0 < measured['approved_incremental_cpu_percent']
+            and reads <= measured['approved_reads_per_second'] <= measured['read_headroom_per_second']
+            and pending <= measured['approved_pending_rows_per_second'] <= measured['pending_row_headroom_per_second'])
+        checks[region + '_health_latency'] = (1 <= len(samples) <= 100 and all(
+            type(v) in (int, float) and math.isfinite(v) and 0 <= v <= .2 for v in samples))
+    total = sum(v['reads_per_second'] for v in projected.values())
+    approved = monitoring['approved_fleet_reads_per_second']
+    checks['fleet_capacity'] = (type(approved) in (int, float) and math.isfinite(approved)
+        and total <= approved <= sum(v['read_headroom_per_second'] for v in monitoring['regions'].values()))
+    return checklist(checks, mode='pre-enable', serving=bundle['serving'],
+                     workspace_count=n, regions=projected, fleet_reads_per_second=total,
+                     maximum_router_instances_by_region=caps,
+                     approved_fleet_reads_per_second=approved,
+                     regional_budgets={r: dict(reads_per_second=m['approved_reads_per_second'],
+                         pending_rows_per_second=m['approved_pending_rows_per_second'])
+                         for r, m in monitoring['regions'].items()},
+                     evidence={k: bundle[k] for k in ('deployment', 'monitoring', 'read_health')})
+
+
 def shadow_serving(bundle: dict[str, Any]) -> dict[str, Any]:
     gate_outputs = {name: json.loads(Path(bundle[name]['path']).read_text()) for name in ('transport', 'fleet')}
     gate_times = [value['completed_at_us'] for value in gate_outputs.values()]
@@ -129,8 +262,9 @@ def shadow_serving(bundle: dict[str, Any]) -> dict[str, Any]:
     checks = dict(serving_pins=serving(bundle, admitted=False),
         durable_evaluable_sample=report['clean_window_start_us'] is not None,
         manifest_coverage=report['completeness'] == 'complete',
-        serving_revisions=set(report['source_revisions']['router']) == {r['revision'] for r in bundle['serving'] if r['role'] == 'router'}
-            and set(report['source_revisions']['go']) == {r['revision'] for r in bundle['serving'] if r['role'] == 'enclave'},
+        serving_counter_coverage=counter_coverage(bundle),
+        serving_control_coverage=control_coverage(bundle),
+        observer_counters=fleet_budgets({**bundle['observer'], 'serving': bundle['serving'], 'rows': bundle['rows']})['status'] == 'PASS',
         transport_gate=artifact(bundle['transport']), fleet_gate=artifact(bundle['fleet']),
         transport_manifest=bundle['proof'].get('maximum_header_hops') == bundle['transport']['sha256'],
         fleet_manifest=bundle['proof'].get('fleet_load_budget') == bundle['fleet']['sha256']
@@ -139,6 +273,9 @@ def shadow_serving(bundle: dict[str, Any]) -> dict[str, Any]:
     for name in ('transport', 'fleet'):
         evidence = gate_outputs[name]
         checks[name + '_pass'] = evidence.get('status') == 'PASS'
+        checks[name + '_roster'] = gate_roster_coverage(evidence['serving'], bundle['serving'])
+    checks['fleet_post_opt_in'] = gate_outputs['fleet'].get('mode') == 'post-opt-in'
+    checks['same_pre_enable_gate'] = gate_outputs['fleet'].get('pre_enable') == bundle['observer']['pre_enable']
     return checklist(checks, first_durable_evaluable_sample_us=report['clean_window_start_us'],
         clock_start_us=report['clean_window_start_us'] if all(checks.values()) else None,
         continuous_seconds=report['continuous_seconds'], shadow_report=report)
@@ -146,25 +283,44 @@ def shadow_serving(bundle: dict[str, Any]) -> dict[str, Any]:
 
 def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     counters = [row for row in bundle['rows'] if row['kind'] == COUNTER]
-    checks = {'counters_present': bool(counters)}
+    pre = json.loads(Path(bundle['pre_enable']['path']).read_text())
+    checks = {'counters_present': bool(counters),
+        'pre_enable_gate': artifact(bundle['pre_enable']) and pre.get('status') == 'PASS'
+            and pre.get('mode') == 'pre-enable',
+        'pre_enable_budget': pre['workspace_count'] == bundle['workspace_count']
+            and pre['maximum_router_instances_by_region'] == bundle['maximum_router_instances_by_region']
+            and pre['regional_budgets'] == bundle['regional_budgets']
+            and pre['approved_fleet_reads_per_second'] == bundle['approved_fleet_reads_per_second']}
+    pre_time = pre['completed_at_us']
+    checks['pre_enable_before_opt_in'] = (type(pre_time) is int and pre_time > 0
+        and bool(counters) and all(pre_time <= r['body']['started_at_us'] for r in counters))
     totals: dict[str, dict[str, float]] = {}
+    instance_rates: dict[tuple[str, str], dict[str, float]] = {}
     for row in counters:
         shadow_report.validate_counter(row['id'], row['body'])
         body = row['body']
         duration = (body['flushed_at_us'] - body['started_at_us']) / 1e6
         obs = body['admission_observer']
         n = bundle['workspace_count']
-        ok = (duration > 0 and 1 <= n <= 32 and body['closed']
+        ok = (duration > 0 and type(n) is int and 1 <= n <= 32 and body['closed']
               and not any(obs[k] for k in ('read_failures', 'missed_ticks', 'prediction_unknown'))
               and obs['prediction_yes'] + obs['prediction_no'] > 0
               and max(1, n * (math.floor(duration / 4) - 1)) <= obs['workspace_reads'] <= n * (math.ceil(duration / 4) + 1)
               and max(1, math.floor(duration) - 1) <= obs['health_reads'] <= math.ceil(duration) + 1)
         checks[row['id']] = ok
         if duration > 0:
-            region = totals.setdefault(body['region'], {'reads_per_second': 0., 'pending_rows_per_second': 0.})
-            region['reads_per_second'] += (obs['workspace_reads'] + obs['health_reads']) / duration
-            region['pending_rows_per_second'] += obs['workspace_reads'] * 1001 / duration
-    checks['complete_instance_roster'] = {row['body']['instance'] for row in counters} == set(bundle['router_instance_ids'])
+            region = instance_rates.setdefault((body['region'], body['instance']), {'reads_per_second': 0., 'pending_rows_per_second': 0.})
+            # Peak interval rate per instance; never average away an overloaded interval.
+            region['reads_per_second'] = max(region['reads_per_second'], (obs['workspace_reads'] + obs['health_reads']) / duration)
+            region['pending_rows_per_second'] = max(region['pending_rows_per_second'], obs['workspace_reads'] * 1001 / duration)
+    for (region_name, _), rates in instance_rates.items():
+        region = totals.setdefault(region_name, {'reads_per_second': 0., 'pending_rows_per_second': 0.})
+        for key, rate in rates.items():
+            region[key] += rate
+    checks['complete_instance_roster'] = (counter_coverage(bundle)
+        and {r['instance'] for r in bundle['serving'] if r['role'] == 'router'} == set(bundle['router_instance_ids'])
+        and len(bundle['router_instance_ids']) == len(set(bundle['router_instance_ids'])))
+    checks['regional_coverage'] = set(totals) == set(bundle['regional_budgets']) == set(bundle['maximum_router_instances_by_region'])
     maxima = bundle['freshness_maxima_seconds']
     bounds = dict(publisher_period=2., publisher_jitter=.25, publication=.5,
                   poll_period=1., poll_jitter=.25, install=.2, skew=.25,
@@ -190,8 +346,8 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
             and maximum * bundle['workspace_count'] / 4 * 1001 <= budget['pending_rows_per_second'])
     checks['regional_roster_caps'] = sum(bundle['maximum_router_instances_by_region'].values()) == maximum_instances
     checks['measured_headroom_artifact'] = artifact(bundle['headroom'])
-    return checklist(checks, regions=totals, fleet_reads_per_second=total_reads,
-                     freshness_maxima_seconds=maxima)
+    return checklist(checks, mode='post-opt-in', serving=bundle['serving'], regions=totals, fleet_reads_per_second=total_reads,
+                     freshness_maxima_seconds=maxima, pre_enable=bundle['pre_enable'])
 
 
 def pre_flip(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -332,6 +488,8 @@ def main() -> None:
         command.add_argument('--live', action='store_true', help='Read explicit bundle keys from the named billing DB')
         for field in ('project', 'instance', 'database'):
             command.add_argument('--' + field, default='')
+    pre = commands.add_parser('fleet-budgets-pre', help='Dormant pre-enable deployment, Monitoring and fixed-key read_health exports; no live reads')
+    pre.add_argument('--bundle', type=Path, required=True)
     probe = commands.add_parser('header-probe')
     probe.add_argument('--base-url', required=True, help='Actual reviewed internal hop base including /v1')
     probe.add_argument('--model', required=True)
@@ -345,14 +503,14 @@ def main() -> None:
                                       os.environ[args.gateway_token_env], client)
         else:
             bundle = json.loads(args.bundle.read_text())
-            if args.live:
+            if getattr(args, 'live', False):
                 database = live_database(args.project, args.instance, args.database)
                 if args.command == 'post-flip':
                     bundle['outbox'] = workspace_outbox(database, PILOT, 1000)
                 else:
                     bundle['rows'] = point_evidence(database, bundle['evidence_keys'])
             result = {'shadow-serving': shadow_serving, 'fleet-budgets': fleet_budgets,
-                      'pre-flip': pre_flip, 'post-flip': post_flip}[args.command](bundle)
+                      'pre-flip': pre_flip, 'post-flip': post_flip, 'fleet-budgets-pre': fleet_budgets_pre}[args.command](bundle)
     except Exception:
         # Exception text can contain credentials or request bodies.
         result = checklist({'complete_valid_evidence_or_probe_cleanup': False})

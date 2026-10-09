@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = ROOT / 'tests/fakes/frozen_main'
 DOCUMENT = ROOT / 'docs/async-settle-frozen-main-inventory.md'
 SCOPE = ('Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 '
-         'default-clock proof_oracle shard 1/4; negative controls excluded')
+         'full proof_oracle runs, default and post-cutover clocks (union of eight worker JSON files); negative controls excluded')
 
 
 def render(data: dict) -> str:

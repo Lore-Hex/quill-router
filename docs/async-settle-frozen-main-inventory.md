@@ -4,7 +4,7 @@ Observed inventory: **330 modules, 1630 distinct qualified names, 1665 execution
 
 BASE: `8d781cf096c43cdc29aa54c37f8d3820b80cf587` plus the source changes in `worktree-pins.json`. CPython 3.12.3.
 
-Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 default-clock proof_oracle shard 1/4; negative controls excluded. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; module/class bodies and comprehensions are included. No observed live router call is permitted.
+Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 full proof_oracle runs, default and post-cutover clocks (union of eight worker JSON files); negative controls excluded. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; module/class bodies and comprehensions are included. No observed live router call is permitted.
 
 Archive SHA-256: `886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345`.
 
