@@ -64,3 +64,42 @@ def test_manifest_records_the_announced_retirement() -> None:
     assert rows[_MODEL]["retirement_at"] == "2026-10-22T00:00:00Z"
     assert "replacement_model_id" not in rows[_MODEL]
     assert "retirement_at" not in rows[_OTHER]
+
+
+_V32_CUTOFF = datetime(2026, 10, 24, tzinfo=UTC)
+_V32 = "deepseek/deepseek-v3.2"
+_V32_NATIVE = "deepseek-ai/DeepSeek-V3.2"
+
+
+def test_friendli_deepseek_v32_exact_boundary_and_scope() -> None:
+    assert provider_lifecycle.FRIENDLI_DEEPSEEK_V32_RETIREMENT_AT == _V32_CUTOFF
+    retired = provider_lifecycle.provider_model_retired
+    assert not retired("friendli", _V32, _V32_NATIVE, at=_V32_CUTOFF - timedelta(microseconds=1))
+    assert retired("friendli", _V32, at=_V32_CUTOFF)
+    assert retired("friendli", "alternate-canonical-id", _V32_NATIVE, at=_V32_CUTOFF)
+    assert not retired("another-provider", _V32, _V32_NATIVE, at=_V32_CUTOFF)
+    assert not retired("friendli", _OTHER, "zai-org/GLM-5.3", at=_V32_CUTOFF)
+
+
+def test_friendli_deepseek_v32_routed_before_cutover_retired_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoints = {}
+    for provider in ("friendli", "another-provider"):
+        for usage in ("Credits", "BYOK"):
+            endpoint = ModelEndpoint(
+                id=f"{_V32}@{provider}/{usage}", model_id=_V32,
+                provider=provider, usage_type=usage, upstream_id=_V32_NATIVE,
+            )
+            endpoints[endpoint.id] = endpoint
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _V32_CUTOFF - timedelta(microseconds=1))
+    assert len(catalog.endpoints_for_model(_V32)) == 4
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _V32_CUTOFF)
+    assert {row.provider for row in catalog.endpoints_for_model(_V32)} == {"another-provider"}
+
+
+def test_friendli_deepseek_v32_manifest_records_the_retirement() -> None:
+    rows = {row["id"]: row for row in json.loads(friendli.MANIFEST_PATH.read_text())["models"]}
+    assert rows[_V32]["upstream_id"] == _V32_NATIVE
+    assert rows[_V32]["retirement_at"] == "2026-10-24T00:00:00Z"
