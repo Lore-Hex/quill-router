@@ -44,7 +44,7 @@ class Observer:
         with self.lock:
             previous = self.last_workspace_start.get(key)
             self.last_workspace_start[key] = started
-            if self.clock() - started > .2 or previous is not None and started - previous > 4.25:
+            if self.clock() - started > .5 or previous is not None and started - previous > 4.25:
                 self.progress_ok = False
             self.entries[key] = (started, value)
 
@@ -52,7 +52,7 @@ class Observer:
         if self.stopped:
             return
         with self.lock:
-            if (self.clock() - started > .2 or self.last_health_start is not None
+            if (self.clock() - started > .5 or self.last_health_start is not None
                     and started - self.last_health_start > 1.25):
                 self.progress_ok = False
             self.last_health_start = started

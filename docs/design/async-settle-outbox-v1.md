@@ -1165,7 +1165,7 @@ The exact covering observation statement is:
 SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL ORDER BY unresolved_at LIMIT @limit
 ```
 
-`@limit=10001` bounds the 0.2-second low-priority, no-retry query. More than
+`@limit=10001` bounds the 0.5-second low-priority, no-retry query. More than
 10,000 rows or invalid returned evidence means incomplete/ineligible; counts
 and sums then describe only the bounded observation, never the full backlog.
 Empty is healthy only after a complete fleet observation with a fresh heartbeat.
@@ -1193,7 +1193,7 @@ and failed claims with successful apply, and a delayed older publication.
 
 The consumer lazily refreshes health only when admission is enabled. Refreshes
 are coalesced for one second per process, using one strong complete-primary-key
-read (`timeout=0.2`, `retry=None`, `PRIORITY_LOW`); hits add no RPC. Missing,
+read (`timeout=0.5`, `retry=None`, `PRIORITY_LOW`); hits add no RPC. Missing,
 invalid, future, unhealthy or five-second-old evidence is ineligible. Receipt
 never rejuvenates the publisher's timestamp. The existing workspace admission
 index/read remains bounded to 1,001 rows and retains its independent five-second
@@ -1967,8 +1967,8 @@ explicit window and coverage before running the offline checklist.
      strictly below the existing 45% alarm. The tool checks the supplied
      arithmetic, not the provenance or adequacy of the reviewed sizing model.
    - `read_health`: same interval and `regions`, each with 1–100 measured
-     latency samples in seconds, all finite and ≤0.2. Obtain these with the
-     existing fixed-key `read_health` reader, LOW priority, 200 ms, no retries,
+     latency samples in seconds, all finite and ≤0.5. Obtain these with the
+     existing fixed-key `read_health` reader, LOW priority, 500 ms, no retries,
      at most one sample per second per region, without installing a shadow
      runtime. This is bounded latency evidence, not observer cadence evidence.
 
@@ -2005,7 +2005,7 @@ explicit window and coverage before running the offline checklist.
    `freshness_maxima_seconds`: `publisher_period`, `publisher_jitter`,
    `publication`, `poll_period`, `poll_jitter`, `install`, `skew`,
    `workspace_period`, `workspace_jitter`, `workspace_install`. All §5 component
-   and combined 4.45-second limits must pass.
+   and combined 4.75-second limits must pass.
 
    Then run `shadow-serving --bundle /absolute/shadow-evidence.json --live`
    (same database arguments). Include these post-opt-in budget fields under

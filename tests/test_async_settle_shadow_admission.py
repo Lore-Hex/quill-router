@@ -34,21 +34,21 @@ def test_cache_does_not_rejuvenate_and_nonmember_has_no_reads():
 @pytest.mark.parametrize('phase', [i/20 for i in range(40)])
 def test_continuous_health_phase_sweep(phase):
     # Worst publication delay .5, period+excess 2.25; read-start gap 1.25,
-    # installation .2 and .25 clock skew. Inspect BETWEEN completions.
+    # installation .5 and .25 clock skew. Inspect BETWEEN completions.
     cached = None
     for i in range(4000):
         now = i/100
-        read_start = math.floor((now-.2-phase)/1.25)*1.25+phase
+        read_start = math.floor((now-.5-phase)/1.25)*1.25+phase
         if read_start < 0:
             continue
         publication = math.floor((read_start-.5)/2.25)*2.25
         if publication < 0:
             continue
         cached = publication
-        assert now-cached+.25 <= 4.45+1e-9
+        assert now-cached+.25 <= 4.75+1e-9
     assert cached is not None
     # Witness for the rejected four-second polling cadence.
-    assert 5.1-0 >= 5 and 4+0.25+0.2 < 5
+    assert 5.1-0 >= 5 and 4+0.25+0.5 < 5
 
 
 @pytest.mark.asyncio
@@ -97,6 +97,17 @@ def test_empty_creates_no_timer():
     assert calls == []
 
 
+@pytest.mark.parametrize('reader', ['workspace', 'health'])
+@pytest.mark.parametrize('seconds,prediction', [(.45, 'yes'), (.5, 'yes'), (.55, 'unknown')])
+def test_install_deadline_preserves_fail_closed(reader, seconds, prediction):
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(0),
+                        clock=lambda: seconds, wall=lambda: seconds)
+    observer.install_workspace('ws', 0. if reader == 'workspace' else seconds, Admission(0, 2))
+    observer.install_health(0. if reader == 'health' else seconds, health(0))
+    assert observer.peek('ws')['prediction'] == prediction
+    assert observer.progress_ok is (prediction == 'yes')
+
+
 def test_maximum_workspaces_share_two_readers_with_health_priority(monkeypatch):
     from types import SimpleNamespace
 
@@ -121,7 +132,7 @@ def test_maximum_workspaces_share_two_readers_with_health_priority(monkeypatch):
         key = args[0] if function == observer._workspace else "health"
         starts.setdefault(key, []).append(now[0])
         future = Future()
-        # Binary-exact virtual times, just below the 200 ms RPC deadline.
+        # Binary-exact virtual times, 195 ms reads within the 500 ms RPC deadline.
         jobs.append((now[0] + 25 / 128, future, function, args))
         alive.append(sum(not job[1].done() for job in jobs))
         return future

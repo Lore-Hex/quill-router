@@ -862,9 +862,9 @@ ORDER BY id LIMIT @page_size
 
 Bind kind to exactly one of the three named kinds, day bounds to
 `YYYY-MM-DD/` and next calendar day's prefix, page size ≤200; first-page cursor
-is empty. No LIKE or JSON predicate. Use strong bounded reads with 0.2-second
-deadline, LOW priority, no retries, following the existing read pattern
-(`src/trusted_router/storage_gcp_async_admission.py:72`). Timeout/incomplete
+is empty. No LIKE or JSON predicate. Operator report reads retain a 0.2-second
+deadline, LOW priority and no retries independently of the admission-reader budget
+(`src/trusted_router/storage_gcp_async_settle_shadow.py:76`). Timeout/incomplete
 pagination is a failed report, never a partial passing table. A report for a
 seven-day observation interval reads the requested days plus up to two preceding
 authorization-day prefixes for long calls; include all requested counter days.
@@ -902,10 +902,13 @@ health scheduling/limiter capacity separately within the shared limits; workspac
 reads cannot starve it. Do not discover workspaces or
 scan/publish fleet health from shadow. Rate-limit all reads to 10 starts/second,
 burst two; spread reads across the cycle, at most one outstanding read per key,
-skip overdue ticks without catch-up. Each read uses LOW priority, ≤200 ms and
+skip overdue ticks without catch-up. Each read uses LOW priority, ≤500 ms and
 no retry, as those readers already specify (`:33`, `:75`). Disable/stop the
 timer and clear evidence on opt-in removal or admission enablement. Empty set
 creates neither timer nor reads. Nonmembers never populate this cache.
+The 2026-10-09 22:12Z regional probe measured São Paulo–nam6 at roughly
+150 ms per round trip, with 200 ms deadlines failing 1/60 health reads and
+4/60 admission reads, motivating the 500 ms read/control-transaction budgets.
 
 Cost per opted-in router instance is at most **N/4 + 1 bounded reads/second**
 in steady state, **9/s at N=32**, bounded additionally by the rate limiter;
@@ -931,16 +934,18 @@ the health publisher period P≤2 s (default 2 s at
 and observation-start-to-durable-publication Dp≤0.5 s. Its timestamp is read
 start, not commit time (`src/trusted_router/storage_gcp_async_admission.py:137`,
 `:165`, `:181`). Health polling period T=1 s, excess read-start gap Jr≤0.25 s,
-read-start-to-cache-install Dr≤0.2 s, and publisher/reader wall-clock skew
+read-start-to-cache-install Dr≤0.5 s, and publisher/reader wall-clock skew
 allowance S≤0.25 s must together satisfy
-**P+Jp+Dp+T+Jr+Dr+S ≤ 4.45 s < 5 s**. This bounds the age of the cached
+**P+Jp+Dp+T+Jr+Dr+S ≤ 4.75 s < 5 s**. This bounds the age of the cached
 publisher observation just before the next install for every phase offset,
 after initial population. The same bound covers heartbeat age because it is
 no earlier than observed_at (`src/trusted_router/services/async_settle.py:136`).
-Workspace read-start age has its own **4+0.25+0.2=4.45 s < 5 s** bound using
+Workspace read-start age has its own **4+0.25+0.5=4.75 s < 5 s** bound using
 the local monotonic clock. Scheduling excess includes limiter/executor delay;
 install delay includes RPC and decoding. These are end-to-end requirements,
-not consequences of an RPC timeout. Preserve the actual `[0,5)` age checks,
+not consequences of an RPC timeout. Both chains leave **0.25 s** of margin
+under the governing 5-second `CACHE_SECONDS` consumer limit. Preserve the actual
+`[0,5)` age checks,
 including rejection of future timestamps; clock anomalies remain unknown
 (`src/trusted_router/services/async_settle.py:166`).
 
@@ -987,7 +992,7 @@ pending exposure with all traffic synchronous is not async-load capacity proof.
 “One transaction” is not “one RPC”: dedup uses a read and mutation commit;
 SDK begin/commit overhead must be included in measured cost. All shadow storage
 work has a shared **1 second** worker I/O budget, individual RPC deadlines at
-most 200 ms and no longer than the remaining budget, LOW priority and no
+most 500 ms and no longer than the remaining budget, LOW priority and no
 application retry; skip when budget is gone. Use a dedicated single-worker
 executor so shadow cannot fill the money executor's queue. Queueing adds no
 per-request storage. This budget must be measured in every pilot region;
@@ -1002,7 +1007,7 @@ claim of fresh observations; shutdown loss still follows §4's coverage rule.
 **Authorize is the budget. Decision:** new overhead must be ≤1 ms p95 and
 ≤2 ms p99 CPU and ≤2 ms p99 wall at the real authorize response seam, with
 zero added RPC on cache misses or failure. This is a proposed F2 acceptance
-budget, not an existing measured SLO. Reject a design that spends the 200 ms
+budget, not an existing measured SLO. Reject a design that spends the 500 ms
 admission-reader timeout on authorize merely because it fits a larger RPC
 deadline. Enclave header construction budget: ≤2 ms p99; router pre-response
 observation capture: ≤100 µs p99; background comparator CPU ≤5 ms p99.
@@ -1171,7 +1176,7 @@ No modification to pricing formulas, transaction SQL, reservation gates,
 | Refund / winner | Positive exact usage refund: evaluate usage charge 2 but P=G=B=0; body without usage → usage_missing; exercise actual refund entry, empty/nonmember/opted guards and exceptions. Race settle/refund in both reservation-claim orders, delayed observations, both delivery orders, lost-ack replay and zero-cost settle winner: winner amount/polarity retained, cross-kind deltas null and requires_review, no false arithmetic disagreement or second booking (`src/trusted_router/routes/internal/gateway.py:2316`, `:4597`; §3.1). |
 | Transport coverage | Reproduce 645/1,041/1,884/2,726/3,563/28,821-byte projections at pinned catalog; named four-model envelope passes full mode at 5,492/7,323 decoded/encoded bytes. All-43 case uses hash-only and passes only with exact original candidates/eligibility and canonical ordering and rebuilt S0 hash; missing view/context, catalog correction/removal, changed candidate set/order or hash mismatch yields snapshot_reconstruction_failed and blocks clock. Exercise outer-bound fallback even below inline cap, both modes at every boundary, no trimming, and local-work-cap snapshot_size with unsampled dimensions. Keep §2.3 literal hashes/lengths unchanged; add hash-only success/failure fixtures. Pilot authorization size distributions and maximum auth+12,288-byte shadow value with fragmented delivery must pass §2.2's actual-hop gate before clock start (`src/trusted_router/routing.py:947`, `src/trusted_router/billing_snapshot.py:369`). |
 | Accounting and reporting | Caps across concurrent instances, dedup/retries/midnight, changed-payload retry, rate-before-evaluate, cumulative idempotent flush, counter failure, unclosed restart, unknown admission, percentile null counts, signed histograms and seven-day/reset/coverage logic. Same reason in multiple adapter/route/streaming/phase buckets with **no sample rows** must remain separate; observed partitions reconcile all settle/refund attempts, overflow blocks, and empty/counter-only/all-null evidence never starts clock. No log dependency (parent §8, `docs/design/async-settle-outbox-v1.md:802`, `:811`). |
-| Admission observation | Fresh runtime with admission off must gain known predictions/ages from bounded timer only; `eligible()` spy never called. Empty/nonmember workspaces cause zero reads; N workspace reads/4 s plus 1 health read/s, concurrency/rate/deadline/index-row bounds. Reproduce old publish 0,2,4,… / read 1.5,5.5,… gap at 5.1; sweep all phases with 1 s reads, boundary scheduling/RPC/publication/skew delays and continuous between-read checks: ages stay <5 s within §5's 4.45 s budget. Successful RPCs with stale timestamps or excess scheduling delay still fail coverage; starvation, missing publisher, absent/stale/unhealthy/truncated data, restart/removal fail closed. Verify fleet budget and clock gate (§5; `src/trusted_router/config.py:977`, `src/trusted_router/services/async_settle.py:172`, `src/trusted_router/storage_gcp_async_admission.py:13`, `:78`). |
+| Admission observation | Fresh runtime with admission off must gain known predictions/ages from bounded timer only; `eligible()` spy never called. Empty/nonmember workspaces cause zero reads; N workspace reads/4 s plus 1 health read/s, concurrency/rate/deadline/index-row bounds. Reproduce old publish 0,2,4,… / read 1.5,5.5,… gap at 5.1; sweep all phases with 1 s reads, boundary scheduling/RPC/publication/skew delays and continuous between-read checks: ages stay <5 s within §5's 4.75 s budget. Successful RPCs with stale timestamps or excess scheduling delay still fail coverage; starvation, missing publisher, absent/stale/unhealthy/truncated data, restart/removal fail closed. Verify fleet budget and clock gate (§5; `src/trusted_router/config.py:977`, `src/trusted_router/services/async_settle.py:172`, `src/trusted_router/storage_gcp_async_admission.py:13`, `:78`). |
 | Native storage | Emulator/integration transaction conflict tests for cap permits and sample uniqueness; exact indexed day bounds/pagination/cleanup; no body scans; unavailable storage cannot hold response. No new DDL. |
 | Cost | Assert no added authorize RPC, nonmember shadow calls zero, no request-triggered cache refresh; measure §5 CPU/wall overhead including sign, independent oracle, maximum envelope and timer reads/row visits multiplied by instances; report region/build evidence. |
 

@@ -239,7 +239,7 @@ def fleet_budgets_pre(bundle: dict[str, Any]) -> dict[str, Any]:
             and reads <= measured['approved_reads_per_second'] <= measured['read_headroom_per_second']
             and pending <= measured['approved_pending_rows_per_second'] <= measured['pending_row_headroom_per_second'])
         checks[region + '_health_latency'] = (1 <= len(samples) <= 100 and all(
-            type(v) in (int, float) and math.isfinite(v) and 0 <= v <= .2 for v in samples))
+            type(v) in (int, float) and math.isfinite(v) and 0 <= v <= .5 for v in samples))
     total = sum(v['reads_per_second'] for v in projected.values())
     approved = monitoring['approved_fleet_reads_per_second']
     checks['fleet_capacity'] = (type(approved) in (int, float) and math.isfinite(approved)
@@ -325,13 +325,13 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     checks['regional_coverage'] = set(totals) == set(bundle['regional_budgets']) == set(bundle['maximum_router_instances_by_region'])
     maxima = bundle['freshness_maxima_seconds']
     bounds = dict(publisher_period=2., publisher_jitter=.25, publication=.5,
-                  poll_period=1., poll_jitter=.25, install=.2, skew=.25,
-                  workspace_period=4., workspace_jitter=.25, workspace_install=.2)
+                  poll_period=1., poll_jitter=.25, install=.5, skew=.25,
+                  workspace_period=4., workspace_jitter=.25, workspace_install=.5)
     checks['freshness_components'] = set(maxima) == set(bounds) and all(
         type(maxima[k]) in (int, float) and math.isfinite(maxima[k]) and 0 <= maxima[k] <= bound
         for k, bound in bounds.items())
-    checks['combined_health_age'] = sum(maxima[k] for k in list(bounds)[:7]) <= 4.45
-    checks['combined_workspace_age'] = sum(maxima[k] for k in list(bounds)[7:]) <= 4.45
+    checks['combined_health_age'] = sum(maxima[k] for k in list(bounds)[:7]) <= 4.75
+    checks['combined_workspace_age'] = sum(maxima[k] for k in list(bounds)[7:]) <= 4.75
     total_reads = sum(v['reads_per_second'] for v in totals.values())
     maximum_instances = bundle['maximum_router_instances']
     checks['maximum_instance_headroom'] = (type(maximum_instances) is int
