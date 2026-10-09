@@ -83,6 +83,10 @@ var (
 	walkTick     = time.Date(2026, 10, 8, 1, 0, 0, 0, time.UTC)
 )
 
+// walkTickNumber is the fence tick's number, which a member that applies it
+// sends as its last tick: not 0, so a store that drops it is seen.
+const walkTickNumber = 7
+
 // holdPayload is what a hold's row keeps beside its snapshot's numbers, as
 // the walk writes it for auth's heartbeat at seq: the snapshot's hash and
 // usage, and the reap basis its first heartbeat brought. A reap after a
@@ -162,7 +166,8 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	t.Logf("store calls:%s", b.String())
 	required := []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
 		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close", "a reap past its time",
-		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on"}
+		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on",
+		"a commit of a tick's number", "S committed again with another time"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -194,6 +199,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 type memberSide struct {
 	decided  []int8
 	faultSeq int64
+	lastTick int64 // the number of the last tick the member applied, or loaded
 	holdSeq  [ac.MaxAuths]int64
 	buffer   []DrainRow
 	cursor   time.Time
@@ -224,6 +230,8 @@ type walker struct {
 	// fault is the audit fault the lease's row holds: the first a commit
 	// stored, or 0.
 	fault int64
+	// lastTick is the last tick the lease's row holds, the last commit's.
+	lastTick int64
 	// stamps are the writes' commit timestamps; moved, the holds whose
 	// stored snapshot a later commit moved on; script, the steps a walk
 	// takes, in order, before it chooses its own.
@@ -403,6 +411,8 @@ func (w *walker) apply(tr ac.Transition) {
 			w.seen["a close past its time"]++
 		}
 		w.close(m, from, tr.To, due, "")
+	case "ApplyTick":
+		w.members[member()].lastTick = walkTickNumber
 	case "Reread", "Crash":
 		w.members[member()] = memberSide{}
 	}
@@ -499,7 +509,7 @@ func (w *walker) load(m int8, to ac.State) {
 	if got != mem {
 		w.fatalf("member %s loads %+v, and the shadow's has %+v", w.c.Members[m], got, mem)
 	}
-	side := memberSide{}
+	side := memberSide{lastTick: l.LastTick}
 	for _, h := range loaded.Holds {
 		if !payloadIs(h, h.SnapshotOwnerSeq.Int64) {
 			w.fatalf("member %s loads a hold row %+v, and the walk wrote another payload for its snapshot", w.c.Members[m], h)
@@ -625,8 +635,16 @@ func (w *walker) request(m int8, from ac.State) CommitRequest {
 				SnapshotOwnerSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true}, ReapBasis: basis})
 		}
 	}
+	req.LastTick = side.lastTick
 	if mem.S != ac.NoS {
-		req.Boundary = &Boundary{S: int64(mem.S), T: walkTick}
+		// S is stored once, with the time the first commit of it carried:
+		// a commit of it after that carries another, which the store must
+		// not take.
+		t := walkTick
+		if from.S != ac.NoS {
+			t = walkTick.Add(time.Duration(from.Ver) * time.Second)
+		}
+		req.Boundary = &Boundary{S: int64(mem.S), T: t}
 	}
 	if mem.Fault {
 		fault := side.faultSeq
@@ -684,6 +702,13 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.seen["faults in one commit"]++
 	}
 	w.members[m].decided, w.members[m].faultSeq = nil, 0
+	w.lastTick = req.LastTick
+	if req.LastTick != 0 {
+		w.seen["a commit of a tick's number"]++
+	}
+	if req.Boundary != nil && !req.Boundary.T.Equal(walkTick) {
+		w.seen["S committed again with another time"]++
+	}
 	if req.AuditFault != nil {
 		if w.fault == 0 {
 			w.fault = *req.AuditFault
@@ -1374,8 +1399,10 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 			w.drainedBy)
 	case l.ClosedAt.Valid != closed || l.CloseKind != closeKind:
 		w.fatalf("closed at %v by %v, and the lease is %s", l.ClosedAt, l.CloseKind, stateName(w.state.St))
-	case l.HoldsListedSeq.Valid || l.LastTick != 0:
-		w.fatalf("holds listed at %v, last tick %d, and the walk sent neither", l.HoldsListedSeq, l.LastTick)
+	case l.HoldsListedSeq.Valid:
+		w.fatalf("holds listed at %v, and the walk listed none", l.HoldsListedSeq)
+	case l.LastTick != w.lastTick:
+		w.fatalf("the last tick is %d, and the walk's last commit sent %d", l.LastTick, w.lastTick)
 	}
 	w.checkPacks(packs, "the winners'")
 	w.checkWinnerCounts()

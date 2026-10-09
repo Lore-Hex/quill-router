@@ -42,7 +42,7 @@ const debtSteps = 120
 // TestTheStoreKeepsCreditDebtsClaims runs FASTPATH_DEBT_WALKS walks (default
 // 6) from FASTPATH_WALK_SEED (default a fixed seed).
 func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
-	s := spikeStore(t, func(c *Config) { c.Allowance = 60 })
+	s := spikeStore(t, func(c *Config) { c.Allowance = 30 })
 	walks, seed := 6, int64(20261008)
 	if v := os.Getenv("FASTPATH_DEBT_WALKS"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -72,7 +72,8 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"return", "drain",
 		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
 		"a booking past the first donor", "a return before the last donor", "a batch its order changes",
-		"a return its place changes", "a pack of several winners"} {
+		"a return its place changes", "a pack of several winners", "refused grant: " + string(RefusedInDebt),
+		"refused grant: " + string(RefusedAllowance), "refused grant: " + string(RefusedFloor)} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -313,6 +314,34 @@ func (d *debtWalk) landed(kind string, ts time.Time) {
 	}
 }
 
+// grantRefusal is the store's answer to a grant of amount, as the store
+// checks, in its order, from what the walk knows: a debt mark on a credit
+// row; the workspace's exposure, every lease's unbooked allocation while it
+// is open or draining with its holds not listed, against the allowance; and
+// the headroom outside leases against the floor. "" is a grant. The walk's
+// workspace is never paused and keeps the tier that allows leases, which
+// the store checks before the exposure.
+func (d *debtWalk) grantRefusal(rows []row, amount int64) Refusal {
+	var exposure, headroom int64
+	for _, l := range d.leases {
+		if l.state == "open" || l.state == "draining" && !l.stored {
+			exposure += max(l.room(), 0)
+		}
+	}
+	for _, r := range rows {
+		headroom += r.headroom()
+	}
+	switch {
+	case slices.ContainsFunc(rows, func(r row) bool { return r.marked }):
+		return RefusedInDebt
+	case exposure > d.s.cfg.Allowance-amount:
+		return RefusedAllowance
+	case headroom < d.s.cfg.Floor+amount:
+		return RefusedFloor
+	}
+	return ""
+}
+
 // rows is every row a write to the lease could touch (everyRow).
 func (d *debtWalk) rows(ref LeaseRef) string {
 	d.t.Helper()
@@ -342,14 +371,19 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 	rows := readRows(d.t, d.ws)
 	ref := LeaseRef{d.ws, req.LeaseID}
 	before := d.rows(ref)
+	want := d.grantRefusal(rows, req.Amount)
 	got, err := d.s.Grant(ctx, detached(req))
 	if err != nil {
 		d.fatalf("the grant: %v", err)
+	}
+	if got.Refused != want {
+		d.fatalf("the grant of %d was refused %q, and the walk's checks say %q", req.Amount, got.Refused, want)
 	}
 	if got.Refused != "" {
 		// Nothing of the workspace's moves, and no row of the lease is
 		// written.
 		d.seen["refused grant"]++
+		d.seen["refused grant: "+string(got.Refused)]++
 		if after := d.rows(ref); after != before {
 			d.fatalf("a refused grant changed the rows from %s to %s", before, after)
 		}
