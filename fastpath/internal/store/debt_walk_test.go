@@ -779,8 +779,8 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 // did.
 func (d *debtWalk) checkLeaseRow(l *debtLease, after string) {
 	d.t.Helper()
-	if err := checkLease(l.ref, d.leaseWant(l)); err != nil {
-		d.fatalf("lease %s's row after %s: %v", l.ref.LeaseID, after, err)
+	if err := checkReads(d.s, l.ref, d.leaseWant(l)); err != nil {
+		d.fatalf("lease %s after %s: %v", l.ref.LeaseID, after, err)
 	}
 }
 
@@ -899,8 +899,8 @@ func (d *debtWalk) check(before, after []int64) {
 		d.fatalf("%d donor rows, and the walk's leases have %d donors", donors, len(want))
 	}
 	for _, l := range d.leases {
-		if err := checkLease(l.ref, d.leaseWant(l)); err != nil {
-			d.fatalf("lease %s's row: %v", l.ref.LeaseID, err)
+		if err := checkReads(d.s, l.ref, d.leaseWant(l)); err != nil {
+			d.fatalf("lease %s: %v", l.ref.LeaseID, err)
 		}
 	}
 	// Each lease's money is what the walk did to it, column by column, and

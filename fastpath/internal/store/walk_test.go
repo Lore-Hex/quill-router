@@ -1074,15 +1074,40 @@ func decoded(l Lease) map[string]any {
 		"closed_at": l.ClosedAt, "close_kind": l.CloseKind}
 }
 
+// notDecoded are tr_lease's columns Lease does not carry: the store reads
+// them where it needs them.
+var notDecoded = []string{"revoked_at", "retire_at"}
+
 // checkDecoded holds a decoded lease to the walk's expectations for its
-// row, each column Lease decodes: its key and every one leaseColumns reads.
+// row, every field of it the test reads (decoded), and requires those to
+// be every column of tr_lease but notDecoded, as the schema has them, not
+// as the store's own list of what it reads: a column the store stops
+// reading, or one the table gains, fails here.
 func checkDecoded(l Lease, want leaseWant) error {
+	tables, err := schemaTables(context.Background())
+	if err != nil {
+		return err
+	}
+	var columns []string
+	for _, t := range tables {
+		if t.name == "tr_lease" {
+			columns = t.columns
+		}
+	}
 	got := decoded(l)
 	var problems []string
-	for _, c := range append([]string{"workspace_id", "lease_id"}, leaseColumns...) {
+	for c := range got {
+		if !slices.Contains(columns, c) || slices.Contains(notDecoded, c) {
+			problems = append(problems, "the test reads "+c+" of Lease, which tr_lease has not or Lease does not carry")
+		}
+	}
+	for _, c := range columns {
+		if slices.Contains(notDecoded, c) {
+			continue
+		}
 		g, ok := got[c]
 		if !ok {
-			problems = append(problems, "Lease decodes "+c+", and the test reads no field of it")
+			problems = append(problems, "the test reads no field of Lease for "+c)
 			continue
 		}
 		w, ok := want[c]
@@ -1115,18 +1140,71 @@ func checkDecoded(l Lease, want leaseWant) error {
 // spannerNow is Spanner's time, as a strong read's timestamp.
 func spannerNow(t testing.TB) time.Time {
 	t.Helper()
-	ro := shared.Single()
-	defer ro.Close()
-	if err := ro.Query(context.Background(), spanner.Statement{SQL: "SELECT 1"}).Do(func(*spanner.Row) error {
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	ts, err := ro.Timestamp()
+	ts, err := spannerTime(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return ts
+}
+
+func spannerTime(ctx context.Context) (time.Time, error) {
+	ro := shared.Single()
+	defer ro.Close()
+	if err := ro.Query(ctx, spanner.Statement{SQL: "SELECT 1"}).Do(func(*spanner.Row) error {
+		return nil
+	}); err != nil {
+		return time.Time{}, err
+	}
+	return ro.Timestamp()
+}
+
+// checkReads holds the lease's row and both of the store's reads of it to
+// the walk's expectations after a write: the row, column by column
+// (checkLease); Load's lease and ReadLease's, field by field
+// (checkDecoded); and each read's timestamp between Spanner's times read
+// just before and just after it.
+func checkReads(s *Store, ref LeaseRef, want leaseWant) error {
+	if err := checkLease(ref, want); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	before, err := spannerTime(ctx)
+	if err != nil {
+		return err
+	}
+	loaded, err := s.Load(ctx, ref)
+	if err != nil {
+		return err
+	}
+	between, err := spannerTime(ctx)
+	if err != nil {
+		return err
+	}
+	l, read, err := s.ReadLease(ctx, ref)
+	if err != nil {
+		return err
+	}
+	after, err := spannerTime(ctx)
+	if err != nil {
+		return err
+	}
+	var problems []string
+	if loaded.ReadTS.Before(before) || loaded.ReadTS.After(between) {
+		problems = append(problems, fmt.Sprintf("Load read at %v, outside %v to %v", loaded.ReadTS, before, between))
+	}
+	if read.Before(between) || read.After(after) {
+		problems = append(problems, fmt.Sprintf("ReadLease read at %v, outside %v to %v", read, between, after))
+	}
+	if err := checkDecoded(loaded.Lease, want); err != nil {
+		problems = append(problems, "as Load decodes it: "+err.Error())
+	}
+	if err := checkDecoded(l, want); err != nil {
+		problems = append(problems, "as ReadLease decodes it: "+err.Error())
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 type schemaTable struct {
@@ -1617,11 +1695,8 @@ func (w *walker) leaseWant() leaseWant {
 
 func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	w.t.Helper()
-	if err := checkLease(w.ref, w.leaseWant()); err != nil {
-		w.fatalf("the lease's row: %v", err)
-	}
-	if err := checkDecoded(l, w.leaseWant()); err != nil {
-		w.fatalf("the lease as Load decodes it: %v", err)
+	if err := checkReads(w.s, w.ref, w.leaseWant()); err != nil {
+		w.fatalf("the lease: %v", err)
 	}
 	closed := w.state.St == ac.Closed
 	closeKind := spanner.NullString{}
