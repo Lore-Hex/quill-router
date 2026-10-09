@@ -1,79 +1,104 @@
 from __future__ import annotations
 
-import datetime as dt
+import copy
+from datetime import UTC, datetime, timedelta
 
-from scripts.update_provider_throughput_rank import (
-    build_rank_block,
-    measured_rank,
-    parse_provider_rows,
-    replace_rank_block,
-)
+import pytest
 
-LEADERBOARD_HTML = """
-<table class="leaderboard-table">
-  <thead>
-    <tr>
-      <th>#</th><th>Provider</th><th>Models</th><th>p50 TTFT</th>
-      <th>Effective throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Availability samples</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td>1</td><td>deepseek</td><td>2</td><td>3521 ms</td><td>53 tok/s n=12</td><td>100.00%</td><td>—</td><td>—</td><td>111</td></tr>
-    <tr><td>2</td><td>baseten</td><td>11</td><td>3349 ms</td><td>55 tok/s n=18</td><td>98.40%</td><td>—</td><td>—</td><td>125</td></tr>
-    <tr><td>3</td><td>novita</td><td>27</td><td>3534 ms</td><td>9 tok/s n=3</td><td>92.11%</td><td>provider_error 8%</td><td>—</td><td>38</td></tr>
-    <tr><td>4</td><td>openai</td><td>11</td><td>2579 ms</td><td>—</td><td>100.00%</td><td>—</td><td>—</td><td>44</td></tr>
-    <tr><td>5</td><td>crusoe</td><td>12</td><td>2888 ms</td><td>2 tok/s n=2</td><td>100.00%</td><td>—</td><td>—</td><td>24</td></tr>
-  </tbody>
-</table>
-"""
+from scripts.update_provider_throughput_rank import parse_snapshot
+from trusted_router import provider_ranking as ranking
+
+NOW = datetime(2026, 10, 9, 15, 5, tzinfo=UTC)
 
 
-def test_parse_provider_rows_from_public_leaderboard_table() -> None:
-    rows = parse_provider_rows(LEADERBOARD_HTML)
-
-    assert rows[0].provider == "deepseek"
-    assert rows[0].throughput_tokens_per_second == 53
-    assert rows[0].throughput_samples == 12
-    assert rows[0].uptime == 1.0
-    assert rows[0].samples == 111
-    assert rows[0].p50_ttft_ms == 3521
-    assert rows[3].throughput_tokens_per_second is None
+def row(provider="test", *, rate=1.0, tps=100, ttft=100, samples=30, throughput_samples=10):
+    return dict(provider=provider, completion_rate=rate, tokens_per_second=tps,
+                p50_ttft_ms=ttft, samples=samples, throughput_samples=throughput_samples)
 
 
-def test_measured_rank_uses_positive_throughput_with_sample_and_uptime_guards() -> None:
-    rows = parse_provider_rows(LEADERBOARD_HTML)
-
-    assert measured_rank(rows) == ["baseten", "deepseek"]
-    assert measured_rank(rows, min_throughput_samples=13) == ["baseten"]
+def snapshot(*rows):
+    return dict(window="7d", generated_at=NOW.isoformat(), providers=list(rows))
 
 
-def test_build_rank_block_places_measured_providers_before_secondary_priors() -> None:
-    block = build_rank_block(
-        ["baseten", "deepseek"], generated_date=dt.date(2026, 6, 27)
-    )
+def test_ranks_use_separate_metrics_and_sufficient_samples():
+    ranks = ranking.build_ranks([
+        row("fast-decode", tps=500, ttft=2000),
+        row("fast-first-token", tps=50, ttft=500),
+        row("thin", tps=1000, samples=2),
+        row("no-speed", tps=None),
+        row("flaky", rate=.5, tps=2000),
+        row("thin-throughput", throughput_samples=1),
+    ])
+    assert ranks["throughput"] == {"fast-decode": 0, "fast-first-token": 1}
+    assert ranks["latency"]["fast-first-token"] < ranks["latency"]["fast-decode"]
+    assert "thin" not in ranks["default"]
+    assert ranks["default"]["flaky"] >= 2000
+    assert "flaky" not in ranks["throughput"]
 
-    assert '"baseten": 0' in block
-    assert '"deepseek": 1' in block
-    assert '"cerebras": 20' in block
-    assert '"trustedrouter": 99' in block
+
+def test_stale_future_and_unknown_are_neutral(monkeypatch):
+    timestamp, ranks = ranking.validate_snapshot(snapshot(row()))
+    monkeypatch.setattr(ranking, "_GENERATED_AT", timestamp)
+    monkeypatch.setattr(ranking, "_RANKS", ranks)
+    assert ranking.measured_provider_rank("test", "throughput", now=NOW) == 0
+    for now in (NOW - timedelta(seconds=1), NOW + timedelta(days=15)):
+        assert ranking.measured_provider_rank("test", None, now=now) == ranking.UNKNOWN_RANK
+    assert ranking.measured_provider_rank("unknown", None, now=NOW) == ranking.UNKNOWN_RANK
 
 
-def test_replace_rank_block_is_targeted() -> None:
-    source = '''
-_OTHER = {}
+@pytest.mark.parametrize("field,value", [("samples", -1), ("samples", True),
+    ("completion_rate", float("nan")), ("completion_rate", 1.1),
+    ("tokens_per_second", float("inf")), ("p50_ttft_ms", -1)])
+def test_invalid_measurement_rejected(field, value):
+    item = row()
+    item[field] = value
+    with pytest.raises(ValueError):
+        ranking.validate_snapshot(snapshot(item))
 
-# Throughput-first routing rank. Lower values are tried first for
-# `provider.sort = "throughput"` and `:nitro`.
-_THROUGHPUT_RANK = {
-    "old": 0,
-}
 
-def keep_me() -> None:
-    pass
+def test_empty_duplicate_and_unbounded_window_rejected():
+    for payload in (snapshot(), snapshot(row(), row()), {**snapshot(row()), "window": "all"}):
+        with pytest.raises(ValueError):
+            ranking.validate_snapshot(payload)
+
+
+HTML = '''
+<p class="lb-muted">Last updated 2026-10-09T15:03:09.610Z</p>
+<section id="lb-providers"><table><tr data-lb-row data-provider="cerebras"
+data-completion="1" data-ttft="1002" data-throughput="463.89" data-samples="121">
+<td data-label="Effective throughput">464 tok/s<small>10 samples</small></td>
+</tr></table></section>
+<section id="lb-models"><tr data-lb-row data-provider="wrong"></tr></section>
 '''
 
-    updated = replace_rank_block(source, '_THROUGHPUT_RANK = {\n    "new": 0,\n}')
 
-    assert '"old"' not in updated
-    assert '"new": 0' in updated
-    assert "def keep_me" in updated
+def test_current_markup_preserves_precise_data_and_ignores_model_rows():
+    payload = parse_snapshot(HTML, now=NOW)
+    assert payload["providers"] == [row("cerebras", ttft=1002, tps=463.89, samples=121)]
+    assert payload["window"] == "7d"
+    with pytest.raises(ValueError, match="stale"):
+        parse_snapshot(HTML, now=NOW + timedelta(days=2))
+    with pytest.raises(ValueError):
+        parse_snapshot("<html>failure</html>", now=NOW)
+
+
+def test_cloudflare_credit_preference_does_not_change_measurements_or_explicit_sort(monkeypatch):
+    from dataclasses import replace
+
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    from trusted_router.routing import RoutePreferences, _sort_endpoint_candidates
+
+    base = next(e for e in MODEL_ENDPOINTS.values() if e.usage_type == "Credits")
+    model = MODELS[base.model_id]
+    cloudflare = replace(base, provider="cloudflare-workers-ai", id="cf", prompt_price_microdollars_per_million_tokens=200)
+    direct = replace(base, provider="deepinfra", id="direct", prompt_price_microdollars_per_million_tokens=100)
+    candidates = [(model, direct), (model, cloudflare)]
+    monkeypatch.setattr("trusted_router.routing.measured_provider_rank", lambda provider, sort: 1 if provider == "deepinfra" else 2)
+    measured = copy.deepcopy(ranking._RANKS)
+    assert _sort_endpoint_candidates(candidates, RoutePreferences())[0][1] == cloudflare
+    for sort in ("price", "latency", "throughput"):
+        assert _sort_endpoint_candidates(candidates, RoutePreferences(sort=sort))[0][1] == direct
+    assert _sort_endpoint_candidates(candidates, RoutePreferences(order=("deepinfra",)))[0][1] == direct
+    byok = [(model, direct), (model, replace(cloudflare, usage_type="BYOK"))]
+    assert _sort_endpoint_candidates(byok, RoutePreferences())[0][1] == direct
+    assert ranking._RANKS == measured

@@ -108,6 +108,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "s1-fast"}]}
     if "api.lyceum.technology" in url:
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
+    if "llm.eu.greenference.com" in url:
+        return {"data": [{"id": "greenference/glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:
         return {"data": [{"id": "gpt-oss-120b"}]}
     if "api.regolo.ai" in url:

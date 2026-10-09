@@ -1,0 +1,509 @@
+{
+  "provider": "greenference",
+  "models": [
+    {
+      "display_name": "Google: Gemma 4 31B It",
+      "title": "greenference/gemma-4-31b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "greenference/gemma-4-31b-it",
+      "context_length": 262144,
+      "max_output_tokens": 262141,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 148500,
+      "output_token_price_per_m": 420000,
+      "cached_input_token_price_per_m": 57750
+    },
+    {
+      "display_name": "Openai: Gpt Oss 20b",
+      "title": "greenference/gpt-oss-20b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-20b",
+      "upstream_id": "greenference/gpt-oss-20b",
+      "context_length": 131072,
+      "max_output_tokens": 117964,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 9000,
+      "output_token_price_per_m": 45000,
+      "cached_input_token_price_per_m": 4500
+    },
+    {
+      "display_name": "Qwen: Qwen3 14B",
+      "title": "greenference/qwen3-14b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-14b",
+      "upstream_id": "greenference/qwen3-14b",
+      "context_length": 41000,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 76000,
+      "output_token_price_per_m": 228000,
+      "cached_input_token_price_per_m": 38000
+    },
+    {
+      "display_name": "Qwen: Qwen3 30B A3B",
+      "title": "greenference/qwen3-30b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-30b-a3b",
+      "upstream_id": "greenference/qwen3-30b-a3b",
+      "context_length": 41000,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 95000,
+      "output_token_price_per_m": 285000,
+      "cached_input_token_price_per_m": 47500
+    },
+    {
+      "display_name": "Qwen: Qwen3 32B",
+      "title": "greenference/qwen3-32b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-32b",
+      "upstream_id": "greenference/qwen3-32b",
+      "context_length": 41000,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 95000,
+      "output_token_price_per_m": 285000,
+      "cached_input_token_price_per_m": 47500
+    },
+    {
+      "display_name": "Qwen: Qwen3 8B",
+      "title": "greenference/qwen3-8b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-8b",
+      "upstream_id": "greenference/qwen3-8b",
+      "context_length": 41000,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 446500,
+      "output_token_price_per_m": 446500,
+      "cached_input_token_price_per_m": 223250
+    },
+    {
+      "display_name": "Qwen: Qwen3.5 9B",
+      "title": "greenference/qwen3.5-9b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-9b",
+      "upstream_id": "greenference/qwen3.5-9b",
+      "context_length": 262144,
+      "max_output_tokens": 235929,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 65000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "Qwen: Qwen3.6 27B",
+      "title": "greenference/qwen3.6-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-27b",
+      "upstream_id": "greenference/qwen3.6-27b",
+      "context_length": 262144,
+      "max_output_tokens": 235929,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1350000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "Zai Org: GLM 4.7 Flash",
+      "title": "greenference/glm-4.7-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7-flash",
+      "upstream_id": "greenference/glm-4.7-flash",
+      "context_length": 131072,
+      "max_output_tokens": 117964,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 407560,
+      "cached_input_token_price_per_m": 14331
+    },
+    {
+      "display_name": "Zai Org: GLM 5.3 Flash",
+      "title": "greenference/glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "greenference/glm-5.3-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 943718,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "reliability": {
+        "first_token_timeout_seconds": 30.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "greenference",
+        "status_url": "https://greenference.com/status",
+        "regions": [
+          "EU"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": []
+      },
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 490000,
+      "cached_input_token_price_per_m": 28000
+    }
+  ],
+  "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
+  "generated_at": "2026-10-09T15:16:26Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 10
+}
