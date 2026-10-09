@@ -11,10 +11,11 @@
 // disable-all turns every workspace off and revokes every open lease, the one
 // switch that empties the allow-list. status reads
 // the workspace's rows by its keys, read only, and exits 0 once it is off
-// with no lease open or draining, nothing its leases' donors hold and no
-// pack's work pending, and 3 until then: turning a workspace off waits on
-// it before any node stops (W2). With SPANNER_EMULATOR_HOST set, the client
-// reaches the emulator instead.
+// with no lease open or draining, nothing its leases' donors hold, no pack's
+// work pending and no staged record, and 3 until then: turning a workspace
+// off waits on it before any node stops (W2). A command whose answer cannot
+// be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
+// emulator instead.
 package main
 
 import (
@@ -93,32 +94,37 @@ func run(ctx context.Context, args []string, out io.Writer,
 		return 1, err
 	}
 	defer closeStore()
-	enc := json.NewEncoder(out)
+	var answer map[string]any
+	code := 0
 	switch command {
 	case "disable-all":
 		off, revoked, at, err := s.DisableAll(ctx)
 		if err != nil {
 			return 1, err
 		}
-		return 0, enc.Encode(map[string]any{"workspaces_turned_off": off, "revoked_leases": revoked, "at": at})
+		answer = map[string]any{"workspaces_turned_off": off, "revoked_leases": revoked, "at": at}
 	case "enable", "disable":
 		revoked, at, err := s.SetWorkspace(ctx, workspace, command == "enable")
 		if err != nil {
 			return 1, err
 		}
-		return 0, enc.Encode(map[string]any{"workspace": workspace, "enabled": command == "enable",
-			"revoked_leases": revoked, "at": at})
+		answer = map[string]any{"workspace": workspace, "enabled": command == "enable", "revoked_leases": revoked,
+			"at": at}
+	default:
+		st, err := s.WorkspaceStatus(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		done, why := st.Done()
+		answer = map[string]any{"status": st, "done": done, "why_not": why}
+		if !done {
+			code = notDone
+		}
 	}
-	st, err := s.WorkspaceStatus(ctx, workspace)
-	if err != nil {
+	// An answer not written is a failure, whatever was done: the caller
+	// cannot tell what happened.
+	if err := json.NewEncoder(out).Encode(answer); err != nil {
 		return 1, err
 	}
-	done, why := st.Done()
-	if err := enc.Encode(map[string]any{"status": st, "done": done, "why_not": why}); err != nil {
-		return 1, err
-	}
-	if !done {
-		return notDone, nil
-	}
-	return 0, nil
+	return code, nil
 }

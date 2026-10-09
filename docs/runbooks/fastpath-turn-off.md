@@ -15,11 +15,14 @@ In one transaction the switch turns off and every open lease of the
 workspace is revoked. From then:
 
 - no lease is granted for it;
-- each node's copy of the switch drops it within three seconds, and the
-  front door answers `off`, the gateway taking today's path;
-- an owner learns its lease is revoked at its next renewal round, five
-  seconds at most, and admits nothing more under it; without that, it would
-  stop at the lease's cutoff, the expiry less the skew allowance;
+- each node's copy of the switch drops it within three seconds, since a
+  copy older than that enables nothing, and the front door answers `off`,
+  the gateway taking today's path;
+- an owner learns its lease is revoked at its next renewal round, every
+  five seconds by default and later if a round stalls, and admits nothing
+  more under it; whatever the delay, a revoked lease takes no renewal, so
+  nothing is admitted under it past its cutoff, the expiry less the skew
+  allowance, within the renewal window, 30 seconds, of its last renewal;
 - what the leases admitted still settles, is reaped or released.
 
 To turn every workspace off at once, the one switch that empties the
@@ -35,11 +38,21 @@ transaction. The rest of this procedure then holds for each of them.
 ## 2. Wait for its leases to end
 
 A revoked lease expires within the renewal window, 30 seconds, of its last
-renewal. The auditor marks it draining past its expiry and the skew, stores
-its boundary after the fence, and closes it once its holds have ended: at
-once if its owner listed them, and at the latest at the expiry plus a hold's
-longest life, 2 hours 20 minutes, plus the grace. Closing returns what its
-donors held. Then each pack's pending work is done.
+renewal. Past its expiry and the skew allowance the auditor marks it
+draining and stores its boundary after the fence. It closes the lease once
+its holds have ended: the first tick that finds no hold open notes when,
+and a tick at least the skew allowance, 2 seconds, after that closes it.
+Holds its owner listed end as they settle or are reaped; holds no list
+named are taken to have ended only from the expiry plus a hold's longest
+life, 2 hours 20 minutes, plus the grace, a minute. Closing returns what its
+donors held. Then the pending worker does each pack's work and drops its
+winners' staged records, and once the lease has retired, closed with its
+work done, it drops the rest of the lease's staged records.
+
+These are the earliest times, not limits. The auditor ticks every second
+and the pending worker sweeps every five seconds by default, and a step
+that fails waits for the next. Only the check below says when the workspace
+is done.
 
 Every node keeps running meanwhile: the auditor, the ticker, the stager and
 the pending worker are what end the leases. A fleet stopped with a lease
@@ -51,11 +64,14 @@ open leaves its reservation held.
 fastpathctl -database projects/P/instances/I/databases/D status WORKSPACE
 ```
 
-It reads the workspace's switch, leases, donors, credit rows and pending
-packs, by the workspace's keys and read only, and prints them. It exits 0
-once the workspace is off, no lease of it is open or draining, its leases'
-donors hold nothing and no pack's work is pending; it exits 3, and says why,
-until then. Run it until it exits 0.
+It reads the workspace's switch, leases, donors, credit rows, pending packs
+and staged records, by the workspace's keys and read only, and prints them.
+It exits 0 once the workspace is off, no lease of it is open or draining,
+its leases' donors hold nothing, no pack's work is pending and no staged
+record is left; it exits 3, and says why, until then. Run it until it exits
+0. Done stays done: no lease is granted for a workspace off, and nothing is
+staged for a lease once it has retired. Any other exit means the check did
+not finish, and says why.
 
 ## 4. Only then stop nodes
 

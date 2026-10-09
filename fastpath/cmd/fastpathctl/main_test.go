@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -103,7 +104,7 @@ func TestStatusSaysWhenAWorkspaceIsDone(t *testing.T) {
 		t.Fatalf("enable: exit %d, %v", code, got)
 	}
 	code, got := do("status")
-	if why, _ := json.Marshal(got["why_not"]); code != notDone || got["done"] != false ||
+	if why, _ := json.Marshal(got["why_not"]); code != 3 || got["done"] != false ||
 		!strings.Contains(string(why), "enabled") {
 		t.Fatalf("an enabled workspace's status: exit %d, %v", code, got)
 	}
@@ -115,23 +116,30 @@ func TestStatusSaysWhenAWorkspaceIsDone(t *testing.T) {
 	}
 }
 
-// TestDisableAllTurnsEverythingOff: every workspace enabled is turned off,
-// and the status of each then says so. It has its own database, so it turns
-// off only its own workspaces.
-func TestDisableAllTurnsEverythingOff(t *testing.T) {
+// onOwn is the command's store, on a database of the test's own, for a
+// command that touches every workspace.
+func onOwn(t *testing.T) func(context.Context, string) (*store.Store, func(), error) {
+	t.Helper()
 	if emulator == nil {
 		t.Skip(skipped)
 	}
-	ctx := context.Background()
-	db, err := emulator.Database(ctx, storetest.UniqueID("all"), nil)
+	db, err := emulator.Database(context.Background(), storetest.UniqueID("own"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	open := func(context.Context, string) (*store.Store, func(), error) {
+	return func(context.Context, string) (*store.Store, func(), error) {
 		s, err := store.New(db, service.Defaults().Store)
 		return s, func() {}, err
 	}
+}
+
+// TestDisableAllTurnsEverythingOff: every workspace enabled is turned off,
+// and the status of each then says so. It has its own database, so it turns
+// off only its own workspaces.
+func TestDisableAllTurnsEverythingOff(t *testing.T) {
+	open := onOwn(t)
+	ctx := context.Background()
 	a, b := storetest.UniqueID("ws"), storetest.UniqueID("ws")
 	for _, ws := range []string{a, b} {
 		if code, err := run(ctx, []string{"-database", "d", "enable", ws}, &bytes.Buffer{}, open); code != 0 || err != nil {
@@ -150,6 +158,24 @@ func TestDisableAllTurnsEverythingOff(t *testing.T) {
 	for _, ws := range []string{a, b} {
 		if code, err := run(ctx, []string{"-database", "d", "status", ws}, &bytes.Buffer{}, open); code != 0 || err != nil {
 			t.Errorf("%s after disable-all: exit %d, %v", ws, code, err)
+		}
+	}
+}
+
+// full is an output that takes nothing.
+type full struct{}
+
+func (full) Write([]byte) (int, error) { return 0, errors.New("the output is full") }
+
+// TestAnAnswerNotWrittenIsAFailure: each command whose answer cannot be
+// written exits 1, though what it did is done.
+func TestAnAnswerNotWrittenIsAFailure(t *testing.T) {
+	open := onOwn(t)
+	ws := storetest.UniqueID("ws")
+	for _, args := range [][]string{{"enable", ws}, {"status", ws}, {"disable", ws}, {"disable-all"}} {
+		code, err := run(context.Background(), append([]string{"-database", "d"}, args...), full{}, open)
+		if code != 1 || err == nil {
+			t.Errorf("%q with its answer not written: exit %d, %v", args, code, err)
 		}
 	}
 }

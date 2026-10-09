@@ -540,4 +540,47 @@ func TestTheStagerStagesFullRecords(t *testing.T) {
 	if again.acked != 1 {
 		t.Fatalf("staged at last: acknowledged %d", again.acked)
 	}
+	// Once the lease has retired, a record is acknowledged, staged for no
+	// one and told to no one: a redelivery, or a copy no winner names.
+	if _, err := f.db.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{SQL: `UPDATE tr_lease SET retire_at = CURRENT_TIMESTAMP()
+		       WHERE workspace_id = @w AND lease_id = @l`, Params: map[string]any{"w": f.ref.Workspace, "l": f.ref.LeaseID}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	alerts = nil
+	late := &fakeStaged{auth: a, kind: settlelog.FullRecord, data: []byte("late")}
+	stager.Handle(ctx, late)
+	if _, ok, err := f.s.ReadStaged(ctx, a, sum("late")); ok || err != nil || late.acked != 1 || late.nacked != 0 ||
+		len(alerts) != 0 {
+		t.Fatalf("a record for a lease retired: staged %v %v, acknowledged %d, again %d, told %v", ok, err, late.acked,
+			late.nacked, alerts)
+	}
+	// A lease's row that goes between the stager finding it and staging,
+	// seven days after it retired, is told and acknowledged, as one never
+	// found.
+	f.store.staging, f.store.staged = make(chan struct{}, 1), make(chan struct{})
+	vanished := &fakeStaged{auth: a, kind: settlelog.FullRecord, data: []byte("gone")}
+	alerts = nil
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		stager.Handle(ctx, vanished)
+	}()
+	<-f.store.staging
+	if _, err := f.db.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{SQL: `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`,
+			Params: map[string]any{"w": f.ref.Workspace, "l": f.ref.LeaseID}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(f.store.staged)
+	<-handled
+	if _, ok, err := f.s.ReadStaged(ctx, a, sum("gone")); ok || err != nil || vanished.acked != 1 || vanished.nacked != 0 ||
+		len(alerts) != 1 {
+		t.Fatalf("a record whose lease went while it was staged: staged %v %v, acknowledged %d, again %d, told %v", ok,
+			err, vanished.acked, vanished.nacked, alerts)
+	}
 }

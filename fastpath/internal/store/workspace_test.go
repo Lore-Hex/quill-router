@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -225,7 +226,25 @@ func TestEnabledWorkspacesReadsTheSwitch(t *testing.T) {
 func TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
-	ws := seedWorkspace(t, 100)
+	base := storetest.UniqueID("ws")
+	ws := base + "-m"
+	// Its neighbours in key order each have a lease and a staged record,
+	// which no read of its own may count.
+	for _, n := range []string{base + "-a", base + "-z"} {
+		ref := grantIn(t, s, n)
+		a, err := NewAuthorizationID(ref.LeaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.StageRecord(ctx, StagedRecord{AuthorizationID: a, Digest: []byte("d"), Ref: ref, Body: []byte("full"),
+			MessageID: "m", PublishTime: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
+		map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
 	status := func(step string, want WorkspaceStatus, done bool) {
 		t.Helper()
 		got, err := s.WorkspaceStatus(ctx, ws)
@@ -245,6 +264,7 @@ func TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft(t *testing.T) {
 	}
 	status("enabled", WorkspaceStatus{Enabled: true}, false)
 	req := grantOf(ws, 10)
+	req.LeaseID = NewLeaseID() // one an authorization can name
 	if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
 		t.Fatalf("the grant: %+v %v", got, err)
 	}
@@ -274,10 +294,45 @@ func TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft(t *testing.T) {
 		t.Fatalf("the close: %+v %v", closed, err)
 	}
 	status("closed", WorkspaceStatus{Closed: 1, PendingPacks: 1}, false)
+	a, err := NewAuthorizationID(ref.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := StagedRecord{AuthorizationID: a, Digest: []byte("a copy no winner names"), Ref: ref, Body: []byte("full"),
+		MessageID: "m", PublishTime: time.Now()}
+	if err := s.StageRecord(ctx, staged); err != nil {
+		t.Fatal(err)
+	}
+	status("a record staged", WorkspaceStatus{Closed: 1, PendingPacks: 1, Staged: 1}, false)
 	if ok, err := s.MarkPackDone(ctx, ref, got[0].NewVersion); err != nil || !ok {
 		t.Fatalf("the pack's work: %v %v", ok, err)
 	}
-	status("its work done", WorkspaceStatus{Closed: 1}, true)
+	status("its work done", WorkspaceStatus{Closed: 1, Staged: 1}, false)
+	if err := s.DropStaged(ctx, StagedKey{a, staged.Digest}); err != nil {
+		t.Fatal(err)
+	}
+	status("its staged record dropped", WorkspaceStatus{Closed: 1}, true)
+	if err := s.StageRecord(ctx, staged); !errors.Is(err, ErrRetired) {
+		t.Fatalf("a redelivery after the lease retired: %v", err)
+	}
+	status("a redelivery refused", WorkspaceStatus{Closed: 1}, true)
+}
+
+// grantIn grants a lease, one an authorization can name, for a workspace
+// the test names, enabled and funded.
+func grantIn(t *testing.T, s *Store, ws string) LeaseRef {
+	t.Helper()
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap(
+		"tr_credit_balance", map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100),
+			"trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	req := grantOf(ws, 10)
+	req.LeaseID = NewLeaseID()
+	if got, err := s.Grant(context.Background(), req); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	return LeaseRef{ws, req.LeaseID}
 }
 
 // TestDoneNamesEachThingLeft: each thing left of a workspace keeps it from
@@ -287,7 +342,7 @@ func TestDoneNamesEachThingLeft(t *testing.T) {
 		t.Fatalf("nothing of the fast path left: done %v, %v", done, why)
 	}
 	for _, left := range []WorkspaceStatus{{Enabled: true}, {Open: 1}, {Open: 1, Revoked: 1}, {Draining: 1},
-		{LeaseReserved: 1}, {LeaseReserved: -1}, {PendingPacks: 1}} {
+		{LeaseReserved: 1}, {LeaseReserved: -1}, {PendingPacks: 1}, {Staged: 1}} {
 		if done, why := left.Done(); done || len(why) != 1 {
 			t.Errorf("%+v: done %v, %v; want one reason", left, done, why)
 		}

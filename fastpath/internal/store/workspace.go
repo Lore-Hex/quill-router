@@ -127,12 +127,19 @@ type WorkspaceStatus struct {
 	CreditReserved int64
 	// PendingPacks are its leases' packs whose work is not done.
 	PendingPacks int64
-	ReadTS       time.Time
+	// Staged are its leases' staged full records not yet dropped: the
+	// pending work drops its winners', and its sweep the rest once the
+	// lease retires.
+	Staged int64
+	ReadTS time.Time
 }
 
 // Done says whether the workspace is off and nothing of the fast path is
-// left of it: no lease open or draining, nothing its leases' donors hold,
-// and no pack's work pending; and if not, why not.
+// left of it: no lease open or draining, nothing its leases' donors hold, no
+// pack's work pending and no staged record; and if not, why not. Done
+// stays done: no lease is granted for a workspace off, and nothing is
+// staged for a lease once retired, as each of its leases is, closed with
+// its work done.
 func (w WorkspaceStatus) Done() (bool, []string) {
 	var why []string
 	if w.Enabled {
@@ -150,12 +157,16 @@ func (w WorkspaceStatus) Done() (bool, []string) {
 	if w.PendingPacks > 0 {
 		why = append(why, fmt.Sprintf("%d packs' work is pending", w.PendingPacks))
 	}
+	if w.Staged > 0 {
+		why = append(why, fmt.Sprintf("%d staged records are not dropped", w.Staged))
+	}
 	return len(why) == 0, why
 }
 
-// WorkspaceStatus reads a workspace's switch, leases, donors, credit rows
-// and pending packs in one read-only transaction, each by the workspace's
-// key: it scans nothing of another workspace's.
+// WorkspaceStatus reads a workspace's switch, leases, donors, credit rows,
+// pending packs and staged records in one read-only transaction, each by the
+// workspace's key, the staged records through their index on their lease:
+// it scans nothing of another workspace's.
 func (s *Store) WorkspaceStatus(ctx context.Context, workspace string) (WorkspaceStatus, error) {
 	if workspace == "" {
 		return WorkspaceStatus{}, errors.New("store: no workspace")
@@ -204,6 +215,8 @@ func (s *Store) WorkspaceStatus(ctx context.Context, workspace string) (Workspac
 			func(r *spanner.Row) error { return r.Column(0, &out.CreditReserved) }},
 		{`SELECT COUNT(*) FROM tr_lease_winners WHERE workspace_id = @w AND work_done_at IS NULL`,
 			func(r *spanner.Row) error { return r.Column(0, &out.PendingPacks) }},
+		{`SELECT COUNT(*) FROM tr_spike_staged@{FORCE_INDEX=tr_spike_staged_by_lease} WHERE workspace_id = @w`,
+			func(r *spanner.Row) error { return r.Column(0, &out.Staged) }},
 	}
 	for _, q := range queries {
 		err := ro.QueryWithOptions(ctx, spanner.Statement{SQL: q.sql, Params: w},
