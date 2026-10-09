@@ -43,6 +43,10 @@ func run() error {
 	database := flag.String("database", "", "the spike's database: projects/P/instances/I/databases/D")
 	project := flag.String("project", "", "the Pub/Sub project")
 	keyPath := flag.String("key", "", "a file with the fleet's envelope key, at least 32 bytes")
+	keySecret := flag.String("key-secret", "",
+		"the fleet's envelope key as a Secret Manager version pinned by its number: projects/P/secrets/S/versions/N")
+	acceptSecrets := flag.String("accept-key-secrets", "",
+		"keys also accepted when verifying, a rotation's other key, as pinned secret versions, separated by commas")
 	flag.Int64Var(&cfg.Shards, "shards", cfg.Shards, "every workspace's shard count")
 	topics := flag.String("topics", "settle-log,records", "the settle log's topic and the record topic")
 	subs := flag.String("subscriptions", "auditor,stager", "the auditor's subscriptions to the two topics")
@@ -85,12 +89,24 @@ func run() error {
 	cfg.RecordTopic = "projects/" + *project + "/topics/" + topicNames[1]
 	cfg.SettleSubscription = "projects/" + *project + "/subscriptions/" + subNames[0]
 	cfg.RecordSubscription = "projects/" + *project + "/subscriptions/" + subNames[1]
-	if *keyPath != "" {
+	switch {
+	case *keyPath != "" && *keySecret != "":
+		return errors.New("-key or -key-secret, not both")
+	case *keyPath != "":
+		if *acceptSecrets != "" {
+			return errors.New("-accept-key-secrets goes with -key-secret")
+		}
 		key, err := os.ReadFile(*keyPath)
 		if err != nil {
 			return err
 		}
 		cfg.Key = key
+	case *keySecret != "":
+		key, accepted, err := readKeys(context.Background(), *keySecret, *acceptSecrets)
+		if err != nil {
+			return err
+		}
+		cfg.Key, cfg.AcceptKeys = key, accepted
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

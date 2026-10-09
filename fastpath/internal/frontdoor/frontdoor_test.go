@@ -644,3 +644,89 @@ func TestAWorkspaceNotEnabledIsOff(t *testing.T) {
 		t.Fatalf("an enabled workspace: %+v", on)
 	}
 }
+
+// rotated is the key a rotation moves to from key.
+var rotated = bytes.Repeat([]byte{9}, MinKeySize)
+
+// TestOpenWithTakesEitherKeyOfARotation: an envelope sealed with either key
+// opens with the two, and one sealed with a key not given does not.
+func TestOpenWithTakesEitherKeyOfARotation(t *testing.T) {
+	e, _ := envelope(t)
+	for _, sealer := range [][]byte{key, rotated} {
+		sealed, err := Seal(sealer, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := OpenWith([][]byte{key, rotated}, sealed); err != nil || got != e {
+			t.Fatalf("sealed with %x: %+v %v", sealer[0], got, err)
+		}
+	}
+	other, err := Seal(bytes.Repeat([]byte{8}, MinKeySize), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenWith([][]byte{key, rotated}, other); err != ErrSeal {
+		t.Fatalf("a key not given: %v", err)
+	}
+}
+
+// TestARotationsPhasesOverlap: in a rotation's first phase a node seals with
+// the old key and accepts the new, in its second it seals with the new and
+// accepts the old, and in a deploy's overlap a node of either phase takes
+// the other's envelopes; a node that accepts no other key refuses one sealed
+// with it. And a closed lease's terminal, sealed before the rotation and
+// retried after it, is answered from its disposition, not refused.
+func TestARotationsPhasesOverlap(t *testing.T) {
+	ctx := context.Background()
+	e, _ := envelope(t)
+	sealedWith := func(k []byte) string {
+		t.Helper()
+		s, err := Seal(k, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	door := func(seal []byte, accept ...[]byte) *doorFixture {
+		t.Helper()
+		f := newDoor(t, 1)
+		f.door.cfg.Key, f.door.cfg.Accept = seal, accept
+		f.owners.unreachable["node-b"] = true
+		return f
+	}
+	first, second := door(key, rotated), door(rotated, key)
+	for name, c := range map[string]struct {
+		f      *doorFixture
+		sealer []byte
+	}{"the first phase takes the second's": {first, rotated}, "the second phase takes the first's": {second, key}} {
+		if got := c.f.door.Settle(ctx, settle(sealedWith(c.sealer))); got.Status != Recorded {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+	if got := door(rotated).door.Settle(ctx, settle(sealedWith(key))); got.Status != Invalid {
+		t.Errorf("a node that accepts no other key took the old one's envelope: %+v", got)
+	}
+	late := door(rotated, key)
+	late.store.refuse = true
+	late.store.disposition = store.Disposition{Outcome: "settled", Cost: spanner.NullInt64{Int64: 55, Valid: true},
+		From: "winner"}
+	want := TerminalAnswer{Status: Settled, Outcome: "settled", Cost: 55, CostKnown: true}
+	if got := late.door.Settle(ctx, settle(sealedWith(key))); got != want {
+		t.Errorf("a closed lease's late retry, sealed before the rotation: %+v, want %+v", got, want)
+	}
+}
+
+// TestAnAcceptedKeyIsAWholeKey: a key accepted beside the fleet's is at
+// least as long as the fleet's must be.
+func TestAnAcceptedKeyIsAWholeKey(t *testing.T) {
+	f := newDoor(t, 1)
+	cfg := f.door.cfg
+	cfg.Accept = [][]byte{rotated, rotated[:MinKeySize-1]}
+	if _, err := New(cfg); err == nil {
+		t.Fatal("a short accepted key is taken")
+	}
+	cfg.Accept = [][]byte{rotated}
+	if _, err := New(cfg); err != nil {
+		t.Fatalf("a whole accepted key: %v", err)
+	}
+}

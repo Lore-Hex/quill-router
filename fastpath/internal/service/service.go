@@ -49,8 +49,11 @@ type Config struct {
 	// Region is the settle log's region: the owner's shard keys carry it,
 	// and the ticker ticks its leases.
 	Region string
-	// Key is the fleet's envelope key.
-	Key []byte
+	// Key is the fleet's envelope key, which the node seals with; AcceptKeys
+	// are the keys it also verifies with, a rotation's other key
+	// (docs/design/fast-admission-production-rollout.md, W6).
+	Key        []byte
+	AcceptKeys [][]byte
 	// Shards is every workspace's shard count K (§4.3).
 	Shards int64
 
@@ -425,7 +428,8 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	fc := cfg.FrontDoor
 	fc.Enabled = sw.Enabled
 	fc.Owners = owners{self: cfg.Address, local: local, remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
-	fc.Store, fc.Records, fc.Members, fc.Key = s, frontdoor.FromRecords(records), members, cfg.Key
+	fc.Store, fc.Records, fc.Members, fc.Key, fc.Accept = s, frontdoor.FromRecords(records), members, cfg.Key,
+		cfg.AcceptKeys
 	fc.Shards = func(string) int64 { return cfg.Shards }
 	fc.Self, fc.Peers, fc.Node = cfg.Address, frontdoor.HTTPPeers{Client: client, Scheme: "http"}, node
 	fc.Clock = time.Now
