@@ -33,17 +33,25 @@ fails() {
   echo "$n" > "$state/count-$kind"
   [ -e "$state/fail-$kind-at" ] && [ "$(cat "$state/fail-$kind-at")" = "$n" ]
 }
+# The whole argument vector is the script's, word for word, in its order:
+# no flag more, none twice.
 sql=""
 statement=""
 format=""
-for arg in "$@"; do
-  case "$arg" in
-    --sql=*) sql="${arg#--sql=}" ;;
-    --ddl=*) statement="${arg#--ddl=}" ;;
-    --format=*) format="${arg#--format=}" ;;
-  esac
-done
 command="$1 $2 $3 $4"
+case "$command" in
+  "spanner databases execute-sql database")
+    [ $# -eq 9 ] && [ "$5" = --instance=instance ] && [ "$6" = --project ] && [ "$7" = project ] &&
+      [[ $8 == --sql=* ]] && [[ $9 == --format=* ]] || refuse "the arguments $*"
+    sql="${8#--sql=}"
+    format="${9#--format=}"
+    ;;
+  "spanner databases ddl update")
+    [ $# -eq 9 ] && [ "$5" = database ] && [ "$6" = --instance=instance ] && [ "$7" = --project ] &&
+      [ "$8" = project ] && [[ $9 == --ddl=* ]] || refuse "the arguments $*"
+    statement="${9#--ddl=}"
+    ;;
+esac
 case "$command" in
   "spanner databases execute-sql "*)
     query=$(echo $sql)

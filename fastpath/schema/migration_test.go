@@ -259,28 +259,35 @@ func TestAMigrationThatCannotReadOrWriteFails(t *testing.T) {
 	}
 }
 
-// TestTheMigrationWaitsForEachIndex: an index reported not yet read-write is
-// read again until it is, and the run then passes; one that never is fails
-// the run.
+// TestTheMigrationWaitsForEachIndex: each index, on a first run and on a
+// rerun over every object, reported not yet read-write is read again until
+// it is, and the run passes; one that never is fails the run, and nothing
+// is sent after its last read.
 func TestTheMigrationWaitsForEachIndex(t *testing.T) {
 	_, names, index := ownStatements(t)
-	var last string
 	for i, name := range names {
-		if index[i] {
-			last = name
+		if !index[i] {
+			continue
 		}
-	}
-	d := newDatabase(t)
-	d.set(t, filepath.Join("waits", last), "3")
-	if ok, out := migrate(t, d); !ok {
-		t.Fatalf("a run whose index came read-write late failed:\n%s", out)
-	}
-	if got := d.readinessChecked(t)[last]; got != 4 {
-		t.Fatalf("%s's state was read %d times, want 4", last, got)
-	}
-	d = newDatabase(t)
-	d.set(t, filepath.Join("waits", last), "always")
-	if ok, _ := migrate(t, d); ok {
-		t.Fatalf("a run whose index never came read-write passed")
+		for _, existing := range [][]string{nil, names} {
+			d := newDatabase(t, existing...)
+			d.set(t, filepath.Join("waits", name), "3")
+			if ok, out := migrate(t, d); !ok {
+				t.Fatalf("%s late to read-write, with %d objects present: the run failed:\n%s", name, len(existing), out)
+			}
+			if got := d.readinessChecked(t)[name]; got != 4 {
+				t.Fatalf("%s's state was read %d times, want 4", name, got)
+			}
+			d = newDatabase(t, existing...)
+			d.set(t, filepath.Join("waits", name), "always")
+			if ok, _ := migrate(t, d); ok {
+				t.Fatalf("%s never read-write, with %d objects present: the run passed", name, len(existing))
+			}
+			events := d.events(t)
+			if last := events[len(events)-1]; !strings.HasPrefix(last, "Q SELECT INDEX_STATE") ||
+				!strings.Contains(last, "'"+name+"'") {
+				t.Fatalf("%s never read-write: the run went on after it, to %q", name, last)
+			}
+		}
 	}
 }

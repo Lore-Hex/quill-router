@@ -35,11 +35,15 @@
       }
     },
     "fastpath/schema/testdata/gcloud": {
-      "--ddl=*) statement=\"${arg#--ddl=}\" ;;": {
+      "\"spanner databases ddl update\")": {
+        "count": 2,
+        "reason": "A test double for gcloud in the tests of scripts/deploy/migrate_fastpath.sh (fastpath/schema/migration_test.go): it records the statements the migration gives it in a temporary directory and answers its schema queries from there; it reaches no database and dispatches no DDL."
+      },
+      "[ \"$8\" = project ] && [[ $9 == --ddl=* ]] || refuse \"the arguments $*\"": {
         "count": 1,
         "reason": "A test double for gcloud in the tests of scripts/deploy/migrate_fastpath.sh (fastpath/schema/migration_test.go): it records the statements the migration gives it in a temporary directory and answers its schema queries from there; it reaches no database and dispatches no DDL."
       },
-      "\"spanner databases ddl update\")": {
+      "statement=\"${9#--ddl=}\"": {
         "count": 1,
         "reason": "A test double for gcloud in the tests of scripts/deploy/migrate_fastpath.sh (fastpath/schema/migration_test.go): it records the statements the migration gives it in a temporary directory and answers its schema queries from there; it reaches no database and dispatches no DDL."
       }
