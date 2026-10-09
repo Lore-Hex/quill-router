@@ -16,16 +16,24 @@ import (
 )
 
 // Monitoring reads Spanner's CPU and the subscriptions' backlogs from Cloud
-// Monitoring, each the highest value over the last Window, which Monitoring
-// reports a minute or two late.
+// Monitoring, each the highest value of its series over the last Window,
+// aligned a minute at a time. Their points are sampled every minute and
+// visible up to three minutes later, so the newest must be at most Fresh
+// old, four minutes by default: a series older than that is a read that
+// fails, as of a source that has stopped reporting, not a reading that
+// stays as it was.
 type Monitoring struct {
 	Client        *monitoring.MetricClient
 	Project       string
 	Instance      string
 	Subscriptions []string
 	Window        time.Duration
+	Fresh         time.Duration
 	Clock         func() time.Time
 }
+
+// align is how Monitoring's points are aligned: a minute, their sampling.
+const align = time.Minute
 
 // SpannerCPU is the instance's high-priority CPU, read as production's
 // alarm on it reads it (scripts/deploy/spanner-alerts/high-priority-cpu.yaml).
@@ -59,21 +67,24 @@ func (m Monitoring) Backlogs(ctx context.Context) (map[string]Backlog, error) {
 }
 
 // highest is the highest value of the series the filter names over the
-// last Window, each aligned to its highest and reduced to the highest of
-// them; none is an error.
+// last Window, each aligned to its highest a minute at a time and reduced
+// to the highest of them; none, or none newer than Fresh, is an error.
 func (m Monitoring) highest(ctx context.Context, filter string) (float64, error) {
+	if m.Window < align || m.Fresh <= 0 || m.Fresh > m.Window {
+		return 0, fmt.Errorf("watch: a window of at least %v, and freshness above 0 and within it", align)
+	}
 	now := m.Clock()
 	it := m.Client.ListTimeSeries(ctx, &monitoringpb.ListTimeSeriesRequest{
 		Name:   "projects/" + m.Project,
 		Filter: filter,
 		Interval: &monitoringpb.TimeInterval{StartTime: timestamppb.New(now.Add(-m.Window)),
 			EndTime: timestamppb.New(now)},
-		Aggregation: &monitoringpb.Aggregation{AlignmentPeriod: durationpb.New(m.Window),
+		Aggregation: &monitoringpb.Aggregation{AlignmentPeriod: durationpb.New(align),
 			PerSeriesAligner:   monitoringpb.Aggregation_ALIGN_MAX,
 			CrossSeriesReducer: monitoringpb.Aggregation_REDUCE_MAX},
 		View: monitoringpb.ListTimeSeriesRequest_FULL,
 	})
-	found, top := false, 0.0
+	found, top, newest := false, 0.0, time.Time{}
 	for {
 		series, err := it.Next()
 		if errors.Is(err, iterator.Done) {
@@ -95,10 +106,16 @@ func (m Monitoring) highest(ctx context.Context, filter string) (float64, error)
 			if !found || v > top {
 				found, top = true, v
 			}
+			if end := p.GetInterval().GetEndTime().AsTime(); end.After(newest) {
+				newest = end
+			}
 		}
 	}
 	if !found {
 		return 0, fmt.Errorf("no point in the last %v for %s", m.Window, filter)
+	}
+	if age := now.Sub(newest); age > m.Fresh {
+		return 0, fmt.Errorf("the newest point is %v old, past %v, for %s", age, m.Fresh, filter)
 	}
 	return top, nil
 }

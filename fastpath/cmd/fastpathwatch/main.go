@@ -52,7 +52,7 @@ func main() {
 type target struct {
 	database, project, instance, workspace string
 	subscriptions                          []string
-	window                                 time.Duration
+	window, fresh                          time.Duration
 	limit                                  int
 }
 
@@ -83,7 +83,7 @@ var production = deps{
 		}
 		src := watch.Production{
 			Monitoring: watch.Monitoring{Client: metrics, Project: t.project, Instance: t.instance,
-				Subscriptions: t.subscriptions, Window: t.window, Clock: time.Now},
+				Subscriptions: t.subscriptions, Window: t.window, Fresh: t.fresh, Clock: time.Now},
 			Store: watch.Store{Store: s, Workspace: t.workspace, Limit: t.limit},
 		}
 		return src, s, func() { _ = metrics.Close(); client.Close() }, nil
@@ -103,6 +103,8 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	subs := fs.String("subscriptions", "", "the subscriptions whose backlogs are watched, separated by commas")
 	fs.StringVar(&t.workspace, "workspace", "", "the stage's workspace, turned off once the stage stops")
 	fs.DurationVar(&t.window, "window", 5*time.Minute, "how far back each look reads Monitoring, at least a minute")
+	fs.DurationVar(&t.fresh, "fresh", 4*time.Minute,
+		"how old Monitoring's newest point may be: older is a failed read; at most the window")
 	fs.IntVar(&t.limit, "pending-limit", 10_000, "the most pending packs a look reads; more fails the look")
 	var c watch.Ceilings
 	fs.Float64Var(&c.SpannerCPU, "max-cpu", 0, "Spanner's high-priority CPU, 0 to 1, past which the stage stops")
@@ -112,6 +114,7 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	fs.IntVar(&c.PendingOverdue, "max-overdue", 0, "how many packs may be overdue at once")
 	fs.Int64Var(&c.Spend, "max-spend", 0, "what the stage's workspace may book from the watch's start")
 	every := fs.Duration("every", 30*time.Second, "how often the watch looks")
+	timeout := fs.Duration("timeout", 30*time.Second, "how long each read of a look may take")
 	misses := fs.Int("misses", 3, "how many looks in a row may fail before the watch stops the stage")
 	pid := fs.Int("stop-pid", 0, "the load generator's process, stopped first; 0 for none")
 	grace := fs.Duration("stop-wait", time.Minute, "how long the load generator has to exit once told to")
@@ -131,17 +134,22 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		return 2, fmt.Errorf("arguments past the flags: %q", fs.Args())
 	case t.database == "" || t.project == "" || t.instance == "" || t.workspace == "" || len(t.subscriptions) == 0:
 		return 2, errors.New("-database, -project, -instance, -workspace and -subscriptions")
-	case t.window < time.Minute || t.limit < 1 || *pid < 0 || *grace <= 0:
-		return 2, errors.New("-window at least a minute, -pending-limit at least 1, -stop-pid at least 0 and -stop-wait above 0")
-	case c == (watch.Ceilings{}):
-		return 2, errors.New("no ceiling: a watch that bounds nothing stops nothing")
+	case t.window < time.Minute || t.fresh <= 0 || t.fresh > t.window || t.limit < 1 || *pid < 0 || *grace <= 0:
+		return 2, errors.New("-window at least a minute, -fresh above 0 and at most -window, -pending-limit at " +
+			"least 1, -stop-pid at least 0 and -stop-wait above 0")
+	case *every <= 0 || *timeout <= 0 || *misses < 1:
+		return 2, errors.New("-every and -timeout above 0, and -misses at least 1")
+	}
+	if err := c.Valid(); err != nil {
+		return 2, err
 	}
 	src, s, closeAll, err := d.open(ctx, t)
 	if err != nil {
 		return 1, err
 	}
 	defer closeAll()
-	w, err := watch.New(ctx, watch.Config{Ceilings: c, Sources: src, Every: *every, Misses: *misses, Clock: d.clock})
+	w, err := watch.New(ctx, watch.Config{Ceilings: c, Sources: src, Every: *every, Timeout: *timeout, Misses: *misses,
+		Clock: d.clock})
 	if err != nil {
 		return 1, err
 	}

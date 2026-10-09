@@ -10,7 +10,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,10 +49,19 @@ type Ceilings struct {
 	Spend          int64
 }
 
-func (c Ceilings) valid() error {
-	if c.SpannerCPU < 0 || c.SpannerCPU > 1 || c.Undelivered < 0 || c.OldestAge < 0 || c.Overdue < 0 ||
-		c.PendingOverdue < 0 || c.Spend < 0 {
-		return errors.New("watch: ceilings are at least 0, and Spanner's CPU at most 1")
+// Valid says whether the ceilings can be watched: each at least 0, Spanner's
+// CPU a number at most 1, a count of overdue packs only with how long makes
+// one overdue, and at least one ceiling that bounds something, since a
+// watch that bounds nothing stops nothing.
+func (c Ceilings) Valid() error {
+	switch {
+	case math.IsNaN(c.SpannerCPU) || c.SpannerCPU < 0 || c.SpannerCPU > 1 || c.Undelivered < 0 ||
+		c.OldestAge < 0 || c.Overdue < 0 || c.PendingOverdue < 0 || c.Spend < 0:
+		return errors.New("watch: ceilings are at least 0, and Spanner's CPU a number at most 1")
+	case c.PendingOverdue > 0 && c.Overdue == 0:
+		return errors.New("watch: a count of overdue packs needs how long a pack's work may be pending")
+	case c.SpannerCPU == 0 && c.Undelivered == 0 && c.OldestAge == 0 && c.Overdue == 0 && c.Spend == 0:
+		return errors.New("watch: no ceiling: a watch that bounds nothing stops nothing")
 	}
 	return nil
 }
@@ -101,14 +113,15 @@ type Sources interface {
 	Booked(ctx context.Context) (int64, error)
 }
 
-// Config is a watch: its ceilings, its sources, how often it looks and how
-// many looks in a row may fail before it stops the stage, since a watch
-// that cannot see must not let the stage run on. Clock is the time a look
-// is taken at.
+// Config is a watch: its ceilings, its sources, how often it looks, how
+// long each read of a look may take, Timeout, and how many looks in a row
+// may have a read fail before it stops the stage, since a watch that cannot
+// see must not let the stage run on. Clock is the time a look is taken at.
 type Config struct {
 	Ceilings Ceilings
 	Sources  Sources
 	Every    time.Duration
+	Timeout  time.Duration
 	Misses   int
 	Clock    func() time.Time
 }
@@ -122,78 +135,165 @@ type Watcher struct {
 	misses   int
 }
 
-// New is a watch, reading what is booked as the stage begins.
+// New is a watch, reading what is booked as the stage begins, within
+// Timeout.
 func New(ctx context.Context, cfg Config) (*Watcher, error) {
-	if err := cfg.Ceilings.valid(); err != nil {
+	if err := cfg.Ceilings.Valid(); err != nil {
 		return nil, err
 	}
-	if cfg.Sources == nil || cfg.Every <= 0 || cfg.Misses < 1 || cfg.Clock == nil {
-		return nil, errors.New("watch: sources, an interval, at least one look that may fail, and a clock")
+	if cfg.Sources == nil || cfg.Every <= 0 || cfg.Timeout <= 0 || cfg.Misses < 1 || cfg.Clock == nil {
+		return nil, errors.New("watch: sources, an interval, a read's timeout, at least one look that may fail, " +
+			"and a clock")
 	}
-	start, err := cfg.Sources.Booked(ctx)
+	rctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+	type booked struct {
+		v   int64
+		err error
+	}
+	done := make(chan booked, 1)
+	go func() {
+		v, err := cfg.Sources.Booked(rctx)
+		done <- booked{v, err}
+	}()
+	var start int64
+	var err error
+	select {
+	case b := <-done:
+		start, err = b.v, b.err
+	case <-rctx.Done():
+		select {
+		case b := <-done:
+			start, err = b.v, b.err
+		default:
+			err = fmt.Errorf("no answer within %v", cfg.Timeout)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("watch: what the stage's workspace has booked as it begins: %w", err)
 	}
 	return &Watcher{cfg: cfg, start: start, firstSaw: map[string]time.Time{}}, nil
 }
 
-// Look reads once and reports why the stage must stop, if it must: the
-// ceilings the reading is past, or, once Misses looks in a row have failed,
-// that it cannot see.
+// Look reads once, its four reads at once, each within Timeout, so a look
+// takes at most Timeout. It reports why the stage must stop, if it must: the
+// ceilings past by any read that succeeded, whatever the others did; else,
+// once Misses looks in a row have had a read fail, that it cannot see. A
+// read that fails leaves its part of the reading at zero, which is past no
+// ceiling.
 func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
-	r, err := w.read(ctx)
-	if err != nil {
+	// Each read's result is its own, sent once it ends; one that ends after
+	// its timeout is never taken, so nothing it does reaches the reading.
+	type result struct {
+		cpu      float64
+		backlogs map[string]Backlog
+		pending  []string
+		booked   int64
+		err      error
+	}
+	reads := []func(context.Context) result{
+		func(ctx context.Context) result {
+			v, err := w.cfg.Sources.SpannerCPU(ctx)
+			return result{cpu: v, err: err}
+		},
+		func(ctx context.Context) result {
+			v, err := w.cfg.Sources.Backlogs(ctx)
+			return result{backlogs: v, err: err}
+		},
+		func(ctx context.Context) result {
+			v, err := w.cfg.Sources.Pending(ctx)
+			return result{pending: v, err: err}
+		},
+		func(ctx context.Context) result {
+			v, err := w.cfg.Sources.Booked(ctx)
+			return result{booked: v, err: err}
+		},
+	}
+	results := make([]result, len(reads))
+	var wg sync.WaitGroup
+	for i, read := range reads {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rctx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
+			defer cancel()
+			done := make(chan result, 1)
+			go func() { done <- read(rctx) }()
+			select {
+			case results[i] = <-done:
+			case <-rctx.Done():
+				// An answer that came as the time ran out is taken.
+				select {
+				case results[i] = <-done:
+				default:
+					results[i] = result{err: fmt.Errorf("no answer within %v", w.cfg.Timeout)}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	var r Reading
+	var failed []string
+	for i, what := range []string{"Spanner's CPU", "the backlogs", "the pending work", "what is booked"} {
+		if results[i].err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", what, results[i].err))
+		}
+	}
+	if results[0].err == nil {
+		r.SpannerCPU = results[0].cpu
+	}
+	if results[1].err == nil {
+		r.Backlogs = results[1].backlogs
+	}
+	if results[2].err == nil {
+		pending := results[2].pending
+		now := w.cfg.Clock()
+		seen := make(map[string]time.Time, len(pending))
+		for _, p := range pending {
+			first, ok := w.firstSaw[p]
+			if !ok {
+				first = now
+			}
+			seen[p] = first
+			if now.Sub(first) > w.cfg.Ceilings.Overdue {
+				r.PendingOverdue++
+			}
+		}
+		w.firstSaw = seen
+	}
+	if results[3].err == nil {
+		r.Spend = results[3].booked - w.start
+	}
+	if past := w.cfg.Ceilings.Past(r); len(past) > 0 {
+		return r, past
+	}
+	if len(failed) > 0 {
 		w.misses++
 		if w.misses >= w.cfg.Misses {
-			return r, []string{fmt.Sprintf("%d looks in a row failed, the last: %v", w.misses, err)}
+			return r, []string{fmt.Sprintf("%d looks in a row could not read: %s", w.misses, strings.Join(failed, "; "))}
 		}
 		return r, nil
 	}
 	w.misses = 0
-	return r, w.cfg.Ceilings.Past(r)
-}
-
-func (w *Watcher) read(ctx context.Context) (Reading, error) {
-	var r Reading
-	var err error
-	if r.SpannerCPU, err = w.cfg.Sources.SpannerCPU(ctx); err != nil {
-		return Reading{}, fmt.Errorf("Spanner's CPU: %w", err)
-	}
-	if r.Backlogs, err = w.cfg.Sources.Backlogs(ctx); err != nil {
-		return Reading{}, fmt.Errorf("the backlogs: %w", err)
-	}
-	pending, err := w.cfg.Sources.Pending(ctx)
-	if err != nil {
-		return Reading{}, fmt.Errorf("the pending work: %w", err)
-	}
-	now := w.cfg.Clock()
-	seen := make(map[string]time.Time, len(pending))
-	for _, p := range pending {
-		first, ok := w.firstSaw[p]
-		if !ok {
-			first = now
-		}
-		seen[p] = first
-		if now.Sub(first) > w.cfg.Ceilings.Overdue {
-			r.PendingOverdue++
-		}
-	}
-	w.firstSaw = seen
-	booked, err := w.cfg.Sources.Booked(ctx)
-	if err != nil {
-		return Reading{}, fmt.Errorf("what is booked: %w", err)
-	}
-	r.Spend = booked - w.start
 	return r, nil
 }
 
 // Watch looks every interval until ctx ends, and once a look says the stage
-// must stop, stops it: stop is given why, and Watch returns them.
+// must stop, stops it: stop is given why, and Watch returns them. A look
+// that ctx ended during stops nothing: the watch itself was stopped first,
+// and its reads failed for that.
 func (w *Watcher) Watch(ctx context.Context, stop func(why []string)) []string {
 	t := time.NewTicker(w.cfg.Every)
 	defer t.Stop()
 	for {
-		if _, why := w.Look(ctx); len(why) > 0 {
+		if ctx.Err() != nil {
+			return nil
+		}
+		_, why := w.Look(ctx)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if len(why) > 0 {
 			stop(why)
 			return why
 		}

@@ -17,11 +17,13 @@ import (
 )
 
 // metrics is a stand-in for Cloud Monitoring's metric service: it answers a
-// request with the points set for its filter, and keeps each request.
+// request with the points set for its filter, each ending age before the
+// watch's clock, and keeps each request.
 type metrics struct {
 	monitoringpb.UnimplementedMetricServiceServer
 	mu       sync.Mutex
 	points   map[string][]*monitoringpb.TypedValue // by filter
+	age      time.Duration
 	requests []*monitoringpb.ListTimeSeriesRequest
 }
 
@@ -36,7 +38,7 @@ func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSe
 	var points []*monitoringpb.Point
 	for _, v := range values {
 		points = append(points, &monitoringpb.Point{Value: v,
-			Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.New(start)}})
+			Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.New(start.Add(-m.age))}})
 	}
 	return &monitoringpb.ListTimeSeriesResponse{TimeSeries: []*monitoringpb.TimeSeries{{Points: points}}}, nil
 }
@@ -67,7 +69,7 @@ func served(t *testing.T, m *metrics, subs ...string) Monitoring {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return Monitoring{Client: client, Project: "proj", Instance: "trusted-router-nam6", Subscriptions: subs,
-		Window: 5 * time.Minute, Clock: func() time.Time { return start }}
+		Window: 5 * time.Minute, Fresh: 4 * time.Minute, Clock: func() time.Time { return start }}
 }
 
 const cpuFilter = `resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND ` +
@@ -94,7 +96,7 @@ func TestMonitoringReadsAsTheAlarmDoes(t *testing.T) {
 	case req.GetName() != "projects/proj":
 		t.Errorf("the project: %s", req.GetName())
 	case a.GetPerSeriesAligner() != monitoringpb.Aggregation_ALIGN_MAX ||
-		a.GetCrossSeriesReducer() != monitoringpb.Aggregation_REDUCE_MAX || a.GetAlignmentPeriod().AsDuration() != 5*time.Minute:
+		a.GetCrossSeriesReducer() != monitoringpb.Aggregation_REDUCE_MAX || a.GetAlignmentPeriod().AsDuration() != time.Minute:
 		t.Errorf("the aggregation: %v", a)
 	case !req.GetInterval().GetEndTime().AsTime().Equal(start) ||
 		!req.GetInterval().GetStartTime().AsTime().Equal(start.Add(-5*time.Minute)):
@@ -127,5 +129,19 @@ func TestMonitoringReadsEachBacklog(t *testing.T) {
 	}
 	if _, err := served(t, &metrics{}).SpannerCPU(context.Background()); err == nil {
 		t.Fatal("Spanner's CPU with no series is read")
+	}
+}
+
+// TestAStaleSeriesIsAFailedRead: a series whose newest point is older than
+// Fresh, as of a source that stopped reporting, fails the read; one exactly
+// that old is read.
+func TestAStaleSeriesIsAFailedRead(t *testing.T) {
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}}, age: 4 * time.Minute}
+	if cpu, err := served(t, m).SpannerCPU(context.Background()); err != nil || cpu != 0.1 {
+		t.Fatalf("a point as old as allowed: %v %v", cpu, err)
+	}
+	m.age = 4*time.Minute + time.Second
+	if _, err := served(t, m).SpannerCPU(context.Background()); err == nil || !strings.Contains(err.Error(), "old") {
+		t.Fatalf("a stale point: %v", err)
 	}
 }

@@ -3,24 +3,36 @@ package watch
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 var start = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
-// fake is Sources the test sets, failing each read named in fail.
+// fake is Sources the test sets, failing each read named in fail and
+// never answering each named in hang, whatever its context; during, if
+// set, runs as each read begins.
 type fake struct {
 	cpu      float64
 	backlogs map[string]Backlog
 	pending  []string
 	booked   int64
 	fail     map[string]bool
+	hang     map[string]bool
+	during   func()
 }
 
 func (f *fake) err(what string) error {
+	if f.during != nil {
+		f.during()
+	}
+	if f.hang[what] {
+		select {} // a read that never answers
+	}
 	if f.fail[what] {
 		return errors.New(what + " failed")
 	}
@@ -43,8 +55,8 @@ var ceilings = Ceilings{SpannerCPU: 0.3, Undelivered: 100, OldestAge: time.Minut
 
 func watcher(t *testing.T, f *fake, c *clock, misses int) *Watcher {
 	t.Helper()
-	w, err := New(context.Background(), Config{Ceilings: ceilings, Sources: f, Every: time.Second, Misses: misses,
-		Clock: c.Now})
+	w, err := New(context.Background(), Config{Ceilings: ceilings, Sources: f, Every: time.Second,
+		Timeout: 100 * time.Millisecond, Misses: misses, Clock: c.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,9 +128,15 @@ func TestSpendIsFromTheStagesStart(t *testing.T) {
 		t.Fatalf("spent past the ceiling: %+v %v", r, why)
 	}
 	f.fail = map[string]bool{"booked": true}
-	if _, err := New(context.Background(), Config{Ceilings: ceilings, Sources: f, Every: time.Second, Misses: 1,
-		Clock: c.Now}); err == nil {
+	if _, err := New(context.Background(), Config{Ceilings: ceilings, Sources: f, Every: time.Second,
+		Timeout: time.Second, Misses: 1, Clock: c.Now}); err == nil {
 		t.Fatal("a watch that cannot read what was booked as the stage begins began")
+	}
+	f.fail, f.hang = nil, map[string]bool{"booked": true}
+	began := time.Now()
+	if _, err := New(context.Background(), Config{Ceilings: ceilings, Sources: f, Every: time.Second,
+		Timeout: 100 * time.Millisecond, Misses: 1, Clock: c.Now}); err == nil || time.Since(began) > 5*time.Second {
+		t.Fatalf("a watch whose first read never answers: %v after %v", err, time.Since(began))
 	}
 }
 
@@ -167,13 +185,69 @@ func TestWatchStopsOnce(t *testing.T) {
 	}
 }
 
-// TestCeilingsAreChecked: a ceiling below 0, or a CPU past 1, is refused.
+// TestCeilingsAreChecked: a ceiling below 0, a CPU past 1 or not a number,
+// a count of overdue packs with no time that makes one overdue, and no
+// ceiling at all, are each refused; one ceiling alone is taken.
 func TestCeilingsAreChecked(t *testing.T) {
-	for _, c := range []Ceilings{{SpannerCPU: -0.1}, {SpannerCPU: 1.1}, {Undelivered: -1}, {OldestAge: -1},
-		{Overdue: -1}, {PendingOverdue: -1}, {Spend: -1}} {
-		if _, err := New(context.Background(), Config{Ceilings: c, Sources: &fake{}, Every: time.Second, Misses: 1,
-			Clock: time.Now}); err == nil {
+	for _, c := range []Ceilings{{SpannerCPU: -0.1}, {SpannerCPU: 1.1}, {SpannerCPU: math.NaN()},
+		{Spend: 1, Undelivered: -1}, {Spend: 1, OldestAge: -1}, {Overdue: -1}, {Spend: 1, PendingOverdue: -1},
+		{Spend: -1}, {Spend: 1, PendingOverdue: 1}, {}} {
+		if c.Valid() == nil {
 			t.Errorf("%+v taken", c)
 		}
+	}
+	for _, c := range []Ceilings{{SpannerCPU: 0.3}, {Undelivered: 1}, {OldestAge: 1}, {Overdue: 1}, {Spend: 1},
+		{Overdue: 1, PendingOverdue: 2}} {
+		if err := c.Valid(); err != nil {
+			t.Errorf("%+v refused: %v", c, err)
+		}
+	}
+}
+
+// TestABreachStopsThoughAnotherReadFails: a look whose CPU is past its
+// ceiling stops the stage at once, though the bookings could not be read,
+// rather than waiting for the reads to recover.
+func TestABreachStopsThoughAnotherReadFails(t *testing.T) {
+	f, c := &fake{}, &clock{now: start}
+	w := watcher(t, f, c, 3)
+	f.cpu, f.fail = 0.8, map[string]bool{"booked": true}
+	if _, why := w.Look(context.Background()); len(why) != 1 || !strings.Contains(why[0], "CPU") {
+		t.Fatalf("a breach with another read failing: %v", why)
+	}
+}
+
+// TestAReadThatNeverAnswersIsAMiss: a read that never answers, whatever its
+// context, ends its look within the timeout as a miss, and the others are
+// still read; Misses such looks stop the stage.
+func TestAReadThatNeverAnswersIsAMiss(t *testing.T) {
+	f, c := &fake{}, &clock{now: start}
+	w := watcher(t, f, c, 2)
+	f.hang, f.booked = map[string]bool{"pending": true}, 1001
+	began := time.Now()
+	if r, why := w.Look(context.Background()); len(why) != 1 || r.Spend != 1001 || time.Since(began) > 5*time.Second {
+		t.Fatalf("a look with a read that never answers, the spend past its ceiling: %v %+v after %v", why, r,
+			time.Since(began))
+	}
+	f.booked = 0
+	if _, why := w.Look(context.Background()); len(why) != 0 {
+		t.Fatalf("the first look missed stops: %v", why)
+	}
+	if _, why := w.Look(context.Background()); len(why) != 1 || !strings.Contains(why[0], "within") {
+		t.Fatalf("the second look missed: %v", why)
+	}
+}
+
+// TestAWatchStoppedDuringALookStopsNothing: the watch's own context ending
+// while a look reads, its reads failing for that, stops nothing, though one
+// look missed would.
+func TestAWatchStoppedDuringALookStopsNothing(t *testing.T) {
+	f, c := &fake{}, &clock{now: start}
+	w := watcher(t, f, c, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	var once sync.Once
+	f.during = func() { once.Do(cancel) }
+	f.hang = map[string]bool{"cpu": true}
+	if why := w.Watch(ctx, func(why []string) { t.Errorf("stopped: %v", why) }); why != nil {
+		t.Fatalf("a watch stopped during a look: %v", why)
 	}
 }

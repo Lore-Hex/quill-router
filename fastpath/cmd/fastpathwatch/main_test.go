@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,8 +212,11 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		t.Fatal("opened")
 		return nil, nil, nil, nil
 	}
-	full := append(flags, "-workspace", "ws")
-	cases := [][]string{append(full, "extra"), append(full, "-window", "30s"),
+	full := append(slices.Clone(flags), "-workspace", "ws")
+	with := func(more ...string) []string { return append(slices.Clone(full), more...) }
+	cases := [][]string{with("extra"), with("-window", "30s"), with("-fresh", "6m"), with("-fresh", "0s"),
+		with("-max-cpu", "NaN"), with("-max-cpu", "-0.1"), with("-max-cpu", "0", "-max-overdue", "1"),
+		with("-every", "0s"), with("-timeout", "0s"), with("-misses", "0"),
 		{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "a", "-workspace", "ws"}}
 	for _, name := range []string{"-database", "-project", "-instance", "-subscriptions", "-workspace"} {
 		var without []string
@@ -226,6 +230,35 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	for _, args := range cases {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, d); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
+		}
+	}
+}
+
+// TestTheWorkspaceIsTurnedOffThoughTheWatchIsStopping: the watch's own
+// context ending as it stops the load, or the load not told to stop at
+// all, still leaves the workspace turned off.
+func TestTheWorkspaceIsTurnedOffThoughTheWatchIsStopping(t *testing.T) {
+	for _, failTerm := range []bool{false, true} {
+		ws, _, d := stage(t, sources{cpu: 0.5})
+		ctx, cancel := context.WithCancel(context.Background())
+		d.term = func(int) error {
+			cancel()
+			if failTerm {
+				return fmt.Errorf("no such process")
+			}
+			return nil
+		}
+		d.alive = func(int) bool { return false }
+		var out bytes.Buffer
+		code, err := run(ctx, append(slices.Clone(flags), "-workspace", ws, "-stop-pid", "4242"), &out, d)
+		if code != stopped || err != nil {
+			t.Fatalf("SIGTERM failing %v: exit %d, %v: %s", failTerm, code, err, out.String())
+		}
+		if failTerm != strings.Contains(out.String(), "not told to stop") {
+			t.Fatalf("SIGTERM failing %v: %s", failTerm, out.String())
+		}
+		if enabled(t, ws) {
+			t.Fatalf("SIGTERM failing %v: the workspace is still enabled", failTerm)
 		}
 	}
 }

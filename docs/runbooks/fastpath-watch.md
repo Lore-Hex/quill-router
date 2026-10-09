@@ -19,11 +19,31 @@ Every `-every` (30 seconds by default) it reads:
   across its reads, since a pack carries no time of its own;
 - what the stage's workspace has booked since the watch began.
 
-Monitoring reports a minute or two late, so a stage can pass a ceiling for
-that long before the watch sees it. A read that fails `-misses` times in a
-row, 3 by default, stops the stage too: a watch that cannot see does not
-let a stage run on. A subscription Monitoring reports nothing for is a
+A look's four reads run at once, each given `-timeout` (30 seconds), so a
+look takes at most that. A ceiling that any read shows passed stops the
+stage at that look, whatever the other reads did. A look with a read that
+failed, timed out or found nothing counts as a miss, and `-misses` of them
+in a row, 3 by default, stop the stage too: a watch that cannot see does
+not let a stage run on. A subscription Monitoring reports nothing for is a
 failed read, not an empty backlog.
+
+Monitoring samples Spanner's CPU and the subscriptions' backlogs every
+minute and shows a sample up to three minutes later. The watch reads the
+highest of each over `-window`, a minute at a time, and takes a series whose
+newest point is older than `-fresh` (4 minutes) as a failed read: a source
+that has stopped reporting is not taken to be as it was.
+
+## How soon it stops
+
+- A ceiling passed in Spanner's CPU or a backlog: once Monitoring shows it,
+  up to four minutes after it happened, within `-every` and a look, about
+  five minutes at the defaults.
+- Pending work or spend, read from the database: within `-every` and a
+  look, a minute at the defaults; pending work counts as overdue once seen
+  pending across looks for longer than `-overdue`.
+- A source that stops answering: `-misses` looks after, at most
+  `-misses` times `-every` plus `-timeout`, three minutes at the defaults;
+  Monitoring's series stopping takes `-fresh` more before its reads fail.
 
 ## Running it
 
@@ -44,7 +64,10 @@ nothing, and a watch with none is refused. The watch exits:
 - 0 if it was itself stopped first, having stopped nothing;
 - 1 if it cannot watch, or cannot turn the workspace off, which then needs
   `fastpathctl disable WS` by hand;
-- 2 for its usage.
+- 2 for its usage, checked before it opens anything: a ceiling below 0, a
+  CPU ceiling past 1 or not a number, `-max-overdue` without `-overdue`, no
+  ceiling at all, or an interval, timeout or miss count that is not
+  positive.
 
 The load generator is told to stop with SIGTERM, which ends its run, and
 has `-stop-wait` (a minute) to exit. The workspace is turned off whether or
