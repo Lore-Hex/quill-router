@@ -485,6 +485,8 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .status-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:16px 18px; border-bottom:1px solid var(--line2); }
 .status-section-head h2 { margin:0 0 4px; font-size:16px; letter-spacing:0; }
 .status-section-head p { margin:0; color:var(--muted); font-size:13px; line-height:1.45; }
+.status-section > :is(h2, h3, p, pre, ul, ol):not(.empty) { margin-inline:18px; }
+.status-section > .marketing-grid { margin:0 18px 18px; }
 .status-legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; color:var(--muted); font-size:12px; }
 .status-legend span { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
 .status-legend .history-day { width:3px; flex:0 0 3px; }
