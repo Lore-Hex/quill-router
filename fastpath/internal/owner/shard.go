@@ -192,8 +192,10 @@ func (o *Owner) Retire() {
 // low-water mark, a request found no lease to take it (unmet, with need, the
 // request's estimate and buffer, which the lease is sized for too), or an
 // ask's answer was lost, room or not; one ask at a time, none within the
-// cooldown of the last, and none once the owner stops. The grant is a
-// Spanner transaction off the request's path.
+// cooldown of the last, none once the owner stops, and none for a workspace
+// the switch does not enable, asked as the ask is made: a lost ask waits
+// for it to be on again. The grant is a Spanner transaction off the
+// request's path.
 func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	t := o.cfg.TopUps
 	if t == (TopUps{}) {
@@ -230,7 +232,7 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	} else {
 		now = o.cfg.Clock()
 	}
-	if cooling(sh, now) {
+	if cooling(sh, now) || !o.cfg.Enabled(key.Workspace) {
 		return
 	}
 	if req == nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,15 +18,15 @@ var key = ShardKey{Workspace: "ws-1", Region: "us-central1", Shard: 2}
 // shardFixture is an owner with top-ups: a shard below 50 asks, at most
 // every 10 s, for what it charged over a minute plus its holds' needs,
 // between 10 and 1000; a lease idle 5 minutes, or an hour old, closes.
-func shardFixture(t *testing.T) (*fixture, *fakeSpanner) {
+func shardFixture(t *testing.T, changes ...func(*Config)) (*fixture, *fakeSpanner) {
 	t.Helper()
 	sp := newFakeSpanner()
 	sp.expiry = start.Add(2 * time.Hour)
-	f := newFixture(t, 1000, nil, func(c *Config) {
+	f := newFixture(t, 1000, nil, append([]func(*Config){func(c *Config) {
 		c.Spanner, c.Node, c.RenewEvery, c.Window, c.KeyStatus = sp, "owner-1", time.Hour, 30*time.Second, 7
 		c.TopUps = TopUps{LowWater: 50, Cooldown: 10 * time.Second, Horizon: time.Minute, Min: 10, Max: 1000,
 			IdleAfter: 5 * time.Minute, MaxLife: time.Hour}
-	})
+	}}, changes...)...)
 	return f, sp
 }
 
@@ -200,6 +201,41 @@ func TestALostGrantIsAskedForAgainTheSame(t *testing.T) {
 	grants := sp.granted()
 	if len(grants) != 2 || grants[1] != grants[0] || l.id != grants[0].LeaseID {
 		t.Fatalf("the asks: %+v, the lease taken %s", grants, l.id)
+	}
+}
+
+// TestNoLeaseIsAskedForAWorkspaceOff: while the switch does not enable the
+// workspace, as when the node's copy of it has aged out, a lost ask is not
+// asked again at a renewal round; on again, it is.
+func TestNoLeaseIsAskedForAWorkspaceOff(t *testing.T) {
+	var off atomic.Bool
+	f, sp := shardFixture(t, func(c *Config) { c.Enabled = func(string) bool { return !off.Load() } })
+	ctx := context.Background()
+	sp.mu.Lock()
+	sp.lostGrants = 1
+	sp.mu.Unlock()
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	asking := func() bool {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return f.owner.shards[key].asking
+	}
+	waitFor(t, "the lost answer", func() bool { return len(sp.granted()) == 1 && !asking() })
+	off.Store(true)
+	f.clock.advance(10 * time.Second)
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if asking() || len(sp.granted()) != 1 {
+		t.Fatalf("a lost ask asked again for a workspace off: %+v", sp.granted())
+	}
+	off.Store(false)
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	l := f.waitLeases(t, 1)[0]
+	if grants := sp.granted(); len(grants) != 2 || grants[1] != grants[0] || l.id != grants[0].LeaseID {
+		t.Fatalf("the asks once on again: %+v, the lease taken %s", grants, l.id)
 	}
 }
 
