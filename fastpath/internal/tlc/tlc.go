@@ -124,12 +124,7 @@ func SpecText(spec string) (string, error) {
 }
 
 var (
-	// A state: its fingerprint, its label, and the attributes TLC adds after
-	// it, a tooltip and, on an initial state, a fill.
-	nodeLine    = regexp.MustCompile(`^(-?\d+) \[label="((?:[^"\\]|\\.)*)"((?:,tooltip="(?:[^"\\]|\\.)*"|,style = filled)*)\];?$`)
-	tooltipAttr = regexp.MustCompile(`,tooltip="(?:[^"\\]|\\.)*"`)
-	edgeLine    = regexp.MustCompile(`^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)",color="black",fontcolor="black"\];$`)
-	rankLine    = regexp.MustCompile(`^\{rank = same; (?:-?\d+;)+\}$`)
+	rankLine = regexp.MustCompile(`^\{rank = same; (?:-?\d+;)+\}$`)
 	// The rest of what TLC writes around the states and steps, line for line.
 	// Anything else, an indented step included, is refused rather than
 	// skipped.
@@ -193,18 +188,18 @@ func streamDot(path string, state func(fp string, v Value, initial bool) error,
 	scanner.Buffer(make([]byte, 1<<20), 1<<26)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if m := edgeLine.FindStringSubmatch(line); m != nil {
-			if err := edge(m[1], m[2], unescape(m[3])); err != nil {
+		if from, to, label, ok := edgeOf(line); ok {
+			if err := edge(from, to, unescape(label)); err != nil {
 				return err
 			}
 			continue
 		}
-		if m := nodeLine.FindStringSubmatch(line); m != nil {
-			v, err := ParseState(unescape(m[2]))
+		if fp, label, initial, ok := nodeOf(line); ok {
+			v, err := ParseState(unescape(label))
 			if err != nil {
-				return fmt.Errorf("state %s: %w", m[1], err)
+				return fmt.Errorf("state %s: %w", fp, err)
 			}
-			if err := state(m[1], v, tooltipAttr.ReplaceAllString(m[3], "") == ",style = filled"); err != nil {
+			if err := state(fp, v, initial); err != nil {
 				return err
 			}
 			continue
@@ -214,6 +209,93 @@ func streamDot(path string, state func(fp string, v Value, initial bool) error,
 		}
 	}
 	return scanner.Err()
+}
+
+// edgeOf reads a step's line, `from -> to [label="action",color="black",
+// fontcolor="black"];`, each end a fingerprint, the label as TLC escapes it.
+// The dump is read a line at a time, and these readers took the place of
+// patterns, which spent most of a dump's reading; the tests hold them to the
+// patterns.
+func edgeOf(line string) (from, to, label string, ok bool) {
+	from, rest, found := strings.Cut(line, " -> ")
+	if !found || !fingerprint(from) {
+		return "", "", "", false
+	}
+	to, rest, found = strings.Cut(rest, ` [label="`)
+	if !found || !fingerprint(to) {
+		return "", "", "", false
+	}
+	label, rest, found = quoted(rest)
+	if !found || rest != `,color="black",fontcolor="black"];` {
+		return "", "", "", false
+	}
+	return from, to, label, true
+}
+
+// nodeOf reads a state's line, `fp [label="state"`, the attributes TLC adds
+// after it, tooltips and, on an initial state, `,style = filled`, then `]`
+// and an optional `;`; initial is whether the attributes, tooltips aside,
+// are one fill.
+func nodeOf(line string) (fp, label string, initial, ok bool) {
+	fp, rest, found := strings.Cut(line, ` [label="`)
+	if !found || !fingerprint(fp) {
+		return "", "", false, false
+	}
+	if label, rest, found = quoted(rest); !found {
+		return "", "", false, false
+	}
+	attrs, found := strings.CutSuffix(strings.TrimSuffix(rest, ";"), "]")
+	if !found {
+		return "", "", false, false
+	}
+	fills := 0
+	for attrs != "" {
+		if after, filled := strings.CutPrefix(attrs, ",style = filled"); filled {
+			attrs, fills = after, fills+1
+			continue
+		}
+		after, tip := strings.CutPrefix(attrs, `,tooltip="`)
+		if !tip {
+			return "", "", false, false
+		}
+		if _, attrs, found = quoted(after); !found {
+			return "", "", false, false
+		}
+	}
+	return fp, label, fills == 1, true
+}
+
+// fingerprint is whether s is a state's fingerprint as TLC writes it: an
+// optional minus and decimal digits.
+func fingerprint(s string) bool {
+	s = strings.TrimPrefix(s, "-")
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// quoted reads s up to the quote that closes it, a backslash escaping the
+// character after it, and returns what it held and what follows the quote.
+func quoted(s string) (inside, after string, ok bool) {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			// The escaped character, whatever it is but a line's end, as the
+			// patterns' `.` took it; at the end, no quote closes s.
+			if i++; i < len(s) && s[i] == '\n' {
+				return "", "", false
+			}
+		case '"':
+			return s[:i], s[i+1:], true
+		}
+	}
+	return "", "", false
 }
 
 // Step is one step of a shadow: the action TLC would label it with, and the
