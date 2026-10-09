@@ -291,11 +291,15 @@ func TestTheLineReadersAgreeWithThePatterns(t *testing.T) {
 		`1 [label="a` + "\n" + `b"]`,
 		`1 -> 2 [label="a` + "\\\n" + `b",color="black",fontcolor="black"];`,
 		`1 [label="a",tooltip="b` + "\\\n" + `c"]`,
+		`1 [label="a` + "\r" + `b"]`,
+		`1 [label="a` + "\\\r" + `b"]`,
+		`1 -> 2 [label="a` + "\\\r" + `b",color="black",fontcolor="black"];`,
+		`1 [label="a",tooltip="b` + "\\\r" + `c"]`,
 		`{rank = same; -11;}`,
 		`strict digraph DiskGraph {`,
 	}
 	alphabet := []string{`"`, `\`, `]`, `;`, `,`, ` `, `-`, `+`, `>`, `0`, `9`, `١`, `a`, `=`, `[`, `é`, `€`, "\x80",
-		"\n"}
+		"\n", "\r"}
 	rng := rand.New(rand.NewSource(20261008))
 	check := func(line string) {
 		t.Helper()
