@@ -38,6 +38,32 @@ print(response.output_text)</code></pre>
   </div>
 </section>
 
+<section class="marketing-split" style="margin-top:48px" aria-label="Chat Completions web search quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Chat Completions</span>
+    <h2>The same search engine for Chat.</h2>
+    <p><code>/v1/chat/completions</code> also accepts <code>web_search</code> and <code>web_search_preview</code>. These TrustedRouter compatibility aliases use the same Exa execution and controls as Responses, with at most three search calls. Set <code>max_tool_calls</code> to a value from 1 to 3.</p>
+    <p>The OpenRouter-style <code>openrouter:web_search</code> tool remains supported with a <code>parameters</code> object and a <code>max_uses</code> budget of up to 30. Use one hosted search tool per request.</p>
+    <p>Chat results include <code>citations</code>, <code>search_results</code>, and URL annotations. Streaming uses Chat completion chunks; set <code>stream_options.include_usage</code> to receive final usage and search cost.</p>
+    <p>Function tools remain caller-executed. Hosted tools such as <code>file_search</code>, <code>code_interpreter</code>, and <code>mcp</code>, plus free-form <code>custom</code> tools, are not implemented and return explicit errors.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Chat request</span><span>JSON</span></div>
+    <pre><code>{
+  "model": "anthropic/claude-sonnet-5",
+  "messages": [{
+    "role": "user",
+    "content": "What changed in Python this week? Cite sources."
+  }],
+  "tools": [{"type": "web_search"}],
+  "tool_choice": {"type": "web_search"},
+  "max_tool_calls": 1,
+  "stream": true,
+  "stream_options": {"include_usage": true}
+}</code></pre>
+  </div>
+</section>
+
 <section style="margin-top:48px">
   <h2 class="section-center">Search controls</h2>
   <div class="marketing-grid three">
