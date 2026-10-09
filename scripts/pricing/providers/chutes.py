@@ -8,7 +8,8 @@ Only TEE rows are published by this adapter.
 from __future__ import annotations
 
 import os
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+import re
+from decimal import ROUND_HALF_UP, Decimal, DecimalException
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
-from scripts.pricing.model_ids import remember_upstream_id
+from scripts.pricing.model_ids import canonicalize_native_model_id
 
 SLUG = "chutes"
 URL = "https://llm.chutes.ai/v1/models"
@@ -53,19 +54,37 @@ _NATIVE_TO_MODEL_ID = {
     "MiniMaxAI/MiniMax-M2.5-TEE": "minimax/minimax-m2.5",
     "unsloth/Mistral-Nemo-Instruct-2407-TEE": "mistralai/mistral-nemo",
     "zai-org/GLM-5-TEE": "z-ai/glm-5",
+    "Nemotron-3-Nano-Omni-30B-TEE": "nvidia/nemotron-3-nano-omni",
 }
 UPSTREAM_ID_MAP = {
     model_id: native_id for native_id, model_id in _NATIVE_TO_MODEL_ID.items()
 }
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+# Catalog presence is not proof of runtime TEE eligibility. Confirmed failures
+# can be held here without discovery or delist/relist recovery clearing them.
+_OPERATOR_HOLD_REASONS = {
+    # Repeated encrypted probes fail to obtain evidence (upstream HTTP 400).
+    "qwen/qwen3-235b-a22b-thinking-2507": "attestation-evidence-unavailable",
+}
+
+
+def _canonical_model_id(native_id: str) -> str | None:
+    if native_id in _NATIVE_TO_MODEL_ID:
+        return _NATIVE_TO_MODEL_ID[native_id]
+    # Only strip Chutes' terminal deployment marker, never model variants.
+    # The caller gates on confidential_compute; upstream keeps the exact ID.
+    model_id = native_id.removesuffix("-TEE")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", model_id) is None:
+        return None
+    return canonicalize_native_model_id(model_id)
 
 
 def _positive_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
     try:
-        parsed = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        parsed = int(value)  # type: ignore[call-overload]
+    except (OverflowError, TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
 
@@ -73,16 +92,21 @@ def _positive_int(value: object) -> int | None:
 def _dollars_per_m_to_micro_per_m(value: object) -> int | None:
     try:
         parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
+        if not parsed.is_finite() or parsed < 0:
+            return None
+        return int((parsed * Decimal("1000000")).to_integral_value(ROUND_HALF_UP))
+    except (DecimalException, OverflowError, TypeError, ValueError):
         return None
-    if parsed < 0:
-        return None
-    return int((parsed * Decimal("1000000")).to_integral_value(ROUND_HALF_UP))
 
 
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
+    _DISCOVERED_MANIFEST_ROWS = {}
+    UPSTREAM_ID_MAP.clear()
+    UPSTREAM_ID_MAP.update(
+        {model_id: native_id for native_id, model_id in _NATIVE_TO_MODEL_ID.items()}
+    )
     api_key = os.environ.get("CHUTES_API_KEY")
     if not api_key:
         raise RuntimeError("CHUTES_API_KEY is required for Chutes catalog discovery")
@@ -94,7 +118,7 @@ def fetch() -> ProviderPricingResult:
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     with httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=False,
         transport=transport,
     ) as client:
         response = client.get(URL, headers=headers)
@@ -112,10 +136,12 @@ def fetch() -> ProviderPricingResult:
         native_id = source.get("id")
         if not isinstance(native_id, str):
             continue
-        model_id = _NATIVE_TO_MODEL_ID.get(native_id)
+        model_id = _canonical_model_id(native_id)
         if model_id is None:
             continue
-        remember_upstream_id(UPSTREAM_ID_MAP, model_id, native_id)
+        previous = discovered.get(model_id)
+        if previous is not None and previous["upstream_id"] != native_id:
+            raise RuntimeError(f"Chutes catalog has ambiguous upstream IDs for {model_id}")
         row: dict[str, Any] = {
             "id": model_id,
             "upstream_id": native_id,
@@ -150,16 +176,20 @@ def fetch() -> ProviderPricingResult:
             prompt_cached_micro_per_m=cached,
         )
 
-    _DISCOVERED_MANIFEST_ROWS = discovered
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
+    _DISCOVERED_MANIFEST_ROWS = discovered
+    UPSTREAM_ID_MAP.update(
+        {model_id: row["upstream_id"] for model_id, row in discovered.items()}
+    )
     return ProviderPricingResult(
         slug=SLUG,
         prices=prices,
         source="api",
         fetched_url=URL,
         notes=[f"discovered {len(discovered)} confidential-compute models"],
+        price_index_model_ids=frozenset(prices.keys() - _OPERATOR_HOLD_REASONS.keys()),
     )
 
 
@@ -169,4 +199,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+        operator_hold_reasons=_OPERATOR_HOLD_REASONS,
     )
