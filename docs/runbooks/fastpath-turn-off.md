@@ -22,6 +22,16 @@ workspace is revoked. From then:
   stop at the lease's cutoff, the expiry less the skew allowance;
 - what the leases admitted still settles, is reaped or released.
 
+To turn every workspace off at once, the one switch that empties the
+allow-list:
+
+```bash
+fastpathctl -database projects/P/instances/I/databases/D disable-all
+```
+
+It turns every enabled workspace off and revokes every open lease, in one
+transaction. The rest of this procedure then holds for each of them.
+
 ## 2. Wait for its leases to end
 
 A revoked lease expires within the renewal window, 30 seconds, of its last

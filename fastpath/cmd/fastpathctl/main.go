@@ -5,8 +5,11 @@
 //	fastpathctl -database projects/P/instances/I/databases/D enable WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D disable WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D status WORKSPACE
+//	fastpathctl -database projects/P/instances/I/databases/D disable-all
 //
-// disable revokes the workspace's open leases with the switch. status reads
+// disable revokes the workspace's open leases with the switch, and
+// disable-all turns every workspace off and revokes every open lease, the one
+// switch that empties the allow-list. status reads
 // the workspace's rows by its keys, read only, and exits 0 once it is off
 // with no lease open or draining, nothing its leases' donors hold and no
 // pack's work pending, and 3 until then: turning a workspace off waits on
@@ -68,12 +71,20 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 		return 2, err
 	}
-	if *database == "" || fs.NArg() != 2 || fs.Arg(1) == "" {
-		return 2, errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE")
+	usage := errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE, or disable-all")
+	if *database == "" || fs.NArg() < 1 {
+		return 2, usage
 	}
 	command, workspace := fs.Arg(0), fs.Arg(1)
-	if command != "enable" && command != "disable" && command != "status" {
-		return 2, fmt.Errorf("%q is not enable, disable or status", command)
+	switch {
+	case command == "disable-all":
+		if fs.NArg() != 1 {
+			return 2, usage
+		}
+	case command != "enable" && command != "disable" && command != "status":
+		return 2, fmt.Errorf("%q is not enable, disable, status or disable-all", command)
+	case fs.NArg() != 2 || workspace == "":
+		return 2, usage
 	}
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
@@ -84,6 +95,12 @@ func run(ctx context.Context, args []string, out io.Writer,
 	defer closeStore()
 	enc := json.NewEncoder(out)
 	switch command {
+	case "disable-all":
+		off, revoked, at, err := s.DisableAll(ctx)
+		if err != nil {
+			return 1, err
+		}
+		return 0, enc.Encode(map[string]any{"workspaces_turned_off": off, "revoked_leases": revoked, "at": at})
 	case "enable", "disable":
 		revoked, at, err := s.SetWorkspace(ctx, workspace, command == "enable")
 		if err != nil {
