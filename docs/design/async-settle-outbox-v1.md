@@ -1820,3 +1820,278 @@ sentinel. `test_fake_rejects_dropped_predicate` executes the real builder output
 first, then deletes one predicate at a time and requires the fake to reject it.
 The refresh expectation is explicit on the test database, so historical
 flag-off frozen SQL remains valid.
+
+## PR G — dormant pilot enablement runbook (2026-10-09 decisions)
+
+**Landing PR G activates nothing.** `scripts/deploy/rollout.sh` is unchanged:
+shadow workspaces empty, admission/protection/fast drain false, ticket path
+empty, epoch zero, existing drain cadence unchanged. This appendix is the later
+reviewed activation procedure, not permission to skip release CI, attestation,
+serving-revision coverage or rollout gates. Every command below is invoked with
+CPython 3.12 (`PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.<tool>`).
+No tool changes serving configuration. Gate tools exit 0 for PASS and 1 for
+BLOCKED; retain their JSON output and SHA-256 in the release evidence.
+
+The binding October 9 decisions select workspace
+`45819281-0ce9-4811-a0cd-c660ab3a116d`, key ID
+`key_1ZXjS8vNqWdQ7qRUkZj8Meuj`, prepaid, $5,000 lifetime limit, no auto-refill.
+Record observed peak concurrency (existing per-instance limits: 4 authorizes,
+16 settles). The pilot excludes auto-refill-dependent traffic and expectations
+of metadata broadcast/budget notifications. `/decide` stays synchronous;
+only the existing chat.completions/Responses cohort can negotiate. Tier 1 is
+ineligible. `TR_ASYNC_SETTLE_PILOT_WORKSPACES` is a comma list with the shadow
+list's whitespace, duplicate, identifier and 32-workspace rules. Empty preserves
+unrestricted admission semantics; the pilot flip MUST pin the single workspace.
+Removal closes fresh admission, while duplicate accepted work and recovery
+continue. Authorize and async-v1 acceptance both check the list.
+
+Pin `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000` at activation. The override applies
+to either eligible tier: new work requires a fresh pending frozen sum **≤ $5**.
+Without an override the tier 2/3 guards remain $25/$100. This is §6's cached
+admission/lag guard, **not a strict exposure ceiling**: outstanding admissions
+can increase exposure by `sum(actual_i for i in I)` beyond the threshold.
+Reservation-based balance remains the money-safety invariant. No cap SQL or
+legacy settlement SQL changes in PR G.
+
+### Evidence bundle and read boundaries
+
+`pilot_enablement.py` has `shadow-serving`, `header-probe`, `fleet-budgets`,
+`pre-flip`, and `post-flip` subcommands. The four checklist commands take
+`--bundle /absolute/evidence.json`; optional `--live` replaces exported database
+rows with fresh reads using explicit `--project`, `--instance`, `--database`
+arguments. The tool creates only a database handle, never initializes a schema. Default is offline
+replay of exports, **not a claim of current production state**. Obtain the
+complete serving inventory through the reviewed deployment exports, including
+old/new revisions during rollout, not from a service template or process logs.
+
+Common bundle fields:
+
+| Field | Required content |
+| --- | --- |
+| `serving_instance_ids`, `serving` | Complete explicit roster and rows with `instance`, `role` (`router`/`enclave`), `revision`, `region`, `pins` (literal env strings). No missing role/instance or mixed flag values. |
+| `rows`, `days`, `proof` | Exact shadow_report exported `{kind,id,body}` rows, requested UTC days and reviewed proof manifest. Its existing validation, coverage, positive seed, reset and seven-day rules are reused, not reimplemented. |
+| `evidence_keys` | For `--live`, explicit `{kind,id}` keys, ≤10,000. Sample authorization-day IDs, instance/day counters and daily control manifests must cover the proof roster. Missing rows block. |
+| Artifact reference | `{ "path": "/absolute/export.json", "sha256": "<64 hex SHA-256>" }`; tools recompute actual file hashes. Artifact provenance/CI success must be independently reviewed. A hash is an integrity check, not attestation. |
+
+Live evidence access uses complete `(kind,id)` primary keys only. Post-flip
+uses `tr_settle_outbox_workspace_status` with a complete workspace prefix,
+≤1,001 rows including a truncation sentinel. All reads use LOW priority,
+200 ms deadlines and no retries. No `tr_entities` discovery or body scans.
+Truncation blocks; do not substitute a partial export and call it complete.
+For a larger history, prepare a separately reviewed bounded export with its
+explicit window and coverage before running the offline checklist.
+
+### Exact enablement order and gates
+
+1. Land enclave F2c with `TR_ASYNC_SETTLE_SHADOW=off` and
+   `TR_ASYNC_SETTLE_NEGOTIATE=off`. Verify every traffic-carrying revision and
+   attested image. Keep router admission and protection off.
+2. Provision the purpose key, signer configuration and a positive authority
+   epoch with admission and protection still off: `ticket_keys.py` writes the
+   Ed25519 PEM to an operator-named path (never printed), the PEM becomes a
+   Secret Manager version mounted as a file by `rollout.sh`, and the pins
+   `TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE`, `_KID`, `_ISSUER`, `_AUDIENCE`
+   and `TR_ASYNC_SETTLE_AUTHORITY_EPOCH` (positive) land in a reviewed rollout.
+   The shadow binding is signed by the same runtime signer (`ShadowSigner`
+   wraps the ticket signer), so without this step no evaluable sample can ever
+   start the clock. The enclave keyring stays empty and
+   `TR_ASYNC_SETTLE_NEGOTIATE=off` until step 8.
+3. Before any opt-in, run the actual-hop §2.2 header check against the still
+   dormant router (it ignores the header for non-opted workspaces) and the §5
+   fleet check; retain the outputs and authorization-size distributions:
+
+   ```bash
+   PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.pilot_enablement header-probe \
+     --base-url https://REVIEWED-HOP/v1 --model PILOT-MODEL \
+     --pilot-key-env PILOT_API_KEY --gateway-token-env TR_INTERNAL_GATEWAY_TOKEN
+   PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.pilot_enablement fleet-budgets \
+     --bundle /absolute/fleet-evidence.json --live \
+     --project PROJECT --instance INSTANCE --database DATABASE
+   ```
+
+   `header-probe` is the **only non-read-only check**: one authorize with zero
+   estimated input and one output token (the smallest accepted output estimate),
+   a printable 12,288-byte `X-TR-Settlement-Shadow` value, then immediate legacy
+   `/internal/gateway/refund` with zero input/output and no async mode header.
+   It performs no inference or positive-charge settle. Internal endpoints need
+   the gateway credential in addition to the pilot key from the named env var;
+   a public inference URL is not a substitute. Redirects are disabled. Record
+   HTTP status, authorize latency, response size and confirmed zero-cost refund.
+   Failed/unknown cleanup is BLOCKED: use the recorded authorization ID to
+   retry the same synchronous refund; never abandon an unknown hold. A lost
+   authorize reply needs operator idempotency reconciliation, not a fresh call.
+   Repeat across the actual reviewed hops/regions and largest pilot credential
+   and authorization shapes, including fragmented-delivery tests. A successful
+   single route/model probe alone is not the full §2.2 distribution/fragmentation
+   evidence; keep those artifacts in the shadow proof manifest.
+
+   Fleet bundle additions: `workspace_count`, `router_instance_ids`,
+   `maximum_router_instances`, `maximum_router_instances_by_region`,
+   `approved_fleet_reads_per_second`,
+   `regional_budgets` keyed by region with `reads_per_second` and
+   `pending_rows_per_second`, and `headroom` artifact. Include closed observer
+   counters for every instance and `freshness_maxima_seconds` with measured
+   `publisher_period`, `publisher_jitter`, `publication`, `poll_period`,
+   `poll_jitter`, `install`, `skew`, `workspace_period`, `workspace_jitter`,
+   `workspace_install`. The §5 component limits and both 4.45-second combined
+   limits are checked; unknown predictions, missed ticks, absent readers,
+   cadence gaps or unapproved fleet cost block. Regional budgets must account
+   for peak roster including overlapping revisions and existing Spanner load.
+4. In a reviewed rollout, pin router
+   `TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`.
+   A non-empty list installs the comparator runtime, observer and evidence
+   store and persists evidence for that workspace, so it is not dormant;
+   that is why steps 2 and 3 precede it. Then pin enclave
+   `TR_ASYNC_SETTLE_SHADOW=on` everywhere serving this pilot. Admission and
+   enclave negotiation remain off on every serving revision.
+5. Run `shadow-serving --bundle /absolute/shadow-evidence.json --live` (with the
+   same explicit database arguments) with
+   `transport` and `fleet` artifact references to passing gate outputs. Their
+   hashes must match `maximum_header_hops`, `fleet_load_budget` and
+   `publisher_poll_freshness` in the reviewed shadow proof manifest. It
+   reuses `shadow_report.report` for manifest/coverage and prints the first
+   durable evaluable sample and clock start. Neither empty evidence nor a
+   counter-only interval starts the clock. **PR G may land dormant during this
+   window**, provided admission/negotiation remain off everywhere and revisions
+   stay covered. A reset/gap follows the existing shadow report rules.
+6. Require shadow report PASS for **≥604,800 continuous seconds**. Keep F1,
+   F2b and F2c successful exact-revision CI artifacts, the versioned 759-case
+   contract and wire fixtures. The missing October 5 timing export and the
+   93,561-probe parity report are not release evidence.
+7. Select PR D fast-drain settings from the pilot's own exports, verify the
+   purpose key/epoch provisioned in step 2 on every serving revision, and run `pre-flip --bundle ... --live`. Bundle adds
+   `ci` references keyed `F1`, `F2b`, `F2c`; `drain` reference to the selection
+   output; and `signer` with `kid`, `issuer`, `audience`, unpadded `public_key`, positive `epoch`,
+   `mounted:true` and `verification` artifact proving the serving mount/keyring.
+   Router signing pins/file paths and enclave keyrings must match on every
+   serving revision. Stage the signing material/pins with admission still off.
+   The checklist prints chosen pins and source export paths/hashes. PASS is
+   contingent on every external proof/measurement gate, not merely elapsed time.
+8. Through reviewed config-as-code releases, in this order: pin
+   `TR_ASYNC_SETTLE_PROTECTION=true`; verify accepted-work fencing; apply the
+   **entire measured drain output**, including
+   `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=true`; verify healthy fresh fleet
+   publication; apply signer/epoch pins and enclave public keyring; verify
+   signature roundtrip on all serving revisions. Then pin
+   `TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`,
+   `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000`, and finally
+   `TR_ASYNC_SETTLE_ENABLED=true`. Enable enclave
+   `TR_ASYNC_SETTLE_NEGOTIATE=on` only with those protections verified, and
+   turn `TR_ASYNC_SETTLE_SHADOW=off` for the negotiated pilot. No manual env
+   edits: rollout.sh overwrites them. A queued/partial rollout is not enabled.
+9. Exercise rollback below, repeat the gated re-enable sequence, and run
+   `post-flip --bundle ... --live` against the re-enabled serving roster. Include
+   `rollback` artifact containing PASS and observed states
+   `["admission_on","pending","admission_off","drained","protection_off"]`,
+   `observed_peak_concurrency`, `outbox`, and `handoff` keyed by
+   `authorization_id.intent_kind`, each with `region` and measured integer
+   `handoff_us`. The workspace-index export provides created/terminal times
+   for drain completion including repair. Existing outbox schema does **not**
+   persist handoff duration or region: join the separately measured pilot
+   handoff export by exact intent identity; never infer it from service time.
+   Missing data blocks, and null counts remain visible. Publish region
+   p50/p95/p99, including outage accounting and rollback evidence. Re-enable
+   only via the same gated admission sequence after the rollback rehearsal.
+
+The 95% ≤5 s and 100% ≤60 s numbers are operating targets with alerts including
+crash reclaim and repair. Sixty seconds is an alert threshold with outage
+accounting, not an absolute promise. Report measured values and outages.
+
+### Measured drain selection
+
+`drain_settings.py INPUT --trials TRIALS --start S --end E --bucket-seconds B
+--margin M --backlog N --target-seconds T --rpc-room-seconds R` accepts exactly
+the JSONL/text service and arrival export supported by `drain_capacity.py`.
+Observation windows include idle time. `M`, `N`, `T`, and positive claim/
+resolution room `R` are mandatory; no production settings are defaulted.
+
+`TRIALS` is a JSON array of measured concurrency-sweep rows on that same pilot
+traffic/window, separated by outcome in the source export. Each row requires
+`id`, `poll_seconds`, `batch`, `concurrency`, `lease_seconds`, `pass_seconds`,
+`service_rate` (measured μ, not ideal μ), `claim_seconds`, `resolution_seconds`,
+`work_seconds` (pass tail), `booking_p95_seconds`, `completion_max_seconds`,
+`crash_reclaim_seconds`, `burst_clear_seconds`, `lease_losses`, `fence_misses`,
+`contention_acceptable`, `health_freshness_pass`, and `repair_included`.
+The latter booleans refer to reviewed trial evidence, not assumed properties.
+Retain trial provenance/region/build and raw measurements with the export.
+
+Selection requires measured μ greater than both peak λ × (1+margin) and
+peak λ + backlog/target; observed burst recovery within target; 5/60-second
+booking/completion/crash checks; no lease losses or fence misses; acceptable
+contention and healthy observation including repair. RPC room is the greater
+of explicit R and measured claim+resolution time. Work+room must fit the pass;
+pass+room must be strictly below lease. Settings also pass the actual PR D
+Settings validator. Among passing trials choose lowest concurrency, then
+smallest wave, then polling period and trial ID. Output records rejected
+trials, capacity arithmetic, selected measurements, **both export hashes** and
+all six rollout pin lines. Re-run regional load/crash trials before accepting
+those values for a release; arithmetic alone does not certify an SLO.
+
+### Admission signing key and epoch placement
+
+```bash
+PYTHONPATH=$PWD/src .venv/bin/python -m scripts.async_settle.ticket_keys \
+  --private-key-file /OPERATOR/SECURE/PATH/async-settle.pem \
+  --kid OPERATOR-CHOSEN-KID --issuer OPERATOR-CHOSEN-ISSUER --epoch POSITIVE-EPOCH
+```
+
+This generates independent Ed25519 material, creates the operator-named file
+exclusively with mode 0600, and never prints private bytes. Existing files and
+symlinks are rejected. Output includes the exact PR E map
+`{"kid":"issuer~base64url_public_key"}` (unpadded raw 32-byte public key) for
+`TR_ASYNC_SETTLE_TICKET_PUBLIC_KEYS`, and router pins for kid, issuer,
+`TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement`, authority epoch and private
+key file. Do not reuse shadow/receipt keys. Verify against PR B and PR E before
+serving. Epoch is the local settlement authority epoch, not billing-pause or
+shadow generation. Retain old public verification keys for accepted work.
+
+Upload private PEM from the named file directly to a dedicated Secret Manager
+secret/version under the release operator's restricted access. Grant only the
+router runtime access, and mount a pinned version as a file at the exact
+`TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE` path. Never place PEM in rollout env
+values, source, logs or GitHub Actions text outputs. The enclave receives only
+the public keyring through its reviewed measured runtime/bootstrap configuration.
+Extend the release's `.github/workflows/deploy.yml` `sync-runtime-secrets` job
+in the later activation change to validate the dedicated secret/version and
+runtime mount prerequisite before deploy, using the existing CI/cloud-admission
+dependencies. Do not copy a stale GitHub secret over Secret Manager material.
+The current job does not provision this key, and PR G intentionally does not
+add a secret, mount, pin value or production credential.
+
+### Rollback and truthful status
+
+First set `TR_ASYNC_SETTLE_ENABLED=false` (and enclave negotiation off), retaining
+protection, keys/epoch, and measured fast drain. All accepted pending work must
+continue returning pending until booked/refunded or truthfully failed; never
+change pending to settled merely because admission was disabled. Verify fresh
+attempts require sync and drain accepted intents through completion/repair.
+Fleet stale/unhealthy health must also close fresh admission, while draining
+continues. Workspace allowlist removal has the same fresh-admission property.
+
+Use bounded workspace reads plus fleet drain-health evidence to prove no
+accepted unresolved work remains (including dead/leased rows), then and only
+then set `TR_ASYNC_SETTLE_PROTECTION=false`. Keep status truthful after that
+flip. Do not disable protection to clear a stuck queue; resolve/repair it first.
+Tests exercise admission-on → pending → admission-off → drain-complete →
+protection-off, and allowlist/fleet-health flips against the fake storage money
+path, checking durable status throughout. These are test evidence; production
+rollback still needs its own recorded exercise.
+
+Clock prerequisite timestamps are retained as `completed_at_us` in gate outputs.
+PR G passes their maximum to `shadow_report.report(not_before_us=...)`; this
+only restricts eligible clock seeds and retains all earlier correctness resets
+and coverage accounting. It does not discard inconvenient history. Fleet
+budget exports should cover one closed measurement interval per named serving
+instance; peak regional caps must sum to the approved whole-fleet cap.
+
+### PR G frozen-reference provenance
+
+The original F1-001 frozen archive passed the requested CPython 3.12.3
+`proof_oracle` shard 1/4 (**85 comparisons**) before re-freezing. PR G touches
+frozen Settings/authorize/handler helpers, so the reference was re-frozen from
+BASE `8d781cf096c43cdc29aa54c37f8d3820b80cf587` plus exactly those three source
+files in `worktree-pins.json`, without Git writes. Archive SHA-256:
+`886540b447d9d779855d2d1f3843c288e722e981b65619a80b2b2687be77e345`.
+No changed storage SQL or unexpected baseline behavior was absorbed. The new
+execution inventory is scoped to the requested default-clock shard 1/4, not
+the full/post-cutover F1 runs. See the round-1 report for execution results.

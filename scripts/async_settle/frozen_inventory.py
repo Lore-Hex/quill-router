@@ -9,14 +9,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = ROOT / 'tests/fakes/frozen_main'
 DOCUMENT = ROOT / 'docs/async-settle-frozen-main-inventory.md'
-SCOPE = ('Union of guarded frozen setup and HTTP/drain/state-capture executions in the '
-         'F1-001 CPython 3.12.3 default and post-cutover proof runs; negative controls excluded')
+SCOPE = ('Guarded frozen setup and HTTP/drain/state-capture executions in PR G CPython 3.12.3 '
+         'default-clock proof_oracle shard 1/4; negative controls excluded')
 
 
 def render(data: dict) -> str:
     lines = [
         '# Frozen-main execution inventory', '',
-        f"F1-001 observed inventory: **{data['modules']} modules, {data['callables']} distinct qualified names, "
+        f"Observed inventory: **{data['modules']} modules, {data['callables']} distinct qualified names, "
         f"{data['execution_entries']} execution entries**.", '',
         f"BASE: `{data['baseline']}` plus the source changes in `worktree-pins.json`. CPython 3.12.3.", '',
         data['scope'] + '. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; '

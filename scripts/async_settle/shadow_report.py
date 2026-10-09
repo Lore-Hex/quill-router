@@ -234,7 +234,10 @@ def collect_rollbacks(resets: list[dict[str, Any]], serving: list[tuple[int, int
             resets.append(dict(at_us=at_us, revision=revision, reason="revision_rollback"))
 
 
-def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -> dict[str, Any]:
+def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
+           *, not_before_us: int = 0) -> dict[str, Any]:
+    if not _uint(not_before_us):
+        raise ValueError("clock prerequisite timestamp")
     requested = sorted(set(days))
     if not requested:
         raise ValueError("days required")
@@ -574,7 +577,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any]) -
         reset["resolved_at_us"] = resolved["serving_since_us"]
         reset["fixed_revision"] = resolved["fixed_revision"]
         restored_after = max(restored_after, resolved["serving_since_us"])
-    candidates = [row for row in samples if positive_sample(row) and row["observed_at_us"] >= restored_after]
+    candidates = [row for row in samples if positive_sample(row) and row["observed_at_us"] >= max(restored_after, not_before_us)]
     start = candidates[0]["observed_at_us"] if candidates and not unresolved else None
     # Measure the connected covered interval containing the positive seed.
     # Overlap counts once; an uncovered interval can never accrue clean time.

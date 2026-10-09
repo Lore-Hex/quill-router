@@ -897,6 +897,8 @@ class Settings(BaseSettings):
     # Dormant async v1 authorize metadata; activation requires later PR gates.
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    async_settle_pilot_workspaces: str = ""
+    _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
     async_settle_ticket_kid: str = ""
@@ -1302,6 +1304,21 @@ class Settings(BaseSettings):
     @property
     def async_settle_shadow_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_shadow_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_pilot_workspaces(self) -> Settings:
+        ids = frozenset(part.strip() for part in self.async_settle_pilot_workspaces.split(",") if part.strip())
+        if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
+            raise ValueError("invalid async settle pilot workspace set")
+        self._async_settle_pilot_workspace_ids = ids
+        return self
+
+    @property
+    def async_settle_pilot_workspace_ids(self) -> frozenset[str]:
+        return self._async_settle_pilot_workspace_ids
+
+    def async_settle_pilot_allows(self, workspace_id: str) -> bool:
+        return not self._async_settle_pilot_workspace_ids or workspace_id in self._async_settle_pilot_workspace_ids
 
     @property
     def async_settle_admission_enabled(self) -> bool:
