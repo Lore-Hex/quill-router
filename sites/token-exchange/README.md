@@ -39,6 +39,22 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ## Build and Test
 
+### Private provider deck request page
+
+`https://nytokenexchange.com/providers.html` is a public, request-only landing
+page. Its email link opens a request to `providers@trustedrouter.com`; it does
+not submit a form, automatically send mail, or deliver a download. The team
+reviews requests and shares the deck privately. Never add the confidential PDF,
+slide images, or a publicly resolvable deck URL to the build or storage bucket.
+The build includes this page in New York's sitemap only. Existing hosting's
+default static route serves the HTML without DNS, certificate, or URL-map changes.
+
+For a narrow update, publish only the built `providers.html` object and
+`new-york/sitemap.xml` after the repository and site checks. Do not sync a stale
+full build over other markets. Both objects use a five-minute public cache.
+
+### Commands
+
 ```sh
 python3 -m unittest discover -s sites/token-exchange -p 'test_*.py' -v
 python3 sites/token-exchange/build.py --output /tmp/token-exchange-build
