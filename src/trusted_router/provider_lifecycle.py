@@ -58,6 +58,9 @@ DEEPINFRA_KIMI_K25_RETIREMENT_AT = datetime(2026, 9, 7, 0, 0, tzinfo=UTC)
 DEEPINFRA_SEPTEMBER_10_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 DEEPINFRA_MIMO_V25_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
 DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
+DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
+# 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
+XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2027, 1, 28, 0, 0, tzinfo=UTC)
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
@@ -466,6 +469,25 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"mimo-v2.5-pro-ultraspeed"}),
         effective_at=XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
     ),
+    # Xiaomi's October 9 notice: from 2026-10-14 18:00 UTC+8 its API serves
+    # MiMo V2.6 weights (billed at V2.6 rates) for the V2.5 ids, and from
+    # October 21 10:00 UTC+8 the ids error. Retire at the substitution, not
+    # the hard shutoff: a pinned V2.5 request must never get V2.6. Only
+    # Xiaomi's direct routes; DeepInfra and other hosts keep their V2.5.
+    _Retirement(
+        provider="xiaomi",
+        model_ids=frozenset({"xiaomi/mimo-v2.5-pro"}),
+        upstream_ids=frozenset({"mimo-v2.5-pro"}),
+        effective_at=XIAOMI_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-pro",),
+    ),
+    _Retirement(
+        provider="xiaomi",
+        model_ids=frozenset({"xiaomi/mimo-v2.5"}),
+        upstream_ids=frozenset({"mimo-v2.5"}),
+        effective_at=XIAOMI_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-flash",),
+    ),
     # Fireworks announced that these Serverless routes retire on 2026-08-27.
     # The two Kimi retirements apply only to the separately billed Fast
     # routers; standard Kimi K2.6 and Kimi K2.7 Code remain available. The
@@ -783,6 +805,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"inclusionAI/Ling-3.0-flash-Fin"}),
         effective_at=DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT,
         replacement_model_ids=("inclusionai/ling-3.0-flash-vl",),
+    ),
+    # DeepInfra's October 9 notices deprecate Qwen3 Max and Qwen3 Max Thinking
+    # on 2026-10-10 and redirect later requests to the different Qwen3.8 Max
+    # weights. Retire DeepInfra's routes at 00:00 UTC (date only) rather than
+    # accept the substitution; other providers' routes are unaffected.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"qwen/qwen3-max", "qwen/qwen3-max-thinking"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-Max", "Qwen/Qwen3-Max-Thinking"}),
+        effective_at=DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-max",),
     ),
     # Google Cloud's October 5 notice: Vertex (Gemini Enterprise) requests to
     # Gemini 3.6 Flash fail with 404 from November 19, 2026 and to Gemini 3.7
