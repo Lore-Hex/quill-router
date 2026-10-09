@@ -72,10 +72,13 @@ func (o *Owner) every(ctx context.Context, f func()) {
 // takes no renewal is draining, revoked or another process's, and the owner
 // stops using it at once, as LeaseLifecycle's OwnerDrops does: it lets it
 // go, and answers what names it as an owner past its cutoff does. With each
-// round every lease publishes a checkpoint record. A lease the owner no
-// longer renews, its publishes failing or its workspace one the switch does
-// not enable (W1), is let go once past its cutoff; the switch on again
-// before then, it is renewed again. The auditor finishes a lease let go so. Rounds run one at a time, and each
+// round every lease publishes a checkpoint record. A lease of a workspace the
+// switch does not enable (W1) is closed, admitting nothing more even once
+// the switch is on again, since it may have been revoked meanwhile and only
+// a renewal would tell; it serves its holds, and is not renewed while the
+// switch is off. A lease the owner no longer renews, its publishes failing
+// or its workspace off, is let go once past its cutoff. The auditor
+// finishes a lease let go so. Rounds run one at a time, and each
 // ends with ctx or the owner, which waits for it to end when it stops.
 func (o *Owner) Renew(ctx context.Context) error {
 	if o.cfg.Spanner == nil {
@@ -105,7 +108,11 @@ func (o *Owner) Renew(ctx context.Context) error {
 	var refs []store.LeaseRef
 	var renewing []*Lease
 	for _, l := range leases {
-		if l.renewable(now) && o.cfg.Enabled(l.workspace) {
+		if !o.cfg.Enabled(l.workspace) {
+			l.Close()
+			continue
+		}
+		if l.renewable(now) {
 			refs, renewing = append(refs, l.ref()), append(renewing, l)
 		}
 	}

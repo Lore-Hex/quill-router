@@ -560,12 +560,15 @@ func TestALeaseWhosePublishesFailIsNotRenewed(t *testing.T) {
 
 // TestAWorkspaceOffsLeaseIsNotRenewed: while the switch does not enable the
 // lease's workspace, as when the node's copy of it has aged out, the owner
-// leaves the lease out of its renewal rounds; on again within its cutoff,
-// it renews it; off past the cutoff, it lets it go.
+// leaves the lease out of its renewal rounds and closes it, serving its
+// hold; on again, the lease admits nothing, though no renewal has told the
+// owner whether it was revoked meanwhile, and it is renewed again; off past
+// the cutoff, it is let go.
 func TestAWorkspaceOffsLeaseIsNotRenewed(t *testing.T) {
 	var off atomic.Bool
 	f, sp := spannerFixture(t, 1000, nil, func(c *Config) { c.Enabled = func(string) bool { return !off.Load() } })
 	ctx := context.Background()
+	f.admit(t, 100, false) // a hold, so the closed lease is not finished at once
 	off.Store(true)
 	if err := f.owner.Renew(ctx); err != nil {
 		t.Fatal(err)
@@ -577,6 +580,9 @@ func TestAWorkspaceOffsLeaseIsNotRenewed(t *testing.T) {
 		t.Fatal("let go within its cutoff")
 	}
 	off.Store(false)
+	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("a lease seen off admits once the switch is on again, before any renewal: %v", err)
+	}
 	if err := f.owner.Renew(ctx); err != nil {
 		t.Fatal(err)
 	}
