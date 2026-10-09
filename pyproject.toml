@@ -69,6 +69,12 @@ dev = [
 # under xdist workers with subprocess fixtures.
 timeout = 600
 timeout_method = "thread"
+# The default matches CI's release jobs. The frozen-main proof oracle is
+# hundreds of ~10 s differentials (over an hour on one machine, which looks
+# like a hang); provider_health reads live provider state. CI runs both in
+# dedicated jobs. A later -m on the command line replaces this default, so
+# CI's explicit selections (and `-m proof_oracle` locally) still win.
+addopts = ["-m", "not provider_health and not proof_oracle"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
