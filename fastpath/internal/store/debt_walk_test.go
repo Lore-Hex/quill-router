@@ -304,26 +304,51 @@ func (d *debtWalk) note(format string, args ...any) {
 	d.history = append(d.history, fmt.Sprintf(format, args...))
 }
 
+// rows is every row a write to the lease could touch (everyRow).
+func (d *debtWalk) rows(ref LeaseRef) string {
+	d.t.Helper()
+	out, err := everyRow(ref)
+	if err != nil {
+		d.fatalf("reading the rows: %v", err)
+	}
+	return out
+}
+
+// unchanged runs a write the store must refuse, and requires every row it
+// could touch as it was, read at once after it.
+func (d *debtWalk) unchanged(ref LeaseRef, kind string, f func()) {
+	d.t.Helper()
+	before := d.rows(ref)
+	f()
+	if after := d.rows(ref); after != before {
+		d.fatalf("a refused %s changed the rows from %s to %s", kind, before, after)
+	}
+}
+
 // grant reports whether the workspace granted a lease.
 func (d *debtWalk) grant(ctx context.Context) bool {
 	d.t.Helper()
 	req := grantOf(d.ws, int64(1+d.rng.Intn(20)))
 	d.note("grant %d", req.Amount)
 	rows := readRows(d.t, d.ws)
-	got, err := d.s.Grant(ctx, req)
+	ref := LeaseRef{d.ws, req.LeaseID}
+	before := d.rows(ref)
+	got, err := d.s.Grant(ctx, detached(req))
 	if err != nil {
 		d.fatalf("the grant: %v", err)
 	}
 	if got.Refused != "" {
+		// Nothing of the workspace's moves, and no row of the lease is
+		// written.
 		d.seen["refused grant"]++
-		if after := readRows(d.t, d.ws); !slices.Equal(after, rows) {
-			d.fatalf("a refused grant changed the credit rows: %+v, then %+v", rows, after)
+		if after := d.rows(ref); after != before {
+			d.fatalf("a refused grant changed the rows from %s to %s", before, after)
 		}
 		return false
 	}
 	// A grant reserves L on donor shards in ascending order, each up to its
 	// headroom.
-	l := &debtLease{ref: LeaseRef{d.ws, req.LeaseID}, state: "open", granted: req.Amount,
+	l := &debtLease{ref: ref, state: "open", granted: req.Amount,
 		rows: map[string]DrainTerminal{}, raises: map[string]int64{}, stamped: map[string]time.Time{},
 		committed: map[string]bool{}}
 	left := req.Amount
@@ -369,7 +394,9 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	if boundary {
 		req.Boundary, req.HoldsListedSeq = &Boundary{S: seq, T: walkTick}, &seq
 	}
-	got, _, err := d.s.Commit(ctx, []CommitRequest{req})
+	// The store gets a copy, so what the walk expects, from money and req,
+	// is what it generated, whatever the call does with its request.
+	got, _, err := d.s.Commit(ctx, detached([]CommitRequest{req}))
 	if err != nil || len(got) != 1 || got[0].Refused != "" {
 		d.fatalf("the commit %+v: %+v %v", req, got, err)
 	}
@@ -433,17 +460,15 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	if d.probes.Intn(4) == 0 {
 		// A member that read a later version than the lease's, its
 		// progress past the stored one: the store refuses its commit and
-		// changes nothing, the lease's row read whole at once after it, and
-		// the check after holding every row to the walk's ledger.
-		before := readLease(d.t, d.s, l.ref)
-		got, _, err := d.s.Commit(ctx, []CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1, AppliedSeq: l.seq + 1,
-			Money: money}})
-		if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
-			d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
-		}
-		if after := readLease(d.t, d.s, l.ref); !reflect.DeepEqual(after, before) {
-			d.fatalf("a refused commit changed lease %s from %+v to %+v", l.ref.LeaseID, before, after)
-		}
+		// changes nothing, every row read at once after it, and the check
+		// after holding every row to the walk's ledger.
+		d.unchanged(l.ref, "commit", func() {
+			got, _, err := d.s.Commit(ctx, detached([]CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1,
+				AppliedSeq: l.seq + 1, Money: money}}))
+			if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
+				d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
+			}
+		})
 		d.seen["refused commit"]++
 	}
 	back := slices.Clone(money)
@@ -508,7 +533,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	d.note("door %s +%d", l.ref.LeaseID, raise)
 	t := DrainTerminal{Ref: l.ref, AuthorizationID: "a" + record, RecordID: record, Kind: "settle", Charge: 2 + raise,
 		Estimate: 2, Digest: []byte(l.ref.LeaseID + record), Money: []byte(`{"walk":"debt"}`), Cause: "debt walk"}
-	got, err := d.s.Append(ctx, t)
+	got, err := d.s.Append(ctx, detached(t))
 	if err != nil || got.Refused != "" || got.Raise != raise {
 		d.fatalf("the append: %+v %v", got, err)
 	}
@@ -556,14 +581,17 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	}
 	now := row.Expiry
 	if len(winners) > 0 {
-		// Still, a row whose winner is not stored holds the close back.
-		got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
-		if err != nil || got.Refused != RefusedUndecided || got.Released != 0 {
-			d.fatalf("a close over undecided drain rows: %+v %v", got, err)
-		}
+		// Still, a row whose winner is not stored holds the close back,
+		// and the refusal moves nothing, every row read at once after it.
+		d.unchanged(l.ref, "close", func() {
+			got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
+			if err != nil || got.Refused != RefusedUndecided || got.Released != 0 {
+				d.fatalf("a close over undecided drain rows: %+v %v", got, err)
+			}
+		})
 		d.seen["refused close: undecided"]++
-		got2, _, err := d.s.Commit(ctx, []CommitRequest{{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.seq,
-			Money: money, Winners: winners}})
+		got2, _, err := d.s.Commit(ctx, detached([]CommitRequest{{Ref: l.ref, ReadVersion: l.version,
+			AppliedSeq: l.seq, Money: money, Winners: winners}}))
 		if err != nil || len(got2) != 1 || got2[0].Refused != "" {
 			d.fatalf("committing the drain log's winners: %+v %v", got2, err)
 		}

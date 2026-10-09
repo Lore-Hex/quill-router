@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/gob"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -416,9 +417,9 @@ func (w *walker) markDraining(taken bool) {
 func (w *walker) appendDoor(a int8, record string, taken bool) {
 	w.t.Helper()
 	w.seen["append"]++
-	got, err := w.s.Append(context.Background(), DrainTerminal{Ref: w.ref, AuthorizationID: w.c.Auths[a], RecordID: record,
-		Kind: "settle", Charge: ac.DoorCharge, Estimate: ac.DoorCharge, Digest: []byte(record), Money: []byte(`{}`),
-		Cause: "walk"})
+	got, err := w.s.Append(context.Background(), detached(DrainTerminal{Ref: w.ref, AuthorizationID: w.c.Auths[a],
+		RecordID: record, Kind: "settle", Charge: ac.DoorCharge, Estimate: ac.DoorCharge, Digest: []byte(record),
+		Money: []byte(`{}`), Cause: "walk"}))
 	switch {
 	case err != nil:
 		w.fatalf("the append: %v", err)
@@ -543,9 +544,9 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 	w.seen["reap"]++
 	mem := from.Mem[m]
 	charge := int64(max(mem.Holds[a], 0))
-	got, committed, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, ReapRow{AuthorizationID: w.c.Auths[a],
-		RecordID: record, Charge: charge, Estimate: walkEstimate,
-		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)})
+	got, committed, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, detached(ReapRow{
+		AuthorizationID: w.c.Auths[a], RecordID: record, Charge: charge, Estimate: walkEstimate,
+		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)}))
 	if err != nil || got != want {
 		w.fatalf("member %s's reap of %s: %q, want %q, %v", w.c.Members[m], w.c.Auths[a], got, want, err)
 	}
@@ -606,7 +607,9 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		}
 	}
 	req := w.request(m, from)
-	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
+	// The store gets a copy: the ledger below reads req, which no store
+	// call can reach.
+	got, _, err := w.s.Commit(context.Background(), detached([]CommitRequest{req}))
 	if err != nil || len(got) != 1 {
 		w.fatalf("member %s's commit: %+v %v", w.c.Members[m], got, err)
 	}
@@ -662,7 +665,7 @@ func (w *walker) commitOff(m int8, from ac.State, off int64) {
 	w.seen["commit"]++
 	req := w.request(m, from)
 	req.AppliedSeq, req.Boundary = int64(from.S)+off, nil
-	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
+	got, _, err := w.s.Commit(context.Background(), detached([]CommitRequest{req}))
 	if err != nil || len(got) != 1 || got[0].Refused != RefusedBoundary || len(got[0].Faults) != 0 {
 		w.fatalf("member %s's commit %+d off S: %+v %v", w.c.Members[m], off, got, err)
 	}
@@ -778,9 +781,7 @@ func (w *walker) timed(kind string, reason Refusal, f func()) {
 }
 
 // unchanged runs a write the store must refuse, and requires every row a
-// write could touch as it was, read at once after it: the workspace's credit
-// rows, the lease's donors, and its row, holds, packs, chunks and drain rows,
-// each whole.
+// write could touch as it was, read at once after it (everyRow).
 func (w *walker) unchanged(kind string, f func()) {
 	w.t.Helper()
 	before := w.snapshot()
@@ -790,26 +791,251 @@ func (w *walker) unchanged(kind string, f func()) {
 	}
 }
 
-// snapshot is what unchanged compares, as text.
 func (w *walker) snapshot() string {
 	w.t.Helper()
-	ctx := context.Background()
-	out := w.credit()
-	loaded, err := w.s.Load(ctx, w.ref)
-	switch {
-	case errors.Is(err, ErrNoLease):
-		out += " no lease"
-	case err != nil:
-		w.fatalf("loading the lease: %v", err)
-	default:
-		loaded.ReadTS = time.Time{}
-		out += fmt.Sprintf(" %+v", loaded)
-	}
-	drain, _, err := w.s.ReadDrainSince(ctx, w.ref, time.Time{})
+	out, err := everyRow(w.ref)
 	if err != nil {
-		w.fatalf("reading the drain log: %v", err)
+		w.fatalf("reading the rows: %v", err)
 	}
-	return out + fmt.Sprintf(" drain %+v", drain)
+	return out
+}
+
+// everyRow is every row a write to the lease could touch, as text: each row,
+// every column of it, of every table with a workspace_id column, that is the
+// lease's workspace's and, where the table has a lease_id column, the
+// lease's. The tables are read from the schema, so one added later is read
+// too, and a column no reader of the store returns is compared all the same.
+func everyRow(ref LeaseRef) (string, error) {
+	ctx := context.Background()
+	tables, err := schemaTables(ctx)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, t := range tables {
+		if !slices.Contains(t.columns, "workspace_id") {
+			continue
+		}
+		stmt := spanner.Statement{SQL: "SELECT * FROM " + t.name + " WHERE workspace_id = @w",
+			Params: map[string]any{"w": ref.Workspace}}
+		if slices.Contains(t.columns, "lease_id") {
+			stmt.SQL += " AND lease_id = @l"
+			stmt.Params["l"] = ref.LeaseID
+		}
+		var rows []string
+		err := shared.Single().Query(ctx, stmt).Do(func(r *spanner.Row) error {
+			fields := make([]string, r.Size())
+			for i, name := range r.ColumnNames() {
+				var v spanner.GenericColumnValue
+				if err := r.Column(i, &v); err != nil {
+					return err
+				}
+				fields[i] = fmt.Sprintf("%s=%v", name, v.Value.AsInterface())
+			}
+			rows = append(rows, strings.Join(fields, " "))
+			return nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", t.name, err)
+		}
+		slices.Sort(rows)
+		fmt.Fprintf(&b, "%s %q; ", t.name, rows)
+	}
+	return b.String(), nil
+}
+
+type schemaTable struct {
+	name    string
+	columns []string
+}
+
+var (
+	schemaOnce    sync.Once
+	schemaTabs    []schemaTable
+	schemaReadErr error
+)
+
+// schemaTables is the database's tables, each with its columns, read once.
+func schemaTables(ctx context.Context) ([]schemaTable, error) {
+	schemaOnce.Do(func() {
+		schemaReadErr = shared.Single().Query(ctx, spanner.Statement{
+			SQL: `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = ''
+			       ORDER BY table_name, ordinal_position`,
+		}).Do(func(r *spanner.Row) error {
+			var table, column string
+			if err := r.Columns(&table, &column); err != nil {
+				return err
+			}
+			if n := len(schemaTabs); n == 0 || schemaTabs[n-1].name != table {
+				schemaTabs = append(schemaTabs, schemaTable{name: table})
+			}
+			schemaTabs[len(schemaTabs)-1].columns = append(schemaTabs[len(schemaTabs)-1].columns, column)
+			return nil
+		})
+	})
+	return schemaTabs, schemaReadErr
+}
+
+// TestDetachedSharesNothing: detached's copy of each request the walks send
+// equals the request, and writing every field, element and byte of the copy,
+// through every slice and pointer, leaves the request as it was. The same
+// writes through a plain copy reach the request, so the test sees memory
+// shared where there is any.
+func TestDetachedSharesNothing(t *testing.T) {
+	seq, fault := int64(7), int64(3)
+	when := time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)
+	commit := func() []CommitRequest {
+		return []CommitRequest{{Ref: LeaseRef{"w", "l"}, ReadVersion: 1, AppliedSeq: 2, LastTick: 3, AuditOsum: 4,
+			Money: []MoneyOp{Book(5, 6), Return(7)},
+			PutHolds: []HoldRow{{AuthorizationID: "a", Estimate: 8, Deadline: when, Listed: true,
+				SnapshotSeq: spanner.NullInt64{Int64: 9, Valid: true}, SnapshotHash: []byte("h"),
+				SnapshotUsage: []byte("u"), RunningCharge: spanner.NullInt64{Int64: 10, Valid: true},
+				SnapshotOwnerSeq: spanner.NullInt64{Int64: 11, Valid: true}, ReapBasis: []byte("b")}},
+			Winners:  []Winner{{AuthorizationID: "a", Kind: "settle", Charge: 12, RecordID: "r", Work: []byte(`{}`)}},
+			Boundary: &Boundary{S: 13, T: when}, HoldsListedSeq: &seq, AuditFault: &fault}}
+	}
+	terminal := func() DrainTerminal {
+		return DrainTerminal{Ref: LeaseRef{"w", "l"}, AuthorizationID: "a", RecordID: "r", Kind: "settle", Charge: 1,
+			Estimate: 2, Digest: []byte("d"), Money: []byte("m"), Cause: "c"}
+	}
+	reap := func() ReapRow {
+		return ReapRow{AuthorizationID: "a", RecordID: "r", Charge: 1, Estimate: 2, SnapshotOwnerSeq: 3,
+			Digest: []byte("d"), Money: []byte("m")}
+	}
+	grant := func() GrantRequest {
+		return GrantRequest{Workspace: "w", LeaseID: "l", Region: "r", WorkspaceShard: 1, Owner: Owner{"n", 2},
+			Amount: 3, KeyStatusVersion: 4}
+	}
+	sharesNothing(t, "a commit", commit, detached[[]CommitRequest])
+	sharesNothing(t, "an append", terminal, detached[DrainTerminal])
+	sharesNothing(t, "a reap", reap, detached[ReapRow])
+	sharesNothing(t, "a grant", grant, detached[GrantRequest])
+	// The positive control: a plain copy shares the request's slices and
+	// pointers, and the writes reach it.
+	if !shares(t, commit, func(v []CommitRequest) []CommitRequest { return slices.Clone(v) }) {
+		t.Error("writes through a plain copy of a commit's requests left them as they were: the test sees no sharing")
+	}
+}
+
+func sharesNothing[T any](t *testing.T, name string, made func() T, copied func(T) T) {
+	t.Helper()
+	v := made()
+	if c := copied(v); !reflect.DeepEqual(c, v) {
+		t.Errorf("%s: the copy %+v is not the request %+v", name, c, v)
+	}
+	if shares(t, made, copied) {
+		t.Errorf("%s: writing the copy wrote the request", name)
+	}
+}
+
+// shares reports whether writing every field of a copy of a request changes
+// the request, read whole, through its pointers, before and after.
+func shares[T any](t *testing.T, made func() T, copied func(T) T) bool {
+	t.Helper()
+	whole := func(v T) []byte {
+		t.Helper()
+		var b bytes.Buffer
+		if err := gob.NewEncoder(&b).Encode(v); err != nil {
+			t.Fatal(err)
+		}
+		return b.Bytes()
+	}
+	v := made()
+	before := whole(v)
+	c := copied(v)
+	touchAll(reflect.ValueOf(&c).Elem())
+	if bytes.Equal(whole(c), before) {
+		t.Fatal("writing every field of the copy left it as it was")
+	}
+	return !bytes.Equal(whole(v), before)
+}
+
+// touchAll writes every field, element and byte v reaches.
+func touchAll(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if !v.IsNil() {
+			touchAll(v.Elem())
+		}
+	case reflect.Slice:
+		for i := range v.Len() {
+			touchAll(v.Index(i))
+		}
+	case reflect.Struct:
+		if t, ok := v.Interface().(time.Time); ok {
+			v.Set(reflect.ValueOf(t.Add(time.Second)))
+			return
+		}
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				touchAll(v.Field(i))
+			}
+		}
+	case reflect.String:
+		v.SetString(v.String() + "x")
+	case reflect.Bool:
+		v.SetBool(!v.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(v.Int() + 1)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint(v.Uint() ^ 0xff)
+	default:
+		panic(fmt.Sprintf("touchAll: a %s", v.Type()))
+	}
+}
+
+// detached is a copy of v that shares no memory with it: every slice, map
+// and pointer in it new, a struct with unexported fields, such as a
+// time.Time, copied whole. The walks give the store the copy and keep v for
+// what they expect, so a store that wrote into its request could not move
+// the expectation with it (TestDetachedSharesNothing).
+func detached[T any](v T) T {
+	var out T
+	copyInto(reflect.ValueOf(&out).Elem(), reflect.ValueOf(&v).Elem())
+	return out
+}
+
+func copyInto(dst, src reflect.Value) {
+	switch src.Kind() {
+	case reflect.Pointer:
+		if !src.IsNil() {
+			p := reflect.New(src.Type().Elem())
+			copyInto(p.Elem(), src.Elem())
+			dst.Set(p)
+		}
+	case reflect.Slice:
+		if !src.IsNil() {
+			c := reflect.MakeSlice(src.Type(), src.Len(), src.Len())
+			for i := range src.Len() {
+				copyInto(c.Index(i), src.Index(i))
+			}
+			dst.Set(c)
+		}
+	case reflect.Map:
+		if !src.IsNil() {
+			c := reflect.MakeMapWithSize(src.Type(), src.Len())
+			for it := src.MapRange(); it.Next(); {
+				v := reflect.New(src.Type().Elem()).Elem()
+				copyInto(v, it.Value())
+				c.SetMapIndex(it.Key(), v)
+			}
+			dst.Set(c)
+		}
+	case reflect.Struct:
+		for i := range src.NumField() {
+			if !src.Type().Field(i).IsExported() {
+				dst.Set(src)
+				return
+			}
+		}
+		for i := range src.NumField() {
+			copyInto(dst.Field(i), src.Field(i))
+		}
+	case reflect.Interface, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		panic(fmt.Sprintf("detached: a %s, which no request holds", src.Type()))
+	default:
+		dst.Set(src)
+	}
 }
 
 // commitAhead commits member m's progress past the stored progress at its
@@ -822,32 +1048,10 @@ func (w *walker) commitAhead(m int8, from ac.State) {
 	// No boundary: a request storing S must end its progress there, which
 	// the store holds before it reads the lease.
 	req.AppliedSeq, req.Boundary = int64(max(from.Mem[m].Prog, from.Prog))+1, nil
-	got, _, err := w.s.Commit(context.Background(), []CommitRequest{req})
+	got, _, err := w.s.Commit(context.Background(), detached([]CommitRequest{req}))
 	if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
 		w.fatalf("member %s's commit ahead of the stored progress: %+v %v", w.c.Members[m], got, err)
 	}
-}
-
-// credit is the workspace's credit rows and the lease's donors, as text.
-func (w *walker) credit() string {
-	w.t.Helper()
-	out := fmt.Sprintf("%+v", readRows(w.t, w.ref.Workspace))
-	err := shared.Single().Query(context.Background(), spanner.Statement{
-		SQL: `SELECT credit_shard, allocation, consumed FROM tr_lease_donor WHERE workspace_id = @w AND lease_id = @l
-		       ORDER BY credit_shard`,
-		Params: w.ref.params(),
-	}).Do(func(r *spanner.Row) error {
-		var shard, allocation, consumed int64
-		if err := r.Columns(&shard, &allocation, &consumed); err != nil {
-			return err
-		}
-		out += fmt.Sprintf(" donor %d: %d of %d", shard, consumed, allocation)
-		return nil
-	})
-	if err != nil {
-		w.fatalf("reading the credit: %v", err)
-	}
-	return out
 }
 
 // commitRefusal is the store's refusal of a commit from member m, in the
