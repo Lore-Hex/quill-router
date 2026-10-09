@@ -112,11 +112,18 @@ func load(t *testing.T) (*exec.Cmd, chan struct{}) {
 }
 
 // TestAStagePastACeilingIsStopped: a look past a ceiling stops the load
-// generator, which exits, and then turns the workspace off, revoking its
-// lease; the command says why and exits 3.
+// generator, which exits, and only then turns the workspace off, revoking
+// its lease; the command says why and exits 3.
 func TestAStagePastACeilingIsStopped(t *testing.T) {
 	ws, ref, d := stage(t, sources{cpu: 0.5})
 	cmd, exited := load(t)
+	term := d.term
+	d.term = func(pid int) error {
+		if !enabled(t, ws) {
+			t.Error("the workspace was turned off before the load generator was told to stop")
+		}
+		return term(pid)
+	}
 	var out bytes.Buffer
 	code, err := run(context.Background(), append(flags, "-workspace", ws, "-stop-pid", fmt.Sprint(cmd.Process.Pid)),
 		&out, d)
