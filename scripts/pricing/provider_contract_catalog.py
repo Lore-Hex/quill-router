@@ -277,6 +277,7 @@ def discover_provider_contract_catalog(
 
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
+    seen_ids: set[str] = set()
     for index, source in enumerate(source_rows):
         label = f"catalog.data[{index}]"
         row = _require_exact_fields(
@@ -286,6 +287,9 @@ def discover_provider_contract_catalog(
             optional=_MODEL_OPTIONAL_FIELDS,
         )
         model_id = _require_string(row["id"], label=f"{label}.id")
+        if model_id in seen_ids:
+            raise RuntimeError(f"{label}.id duplicates an earlier model")
+        seen_ids.add(model_id)
         if _MODEL_ID_RE.fullmatch(model_id) is None:
             raise RuntimeError(f"{label}.id is not a canonical model id")
         if row["object"] != "model" or row["type"] != "chat":

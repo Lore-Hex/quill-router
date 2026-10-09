@@ -163,6 +163,7 @@ PROVIDER_SLUGS = [
     "scaleway",
     "regolo",
     "lyceum",
+    "greenference",
     "byteplus",
     "privatemode",
     "featherless",

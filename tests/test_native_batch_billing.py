@@ -351,6 +351,10 @@ def test_native_batch_eligibility_does_not_override_primary_provider_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The primary host has no verified discount; the discounted host is a fallback.
+    monkeypatch.setattr(
+        "trusted_router.routing.measured_provider_rank",
+        lambda provider, sort: 0 if provider == "deepseek" else 1,
+    )
     drop_routes(monkeypatch, "deepseek/deepseek-v4-flash")
     for host in ("deepseek", "parasail"):
         serve_on_fixture_route(
@@ -372,7 +376,7 @@ def test_native_batch_eligibility_does_not_override_primary_provider_order(
     assert authorize.status_code == 200, authorize.text
     auth = authorize.json()["data"]
     primary = endpoint_for_id(auth["endpoint_id"])
-    assert primary is not None and primary.provider not in {"openai", "parasail"}
+    assert primary is not None and primary.provider == "deepseek"
     assert auth["native_batch_eligible"] is False
     assert any(candidate["provider"] == "parasail" for candidate in auth["route_candidates"])
 

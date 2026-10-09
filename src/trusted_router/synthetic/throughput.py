@@ -38,7 +38,7 @@ def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
     if limit <= 0:
         return []
 
-    from trusted_router.routing import _THROUGHPUT_RANK
+    from trusted_router.provider_ranking import measured_provider_rank
 
     # Input-only task APIs have no metered output-token stream to benchmark.
     # They remain covered by the normal availability rotation.
@@ -57,7 +57,7 @@ def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
         return (
             -importance.get(model, 0),
             -releases.get(model, 0),
-            _THROUGHPUT_RANK.get(provider, 80),
+            measured_provider_rank(provider, "throughput"),
             completion_price,
             prompt_price,
             model,

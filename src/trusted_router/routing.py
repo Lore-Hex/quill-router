@@ -41,6 +41,7 @@ from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slu
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
+from trusted_router.provider_ranking import measured_provider_rank
 from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.types import ErrorType
 from trusted_router.video_billing import video_endpoint_for_resolution
@@ -165,67 +166,6 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 }
 
 
-# Throughput-first routing rank. Lower values are tried first for
-# `provider.sort = "throughput"` and `:nitro`.
-#
-# Generated from the public /leaderboard provider table on 2026-06-27 with:
-#   python scripts/update_provider_throughput_rank.py --write
-# The generator admits only providers with enough samples, >=95% measured uptime,
-# and positive p50 output tokens/second. Providers without reliable token/s data
-# keep conservative secondary ranks so they do not beat measured fast routes.
-_THROUGHPUT_RANK = {
-    "baseten": 0,
-    "deepseek": 1,
-    "fireworks": 2,
-    "kimi": 3,
-    "siliconflow": 4,
-    "deepinfra": 5,
-    "minimax": 6,
-    "crusoe": 7,
-    # Current leaderboard rows do not expose enough usable token/s for these
-    # providers. Keep strong prior ordering below the measured set until the
-    # synthetic probes emit stable longer completions for every provider.
-    "cerebras": 20,
-    "mistral": 21,
-    "openai": 22,
-    "google-vertex": 23,
-    "google-ai-studio": 24,
-    "together": 25,
-    "zai": 26,
-    "anthropic": 27,
-    "tinfoil": 28,
-    "venice": 29,
-    "grok": 30,
-    "lightning": 31,
-    "nebius": 32,
-    "friendli": 33,
-    "novita": 34,
-    "phala": 35,
-    "gmi": 36,
-    "parasail": 37,
-    "wafer": 38,
-    "xiaomi": 39,
-    "trustedrouter": 99,
-}
-
-# Phase 4 — reliability-informed DEFAULT routing preference. Lower = tried
-# first. When a model is served by several prepaid hosts, default traffic
-# routes to the more RELIABLE host rather than raw catalog order. Demotions are
-# evidence-based, from measured uptime on the public leaderboard (2026-06):
-# gmi ~82% (and slow ~2.8s TTFT), parasail ~87%, novita ~94% — all materially
-# below the reliable open-weight hosts (deepinfra / cerebras / lightning /
-# deepseek ~100%). Everything unlisted stays at the reliable default; within a
-# tier the catalog order is preserved, so only models served by BOTH a flaky
-# and a healthy host change. Explicit `provider.order` and
-# `sort=price|throughput` still take precedence. (A future per-model measured
-# snapshot will refine this static floor — see Phase 4 plan.)
-_DEFAULT_PROVIDER_PREFERENCE = 0
-_PROVIDER_PREFERENCE = {
-    "novita": 3,
-    "parasail": 4,
-    "gmi": 5,
-}
-
 # Prefer operator-funded capacity only for default prepaid routing. BYOK,
 # caller-supplied order/sort, eligibility filters, and published prices stay unchanged.
 _PREPAID_PROVIDER_PREFERENCE = {"cloudflare-workers-ai": -2}
@@ -238,8 +178,8 @@ _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
     # headers within 95s; all three Chutes instances lacked evidence support.
     # Keep both routes observable and explicitly selectable while preferring
     # other backends for these exact models. Remove after verified recovery.
-    "deepseek/deepseek-v4.1-flash": {"nvidia-nim": 10},
-    "qwen/qwen3-235b-a22b-thinking-2507": {"chutes": 10},
+    "deepseek/deepseek-v4.1-flash": {"nvidia-nim": 3_000},
+    "qwen/qwen3-235b-a22b-thinking-2507": {"chutes": 3_000},
     # Jev's vendor before the relay: one third party instead of two, and a
     # measured 238 ms median against ~330 ms through Vercel (2026-09-19, the
     # gateway's labeled ticket set). The relay stays as the failover.
@@ -1085,7 +1025,7 @@ def _sort_candidates(candidates: list[Model], prefs: RoutePreferences) -> list[M
                 + model.completion_price_microdollars_per_million_tokens
             )
         elif prefs.sort in {"latency", "throughput"}:
-            sort_rank = _THROUGHPUT_RANK.get(model.provider, 50)
+            sort_rank = measured_provider_rank(model.provider, prefs.sort)
         else:
             # Default: preserve the caller's explicit `models` array order. The
             # reliability preference is applied at the ENDPOINT level (which host
@@ -1187,7 +1127,7 @@ def _sort_endpoint_candidates(
                 + endpoint.completion_price_microdollars_per_million_tokens
             )
         elif prefs.sort in {"latency", "throughput"}:
-            sort_rank = _THROUGHPUT_RANK.get(endpoint.provider, 50)
+            sort_rank = measured_provider_rank(endpoint.provider, prefs.sort)
         else:
             # Default: reliability-informed preference (Phase 4), catalog order
             # preserved within a tier via the original_index tiebreaker below.
@@ -1196,9 +1136,7 @@ def _sort_endpoint_candidates(
             model_preference = (
                 _MODEL_PROVIDER_PREFERENCE.get(model.id, {}) if model.id == single_model_id else {}
             )
-            default_rank = _PROVIDER_PREFERENCE.get(
-                endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE,
-            )
+            default_rank = measured_provider_rank(endpoint.provider, None)
             if endpoint.usage_type == "Credits":
                 default_rank = _PREPAID_PROVIDER_PREFERENCE.get(endpoint.provider, default_rank)
             sort_rank = model_preference.get(endpoint.provider, default_rank)

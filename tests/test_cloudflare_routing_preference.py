@@ -23,6 +23,11 @@ MODEL = "unit/cloudflare-preference"
 
 @pytest.fixture
 def routes(monkeypatch: pytest.MonkeyPatch) -> list[ModelEndpoint]:
+    # Verify policy precedence independently of the changing measured snapshot.
+    monkeypatch.setattr(
+        "trusted_router.routing.measured_provider_rank",
+        lambda provider, sort: {"deepinfra": 0, CLOUDFLARE: 1, "parasail": 4}.get(provider, 1000),
+    )
     return [
         serve_on_fixture_route(
             monkeypatch, MODEL, provider, author="openai",

@@ -32,6 +32,18 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "greenference": InferenceLocations(
+        locations=("European Union (countries unspecified)",),
+        scope="All inference is on Greenference-operated serving software on rented EU GPU capacity.",
+        routing="Dynamic within the EU; requests fail rather than leave the EU. Exact countries are not disclosed.",
+        provider_pinning="EU-only service; no country-specific pin or actual-served-region response field.",
+        trustedrouter_pinning="Select provider.only=[greenference] with allow_fallbacks=false to restrict this route.",
+        declaration="EU-only inference, dynamically placed; no individual-country commitment.",
+        evidence="Public DPA and provider application; authenticated Catalog v2",
+        reviewed_on="2026-10-09",
+        sources=(("EU processing and retention commitments", "https://greenference.com/legal/dpa"),
+                 ("Compute subprocessors", "https://greenference.com/legal/subprocessors")),
+    ),
     **{
         slug: InferenceLocations(
             locations=(("Finland (EU)",) if tier == "eu" else ("Finland (EU)", "Worldwide (opted-in Global keys)")),

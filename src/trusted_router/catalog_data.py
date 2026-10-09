@@ -1921,6 +1921,28 @@ PROVIDERS: dict[str, Provider] = {
         # Operator jurisdiction is not US-only inference; Canada is also declared.
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "greenference": Provider(
+        slug="greenference",
+        name="Greenference",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_headquarters_country="FR",
+        provider_policy=(
+            "Greenference SAS's DPA commits to EU-only inference, no persistent "
+            "prompt/output storage and no training or secondary use. Shared prefix "
+            "caches remain in volatile GPU memory until eviction or instance restart; "
+            "they are not account-isolated and have no fixed maximum lifetime. "
+            "Content-free operational metadata is retained. Greenference runs its "
+            "own serving software on rented EU compute; this is contractual ZDR, "
+            "not verified confidential compute or E2EE. Its current electricity "
+            "mix is unverified, not a 100% renewable-energy commitment."
+        ),
+        provider_policy_url="https://greenference.com/legal/dpa",
+    ),
     "lyceum": Provider(
         slug="lyceum",
         name="Lyceum",
@@ -2229,6 +2251,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "system1models",
         "system1models-eu",
         "lyceum",
+        "greenference",
         "privatemode",
         "telluvian",
         "vercel-ai-gateway",
