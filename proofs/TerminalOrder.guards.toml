@@ -1,14 +1,14 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "3b3944c8dd01e73b224b2af2682966b3d781f6d477733f73e166bfe7d2940665"
+inputs_sha256 = "310152af7136ece0ac95117547dcc6b71e8c429bbfe389af27e077dc0e8c798a"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
 "TerminalOrder.cfg" = 1047716
-"TerminalOrder.adopt.cfg" = 692648
 "TerminalOrder.appends.cfg" = 13322
 "TerminalOrder.list.cfg" = 5256
+"TerminalOrder.rows.cfg" = 1594624
 "TerminalOrder.undeclared.cfg" = 8324
 
 [[guard]]
@@ -383,13 +383,8 @@ state, which the specification's stuttering allows anyway.
 [[guard]]
 action = "Listed"
 text = '''/\ lease # "closed"'''
-breaks = "nothing"
-reaches = "new states"
-why = '''
-No commit lands after the close, so the runtime lists nothing then. A
-listing after the close changes listed and nothing that reads it: the
-auditor reaps only a draining lease and the close is behind it.
-'''
+breaks = "NoListedHoldClosedOver"
+cfg = "list"
 
 [[guard]]
 action = "AuditorReap"
