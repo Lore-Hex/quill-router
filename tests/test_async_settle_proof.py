@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import json
 import re
 from dataclasses import replace
@@ -34,6 +35,32 @@ from trusted_router.storage_models import SettleOutboxRow
 STATE = ('typed', 'rows', 'reservations', 'gateway_authorizations', 'settle_outbox',
          'generation_records', 'operational_analytics_outbox', 'analytics_outbox',
          'reservation_idemp')
+
+
+def retention_clock(monkeypatch):
+    """One settlement clock across all four paths, distinct from creation."""
+    from trusted_router import storage_gcp_authorize, storage_gcp_settle_outbox
+
+    clock = dt.datetime(2026, 10, 8, 12, tzinfo=dt.UTC)
+    real_datetime = dt.datetime
+    class ClockMeta(type):
+        def __instancecheck__(cls, value):
+            return isinstance(value, real_datetime)
+    class Clock(dt.datetime, metaclass=ClockMeta):
+        @classmethod
+        def now(cls, tz=None):
+            return clock
+    monkeypatch.setattr(dt, 'datetime', Clock)
+    monkeypatch.setattr(storage_gcp_authorize, 'utcnow', lambda: clock)
+    monkeypatch.setattr(storage_gcp_settle_outbox, 'datetime', Clock)
+    monkeypatch.setattr(storage_gcp_settle_outbox, '_iso_now', lambda: clock.isoformat().replace('+00:00', 'Z'))
+    return clock
+
+
+def terminal_time(row):
+    value = row['terminal_at']
+    assert value is not None
+    return dt.datetime.fromisoformat(value) if isinstance(value, str) else value
 
 
 def save(db):
@@ -164,6 +191,7 @@ def test_four_path_billing_state(env, monkeypatch, case):
 
 def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
     body, auth, key = prepare(env, case)
+    terminal_at = retention_clock(monkeypatch)
     endpoints = catalog(monkeypatch, body)
     db, store = env[1], env[0]
     if scenario == 'catalog_change':
@@ -266,6 +294,8 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                       credit_hold=_typed_credit(db, 'ws-v1')['reserved'],
                       key_hold=key_state['reserved'],
                       actual=reservation['actual_micro'], reservation_settled=reservation['settled'],
+                      reservation_terminal_at=terminal_time(reservation),
+                      authorization_terminal_at=terminal_time(db.gateway_authorizations[auth.id]),
                       settled=settled.settled, cost=settled.finalized_cost_microdollars,
                       outcome=settled.finalization_outcome, generation_id=settled.finalized_generation_id,
                       generation_model=generation.model,
@@ -279,6 +309,7 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                                                reasoning=settled.finalized_reasoning_tokens))
         assert fields == dict(credit=expected + (7 if scenario == 'debt' else 0), key=expected if scenario != 'deleted_key' else None, credit_hold=0, key_hold=0 if scenario != 'deleted_key' else None,
                              actual=expected, reservation_settled=True, settled=True, cost=expected,
+                             reservation_terminal_at=terminal_at, authorization_terminal_at=terminal_at,
                              outcome='settled', generation_id=body['terminal']['generation_id'],
                              generation_model=selected['model_id'],
                              authorization_model=selected['model_id'],
@@ -301,8 +332,6 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                 assert row['snapshot_hash'] == body['terminal']['snapshot_hash']
             else:
                 assert row.get('payload_hash') is None and row.get('snapshot_hash') is None
-        if path != 'snapshot_sync':
-            assert reservation['terminal_at'] is not None
         if scenario == 'window_rollover':
             assert [key_state[window+'_usage'] for window in ('day', 'week', 'month')] == [expected]*3
         if scenario == 'debt':
@@ -320,17 +349,27 @@ def test_four_path_scenario_axes(env, monkeypatch, scenario):
     run_four_paths(env, monkeypatch, SUPPORTED[0], scenario)
 
 
-@pytest.mark.xfail(strict=True, reason='F1-001: fresh snapshot-sync defers retention without a durable repair row')
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 @pytest.mark.parametrize('record', ['reservation', 'authorization'])
-def test_fresh_snapshot_sync_completes_retention(env, kind, record):
+def test_fresh_snapshot_sync_completes_retention(env, monkeypatch, kind, record):
+    """F1-001: fresh sync and its duplicate finish retention without an intent."""
     body, auth, _ = prepare(env, kind=kind)
+    terminal_at = retention_clock(monkeypatch)
     assert call(env, body, synchronous=True).status_code == 200
     assert env[1].settle_outbox == {}
     assert env[1].reservations[auth.credit_reservation_id]['settled']
     terminal = (env[1].reservations[auth.credit_reservation_id] if record == 'reservation'
                 else env[1].gateway_authorizations[auth.id])
-    assert terminal['terminal_at'] is not None
+    assert terminal_time(terminal) == terminal_at
+    before = save(env[1])
+    # A retry's clock must not extend the original winner's retention deadline.
+    real_finalize = type(env[0]).typed_finalize_gateway
+    def later_finalize(self, **kwargs):
+        kwargs['now'] = terminal_at + dt.timedelta(days=1)
+        return real_finalize(self, **kwargs)
+    monkeypatch.setattr(type(env[0]), 'typed_finalize_gateway', later_finalize)
+    assert call(env, body, synchronous=True).status_code == 200
+    assert save(env[1]) == before
 
 
 LITERALS = [

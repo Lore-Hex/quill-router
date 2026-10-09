@@ -357,3 +357,61 @@ def test_finalize_commit_crash_before_mark(env, monkeypatch):
     assert env[1].typed == before
     row = env[1].settle_outbox[(auth.id, 'settle')]
     assert row['status'] == 'done' and row['settle_body'] is None and row['terminal_at'] is not None
+
+
+@pytest.mark.parametrize('kind', ['settle', 'refund'])
+@pytest.mark.parametrize('deleted_key', [False, True])
+def test_F1_001_retention_money_transaction(env, monkeypatch, kind, deleted_key):
+    """Both stamps share the money commit, roll back with it, and use finalize now."""
+    from tests.fakes.spanner import FakeSpannerDatabase
+    from tests.test_async_settle_proof import retention_clock, save, terminal_time
+
+    body, auth, key = prepare(env, kind=kind)
+    db = env[1]
+    if deleted_key:
+        db.typed['tr_key_limit'].clear()
+        db.rows.pop(('api_key', key.hash), None)
+    now = retention_clock(monkeypatch)
+    before = save(db)
+    update = _FakeTransaction.execute_update
+    commit = FakeSpannerDatabase._try_commit
+    statements = {}
+    money_commits = []
+    fail = True
+
+    def record(tx, sql, **kwargs):
+        count = update(tx, sql, **kwargs)
+        statements.setdefault(tx, []).append((sql, kwargs['params'], count))
+        if fail and sql.startswith('UPDATE tr_reservation SET terminal_at=IF('):
+            raise RuntimeError('F1-001 rollback after terminal stamps')
+        return count
+
+    def check_commit(database, tx):
+        writes = statements.get(tx, [])
+        if any(sql.startswith('UPDATE tr_reservation SET settled=true') and count == 1
+               for sql, _, count in writes):
+            stamps = [(sql, params, count) for sql, params, count in writes
+                      if 'SET terminal_at=IF(' in sql]
+            assert len(stamps) == 2
+            assert [count for _, _, count in stamps] == [1, 1]
+            assert [params['now'] for _, params, _ in stamps] == [now, now]
+            assert [params['kind'] for _, params, _ in stamps] == [kind, kind]
+            assert [params['record_id'] for _, params, _ in stamps] == [auth.id, auth.credit_reservation_id]
+            assert any('UPDATE tr_credit_balance' in sql and count == 1 for sql, _, count in writes)
+            money_commits.append(writes)
+        return commit(database, tx)
+
+    monkeypatch.setattr(_FakeTransaction, 'execute_update', record)
+    monkeypatch.setattr(FakeSpannerDatabase, '_try_commit', check_commit)
+    with pytest.raises(RuntimeError, match='F1-001 rollback'):
+        call(env, body, synchronous=True)
+    assert save(db) == before
+    fail = False
+    assert call(env, body, synchronous=True).status_code == 200
+    assert len(money_commits) == 1
+    assert terminal_time(db.reservations[auth.credit_reservation_id]) == now
+    assert terminal_time(db.gateway_authorizations[auth.id]) == now
+    settled = save(db)
+    assert call(env, body, synchronous=True).status_code == 200
+    assert save(db) == settled
+    assert len(money_commits) == 1

@@ -1,33 +1,17 @@
 # Frozen-main execution inventory
 
-Round-12 observed inventory: **330 modules, 1633 distinct qualified names, 1666 execution entries**.
+F1-001 observed inventory: **330 modules, 1628 distinct qualified names, 1662 execution entries**.
 
-BASE: `4701b1a6da9b2b05df93321a6bbd59ea82188c2b`. CPython 3.12.3.
+BASE: `c4c95e0f2a94b33ec3928daa10d769b78859a944` plus the source changes in `worktree-pins.json`. CPython 3.12.3.
 
-Union of guarded frozen setup and HTTP/drain/state-capture executions in the Round-12 CPython 3.12.3 normal and post-cutover proof runs; negative controls excluded. This is a golden against BASE. It includes module/class bodies and
-comprehensions as well as functions. Fixture seed preparation is excluded. Every
-router entry below maps to unchanged BASE bytes in the snapshot. No observed live
-router call is permitted. This inventory is evidence, **not an allowlist**.
+Union of guarded frozen setup and HTTP/drain/state-capture executions in the F1-001 CPython 3.12.3 default and post-cutover proof runs; negative controls excluded. This inventory is evidence, **not an allowlist**. Fixture seed preparation is excluded; module/class bodies and comprehensions are included. No observed live router call is permitted.
 
-Archive SHA-256: `8ee042a19b878760da7f024c8805fc7d6f4add1bde7b8d4fd625ce5790357d93`.
+Archive SHA-256: `65cb42f7f8065ffcc173645a21c1a856068608d7ec40cb8a66f2aa795d5b8566`.
 
-[Machine-readable records](../tests/fakes/frozen_main/execution-inventory.json) ·
-[all file pins](../tests/fakes/frozen_main/pins.json) ·
-[re-pin and regeneration instructions](../tests/fakes/frozen_main/README.md) ·
-[guard coverage and scope](design/async-settle-outbox-v1.md#frozen-main-coverage)
+[Machine-readable records](../tests/fakes/frozen_main/execution-inventory.json) · [all file pins](../tests/fakes/frozen_main/pins.json) · [regeneration instructions](../tests/fakes/frozen_main/README.md) · [guard coverage and scope](design/async-settle-outbox-v1.md#frozen-main-coverage)
 
-Each module heading supplies the alias, archive member and SHA-256 for every
-listed entry. `Code line` means `co_firstlineno`; generated dataclass methods use
-their generated code line, not a literal source line, and are attributed to the
-owning class and pinned source file. Standard-library/third-party machinery and
-the shared fake IO engine are outside this router inventory. The appendix
-records their permitted roles, native supplements and registry boundaries.
+`Code line` means `co_firstlineno`; generated dataclass methods use their generated code line and are attributed to the owning class and pinned source file. Standard-library/third-party machinery and the shared fake IO engine are outside this router inventory.
 
-The reference and execution guards are verified on CPython 3.11, 3.12.3, 3.13
-and 3.14.6. In particular, held frame locals use native exact-dict items on
-3.11/3.12 and the sealed native proxy on 3.13/3.14, always preserving GC edges.
-The interpreter matrix and verification results are in the
-[validation report](validation/async-settle-pr-f1.md).
 
 ## `trusted_router`
 
@@ -220,8 +204,8 @@ SHA-256: `ea9148d3d270617ebb477ac518b03f7c42d85346bf2c71d751f6dce11747fd9b`.
 |---|---|
 | `<module>` | 1 |
 | `BenchmarkDef` | 34 |
-| `BenchmarkDef.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.billing_policy`
 
@@ -301,36 +285,36 @@ SHA-256: `2d89e6e24a6fd6d04bc540cd90587a4e7e7b4215620acacc995b244388431dff`.
 
 Frozen alias: `frozen_main.catalog`. Member: `src/trusted_router/catalog.py`.
 
-SHA-256: `6349f8c810e46a087bb8012001d30ea16f727c6796681086291508e7c57879e3`.
+SHA-256: `7f4665fccf731f8b6775a2558ad597e25a953a2a2355d76ab09b1da98e900fb3`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `_meta_price_range` | 425 |
-| `_model_max_privacy_tier` | 461 |
-| `_route_provider_slugs` | 540 |
+| `_meta_price_range` | 424 |
+| `_model_max_privacy_tier` | 460 |
+| `_route_provider_slugs` | 539 |
 | `canonical_orchestration_model_id` | 310 |
 | `effective_endpoint` | 353 |
 | `endpoints_for_model` | 389 |
-| `model_eu_focused_provider_available` | 590 |
-| `model_eu_focused_provider_available.<locals>.<genexpr>` | 592 |
-| `model_max_privacy_tier` | 487 |
-| `model_open_weights` | 517 |
+| `model_eu_focused_provider_available` | 589 |
+| `model_eu_focused_provider_available.<locals>.<genexpr>` | 591 |
+| `model_max_privacy_tier` | 486 |
+| `model_open_weights` | 516 |
+| `model_open_weights.<locals>.<genexpr>` | 533 |
 | `model_open_weights.<locals>.<genexpr>` | 534 |
-| `model_open_weights.<locals>.<genexpr>` | 535 |
-| `model_to_openrouter_shape` | 597 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 610 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 621 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 629 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 632 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 641 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 661 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 664 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 669 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 673 |
-| `model_to_openrouter_shape.<locals>.<genexpr>` | 755 |
-| `model_us_provider_available` | 581 |
-| `model_us_provider_available.<locals>.<genexpr>` | 583 |
+| `model_to_openrouter_shape` | 596 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 609 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 620 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 628 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 631 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 640 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 660 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 663 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 668 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 672 |
+| `model_to_openrouter_shape.<locals>.<genexpr>` | 754 |
+| `model_us_provider_available` | 580 |
+| `model_us_provider_available.<locals>.<genexpr>` | 582 |
 | `orchestration_primitive` | 306 |
 | `orchestration_role` | 319 |
 
@@ -370,16 +354,15 @@ SHA-256: `8c8bb1451424a9a1859afd6e49cbbd6243a88d1cd0a83c74b3342211145e47e2`.
 | `ModelEndpoint.catalog_is_current` | 443 |
 | `ModelEndpoint.is_byok` | 439 |
 | `ModelOrigin` | 3699 |
-| `ModelOrigin.__init__` | 2 |
 | `ModelProviderPrivacyOverride` | 238 |
 | `ModelProviderPrivacyOverride.__init__` | 2 |
 | `NamedDecisionModel` | 2425 |
 | `Provider` | 25 |
-| `Provider.__init__` | 2 |
 | `_DecisionFallbackRoute` | 3270 |
 | `_DecisionSpec` | 3276 |
 | `_EmbeddingSpec` | 3354 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 | `_utc_now` | 20 |
 | `maker_provider_slug` | 4241 |
 | `model_vendor_provider_slugs` | 4260 |
@@ -485,22 +468,22 @@ SHA-256: `f75a1d6fa0601a6900dadc1f1079a84546f618c42e5dac92672a43d0e433928c`.
 
 Frozen alias: `frozen_main.catalog_registry`. Member: `src/trusted_router/catalog_registry.py`.
 
-SHA-256: `c59438828422013631cd71680331b49282e1ca4ac4e3405fc66f1afecab88d0c`.
+SHA-256: `68da176a580280967e8b31490e4210f053a0f97b46bdec65c05a671bde8d070a`.
 
 | Callable / executed code unit | Code line |
 |---|---|
-| `<genexpr>` | 1645 |
 | `<genexpr>` | 1658 |
-| `<genexpr>` | 1661 |
+| `<genexpr>` | 1671 |
+| `<genexpr>` | 1674 |
 | `<module>` | 1 |
 | `_install_deepseek_v4_pro_release_routes` | 1365 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install` | 1432 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install.<locals>.<genexpr>` | 1437 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install.<locals>.<genexpr>` | 1438 |
 | `_install_deepseek_v4_pro_release_routes.<locals>.install.<locals>.<lambda>` | 1443 |
-| `_named_decision_model_with_chain_prices` | 1667 |
-| `_named_decision_model_with_chain_prices.<locals>.<genexpr>` | 1695 |
-| `_named_decision_model_with_chain_prices.<locals>.<genexpr>` | 1696 |
+| `_named_decision_model_with_chain_prices` | 1680 |
+| `_named_decision_model_with_chain_prices.<locals>.<genexpr>` | 1708 |
+| `_named_decision_model_with_chain_prices.<locals>.<genexpr>` | 1709 |
 | `_settle_deepseek_v4_pro_0423_leaf` | 1489 |
 | `_settle_deepseek_v4_pro_0423_leaf.<locals>.<genexpr>` | 1507 |
 | `archimedes_model` | 980 |
@@ -609,11 +592,10 @@ SHA-256: `d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d`.
 |---|---|
 | `<module>` | 1 |
 | `ComparisonSource` | 10 |
-| `ComparisonSource.__init__` | 2 |
 | `CompetitorComparison` | 16 |
-| `CompetitorComparison.__init__` | 2 |
 | `CompetitorComparison.href` | 34 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 | `_comparison` | 116 |
 | `_rows` | 50 |
 
@@ -621,28 +603,32 @@ SHA-256: `d7590b05d19a1f363bf326e37f4aa8b0f5bc39a24de0dc2a5e2df49308341c3d`.
 
 Frozen alias: `frozen_main.config`. Member: `src/trusted_router/config.py`.
 
-SHA-256: `08b514ad7b8f8f9abad38c8041fe3aba603d12b22cdcc6606ca5ec880e348872`.
+SHA-256: `4e38316b482b0cfae398967cd8d842a54c16cc53445e0da81fa5513b4cb53824`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
 | `GatewayRegionTarget` | 108 |
 | `Settings` | 368 |
-| `Settings.async_settle_admission_enabled` | 1292 |
-| `Settings.async_settle_requires_protection` | 1297 |
-| `Settings.drain_budget_within_lease` | 1285 |
-| `Settings.production_is_fail_closed` | 1303 |
-| `Settings.production_is_fail_closed.<locals>.<genexpr>` | 1472 |
-| `Settings.production_is_fail_closed.<locals>.<genexpr>` | 1571 |
-| `Settings.remediator_mode_is_known` | 1271 |
-| `Settings.settings_customise_sources` | 1251 |
-| `Settings.trust_qualifying_provider_set` | 2072 |
-| `Settings.trust_qualifying_provider_set.<locals>.<genexpr>` | 2074 |
-| `_LocalKeyFileSource` | 2192 |
-| `_LocalKeyFileSource.__call__` | 2221 |
-| `_LocalKeyFileSource.__init__` | 2199 |
-| `_running_under_pytest` | 2225 |
-| `get_settings` | 2229 |
+| `Settings.async_settle_admission_enabled` | 1306 |
+| `Settings.async_settle_requires_protection` | 1311 |
+| `Settings.async_settle_shadow_workspace_ids` | 1302 |
+| `Settings.drain_budget_within_lease` | 1287 |
+| `Settings.parse_shadow_workspaces` | 1294 |
+| `Settings.parse_shadow_workspaces.<locals>.<genexpr>` | 1296 |
+| `Settings.parse_shadow_workspaces.<locals>.<genexpr>` | 1297 |
+| `Settings.production_is_fail_closed` | 1317 |
+| `Settings.production_is_fail_closed.<locals>.<genexpr>` | 1486 |
+| `Settings.production_is_fail_closed.<locals>.<genexpr>` | 1585 |
+| `Settings.remediator_mode_is_known` | 1273 |
+| `Settings.settings_customise_sources` | 1253 |
+| `Settings.trust_qualifying_provider_set` | 2086 |
+| `Settings.trust_qualifying_provider_set.<locals>.<genexpr>` | 2088 |
+| `_LocalKeyFileSource` | 2206 |
+| `_LocalKeyFileSource.__call__` | 2235 |
+| `_LocalKeyFileSource.__init__` | 2213 |
+| `_running_under_pytest` | 2239 |
+| `get_settings` | 2243 |
 | `parse_gateway_region_targets` | 132 |
 | `parse_settlement_inbound_tokens` | 58 |
 
@@ -666,8 +652,8 @@ SHA-256: `8cc18c4591cbd7aa4a116140b62dd8a096237e642b05e44ae9674f3e0ffb6f7a`.
 |---|---|
 | `<module>` | 1 |
 | `BlogPost` | 6 |
-| `BlogPost.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.content.company_signin`
 
@@ -789,12 +775,11 @@ SHA-256: `d6580891bf030e47b6e6999ed12ee3ec284bf4f27df26a4e3a9857997d6cd8fc`.
 | `<module>` | 1 |
 | `BlogIndexPost` | 452 |
 | `OpenRouterLandingVariant` | 426 |
-| `OpenRouterLandingVariant.__init__` | 2 |
 | `PublicPage` | 413 |
-| `PublicPage.__init__` | 2 |
 | `_EndpointProviderView` | 5229 |
 | `_ModelPublisher` | 4976 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.detached_jws`
 
@@ -965,7 +950,7 @@ SHA-256: `78ecef2e40825b87d75a964dcab67a1dffdd6c7fb3b77ffb30c62b777c8f75c5`.
 
 Frozen alias: `frozen_main.main`. Member: `src/trusted_router/main.py`.
 
-SHA-256: `33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde`.
+SHA-256: `59d62bcf5c54ec6f82b46467fb9e6b77d8eac8dc15ae73e4144fb4e90b1bfbf5`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -973,8 +958,8 @@ SHA-256: `33f5ebb387d0b340dc3bce12ab3d9ca45f0dcb843f2f15c8765e16a4617e1bde`.
 | `_ApplicationConsoleFormatter` | 147 |
 | `_configure_application_logging` | 176 |
 | `_configure_application_logging.<locals>.<genexpr>` | 194 |
-| `_control_plane_inference_enabled` | 877 |
-| `_make_api_router` | 757 |
+| `_control_plane_inference_enabled` | 880 |
+| `_make_api_router` | 760 |
 | `create_app` | 209 |
 
 ## `trusted_router.markdown_negotiation`
@@ -1000,16 +985,12 @@ SHA-256: `98fad0d10848b3992a035edcfba55e35b161b30b8aeb803da9a6ea9189aa897e`.
 |---|---|
 | `<module>` | 1 |
 | `Audience` | 30 |
-| `Audience.__init__` | 2 |
 | `CallToAction` | 57 |
-| `CallToAction.__init__` | 2 |
 | `GoogleSearchExperimentCell` | 64 |
-| `GoogleSearchExperimentCell.__init__` | 2 |
 | `Promise` | 38 |
-| `Promise.__init__` | 2 |
 | `Proof` | 47 |
-| `Proof.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 | `build_google_search_cells` | 313 |
 | `build_google_search_cells.<locals>.<genexpr>` | 314 |
 
@@ -1100,8 +1081,8 @@ SHA-256: `9bb09d9b9121b7b19cf9ca7975f903c361a3cd56148124d65c7522b01f9f8ea3`.
 |---|---|
 | `<module>` | 1 |
 | `ModelRegion` | 160 |
-| `ModelRegion.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.money`
 
@@ -1139,9 +1120,9 @@ SHA-256: `bce1e4ba95f39ba5f24d4b88c3a77ea9c5b4c21043db0f9682f8b107ac4d2ef1`.
 |---|---|
 | `<module>` | 1 |
 | `OAuthProvider` | 30 |
-| `OAuthProvider.__init__` | 2 |
 | `OAuthUserInfo` | 20 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.og`
 
@@ -1163,8 +1144,8 @@ SHA-256: `28928c57283a77ce19fbaed1e3bebb2acfbccea0ff26dcb0ab26275b97195cdf`.
 |---|---|
 | `<module>` | 1 |
 | `OpenAIPriorityPricing` | 20 |
-| `OpenAIPriorityPricing.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 | `_customer_priority_pricing` | 40 |
 
 ## `trusted_router.operational_analytics`
@@ -1305,8 +1286,8 @@ SHA-256: `f0b624ee7ae31c9490cb9f6323dc8e81cc8142159d64bd53f15bbedbe7adaf5d`.
 |---|---|
 | `<module>` | 1 |
 | `ProviderBrand` | 15 |
-| `ProviderBrand.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.provider_compat`
 
@@ -1345,30 +1326,30 @@ SHA-256: `332c1d4f4aef1da728faaccc66fa1ac0d6198640491d403067d680624d0352ae`.
 
 Frozen alias: `frozen_main.provider_lifecycle`. Member: `src/trusted_router/provider_lifecycle.py`.
 
-SHA-256: `e89caf06892f9ab15cd3baebb504cade311abbf825402add573532149272129f`.
+SHA-256: `b060482bc531dd5960cb9098bd199e8f9a100233584d4b99f95d25b97f340403`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `ProviderPrice` | 97 |
+| `ProviderPrice` | 98 |
 | `ProviderPrice.__init__` | 2 |
-| `_Retirement` | 151 |
-| `_Retirement.__init__` | 2 |
+| `_Retirement` | 152 |
 | `__create_fn__` | 1 |
-| `_clock_override_permitted` | 1007 |
-| `_deepseek_prices` | 1123 |
-| `_deepseek_v41_effective_at` | 1115 |
-| `_deepseek_v4_family` | 1082 |
-| `_deepseek_v4_period` | 1092 |
-| `_deepseek_v4_period.<locals>.<genexpr>` | 1107 |
-| `_effective_time` | 1052 |
-| `_tencent_period` | 113 |
-| `_utc_now` | 1015 |
-| `provider_catalog_revision` | 1039 |
-| `provider_catalog_revision.<locals>.<genexpr>` | 1047 |
-| `provider_catalog_revision.<locals>.<genexpr>` | 1049 |
-| `provider_model_retired` | 1064 |
-| `provider_price_microdollars` | 1221 |
+| `__create_fn__.<locals>.__init__` | 2 |
+| `_clock_override_permitted` | 1035 |
+| `_deepseek_prices` | 1151 |
+| `_deepseek_v41_effective_at` | 1143 |
+| `_deepseek_v4_family` | 1110 |
+| `_deepseek_v4_period` | 1120 |
+| `_deepseek_v4_period.<locals>.<genexpr>` | 1135 |
+| `_effective_time` | 1080 |
+| `_tencent_period` | 114 |
+| `_utc_now` | 1043 |
+| `provider_catalog_revision` | 1067 |
+| `provider_catalog_revision.<locals>.<genexpr>` | 1075 |
+| `provider_catalog_revision.<locals>.<genexpr>` | 1077 |
+| `provider_model_retired` | 1092 |
+| `provider_price_microdollars` | 1249 |
 
 ## `trusted_router.provider_locations`
 
@@ -1380,12 +1361,12 @@ SHA-256: `ab1734a9b86fd01350f078022494446cb61b04f5e8cd7b6cb649838122a164c8`.
 |---|---|
 | `<module>` | 1 |
 | `Headquarters` | 233 |
-| `Headquarters.__init__` | 2 |
 | `InferenceLocations` | 19 |
 | `InferenceLocations.__init__` | 2 |
 | `ModelLocationSnapshot` | 269 |
 | `ModelLocationSnapshot.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 | `_telnyx_location_snapshot` | 318 |
 | `inference_location_metadata` | 333 |
 | `provider_inference_locations` | 265 |
@@ -1549,8 +1530,8 @@ SHA-256: `38d491f63e99b96e33e99a9e38195ce29c45137c513bb5dafd0195e2d279ab42`.
 |---|---|
 | `<module>` | 1 |
 | `RegionGeo` | 9 |
-| `RegionGeo.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.request_attribution`
 
@@ -1609,24 +1590,24 @@ SHA-256: `f75518fc19ccbe958d9c025a98cf483131446dd22c890703926734dbdb7f13c5`.
 
 Frozen alias: `frozen_main.request_capabilities`. Member: `src/trusted_router/request_capabilities.py`.
 
-SHA-256: `55779bdeeb0c0b3bbc60284a3d3e2ec312491deeb9af53da4a81660c4fbf129b`.
+SHA-256: `c0eae8acfe972f634ce92dc7a73037765d401ac4b629266ff6aa0e43349ef239`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `RequestCapabilities` | 25 |
-| `_reviewed_contracts` | 33 |
-| `endpoint_capabilities` | 100 |
-| `model_capabilities` | 116 |
-| `model_capabilities.<locals>.<genexpr>` | 125 |
-| `model_capabilities.<locals>.<genexpr>` | 136 |
-| `normalize_request_capabilities` | 44 |
-| `normalize_request_capabilities.<locals>.<genexpr>` | 68 |
-| `normalize_request_capabilities.<locals>.<genexpr>` | 69 |
-| `normalize_request_capabilities.<locals>.<genexpr>` | 76 |
-| `normalize_request_capabilities.<locals>.<genexpr>` | 83 |
-| `normalize_request_capabilities.<locals>.<genexpr>` | 90 |
-| `normalize_request_capabilities.<locals>.<genexpr>` | 93 |
+| `RequestCapabilities` | 27 |
+| `_reviewed_contracts` | 35 |
+| `endpoint_capabilities` | 102 |
+| `model_capabilities` | 118 |
+| `model_capabilities.<locals>.<genexpr>` | 127 |
+| `model_capabilities.<locals>.<genexpr>` | 138 |
+| `normalize_request_capabilities` | 46 |
+| `normalize_request_capabilities.<locals>.<genexpr>` | 70 |
+| `normalize_request_capabilities.<locals>.<genexpr>` | 71 |
+| `normalize_request_capabilities.<locals>.<genexpr>` | 78 |
+| `normalize_request_capabilities.<locals>.<genexpr>` | 85 |
+| `normalize_request_capabilities.<locals>.<genexpr>` | 92 |
+| `normalize_request_capabilities.<locals>.<genexpr>` | 95 |
 
 ## `trusted_router.request_limits`
 
@@ -2173,39 +2154,39 @@ SHA-256: `e6b0594ab736e148eef27ba9ae02c5e3b51d80e3ae768176fec9ac2ebad5d7a9`.
 
 Frozen alias: `frozen_main.routes.internal.gateway`. Member: `src/trusted_router/routes/internal/gateway.py`.
 
-SHA-256: `3ba4101ad7b31e4242b0e1f72e9528a1343f2462a1bfec3f8fba806214d5dd8f`.
+SHA-256: `baf12525b8e5c89c7c388bb9ee1b1b043c0afcaf8cfe754fd801089541bbb5a5`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `_actual_service_tier_or_error` | 5053 |
-| `_authorization_is_synthetic` | 4772 |
-| `_authorized_user_model_pair` | 4870 |
-| `_endpoint_cost_microdollars` | 5253 |
-| `_endpoint_cost_microdollars_from_document` | 5294 |
-| `_endpoint_for_id_compat` | 5007 |
-| `_intent_durable_gateway_data` | 4658 |
-| `_is_native_batch_idempotency_key` | 5178 |
-| `_is_native_batch_route` | 5099 |
-| `_is_synthetic_settlement` | 4777 |
-| `_native_batch_cost_or_error` | 5198 |
-| `_partner_billing_mode_or_error` | 5316 |
-| `_provider_price_tier_input_tokens` | 5242 |
-| `_record_user_model_gateway_outcome_safely` | 4549 |
-| `_refund_benchmark_sample_safely` | 3319 |
-| `_release_user_model_slot_safely` | 4534 |
-| `_schedule_auto_refill` | 5332 |
-| `_select_authorized_endpoint` | 4963 |
-| `_settle_body_with_safe_attribution` | 4680 |
-| `_settle_body_with_safe_client_context` | 4717 |
-| `_settle_gateway_authorization` | 3409 |
-| `_settle_gateway_authorization.<locals>.<genexpr>` | 4267 |
-| `_settle_gateway_with_admission_sync` | 3367 |
-| `_settle_repair_metadata` | 4748 |
-| `register` | 2200 |
-| `register.<locals>.gateway_refund` | 2308 |
-| `register.<locals>.gateway_settle` | 2299 |
-| `settle_gateway` | 524 |
+| `_actual_service_tier_or_error` | 5145 |
+| `_authorization_is_synthetic` | 4864 |
+| `_authorized_user_model_pair` | 4962 |
+| `_endpoint_cost_microdollars` | 5345 |
+| `_endpoint_cost_microdollars_from_document` | 5386 |
+| `_endpoint_for_id_compat` | 5099 |
+| `_intent_durable_gateway_data` | 4750 |
+| `_is_native_batch_idempotency_key` | 5270 |
+| `_is_native_batch_route` | 5191 |
+| `_is_synthetic_settlement` | 4869 |
+| `_native_batch_cost_or_error` | 5290 |
+| `_partner_billing_mode_or_error` | 5408 |
+| `_provider_price_tier_input_tokens` | 5334 |
+| `_record_user_model_gateway_outcome_safely` | 4641 |
+| `_refund_benchmark_sample_safely` | 3385 |
+| `_release_user_model_slot_safely` | 4626 |
+| `_schedule_auto_refill` | 5424 |
+| `_select_authorized_endpoint` | 5055 |
+| `_settle_body_with_safe_attribution` | 4772 |
+| `_settle_body_with_safe_client_context` | 4809 |
+| `_settle_gateway_authorization` | 3481 |
+| `_settle_gateway_authorization.<locals>.<genexpr>` | 4359 |
+| `_settle_gateway_with_admission_sync` | 3433 |
+| `_settle_repair_metadata` | 4840 |
+| `register` | 2234 |
+| `register.<locals>.gateway_refund` | 2342 |
+| `register.<locals>.gateway_settle` | 2333 |
+| `settle_gateway` | 527 |
 
 ## `trusted_router.routes.internal.lightning`
 
@@ -2595,14 +2576,14 @@ SHA-256: `ef4811378f0f8c1c841d3a00b49d5da0d9fad89d0bfedf4f341011c28d541585`.
 
 Frozen alias: `frozen_main.routing`. Member: `src/trusted_router/routing.py`.
 
-SHA-256: `b277ef0682aa06f49019727083ba331aeb826bfb9e50258562a87e73624cd78c`.
+SHA-256: `aecc2d0cf6b593878d0815b1b216663252cccd76eb1410fbeaff74f7bf1f3649`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `NormalizedRoutingInputs` | 75 |
+| `NormalizedRoutingInputs` | 76 |
 | `RoutePreferences` | 49 |
-| `RoutingCandidates` | 247 |
+| `RoutingCandidates` | 248 |
 | `__create_fn__` | 1 |
 
 ## `trusted_router.routing_candidates`
@@ -2652,7 +2633,7 @@ SHA-256: `faf6be9fc7159c0a88bcbec1ef592f265e9cf009be80c72d54f5341de24158a3`.
 
 Frozen alias: `frozen_main.schemas`. Member: `src/trusted_router/schemas.py`.
 
-SHA-256: `4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386`.
+SHA-256: `f1e3ad90cfb75346ef1bc9357cc2faa569ad815d06fed77149ad584607257332`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -2672,29 +2653,29 @@ SHA-256: `4658eab2734eb87672402c106c3b87268b6982f23aa527916403e4db9132d386`.
 | `GatewayAuthorizeResponse` | 350 |
 | `GatewayBootCapabilities` | 299 |
 | `GatewayBootRegistrationRequest` | 311 |
-| `GatewayClientContext` | 534 |
-| `GatewayContractRejection` | 482 |
-| `GatewayFetchImageRequest` | 425 |
-| `GatewayHeartbeatRequest` | 670 |
-| `GatewayHeartbeatUsage` | 637 |
-| `GatewayResolveCustomModelRequest` | 515 |
+| `GatewayClientContext` | 536 |
+| `GatewayContractRejection` | 484 |
+| `GatewayFetchImageRequest` | 427 |
+| `GatewayHeartbeatRequest` | 672 |
+| `GatewayHeartbeatUsage` | 639 |
+| `GatewayResolveCustomModelRequest` | 517 |
 | `GatewaySettleData` | 354 |
-| `GatewaySettleRequest` | 558 |
-| `GatewaySettleRequest.cache_creation_count` | 624 |
-| `GatewaySettleRequest.cache_read_count` | 620 |
-| `GatewaySettleRequest.input_count` | 608 |
-| `GatewaySettleRequest.output_count` | 614 |
-| `GatewaySettleRequest.selected_endpoint_id` | 632 |
+| `GatewaySettleRequest` | 560 |
+| `GatewaySettleRequest.cache_creation_count` | 626 |
+| `GatewaySettleRequest.cache_read_count` | 622 |
+| `GatewaySettleRequest.input_count` | 610 |
+| `GatewaySettleRequest.output_count` | 616 |
+| `GatewaySettleRequest.selected_endpoint_id` | 634 |
 | `GatewaySettleResponse` | 361 |
 | `GatewayTimingData` | 319 |
-| `GatewayValidateRequest` | 502 |
-| `GatewayVideoJobClaimRequest` | 464 |
-| `GatewayVideoJobLookupRequest` | 460 |
-| `GatewayVideoJobPrepareRequest` | 432 |
-| `GatewayVideoJobQueuedRequest` | 449 |
-| `GatewayVideoJobUpdateRequest` | 470 |
+| `GatewayValidateRequest` | 504 |
+| `GatewayVideoJobClaimRequest` | 466 |
+| `GatewayVideoJobLookupRequest` | 462 |
+| `GatewayVideoJobPrepareRequest` | 434 |
+| `GatewayVideoJobQueuedRequest` | 451 |
+| `GatewayVideoJobUpdateRequest` | 472 |
 | `PatchKeyRequest` | 167 |
-| `ReconcileGenerationActivityRequest` | 528 |
+| `ReconcileGenerationActivityRequest` | 530 |
 | `SignupRequest` | 57 |
 | `UpsertByokRequest` | 186 |
 | `UserModelCreateRequest` | 237 |
@@ -2745,12 +2726,11 @@ SHA-256: `23e81d7aa5cef89ff5b9967eb792013f74b083ee80308f3871ae58f3d23c27ae`.
 |---|---|
 | `<module>` | 1 |
 | `SentryFloodgateConfig` | 103 |
-| `SentryFloodgateConfig.__init__` | 2 |
 | `_FloodBucket` | 113 |
-| `_FloodBucket.__init__` | 2 |
 | `_SentryFloodgate` | 119 |
 | `_SentryFloodgate.__init__` | 120 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 | `init_sentry` | 226 |
 | `sentry_should_init` | 276 |
 
@@ -2812,7 +2792,7 @@ SHA-256: `41d8ededf5c96d4b7547bd4b726f44177a040d87f02f3b0881e66c2cce24c288`.
 
 Frozen alias: `frozen_main.services.async_settle`. Member: `src/trusted_router/services/async_settle.py`.
 
-SHA-256: `1e0d626757f0f698e6d72c076ffb51bdec26c6b20e75fa4e93ceeaf3861ff297`.
+SHA-256: `2e4e50e949e3f26fb00577c9ccc6502c54664085f69443634238c989bed26d31`.
 
 | Callable / executed code unit | Code line |
 |---|---|
@@ -3293,18 +3273,18 @@ SHA-256: `a8513ffd13637fc1ce05eab88545918d6810f6c310c8bcec1bf4b41479496315`.
 
 Frozen alias: `frozen_main.stage_d`. Member: `src/trusted_router/stage_d.py`.
 
-SHA-256: `fa98eade0f889e84edb3ec5d9ce8a7669addf02a02b7bb7b85a24ec4c9db090b`.
+SHA-256: `78f50c2a9ffa5e751e109e3c58baa7dab734d1a7acb56aafe09e26bdcdab9ee5`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `billing_pricing_snapshot` | 25 |
-| `endpoint_cost_microdollars_from_candidate` | 161 |
-| `endpoint_cost_microdollars_from_document` | 221 |
-| `endpoint_pricing_candidate` | 83 |
-| `endpoint_pricing_candidate.<locals>.rates` | 86 |
-| `endpoint_pricing_document` | 127 |
-| `pricing_candidate_for_endpoint` | 149 |
+| `billing_pricing_snapshot` | 30 |
+| `endpoint_cost_microdollars_from_candidate` | 173 |
+| `endpoint_cost_microdollars_from_document` | 233 |
+| `endpoint_pricing_candidate` | 95 |
+| `endpoint_pricing_candidate.<locals>.rates` | 98 |
+| `endpoint_pricing_document` | 139 |
+| `pricing_candidate_for_endpoint` | 161 |
 
 ## `trusted_router.stage_d_policy`
 
@@ -3561,43 +3541,43 @@ SHA-256: `4b5d0a41d45e7f8e43d351a368dda5f56d079917f9fc5a39d8ed05119997a702`.
 
 Frozen alias: `frozen_main.storage_gcp_authorize`. Member: `src/trusted_router/storage_gcp_authorize.py`.
 
-SHA-256: `ec7f0244f4c2489d5b9461fcedd2ae78643ca0f733857d8dcb1bf14da2a8e83e`.
+SHA-256: `f30047ae534e55bdc11a3957bd09b436dc5f6f2bd4b5514558a534d75d59c9fe`.
 
 | Callable / executed code unit | Code line |
 |---|---|
 | `<module>` | 1 |
-| `AuthorizeOutcome` | 136 |
-| `AuthorizeVerdict` | 146 |
-| `ExhaustedKeyCache` | 200 |
-| `ExhaustedKeyCache.__init__` | 203 |
-| `OneCommitSettleDeclined` | 819 |
-| `ReapPassResult` | 834 |
+| `AuthorizeOutcome` | 137 |
+| `AuthorizeVerdict` | 147 |
+| `ExhaustedKeyCache` | 201 |
+| `ExhaustedKeyCache.__init__` | 204 |
+| `OneCommitSettleDeclined` | 820 |
+| `ReapPassResult` | 835 |
 | `ReapPassResult.__init__` | 2 |
-| `ReapPassResult.out_of_cohort_share` | 862 |
-| `ReapPassResult.started_marker_share` | 858 |
-| `SettleOutcome` | 799 |
-| `_ReapGuardLost` | 815 |
-| `_ReapOneResult` | 867 |
-| `_Reject` | 162 |
-| `_RetrySequentialCreditReserve` | 169 |
-| `_RetrySequentialFinalize` | 186 |
-| `_RetrySequentialKeyReserve` | 176 |
-| `_SettleError` | 810 |
+| `ReapPassResult.out_of_cohort_share` | 863 |
+| `ReapPassResult.started_marker_share` | 859 |
+| `SettleOutcome` | 800 |
+| `_ReapGuardLost` | 816 |
+| `_ReapOneResult` | 868 |
+| `_Reject` | 163 |
+| `_RetrySequentialCreditReserve` | 170 |
+| `_RetrySequentialFinalize` | 187 |
+| `_RetrySequentialKeyReserve` | 177 |
+| `_SettleError` | 811 |
 | `__create_fn__` | 1 |
-| `_cached_outbox_availability` | 1128 |
-| `_log_missing_key_releases` | 937 |
-| `_outbox_cache_key` | 1107 |
-| `_outbox_table_available` | 1157 |
-| `_release_key_or_skip_deleted` | 877 |
-| `_remember_outbox_availability` | 1143 |
-| `reap_expired_reservations_result` | 1223 |
-| `typed_finalize_atomic` | 1691 |
-| `typed_finalize_atomic.<locals>.run` | 2082 |
-| `typed_finalize_atomic.<locals>.run.<locals>.tracked` | 2089 |
-| `typed_finalize_atomic.<locals>.speculative_batch` | 1800 |
-| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.<genexpr>` | 1890 |
-| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.check_prefix` | 1872 |
-| `typed_finalize_atomic.<locals>.txn` | 1893 |
+| `_cached_outbox_availability` | 1129 |
+| `_log_missing_key_releases` | 938 |
+| `_outbox_cache_key` | 1108 |
+| `_outbox_table_available` | 1158 |
+| `_release_key_or_skip_deleted` | 878 |
+| `_remember_outbox_availability` | 1144 |
+| `reap_expired_reservations_result` | 1224 |
+| `typed_finalize_atomic` | 1692 |
+| `typed_finalize_atomic.<locals>.run` | 2095 |
+| `typed_finalize_atomic.<locals>.run.<locals>.tracked` | 2102 |
+| `typed_finalize_atomic.<locals>.speculative_batch` | 1801 |
+| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.<genexpr>` | 1891 |
+| `typed_finalize_atomic.<locals>.speculative_batch.<locals>.check_prefix` | 1873 |
+| `typed_finalize_atomic.<locals>.txn` | 1894 |
 
 ## `trusted_router.storage_gcp_batch_dml`
 
@@ -4587,8 +4567,8 @@ SHA-256: `afd0bc3e37723312f972ecf1cd09d05a1ecd933158f1b9a38d817002ed8952ec`.
 |---|---|
 | `<module>` | 1 |
 | `DispatchBudget` | 56 |
-| `DispatchBudget.__init__` | 2 |
 | `__create_fn__` | 1 |
+| `__create_fn__.<locals>.__init__` | 2 |
 
 ## `trusted_router.veriff_verify`
 
@@ -4664,4 +4644,3 @@ SHA-256: `ed32ea418f6bf66b7aa96b05995a705b6e24351d0663e22f15608b9efb102026`.
 | `<module>` | 1 |
 | `SiweMessage` | 20 |
 | `__create_fn__` | 1 |
-

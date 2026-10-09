@@ -1,25 +1,28 @@
 # Frozen-main package snapshot
 
-BASE: `4701b1a6da9b2b05df93321a6bbd59ea82188c2b`.
+BASE: `c4c95e0f2a94b33ec3928daa10d769b78859a944`, plus the source changes recorded in `worktree-pins.json`.
 
-This oracle is a **golden against BASE**. The worktree includes later merged main changes; this tests-only round leaves
-production source and the pinned BASE unchanged. A PR that intentionally
-changes the legacy path **re-freezes from its own tree in the same PR**, and the
-reviewer reads the frozen diff as the intended behavior change.
+The F1-001 golden was frozen from this worktree without Git writes. Relative to
+BASE, the frozen source diff equals the production source diff: only
+`src/trusted_router/storage_gcp_authorize.py` changes. BASE advances from the
+Round-12 reference to this worktree's HEAD, incorporating already-merged main
+changes separately from F1-001.
 
-Re-pin from the repository root:
+Re-pin from the repository root without committing local edits:
 
 ```bash
-python scripts/async_settle/freeze_reference.py --base <commit>
+python scripts/async_settle/freeze_reference.py --base HEAD --worktree
 ```
 
 Paste the printed archive SHA-256 into `../frozen_package.py`, update this BASE
 statement and the design appendix, and regenerate the execution inventory.
-`--base` uses read-only Git object commands: `git ls-tree -r --name-only <commit>
--- src/trusted_router` and `git show <commit>:<path>`. It never reads working-tree
-source bytes. Tar members are sorted by repository path, with mode 0644, mtime 0,
-uid/gid 0 and empty owner names. Gzip has an empty filename and mtime 0. The
-script writes `BASE`, `pins.json` and `package.tar.gz` deterministically.
+`--base` alone reads only Git objects (`rev-parse`, `ls-tree`, `show`).
+`--worktree` reads local source bytes and records the exact changed member hashes
+relative to that commit in `worktree-pins.json`, including additions/deletions.
+Neither mode writes Git state. Tar members are sorted by repository path, with
+mode 0644, mtime 0, uid/gid 0 and empty owner names. Gzip has an empty filename
+and mtime 0. The script writes `BASE`, `pins.json` and `package.tar.gz`
+deterministically. A commit-only re-pin removes the worktree manifest.
 
 The local gate runs:
 
@@ -27,15 +30,18 @@ The local gate runs:
 python scripts/async_settle/freeze_reference.py --check
 ```
 
-This re-derives the archive and pins from the commit recorded in `BASE`, and
-fails on any byte difference in these three files. CI's shallow checkout cannot
-run `--check`: BASE's Git objects need not exist there. Test execution needs no
-Git objects or network access.
+With a worktree manifest this re-derives the archive, pins and changed-member
+manifest from local source against BASE; otherwise it re-derives from BASE's
+Git objects. Any byte difference fails. It also verifies that the execution
+inventory matches BASE, the archive and member hashes, and that the Markdown
+inventory is exactly the rendering of the JSON inventory. CI's shallow checkout
+cannot run `--check`: BASE's Git objects need not exist there. Test execution
+needs no Git objects or network access.
 
-The snapshot includes all 405 Python files plus JSON, JSONL, HTML, TXT, SQL, CSS
-and JavaScript resources under BASE's `src/trusted_router` (753 files total).
-Binary static media are omitted because the tested requests do not need them.
-The member-selection policy and repository-path layout are unchanged.
+The snapshot includes all 413 Python files plus JSON, JSONL, HTML, TXT, SQL, CSS
+and JavaScript resources under `src/trusted_router` (761 members total). Binary static media are omitted
+because the tested requests do not need them. The member-selection policy and
+repository-path layout are unchanged.
 
 `pins.json` hashes unchanged file bytes. The loader independently pins the archive
 SHA-256, checks the exact member set and every digest, and verifies source bytes
@@ -54,6 +60,14 @@ sha256)` rows. Union and sort these files, emitting one record per row with keys
 BASE, archive digest, module count, unique `(module, qualname)` count and row
 count in `execution-inventory.json`; group the same records by module in
 `docs/async-settle-frozen-main-inventory.md`.
+
+Use a separate empty directory for each CPython 3.12.3 clock run, then regenerate
+both inventory artifacts from their union:
+
+```bash
+python scripts/async_settle/frozen_inventory.py /tmp/f1-001-inventory-default /tmp/f1-001-inventory-post-cutover
+python scripts/async_settle/freeze_reference.py --check
+```
 
 Both snapshot setup and HTTP/drain/state-capture execution are guarded and
 recorded. Fixture seed preparation and intentional live negative controls are
