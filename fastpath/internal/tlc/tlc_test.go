@@ -288,6 +288,19 @@ func TestTheLineReadersAgreeWithThePatterns(t *testing.T) {
 		`+1 [label=""]`,
 		`١ [label=""]`,
 		`1 -> ١ [label="x",color="black",fontcolor="black"];`,
+		// A sign or a digit not ASCII at each fingerprint's place, which the
+		// patterns refuse but for a minus sign. Seeded changes reach these
+		// only by chance, and a change to the alphabet moves them.
+		`+1 -> 2 [label="Step",color="black",fontcolor="black"];`,
+		`1 -> +2 [label="Step",color="black",fontcolor="black"];`,
+		`+1 -> +2 [label="Step",color="black",fontcolor="black"];`,
+		`-1 -> -2 [label="Step",color="black",fontcolor="black"];`,
+		`١ -> 1 [label="Step",color="black",fontcolor="black"];`,
+		`-١ -> 1 [label="Step",color="black",fontcolor="black"];`,
+		`1 -> -١ [label="Step",color="black",fontcolor="black"];`,
+		`-١ [label=""]`,
+		`+-1 [label=""]`,
+		`--1 [label=""]`,
 		`1 [label="a` + "\n" + `b"]`,
 		`1 -> 2 [label="a` + "\\\n" + `b",color="black",fontcolor="black"];`,
 		`1 [label="a",tooltip="b` + "\\\n" + `c"]`,
