@@ -451,10 +451,11 @@ text = '''/\ winner[a] = NoWinner'''
 breaks = "nothing"
 reaches = "new states"
 why = '''
-One reap row per hold. Without it the auditor could append reap rows for a
-decided hold without end. Each would lose to the hold's winner, since
-ApplyDrain keeps the first, so only TypeOK's bound on the drain log
-notices.
+Without it the auditor may reap a hold whose winner is stored already, the
+owner's record or a row before, when the hold has no drain row: one row
+more, since DrainRows(a) = {} still allows one reap a hold, and it loses to
+the stored winner, as ApplyDrain keeps the first. The guard saves the row,
+which the store's transaction refuses (RefusedTerminal), not a claim.
 '''
 
 [[guard]]

@@ -17,9 +17,10 @@ import (
 // that do not stream: the per-authorization functions, and Close's look at
 // every hold. The third gives the drain log rows of both, so that a hold's
 // first row can come after another's: adoption, ApplyDrain and the
-// acknowledged rows across authorizations. TLC reaches 13,322, 69,768 and
-// 692,648 distinct states in them; the third is read as it streams
-// (tlc.Compare).
+// acknowledged rows across authorizations; it is TerminalOrder.adopt.cfg's,
+// whose whole graph TestWholeConfigurationsMatchTLC compares, and the
+// negative control's. TLC reaches 13,322, 69,768 and 692,648 distinct
+// states in them; the third is read as it streams (tlc.Compare).
 var (
 	oneStream = Config{
 		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, Listable: []bool{false}, MaxAppends: 2,
@@ -95,6 +96,7 @@ var cfgInstances = map[string]Config{
 	"TerminalOrder.appends.cfg": {
 		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, Listable: []bool{false}, MaxAppends: 2,
 	},
+	"TerminalOrder.adopt.cfg": twoAppends,
 }
 
 // specConstants are the constants TerminalOrder declares: a configuration of

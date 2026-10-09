@@ -1256,6 +1256,23 @@ new = '''
        IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
 '''
 
+# Its own hold's first row, not the drain log's: only TerminalOrder.adopt.cfg
+# has a hold whose first row comes after another hold's while the owner is
+# active.
+
+[[TerminalOrder.mutants]]
+name = "adopt-another-holds-row"
+cfg = "adopt"
+violates = "AdoptionKeepsTheWinner"
+old = '''
+    /\ LET j == Min(DrainRows(a))
+       IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
+'''
+new = '''
+    /\ LET j == 1
+       IN  outbox' = Append(outbox, Rec(a, drain[j].kind, j))
+'''
+
 # Close against appends.
 
 [[TerminalOrder.mutants]]
