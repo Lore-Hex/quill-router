@@ -36,6 +36,7 @@ func main() {
 }
 
 func run() error {
+	quietLibraries()
 	cfg := service.Defaults()
 	roles := flag.String("roles", "admission", "the roles to run: admission, auditor, or both, separated by a comma")
 	flag.StringVar(&cfg.Address, "address", "", "the admission node's host and port, as other nodes reach it")

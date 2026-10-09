@@ -24,6 +24,23 @@ var pinnedVersion = regexp.MustCompile(`^projects/[^/]+/secrets/[^/]+/versions/[
 // response, and an access's response is the key's own bytes.
 var quiet = slog.New(slog.DiscardHandler)
 
+// sdkLogging is the variable that turns the Google client libraries' logs
+// on; each library reads it as it makes a client's logger.
+const sdkLogging = "GOOGLE_SDK_GO_LOGGING_LEVEL"
+
+// quietLibraries keeps every Google client library the node uses from
+// logging, whatever sdkLogging says: their debug logs print each request and
+// response, with the credentials that can read the envelope keys, and the
+// keys. It runs before the node makes any client.
+func quietLibraries() {
+	if os.Getenv(sdkLogging) == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "fastpath: %s is ignored: the client libraries' logs print credentials and keys\n",
+		sdkLogging)
+	_ = os.Unsetenv(sdkLogging)
+}
+
 // readSecret reads a pinned secret version's payload: the key's own bytes.
 func readSecret(ctx context.Context, name string, opts ...option.ClientOption) ([]byte, error) {
 	if !pinnedVersion.MatchString(name) {

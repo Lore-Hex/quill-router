@@ -94,27 +94,7 @@ func TestNoKeyIsLogged(t *testing.T) {
 	opts := []option.ClientOption{option.WithEndpoint(srv.URL + "/"), option.WithHTTPClient(srv.Client())}
 	ctx := context.Background()
 	encoded := base64.StdEncoding.EncodeToString(key)
-	// logged is what read writes to standard error, where the library's
-	// default logger writes.
-	logged := func(read func()) string {
-		t.Helper()
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		out := make(chan []byte)
-		go func() {
-			b, _ := io.ReadAll(r)
-			out <- b
-		}()
-		saved := os.Stderr
-		os.Stderr = w
-		read()
-		os.Stderr = saved
-		_ = w.Close()
-		return string(<-out)
-	}
-	unquiet := logged(func() {
+	unquiet := logged(t, func() {
 		svc, err := secretmanager.NewService(ctx, opts...)
 		if err != nil {
 			t.Fatal(err)
@@ -126,7 +106,7 @@ func TestNoKeyIsLogged(t *testing.T) {
 	if !strings.Contains(unquiet, encoded) {
 		t.Fatalf("the library's debug log does not show the payload, so this test would see nothing: %q", unquiet)
 	}
-	if out := logged(func() {
+	if out := logged(t, func() {
 		if _, _, err := readKeys(ctx, name, name, opts...); err != nil {
 			t.Fatal(err)
 		}
@@ -164,5 +144,73 @@ func TestTheKeyFlagsGoTogether(t *testing.T) {
 	}
 	if got, accepted, err := keysOf(ctx, "", "", "", opts...); got != nil || accepted != nil || err != nil {
 		t.Errorf("no key flag: %x %x %v", got, accepted, err)
+	}
+}
+
+// logged is what read writes to standard error, where the client libraries'
+// default logger writes.
+func logged(t *testing.T, read func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make(chan []byte)
+	go func() {
+		b, _ := io.ReadAll(r)
+		out <- b
+	}()
+	saved := os.Stderr
+	os.Stderr = w
+	read()
+	os.Stderr = saved
+	_ = w.Close()
+	return string(<-out)
+}
+
+// TestTheLibrariesLogNothing: once the node has quieted the client
+// libraries, a client made after, with no logger of its own, logs nothing,
+// though GOOGLE_SDK_GO_LOGGING_LEVEL asked for debug; made before, the same
+// client writes the payload to the log (TestNoKeyIsLogged). Every client the
+// node makes, Spanner's and Pub/Sub's with their credentials too, takes its
+// logger from the variable the same way.
+func TestTheLibrariesLogNothing(t *testing.T) {
+	t.Setenv(sdkLogging, "debug")
+	key := bytes.Repeat([]byte{7}, 32)
+	name := "projects/p/secrets/key/versions/1"
+	srv, _ := secrets(t, map[string][]byte{name: key})
+	opts := []option.ClientOption{option.WithEndpoint(srv.URL + "/"), option.WithHTTPClient(srv.Client())}
+	ctx := context.Background()
+	quietLibraries()
+	if v, set := os.LookupEnv(sdkLogging); set {
+		t.Fatalf("%s is still %q", sdkLogging, v)
+	}
+	out := logged(t, func() {
+		svc, err := secretmanager.NewService(ctx, opts...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Projects.Secrets.Versions.Access(name).Context(ctx).Do(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.Contains(out, base64.StdEncoding.EncodeToString(key)) {
+		t.Fatal("a client made after the libraries were quieted wrote the key to the log")
+	}
+}
+
+// TestTheNodeQuietsTheLibrariesFirst: the node quiets the client libraries
+// before anything else, so before it makes any client. The only test that
+// runs the node: its flags are the process's.
+func TestTheNodeQuietsTheLibrariesFirst(t *testing.T) {
+	t.Setenv(sdkLogging, "debug")
+	saved := os.Args
+	os.Args = []string{"fastpath"}
+	defer func() { os.Args = saved }()
+	if err := run(); err == nil {
+		t.Fatal("a node with no database ran")
+	}
+	if v, set := os.LookupEnv(sdkLogging); set {
+		t.Fatalf("the node left %s at %q", sdkLogging, v)
 	}
 }

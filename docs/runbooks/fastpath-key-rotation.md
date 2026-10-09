@@ -36,12 +36,18 @@ OLD is the version in use and NEW the one replacing it.
    up to 2 hours 20 minutes, and the enclave's queue retries its settle for
    up to about 52 hours (design §4.8). Only then deploy every node with
    `-key-secret NEW` and no accepted key.
-5. Once that deploy has replaced every node, disable OLD's version. Destroy
-   it only when no rollback would deploy it again.
+5. Once that deploy has replaced every node, disable OLD's version. A
+   rollback past this step enables it again first, below. Destroy it only
+   when no rollback would deploy it again.
 
 Each deploy keeps its leases as W8's deploys do. Rolling a step back is
-deploying the step before it, so every version a step names stays enabled
-until the step after it has replaced every node.
+deploying the step before it. A node reads every version its flags name as
+it starts, and one disabled stops it starting, so before rolling back,
+enable each version the step names again and check that it reads:
+
+```bash
+gcloud secrets versions access N --secret S > /dev/null && echo readable
+```
 
 A rotation that starts within 55 hours of the last one keeps both older
 keys accepted: `-accept-key-secrets OLDER,OLD`, until each one's 55 hours
