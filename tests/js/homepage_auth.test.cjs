@@ -56,5 +56,5 @@ test('delegated homepage analytics survives auth-aware replacement and excludes 
  });
  assert.equal(sent.length, 3);
  assert.deepEqual(sent.map(args => args[1].module), ['hero', 'migration', 'closing']);
- assert.ok(sent.every(args => args[0] === 'home.cta_clicked'));
+ assert.deepEqual(sent.map(args => args[0]), ['home.cta_clicked.hero', 'home.cta_clicked.migration', 'home.cta_clicked.closing']);
 });
