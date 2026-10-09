@@ -135,6 +135,21 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 			seen[k] += n
 		}
 	}
+	// One walk more, scripted where the random ones seldom go: it stores a
+	// hold, moves the hold's snapshot on with a second heartbeat, and reaps
+	// it at the new one, so a store that kept a hold's first snapshot fails
+	// the check after the second commit, or the reap. Then it goes on as
+	// the others do.
+	w := newWalker(t, s, seed-1)
+	m := w.c.Members[w.c.Holder]
+	w.script = []string{"Load(" + m + ")", "IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")",
+		"IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")", "MarkDraining",
+		"LoadWinners(" + m + ")", "FenceTick", "ApplyTick(" + m + ")", "Commit(" + m + ")",
+		"Reap(" + m + ",a1)"}
+	w.run()
+	for k, n := range w.seen {
+		seen[k] += n
+	}
 	keys := make([]string, 0, len(seen))
 	for k := range seen {
 		keys = append(keys, k)
@@ -147,7 +162,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	t.Logf("store calls:%s", b.String())
 	required := []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
 		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close", "a reap past its time",
-		"a close past its time"}
+		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -209,6 +224,12 @@ type walker struct {
 	// fault is the audit fault the lease's row holds: the first a commit
 	// stored, or 0.
 	fault int64
+	// stamps are the writes' commit timestamps; moved, the holds whose
+	// stored snapshot a later commit moved on; script, the steps a walk
+	// takes, in order, before it chooses its own.
+	stamps stamps
+	moved  [ac.MaxAuths]bool
+	script []string
 	// consumed and faulted are what the commits booked, matched against the
 	// allocation and beyond it, as the store books (§4.2).
 	consumed, faulted int64
@@ -242,6 +263,14 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 		tries: map[string]int{}, rows: map[string]DrainRow{}}
 }
 
+// landed requires a write's commit timestamp after the walk's last.
+func (w *walker) landed(kind string, ts time.Time) {
+	w.t.Helper()
+	if err := w.stamps.next(ts); err != nil {
+		w.fatalf("the %s: %v", kind, err)
+	}
+}
+
 func (w *walker) fatalf(format string, args ...any) {
 	w.t.Helper()
 	w.t.Fatalf("walk %d (grant %d, holder %s), after %s: %s", w.seed, w.c.Grant, w.c.Members[w.c.Holder],
@@ -261,6 +290,13 @@ func (w *walker) run() {
 			return
 		}
 		tr := w.choose(next)
+		if len(w.script) > 0 {
+			i := slices.IndexFunc(next, func(tr ac.Transition) bool { return tr.Action == w.script[0] })
+			if i < 0 {
+				w.fatalf("the script's step %s is not one the shadow allows here", w.script[0])
+			}
+			tr, w.script = next[i], w.script[1:]
+		}
 		w.history = append(w.history, tr.Action)
 		w.apply(tr)
 		from := w.state
@@ -386,6 +422,7 @@ func (w *walker) raise(taken bool) {
 	}
 	if taken {
 		w.shortfall++
+		w.landed("shortfall write", got.CommitTS)
 	}
 }
 
@@ -393,17 +430,18 @@ func (w *walker) markDraining(taken bool) {
 	w.t.Helper()
 	ctx := context.Background()
 	var ok bool
+	var ts time.Time
 	var err error
 	by := "owner"
 	if w.rng.Intn(2) == 0 {
 		w.seen["owner-mark-draining"]++
-		ok, _, err = w.s.OwnerMarkDraining(ctx, owner, w.ref)
+		ok, ts, err = w.s.OwnerMarkDraining(ctx, owner, w.ref)
 	} else {
 		w.seen["auditor-mark-draining"]++
 		by = "auditor"
 		var l Lease
 		if l, _, err = w.s.ReadLease(ctx, w.ref); err == nil {
-			ok, _, err = w.s.AuditorMarkDraining(ctx, w.ref, l.Expiry)
+			ok, ts, err = w.s.AuditorMarkDraining(ctx, w.ref, l.Expiry)
 		}
 	}
 	if err != nil || ok != taken {
@@ -411,6 +449,7 @@ func (w *walker) markDraining(taken bool) {
 	}
 	if taken {
 		w.drainedBy = by
+		w.landed("draining write", ts)
 	}
 }
 
@@ -429,6 +468,7 @@ func (w *walker) appendDoor(a int8, record string, taken bool) {
 		w.fatalf("an append to a closed lease: %+v", got)
 	}
 	if taken {
+		w.landed("append", got.CommitTS)
 		w.rows[record] = DrainRow{AuthorizationID: w.c.Auths[a], RecordID: record, Kind: "settle",
 			Charge: ac.DoorCharge, Estimate: ac.DoorCharge, Digest: []byte(record), Money: []byte(`{}`), Cause: "walk",
 			CommitTS: got.CommitTS}
@@ -530,12 +570,13 @@ func (w *walker) applyRow(m int8, from ac.State) {
 func (w *walker) gap(m, seq int8, taken bool) {
 	w.t.Helper()
 	w.seen["stop-for-gap"]++
-	ok, _, err := w.s.StopForGap(context.Background(), w.ref, int64(w.state.Mem[m].Ver), int64(seq))
+	ok, ts, err := w.s.StopForGap(context.Background(), w.ref, int64(w.state.Mem[m].Ver), int64(seq))
 	if err != nil || ok != taken {
 		w.fatalf("member %s's gap at %d: took it %v, want %v, %v", w.c.Members[m], seq, ok, taken, err)
 	}
 	if taken {
 		w.gapSeq = int64(seq)
+		w.landed("gap", ts)
 	}
 }
 
@@ -551,6 +592,10 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 		w.fatalf("member %s's reap of %s: %q, want %q, %v", w.c.Members[m], w.c.Auths[a], got, want, err)
 	}
 	if want == "" {
+		w.landed("reap", committed)
+		if w.moved[a] {
+			w.seen["a reap at a snapshot moved on"]++
+		}
 		w.rows[record] = DrainRow{AuthorizationID: w.c.Auths[a], RecordID: record, Kind: "reap", Charge: charge,
 			Estimate: walkEstimate, Digest: []byte(record), Money: []byte(`{}`), Cause: "reap",
 			SnapshotOwnerSeq: spanner.NullInt64{Int64: w.members[m].holdSeq[a], Valid: true}, CommitTS: committed}
@@ -607,22 +652,18 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		}
 	}
 	req := w.request(m, from)
-	// The store gets a copy: the ledger below reads req, which no store
-	// call can reach.
-	got, _, err := w.s.Commit(context.Background(), detached([]CommitRequest{req}))
-	if err != nil || len(got) != 1 {
-		w.fatalf("member %s's commit: %+v %v", w.c.Members[m], got, err)
-	}
-	if got[0].Refused != want {
-		w.fatalf("member %s's commit: refused %q, want %q", w.c.Members[m], got[0].Refused, want)
+	// The store gets a copy (walkCommit): the ledger below reads req, which
+	// no store call can reach. A refused commit books nothing, so it faults
+	// nothing.
+	result, ts, err := walkCommit(w.s, req, want)
+	if err != nil {
+		w.fatalf("member %s's commit: %v", w.c.Members[m], err)
 	}
 	if want != "" {
-		// A refused commit books nothing, so it faults nothing.
-		if len(got[0].Faults) != 0 {
-			w.fatalf("member %s's commit, refused %q, faulted %v", w.c.Members[m], want, got[0].Faults)
-		}
 		return
 	}
+	w.landed("commit", ts)
+	got := []CommitResult{result}
 	if got[0].NewVersion != int64(to.Ver) || got[0].State != stateName(from.St) {
 		w.fatalf("member %s's commit: %+v, and the shadow's version is %d", w.c.Members[m], got[0], to.Ver)
 	}
@@ -651,7 +692,14 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		}
 	}
 	for _, h := range req.PutHolds {
-		w.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotOwnerSeq.Int64
+		a := index(w.c.Auths, h.AuthorizationID)
+		if prev := w.holdSeq[a]; prev != 0 && prev != h.SnapshotOwnerSeq.Int64 {
+			// The hold is stored, and this commit moves its snapshot on:
+			// the check after it finds the new one or fails.
+			w.moved[a] = true
+			w.seen["a stored hold's snapshot moved on"]++
+		}
+		w.holdSeq[a] = h.SnapshotOwnerSeq.Int64
 	}
 	w.packVers = append(w.packVers, got[0].NewVersion)
 	w.packWins = append(w.packWins, req.Winners)
@@ -665,9 +713,8 @@ func (w *walker) commitOff(m int8, from ac.State, off int64) {
 	w.seen["commit"]++
 	req := w.request(m, from)
 	req.AppliedSeq, req.Boundary = int64(from.S)+off, nil
-	got, _, err := w.s.Commit(context.Background(), detached([]CommitRequest{req}))
-	if err != nil || len(got) != 1 || got[0].Refused != RefusedBoundary || len(got[0].Faults) != 0 {
-		w.fatalf("member %s's commit %+d off S: %+v %v", w.c.Members[m], off, got, err)
+	if _, _, err := walkCommit(w.s, req, RefusedBoundary); err != nil {
+		w.fatalf("member %s's commit %+d off S: %v", w.c.Members[m], off, err)
 	}
 }
 
@@ -679,8 +726,15 @@ func (w *walker) close(m int8, from, to ac.State, now time.Time, want Refusal) {
 	if err != nil || got.Refused != want || (want != "" && got.Released != 0) {
 		w.fatalf("member %s's close: %+v, want %q, %v", w.c.Members[m], got, want, err)
 	}
-	if want == "" && got.NewVersion != int64(to.Ver) {
-		w.fatalf("member %s's close: version %d, and the shadow's is %d", w.c.Members[m], got.NewVersion, to.Ver)
+	if want == "" {
+		if got.NewVersion != int64(to.Ver) {
+			w.fatalf("member %s's close: version %d, and the shadow's is %d", w.c.Members[m], got.NewVersion, to.Ver)
+		}
+		// It returns what the commits left unbooked of the allocation.
+		if room := int64(w.c.Grant) + int64(from.Raised) - w.consumed; got.Released != room {
+			w.fatalf("member %s's close released %d, and the walk's room is %d", w.c.Members[m], got.Released, room)
+		}
+		w.landed("close", got.CommitTS)
 	}
 	w.justClosed = want == ""
 }
@@ -876,6 +930,40 @@ func schemaTables(ctx context.Context) ([]schemaTable, error) {
 	return schemaTabs, schemaReadErr
 }
 
+// walkCommit commits one request, a copy of it (detached), and holds the
+// result to what the store promises of every one: it names the request's
+// lease, and refused, it has the reason the caller expects and, nothing
+// being written, no version, no state and no fault.
+func walkCommit(s *Store, req CommitRequest, want Refusal) (CommitResult, time.Time, error) {
+	got, ts, err := s.Commit(context.Background(), detached([]CommitRequest{req}))
+	switch {
+	case err != nil:
+		return CommitResult{}, ts, err
+	case len(got) != 1:
+		return CommitResult{}, ts, fmt.Errorf("%d results for one request: %+v", len(got), got)
+	case got[0].Ref != req.Ref:
+		return got[0], ts, fmt.Errorf("the result names lease %v, and the request %v", got[0].Ref, req.Ref)
+	case got[0].Refused != want:
+		return got[0], ts, fmt.Errorf("refused %q, want %q: %+v", got[0].Refused, want, got[0])
+	case want != "" && (got[0].NewVersion != 0 || got[0].State != "" || len(got[0].Faults) != 0):
+		return got[0], ts, fmt.Errorf("refused %q, and with a version, a state or a fault: %+v", want, got[0])
+	}
+	return got[0], ts, nil
+}
+
+// stamps are a walk's writes' commit timestamps: each write that lands is
+// after the last, since each call begins after the one before it returned,
+// so a write reporting a timestamp it did not commit at is seen.
+type stamps struct{ last time.Time }
+
+func (c *stamps) next(ts time.Time) error {
+	if !ts.After(c.last) {
+		return fmt.Errorf("its commit timestamp %v is not after the last write's, %v", ts, c.last)
+	}
+	c.last = ts
+	return nil
+}
+
 // TestDetachedSharesNothing: detached's copy of each request the walks send
 // equals the request, and writing every field, element and byte of the copy,
 // through every slice and pointer, leaves the request as it was. The same
@@ -1048,9 +1136,8 @@ func (w *walker) commitAhead(m int8, from ac.State) {
 	// No boundary: a request storing S must end its progress there, which
 	// the store holds before it reads the lease.
 	req.AppliedSeq, req.Boundary = int64(max(from.Mem[m].Prog, from.Prog))+1, nil
-	got, _, err := w.s.Commit(context.Background(), detached([]CommitRequest{req}))
-	if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
-		w.fatalf("member %s's commit ahead of the stored progress: %+v %v", w.c.Members[m], got, err)
+	if _, _, err := walkCommit(w.s, req, RefusedVersion); err != nil {
+		w.fatalf("member %s's commit ahead of the stored progress: %v", w.c.Members[m], err)
 	}
 }
 

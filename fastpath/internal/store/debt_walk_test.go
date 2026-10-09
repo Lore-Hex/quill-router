@@ -220,6 +220,7 @@ type debtWalk struct {
 	leases  []*debtLease
 	history []string
 	seen    map[string]int
+	stamps  stamps // the writes' commit timestamps
 }
 
 func newDebtWalk(t *testing.T, s *Store, seed int64) *debtWalk {
@@ -304,6 +305,14 @@ func (d *debtWalk) note(format string, args ...any) {
 	d.history = append(d.history, fmt.Sprintf(format, args...))
 }
 
+// landed requires a write's commit timestamp after the walk's last.
+func (d *debtWalk) landed(kind string, ts time.Time) {
+	d.t.Helper()
+	if err := d.stamps.next(ts); err != nil {
+		d.fatalf("the %s: %v", kind, err)
+	}
+}
+
 // rows is every row a write to the lease could touch (everyRow).
 func (d *debtWalk) rows(ref LeaseRef) string {
 	d.t.Helper()
@@ -361,6 +370,17 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 	if left != 0 {
 		d.fatalf("a grant of %d past the headroom %v", req.Amount, headrooms(rows))
 	}
+	var donors []Donor
+	for _, dn := range l.donors {
+		donors = append(donors, Donor{Shard: dn.shard, Allocation: dn.allocation})
+	}
+	if !slices.Equal(got.Donors, donors) {
+		d.fatalf("the grant's donors %+v, and the walk's %+v", got.Donors, donors)
+	}
+	if row := readLease(d.t, d.s, ref); !got.Expiry.Equal(row.Expiry) {
+		d.fatalf("the grant's expiry %v, and its row's %v", got.Expiry, row.Expiry)
+	}
+	d.landed("grant", got.CommitTS)
 	if len(l.donors) > 1 {
 		d.seen["a lease of two donors or more"]++
 	}
@@ -378,6 +398,7 @@ func (d *debtWalk) raise(ctx context.Context, l *debtLease) {
 		d.fatalf("the shortfall write: %+v %v", got, err)
 	}
 	d.seen["shortfall-write"]++
+	d.landed("shortfall write", got.CommitTS)
 	l.raised(total - l.shortfall)
 	l.shortfall = total
 }
@@ -394,12 +415,18 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	if boundary {
 		req.Boundary, req.HoldsListedSeq = &Boundary{S: seq, T: walkTick}, &seq
 	}
-	// The store gets a copy, so what the walk expects, from money and req,
-	// is what it generated, whatever the call does with its request.
-	got, _, err := d.s.Commit(ctx, detached([]CommitRequest{req}))
-	if err != nil || len(got) != 1 || got[0].Refused != "" {
-		d.fatalf("the commit %+v: %+v %v", req, got, err)
+	// The store gets a copy (walkCommit), so what the walk expects, from
+	// money and req, is what it generated, whatever the call does with its
+	// request.
+	result, ts, err := walkCommit(d.s, req, "")
+	if err != nil {
+		d.fatalf("the commit %+v: %v", req, err)
 	}
+	d.landed("commit", ts)
+	if result.State != l.state {
+		d.fatalf("the commit left lease %s %q, and the walk has it %q", l.ref.LeaseID, result.State, l.state)
+	}
+	got := []CommitResult{result}
 	if !slices.ContainsFunc(money, func(op MoneyOp) bool { return op.Book }) && len(got[0].Faults) != 0 {
 		d.fatalf("a commit that books nothing faulted %v", got[0].Faults)
 	}
@@ -463,10 +490,9 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 		// changes nothing, every row read at once after it, and the check
 		// after holding every row to the walk's ledger.
 		d.unchanged(l.ref, "commit", func() {
-			got, _, err := d.s.Commit(ctx, detached([]CommitRequest{{Ref: l.ref, ReadVersion: l.version + 1,
-				AppliedSeq: l.seq + 1, Money: money}}))
-			if err != nil || len(got) != 1 || got[0].Refused != RefusedVersion || len(got[0].Faults) != 0 {
-				d.fatalf("a commit at a version the lease never had: %+v %v", got, err)
+			if _, _, err := walkCommit(d.s, CommitRequest{Ref: l.ref, ReadVersion: l.version + 1, AppliedSeq: l.seq + 1,
+				Money: money}, RefusedVersion); err != nil {
+				d.fatalf("a commit at a version the lease never had: %v", err)
 			}
 		})
 		d.seen["refused commit"]++
@@ -516,9 +542,11 @@ func (d *debtWalk) giveBack(ctx context.Context, l *debtLease) {
 func (d *debtWalk) drain(ctx context.Context, l *debtLease) {
 	d.t.Helper()
 	d.note("drain %s", l.ref.LeaseID)
-	if ok, _, err := d.s.OwnerMarkDraining(ctx, owner, l.ref); err != nil || !ok {
+	ok, ts, err := d.s.OwnerMarkDraining(ctx, owner, l.ref)
+	if err != nil || !ok {
 		d.fatalf("the draining write: %v %v", ok, err)
 	}
+	d.landed("draining write", ts)
 	l.state = "draining"
 	d.seen["drain"]++
 }
@@ -537,6 +565,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	if err != nil || got.Refused != "" || got.Raise != raise {
 		d.fatalf("the append: %+v %v", got, err)
 	}
+	d.landed("append", got.CommitTS)
 	l.doorRaised += raise
 	l.raised(raise)
 	l.rows[record], l.raises[record], l.stamped[record] = t, raise, got.CommitTS
@@ -590,11 +619,17 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			}
 		})
 		d.seen["refused close: undecided"]++
-		got2, _, err := d.s.Commit(ctx, detached([]CommitRequest{{Ref: l.ref, ReadVersion: l.version,
-			AppliedSeq: l.seq, Money: money, Winners: winners}}))
-		if err != nil || len(got2) != 1 || got2[0].Refused != "" {
-			d.fatalf("committing the drain log's winners: %+v %v", got2, err)
+		result, ts, err := walkCommit(d.s, CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.seq,
+			Money: money, Winners: winners}, "")
+		if err != nil {
+			d.fatalf("committing the drain log's winners: %v", err)
 		}
+		d.landed("commit", ts)
+		if result.State != l.state {
+			d.fatalf("the winners' commit left lease %s %q, and the walk has it %q", l.ref.LeaseID, result.State,
+				l.state)
+		}
+		got2 := []CommitResult{result}
 		l.advance(d, "the drain log's winners' commit", got2[0].NewVersion)
 		l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: winners})
 		d.checkPacks(l)
@@ -617,6 +652,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	if err != nil || got.Refused != "" || got.Released != room {
 		d.fatalf("the close of lease %s, room %d: %+v %v", l.ref.LeaseID, room, got, err)
 	}
+	d.landed("close", got.CommitTS)
 	l.state = "closed"
 	l.advance(d, "the close", got.NewVersion)
 	if l.gaveBack(got.Released) {
