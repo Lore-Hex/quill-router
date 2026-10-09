@@ -1,15 +1,16 @@
--- The fast-admission spike's schema (docs/design/fast-admission-spike.md, §4):
--- a first draft of what production will need, applied only to the spike's
--- databases, the emulator's in CI and the spike's own instance. Production's
--- schema comes after the spike, from what it learned.
+-- The fast admission service's schema: its own tables, which
+-- scripts/deploy/migrate_fastpath.sh creates in production, statement for
+-- statement (docs/design/fast-admission-production-rollout.md, W4; a test
+-- holds the two equal), and production's tr_credit_balance, the one table it
+-- shares. The emulator's databases in CI are made from it whole.
 --
 -- GoogleSQL, statements separated by semicolons. Section numbers are the
 -- design's (docs/design/fast-admission-and-batched-settlement.md). The
--- design fixes what is stored; where a column's form is the spike's own
+-- design fixes what is stored; where a column's form is the service's own
 -- choice, its comment says so.
 
 -- Credit rows, as production's scripts/deploy/migrate_typed_counters.sh
--- creates them, word for word, so the spike's statements meet production's
+-- creates them, word for word, so the service's statements meet production's
 -- columns, nullability and defaults; a test holds the two equal. Grants,
 -- raises, bookings and returns move `reserved` and `total_usage`, covering
 -- moves `total_credits`, and `in_debt` is the debt mark (§4.7), NULL on rows
@@ -233,10 +234,10 @@ CREATE TABLE tr_lease_record (
   CONSTRAINT tr_lease_record_outcome CHECK (outcome IN ('settled', 'refunded', 'reaped_snapshot', 'released')),
 ) PRIMARY KEY (authorization_id, kind);
 
--- The stand-in for staging full records (spike plan §2; design §4.9), keyed
+-- Full records, staged until their pack's work is done (design §4.9), keyed
 -- by authorization and digest: the pending work joins on both, never on the
 -- authorization alone. Its writes are tagged and counted apart.
-CREATE TABLE tr_spike_staged (
+CREATE TABLE tr_lease_staged (
   authorization_id STRING(64) NOT NULL,
   record_digest BYTES(32) NOT NULL,
   workspace_id STRING(64) NOT NULL,
@@ -246,7 +247,7 @@ CREATE TABLE tr_spike_staged (
   publish_time TIMESTAMP NOT NULL,
 ) PRIMARY KEY (authorization_id, record_digest);
 
-CREATE INDEX tr_spike_staged_by_lease ON tr_spike_staged (workspace_id, lease_id);
+CREATE INDEX tr_lease_staged_by_lease ON tr_lease_staged (workspace_id, lease_id);
 
 -- The workspaces the fast path may grant leases for: the production
 -- rollout's switch (docs/design/fast-admission-production-rollout.md, W1).

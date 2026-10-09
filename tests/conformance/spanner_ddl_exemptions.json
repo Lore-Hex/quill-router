@@ -21,17 +21,17 @@
     "fastpath/internal/store/storetest/storetest.go": {
       "op, err := e.databases.CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{": {
         "count": 1,
-        "reason": "Emulator-only test harness: creates a throwaway database on a loopback Spanner emulator (storetest.Start refuses any other host and any GCP credentials) from fastpath/schema/spike.sql, the spike's own schema; it never reaches a deployed database."
+        "reason": "Emulator-only test harness: creates a throwaway database on a loopback Spanner emulator (storetest.Start refuses any other host and any GCP credentials) from fastpath/schema/fastpath.sql, the fast path's own schema; it never reaches a deployed database."
       },
       "ExtraStatements: statements,": {
         "count": 1,
-        "reason": "Emulator-only test harness: creates a throwaway database on a loopback Spanner emulator (storetest.Start refuses any other host and any GCP credentials) from fastpath/schema/spike.sql, the spike's own schema; it never reaches a deployed database."
+        "reason": "Emulator-only test harness: creates a throwaway database on a loopback Spanner emulator (storetest.Start refuses any other host and any GCP credentials) from fastpath/schema/fastpath.sql, the fast path's own schema; it never reaches a deployed database."
       }
     },
     "fastpath/schema/schema_test.go": {
       "created := regexp.MustCompile(`(?s)apply_ddl \"(CREATE TABLE tr_credit_balance \\(.*?\\) PRIMARY KEY \\(workspace_id, shard\\))\"`).": {
         "count": 1,
-        "reason": "A test's pattern that reads production's CREATE TABLE tr_credit_balance out of scripts/deploy/migrate_typed_counters.sh to hold the spike's copy equal to it; it dispatches no DDL."
+        "reason": "A test's pattern that reads production's CREATE TABLE tr_credit_balance out of scripts/deploy/migrate_typed_counters.sh to hold the fast path's copy equal to it; it dispatches no DDL."
       }
     },
     "scripts/cleanup_smoke_signups.py": {

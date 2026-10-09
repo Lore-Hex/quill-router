@@ -54,8 +54,7 @@ func (s staged) Published() time.Time  { return s.d.PublishTime }
 func (s staged) Ack()                  { s.d.Ack() }
 func (s staged) Nack()                 { s.d.Nack() }
 
-// Stager is the record topic's consumer (§4.9), standing for production's
-// staging in ClickHouse (spike plan §2): it stages each full record under
+// Stager is the record topic's consumer (§4.9): it stages each full record under
 // its authorization and digest, with its lease, and acknowledges it only
 // once written, so an outage of the stage loses nothing. An outcome is
 // acknowledged as it comes: the topic's export keeps it, and nothing reads

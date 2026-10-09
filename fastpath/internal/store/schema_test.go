@@ -12,7 +12,7 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
 
-// TestSchemaIsAsWritten: the emulator holds spike.sql's tables, with their
+// TestSchemaIsAsWritten: the emulator holds fastpath.sql's tables, with their
 // parents, cascades and deletion policies, and its indexes.
 func TestSchemaIsAsWritten(t *testing.T) {
 	spikeStore(t)
@@ -42,7 +42,7 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		"tr_lease_drain":        "tr_lease | CASCADE | ",
 		"tr_lease_handoff":      "tr_lease | CASCADE | ",
 		"tr_lease_record":       " |  | ",
-		"tr_spike_staged":       " |  | ",
+		"tr_lease_staged":       " |  | ",
 		"tr_fastpath_member":    " |  | ",
 		"tr_fastpath_workspace": " |  | ",
 	}
@@ -72,7 +72,7 @@ func TestSchemaIsAsWritten(t *testing.T) {
 	sort.Strings(indexes)
 	wantIndexes := "tr_lease_by_id ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
 		"tr_lease_drain_by_commit ON tr_lease_drain IN tr_lease, " +
-		"tr_lease_winners_by_work ON tr_lease_winners IN , tr_spike_staged_by_lease ON tr_spike_staged IN "
+		"tr_lease_winners_by_work ON tr_lease_winners IN , tr_lease_staged_by_lease ON tr_lease_staged IN "
 	if got := strings.Join(indexes, ", "); got != wantIndexes {
 		t.Errorf("the indexes are %s", got)
 	}

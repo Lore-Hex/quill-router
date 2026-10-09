@@ -215,7 +215,7 @@ func (s *Store) WorkspaceStatus(ctx context.Context, workspace string) (Workspac
 			func(r *spanner.Row) error { return r.Column(0, &out.CreditReserved) }},
 		{`SELECT COUNT(*) FROM tr_lease_winners WHERE workspace_id = @w AND work_done_at IS NULL`,
 			func(r *spanner.Row) error { return r.Column(0, &out.PendingPacks) }},
-		{`SELECT COUNT(*) FROM tr_spike_staged@{FORCE_INDEX=tr_spike_staged_by_lease} WHERE workspace_id = @w`,
+		{`SELECT COUNT(*) FROM tr_lease_staged@{FORCE_INDEX=tr_lease_staged_by_lease} WHERE workspace_id = @w`,
 			func(r *spanner.Row) error { return r.Column(0, &out.Staged) }},
 	}
 	for _, q := range queries {
