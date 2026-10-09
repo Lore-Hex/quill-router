@@ -1,13 +1,14 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "310152af7136ece0ac95117547dcc6b71e8c429bbfe389af27e077dc0e8c798a"
+inputs_sha256 = "b54013033ed5b87d2d0c40c4ac236f5089e853b64c65d0ad30f7fe943d74257e"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
 "TerminalOrder.cfg" = 1047716
 "TerminalOrder.appends.cfg" = 13322
 "TerminalOrder.list.cfg" = 5256
+"TerminalOrder.reaps.cfg" = 342632
 "TerminalOrder.rows.cfg" = 1594624
 "TerminalOrder.undeclared.cfg" = 8324
 
@@ -53,7 +54,9 @@ breaks = "nothing"
 reaches = "new states"
 why = '''
 A4 is an assumption about the enclave, and it carries its weight in
-FrontDoorAppend, where removing it breaks ReleasedHoldOwesNothing. Without it
+FrontDoorAppend, where removing its guard lets a front door append a refund
+for a hold whose enclave then delivers, and RefundOnlyWhenNothingDelivered
+breaks. Without it
 the owner may settle a hold whose enclave never delivered: new states, none of
 which a claim reads differently, since the owner decides one terminal per
 hold, so a settle it takes and a release exclude each other whatever the

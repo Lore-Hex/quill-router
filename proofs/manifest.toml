@@ -1296,6 +1296,44 @@ new = '''
                     deadlinePassed, outbox, delivered, acked, tickAt, S, drain,
 '''
 
+# Two reaps outstanding at once, each applied to its own hold: only
+# TerminalOrder.reaps.cfg has two holds the auditor may reap, and the second
+# reap may come before the first's row is applied. A reap applied to the hold
+# of the last reap in the log, as a batch of reaps read once and applied by
+# its last entry would, gives the wrong hold a winner and leaves its own
+# without one.
+
+[[TerminalOrder.mutants]]
+name = "reap-applied-to-the-last-reaps-hold"
+cfg = "reaps"
+violates = "WinnerIsFirstInOrder"
+old = '''
+    /\ LET j == drainApplied + 1
+           a == drain[j].auth
+'''
+new = '''
+    /\ LET j == drainApplied + 1
+           a == IF drain[j].kind = "reap" /\ drain[Len(drain)].kind = "reap"
+                    THEN drain[Len(drain)].auth ELSE drain[j].auth
+'''
+
+# The close waits for every listed hold to have a winner, not for one: only
+# TerminalOrder.reaps.cfg lists two holds.
+
+[[TerminalOrder.mutants]]
+name = "close-waits-for-one-listed-hold"
+cfg = "reaps"
+violates = "NoListedHoldClosedOver"
+old = '''
+    /\ \A a \in Auths : Known(a) => winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
+new = '''
+    /\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner
+    /\ listed = {} \/ \E a \in listed : winner[a] # NoWinner
+    /\ lease' = "closed"
+'''
+
 # Close against appends.
 
 [[TerminalOrder.mutants]]

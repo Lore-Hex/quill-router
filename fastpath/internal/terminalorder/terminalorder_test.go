@@ -100,6 +100,10 @@ var cfgInstances = map[string]Config{
 		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false},
 		Listable: []bool{true, false}, MaxAppends: 2,
 	},
+	"TerminalOrder.reaps.cfg": {
+		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false},
+		Listable: []bool{true, true}, MaxAppends: 0,
+	},
 }
 
 // specConstants are the constants TerminalOrder declares: a configuration of
