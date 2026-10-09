@@ -1280,6 +1280,10 @@ For Joseph:
    not activation, but count overlap only after that policy is confirmed and
    serving revisions/pins remain in the evidence manifest.
 
+Answered 2026-10-09 (parent §10 "Decisions"): the pilot is workspace
+`45819281-0ce9-4811-a0cd-c660ab3a116d`; the seven-day clock may overlap PR G
+landing dormant under the conditions stated there.
+
 Unverified by this source-only pass: production serving revision and real log
 delivery; pilot identity/load; mounted signing material/epoch; maximum-header
 ingress behavior; complete instance/traffic roster availability; all

@@ -936,6 +936,18 @@ Billing review, CI, attestation and rollout gates remain in force for later PRs.
    found in the inspected sources; the doc currently attributes the timings to
    the sketch and relies on the versioned 759-case contract.
 
+### Decisions (2026-10-09, recorded by the gatekeeper at Joseph's instruction to decide from the best available information)
+
+1. **Pilot workspace/key.** Workspace `45819281-0ce9-4811-a0cd-c660ab3a116d` (Joseph's operator workspace; already the spend-lease Stage B pilot in `scripts/deploy/rollout.sh`), key hash `key_1ZXjS8vNqWdQ7qRUkZj8Meuj` (prepaid, $5,000 lifetime cap, no auto-refill). Expected peak concurrency is bounded by the key's existing per-instance in-flight limits (4 authorizes / 16 settles per router instance); the pilot report records the observed maximum. The first pilot **excludes** auto-refill-dependent traffic and metadata-broadcast / budget-notification expectations: the operator key has neither, and the drain's narrower side effects are acceptable for it.
+2. **`pending` for `/decide`.** No. v1 keeps `/decide` synchronous; the cohort stays chat.completions and responses. Revisit after the pilot with its own route/envelope/evaluator fixtures.
+3. **SLO numbers.** 95% ≤ 5 s and 100% ≤ 60 s are adopted as **operating targets with alerting**, including crash reclaim and repair completion. 60 s is an alert threshold with explicit outage accounting, not an absolute promise. Meeting them requires PR D's fast-drain mode; its poll/batch/concurrency/lease values are selected from the PR D measurement plan on the pilot's own exports before the admission flip, and the pilot publishes real region p50/p95/p99 instead of the sketch's forecast.
+4. **Cap policy.** $25 (tier 2) and $100 (tier 3) are accepted as the **cached admission/lag guard** described in §6, with a **$5 pilot override** (`async_settle_pilot_cap_micro=5000000`) on either eligible tier. They are not a strict exposure cap; the reservation-based balance bound remains the money-safety invariant, and the guard's worst case is the bound stated in §6. The approved $5 threshold means: the pilot admits a new async settlement only while the workspace's fresh pending frozen sum is at most $5. Tier 1 stays ineligible.
+5. **Missing evidence.** The 2026-10-05 raw timing export and the 93,561-probe parity report are **not release evidence**; neither was located. The release relies on the versioned 759-case contract and wire fixtures, the F1 proof set, the seven-day shadow report, and the pilot's own region measurements.
+
+Shadow appendix §12: (1) answered above; (2) **yes**, the seven-day clock may overlap PR G landing dormant, provided every serving router has admission off and every serving enclave has negotiation off, and the serving revisions and pins stay in the evidence manifest.
+
+Enablement order from here: land enclave F2c (shadow and negotiation pinned off) → router workspace opt-in for the pilot (this change) → enclave `TR_ASYNC_SETTLE_SHADOW=on` → §2.2 pilot authorization-size and actual-hop maximum-header acceptance gate and §5 fleet read/freshness validation recorded → first durable evaluable sample starts the clock → PR G lands dormant during the window → after a PASS at ≥604,800 s: protection on, fast drain on with measured settings, signer/epoch provisioned, admission on for the pilot workspace with the $5 override, rollback exercised, region percentiles published.
+
 Repository gaps to close in the named PRs, not additional policy questions:
 new ticket key purpose/config and epoch provenance (B); workspace index and
 strict raw request parser (B/C); immutable metadata across body clearing and

@@ -611,7 +611,10 @@ ENV_VARS=(
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
   # PR B is dormant. Do not inherit a purpose key path from an old revision.
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
+  # Shadow phase (design §8, shadow appendix §11): the pilot workspace opts in
+  # to the router-side comparator; sync still books, admission stays off.
+  # Rollback: empty the list and redeploy.
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="
