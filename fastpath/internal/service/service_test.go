@@ -1587,3 +1587,30 @@ func TestTheSwitchTurnsANodeOffAndOn(t *testing.T) {
 		return err == nil && d.Outcome == "settled" && d.Cost.Int64 == 30, err
 	})
 }
+
+// TestARotationsPhasesTakeEachOthersEnvelopes: in a key rotation's deploy,
+// a node of the second phase, sealing with the new key and accepting the
+// old, settles a request that a node of the first phase admitted, its owner
+// sealing the envelope with the old key while accepting the new.
+func TestARotationsPhasesTakeEachOthersEnvelopes(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	rotated := bytes.Repeat([]byte{9}, frontdoor.MinKeySize)
+	a, b, _, _, ws := twoNodes(t, "rotation", func(owner bool, cfg *Config) {
+		if owner {
+			cfg.AcceptKeys = [][]byte{rotated}
+		} else {
+			cfg.Key, cfg.AcceptKeys = rotated, [][]byte{key}
+		}
+	})
+	client := &http.Client{Timeout: 10 * time.Second}
+	sealed, _ := admitted(t, frontdoor.Gateway{Client: client, Base: "http://" + b.Addr().String()}, ws, "r1", b)
+	second := frontdoor.Gateway{Client: client, Base: "http://" + a.Addr().String()}
+	settled, err := second.Settle(ctx, frontdoor.SettleOf{Envelope: sealed, Charge: 30,
+		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
+	if err != nil || settled.Status != frontdoor.Won || settled.Charge != 30 {
+		t.Fatalf("the first phase's request settled through the second's node: %+v %v", settled, err)
+	}
+}

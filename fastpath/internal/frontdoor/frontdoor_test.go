@@ -648,16 +648,20 @@ func TestAWorkspaceNotEnabledIsOff(t *testing.T) {
 // rotated is the key a rotation moves to from key.
 var rotated = bytes.Repeat([]byte{9}, MinKeySize)
 
-// TestOpenWithTakesEitherKeyOfARotation: an envelope sealed with either key
-// opens with the two, and one sealed with a key not given does not.
+// third is a key a rotation after the next moves to.
+var third = bytes.Repeat([]byte{11}, MinKeySize)
+
+// TestOpenWithTakesEitherKeyOfARotation: an envelope sealed with any key
+// given opens with them, the last of three too, and one sealed with a key
+// not given does not.
 func TestOpenWithTakesEitherKeyOfARotation(t *testing.T) {
 	e, _ := envelope(t)
-	for _, sealer := range [][]byte{key, rotated} {
+	for _, sealer := range [][]byte{key, rotated, third} {
 		sealed, err := Seal(sealer, e)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, err := OpenWith([][]byte{key, rotated}, sealed); err != nil || got != e {
+		if got, err := OpenWith([][]byte{key, rotated, third}, sealed); err != nil || got != e {
 			t.Fatalf("sealed with %x: %+v %v", sealer[0], got, err)
 		}
 	}
@@ -694,17 +698,35 @@ func TestARotationsPhasesOverlap(t *testing.T) {
 		f.owners.unreachable["node-b"] = true
 		return f
 	}
-	first, second := door(key, rotated), door(rotated, key)
+	first, second, both := door(key, rotated), door(rotated, key), door(third, key, rotated)
 	for name, c := range map[string]struct {
 		f      *doorFixture
 		sealer []byte
-	}{"the first phase takes the second's": {first, rotated}, "the second phase takes the first's": {second, key}} {
-		if got := c.f.door.Settle(ctx, settle(sealedWith(c.sealer))); got.Status != Recorded {
-			t.Errorf("%s: %+v", name, got)
+	}{"the first phase takes the second's": {first, rotated}, "the second phase takes the first's": {second, key},
+		"a node accepting two keys takes the second's": {both, rotated}} {
+		// The envelope's owner is unreachable: a settle and a refund go to
+		// the drain log, and a heartbeat is answered Retry, none refused.
+		sealed := sealedWith(c.sealer)
+		if got := c.f.door.Settle(ctx, settle(sealed)); got.Status != Recorded {
+			t.Errorf("%s, a settle: %+v", name, got)
+		}
+		if got := c.f.door.Refund(ctx, RefundOf{Envelope: sealed, Money: []byte(`{"cost":0}`)}); got.Status != Recorded {
+			t.Errorf("%s, a refund: %+v", name, got)
+		}
+		if got := c.f.door.Heartbeat(ctx, HeartbeatOf{Envelope: sealed, GatewaySeq: 1}); got.Status != Retry {
+			t.Errorf("%s, a heartbeat: %+v", name, got)
 		}
 	}
-	if got := door(rotated).door.Settle(ctx, settle(sealedWith(key))); got.Status != Invalid {
-		t.Errorf("a node that accepts no other key took the old one's envelope: %+v", got)
+	unrotated := door(rotated)
+	sealed := sealedWith(key)
+	if got := unrotated.door.Settle(ctx, settle(sealed)); got.Status != Invalid {
+		t.Errorf("a node that accepts no other key took the old one's settle: %+v", got)
+	}
+	if got := unrotated.door.Refund(ctx, RefundOf{Envelope: sealed, Money: []byte(`{"cost":0}`)}); got.Status != Invalid {
+		t.Errorf("a node that accepts no other key took the old one's refund: %+v", got)
+	}
+	if got := unrotated.door.Heartbeat(ctx, HeartbeatOf{Envelope: sealed, GatewaySeq: 1}); got.Status != Invalid {
+		t.Errorf("a node that accepts no other key took the old one's heartbeat: %+v", got)
 	}
 	late := door(rotated, key)
 	late.store.refuse = true
