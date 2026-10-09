@@ -73,6 +73,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"door raise", "close", "refused close: undecided", "refused commit", "debt", "debt repaid", "a lease of two donors or more",
 		"a booking past the first donor", "a return before the last donor", "a batch its order changes",
 		"a return its place changes", "a pack of several winners", "refused grant: " + string(RefusedInDebt),
+		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
 		"refused grant: " + string(RefusedAllowance), "refused grant: " + string(RefusedFloor)} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
@@ -103,7 +104,8 @@ type debtLease struct {
 	raises     map[string]int64
 	stamped    map[string]time.Time // each row's commit timestamp, as its append returned it
 	committed  map[string]bool
-	packs      []Pack // each commit's version and winners, in commit order
+	packs      []Pack   // each commit's version and winners, in commit order
+	order      []string // the drain rows' record IDs, in the order appended
 	// req is the lease's grant and expiry its answer's; boundary is the S
 	// its commit stored, or 0; closedAt is when the close's statement ran.
 	req      GrantRequest
@@ -222,6 +224,7 @@ type debtWalk struct {
 	rng     *rand.Rand
 	probes  *rand.Rand // the refused commits', apart, so they leave the walk's own choices as they were
 	batches *rand.Rand // the bookings after a commit's first, apart for the same reason
+	ids     *rand.Rand // the drain rows' record IDs, apart for the same reason
 	seed    int64
 	credits int64
 	leases  []*debtLease
@@ -235,7 +238,8 @@ func newDebtWalk(t *testing.T, s *Store, seed int64) *debtWalk {
 	rng := rand.New(rand.NewSource(seed))
 	credits := []int64{int64(rng.Intn(30)), int64(rng.Intn(30)), int64(rng.Intn(30))}
 	d := &debtWalk{t: t, s: s, ws: seedWorkspace(t, credits...), rng: rng, probes: rand.New(rand.NewSource(^seed)),
-		batches: rand.New(rand.NewSource(seed ^ 0x5eed)), seed: seed, seen: map[string]int{}}
+		batches: rand.New(rand.NewSource(seed ^ 0x5eed)), ids: rand.New(rand.NewSource(seed ^ 0x1d5)), seed: seed,
+		seen: map[string]int{}}
 	for _, c := range credits {
 		d.credits += c
 	}
@@ -412,10 +416,12 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 	ref := LeaseRef{d.ws, req.LeaseID}
 	before := d.rows(ref)
 	want := d.grantRefusal(rows, req.Amount)
+	start := spannerNow(d.t)
 	got, err := d.s.Grant(ctx, detached(req))
 	if err != nil {
 		d.fatalf("the grant: %v", err)
 	}
+	end := spannerNow(d.t)
 	if got.Refused != want {
 		d.fatalf("the grant of %d was refused %q, and the walk's checks say %q", req.Amount, got.Refused, want)
 	}
@@ -428,6 +434,12 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 			d.fatalf("a refused grant changed the rows from %s to %s", before, after)
 		}
 		return false
+	}
+	// Its expiry is a window past Spanner's time as it granted, which the
+	// walk then takes as the lease's.
+	if from := got.Expiry.Add(-d.s.cfg.Window); from.Before(start) || from.After(end) {
+		d.fatalf("the grant's expiry %v is not a window of %v past Spanner's time during it, %v to %v", got.Expiry,
+			d.s.cfg.Window, start, end)
 	}
 	// A grant reserves L on donor shards in ascending order, each up to its
 	// headroom.
@@ -634,7 +646,12 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	d.t.Helper()
 	l.appends++
 	raise := int64(d.rng.Intn(7))
-	record := fmt.Sprintf("d%d", l.appends)
+	// A record ID is random, so the IDs' order is not the rows' (a drain
+	// log read in ID order shows).
+	record := fmt.Sprintf("d%06x", d.ids.Intn(1<<24))
+	for _, ok := l.rows[record]; ok; _, ok = l.rows[record] {
+		record = fmt.Sprintf("d%06x", d.ids.Intn(1<<24))
+	}
 	d.note("door %s +%d", l.ref.LeaseID, raise)
 	t := DrainTerminal{Ref: l.ref, AuthorizationID: "a" + record, RecordID: record, Kind: "settle", Charge: 2 + raise,
 		Estimate: 2, Digest: []byte(l.ref.LeaseID + record), Money: []byte(`{"walk":"debt"}`), Cause: "debt walk"}
@@ -646,6 +663,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 	l.doorRaised += raise
 	l.raised(raise)
 	l.rows[record], l.raises[record], l.stamped[record] = t, raise, got.CommitTS
+	l.order = append(l.order, record)
 	d.seen["door raise"]++
 }
 
@@ -657,10 +675,26 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	d.note("close %s", l.ref.LeaseID)
 	if !l.stored {
 		d.commit(ctx, l, nil, true)
+		d.checkLeaseRow(l, "S's commit")
 	}
 	rows, read, err := d.s.ReadDrainSince(ctx, l.ref, time.Time{})
 	if err != nil {
 		d.fatalf("reading the drain log: %v", err)
+	}
+	// The log reads in the order appended, whatever the IDs' order.
+	if len(rows) != len(l.order) {
+		d.fatalf("lease %s's drain log reads %d rows, and the walk appended %d", l.ref.LeaseID, len(rows), len(l.order))
+	}
+	for i, r := range rows {
+		if r.RecordID != l.order[i] {
+			d.fatalf("lease %s's drain row %d is %s, and the walk appended %s", l.ref.LeaseID, i, r.RecordID, l.order[i])
+		}
+		if i > 0 && r.RecordID < rows[i-1].RecordID {
+			d.seen["drain rows whose IDs sort before an earlier row's"]++
+		}
+		if i > 0 && r.RecordID > rows[i-1].RecordID {
+			d.seen["drain rows whose IDs sort after an earlier row's"]++
+		}
 	}
 	// The winners are the rows as read back, each its authorization's first
 	// terminal, held to what the walk appended.
@@ -674,13 +708,13 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			money = append(money, Book(r.Charge, l.shortfall))
 		}
 	}
-	if len(rows) != len(l.rows) {
-		d.fatalf("lease %s's drain log reads %d rows, and the walk appended %d", l.ref.LeaseID, len(rows), len(l.rows))
-	}
 	// The holds are listed (S's commit listed them), so the lease closes
 	// before its holds' time runs out: at its expiry, long before the
 	// expiry plus MaxLife and the grace.
 	row := readLease(d.t, d.s, l.ref)
+	if err := checkDecoded(row, d.leaseWant(l)); err != nil {
+		d.fatalf("lease %s as ReadLease decodes it: %v", l.ref.LeaseID, err)
+	}
 	if row.HoldsListedSeq != (spanner.NullInt64{Int64: l.seq, Valid: true}) {
 		d.fatalf("lease %s's holds listed at %v, and S's commit listed them at %d", l.ref.LeaseID, row.HoldsListedSeq,
 			l.seq)
@@ -723,6 +757,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		for _, w := range winners {
 			l.committed[w.RecordID] = true
 		}
+		d.checkLeaseRow(l, "the winners' commit")
 	}
 	room := l.room()
 	got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
@@ -737,6 +772,16 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		d.seen["a return before the last donor"]++
 	}
 	d.seen["close"]++
+}
+
+// checkLeaseRow holds the lease's row, every column, to the walk's account
+// after a write inside a step, before a later write could cover what it
+// did.
+func (d *debtWalk) checkLeaseRow(l *debtLease, after string) {
+	d.t.Helper()
+	if err := checkLease(l.ref, d.leaseWant(l)); err != nil {
+		d.fatalf("lease %s's row after %s: %v", l.ref.LeaseID, after, err)
+	}
 }
 
 // advance moves the lease's version on by one, as each commit and close

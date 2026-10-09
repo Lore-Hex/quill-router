@@ -180,7 +180,8 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	required := []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
 		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close", "a reap past its time",
 		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on",
-		"a commit of a tick's number", "S committed again with another time", "a later audit fault"}
+		"a commit of a tick's number", "S committed again with another time", "a later audit fault",
+		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -271,6 +272,12 @@ type walker struct {
 	rows      map[string]DrainRow
 	packVers  []int64
 	packWins  [][]Winner
+	// ids makes the drain rows' record IDs, at random, apart from rng so
+	// the walk's own choices stay as they were; drainIDs and drainIdx map
+	// the shadow's row numbers to them and back.
+	ids      *rand.Rand
+	drainIDs map[int8]string
+	drainIdx map[string]int8
 }
 
 func newWalker(t *testing.T, s *Store, seed int64) *walker {
@@ -286,13 +293,21 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	// and faults reach debt in some walks.
 	first := int64(rng.Intn(c.Grant + 1))
 	req := grantOf(seedWorkspace(t, first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3))), int64(c.Grant))
+	start := spannerNow(t)
 	got, err := s.Grant(context.Background(), req)
 	if err != nil || got.Refused != "" {
 		t.Fatalf("the grant: %+v %v", got, err)
 	}
+	// Its expiry is a window past Spanner's time as it granted, which the
+	// walk then takes as the lease's.
+	if from, end := got.Expiry.Add(-s.cfg.Window), spannerNow(t); from.Before(start) || from.After(end) {
+		t.Fatalf("the grant's expiry %v is not a window of %v past Spanner's time during it, %v to %v", got.Expiry,
+			s.cfg.Window, start, end)
+	}
 	return &walker{t: t, s: s, c: c, ref: LeaseRef{req.Workspace, req.LeaseID}, rng: rng, seed: seed,
 		state: c.Init(), seen: map[string]int{}, tries: map[string]int{}, rows: map[string]DrainRow{}, grant: req,
-		expiry: got.Expiry}
+		expiry: got.Expiry, ids: rand.New(rand.NewSource(seed ^ 0x1d5)), drainIDs: map[int8]string{},
+		drainIdx: map[string]int8{}}
 }
 
 // landed requires a write's commit timestamp after the walk's last.
@@ -392,7 +407,7 @@ func (w *walker) apply(tr ac.Transition) {
 	case "MarkDraining":
 		w.markDraining(true)
 	case "FrontDoorAppend":
-		w.appendDoor(index(w.c.Auths, args[0]), fmt.Sprintf("d%d", from.DrainLen+1), true)
+		w.appendDoor(index(w.c.Auths, args[0]), w.drainID(from.DrainLen+1), true)
 	case "Load":
 		w.load(member(), tr.To)
 	case "LoadWinners":
@@ -418,7 +433,7 @@ func (w *walker) apply(tr ac.Transition) {
 			due = due.Add(time.Hour)
 			w.seen["a reap past its time"]++
 		}
-		w.reap(m, a, from, due, fmt.Sprintf("d%d", from.DrainLen+1), "")
+		w.reap(m, a, from, due, w.drainID(from.DrainLen+1), "")
 	case "Commit":
 		w.commit(member(), from, tr.To, "")
 	case "Close":
@@ -1045,6 +1060,75 @@ func checkLease(ref LeaseRef, want leaseWant) error {
 	return nil
 }
 
+// decoded is a lease as Load and ReadLease decode it, by its columns' names.
+func decoded(l Lease) map[string]any {
+	return map[string]any{"workspace_id": l.Ref.Workspace, "lease_id": l.Ref.LeaseID, "region": l.Region,
+		"workspace_shard": l.WorkspaceShard, "owner_node": l.Owner.Node, "owner_epoch": l.Owner.Epoch,
+		"state": l.State, "granted": l.Granted, "allocation": l.Allocation, "consumed": l.Consumed,
+		"shortfall_total": l.ShortfallTotal, "door_raised": l.DoorRaised, "returned": l.Returned,
+		"fault_usage": l.FaultUsage, "expiry": l.Expiry, "revoked": l.Revoked,
+		"key_status_version": l.KeyStatusVersion, "commit_version": l.CommitVersion, "applied_seq": l.AppliedSeq,
+		"last_tick": l.LastTick, "audit_osum": l.AuditOsum, "holds_listed_seq": l.HoldsListedSeq,
+		"audit_fault_seq": l.AuditFaultSeq, "gap_seq": l.GapSeq, "fence_time": l.FenceTime,
+		"boundary_seq": l.BoundarySeq, "boundary_publish_time": l.BoundaryPublishTime, "drained_by": l.DrainedBy,
+		"closed_at": l.ClosedAt, "close_kind": l.CloseKind}
+}
+
+// checkDecoded holds a decoded lease to the walk's expectations for its
+// row, each column Lease decodes: its key and every one leaseColumns reads.
+func checkDecoded(l Lease, want leaseWant) error {
+	got := decoded(l)
+	var problems []string
+	for _, c := range append([]string{"workspace_id", "lease_id"}, leaseColumns...) {
+		g, ok := got[c]
+		if !ok {
+			problems = append(problems, "Lease decodes "+c+", and the test reads no field of it")
+			continue
+		}
+		w, ok := want[c]
+		if !ok {
+			problems = append(problems, "no expectation for "+c)
+			continue
+		}
+		same := g == w
+		switch w := w.(type) {
+		case time.Time:
+			g, ok := g.(time.Time)
+			same = ok && g.Equal(w)
+		case spanner.NullTime:
+			g, ok := g.(spanner.NullTime)
+			same = ok && g.Valid == w.Valid && g.Time.Equal(w.Time)
+		case within:
+			g, ok := g.(spanner.NullTime)
+			same = ok && g.Valid && !g.Time.Before(w.lo) && !g.Time.After(w.hi)
+		}
+		if !same {
+			problems = append(problems, fmt.Sprintf("%s decodes as %v, and the walk's is %v", c, g, w))
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// spannerNow is Spanner's time, as a strong read's timestamp.
+func spannerNow(t testing.TB) time.Time {
+	t.Helper()
+	ro := shared.Single()
+	defer ro.Close()
+	if err := ro.Query(context.Background(), spanner.Statement{SQL: "SELECT 1"}).Do(func(*spanner.Row) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := ro.Timestamp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
+}
+
 type schemaTable struct {
 	name    string
 	columns []string
@@ -1422,6 +1506,12 @@ func (w *walker) check() {
 		if got.Drain[i].Idx != int8(i+1) {
 			w.fatalf("drain row %d is %s", i+1, r.RecordID)
 		}
+		if i > 0 && r.RecordID < rows[i-1].RecordID {
+			w.seen["drain rows whose IDs sort before an earlier row's"]++
+		}
+		if i > 0 && r.RecordID > rows[i-1].RecordID {
+			w.seen["drain rows whose IDs sort after an earlier row's"]++
+		}
 	}
 	got.DrainLen = int8(len(rows))
 	if want := viewOf(w.state); got != want {
@@ -1529,6 +1619,9 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	w.t.Helper()
 	if err := checkLease(w.ref, w.leaseWant()); err != nil {
 		w.fatalf("the lease's row: %v", err)
+	}
+	if err := checkDecoded(l, w.leaseWant()); err != nil {
+		w.fatalf("the lease as Load decodes it: %v", err)
 	}
 	closed := w.state.St == ac.Closed
 	closeKind := spanner.NullString{}
@@ -1698,7 +1791,7 @@ func kindOf(w *walker, name string) int8 {
 func (w *walker) winnerOf(r ac.Rec) Winner {
 	out := Winner{AuthorizationID: w.c.Auths[r.A], Kind: kinds[r.K], Charge: int64(r.C)}
 	if r.Idx > 0 {
-		out.FromDrain, out.RecordID = true, fmt.Sprintf("d%d", r.Idx)
+		out.FromDrain, out.RecordID = true, w.drainID(r.Idx)
 	} else {
 		out.RecordID = fmt.Sprintf("o%d", r.Seq)
 	}
@@ -1716,7 +1809,11 @@ func (w *walker) recOfWinner(win Winner) ac.Rec {
 	w.t.Helper()
 	r := ac.Rec{K: kindOf(w, win.Kind), A: index(w.c.Auths, win.AuthorizationID), C: small(w, win.Charge)}
 	if win.FromDrain {
-		r.Idx = w.recordNumber(win.RecordID, "d")
+		idx, ok := w.drainIdx[win.RecordID]
+		if !ok {
+			w.fatalf("a winner from a drain row %q the walk never appended", win.RecordID)
+		}
+		r.Idx = idx
 	} else {
 		r.Seq = w.recordNumber(win.RecordID, "o")
 	}
@@ -1729,8 +1826,26 @@ func (w *walker) recOfWinner(win Winner) ac.Rec {
 
 func (w *walker) recOfRow(row DrainRow) ac.Rec {
 	w.t.Helper()
-	return ac.Rec{K: kindOf(w, row.Kind), A: index(w.c.Auths, row.AuthorizationID), C: small(w, row.Charge),
-		Idx: w.recordNumber(row.RecordID, "d")}
+	idx, ok := w.drainIdx[row.RecordID]
+	if !ok {
+		w.fatalf("a drain row %q the walk never appended", row.RecordID)
+	}
+	return ac.Rec{K: kindOf(w, row.Kind), A: index(w.c.Auths, row.AuthorizationID), C: small(w, row.Charge), Idx: idx}
+}
+
+// drainID is the record ID of the shadow's drain row n, made at random the
+// first time, so the IDs' order is not the rows' (a drain log read in ID
+// order shows).
+func (w *walker) drainID(n int8) string {
+	if id, ok := w.drainIDs[n]; ok {
+		return id
+	}
+	id := fmt.Sprintf("d%06x", w.ids.Intn(1<<24))
+	for _, taken := w.drainIdx[id]; taken; _, taken = w.drainIdx[id] {
+		id = fmt.Sprintf("d%06x", w.ids.Intn(1<<24))
+	}
+	w.drainIDs[n], w.drainIdx[id] = id, n
+	return id
 }
 
 // recordNumber is the number in a record ID the walk wrote, which must be
