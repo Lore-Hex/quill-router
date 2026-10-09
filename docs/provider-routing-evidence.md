@@ -20,5 +20,5 @@ Cloudflare Workers AI has an explicit commercial preference while its credits
 are available. It is first only for default eligible credits endpoints, within
 the requested model. Explicit provider ordering, price/latency/throughput sort,
 privacy and provider filters, model fallback order and BYOK are not overridden.
-Remove `_CREDIT_PROVIDER_PREFERENCE` when the credit arrangement ends; this is
+Remove `_PREPAID_PROVIDER_PREFERENCE` when the credit arrangement ends; this is
 not evidence that Cloudflare is the fastest or most reliable provider.
