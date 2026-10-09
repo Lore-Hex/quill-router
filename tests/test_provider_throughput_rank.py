@@ -102,3 +102,40 @@ def test_cloudflare_credit_preference_does_not_change_measurements_or_explicit_s
     byok = [(model, direct), (model, replace(cloudflare, usage_type="BYOK"))]
     assert _sort_endpoint_candidates(byok, RoutePreferences())[0][1] == direct
     assert ranking._RANKS == measured
+
+
+def test_cloudflare_preference_preserves_primary_model_order():
+    from dataclasses import replace
+
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    from trusted_router.routing import RoutePreferences, _sort_endpoint_candidates
+
+    base = next(e for e in MODEL_ENDPOINTS.values() if e.usage_type == "Credits")
+    primary = MODELS[base.model_id]
+    fallback = replace(primary, id="test/fallback")
+    direct = replace(base, provider="deepinfra", id="direct")
+    cloudflare = replace(base, provider="cloudflare-workers-ai", id="cf", model_id=fallback.id)
+    candidates = [(primary, direct), (fallback, cloudflare)]
+    assert _sort_endpoint_candidates(candidates, RoutePreferences()) == candidates
+
+
+def test_cloudflare_preference_never_bypasses_privacy_floor(monkeypatch):
+    from dataclasses import replace
+
+    from tests.fixture_routes import serve_on_fixture_route
+    from trusted_router.catalog import PROVIDERS
+    from trusted_router.config import Settings
+    from trusted_router.routing import chat_route_endpoint_candidates
+
+    model_id = "unit/privacy-preference"
+    for provider, zdr in (("cloudflare-workers-ai", False), ("greenference", True)):
+        monkeypatch.setitem(PROVIDERS, provider, replace(
+            PROVIDERS[provider], stores_content=not zdr, provider_zero_data_retention=zdr,
+            provider_confidential_compute=False, provider_e2ee=False,
+        ))
+        serve_on_fixture_route(monkeypatch, model_id, provider, author="unit")
+    candidates = chat_route_endpoint_candidates(
+        {"model": model_id, "provider": {"usage": "credits", "min_privacy": "zdr"}},
+        Settings(environment="test"),
+    )
+    assert [endpoint.provider for _, endpoint in candidates] == ["greenference"]
