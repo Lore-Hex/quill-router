@@ -248,6 +248,17 @@ CREATE TABLE tr_spike_staged (
 
 CREATE INDEX tr_spike_staged_by_lease ON tr_spike_staged (workspace_id, lease_id);
 
+-- The workspaces the fast path may grant leases for: the production
+-- rollout's switch (docs/design/fast-admission-production-rollout.md, W1).
+-- A workspace with no row, or not enabled, is granted none. Disabling one
+-- revokes its open leases in the same transaction (Store.SetWorkspace), so
+-- they take no renewal, expire and drain; what they admitted still settles.
+CREATE TABLE tr_fastpath_workspace (
+  workspace_id STRING(64) NOT NULL,
+  enabled BOOL NOT NULL,
+  changed_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+) PRIMARY KEY (workspace_id);
+
 -- Membership (spike plan §4): each node writes its row every second. A node
 -- is live while its heartbeat is younger than three seconds, both times
 -- Spanner's. Each start of the node takes the next epoch, which its leases

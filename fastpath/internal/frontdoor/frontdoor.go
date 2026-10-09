@@ -60,6 +60,9 @@ type Members interface {
 
 // Config is a front door's.
 type Config struct {
+	// Enabled says whether a workspace is enabled for the fast path; an
+	// authorize for one that is not is Off, and goes to no owner.
+	Enabled func(workspace string) bool
 	Owners  Owners
 	Store   Store
 	Records RecordLog
@@ -150,10 +153,10 @@ type failure struct {
 
 // New is a front door with its configuration.
 func New(cfg Config) (*FrontDoor, error) {
-	if cfg.Owners == nil || cfg.Store == nil || cfg.Records == nil || cfg.Members == nil ||
+	if cfg.Enabled == nil || cfg.Owners == nil || cfg.Store == nil || cfg.Records == nil || cfg.Members == nil ||
 		len(cfg.Key) < MinKeySize || cfg.Shards == nil || cfg.OwnerWait <= 0 || cfg.PublishWait <= 0 {
-		return nil, errors.New("frontdoor: owners, a store, the record topic, the members, a key of at least " +
-			"32 bytes, the workspaces' shard counts and positive waits")
+		return nil, errors.New("frontdoor: the switch, owners, a store, the record topic, the members, a key of " +
+			"at least 32 bytes, the workspaces' shard counts and positive waits")
 	}
 	if (cfg.Peers != nil && (cfg.Self == "" || cfg.PeerWait <= 0)) ||
 		(cfg.Node != nil && (cfg.WithdrawWithin <= 0 || cfg.ProbeEvery <= 0)) || cfg.RevokeAfter < 0 ||
@@ -202,6 +205,9 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 	k := f.cfg.Shards(a.Workspace)
 	if a.Workspace == "" || k < 1 || a.Estimate < 0 || len(a.Boot) == 0 {
 		return Authorized{Status: Invalid}
+	}
+	if !f.cfg.Enabled(a.Workspace) {
+		return Authorized{Status: Off}
 	}
 	if f.Withdrawn() {
 		return Authorized{Status: Busy}

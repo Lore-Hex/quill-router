@@ -155,3 +155,11 @@ func randomHex(n int) string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// Enabled is the mutation that turns the fast path on for a workspace
+// (tr_fastpath_workspace), which a test applies with the workspace's credit
+// rows so that its grants are taken.
+func Enabled(workspace string) *spanner.Mutation {
+	return spanner.InsertOrUpdateMap("tr_fastpath_workspace", map[string]any{
+		"workspace_id": workspace, "enabled": true, "changed_at": spanner.CommitTimestamp})
+}

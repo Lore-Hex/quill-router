@@ -21,15 +21,17 @@ type Local struct {
 	address string
 	region  string
 	key     []byte
+	enabled func(workspace string) bool
 }
 
 // NewLocal is the owner's part, at its node's address in its region, with
-// the fleet's envelope key.
-func NewLocal(o *owner.Owner, address, region string, key []byte) (*Local, error) {
-	if o == nil || address == "" || region == "" || len(key) < MinKeySize {
-		return nil, errors.New("frontdoor: an owner, its address and region, and a key of at least 32 bytes")
+// the fleet's envelope key, admitting only for a workspace enabled says is
+// enabled for the fast path.
+func NewLocal(o *owner.Owner, address, region string, key []byte, enabled func(string) bool) (*Local, error) {
+	if o == nil || address == "" || region == "" || len(key) < MinKeySize || enabled == nil {
+		return nil, errors.New("frontdoor: an owner, its address and region, a key of at least 32 bytes, and the switch")
 	}
-	return &Local{owner: o, address: address, region: region, key: key}, nil
+	return &Local{owner: o, address: address, region: region, key: key, enabled: enabled}, nil
 }
 
 // Authorize holds the estimate under one of the shard's leases (§4.4) and
@@ -37,6 +39,11 @@ func NewLocal(o *owner.Owner, address, region string, key []byte) (*Local, error
 // the owner asks for a top-up, and the front door tries another shard's
 // owner or answers that the request should wait.
 func (l *Local) Authorize(req OwnerAuthorize) OwnerAdmitted {
+	if !l.enabled(req.Workspace) {
+		// The owner's own route checks the switch too: a caller that
+		// reaches it directly admits nothing for a workspace not enabled.
+		return OwnerAdmitted{Status: Off}
+	}
 	got, err := l.owner.Admit(owner.ShardKey{Workspace: req.Workspace, Region: l.region, Shard: req.Shard},
 		owner.Admission{Estimate: req.Estimate, Stream: req.Stream, Boot: req.Boot, OpenHeartbeat: req.OpenHeartbeat})
 	switch {

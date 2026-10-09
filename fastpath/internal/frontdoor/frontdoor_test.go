@@ -223,7 +223,7 @@ func newDoor(t *testing.T, shards int64) *doorFixture {
 	ev := &events{}
 	f := &doorFixture{ev: ev, owners: &fakeOwners{ev: ev, unreachable: map[string]bool{}, admitted: map[int64]OwnerAdmitted{}},
 		store: &fakeStore{ev: ev}, records: &fakeRecords{ev: ev}, view: owners("node-a", "node-b", "node-c"), shards: shards}
-	door, err := New(Config{Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
+	door, err := New(Config{Enabled: everyWorkspace, Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
 		Shards: func(string) int64 { return f.shards }, OwnerWait: time.Second, PublishWait: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ func TestAShardWithoutRoomTriesOneOtherShard(t *testing.T) {
 
 	f = newDoor(t, 4)
 	f.view = ring.View{ReadAt: start}
-	door, err := New(Config{Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
+	door, err := New(Config{Enabled: everyWorkspace, Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
 		Shards: func(string) int64 { return 4 }, OwnerWait: time.Second, PublishWait: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -622,5 +622,25 @@ func TestAGatewayThatStoppedWaitingAppendsNothing(t *testing.T) {
 	}
 	if len(f.store.appended) != 0 {
 		t.Fatalf("appended %+v", f.store.appended)
+	}
+}
+
+// TestAWorkspaceNotEnabledIsOff: an authorize for a workspace the switch has
+// not enabled is Off and reaches no owner, while one for an enabled
+// workspace is taken as before.
+func TestAWorkspaceNotEnabledIsOff(t *testing.T) {
+	ctx := context.Background()
+	f := newDoor(t, 1)
+	f.door.cfg.Enabled = func(ws string) bool { return ws == "ws-1" }
+	f.owners.admitted[pick("request-1", 1)] = OwnerAdmitted{Status: Admitted, Envelope: "sealed",
+		EndOfLife: start.Add(time.Hour)}
+	off := f.door.Authorize(ctx, AuthorizeOf{Workspace: "ws-2", Request: "request-1", Estimate: 40, Boot: []byte("boot")})
+	if off != (Authorized{Status: Off}) {
+		t.Fatalf("a workspace not enabled: %+v", off)
+	}
+	checkEvents(t, f.ev)
+	on := f.door.Authorize(ctx, AuthorizeOf{Workspace: "ws-1", Request: "request-1", Estimate: 40, Boot: []byte("boot")})
+	if on.Status != Admitted {
+		t.Fatalf("an enabled workspace: %+v", on)
 	}
 }

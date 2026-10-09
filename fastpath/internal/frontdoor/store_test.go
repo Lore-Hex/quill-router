@@ -66,7 +66,7 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +76,14 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer o.Stop()
-	local, err := NewLocal(o, "node-a", "us-central1", key)
+	local, err := NewLocal(o, "node-a", "us-central1", key, everyWorkspace)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ev := &events{}
 	records := &fakeRecords{ev: ev}
 	door := func(to Owners) *FrontDoor {
-		d, err := New(Config{Owners: to, Store: s, Records: records, Members: fakeMembers{owners("node-a")},
+		d, err := New(Config{Enabled: everyWorkspace, Owners: to, Store: s, Records: records, Members: fakeMembers{owners("node-a")},
 			Key: key, Shards: func(string) int64 { return 1 }, OwnerWait: time.Second, PublishWait: time.Second})
 		if err != nil {
 			t.Fatal(err)

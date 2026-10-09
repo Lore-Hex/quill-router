@@ -203,7 +203,7 @@ func newLocalWith(t *testing.T, set func(*owner.Config)) *localFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(o.Stop)
-	l, err := NewLocal(o, "node-a", "us-central1", key)
+	l, err := NewLocal(o, "node-a", "us-central1", key, everyWorkspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,5 +593,30 @@ func TestDirectCopiesWhatItHandsTheOwner(t *testing.T) {
 	release()
 	if r := last(record.Settle); !bytes.Equal(r.Digest, hash("full")) {
 		t.Fatalf("the settle's record: digest %x", r.Digest)
+	}
+}
+
+// everyWorkspace is a switch that has every workspace enabled, for the tests
+// that are about something else.
+func everyWorkspace(string) bool { return true }
+
+// TestTheOwnersRouteChecksTheSwitch: an authorize sent to the owner's own
+// route for a workspace not enabled is Off and holds nothing, so a caller
+// that reaches the owner directly admits nothing; enabled, it is taken.
+func TestTheOwnersRouteChecksTheSwitch(t *testing.T) {
+	f := newLocal(t)
+	enabled := false
+	f.local.enabled = func(string) bool { return enabled }
+	req := OwnerAuthorize{Workspace: "ws-1", Shard: 0, Estimate: 40, Boot: []byte("boot")}
+	if got := f.local.Authorize(req); got != (OwnerAdmitted{Status: Off}) {
+		t.Fatalf("a workspace not enabled: %+v", got)
+	}
+	if held := f.held(t); held != 0 || len(f.grants.all()) != 0 {
+		t.Fatalf("a refused authorize left %d held and %d grants", held, len(f.grants.all()))
+	}
+	enabled = true
+	f.admit(t, req)
+	if held := f.held(t); held != 40 {
+		t.Fatalf("an enabled workspace's authorize holds %d", held)
 	}
 }

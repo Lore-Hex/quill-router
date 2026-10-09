@@ -34,16 +34,17 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"tr_credit_balance":  " |  | ",
-		"tr_lease":           " |  | OLDER_THAN(retire_at, INTERVAL 7 DAY)",
-		"tr_lease_donor":     "tr_lease | CASCADE | ",
-		"tr_lease_hold":      "tr_lease | CASCADE | ",
-		"tr_lease_winners":   "tr_lease | CASCADE | ",
-		"tr_lease_drain":     "tr_lease | CASCADE | ",
-		"tr_lease_handoff":   "tr_lease | CASCADE | ",
-		"tr_lease_record":    " |  | ",
-		"tr_spike_staged":    " |  | ",
-		"tr_fastpath_member": " |  | ",
+		"tr_credit_balance":     " |  | ",
+		"tr_lease":              " |  | OLDER_THAN(retire_at, INTERVAL 7 DAY)",
+		"tr_lease_donor":        "tr_lease | CASCADE | ",
+		"tr_lease_hold":         "tr_lease | CASCADE | ",
+		"tr_lease_winners":      "tr_lease | CASCADE | ",
+		"tr_lease_drain":        "tr_lease | CASCADE | ",
+		"tr_lease_handoff":      "tr_lease | CASCADE | ",
+		"tr_lease_record":       " |  | ",
+		"tr_spike_staged":       " |  | ",
+		"tr_fastpath_member":    " |  | ",
+		"tr_fastpath_workspace": " |  | ",
 	}
 	if len(tables) != len(want) {
 		t.Errorf("the database has tables %v", tables)

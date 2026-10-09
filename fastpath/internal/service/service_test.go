@@ -114,7 +114,7 @@ func fakePubSub(t *testing.T) (*pubsub.Client, *pstest.Server) {
 func workspace(t *testing.T, credits int64) string {
 	t.Helper()
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
 		map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": credits, "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 			break
 		}
 	}
-	if _, err := db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 			break
 		}
 	}
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -891,7 +891,7 @@ func ownedBy(t *testing.T, db *spanner.Client, by net.Listener, among ...net.Lis
 		if !best {
 			continue
 		}
-		if _, err := db.Apply(context.Background(), []*spanner.Mutation{spanner.InsertMap("tr_credit_balance",
+		if _, err := db.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
 			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000),
 				"trust_tier": int64(3)})}); err != nil {
 			t.Fatal(err)

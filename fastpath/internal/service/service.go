@@ -63,6 +63,9 @@ type Config struct {
 
 	// Store's times are the ones every part agrees on.
 	Store store.Config
+	// Switch is how often a node reads the fast path's switch, which
+	// workspaces it may admit for (switch.go).
+	Switch time.Duration
 	// Ring is how often a node writes its row and a front door reads the
 	// members.
 	Ring time.Duration
@@ -109,7 +112,8 @@ func Defaults() Config {
 		Store: store.Config{LiveFor: 3 * time.Second, Window: 30 * time.Second, Skew: 2 * time.Second,
 			PublishDeadline: 5 * time.Second, MaxLife: maxLife, Grace: time.Minute, Allowance: 1 << 50,
 			RequiredTier: 1},
-		Ring: time.Second,
+		Ring:   time.Second,
+		Switch: time.Second,
 		Owner: owner.Config{AnswerWait: 5 * time.Second, HeartbeatEvery: 30 * time.Second, RenewEvery: 5 * time.Second,
 			KeyStatus: 1, TopUps: owner.TopUps{LowWater: 1000, Cooldown: time.Second, Horizon: time.Minute, Min: 10_000,
 				Max: 10_000_000, IdleAfter: 10 * time.Minute, MaxLife: time.Hour},
@@ -145,7 +149,7 @@ func (c Config) valid() error {
 		return errors.New("service: a process needs its region, the settle log's topic and the record topic")
 	case c.Auditor && (c.SettleSubscription == "" || c.RecordSubscription == ""):
 		return errors.New("service: an auditor member needs its subscriptions to the settle log and the record topic")
-	case c.MaxOutstanding < 1 || c.Ring <= 0 || c.Stopping <= 0 || c.HandOff < 0:
+	case c.MaxOutstanding < 1 || c.Ring <= 0 || c.Switch <= 0 || c.Stopping <= 0 || c.HandOff < 0:
 		return errors.New("service: a positive subscription bound, ring interval and stopping time, and a hand-off time")
 	}
 	return nil
@@ -394,7 +398,17 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		o.Run(ctx)
 		return nil
 	})
-	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key)
+	// The switch is read once before serving, and then every interval: a
+	// node that cannot read it admits for no workspace.
+	sw := &workspaceSwitch{read: s.EnabledWorkspaces, every: cfg.Switch, clock: time.Now}
+	if err := sw.refresh(p.ctx); err != nil {
+		log.Printf("service: reading the fast path's switch: %v", err)
+	}
+	p.run("switch", func(ctx context.Context) error {
+		sw.run(ctx)
+		return nil
+	})
+	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key, sw.Enabled)
 	if err != nil {
 		return err
 	}
@@ -408,6 +422,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	// Once every caller has stopped, its idle connections close.
 	p.stop(transport.CloseIdleConnections)
 	fc := cfg.FrontDoor
+	fc.Enabled = sw.Enabled
 	fc.Owners = owners{self: cfg.Address, local: local, remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
 	fc.Store, fc.Records, fc.Members, fc.Key = s, frontdoor.FromRecords(records), members, cfg.Key
 	fc.Shards = func(string) int64 { return cfg.Shards }

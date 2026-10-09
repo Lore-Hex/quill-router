@@ -65,7 +65,7 @@ func TestTheOwnerAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestARevokedLeaseIsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestAShardIsGrantedItsLeaseByTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestTheOwnerAdoptsAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
 		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}

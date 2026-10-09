@@ -24,12 +24,13 @@ type Refusal string
 
 // Why a grant is refused (§4.2, §4.7, §4.11).
 const (
-	RefusedInDebt    Refusal = "the workspace is in debt"
-	RefusedPaused    Refusal = "the workspace's billing is paused"
-	RefusedTier      Refusal = "the workspace is below the tier that allows leases"
-	RefusedAllowance Refusal = "the lease would take the workspace's exposure past its allowance"
-	RefusedFloor     Refusal = "the lease would leave less headroom outside leases than the floor"
-	RefusedLeaseID   Refusal = "the lease ID is another lease's"
+	RefusedNotEnabled Refusal = "the workspace is not enabled for the fast path"
+	RefusedInDebt     Refusal = "the workspace is in debt"
+	RefusedPaused     Refusal = "the workspace's billing is paused"
+	RefusedTier       Refusal = "the workspace is below the tier that allows leases"
+	RefusedAllowance  Refusal = "the lease would take the workspace's exposure past its allowance"
+	RefusedFloor      Refusal = "the lease would leave less headroom outside leases than the floor"
+	RefusedLeaseID    Refusal = "the lease ID is another lease's"
 )
 
 // GrantRequest asks for a lease of Amount, L, for a workspace's shard. The
@@ -81,6 +82,15 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil || existing != nil {
 			if existing != nil {
 				out = *existing
+			}
+			return err
+		}
+		// The switch first: no lease for a workspace not enabled, read in
+		// this transaction, so a grant and its workspace's disabling are
+		// one before the other.
+		if enabled, err := workspaceEnabled(ctx, txn, req.Workspace); err != nil || !enabled {
+			if !enabled {
+				out.Refused = RefusedNotEnabled
 			}
 			return err
 		}
