@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -139,20 +140,32 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 			seen[k] += n
 		}
 	}
-	// One walk more, scripted where the random ones seldom go: it stores a
-	// hold, moves the hold's snapshot on with a second heartbeat, and reaps
-	// it at the new one, so a store that kept a hold's first snapshot fails
-	// the check after the second commit, or the reap. Then it goes on as
-	// the others do.
-	w := newWalker(t, s, seed-1)
-	m := w.c.Members[w.c.Holder]
-	w.script = []string{"Load(" + m + ")", "IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")",
-		"IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")", "MarkDraining",
-		"LoadWinners(" + m + ")", "FenceTick", "ApplyTick(" + m + ")", "Commit(" + m + ")",
-		"Reap(" + m + ",a1)"}
-	w.run()
-	for k, n := range w.seen {
-		seen[k] += n
+	// Two walks more, scripted where the random ones seldom go, then going
+	// on as the others do. The first stores a hold, moves the hold's
+	// snapshot on with a second heartbeat, and reaps it at the new one, so a
+	// store that kept a hold's first snapshot fails the check after the
+	// second commit, or the reap. The second commits two wrong checkpoints'
+	// audit faults, one after the other, so a store that took the later
+	// fails the check after the second.
+	scripts := []func(m string) []string{
+		func(m string) []string {
+			return []string{"Load(" + m + ")", "IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")",
+				"Commit(" + m + ")", "IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")",
+				"MarkDraining", "LoadWinners(" + m + ")", "FenceTick", "ApplyTick(" + m + ")", "Commit(" + m + ")",
+				"Reap(" + m + ",a1)"}
+		},
+		func(m string) []string {
+			return []string{"Load(" + m + ")", "IssueWrongCheckpoint", "Store", "ApplyRecord(" + m + ")",
+				"Commit(" + m + ")", "IssueWrongCheckpoint", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")"}
+		},
+	}
+	for i, script := range scripts {
+		w := newWalker(t, s, seed-1-int64(i))
+		w.script = script(w.c.Members[w.c.Holder])
+		w.run()
+		for k, n := range w.seen {
+			seen[k] += n
+		}
 	}
 	keys := make([]string, 0, len(seen))
 	for k := range seen {
@@ -167,7 +180,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	required := []string{"shortfall-write", "owner-mark-draining", "auditor-mark-draining", "append", "load",
 		"load-winners", "read-drain-since", "stop-for-gap", "reap", "commit", "close", "a reap past its time",
 		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on",
-		"a commit of a tick's number", "S committed again with another time"}
+		"a commit of a tick's number", "S committed again with another time", "a later audit fault"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -232,6 +245,12 @@ type walker struct {
 	fault int64
 	// lastTick is the last tick the lease's row holds, the last commit's.
 	lastTick int64
+	// grant is the lease's grant and expiry its answer's; released is what
+	// the close returned, and closedAt when its statement ran.
+	grant    GrantRequest
+	expiry   time.Time
+	released int64
+	closedAt within
 	// stamps are the writes' commit timestamps; moved, the holds whose
 	// stored snapshot a later commit moved on; script, the steps a walk
 	// takes, in order, before it chooses its own.
@@ -266,9 +285,14 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	// One donor or two, and room left on a third shard or none, so raises
 	// and faults reach debt in some walks.
 	first := int64(rng.Intn(c.Grant + 1))
-	ref := grantLease(t, s, int64(c.Grant), first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3)))
-	return &walker{t: t, s: s, c: c, ref: ref, rng: rng, seed: seed, state: c.Init(), seen: map[string]int{},
-		tries: map[string]int{}, rows: map[string]DrainRow{}}
+	req := grantOf(seedWorkspace(t, first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3))), int64(c.Grant))
+	got, err := s.Grant(context.Background(), req)
+	if err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	return &walker{t: t, s: s, c: c, ref: LeaseRef{req.Workspace, req.LeaseID}, rng: rng, seed: seed,
+		state: c.Init(), seen: map[string]int{}, tries: map[string]int{}, rows: map[string]DrainRow{}, grant: req,
+		expiry: got.Expiry}
 }
 
 // landed requires a write's commit timestamp after the walk's last.
@@ -759,6 +783,8 @@ func (w *walker) close(m int8, from, to ac.State, now time.Time, want Refusal) {
 		if room := int64(w.c.Grant) + int64(from.Raised) - w.consumed; got.Released != room {
 			w.fatalf("member %s's close released %d, and the walk's room is %d", w.c.Members[m], got.Released, room)
 		}
+		w.released += got.Released
+		w.closedAt = within{w.stamps.last, got.CommitTS}
 		w.landed("close", got.CommitTS)
 	}
 	w.justClosed = want == ""
@@ -921,6 +947,102 @@ func everyRow(ref LeaseRef) (string, error) {
 		fmt.Fprintf(&b, "%s %q; ", t.name, rows)
 	}
 	return b.String(), nil
+}
+
+// within is a time a statement took from Spanner's clock: at or after lo,
+// the walk's last write's commit before the statement's call, and at or
+// before hi, the call's own commit.
+type within struct{ lo, hi time.Time }
+
+// leaseWant is every column of a lease's row as a walk expects it, by name:
+// a value of the column's Go type, a spanner.Null* for a nullable column, or
+// a within for a time a statement read from Spanner's clock.
+type leaseWant map[string]any
+
+// checkLease reads the lease's row, every column the schema gives tr_lease,
+// and holds each to want, which must name each of them and no other, so a
+// column added to the table fails the walks until they say what it holds.
+func checkLease(ref LeaseRef, want leaseWant) error {
+	ctx := context.Background()
+	tables, err := schemaTables(ctx)
+	if err != nil {
+		return err
+	}
+	var columns []string
+	for _, t := range tables {
+		if t.name == "tr_lease" {
+			columns = t.columns
+		}
+	}
+	var problems []string
+	for _, c := range columns {
+		if _, ok := want[c]; !ok {
+			problems = append(problems, "no expectation for "+c)
+		}
+	}
+	for c := range want {
+		if !slices.Contains(columns, c) {
+			problems = append(problems, "an expectation for "+c+", which tr_lease has not")
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	row, err := shared.Single().ReadRow(ctx, "tr_lease", ref.key(), columns)
+	if err != nil {
+		return err
+	}
+	for i, c := range columns {
+		var got, exp any
+		switch w := want[c].(type) {
+		case int64:
+			var g int64
+			err, got, exp = row.Column(i, &g), g, w
+		case string:
+			var g string
+			err, got, exp = row.Column(i, &g), g, w
+		case bool:
+			var g bool
+			err, got, exp = row.Column(i, &g), g, w
+		case time.Time:
+			var g time.Time
+			if err = row.Column(i, &g); err == nil && g.Equal(w) {
+				g = w
+			}
+			got, exp = g, w
+		case spanner.NullInt64:
+			var g spanner.NullInt64
+			err, got, exp = row.Column(i, &g), g, w
+		case spanner.NullString:
+			var g spanner.NullString
+			err, got, exp = row.Column(i, &g), g, w
+		case spanner.NullTime:
+			var g spanner.NullTime
+			if err = row.Column(i, &g); err == nil && g.Valid == w.Valid && g.Time.Equal(w.Time) {
+				g = w
+			}
+			got, exp = g, w
+		case within:
+			var g spanner.NullTime
+			err = row.Column(i, &g)
+			got, exp = g, w
+			if err == nil && g.Valid && !g.Time.Before(w.lo) && !g.Time.After(w.hi) {
+				got = w
+			}
+		default:
+			return fmt.Errorf("no comparison for %s's %T", c, w)
+		}
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", c, err)
+		}
+		if got != exp {
+			problems = append(problems, fmt.Sprintf("%s is %v, and the walk's %v", c, got, exp))
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 type schemaTable struct {
@@ -1364,8 +1486,50 @@ func (w *walker) checkRow(r DrainRow, read string) {
 // walk wrote: the gap's and the alert's sequence numbers, S's time T, the
 // draining write's author and the fence, the close, the holds' snapshots,
 // and one pack per commit, at its version, none marked done.
+// leaseWant is the lease's row as the walk's writes left it, every column.
+func (w *walker) leaseWant() leaseWant {
+	s, g := w.state, w.grant
+	nullable := func(v int64) spanner.NullInt64 { return spanner.NullInt64{Int64: v, Valid: v != 0} }
+	want := leaseWant{
+		"workspace_id": w.ref.Workspace, "lease_id": w.ref.LeaseID, "region": g.Region,
+		"workspace_shard": g.WorkspaceShard, "owner_node": g.Owner.Node, "owner_epoch": g.Owner.Epoch,
+		"key_status_version": g.KeyStatusVersion, "state": stateName(s.St), "granted": int64(w.c.Grant),
+		"allocation": int64(w.c.Grant) + w.shortfall - w.released, "consumed": w.consumed,
+		"shortfall_total": w.shortfall, "door_raised": int64(0), "returned": w.released, "fault_usage": w.faulted,
+		"expiry": w.expiry, "revoked": w.fault != 0, "revoked_at": spanner.NullTime{}, "commit_version": int64(s.Ver),
+		"applied_seq": int64(s.Prog), "last_tick": w.lastTick, "audit_osum": int64(s.Osum),
+		"holds_listed_seq": spanner.NullInt64{}, "audit_fault_seq": nullable(w.fault), "gap_seq": nullable(w.gapSeq),
+		"fence_time": spanner.NullTime{}, "boundary_seq": spanner.NullInt64{},
+		"boundary_publish_time": spanner.NullTime{},
+		"drained_by":            spanner.NullString{StringVal: w.drainedBy, Valid: w.drainedBy != ""},
+		"closed_at":             spanner.NullTime{}, "close_kind": spanner.NullString{}, "retire_at": spanner.NullTime{},
+	}
+	// An audit fault's commit revokes the lease's renewal; revoked_at is the
+	// time of a front door's revocation, which the walk never makes, so it
+	// stays empty.
+	if w.drainedBy != "" {
+		want["fence_time"] = spanner.NullTime{Time: w.expiry.Add(w.s.cfg.Skew + w.s.cfg.PublishDeadline), Valid: true}
+	}
+	if s.S != ac.NoS {
+		want["boundary_seq"] = spanner.NullInt64{Int64: int64(s.S), Valid: true}
+		want["boundary_publish_time"] = spanner.NullTime{Time: walkTick, Valid: true}
+	}
+	if s.St == ac.Closed {
+		want["closed_at"], want["close_kind"] = w.closedAt, spanner.NullString{StringVal: "auditor", Valid: true}
+		// The row may go only once closed with no pack's work pending; the
+		// walk marks none done, and every commit stores a pack.
+		if len(w.packVers) == 0 {
+			want["retire_at"] = w.closedAt
+		}
+	}
+	return want
+}
+
 func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	w.t.Helper()
+	if err := checkLease(w.ref, w.leaseWant()); err != nil {
+		w.fatalf("the lease's row: %v", err)
+	}
 	closed := w.state.St == ac.Closed
 	closeKind := spanner.NullString{}
 	if closed {

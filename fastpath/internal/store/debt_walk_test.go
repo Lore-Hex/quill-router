@@ -104,6 +104,12 @@ type debtLease struct {
 	stamped    map[string]time.Time // each row's commit timestamp, as its append returned it
 	committed  map[string]bool
 	packs      []Pack // each commit's version and winners, in commit order
+	// req is the lease's grant and expiry its answer's; boundary is the S
+	// its commit stored, or 0; closedAt is when the close's statement ran.
+	req      GrantRequest
+	expiry   time.Time
+	boundary int64
+	closedAt within
 }
 
 // donor is one of a lease's donors as the walk books it: its credit shard,
@@ -314,6 +320,40 @@ func (d *debtWalk) landed(kind string, ts time.Time) {
 	}
 }
 
+// leaseWant is a lease's row as the walk's writes left it, every column.
+func (d *debtWalk) leaseWant(l *debtLease) leaseWant {
+	listed := spanner.NullInt64{Int64: l.boundary, Valid: l.stored}
+	want := leaseWant{
+		"workspace_id": l.ref.Workspace, "lease_id": l.ref.LeaseID, "region": l.req.Region,
+		"workspace_shard": l.req.WorkspaceShard, "owner_node": l.req.Owner.Node, "owner_epoch": l.req.Owner.Epoch,
+		"key_status_version": l.req.KeyStatusVersion, "state": l.state, "granted": l.granted,
+		"allocation": l.allocation(), "consumed": l.consumed, "shortfall_total": l.shortfall,
+		"door_raised": l.doorRaised, "returned": l.returned, "fault_usage": l.fault, "expiry": l.expiry,
+		"revoked": false, "revoked_at": spanner.NullTime{}, "commit_version": l.version, "applied_seq": l.seq,
+		"last_tick": int64(0), "audit_osum": int64(0), "holds_listed_seq": listed,
+		"audit_fault_seq": spanner.NullInt64{}, "gap_seq": spanner.NullInt64{}, "fence_time": spanner.NullTime{},
+		"boundary_seq": listed, "boundary_publish_time": spanner.NullTime{Time: walkTick, Valid: l.stored},
+		"drained_by": spanner.NullString{}, "closed_at": spanner.NullTime{}, "close_kind": spanner.NullString{},
+		"retire_at": spanner.NullTime{},
+	}
+	if !l.stored {
+		want["boundary_publish_time"] = spanner.NullTime{}
+	}
+	if l.state != "open" {
+		want["drained_by"] = spanner.NullString{StringVal: "owner", Valid: true}
+		want["fence_time"] = spanner.NullTime{Time: l.expiry.Add(d.s.cfg.Skew + d.s.cfg.PublishDeadline), Valid: true}
+	}
+	if l.state == "closed" {
+		// Every commit stores a pack whose work the walk never marks done,
+		// so a closed lease's row is kept: no retire_at.
+		want["closed_at"], want["close_kind"] = l.closedAt, spanner.NullString{StringVal: "auditor", Valid: true}
+		if len(l.packs) == 0 {
+			want["retire_at"] = l.closedAt
+		}
+	}
+	return want
+}
+
 // grantRefusal is the store's answer to a grant of amount, as the store
 // checks, in its order, from what the walk knows: a debt mark on a credit
 // row; the workspace's exposure, every lease's unbooked allocation while it
@@ -391,7 +431,7 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 	}
 	// A grant reserves L on donor shards in ascending order, each up to its
 	// headroom.
-	l := &debtLease{ref: ref, state: "open", granted: req.Amount,
+	l := &debtLease{ref: ref, state: "open", granted: req.Amount, req: req, expiry: got.Expiry,
 		rows: map[string]DrainTerminal{}, raises: map[string]int64{}, stamped: map[string]time.Time{},
 		committed: map[string]bool{}}
 	left := req.Amount
@@ -468,6 +508,9 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	l.seq = seq
 	l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: req.Winners})
 	d.checkPacks(l)
+	if boundary {
+		l.boundary = seq
+	}
 	l.stored = l.stored || boundary
 	return got[0]
 }
@@ -686,6 +729,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	if err != nil || got.Refused != "" || got.Released != room {
 		d.fatalf("the close of lease %s, room %d: %+v %v", l.ref.LeaseID, room, got, err)
 	}
+	l.closedAt = within{d.stamps.last, got.CommitTS}
 	d.landed("close", got.CommitTS)
 	l.state = "closed"
 	l.advance(d, "the close", got.NewVersion)
@@ -808,6 +852,11 @@ func (d *debtWalk) check(before, after []int64) {
 	}
 	if donors != len(want) {
 		d.fatalf("%d donor rows, and the walk's leases have %d donors", donors, len(want))
+	}
+	for _, l := range d.leases {
+		if err := checkLease(l.ref, d.leaseWant(l)); err != nil {
+			d.fatalf("lease %s's row: %v", l.ref.LeaseID, err)
+		}
 	}
 	// Each lease's money is what the walk did to it, column by column, and
 	// its front doors' raises are its drain rows', in two reads of the whole
