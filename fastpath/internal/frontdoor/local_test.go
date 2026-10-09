@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,7 +153,7 @@ func (c *clock) advance(d time.Duration) {
 // they need them, each expiring a minute from the start.
 func ownerConfig(c *clock, sp owner.Spanner) owner.Config {
 	return owner.Config{Epoch: 1, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
-		HeartbeatEvery: 30 * time.Second, NewAuthorization: store.NewAuthorizationID, Clock: c.Now,
+		HeartbeatEvery: 30 * time.Second, NewAuthorization: store.NewAuthorizationID, Clock: c.Now, Enabled: everyWorkspace,
 		Spanner: sp, Node: "node-a", RenewEvery: time.Hour, Window: 30 * time.Second,
 		TopUps: owner.TopUps{LowWater: 10, Cooldown: time.Millisecond, Horizon: time.Minute, Min: 1000, Max: 1000,
 			IdleAfter: time.Hour, MaxLife: time.Hour}}
@@ -203,7 +204,7 @@ func newLocalWith(t *testing.T, set func(*owner.Config)) *localFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(o.Stop)
-	l, err := NewLocal(o, "node-a", "us-central1", key, everyWorkspace)
+	l, err := NewLocal(o, "node-a", "us-central1", key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,13 +601,23 @@ func TestDirectCopiesWhatItHandsTheOwner(t *testing.T) {
 // that are about something else.
 func everyWorkspace(string) bool { return true }
 
-// TestTheOwnersRouteChecksTheSwitch: an authorize sent to the owner's own
-// route for a workspace not enabled is Off and holds nothing, so a caller
-// that reaches the owner directly admits nothing; enabled, it is taken.
+// TestTheOwnersRouteChecksTheSwitch: the owner's own route admits nothing
+// for a workspace its switch does not enable, and asks for no lease for it;
+// enabled, it admits. A request that passed the owner's first look and
+// stalled, here in minting its authorization, while the switch turned off
+// makes no hold: the owner asks the switch again as it makes the hold.
 func TestTheOwnersRouteChecksTheSwitch(t *testing.T) {
-	f := newLocal(t)
-	enabled := false
-	f.local.enabled = func(string) bool { return enabled }
+	var enabled, offWhileMinting atomic.Bool
+	f := newLocalWith(t, func(cfg *owner.Config) {
+		cfg.Enabled = func(string) bool { return enabled.Load() }
+		mint := cfg.NewAuthorization
+		cfg.NewAuthorization = func(lease string) (string, error) {
+			if offWhileMinting.Load() {
+				enabled.Store(false)
+			}
+			return mint(lease)
+		}
+	})
 	req := OwnerAuthorize{Workspace: "ws-1", Shard: 0, Estimate: 40, Boot: []byte("boot")}
 	if got := f.local.Authorize(req); got != (OwnerAdmitted{Status: Off}) {
 		t.Fatalf("a workspace not enabled: %+v", got)
@@ -614,9 +625,16 @@ func TestTheOwnersRouteChecksTheSwitch(t *testing.T) {
 	if held := f.held(t); held != 0 || len(f.grants.all()) != 0 {
 		t.Fatalf("a refused authorize left %d held and %d grants", held, len(f.grants.all()))
 	}
-	enabled = true
+	enabled.Store(true)
 	f.admit(t, req)
 	if held := f.held(t); held != 40 {
 		t.Fatalf("an enabled workspace's authorize holds %d", held)
+	}
+	offWhileMinting.Store(true)
+	if got := f.local.Authorize(req); got != (OwnerAdmitted{Status: Off}) {
+		t.Fatalf("a request that stalled while the switch turned off: %+v", got)
+	}
+	if held := f.held(t); held != 40 {
+		t.Fatalf("a request refused as its hold was made left %d held, want the first's 40", held)
 	}
 }

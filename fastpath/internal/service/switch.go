@@ -3,14 +3,16 @@ package service
 import (
 	"context"
 	"log"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // workspaceSwitch is the node's copy of the fast path's switch,
 // tr_fastpath_workspace (docs/design/fast-admission-production-rollout.md,
 // W1): the workspaces enabled for the fast path, read every interval. The
-// front door and the owner's own route admit only for a workspace it has.
+// front door routes, and the owner makes a hold, only for a workspace it
+// has; each asks it on the request's path, so a copy is read without a
+// lock.
 // A copy older than three intervals, by the node's clock from the start of
 // the read that made it, enables none, so a node that cannot read the
 // switch admits for no workspace. The store refuses a grant, and revokes the
@@ -20,7 +22,12 @@ type workspaceSwitch struct {
 	every time.Duration
 	clock func() time.Time
 
-	mu      sync.Mutex
+	copy atomic.Pointer[switchCopy]
+}
+
+// switchCopy is what one read found, as of the read's start; never changed
+// once made.
+type switchCopy struct {
 	enabled map[string]bool
 	at      time.Time
 }
@@ -28,21 +35,19 @@ type workspaceSwitch struct {
 // Enabled says whether the workspace is enabled, by a copy no older than
 // three intervals.
 func (w *workspaceSwitch) Enabled(workspace string) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.enabled[workspace] && !w.at.IsZero() && w.clock().Sub(w.at) < 3*w.every
+	c := w.copy.Load()
+	return c != nil && c.enabled[workspace] && w.clock().Sub(c.at) < 3*w.every
 }
 
 // refresh reads the switch, and takes what it read as of the read's start.
+// One refresh runs at a time: the first before serving, then run's.
 func (w *workspaceSwitch) refresh(ctx context.Context) error {
 	started := w.clock()
 	got, _, err := w.read(ctx)
 	if err != nil {
 		return err
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.enabled, w.at = got, started
+	w.copy.Store(&switchCopy{enabled: got, at: started})
 	return nil
 }
 

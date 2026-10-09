@@ -60,7 +60,7 @@ func newNode(t *testing.T, withOwner bool, client *http.Client, peers Peers) *no
 		}
 		t.Cleanup(o.Stop)
 		n.owner = o
-		if n.local, err = NewLocal(o, n.addr, "us-central1", key, everyWorkspace); err != nil {
+		if n.local, err = NewLocal(o, n.addr, "us-central1", key); err != nil {
 			t.Fatal(err)
 		}
 	}

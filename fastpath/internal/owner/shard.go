@@ -140,10 +140,15 @@ func (o *Owner) shardLocked(key ShardKey) *shard {
 // (§4.4), and asks for a top-up when the shard's room is low. With no lease
 // that takes it, it answers ErrNoRoom, and the top-up it asks for is sized
 // to take it too: the front door tries another shard's owner, or answers
-// that the request should wait.
+// that the request should wait. A workspace the switch does not enable is
+// ErrOff, with no lease asked for; each lease asks the switch again as it
+// makes the hold.
 func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 	if err := a.valid(); err != nil {
 		return Admitted{}, err
+	}
+	if !o.cfg.Enabled(key.Workspace) {
+		return Admitted{}, ErrOff
 	}
 	o.mu.Lock()
 	leases := slices.Clone(o.shardLocked(key).leases)

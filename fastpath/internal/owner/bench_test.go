@@ -41,7 +41,7 @@ type benchLeases struct {
 func newBenchLeases(b *testing.B) *benchLeases {
 	b.Helper()
 	cfg := Config{Epoch: 3, Skew: 2 * time.Second, AnswerWait: time.Second, HoldLife: time.Hour,
-		HeartbeatEvery: 30 * time.Second, Clock: func() time.Time { return start },
+		HeartbeatEvery: 30 * time.Second, Clock: func() time.Time { return start }, Enabled: everyWorkspace,
 		NewAuthorization: store.NewAuthorizationID}
 	o, err := New(cfg, discardLog{})
 	if err != nil {

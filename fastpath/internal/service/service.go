@@ -386,9 +386,20 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	}
 	p.stop(members.Stop)
 
+	// The switch is read once before serving, and then every interval: a
+	// node that cannot read it admits for no workspace. The owner asks it
+	// as it makes each hold, and the front door before it routes.
+	sw := &workspaceSwitch{read: s.EnabledWorkspaces, every: cfg.Switch, clock: time.Now}
+	if err := sw.refresh(p.ctx); err != nil {
+		log.Printf("service: reading the fast path's switch: %v", err)
+	}
+	p.run("switch", func(ctx context.Context) error {
+		sw.run(ctx)
+		return nil
+	})
 	oc := cfg.Owner
 	oc.Epoch, oc.Spanner, oc.Node, oc.Records = node.Epoch(), s, cfg.Address, owner.FromRecords(records)
-	oc.NewAuthorization, oc.Clock = store.NewAuthorizationID, cfg.ownersClock
+	oc.NewAuthorization, oc.Clock, oc.Enabled = store.NewAuthorizationID, cfg.ownersClock, sw.Enabled
 	o, err := owner.New(oc, owner.FromLog(settle))
 	if err != nil {
 		return err
@@ -398,17 +409,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		o.Run(ctx)
 		return nil
 	})
-	// The switch is read once before serving, and then every interval: a
-	// node that cannot read it admits for no workspace.
-	sw := &workspaceSwitch{read: s.EnabledWorkspaces, every: cfg.Switch, clock: time.Now}
-	if err := sw.refresh(p.ctx); err != nil {
-		log.Printf("service: reading the fast path's switch: %v", err)
-	}
-	p.run("switch", func(ctx context.Context) error {
-		sw.run(ctx)
-		return nil
-	})
-	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key, sw.Enabled)
+	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key)
 	if err != nil {
 		return err
 	}

@@ -66,8 +66,9 @@ func TestAGrantNeedsItsWorkspaceEnabled(t *testing.T) {
 // TestTurningAWorkspaceOffRevokesItsOpenLeases: its open leases take no
 // renewal and its grants are refused, its draining lease is left as it was,
 // another workspace's lease too; turning it on again grants new leases but
-// revives none, and a retry of a revoked lease's grant is refused, so no
-// owner takes it up, while a retry of an open one's is answered.
+// revives none, and a retry of the grant of a lease revoked, draining or
+// closed is refused, whether the workspace is off or on again, so no owner
+// takes it up, while a retry of an open one's is answered.
 func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
@@ -84,10 +85,22 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 		return ref
 	}
 	grant := func() LeaseRef { return grantIn(ws) }
-	open, draining, theirs := grant(), grant(), grantIn(elsewhere)
+	open, draining, closed, theirs := grant(), grant(), grant(), grantIn(elsewhere)
 	if ok, _, err := s.OwnerMarkDraining(ctx, owner, draining); err != nil || !ok {
 		t.Fatalf("the draining write: %v %v", ok, err)
 	}
+	execLease(t, closed, drainIt)
+	execLease(t, closed, closeIt)
+	// None of them is revoked: each retry below is refused for its state.
+	retried := func(when string) {
+		t.Helper()
+		for name, ref := range map[string]LeaseRef{"draining": draining, "closed": closed} {
+			if got, err := s.Grant(ctx, reqs[ref]); err != nil || got.Refused != RefusedRevoked {
+				t.Errorf("%s, a retry of a %s lease's grant: %+v %v", when, name, got, err)
+			}
+		}
+	}
+	retried("with the workspace on")
 	other := grant()
 	revoked, _, err := s.SetWorkspace(ctx, ws, false)
 	if err != nil || revoked != 2 {
@@ -104,6 +117,10 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	if l := readLease(t, s, draining); l.Revoked || l.State != "draining" {
 		t.Errorf("the draining lease is %+v", l)
 	}
+	if l := readLease(t, s, closed); l.Revoked || l.State != "closed" {
+		t.Errorf("the closed lease is %+v", l)
+	}
+	retried("with the workspace off")
 	if l := readLease(t, s, theirs); l.Revoked {
 		t.Error("another workspace's lease is revoked")
 	}
@@ -122,6 +139,7 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	if got, err := s.Grant(ctx, reqs[open]); err != nil || got.Refused != RefusedRevoked {
 		t.Errorf("a retry of a revoked lease's grant: %+v %v", got, err)
 	}
+	retried("with the workspace on again")
 	if got, err := s.Grant(ctx, reqs[theirs]); err != nil || got.Refused != "" || got.Expiry.IsZero() {
 		t.Errorf("a retry of an open lease's grant: %+v %v", got, err)
 	}

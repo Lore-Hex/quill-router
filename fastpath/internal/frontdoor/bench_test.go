@@ -23,7 +23,7 @@ func BenchmarkAuthorize(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(o.Stop)
-	local, err := NewLocal(o, "node-a", "us-central1", key, everyWorkspace)
+	local, err := NewLocal(o, "node-a", "us-central1", key)
 	if err != nil {
 		b.Fatal(err)
 	}

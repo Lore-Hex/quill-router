@@ -76,7 +76,7 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer o.Stop()
-	local, err := NewLocal(o, "node-a", "us-central1", key, everyWorkspace)
+	local, err := NewLocal(o, "node-a", "us-central1", key)
 	if err != nil {
 		t.Fatal(err)
 	}
