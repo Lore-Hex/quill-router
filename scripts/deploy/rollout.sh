@@ -611,10 +611,13 @@ ENV_VARS=(
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
   # PR B is dormant. Do not inherit a purpose key path from an old revision.
-  # Shadow phase (design §8, shadow appendix §11): the pilot workspace opts in
-  # to the router-side comparator; sync still books, admission stays off.
-  # Rollback: empty the list and redeploy.
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # Shadow phase (design §8, shadow appendix §11): a non-empty list installs the
+  # router-side comparator runtime (observer, counter maintenance, evidence
+  # store) for the named workspaces, so it is NOT dormant. Opt the pilot
+  # workspace 45819281-0ce9-4811-a0cd-c660ab3a116d in only after the signer and
+  # epoch are provisioned and the §5 fleet budget gate is recorded (design §10
+  # "Decisions", enablement order). Rollback: empty the list and redeploy.
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="
