@@ -58,6 +58,8 @@
     {
       "id": "xiaomi/mimo-v2.5",
       "upstream_id": "mimo-v2.5",
+      "retirement_at": "2026-10-14T10:00:00Z",
+      "replacement_model_id": "xiaomi/mimo-v2.6-flash",
       "display_name": "Xiaomi MiMo V2.5",
       "title": "MiMo-V2.5",
       "created": 1781000000,
@@ -84,6 +86,8 @@
     {
       "id": "xiaomi/mimo-v2.5-pro",
       "upstream_id": "mimo-v2.5-pro",
+      "retirement_at": "2026-10-14T10:00:00Z",
+      "replacement_model_id": "xiaomi/mimo-v2.6-pro",
       "display_name": "Xiaomi MiMo V2.5 Pro",
       "title": "MiMo-V2.5-Pro",
       "created": 1781000000,
