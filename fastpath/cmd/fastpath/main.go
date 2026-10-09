@@ -58,6 +58,10 @@ func run() error {
 	flag.DurationVar(&cfg.Owner.RenewEvery, "renew-every", cfg.Owner.RenewEvery, "how often an owner renews its leases")
 	flag.DurationVar(&cfg.Owner.FirstHeartbeat, "first-heartbeat", cfg.Owner.FirstHeartbeat,
 		"how long a declared stream's hold waits for its first heartbeat, before the grace; 0 releases none")
+	flag.DurationVar(&cfg.HandOff, "hand-off", cfg.HandOff,
+		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
+	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,
+		"added to the owner's clock readings, to inject an owner's clock error; 0 for a true clock")
 	flag.Parse()
 
 	switch *roles {
@@ -91,6 +95,19 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// SIGUSR1 marks the node leaving, as a deploy does before it stops it.
+	usr1 := make(chan os.Signal, 1)
+	signal.Notify(usr1, syscall.SIGUSR1)
+	defer signal.Stop(usr1)
+	leave := make(chan struct{})
+	go func() {
+		select {
+		case <-usr1:
+			close(leave)
+		case <-ctx.Done():
+		}
+	}()
+	cfg.Leave = leave
 	sp, err := spanner.NewClient(ctx, *database)
 	if err != nil {
 		return err

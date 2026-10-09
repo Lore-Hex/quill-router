@@ -164,6 +164,25 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 	return Admitted{}, ErrNoRoom
 }
 
+// Retire stops the owner taking anything new, as a node marked leaving
+// does (spike plan §4, K3): it asks for no lease and takes none, a grant
+// answered after it included, and each lease it holds admits nothing more
+// (Lease.Close), serving its holds, its next checkpoint returning its free
+// room and its final one, once no hold is open, ending it. A request it can
+// no longer take is ErrNoRoom, for the front door to take elsewhere.
+func (o *Owner) Retire() {
+	o.mu.Lock()
+	o.retiring = true
+	leases := make([]*Lease, 0, len(o.leases))
+	for _, l := range o.leases {
+		leases = append(leases, l)
+	}
+	o.mu.Unlock()
+	for _, l := range leases {
+		l.Close()
+	}
+}
+
 // topUp asks for another lease for the shard once its room is below the
 // low-water mark, a request found no lease to take it (unmet, with need, the
 // request's estimate and buffer, which the lease is sized for too), or an
@@ -176,7 +195,8 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 		return
 	}
 	cooling := func(sh *shard, now time.Time) bool {
-		return o.stopped || o.handoff != nil || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
+		return o.stopped || o.handoff != nil || o.retiring || sh.asking ||
+			(!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
 	}
 	o.mu.Lock()
 	sh := o.shardLocked(key)
