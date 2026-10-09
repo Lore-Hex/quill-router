@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -215,4 +216,66 @@ func TestEnabledWorkspacesReadsTheSwitch(t *testing.T) {
 	if !got[on] || got[off] || got[never] {
 		t.Fatalf("enabled %v; want %s and neither %s nor %s", got, on, off, never)
 	}
+}
+
+// TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft walks one workspace
+// through turning off, the status read after each step: done only once it is
+// off, its lease closed, what its donors held returned, and its pack's work
+// done.
+func TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ws := seedWorkspace(t, 100)
+	status := func(step string, want WorkspaceStatus, done bool) {
+		t.Helper()
+		got, err := s.WorkspaceStatus(ctx, ws)
+		if err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		if got.ReadTS.IsZero() {
+			t.Fatalf("%s: no read timestamp", step)
+		}
+		want.Workspace, want.ReadTS = ws, got.ReadTS
+		if got != want {
+			t.Fatalf("%s: %+v, want %+v", step, got, want)
+		}
+		if ok, why := got.Done(); ok != done || ok != (len(why) == 0) {
+			t.Fatalf("%s: done %v %v, want %v", step, ok, why, done)
+		}
+	}
+	status("enabled", WorkspaceStatus{Enabled: true}, false)
+	req := grantOf(ws, 10)
+	if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	ref := LeaseRef{ws, req.LeaseID}
+	status("granted", WorkspaceStatus{Enabled: true, Open: 1, LeaseReserved: 10, CreditReserved: 10}, false)
+	if _, _, err := s.SetWorkspace(ctx, ws, false); err != nil {
+		t.Fatal(err)
+	}
+	status("off", WorkspaceStatus{Open: 1, Revoked: 1, LeaseReserved: 10, CreditReserved: 10}, false)
+	if ok, _, err := s.OwnerMarkDraining(ctx, owner, ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	status("draining", WorkspaceStatus{Draining: 1, LeaseReserved: 10, CreditReserved: 10}, false)
+	zero := int64(0)
+	got, _, err := s.Commit(ctx, []CommitRequest{{Ref: ref, Boundary: &Boundary{S: 0, T: time.Now()},
+		HoldsListedSeq: &zero}})
+	if err != nil || len(got) != 1 || got[0].Refused != "" {
+		t.Fatalf("S's commit: %+v %v", got, err)
+	}
+	status("S stored", WorkspaceStatus{Draining: 1, LeaseReserved: 10, CreditReserved: 10, PendingPacks: 1}, false)
+	_, read, err := s.ReadDrainSince(ctx, ref, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.CloseLease(ctx, ref, got[0].NewVersion, read, readLease(t, s, ref).Expiry)
+	if err != nil || closed.Refused != "" || closed.Released != 10 {
+		t.Fatalf("the close: %+v %v", closed, err)
+	}
+	status("closed", WorkspaceStatus{Closed: 1, PendingPacks: 1}, false)
+	if ok, err := s.MarkPackDone(ctx, ref, got[0].NewVersion); err != nil || !ok {
+		t.Fatalf("the pack's work: %v %v", ok, err)
+	}
+	status("its work done", WorkspaceStatus{Closed: 1}, true)
 }

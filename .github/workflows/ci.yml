@@ -542,11 +542,11 @@ jobs:
           exit 1
       - name: The store against the emulator
         run: go test -race -count=1 -p 1 ./internal/store/...
-      # The owner's, the auditor's, the front door's and the service's tests
-      # against the store skip without the emulator, so the fastpath job runs
-      # none of them; they run here.
-      - name: The owner, the auditor, the front door and the service against the emulator
-        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/...
+      # The owner's, the auditor's, the front door's, the service's and
+      # fastpathctl's tests against the store skip without the emulator, so
+      # the fastpath job runs none of them; they run here.
+      - name: The owner, the auditor, the front door, the service and fastpathctl against the emulator
+        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./cmd/fastpathctl/...
 
   proofs:
     runs-on: ubuntu-latest

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -109,4 +110,108 @@ func (s *Store) EnabledWorkspaces(ctx context.Context) (map[string]bool, time.Ti
 	}
 	read, err := readTimestamp(ro)
 	return out, read, err
+}
+
+// WorkspaceStatus is what turning a workspace off waits for (the production
+// rollout's W2), as one read-only snapshot of its rows read by its keys.
+type WorkspaceStatus struct {
+	Workspace string
+	Enabled   bool
+	// Open, Revoked, Draining and Closed count its leases by state; Revoked
+	// counts the open ones revoked.
+	Open, Revoked, Draining, Closed int64
+	// LeaseReserved is what its leases' donors hold beyond what they
+	// booked; CreditReserved, its credit rows' reservations, the leases'
+	// and any synchronous holds' together.
+	LeaseReserved  int64
+	CreditReserved int64
+	// PendingPacks are its leases' packs whose work is not done.
+	PendingPacks int64
+	ReadTS       time.Time
+}
+
+// Done says whether the workspace is off and nothing of the fast path is
+// left of it: no lease open or draining, nothing its leases' donors hold,
+// and no pack's work pending; and if not, why not.
+func (w WorkspaceStatus) Done() (bool, []string) {
+	var why []string
+	if w.Enabled {
+		why = append(why, "it is enabled")
+	}
+	if w.Open > 0 {
+		why = append(why, fmt.Sprintf("%d leases are open, %d of them revoked", w.Open, w.Revoked))
+	}
+	if w.Draining > 0 {
+		why = append(why, fmt.Sprintf("%d leases are draining", w.Draining))
+	}
+	if w.LeaseReserved != 0 {
+		why = append(why, fmt.Sprintf("its leases' donors hold %d", w.LeaseReserved))
+	}
+	if w.PendingPacks > 0 {
+		why = append(why, fmt.Sprintf("%d packs' work is pending", w.PendingPacks))
+	}
+	return len(why) == 0, why
+}
+
+// WorkspaceStatus reads a workspace's switch, leases, donors, credit rows
+// and pending packs in one read-only transaction, each by the workspace's
+// key: it scans nothing of another workspace's.
+func (s *Store) WorkspaceStatus(ctx context.Context, workspace string) (WorkspaceStatus, error) {
+	if workspace == "" {
+		return WorkspaceStatus{}, errors.New("store: no workspace")
+	}
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	out := WorkspaceStatus{Workspace: workspace}
+	w := map[string]any{"w": workspace}
+	row, err := ro.ReadRowWithOptions(ctx, "tr_fastpath_workspace", spanner.Key{workspace}, []string{"enabled"},
+		&spanner.ReadOptions{RequestTag: tag("status")})
+	switch {
+	case spanner.ErrCode(err) == codes.NotFound:
+	case err != nil:
+		return WorkspaceStatus{}, err
+	default:
+		if err := row.Column(0, &out.Enabled); err != nil {
+			return WorkspaceStatus{}, err
+		}
+	}
+	queries := []struct {
+		sql  string
+		read func(*spanner.Row) error
+	}{
+		{`SELECT state, revoked FROM tr_lease WHERE workspace_id = @w`, func(r *spanner.Row) error {
+			var state string
+			var revoked bool
+			if err := r.Columns(&state, &revoked); err != nil {
+				return err
+			}
+			switch state {
+			case "open":
+				out.Open++
+				if revoked {
+					out.Revoked++
+				}
+			case "draining":
+				out.Draining++
+			default:
+				out.Closed++
+			}
+			return nil
+		}},
+		{`SELECT COALESCE(SUM(allocation - consumed), 0) FROM tr_lease_donor WHERE workspace_id = @w`,
+			func(r *spanner.Row) error { return r.Column(0, &out.LeaseReserved) }},
+		{`SELECT COALESCE(SUM(reserved), 0) FROM tr_credit_balance WHERE workspace_id = @w`,
+			func(r *spanner.Row) error { return r.Column(0, &out.CreditReserved) }},
+		{`SELECT COUNT(*) FROM tr_lease_winners WHERE workspace_id = @w AND work_done_at IS NULL`,
+			func(r *spanner.Row) error { return r.Column(0, &out.PendingPacks) }},
+	}
+	for _, q := range queries {
+		err := ro.QueryWithOptions(ctx, spanner.Statement{SQL: q.sql, Params: w},
+			spanner.QueryOptions{RequestTag: tag("status")}).Do(q.read)
+		if err != nil {
+			return WorkspaceStatus{}, err
+		}
+	}
+	out.ReadTS, err = readTimestamp(ro)
+	return out, err
 }
