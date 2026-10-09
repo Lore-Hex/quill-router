@@ -69,7 +69,8 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	}
 	for _, args := range [][]string{{"status", "ws"}, {"-database", "d", "status"}, {"-database", "d", "drop", "ws"},
 		{"-database", "d", "status", ""}, {"-database", "d"}, {"-database", "d", "disable-all", "ws"},
-		{"-database", "d", "enable", "ws", "more"}} {
+		{"-database", "d", "enable", "ws", "more"}, {"-database", "d", "node"}, {"-database", "d", "node", ""},
+		{"-database", "d", "node", "a", "b"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -177,5 +178,43 @@ func TestAnAnswerNotWrittenIsAFailure(t *testing.T) {
 		if code != 1 || err == nil {
 			t.Errorf("%q with its answer not written: exit %d, %v", args, code, err)
 		}
+	}
+}
+
+// TestNodeSaysWhenANodeMayStop: a node with no row may not stop, exit 3;
+// joined and marked leaving, owning no lease, it may, exit 0.
+func TestNodeSaysWhenANodeMayStop(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	address := storetest.UniqueID("node")
+	node := func() (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, []string{"-database", "d", "node", address}, &out, open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("node wrote %q: %v", out.String(), err)
+		}
+		return code, got
+	}
+	if code, got := node(); code != 3 || got["done"] != false {
+		t.Fatalf("a node with no row: exit %d, %v", code, got)
+	}
+	s, err := store.New(shared, service.Defaults().Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, _, err := s.Join(ctx, address, []string{"owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := s.Heartbeat(ctx, address, epoch, store.Leaving); err != nil || !ok {
+		t.Fatalf("marking the node leaving: %v %v", ok, err)
+	}
+	if code, got := node(); code != 0 || got["done"] != true {
+		t.Fatalf("a node leaving with no lease: exit %d, %v", code, got)
 	}
 }

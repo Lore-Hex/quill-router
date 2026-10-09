@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -125,4 +126,78 @@ func (s *Store) Members(ctx context.Context) ([]Member, time.Time, error) {
 		members[i].Live = read.Sub(members[i].HeartbeatAt) < s.cfg.LiveFor
 	}
 	return members, read, nil
+}
+
+// NodeStatus is what stopping a node waits for (the production rollout's
+// W8): its row, and the open leases it owns, as one read-only snapshot.
+type NodeStatus struct {
+	Address string
+	// Found says the node has a row; State, Epoch and Live are the row's.
+	Found bool
+	State string
+	Epoch int64
+	Live  bool
+	// OpenLeases are the open leases whose owner is the node, of any of
+	// its epochs.
+	OpenLeases int64
+	ReadTS     time.Time
+}
+
+// Done says whether the node may stop: it has a row, the row says it is
+// leaving, and it owns no open lease, so the holds it admitted have ended
+// and its leases are draining or closed; and if not, why not. A node with
+// no row is never done, so an address mistyped is not taken for one that
+// left.
+func (n NodeStatus) Done() (bool, []string) {
+	var why []string
+	switch {
+	case !n.Found:
+		why = append(why, "it has no row: check the address")
+	case n.State != Leaving:
+		why = append(why, fmt.Sprintf("it is %s, not leaving", n.State))
+	}
+	if n.OpenLeases > 0 {
+		why = append(why, fmt.Sprintf("it owns %d open leases", n.OpenLeases))
+	}
+	return len(why) == 0, why
+}
+
+// NodeStatus reads a node's row by its address and counts the open leases
+// it owns, through the leases' index on their state, in one read-only
+// transaction.
+func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, error) {
+	if address == "" {
+		return NodeStatus{}, errors.New("store: no address")
+	}
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	out := NodeStatus{Address: address}
+	row, err := ro.ReadRowWithOptions(ctx, "tr_fastpath_member", spanner.Key{address},
+		[]string{"state", "epoch", "heartbeat_at"}, &spanner.ReadOptions{RequestTag: tag("node-status")})
+	var heartbeat time.Time
+	switch {
+	case spanner.ErrCode(err) == codes.NotFound:
+	case err != nil:
+		return NodeStatus{}, err
+	default:
+		out.Found = true
+		if err := row.Columns(&out.State, &out.Epoch, &heartbeat); err != nil {
+			return NodeStatus{}, err
+		}
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT COUNT(*) FROM tr_lease@{FORCE_INDEX=tr_lease_by_state}
+		       WHERE state = 'open' AND owner_node = @node`,
+		Params: map[string]any{"node": address},
+	}, spanner.QueryOptions{RequestTag: tag("node-status")}).Do(func(r *spanner.Row) error {
+		return r.Column(0, &out.OpenLeases)
+	})
+	if err != nil {
+		return NodeStatus{}, err
+	}
+	if out.ReadTS, err = readTimestamp(ro); err != nil {
+		return NodeStatus{}, err
+	}
+	out.Live = out.Found && out.ReadTS.Sub(heartbeat) < s.cfg.LiveFor
+	return out, nil
 }
