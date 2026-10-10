@@ -37,7 +37,8 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # total bound fences retention. Reads get up to 500 ms for regional latency;
 # commit/control RPCs can use the remainder, never another full budget.
 # Operator range reads retain their separate 200 ms caller deadline.
-# In per-RPC-capped contexts, Commit, Begin and Rollback transport resets
+# The transaction per-RPC cap equals the write budget, still clipped to the
+# remaining shared time. In capped contexts, Commit, Begin and Rollback resets
 # fail fast before the SDK's two-second backoff can exceed the shared deadline.
 # Transaction streaming reads use the SDK restart path, bounded by that shared
 # deadline. EvidenceStore.booking's standalone snapshot read is bounded by its

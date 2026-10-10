@@ -15,7 +15,14 @@ from google.cloud.spanner_v1.types import CommitResponse, PartialResultSet, Tran
 from google.rpc.error_details_pb2 import RetryInfo
 
 from trusted_router import storage_gcp_io as io
-from trusted_router.storage_gcp_async_settle_shadow import COUNTER, EvidenceStore, point_statement
+from trusted_router.storage_gcp_async_settle_shadow import (
+    COUNTER,
+    RPC_BUDGET_SECONDS,
+    TRANSACTION_RPC_BUDGET_SECONDS,
+    WRITE_BUDGET_SECONDS,
+    EvidenceStore,
+    point_statement,
+)
 
 RESET_MESSAGES = (
     'RST_STREAM',
@@ -103,7 +110,7 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
 
 def read_once(tx):
     sql, params, param_types = point_statement(COUNTER, 'offline')
-    return list(tx.execute_sql(sql, params=params, param_types=param_types, timeout=.2, retry=None))
+    return list(tx.execute_sql(sql, params=params, param_types=param_types, timeout=RPC_BUDGET_SECONDS, retry=None))
 
 
 @pytest.mark.parametrize('message', RESET_MESSAGES)
@@ -116,10 +123,10 @@ def test_shadow_reset_fails_inside_horizon_without_sdk_sleep(sdk_database, caplo
     failure = None
     try:
         if operation == 'transaction':
-            store.transaction(read_once, started+1)
+            store.transaction(read_once, started+WRITE_BUDGET_SECONDS)
         else:
             identity = dt.datetime.now(dt.UTC).date().isoformat()+'/offline'
-            store.flush(identity, {'sequence': 1}, started+1)
+            store.flush(identity, {'sequence': 1}, started+WRITE_BUDGET_SECONDS)
     except Exception as error:
         failure = error
     elapsed = clock.monotonic()-started
@@ -131,7 +138,11 @@ def test_shadow_reset_fails_inside_horizon_without_sdk_sleep(sdk_database, caplo
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
-    assert db.calls == ([('read', .2), ('read', .2)] if operation == 'flush' else [('read', .2)]) + [('commit', .5)]
+    read_count = 2 if operation == 'flush' else 1
+    assert db.calls == [
+        ('read', pytest.approx(min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-i*.01)))
+        for i in range(read_count)
+    ] + [('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-read_count*.01)))]
     assert 'stage=commit reason=transport_reset' in caplog.text
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -161,7 +172,7 @@ def test_other_commit_errors_propagate_unchanged(sdk_database, error_type, shado
     started = clock.monotonic()
     with pytest.raises(error_type) as caught:
         if shadow:
-            EvidenceStore(db).transaction(read_once, started+1)
+            EvidenceStore(db).transaction(read_once, started+WRITE_BUDGET_SECONDS)
         else:
             db.run_in_transaction(read_once, timeout_secs=10)
     assert caught.value is error
@@ -172,10 +183,14 @@ def test_other_commit_errors_propagate_unchanged(sdk_database, error_type, shado
 def test_capped_context_with_room_for_first_backoff_keeps_sdk_retry(sdk_database):
     db, clock, sleeps = sdk_database
     db.errors = [InternalServerError('RST_STREAM')]
-    with io.spanner_rpc_deadline(clock.monotonic()+3, max_rpc_seconds=.5):
+    with io.spanner_rpc_deadline(clock.monotonic()+3, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
         db.run_in_transaction(read_once)
     assert sleeps == [2]
-    assert db.calls == [('read', .2), ('commit', .5), ('commit', .5)]
+    assert db.calls == [
+        ('read', min(RPC_BUDGET_SECONDS, 3)),
+        ('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, 3-.01))),
+        ('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, 3-.01-.45-2))),
+    ]
 
 
 def test_shutdown_flush_records_reset_as_store_failure(sdk_database, caplog):
@@ -187,7 +202,7 @@ def test_shutdown_flush_records_reset_as_store_failure(sdk_database, caplog):
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
     started = clock.monotonic()
     try:
-        rt.flush(started+1, True)
+        rt.flush(started+WRITE_BUDGET_SECONDS, True)
         assert clock.monotonic()-started == pytest.approx(.47)
         assert sleeps == []
         body = rt.counters.snapshot()[0][1]
@@ -208,7 +223,7 @@ def test_shadow_mutations_only_begin_reset_fails_inside_horizon(sdk_database, ca
     failure = None
     try:
         EvidenceStore(db).transaction(
-            lambda tx: tx.delete('tr_entities', KeySet(keys=[('kind', 'offline')])), started+1)
+            lambda tx: tx.delete('tr_entities', KeySet(keys=[('kind', 'offline')])), started+WRITE_BUDGET_SECONDS)
     except Exception as error:
         failure = error
     elapsed = clock.monotonic()-started
@@ -218,7 +233,7 @@ def test_shadow_mutations_only_begin_reset_fails_inside_horizon(sdk_database, ca
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
-    assert db.calls == [('begin', .5)]
+    assert db.calls == [('begin', min(TRANSACTION_RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS))]
     assert 'stage=commit reason=transport_reset' in caplog.text
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -235,7 +250,7 @@ def test_shadow_callback_failure_rollback_reset_fails_inside_horizon(sdk_databas
     started = clock.monotonic()
     failure = None
     try:
-        EvidenceStore(db).flush('offline', {'sequence': 1}, started+1)
+        EvidenceStore(db).flush('offline', {'sequence': 1}, started+WRITE_BUDGET_SECONDS)
     except Exception as error:
         failure = error
     elapsed = clock.monotonic()-started
@@ -245,7 +260,10 @@ def test_shadow_callback_failure_rollback_reset_fails_inside_horizon(sdk_databas
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
-    assert db.calls == [('read', .2), ('rollback', .5)]
+    assert db.calls == [
+        ('read', min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS)),
+        ('rollback', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-.01))),
+    ]
     assert 'stage=callback reason=transport_reset' in caplog.text
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -262,9 +280,12 @@ def test_shadow_read_deadline_exceeded_does_not_rollback(sdk_database, caplog):
         read_once(tx)
 
     with pytest.raises(DeadlineExceeded) as caught:
-        EvidenceStore(db).transaction(callback, clock.monotonic()+1)
+        EvidenceStore(db).transaction(callback, clock.monotonic()+WRITE_BUDGET_SECONDS)
     assert caught.value is error
-    assert db.calls == [('read', .2), ('read', .2)]
+    assert db.calls == [
+        ('read', min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS)),
+        ('read', pytest.approx(min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-.01))),
+    ]
     assert sleeps == []
     assert 'stage=callback reason=deadline_exceeded' in caplog.text
     assert 'private' not in caplog.text
@@ -284,9 +305,12 @@ def test_shadow_aborted_reentry_never_repeats_callback_or_commit(sdk_database, c
         read_once(tx)
 
     with pytest.raises(RuntimeError, match='^shadow_transaction_retry$'):
-        EvidenceStore(db).transaction(callback, clock.monotonic()+1)
+        EvidenceStore(db).transaction(callback, clock.monotonic()+WRITE_BUDGET_SECONDS)
     assert len(callbacks) == 1
-    assert db.calls == [('read', .2), ('commit', .5)]
+    assert db.calls == [
+        ('read', min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS)),
+        ('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-.01))),
+    ]
     # Session rolls back the fresh second transaction, which has no id and
     # therefore sends no rollback RPC.
     assert sleeps == [0]
@@ -330,7 +354,7 @@ def test_billing_without_contextvar_deadline_keeps_sdk_retry(sdk_database, messa
     db.session.run_in_transaction(read_once)
     assert sleeps == [2]
     assert clock.monotonic()-started == pytest.approx(2.91)
-    assert db.calls == [('read', .2), ('commit', 20.), ('commit', 20.)]
+    assert db.calls == [('read', RPC_BUDGET_SECONDS), ('commit', 20.), ('commit', 20.)]
     assert io._SPANNER_RPC_DEADLINE.get() is None
 
 
@@ -342,7 +366,8 @@ def test_wrapper_transport_reset_retains_no_private_error(sdk_database, method, 
     error = InternalServerError(message+' '+private_text)
     {'commit': db.errors, 'begin_transaction': db.begin_errors,
      'rollback': db.rollback_errors}[method].append(error)
-    with io.spanner_rpc_deadline(clock.monotonic()+1, max_rpc_seconds=.5):
+    with io.spanner_rpc_deadline(clock.monotonic()+WRITE_BUDGET_SECONDS,
+                                max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
         with pytest.raises(io.SpannerTransportReset) as caught:
             getattr(db.spanner_api, method)()
     err = caught.value
@@ -368,7 +393,8 @@ def test_wrapper_leaves_nonmatching_or_missing_reset_message_unchanged(sdk_datab
      'rollback': db.rollback_errors}[method].append(error)
     # Exercise the wrapper directly: the upstream SDK itself assumes a string
     # message, so its checker is intentionally outside this wrapper witness.
-    with io.spanner_rpc_deadline(clock.monotonic()+1, max_rpc_seconds=.5):
+    with io.spanner_rpc_deadline(clock.monotonic()+WRITE_BUDGET_SECONDS,
+                                max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
         with pytest.raises(InternalServerError) as caught:
             getattr(db.spanner_api, method)()
     assert caught.value is error
@@ -385,13 +411,14 @@ def test_wrapper_requires_exact_error_class_and_shared_deadline(sdk_database, me
 
     error = DerivedInternalServerError('RST_STREAM')
     errors.append(error)
-    with io.spanner_rpc_deadline(clock.monotonic()+1, max_rpc_seconds=.5):
+    with io.spanner_rpc_deadline(clock.monotonic()+WRITE_BUDGET_SECONDS,
+                                max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
         with pytest.raises(DerivedInternalServerError) as caught:
             getattr(db.spanner_api, method)()
     assert caught.value is error
     error = InternalServerError('RST_STREAM')
     errors.append(error)
-    token = io._SPANNER_RPC_MAX_SECONDS.set(.5)
+    token = io._SPANNER_RPC_MAX_SECONDS.set(TRANSACTION_RPC_BUDGET_SECONDS)
     try:
         assert io._SPANNER_RPC_DEADLINE.get() is None
         with pytest.raises(InternalServerError) as caught:
