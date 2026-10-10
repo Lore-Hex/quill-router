@@ -134,7 +134,10 @@ def test_every_write_rejects_retirement_budget_boundary(monkeypatch, kind, shado
 
 def test_cleanup_fence_aborts_delayed_insert_even_after_empty_scan(monkeypatch, shadow_deadline_clock):
     """Optimistic transaction adapter: validate complete-key reads on commit."""
-    from trusted_router.storage_gcp_async_settle_shadow import RETENTION_FENCE
+    from trusted_router.storage_gcp_async_settle_shadow import RETENTION_FENCE, WRITE_BUDGET_SECONDS
+
+    # Start outside the early-rejection window, then deschedule past retention.
+    delay = dt.timedelta(seconds=WRITE_BUDGET_SECONDS + 1)
 
     class Conflict(Exception):
         pass
@@ -155,7 +158,7 @@ def test_cleanup_fence_aborts_delayed_insert_even_after_empty_scan(monkeypatch, 
                         if kind == SAMPLE:
                             # Descheduling can exceed a client deadline. Cleanup
                             # completes while this mutation is still uncommitted.
-                            now[0] += dt.timedelta(seconds=1)
+                            now[0] += delay
                             assert store.cleanup(SAMPLE, day) == ''
                             assert (SAMPLE, identity) not in database.rows
                         writes[kind, identity] = body
@@ -169,7 +172,7 @@ def test_cleanup_fence_aborts_delayed_insert_even_after_empty_scan(monkeypatch, 
     row = sample_row()
     day = row['authorization_day']
     real = dt.datetime
-    now = [real.fromisoformat(day).replace(tzinfo=dt.UTC) + dt.timedelta(days=31, seconds=-1)]
+    now = [real.fromisoformat(day).replace(tzinfo=dt.UTC) + dt.timedelta(days=31) - delay]
 
     class Clock(real):
         @classmethod
