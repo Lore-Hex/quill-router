@@ -254,8 +254,19 @@ footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px
  .page .trc tbody:not([hidden]){grid-template-columns:1fr;gap:10px}
 }
 
-/* Homepage v2 migration block: the "Agent prompt" tab gets a thin outline in the
-   secondary-button colours. Inset shadow, so no layout shift between states. */
-.trm .tab.ag{box-shadow:inset 0 0 0 1px #526859;border-radius:4px}
-.trm .tab.ag:hover{box-shadow:inset 0 0 0 1px #8cab99;background:#14251c;color:#edf8f5}
-.trm .tab.ag[aria-selected="true"]{box-shadow:inset 0 0 0 1px #cce8d7}
+/* Homepage v2 migration block: two levels. A "Code / Agent prompt" switch comes
+   first; the language tabs and the "from" picker only show under Code. */
+.trm .ph2{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 16px}
+.trm .mode-switch{display:inline-flex;gap:2px;padding:3px;border:1px solid #526859;border-radius:8px;background:#0c1411;justify-self:start}
+.trm .mode{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 14px;border-radius:5px;cursor:pointer;font:500 14px/1 var(--mono);color:#adbbb2;white-space:nowrap}
+.trm .mode:hover{color:#edf8f5;background:#14251c}
+.trm .mode[aria-selected="true"]{color:#10241a;background:#cce8d7}
+.trm .mode[aria-selected="true"]:hover{background:#e5fff2}
+.trm .ph2 .from{width:auto;margin:0;padding:0;justify-content:flex-end}
+.trm .ph2 .code-tabs{grid-column:1/-1}
+@media(max-width:600px){
+ .trm .ph2{grid-template-columns:1fr}
+ .trm .mode-switch{display:flex;width:100%;justify-self:stretch}
+ .trm .mode{flex:1}
+ .trm .ph2 .from{order:3;width:100%;justify-content:flex-start}
+}
