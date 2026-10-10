@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
@@ -832,6 +834,83 @@ func TestEveryPartAgreesOnTheStoresTimes(t *testing.T) {
 	}
 }
 
+// TestTheOverdueAllowancesAreTenMinutes: a drain and a pack's pending work
+// are told of ten minutes past their time by default, and the defaults
+// come through the configuration's setup; zero would tell no one.
+func TestTheOverdueAllowancesAreTenMinutes(t *testing.T) {
+	cfg := Defaults()
+	if cfg.Runtime.DrainOverdue != 10*time.Minute || cfg.Pending.Overdue != 10*time.Minute {
+		t.Fatalf("the defaults: a drain's %v, pending work's %v", cfg.Runtime.DrainOverdue, cfg.Pending.Overdue)
+	}
+	got := cfg.agreed()
+	if got.Runtime.DrainOverdue != 10*time.Minute || got.Pending.Overdue != 10*time.Minute {
+		t.Fatalf("after the setup: a drain's %v, pending work's %v", got.Runtime.DrainOverdue, got.Pending.Overdue)
+	}
+}
+
+// lines is a goroutine-safe writer that keeps what was written.
+type lines struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lines) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lines) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+// TestAProcessWithNoAlertCallbackWritesJSON: a process given no Alert
+// writes each alert as a line of JSON to the default output, standard
+// error, with the kind as the label fastpath_alert: a full record of no
+// lease's authorization, published to the record topic, is told of so.
+func TestAProcessWithNoAlertCallbackWritesJSON(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	out := &lines{}
+	saved := alertOutput
+	alertOutput = out
+	t.Cleanup(func() { alertOutput = saved })
+	ps, _ := fakePubSub(t)
+	cfg := config(listen(t))
+	cfg.Alert = nil
+	start(t, cfg, Clients{Spanner: shared, PubSub: ps})
+	records, err := settlelog.OpenRecords(ps, cfg.RecordTopic, cfg.publish())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer records.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := records.Publish("not-an-authorization", settlelog.FullRecord, []byte("x")).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	eventually(t, 20*time.Second, "the alert written", func() (bool, error) {
+		for _, l := range strings.Split(out.String(), "\n") {
+			if strings.Contains(l, "not-an-authorization") {
+				line = l
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	var got map[string]any
+	want := map[string]any{"severity": "ERROR", "message": "fastpath alert: " + auditor.AlertNoLeaseAuth,
+		"subject":                       "not-an-authorization",
+		"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "full_record_of_no_authorization"}}
+	if err := json.Unmarshal([]byte(line), &got); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("the line %q: %v, want %v", line, err, want)
+	}
+}
+
 // TestANodeWhoseRowIsTakenStops: a node whose ring row another process
 // joins under stops, its epoch no longer the row's.
 func TestANodeWhoseRowIsTakenStops(t *testing.T) {
@@ -1612,5 +1691,29 @@ func TestARotationsPhasesTakeEachOthersEnvelopes(t *testing.T) {
 		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
 	if err != nil || settled.Status != frontdoor.Won || settled.Charge != 30 {
 		t.Fatalf("the first phase's request settled through the second's node: %+v %v", settled, err)
+	}
+}
+
+// TestAnAlertIsALineOfJSON: the default alert is one line of JSON for
+// Cloud Logging: severity ERROR, the message, the subject, and the alert's
+// kind as the label fastpath_alert, "other" for a message of no kind.
+func TestAnAlertIsALineOfJSON(t *testing.T) {
+	var out bytes.Buffer
+	writeAlert(&out, "lease-1", auditor.AlertGap)
+	writeAlert(&out, "gwa-2", "something new")
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the lines: %q", out.String())
+	}
+	for i, want := range []map[string]any{
+		{"severity": "ERROR", "message": "fastpath alert: " + auditor.AlertGap, "subject": "lease-1",
+			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "gap"}},
+		{"severity": "ERROR", "message": "fastpath alert: something new", "subject": "gwa-2",
+			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "other"}},
+	} {
+		var got map[string]any
+		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("line %d: %q: %v, want %v", i, lines[i], err, want)
+		}
 	}
 }

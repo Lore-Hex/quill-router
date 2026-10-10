@@ -10,8 +10,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -127,9 +129,9 @@ func Defaults() Config {
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,
-			Wait: 5 * time.Second},
+			Wait: 5 * time.Second, DrainOverdue: 10 * time.Minute},
 		Ticker:   auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
-		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second},
+		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}
@@ -208,7 +210,7 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		return errors.New("service: a Spanner client and a Pub/Sub client")
 	}
 	if cfg.Alert == nil {
-		cfg.Alert = func(subject, what string) { log.Printf("alert: %s: %s", subject, what) }
+		cfg.Alert = func(subject, what string) { writeAlert(alertOutput, subject, what) }
 	}
 	cfg = cfg.agreed()
 	s, err := store.New(c.Spanner, cfg.Store)
@@ -739,4 +741,28 @@ func (r reporting) Receive(ctx context.Context, handle func(context.Context, aud
 		r.fail(err)
 	}
 	return err
+}
+
+// alertOutput is where the default alert writes: the process's standard
+// error, which Cloud Logging reads.
+var alertOutput io.Writer = os.Stderr
+
+// writeAlert writes an alert as one line of JSON, as Cloud Logging reads a
+// process's standard error: severity ERROR, the message, the subject, and
+// the alert's kind (auditor.AlertKind) as the label fastpath_alert, which
+// the alert policies match (docs/runbooks/fastpath-alerts.md). It carries
+// what the alert carries: a lease or an authorization and what happened,
+// never a record's contents.
+func writeAlert(w io.Writer, subject, what string) {
+	line, err := json.Marshal(map[string]any{
+		"severity":                      "ERROR",
+		"message":                       "fastpath alert: " + what,
+		"subject":                       subject,
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+	})
+	if err != nil {
+		log.Printf("alert: %s: %s", subject, what)
+		return
+	}
+	fmt.Fprintln(w, string(line))
 }

@@ -107,6 +107,11 @@ type Config struct {
 	// end by the lease's expiry plus it plus the grace.
 	Grace   time.Duration
 	MaxLife time.Duration
+	// DrainOverdue is how long past its expiry plus MaxLife plus Grace, by
+	// when every hold of a lease has had its time, a lease may still be
+	// draining before a person is told (AlertDrainOverdue), once per lease
+	// a member holds; 0 tells no one.
+	DrainOverdue time.Duration
 	// Records takes the full records of the reaps the runtime makes, and
 	// Wait bounds how long one's publish is waited for.
 	Records RecordLog
@@ -153,6 +158,8 @@ type held struct {
 	// the read before; endSince is when the member saw the drain's end
 	// condition hold, from when a tick may close the lease.
 	cursor, endSince time.Time
+	// overdueTold is set once the member has told of the drain overdue.
+	overdueTold bool
 }
 
 // handled is a record handled, with its delivery. A bad one no member can
@@ -167,7 +174,8 @@ type handled struct {
 // New is a runtime with its configuration.
 func New(cfg Config) (*Runtime, error) {
 	if cfg.Store == nil || cfg.Skew < 0 || cfg.CommitEvery <= 0 || cfg.MaxBatch < 1 || cfg.Retry <= 0 ||
-		cfg.ForgetAfter < 0 || cfg.Grace < 0 || cfg.MaxLife <= 0 || cfg.Records == nil || cfg.Wait <= 0 {
+		cfg.ForgetAfter < 0 || cfg.Grace < 0 || cfg.MaxLife <= 0 || cfg.DrainOverdue < 0 || cfg.Records == nil ||
+		cfg.Wait <= 0 {
 		return nil, errors.New("auditor: a runtime needs a store, a skew allowance, a commit interval, a batch size, " +
 			"a retry wait, a grace, a hold's maximum life, the record topic and a publish wait")
 	}
@@ -254,7 +262,7 @@ func (rt *Runtime) handle(ctx context.Context, d Delivery) {
 	r, err := record.Decode(d.Data())
 	x := &handled{d: d, r: r, bad: err != nil}
 	if x.bad {
-		rt.cfg.Alert(h.id, "a record the auditor cannot read")
+		rt.cfg.Alert(h.id, AlertUnreadableRecord)
 	}
 	h.pending = append(h.pending, x)
 	rt.replay(ctx, h, len(h.pending)-1)
@@ -324,7 +332,7 @@ func (rt *Runtime) apply(ctx context.Context, h *held, x *handled) (Outcome, boo
 		switch {
 		case err != nil:
 			x.bad = true
-			rt.cfg.Alert(h.id, "a record the auditor cannot apply")
+			rt.cfg.Alert(h.id, AlertUnappliableRecord)
 			return Skipped, true
 		case out != Behind:
 			return out, true
@@ -342,7 +350,7 @@ func (rt *Runtime) apply(ctx context.Context, h *held, x *handled) (Outcome, boo
 		}
 		switch {
 		case errors.Is(err, store.ErrNoLease):
-			rt.cfg.Alert(h.id, "a record of a lease the store does not have")
+			rt.cfg.Alert(h.id, AlertNoSuchLease)
 			rt.finish(h)
 			return 0, false
 		case err != nil:
@@ -372,7 +380,7 @@ func (rt *Runtime) load(ctx context.Context, h *held) bool {
 		loaded, err := rt.read(ctx, h)
 		switch {
 		case errors.Is(err, store.ErrNoLease):
-			rt.cfg.Alert(h.id, "a record of a lease the store does not have")
+			rt.cfg.Alert(h.id, AlertNoSuchLease)
 			rt.finish(h)
 			return false
 		case err == nil && (loaded.Lease.State == "closed" || loaded.Lease.GapSeq.Valid):
@@ -416,7 +424,19 @@ func (rt *Runtime) read(ctx context.Context, h *held) (store.Loaded, error) {
 // member, which the next record reads again.
 func (rt *Runtime) drain(ctx context.Context, h *held, at time.Time) {
 	l := h.lease
-	if !l.draining || !l.sStored {
+	if !l.draining {
+		return
+	}
+	// Still draining once every hold has had its time, and the allowance
+	// past that: a person is told, once, before anything the tick may not
+	// get to, the boundary's commit included, whose failing may be what
+	// keeps the drain from moving.
+	if rt.cfg.DrainOverdue > 0 && !h.overdueTold &&
+		!at.Before(l.expiry.Add(rt.cfg.MaxLife+rt.cfg.Grace+rt.cfg.DrainOverdue)) {
+		h.overdueTold = true
+		rt.cfg.Alert(h.id, AlertDrainOverdue)
+	}
+	if !l.sStored {
 		return
 	}
 	if !l.winnersLoaded {
@@ -545,13 +565,13 @@ func (rt *Runtime) closeAt(ctx context.Context, h *held, at time.Time) {
 // stored it may have lost its answer, or its member stopped, before telling.
 func (rt *Runtime) told(h *held, l store.Lease) {
 	if l.GapSeq.Valid {
-		rt.cfg.Alert(h.id, "a gap in the lease's records stopped it")
+		rt.cfg.Alert(h.id, AlertGap)
 	}
 	if l.AuditFaultSeq.Valid {
-		rt.cfg.Alert(h.id, "an audit fault: the owner's checkpoint disagrees with its records")
+		rt.cfg.Alert(h.id, AlertAuditFault)
 	}
 	if l.FaultUsage > 0 {
-		rt.cfg.Alert(h.id, "a charge past the lease's allocation")
+		rt.cfg.Alert(h.id, AlertFaultUsage)
 	}
 }
 
@@ -574,7 +594,7 @@ func (rt *Runtime) stopAtGap(ctx context.Context, h *held, i int) bool {
 	if err != nil || !stopped {
 		return false
 	}
-	rt.cfg.Alert(h.id, "a gap in the lease's records stopped it")
+	rt.cfg.Alert(h.id, AlertGap)
 	rt.finish(h)
 	return true
 }
@@ -600,10 +620,10 @@ func (rt *Runtime) ack(h *held, n int) {
 // allocation.
 func (rt *Runtime) landed(h *held, got store.CommitResult, n int) {
 	if got.AuditFault != nil {
-		rt.cfg.Alert(h.id, "an audit fault: the owner's checkpoint disagrees with its records")
+		rt.cfg.Alert(h.id, AlertAuditFault)
 	}
 	if len(got.Faults) > 0 {
-		rt.cfg.Alert(h.id, "a charge past the lease's allocation")
+		rt.cfg.Alert(h.id, AlertFaultUsage)
 	}
 	rt.ack(h, n)
 }
