@@ -84,8 +84,15 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
     "greenference": ProviderBrand("https://greenference.com/"),
-    "system1models": ProviderBrand("https://system1models.ai/"),
-    "system1models-eu": ProviderBrand("https://system1models.ai/eu"),
+    # Keep public IDs and regional credentials stable across the provider rebrand.
+    "system1models": ProviderBrand(
+        "https://decisionmodels.io/",
+        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The Global route uses the peer-to-peer tier.",
+    ),
+    "system1models-eu": ProviderBrand(
+        "https://decisionmodels.io/eu",
+        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The EU route remains EU-only.",
+    ),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),

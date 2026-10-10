@@ -72,6 +72,7 @@ def test_discovery_uses_exact_regional_usd_not_eur(tier, slug, cost):
         assert price.completion_micro_per_m == 0
         assert rows[model]["endpoints"] == ["decide"]
         assert rows[model]["model_type"] == "decision"
+        assert rows[model]["display_name"] == f"Decision Models {rows[model]['upstream_id']} ({tier.upper()})"
         assert "chat/completions" not in rows[model]["endpoints"]
 
 
@@ -190,7 +191,8 @@ def test_canary_requires_matching_tier_model_and_billable_usage(monkeypatch, tie
 
     def post(url, *, headers, json, timeout):
         assert headers == {"Authorization": f"Bearer test-{tier}", "S1-Region": tier}
-        assert url.endswith("/systemone") and json["model"] == "s1-fast"
+        assert url == "https://api.decisionmodels.io/v1/systemone"
+        assert json["model"] == "s1-fast"
         return httpx.Response(
             200,
             request=httpx.Request("POST", url),
@@ -261,8 +263,34 @@ def test_public_pages_identify_decision_api_and_provider(client, slug):
     assert "/decide" in page.text and "chat.completions.create" not in page.text
     provider = client.get(f"/providers/{slug}")
     assert provider.status_code == 200
-    assert "System1" in provider.text
+    assert "Decision Models" in provider.text
+    assert "Formerly System1 Models" in provider.text
+    assert "https://decisionmodels.io/" in provider.text
     assert "Finland" in provider.text
+
+
+@pytest.mark.parametrize("tier", ["global", "eu"])
+def test_rebrand_preserves_namespaces_keys_prices_and_residency(tier):
+    from scripts.pricing.providers._system1models import URL
+    from trusted_router.catalog_data import PROVIDERS
+    from trusted_router.provider_branding import provider_homepage_url
+    from trusted_router.provider_locations import PROVIDER_INFERENCE_LOCATIONS
+
+    adapter = System1Catalog(tier)
+    slug = "system1models-eu" if tier == "eu" else "system1models"
+    assert adapter.slug == slug
+    assert adapter.key_env == f"SYSTEM1MODELS_{tier.upper()}_API_KEY"
+    assert URL == "https://api.decisionmodels.io/v1/models"
+    assert PROVIDERS[slug].name == f"Decision Models ({'EU' if tier == 'eu' else 'Global'})"
+    assert PROVIDERS[slug].provider_policy_url == "https://decisionmodels.io/legal/privacy"
+    assert provider_homepage_url(slug) == "https://decisionmodels.io/" + ("eu" if tier == "eu" else "")
+    assert all(url.startswith("https://decisionmodels.io/") for _, url in PROVIDER_INFERENCE_LOCATIONS[slug].sources)
+    manifest = json.loads(adapter.manifest_path.read_text())
+    assert manifest["provider"] == slug
+    for row in manifest["models"]:
+        assert row["id"] == f"{slug}/{row['upstream_id']}"
+        assert row["display_name"].startswith("Decision Models ")
+        assert row["output_token_price_per_m"] == 0
 
 
 def test_hourly_refresh_and_native_cloud_secret_contract():

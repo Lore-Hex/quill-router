@@ -2,7 +2,7 @@
   "provider": "system1models",
   "models": [
     {
-      "display_name": "System1 s1-fast (GLOBAL)",
+      "display_name": "Decision Models s1-fast (GLOBAL)",
       "title": "s1-fast",
       "model_type": "decision",
       "input_modalities": [
@@ -32,7 +32,7 @@
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "System1 s1-pro (GLOBAL)",
+      "display_name": "Decision Models s1-pro (GLOBAL)",
       "title": "s1-pro",
       "model_type": "decision",
       "input_modalities": [
@@ -62,7 +62,7 @@
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "System1 s1-vision (GLOBAL)",
+      "display_name": "Decision Models s1-vision (GLOBAL)",
       "title": "s1-vision",
       "model_type": "decision",
       "input_modalities": [
@@ -93,7 +93,7 @@
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "System1 s1-llm-auto-router (GLOBAL)",
+      "display_name": "Decision Models s1-llm-auto-router (GLOBAL)",
       "title": "s1-llm-auto-router",
       "model_type": "decision",
       "input_modalities": [

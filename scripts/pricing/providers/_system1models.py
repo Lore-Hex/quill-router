@@ -1,4 +1,4 @@
-"""System1's regional typed-decision catalogs, priced by actual input tokens."""
+"""Decision Models' regional catalogs, retaining the System1 API namespaces."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from scripts.pricing.manifest import (
     write_discovered_chat_manifest,
 )
 
-BASE_URL = "https://api.system1models.ai/v1"
+BASE_URL = "https://api.decisionmodels.io/v1"
 URL = f"{BASE_URL}/models"
 
 
@@ -105,7 +105,7 @@ class System1Catalog:
             rows[model_id] = {
                 "id": model_id,
                 "upstream_id": native,
-                "display_name": f"System1 {native} ({self.tier.upper()})",
+                "display_name": f"Decision Models {native} ({self.tier.upper()})",
                 # The contract publishes byte/tokenizer bounds, not a model context window.
                 "context_length": 0,
                 "model_type": "decision",

@@ -758,7 +758,7 @@
   "system1models": {
     "card_version": 2,
     "model_count": 3,
-    "name": "System1 Models (Global)",
+    "name": "Decision Models (Global)",
     "privacy": "Policy documented",
     "route_count": 3,
     "route_mode": "Prepaid",
@@ -767,7 +767,7 @@
   "system1models-eu": {
     "card_version": 2,
     "model_count": 3,
-    "name": "System1 Models (EU)",
+    "name": "Decision Models (EU)",
     "privacy": "Policy documented",
     "route_count": 3,
     "route_mode": "Prepaid",
