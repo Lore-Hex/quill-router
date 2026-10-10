@@ -272,7 +272,7 @@ def configure_spanner_rpc_deadlines(
                 # reset retries, including its private, unbounded sleep. Match
                 # _helpers._retry's exact class and _check_rst_stream_error's
                 # two markers; never carry the transport's text into diagnostics.
-                if (
+                transport_reset = (
                     _method_name in ("commit", "begin_transaction", "rollback")
                     and rpc_max is not None
                     and deadline is not None
@@ -281,9 +281,12 @@ def configure_spanner_rpc_deadlines(
                     and any(marker in (getattr(error, "message", None) or "") for marker in (
                         "RST_STREAM", "Received unexpected EOS on DATA frame from server",
                     ))
-                ):
-                    raise SpannerTransportReset("transport_reset") from None
-                raise
+                )
+                if not transport_reset:
+                    raise
+            # Leave the handler so the private transport error is not retained
+            # as __context__; suppressing its display alone is insufficient.
+            raise SpannerTransportReset("transport_reset") from None
 
         setattr(api, method_name, bounded_rpc)
 

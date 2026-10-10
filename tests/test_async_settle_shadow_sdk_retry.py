@@ -335,6 +335,28 @@ def test_billing_without_contextvar_deadline_keeps_sdk_retry(sdk_database, messa
 
 
 @pytest.mark.parametrize('method', ['commit', 'begin_transaction', 'rollback'])
+@pytest.mark.parametrize('message', RESET_MESSAGES)
+def test_wrapper_transport_reset_retains_no_private_error(sdk_database, method, message):
+    db, clock, _ = sdk_database
+    private_text = 'private SQL body and customer token'
+    error = InternalServerError(message+' '+private_text)
+    {'commit': db.errors, 'begin_transaction': db.begin_errors,
+     'rollback': db.rollback_errors}[method].append(error)
+    with io.spanner_rpc_deadline(clock.monotonic()+1, max_rpc_seconds=.5):
+        with pytest.raises(io.SpannerTransportReset) as caught:
+            getattr(db.spanner_api, method)()
+    err = caught.value
+    assert err.__cause__ is None
+    assert err.__context__ is None
+    assert err.__suppress_context__ is True
+    assert err.args == ('transport_reset',)
+    for rendered in (repr(err), str(err), repr(err.args), repr(err.__dict__)):
+        assert message not in rendered
+        assert private_text not in rendered
+        assert 'private' not in rendered
+
+
+@pytest.mark.parametrize('method', ['commit', 'begin_transaction', 'rollback'])
 @pytest.mark.parametrize('message', [None, 'missing', 'rst_stream',
                                     'received unexpected EOS on DATA frame from server'])
 def test_wrapper_leaves_nonmatching_or_missing_reset_message_unchanged(sdk_database, method, message):
