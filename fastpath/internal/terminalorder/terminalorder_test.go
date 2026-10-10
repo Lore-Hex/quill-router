@@ -13,17 +13,25 @@ import (
 
 // Instances for TLC to write whole state graphs of. One has a single
 // authorization that is a declared stream, with front-door appends:
-// heartbeats, the release, adoption and reaps. Another has two that do not
-// stream: the per-authorization functions, and Close's look at every hold.
-// The third gives the drain log rows of both, so that a hold's first row can
-// come after another's: adoption, ApplyDrain and the acknowledged rows across
-// authorizations. TLC reaches 4,742, 46,728 and 264,008 distinct states in
-// them; the third is read as it streams (tlc.Compare).
+// heartbeats, the answer, the release, adoption and reaps. Another has two
+// that do not stream: the per-authorization functions, and Close's look at
+// every hold. The third gives the drain log rows of both, so that a hold's
+// first row can come after another's: adoption, ApplyDrain and the
+// acknowledged rows across authorizations, for the negative control;
+// TerminalOrder.rows.cfg is it with the first hold listable. TLC reaches
+// 13,322, 69,768 and 692,648 distinct states in them; the third is read as
+// it streams (tlc.Compare).
 var (
-	oneStream  = Config{Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, MaxAppends: 2}
-	twoPlain   = Config{Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false}}
+	oneStream = Config{
+		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, Listable: []bool{false}, MaxAppends: 2,
+	}
+	twoPlain = Config{
+		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false},
+		Listable: []bool{false, false},
+	}
 	twoAppends = Config{
-		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false}, MaxAppends: 2,
+		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false},
+		Listable: []bool{false, false}, MaxAppends: 2,
 	}
 )
 
@@ -63,10 +71,11 @@ CONSTANTS
     Auths = %s
     Streams = %s
     Declared = %s
+    Listable = %s
     MaxAppends = %d
 INVARIANTS
     TypeOK
-`, set(c.Auths, nil), set(c.Auths, c.Stream), set(c.Auths, c.Declared), c.MaxAppends)
+`, set(c.Auths, nil), set(c.Auths, c.Stream), set(c.Auths, c.Declared), set(c.Auths, c.Listable), c.MaxAppends)
 }
 
 // cfgInstances are the instances proofs/TerminalOrder*.cfg check, their
@@ -75,16 +84,31 @@ INVARIANTS
 // until a change to a file is made here too.
 var cfgInstances = map[string]Config{
 	"TerminalOrder.cfg": {
-		Auths: []string{"a1", "a2"}, Stream: []bool{true, false}, Declared: []bool{true, false}, MaxAppends: 2,
+		Auths: []string{"a1", "a2"}, Stream: []bool{true, false}, Declared: []bool{true, false},
+		Listable: []bool{false, false}, MaxAppends: 1,
 	},
 	"TerminalOrder.undeclared.cfg": {
-		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{false}, MaxAppends: 1,
+		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{false}, Listable: []bool{false}, MaxAppends: 1,
+	},
+	"TerminalOrder.list.cfg": {
+		Auths: []string{"a1"}, Stream: []bool{false}, Declared: []bool{false}, Listable: []bool{true}, MaxAppends: 1,
+	},
+	"TerminalOrder.appends.cfg": {
+		Auths: []string{"a1"}, Stream: []bool{true}, Declared: []bool{true}, Listable: []bool{false}, MaxAppends: 2,
+	},
+	"TerminalOrder.rows.cfg": {
+		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false},
+		Listable: []bool{true, false}, MaxAppends: 2,
+	},
+	"TerminalOrder.reaps.cfg": {
+		Auths: []string{"a1", "a2"}, Stream: []bool{false, false}, Declared: []bool{false, false},
+		Listable: []bool{true, true}, MaxAppends: 0,
 	},
 }
 
 // specConstants are the constants TerminalOrder declares: a configuration of
 // it assigns them, and nothing else.
-var specConstants = []string{"Auths", "Streams", "Declared", "MaxAppends"}
+var specConstants = []string{"Auths", "Streams", "Declared", "Listable", "MaxAppends"}
 
 // bind has TLC check that proofs/<file> sets up c's model: TLC's parser finds
 // the file assigns the spec's constants and sets nothing else that changes
@@ -98,9 +122,10 @@ func bind(file string, c Config) error {
 }
 
 // declares is the formula that a configuration has c's constants, up to the
-// names of its model values, which the spec treats alike.
+// names of its model values, which the spec treats alike: how many there are
+// of each kind, a listable one's kind included.
 func declares(c Config) string {
-	streams, declared := 0, 0
+	streams, declared, listable, listedStreams, listedDeclared := 0, 0, 0, 0, 0
 	for a := range c.Auths {
 		if c.Stream[a] {
 			streams++
@@ -108,10 +133,21 @@ func declares(c Config) string {
 		if c.Declared[a] {
 			declared++
 		}
+		if c.Listable[a] {
+			listable++
+			if c.Stream[a] {
+				listedStreams++
+			}
+			if c.Declared[a] {
+				listedDeclared++
+			}
+		}
 	}
 	return fmt.Sprintf("Cardinality(Auths) = %d /\\ Cardinality(Streams) = %d /\\ Cardinality(Declared) = %d /\\ "+
-		"Declared \\subseteq Streams /\\ Streams \\subseteq Auths /\\ MaxAppends = %d",
-		len(c.Auths), streams, declared, c.MaxAppends)
+		"Declared \\subseteq Streams /\\ Streams \\subseteq Auths /\\ Cardinality(Listable) = %d /\\ "+
+		"Cardinality(Listable \\cap Streams) = %d /\\ Cardinality(Listable \\cap Declared) = %d /\\ "+
+		"Listable \\subseteq Auths /\\ MaxAppends = %d",
+		len(c.Auths), streams, declared, listable, listedStreams, listedDeclared, c.MaxAppends)
 }
 
 type step struct {
@@ -237,7 +273,7 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 	}
 	r = rec(r, "lease", "ownerUp", "ownerCutoff", "issuedAtCutoff", "deadlinePassed", "outbox", "delivered",
 		"acked", "tickAt", "S", "drain", "appends", "ownerApplied", "drainApplied", "winner", "ownerWinner",
-		"gwAcked", "enc", "allowance")
+		"gwAcked", "enc", "allowance", "got", "listed")
 	s.Lease = enum(r["lease"], leaseNames)
 	s.OwnerUp, s.OwnerCutoff = flag(r["ownerUp"]), flag(r["ownerCutoff"])
 	s.IssuedAtCutoff, s.DeadlinePassed = num(r["issuedAtCutoff"]), flag(r["deadlinePassed"])
@@ -267,6 +303,30 @@ func fromTLC(c Config, r tlc.Record) (State, error) {
 	perAuth(r["ownerWinner"], func(v tlc.Value, a int8) { s.OwnerWinner[a] = num(v) })
 	perAuth(r["enc"], func(v tlc.Value, a int8) { s.Enc[a] = enum(v, encNames) })
 	perAuth(r["allowance"], func(v tlc.Value, a int8) { s.Allowance[a] = flag(v) })
+	got, ok := r["got"].(tlc.Set)
+	if !ok {
+		fail("got is not a set: %v", r["got"])
+	}
+	for _, v := range got {
+		if a := auth(v); a >= 0 {
+			if s.Got[a] {
+				fail("got holds %v twice", v)
+			}
+			s.Got[a] = true
+		}
+	}
+	listed, ok := r["listed"].(tlc.Set)
+	if !ok {
+		fail("listed is not a set: %v", r["listed"])
+	}
+	for _, v := range listed {
+		if a := auth(v); a >= 0 {
+			if s.Listed[a] {
+				fail("listed holds %v twice", v)
+			}
+			s.Listed[a] = true
+		}
+	}
 	acked, ok := r["gwAcked"].(tlc.Set)
 	if !ok {
 		fail("gwAcked is not a set: %v", r["gwAcked"])
@@ -429,11 +489,12 @@ func TestMappingRefusesWhatAStateCannotHold(t *testing.T) {
 }
 
 // TestRandomWalksKeepTheInvariants walks an instance larger than the .cfg's:
-// three authorizations, two of them streams, more appends.
+// three authorizations, two of them streams, two of them listable, more
+// appends.
 func TestRandomWalksKeepTheInvariants(t *testing.T) {
 	c := Config{
 		Auths: []string{"a1", "a2", "a3"}, Stream: []bool{true, true, false}, Declared: []bool{true, false, false},
-		MaxAppends: 3,
+		Listable: []bool{false, true, true}, MaxAppends: 3,
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
@@ -474,6 +535,11 @@ func TestValidateRefusesWhatTheSpecAssumesAway(t *testing.T) {
 	bad.MaxAppends = MaxDrain
 	if bad.Validate() == nil {
 		t.Error("more appends than the drain log holds are accepted")
+	}
+	bad = twoPlain
+	bad.Listable = []bool{true}
+	if bad.Validate() == nil {
+		t.Error("a configuration that says nothing of a2's listing is accepted")
 	}
 	bad = twoPlain
 	bad.Auths = []string{"a1", "a1"}
