@@ -1016,6 +1016,9 @@ class Settings(BaseSettings):
     # AWS-EU database but has no compute yet.
     external_live_regions: str = "aws-eu-west-1,aws-eu-west-3,azure-australiaeast"
     primary_region: str = "us-central1"
+    # TR_SERVING_REGION identifies this process's deployment, not the primary
+    # Spanner/journal region. Empty preserves primary_region as the fallback.
+    serving_region: str = ""
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
     synthetic_monitor_region: str | None = None
     synthetic_monitor_api_key: str | None = None
@@ -1983,6 +1986,10 @@ class Settings(BaseSettings):
             joined = ", ".join(missing)
             raise ValueError(f"production configuration is not fail-closed: {joined}")
         return self
+
+    @property
+    def effective_serving_region(self) -> str:
+        return self.serving_region or self.primary_region
 
     @property
     def google_oauth_enabled(self) -> bool:

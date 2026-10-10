@@ -99,7 +99,7 @@ class Runtime:
         import threading
         self.settings, self.async_runtime, self.store, self.observer = settings, async_runtime, store, observer
         self.signer = ShadowSigner(async_runtime.signer) if async_runtime.signer else None
-        self.counters = Counters(settings.primary_region, settings.release or "unknown")
+        self.counters = Counters(settings.effective_serving_region, settings.release or "unknown")
         self.lock = threading.RLock()
         self.tokens, self.refilled = 10., time.monotonic()
         self.pending = self.queued_bytes = 0
@@ -153,7 +153,7 @@ class Runtime:
             claims = dict(authorization_id=authorization.id, generation_id=generation_id_for_authorization(authorization.id),
                 workspace_id=authorization.workspace_id, key_id=authorization.key_hash,
                 invocation_nonce=authorization.invocation_nonce, reservation_id=authorization.credit_reservation_id,
-                billing_authority=authorization.settlement, journal_region=self.async_runtime.region,
+                billing_authority=authorization.settlement, journal_region=self.async_runtime.effective_journal_region,
                 epoch=self.async_runtime.epoch, route_type=route, streamed=streamed, settle_origin="typed",
                 snapshot_version=1, snapshot_hash=additions["billing_snapshot_hash"], async_eligible=False,
                 iss=self.signer.trusted.iss, aud="router-shadow", iat=issued, exp=issued+LIFETIME)
@@ -337,7 +337,8 @@ class Runtime:
                           capture.endpoint.id if capture.endpoint else None,
                           self.async_runtime.region, self.async_runtime.epoch, int(capture.received), booking,
                           rebuild if capture.endpoints else None, capture.endpoints is not None and capture.prices_match_booking,
-                          "stage_d_document" if capture.document else "catalog_at_authorize_time" if capture.endpoints else "unknown")
+                          "stage_d_document" if capture.document else "catalog_at_authorize_time" if capture.endpoints else "unknown",
+                          journal_region=self.async_runtime.effective_journal_region)
             failure_reason = "worker_error"
             cpu_started = time.thread_time_ns()
             compared = compare(headers, ctx, [self.signer.trusted] if self.signer else [])

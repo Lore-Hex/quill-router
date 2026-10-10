@@ -181,6 +181,13 @@ class Runtime:
     admission: AdmissionCache | None
     region: str
     epoch: int
+    # Journal authority stays primary even when observation is regional.
+    # Direct constructors predating serving-region labels use region for both.
+    journal_region: str | None = None
+
+    @property
+    def effective_journal_region(self) -> str:
+        return self.region if self.journal_region is None else self.journal_region
 
 
 def load_runtime(settings: Settings, backend: Any) -> Runtime:
@@ -217,7 +224,8 @@ def load_runtime(settings: Settings, backend: Any) -> Runtime:
             def health_read() -> dict[str, Any] | None:
                 return read_health(backend._database) if settings.async_settle_admission_enabled else None
         admission = AdmissionCache(lambda ws: read_admission(backend._database, ws), health_read=health_read)
-    return Runtime(signer, admission, settings.primary_region, settings.async_settle_authority_epoch)
+    return Runtime(signer, admission, settings.effective_serving_region,
+                   settings.async_settle_authority_epoch, journal_region=settings.primary_region)
 
 
 def projection(*, authorization: GatewayAuthorization, endpoints: Iterable[ModelEndpoint],
@@ -241,7 +249,7 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         require_eligible(requested)
         # Missing authority facts must not be invented from defaults or routing.
         if (runtime is None or runtime.signer is None or runtime.epoch < 1
-                or not runtime.region or not authorization.credit_reservation_id
+                or not runtime.effective_journal_region or not authorization.credit_reservation_id
                 or authorization.settlement != "local" or authorization.settled):
             return result
         digest = canonical_hash(snapshot)
@@ -259,7 +267,7 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
             generation_id=generation_id_for_authorization(authorization.id),
             workspace_id=authorization.workspace_id, key_id=authorization.key_hash,
             invocation_nonce=authorization.invocation_nonce, billing_authority="local",
-            journal_region=runtime.region, epoch=runtime.epoch, snapshot_version=1,
+            journal_region=runtime.effective_journal_region, epoch=runtime.epoch, snapshot_version=1,
             snapshot_hash=digest, route_type=requested.route_type, streamed=requested.streamed,
             reservation_id=authorization.credit_reservation_id, settle_origin="typed",
             async_eligible=eligible, iss=signer.trusted.iss, aud=signer.trusted.aud,
