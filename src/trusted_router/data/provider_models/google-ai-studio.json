@@ -945,48 +945,48 @@
     {
       "display_name": "Gemini 3.8 Flash Lite TTS",
       "title": "google/gemini-3.8-flash-lite-tts",
-      "model_type": "chat",
+      "model_type": "speech",
       "features": [],
       "input_modalities": [
         "text"
       ],
       "output_modalities": [
-        "text"
+        "speech"
       ],
       "endpoints": [
-        "chat/completions"
+        "audio/speech"
       ],
       "status": 1,
       "id": "google/gemini-3.8-flash-lite-tts",
       "upstream_id": "gemini-3.8-flash-lite-tts",
       "context_length": 8192,
       "max_output_tokens": 16384,
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-09-23"
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 6000000
     },
     {
       "display_name": "Gemini 3.8 Flash TTS",
       "title": "google/gemini-3.8-flash-tts",
-      "model_type": "chat",
+      "model_type": "speech",
       "features": [],
       "input_modalities": [
         "text"
       ],
       "output_modalities": [
-        "text"
+        "speech"
       ],
       "endpoints": [
-        "chat/completions"
+        "audio/speech"
       ],
       "status": 1,
       "id": "google/gemini-3.8-flash-tts",
       "upstream_id": "gemini-3.8-flash-tts",
       "context_length": 8192,
       "max_output_tokens": 16384,
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-09-23"
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 9000000
     }
   ],
   "pricing_source": "https://ai.google.dev/gemini-api/docs/pricing"

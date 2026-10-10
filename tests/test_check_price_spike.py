@@ -1462,3 +1462,59 @@ def test_fifteenth_unapproved_refresh_transition_still_blocks() -> None:
     assert failures[0].startswith(f"{route} prompt:")
     assert len(changes) == 10
     assert removed == []
+
+
+@pytest.mark.parametrize("native, old_output", [
+    ("gemini-3.8-flash-tts", 9_000_000),
+    ("gemini-3.8-flash-lite-tts", 6_000_000),
+])
+@pytest.mark.parametrize("change", [
+    "approved", "early", "input_only", "output_only", "wrong_old", "wrong_new",
+    "next_doubling", "chat", "provider", "tag", "upstream", "headline", "tier", "cached",
+])
+def test_dated_speech_approval_requires_exact_endpoint_and_complete_pairs(
+    monkeypatch: pytest.MonkeyPatch, native: str, old_output: int, change: str,
+) -> None:
+    from datetime import UTC, datetime
+
+    from trusted_router import pricing_approvals
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 12, 31, tzinfo=UTC) if change == "early" else cls(2027, 1, 1, tzinfo=UTC)
+
+    monkeypatch.setattr(pricing_approvals, "datetime", Clock)
+    route = f"google/{native} [google-ai-studio:google-ai-studio:{native}]"
+    old = {"prompt": Decimal(500_000), "completion": Decimal(old_output)}
+    new = {key: value * 2 for key, value in old.items()}
+    if change == "input_only":
+        new["completion"] = old["completion"]
+    elif change == "output_only":
+        new["prompt"] = old["prompt"]
+    elif change == "wrong_old":
+        old["completion"] -= 1
+    elif change == "wrong_new":
+        new["completion"] += 1
+    elif change == "next_doubling":
+        old, new = new, {key: value * 2 for key, value in new.items()}
+    elif change == "chat":
+        route = route.replace("-tts", "")
+    elif change == "provider":
+        route = route.replace("[google-ai-studio:", "[google-vertex:")
+    elif change == "tag":
+        route = route.replace(":google-ai-studio:", ":other:")
+    elif change == "upstream":
+        route = route.replace(f":{native}]", ":other]")
+    elif change == "headline":
+        route = f"google/{native}"
+    elif change == "tier":
+        route += " tier[max=1000]"
+    elif change == "cached":
+        route += " cached-input"
+    failures, changes, _ = check(
+        {route: {key: str(value / 10**12) for key, value in old.items()}},
+        {route: {key: str(value / 10**12) for key, value in new.items()}},
+    )
+    assert bool(failures) == (change != "approved")
+    assert changes  # An approval never hides the repricing from the report.

@@ -254,6 +254,7 @@ jobs:
         # script returned non-zero.
         run: |
           set -o pipefail
+          uv run python -m scripts.pricing.speech
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
 
       - name: Sanity-check for price spikes + record deltas
@@ -344,6 +345,7 @@ jobs:
           # Stage the snapshot AND any self-healed parser modules.
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
+            src/trusted_router/data/speech_pricing.json \
             src/trusted_router/data/provider_models/ \
             src/trusted_router/data/model_changes.jsonl \
             src/trusted_router/data/model_changes_state.json \
