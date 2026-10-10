@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
+from google.api_core import exceptions as api_errors
 from google.cloud.spanner_v1 import param_types as pt
 
 from trusted_router.async_settle_shadow_compare import Booking
@@ -31,10 +34,13 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
 
 # Multi-round-trip writes share the worker's one-second budget. The same
-# total bound fences retention; individual RPCs still get at most 200 ms.
+# total bound fences retention. Reads stay at 200 ms; commit needs headroom
+# for cross-region replication beyond the read's network round trip.
 WRITE_BUDGET_SECONDS = 1.0
 RPC_BUDGET_SECONDS = .2
+TRANSACTION_RPC_BUDGET_SECONDS = .5
 RETENTION_FENCE = "retention-v1"
+logger = logging.getLogger(__name__)
 
 
 class RetirementBoundary(ValueError):
@@ -72,6 +78,28 @@ class EvidenceStore:
     def __init__(self, database: Any) -> None:
         self.database = database
         self.rejections: Counter[tuple[str, str]] = Counter()
+        self._failure_log_lock = threading.Lock()
+        self._next_failure_log = 0.
+
+    def _report_failure(self, stage: str, error: Exception, started: float) -> None:
+        now = time.monotonic()
+        with self._failure_log_lock:
+            if now < self._next_failure_log:
+                return
+            self._next_failure_log = now + 60
+        # Never stringify exceptions or attach traces: they can contain SQL
+        # parameters or evidence. Only fixed categories and timing leave here.
+        reason = "other"
+        for cls, label in ((api_errors.DeadlineExceeded, "deadline_exceeded"),
+                           (api_errors.Cancelled, "cancelled"),
+                           (api_errors.Aborted, "aborted"),
+                           (api_errors.ServiceUnavailable, "unavailable"),
+                           (TimeoutError, "local_budget")):
+            if isinstance(error, cls):
+                reason = label
+                break
+        logger.warning("shadow evidence transaction failed stage=%s reason=%s elapsed_ms=%d",
+                       stage, reason, max(0, round((now-started)*1000)))
 
     @staticmethod
     def query(reader: Any, statement: Statement, deadline: float) -> list[Any]:
@@ -87,24 +115,33 @@ class EvidenceStore:
                                        retry=None, request_options={"priority": "PRIORITY_LOW"}))
 
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
-        if time.monotonic() >= deadline:
+        started = time.monotonic()
+        if started >= deadline:
             raise TimeoutError("shadow budget")
         rpc_deadline = min(deadline, time.monotonic() + WRITE_BUDGET_SECONDS)
         attempted = False
+        stage = "begin"
         def once(tx: Any) -> Any:
-            nonlocal attempted
+            nonlocal attempted, stage
             if attempted:
                 # The SDK may re-enter on Aborted, but it must never repeat reads/writes or
                 # commit a second attempt. Runtime counts this as a store drop.
                 raise RuntimeError("shadow_transaction_retry")
             attempted = True
-            return callback(tx)
-        with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=RPC_BUDGET_SECONDS):
-            result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
-                commit_request_options={"priority": "PRIORITY_LOW"})
-            if time.monotonic() >= rpc_deadline:
-                raise TimeoutError("shadow commit budget")
+            stage = "callback"
+            result = callback(tx)
+            stage = "commit"
             return result
+        try:
+            with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
+                result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
+                    commit_request_options={"priority": "PRIORITY_LOW"})
+                if time.monotonic() >= rpc_deadline:
+                    raise TimeoutError("shadow commit budget")
+                return result
+        except Exception as error:
+            self._report_failure(stage, error, started)
+            raise
 
     def write(self, tx: Any, kind: str, identity: str, body: dict[str, Any], deadline: float) -> None:
         # Every insert site, including operator control writes, uses this path.
