@@ -25,7 +25,7 @@ from trusted_router.async_settle_shadow_evidence import (
     validate_sample,
 )
 from trusted_router.detached_jws import canonical
-from trusted_router.storage_gcp_io import spanner_rpc_deadline
+from trusted_router.storage_gcp_io import SpannerCommitTransportReset, spanner_rpc_deadline
 
 FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
                     "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id")
@@ -37,6 +37,9 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # total bound fences retention. Reads get up to 500 ms for regional latency;
 # commit/control RPCs can use the remainder, never another full budget.
 # Operator range reads retain their separate 200 ms caller deadline.
+# Commit transport resets fail closed before the SDK's two-second backoff;
+# RPCs share the remaining horizon, with no reset sleep extending it. This
+# bounds scheduled I/O, not Python scheduling/GC or late server-side commits.
 WRITE_BUDGET_SECONDS = 1.0
 RPC_BUDGET_SECONDS = .5
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
@@ -91,7 +94,8 @@ class EvidenceStore:
         # Never stringify exceptions or attach traces: they can contain SQL
         # parameters or evidence. Only fixed categories and timing leave here.
         reason = "other"
-        for cls, label in ((api_errors.DeadlineExceeded, "deadline_exceeded"),
+        for cls, label in ((SpannerCommitTransportReset, "transport_reset"),
+                           (api_errors.DeadlineExceeded, "deadline_exceeded"),
                            (api_errors.Cancelled, "cancelled"),
                            (api_errors.Aborted, "aborted"),
                            (api_errors.ServiceUnavailable, "unavailable"),
