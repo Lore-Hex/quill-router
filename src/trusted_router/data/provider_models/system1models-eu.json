@@ -2,7 +2,7 @@
   "provider": "system1models-eu",
   "models": [
     {
-      "display_name": "System1 s1-fast (EU)",
+      "display_name": "Decision Models s1-fast (EU)",
       "title": "s1-fast",
       "model_type": "decision",
       "input_modalities": [
@@ -32,7 +32,7 @@
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "System1 s1-pro (EU)",
+      "display_name": "Decision Models s1-pro (EU)",
       "title": "s1-pro",
       "model_type": "decision",
       "input_modalities": [
@@ -62,7 +62,7 @@
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "System1 s1-vision (EU)",
+      "display_name": "Decision Models s1-vision (EU)",
       "title": "s1-vision",
       "model_type": "decision",
       "input_modalities": [
@@ -93,7 +93,7 @@
       "output_token_price_per_m": 0
     },
     {
-      "display_name": "System1 s1-llm-auto-router (EU)",
+      "display_name": "Decision Models s1-llm-auto-router (EU)",
       "title": "s1-llm-auto-router",
       "model_type": "decision",
       "input_modalities": [

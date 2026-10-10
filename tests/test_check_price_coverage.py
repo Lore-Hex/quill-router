@@ -104,7 +104,7 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "glm-5-2-260617"}]}
     if "abliterate.ai" in url:
         return {"data": [{"id": "abliterate-0.3-fast"}]}
-    if "api.system1models.ai" in url:
+    if "api.decisionmodels.io" in url:
         return {"data": [{"id": "s1-fast"}]}
     if "api.lyceum.technology" in url:
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}

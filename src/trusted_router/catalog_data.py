@@ -2066,13 +2066,13 @@ PROVIDERS: dict[str, Provider] = {
     **{
         slug: Provider(
             slug=slug,
-            name=f"System1 Models ({tier})",
+            name=f"Decision Models ({tier})",
             supports_chat=False,
             supports_prepaid=True,
             supports_byok=False,
             stores_content=False,
             provider_policy=(
-                "Typed decision models, not chat completions. System1 states that prompts "
+                "Typed decision models, not chat completions. Decision Models states that prompts "
                 "and outputs are processed in memory, never stored or used for training. "
                 "Operational billing metadata is retained. No confidential-compute or "
                 "E2EE claim is made. "
@@ -2081,7 +2081,7 @@ PROVIDERS: dict[str, Provider] = {
                    "Global uses spare EU capacity and may use worldwide capacity for opted-in keys; "
                    "it is not an EU residency guarantee.")
             ),
-            provider_policy_url="https://system1models.ai/legal/privacy",
+            provider_policy_url="https://decisionmodels.io/legal/privacy",
             provider_headquarters_country="DE",
         )
         for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
@@ -4143,10 +4143,10 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     **{
         slug: ModelOrigin(
             country=None,
-            lab_name="System1 Models (serving namespace)",
-            source_url="https://system1models.ai/models",
+            lab_name="Decision Models (serving namespace)",
+            source_url="https://decisionmodels.io/models",
             note=(
-                "System1's regional profiles serve Plumb, Winnow and JevOmni "
+                "Decision Models' regional profiles serve open-weight "
                 "decision models. The serving company's German jurisdiction "
                 "does not establish the origin of the underlying weights."
             ),

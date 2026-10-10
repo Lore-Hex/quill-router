@@ -53,8 +53,8 @@ PROVIDER_INFERENCE_LOCATIONS = {
             trustedrouter_pinning=f"Use {slug}/s1-fast, s1-pro or s1-vision. The gateway pins S1-Region={tier} and a separate regional key; no cross-tier fallback.",
             declaration=("EU-only inference, currently Finland." if tier == "eu" else "Global, dynamically scheduled inference; no fixed-country residency commitment."),
             evidence="Public API and regional documentation; authenticated tier probes",
-            reviewed_on="2026-10-01",
-            sources=(("Regional processing and pricing", "https://system1models.ai/models"), ("Processing locations", "https://system1models.ai/legal/subprocessors"), ("API contract", "https://system1models.ai/openapi.json")),
+            reviewed_on="2026-10-09",
+            sources=(("Regional processing and pricing", "https://decisionmodels.io/models"), ("Processing locations", "https://decisionmodels.io/legal/subprocessors"), ("API contract", "https://decisionmodels.io/openapi.json")),
         ) for slug, tier in (("system1models", "global"), ("system1models-eu", "eu"))
     },
     "lyceum": InferenceLocations(
