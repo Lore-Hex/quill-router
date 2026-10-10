@@ -125,6 +125,7 @@ from trusted_router.seo_meta import (
     seo_title,
     truncate_seo_text,
 )
+from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.storage_models import BedrockGroupBuyPledge
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -5027,6 +5028,10 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     else:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
+    speech = SPEECH_MODELS.get(model.id)
+    if speech and not speech.token_billed:
+        prompt = f"{format_money_precise(speech.customer_rate)}/M characters"
+        completion = "Included"
     cached_prices = _cached_prompt_prices(route_endpoints)
     if cached_prices:
         cached_prompt = _price_values_range(cached_prices, include_zero=True)
@@ -5083,7 +5088,8 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "context_length_compact": _compact_token_count(model.context_length),
         "context_length_int": model.context_length,
         "prompt_price": prompt,
-        "cached_prompt_price": cached_prompt,
+        "cached_prompt_price": "Not applicable" if speech else cached_prompt,
+        "speech": speech_metadata(model.id) if speech else None,
         "completion_price": completion,
         "prompt_price_sort": prompt_price_sort,
         "cached_price_sort": min(cached_prices) if cached_prices else None,
@@ -5443,6 +5449,7 @@ def _model_detail_view(
     include_section_links: bool = True,
 ) -> dict[str, object]:
     publisher = _model_publisher(model)
+    speech = SPEECH_MODELS.get(model.id)
     is_meta = model.id in META_MODEL_IDS
     fixed_price = is_meta and (
         model.prompt_price_microdollars_per_million_tokens > 0
@@ -5465,9 +5472,9 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
-                "cached_prompt_price": _cached_prompt_price_range((endpoint,)),
-                "completion_price": _endpoint_price_range(
+                "prompt_price": f"{format_money_precise(speech.customer_rate)}/M characters" if speech and not speech.token_billed else _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "cached_prompt_price": "Not applicable" if speech else _cached_prompt_price_range((endpoint,)),
+                "completion_price": "Included" if speech and not speech.token_billed else _endpoint_price_range(
                     (endpoint,), "completion_price_microdollars_per_million_tokens"
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
@@ -5513,6 +5520,7 @@ def _model_detail_view(
         "context_length": f"{model.context_length:,}",
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
+        "speech": speech_metadata(model.id) if speech else None,
         "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
         "cached_prompt_price": (
             "selected route" if is_meta else _cached_prompt_price_range(endpoints)

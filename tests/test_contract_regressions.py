@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from tests.fakes.production_storage import PRODUCTION_SPANNER_STORAGE
@@ -38,6 +40,15 @@ def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: 
             trusted["published_completion_price_microdollars_per_million_tokens"]
             == trusted["completion_price_microdollars_per_million_tokens"]
         )
+        speech = trusted.get("speech", {})
+        if "input_character_price_per_million" in speech:
+            assert "prompt" not in pricing and "completion" not in pricing
+            assert Decimal(pricing["input_character"]) * 1_000_000 == Decimal(
+                speech["input_character_price_per_million"]
+            )
+            assert trusted["prompt_price_microdollars_per_million_tokens"] == 0
+            assert trusted["completion_price_microdollars_per_million_tokens"] == 0
+            continue
         assert pricing["prompt"] == _per_token_decimal(
             trusted["prompt_price_microdollars_per_million_tokens"]
         )

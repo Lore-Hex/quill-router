@@ -198,10 +198,12 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
     cache_token_prices_microdollars,
+    customer_fixed_price_microdollars,
     select_price_tier,
 )
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
+from trusted_router.speech import SPEECH_MODELS
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1315,6 +1317,34 @@ _VIDEO_MODELS: dict[str, Model] = {
 }
 MODELS.update(_VIDEO_MODELS)
 
+for _speech in SPEECH_MODELS.values():
+    if _speech.provider == "azure":
+        # Foundry chat agreements must not silently extend to Speech preview.
+        _MODEL_PROVIDER_PRIVACY_OVERRIDES[(_speech.id, "azure")] = ModelProviderPrivacyOverride(
+            privacy_tier=0, provider_zero_data_retention=False,
+            provider_confidential_compute=False, provider_e2ee=False,
+            provider_policy="Azure Speech MAI preview; no route-specific ZDR commitment verified.",
+            provider_policy_url="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-voices",
+        )
+    MODELS[_speech.id] = Model(
+        id=_speech.id, name=_speech.name, provider=_speech.provider,
+        upstream_id=_speech.upstream_id, context_length=8192 if _speech.token_billed else 0,
+        supports_chat=False, supports_messages=False,
+        output_modalities=("speech",), prepaid_available=True, byok_available=False,
+        supported_parameters=("voice", "response_format", "speed"),
+        prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.input_token_cost),
+        completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.output_token_cost),
+        published_prompt_price_microdollars_per_million_tokens=_speech.input_token_cost,
+        published_completion_price_microdollars_per_million_tokens=_speech.output_token_cost,
+        documentation=ModelDocumentation(
+            description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per input character, not per token.",
+            input_format="POST /v1/audio/speech with model, input (text), voice, and response_format.",
+            output_format="Raw audio bytes. Errors are JSON. See supported response_formats.",
+            example_input='{"model":"' + _speech.id + '","input":"Hello!","voice":"' + _speech.voices[0] + '","response_format":"' + _speech.formats[0] + '"}',
+            example_output="Binary audio, not a JSON envelope.",
+        ),
+    )
+
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODELS[POLYPHEMUS_MODEL_ID] = Model(
     id=POLYPHEMUS_MODEL_ID,
@@ -1640,7 +1670,7 @@ for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
 MODEL_ENDPOINTS = _apply_provider_manifest_expiry(MODEL_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
-    explicit_model_ids=frozenset(_VIDEO_MODELS),
+    explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS),
     at=CATALOG_RESOLVED_AT,
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)

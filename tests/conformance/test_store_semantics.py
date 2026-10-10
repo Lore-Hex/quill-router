@@ -2144,6 +2144,21 @@ def test_video_tariff_persists_without_stage_d_enrollment(
     assert stored.heartbeat_seq is None
 
 
+def test_speech_tariff_persists_without_heartbeat_enrollment(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    snapshot = '{"v":1,"candidates":[]}'
+    first = _authorize(store, workspace_id, f"speech-{unique}", idempotency_key=unique,
+                       pricing_snapshot=snapshot, stage_d_reason="speech_token_usage")
+    second = _authorize(store, workspace_id, f"speech-{unique}", idempotency_key=unique,
+                        pricing_snapshot="new-price", stage_d_reason="changed")
+    assert first.id == second.id  # type: ignore[attr-defined]
+    stored = store.get_gateway_authorization(first.id)  # type: ignore[attr-defined]
+    assert stored is not None and stored.pricing_snapshot == snapshot
+    assert stored.stage_d_reason == "speech_token_usage"
+    assert stored.heartbeat_seq is None
+
+
 def test_gateway_idempotency_is_scoped_per_key(
     store: Store, workspace_id: str, unique: str
 ) -> None:

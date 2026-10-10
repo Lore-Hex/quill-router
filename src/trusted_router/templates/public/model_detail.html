@@ -34,7 +34,19 @@
           <span class="muted-copy">No AI IQ profile matched yet.</span>
           {% endif %}
         </td></tr>
+        {% if model.speech %}
+        <tr><th>Input limit</th><td>{{ model.speech.max_input_characters }} characters</td></tr>
+        {% if model.speech.billing_unit == 'input_characters' %}
+        <tr><th>Input price</th><td>${{ model.speech.input_character_price_per_million }}/M characters</td></tr>
+        {% else %}
+        <tr><th>Input price</th><td>${{ model.speech.input_token_price_per_million }}/M text tokens</td></tr>
+        <tr><th>Output price</th><td>${{ model.speech.output_audio_token_price_per_million }}/M audio tokens</td></tr>
+        {% endif %}
+        <tr><th>Formats</th><td>{{ model.speech.response_formats|join(', ') }}</td></tr>
+        <tr><th>Voices</th><td>{{ model.speech.supported_voices|join(', ') }}</td></tr>
+        {% else %}
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
+        {% endif %}
         {% if model.is_meta %}
         <tr><th>Orchestration</th><td>
           {% if model.orchestration_primitive %}<span class="pill">{{ model.orchestration_primitive }}</span>{% endif %}
@@ -79,6 +91,7 @@
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
           {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
           {% if model.supports_decide %}<span class="pill">decide</span>{% endif %}
+          {% if model.speech %}<span class="pill">speech</span>{% endif %}
           {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
           {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
           {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}

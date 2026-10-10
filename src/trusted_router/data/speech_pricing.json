@@ -1,0 +1,24 @@
+{
+  "checked_on": "2026-10-10",
+  "prices": {
+    "elevenlabs/eleven-flash-v2.5": 40000000,
+    "elevenlabs/eleven-multilingual-v2": 80000000,
+    "elevenlabs/eleven-turbo-v2.5": 40000000,
+    "elevenlabs/eleven-v3": 80000000,
+    "microsoft/mai-voice-2.1": 22000000,
+    "microsoft/mai-voice-2.1-flash": 15000000,
+    "mistralai/voxtral-mini-tts-2603": 16000000,
+    "x-ai/grok-voice-tts-1.0": 15000000
+  },
+  "token_prices": {
+    "google/gemini-3.8-flash-lite-tts": {
+      "input": 500000,
+      "output": 6000000
+    },
+    "google/gemini-3.8-flash-tts": {
+      "input": 500000,
+      "output": 9000000
+    }
+  },
+  "unit": "microdollars_per_million_input_characters"
+}
