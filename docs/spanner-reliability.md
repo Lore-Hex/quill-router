@@ -285,3 +285,25 @@ typed-table reads after the first typed authorization is created.
 Spanner table-size metrics include retained historical versions. TTL deletion
 is asynchronous, and physical storage can remain visible until the database
 version-retention window and compaction have elapsed.
+
+## CPU for background work
+
+The combined control plane runs settlement, observation, and heartbeat loops
+outside HTTP requests. Its Cloud Run deployment therefore explicitly sets
+`--no-cpu-throttling`. A warm minimum instance count keeps instances resident;
+it does not guarantee CPU between requests under request-based billing.
+Suspended background work can resume after its database deadline has elapsed.
+See Google's [background activity guidance](https://docs.cloud.google.com/run/docs/tips/general)
+and [billing settings](https://docs.cloud.google.com/run/docs/configuring/billing-settings).
+
+Instance-based billing increases idle compute charges. This setting does not
+increase instance floors, ceilings, concurrency, or database deadlines. Keep
+the guarded no-traffic warmup and regional ramps. Do not silently restore
+request-based CPU allocation unless these loops have been moved to a supported
+execution lifetime. Public-only services that do not own these loops are not
+changed by this control-plane setting.
+
+After rollout, verify `run.googleapis.com/cpu-throttling` is `false` on each
+serving revision and compare background progress and database errors across
+idle and active periods. Fixing the configuration mismatch does not by itself
+prove every database alert was caused by CPU suspension.

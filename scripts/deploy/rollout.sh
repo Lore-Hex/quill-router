@@ -793,12 +793,15 @@ deploy_one_region() {
   # /chat and /synth stream through /chat-proxy/v1 for browser CORS.
   # Synth can legitimately take several model calls before final output, so
   # match the proxy's 300s upstream read timeout unless explicitly overridden.
+  # Settlement and observation loops also run between requests. Allocate CPU
+  # for the instance lifetime; minimum instances alone do not provide idle CPU.
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
       --port 8080 \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
+      --no-cpu-throttling \
       --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \
       --min "$min_instances" \
       --min-instances "$revision_min_instances" \

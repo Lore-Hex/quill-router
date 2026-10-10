@@ -611,6 +611,8 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     # Declared autoscaling ceiling per revision (async-settle §5 fleet budget caps = 2x).
     assert deploy[deploy.index("--max-instances") + 1] == "12"
     assert deploy[deploy.index("--concurrency") + 1] == "8"
+    assert deploy.count("--no-cpu-throttling") == 1
+    assert "--cpu-throttling" not in deploy
     assert "--no-traffic" in deploy
     assert any(
         call[0:4] == ["gcloud", "run", "revisions", "describe"]
@@ -621,6 +623,25 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
         call[0] == "curl" and "staged-probe---" in call[-1]
         for call in run.calls
     )
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_control_plane_allocates_cpu_for_background_workers(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_NO_TRAFFIC": no_traffic},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploys = [call for call in run.calls if call[3:5] == ["run", "deploy"]]
+    assert deploys
+    for deploy in deploys:
+        assert deploy.count("--no-cpu-throttling") == 1
+        assert "--cpu-throttling" not in deploy
+        assert deploy[deploy.index("--min") + 1] == "8"
+        assert deploy[deploy.index("--max-instances") + 1] == "12"
+        assert ("--no-traffic" in deploy) == (no_traffic == "1")
 
 
 # A live primary revision that predates the Bigtable analytics retirement. The
