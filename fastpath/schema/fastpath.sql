@@ -108,6 +108,10 @@ CREATE TABLE tr_lease (
 -- so the index is not written by renewals.
 CREATE INDEX tr_lease_by_state ON tr_lease (state);
 
+-- The open leases a node owns (fastpathctl node): a node marked leaving
+-- stops once it owns none, so a deploy loses no lease.
+CREATE INDEX tr_lease_by_owner ON tr_lease (owner_node, state);
+
 -- A lease by its ID alone. An authorization names its lease but not the
 -- workspace, and the answer for an authorization (§4.9) is looked up from
 -- its ID: this finds the lease's workspace, and with it the lease's packs.

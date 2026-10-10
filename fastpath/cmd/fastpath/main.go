@@ -49,7 +49,7 @@ func start(getenv func(string) string, node func() error) int {
 func run() error {
 	cfg := service.Defaults()
 	roles := flag.String("roles", "admission", "the roles to run: admission, auditor, or both, separated by a comma")
-	flag.StringVar(&cfg.Address, "address", "", "the admission node's host and port, as other nodes reach it")
+	flag.StringVar(&cfg.Address, "address", "", "an admission node's host and port, as other nodes reach it; an auditor member's own names its row")
 	flag.StringVar(&cfg.Region, "region", "", "the settle log's region")
 	database := flag.String("database", "", "the spike's database: projects/P/instances/I/databases/D")
 	project := flag.String("project", "", "the Pub/Sub project")

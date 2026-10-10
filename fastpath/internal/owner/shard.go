@@ -174,10 +174,15 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 // answered after it included, and each lease it holds admits nothing more
 // (Lease.Close), serving its holds, its next checkpoint returning its free
 // room and its final one, once no hold is open, ending it. A request it can
-// no longer take is ErrNoRoom, for the front door to take elsewhere.
+// no longer take is ErrNoRoom, for the front door to take elsewhere. A
+// lease still held once every hold admitted before could have lived, a
+// hold's life and the grace, is renewed no more and let go past its cutoff
+// (abandoned), for the auditor to finish.
 func (o *Owner) Retire() {
 	o.mu.Lock()
-	o.retiring = true
+	if !o.retiring {
+		o.retiring, o.retiredAt = true, o.cfg.Clock()
+	}
 	leases := make([]*Lease, 0, len(o.leases))
 	for _, l := range o.leases {
 		leases = append(leases, l)

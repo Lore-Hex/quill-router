@@ -146,8 +146,11 @@ func (c Config) valid() error {
 	switch {
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
-	case c.Admission && (c.Address == "" || len(c.Key) < frontdoor.MinKeySize || c.Shards < 1):
-		return errors.New("service: an admission node needs its address, a key of at least 32 bytes and a shard count")
+	case c.Address == "":
+		return errors.New("service: a process needs its address, an admission node's host and port as other nodes " +
+			"reach it, or the name of an auditor member's own row")
+	case c.Admission && (len(c.Key) < frontdoor.MinKeySize || c.Shards < 1):
+		return errors.New("service: an admission node needs a key of at least 32 bytes and a shard count")
 	case c.Region == "" || c.SettleTopic == "" || c.RecordTopic == "":
 		return errors.New("service: a process needs its region, the settle log's topic and the record topic")
 	case c.Auditor && (c.SettleSubscription == "" || c.RecordSubscription == ""):
@@ -378,7 +381,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			}
 		}()
 	}
-	node, err := ring.Start(p.ctx, s, cfg.Address, []string{ring.OwnerRole, "frontdoor"}, cfg.Ring)
+	node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
 	if err != nil {
 		return err
 	}
@@ -521,9 +524,32 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	return nil
 }
 
+// roles are a process's membership roles (tr_fastpath_member): an
+// admission node's owner and front door, and the auditor's, so that a
+// deploy sees what a node runs (docs/runbooks/fastpath-deploy.md).
+func roles(cfg Config) []string {
+	var out []string
+	if cfg.Admission {
+		out = append(out, ring.OwnerRole, "frontdoor")
+	}
+	if cfg.Auditor {
+		out = append(out, "auditor")
+	}
+	return out
+}
+
 // auditor starts an auditor member: the runtime on the settle log's
 // subscription, the ticker, the pending work and the record topic's stager.
+// One of its own joins the membership with the auditor role, so that a
+// deploy sees it live; one beside an admission node is on the node's row.
 func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
+	if !cfg.Admission {
+		node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+		if err != nil {
+			return err
+		}
+		p.stop(node.Stop)
+	}
 	rc := cfg.Runtime
 	rc.Store, rc.Records, rc.Alert, rc.Clock = s, auditor.FromRecords(records), cfg.Alert, time.Now
 	rt, err := auditor.New(rc)

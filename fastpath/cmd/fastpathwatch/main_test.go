@@ -78,7 +78,7 @@ func stage(t *testing.T, src watch.Sources) (string, store.LeaseRef, deps) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1), spanner.InsertMap("tr_credit_balance",
 		map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(10_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}

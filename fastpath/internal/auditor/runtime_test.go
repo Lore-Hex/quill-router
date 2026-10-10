@@ -281,8 +281,9 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 	f.t.Helper()
 	ctx := context.Background()
 	ws := storetest.UniqueID("ws")
-	if _, err := f.db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
-		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
+	if _, err := f.db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member(grantee.Node, grantee.Epoch),
+		spanner.InsertMap("tr_credit_balance", map[string]any{
+			"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		f.t.Fatal(err)
 	}
 	id := store.NewLeaseID()

@@ -70,7 +70,7 @@ func TestSchemaIsAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(indexes)
-	wantIndexes := "tr_lease_by_id ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
+	wantIndexes := "tr_lease_by_id ON tr_lease IN , tr_lease_by_owner ON tr_lease IN , tr_lease_by_state ON tr_lease IN , " +
 		"tr_lease_drain_by_commit ON tr_lease_drain IN tr_lease, " +
 		"tr_lease_staged_by_lease ON tr_lease_staged IN , tr_lease_winners_by_work ON tr_lease_winners IN "
 	if got := strings.Join(indexes, ", "); got != wantIndexes {

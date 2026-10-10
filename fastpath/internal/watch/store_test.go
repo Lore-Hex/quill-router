@@ -62,7 +62,7 @@ func TestTheStoreReadsPendingWorkAndBookings(t *testing.T) {
 		usage []int64
 	}{{ws, []int64{40, 2}}, {other, []int64{1000}}} {
 		var mutations []*spanner.Mutation
-		mutations = append(mutations, storetest.Enabled(w.id))
+		mutations = append(mutations, storetest.Enabled(w.id), storetest.Member("node-a", 1))
 		for shard, usage := range w.usage {
 			mutations = append(mutations, spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": w.id,
 				"shard": int64(shard), "total_credits": int64(10_000), "total_usage": usage, "trust_tier": int64(3)}))

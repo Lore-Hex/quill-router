@@ -157,9 +157,11 @@ type Owner struct {
 	// from its start the owner takes no lease.
 	handoff    chan struct{}
 	handoffErr error
-	// retiring is set once the owner takes nothing new (Retire).
-	retiring bool
-	leases   map[string]*Lease
+	// retiring is set once the owner takes nothing new (Retire), at
+	// retiredAt.
+	retiring  bool
+	retiredAt time.Time
+	leases    map[string]*Lease
 	// retired are the leases the owner let go, each with its workers' end:
 	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
