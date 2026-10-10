@@ -28,6 +28,8 @@ from typing import Any
 
 import httpx
 
+from trusted_router.model_aliases import canonical_openrouter_model_id
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
 
@@ -234,6 +236,8 @@ def _google_standard_endpoint_rank(slug: str, tag: str) -> int | None:
 
 def slim_model(raw: dict[str, Any], endpoints: list[dict[str, Any]]) -> dict[str, Any]:
     kept = {key: raw.get(key) for key in MODEL_FIELDS if key in raw}
+    if isinstance(model_id := kept.get("id"), str):
+        kept["id"] = canonical_openrouter_model_id(model_id)
     kept["endpoints"] = endpoints
     return kept
 

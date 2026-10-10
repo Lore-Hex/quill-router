@@ -1,4 +1,17 @@
-"""Brand spellings only; unknown model names still fail catalog validation."""
+"""Explicit router-brand and upstream catalog aliases; no fuzzy model matching."""
+
+_OPENROUTER_MODEL_ID_ALIASES = {
+    # Published from Mistral's native catalog before OpenRouter listed it.
+    "mistralai/mistral-large-4-0": "mistralai/mistral-large-4",
+}
+
+
+def canonical_openrouter_model_id(model_id: str) -> str:
+    """Keep established public IDs when OpenRouter uses a different spelling.
+
+    Apply only to catalog model IDs, never endpoint-native request IDs.
+    """
+    return _OPENROUTER_MODEL_ID_ALIASES.get(model_id, model_id)
 
 
 def canonical_router_model_id(model_id: str) -> str:

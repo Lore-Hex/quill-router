@@ -65,6 +65,7 @@ from scripts.pricing.base import (
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingest_openrouter_catalog import build_snapshot as build_openrouter_snapshot  # noqa: E402
 
+from trusted_router.model_aliases import canonical_openrouter_model_id  # noqa: E402
 from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E402
 from trusted_router.provider_manifest_policy import (  # noqa: E402
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
@@ -617,7 +618,7 @@ def _known_model_ids(snapshot: dict[str, Any]) -> set[str]:
     }
     for path in PROVIDER_MANIFEST_DIR.glob("*.json"):
         known.update(_manifest_model_ids(path))
-    return known
+    return {canonical_openrouter_model_id(model_id) for model_id in known}
 
 
 def _latest_model_created(snapshot: dict[str, Any]) -> int:
@@ -667,11 +668,13 @@ def _new_parser_requirements(
         if not isinstance(model, dict) or not _model_outputs_text(model):
             continue
         model_id = model.get("id")
+        if not isinstance(model_id, str):
+            continue
+        model_id = canonical_openrouter_model_id(model_id)
         endpoints = model.get("endpoints")
         created = model.get("created")
         if (
-            not isinstance(model_id, str)
-            or not isinstance(endpoints, list)
+            not isinstance(endpoints, list)
             or model_id in known
             or not _is_launch_candidate(model_id)
             or not isinstance(created, int)
