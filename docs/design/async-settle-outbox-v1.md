@@ -1919,6 +1919,13 @@ declared region block certification (`regional_roster_unknown`,
 `regional_coverage_gap`, or `legacy_region_label`). A label present elsewhere
 in the fleet does not establish this writer's region.
 
+Requested-day samples are checked against this same per-writer map using
+their **observation day**, not their authorization day. A contradictory or
+unprovable sample region produces `<sample-id>:legacy_sample_region` and a
+day-level `legacy_sample_region` gap. Such samples remain in the original
+evidence and reconciliation counts, but cannot seed the clean clock or enter
+regional percentiles, even after a later seven-day clean suffix restores PASS.
+
 Pilot coverage reports list legacy-labelled rows as `legacy_region_label`,
 name mixed labels for one instance/day (`mixed_region_labels`), and identify
 coverage that would depend on old labels (`legacy_region_coverage`). Any such
@@ -1928,6 +1935,30 @@ and report their workspace/health read counts separately in
 Roster membership alone cannot detect an old revision whose primary label
 happens to equal its true region, so deployment evidence that every serving
 instance carries the pin remains a prerequisite to choosing the clean days.
+
+The #1663 transition from seven-character `TR_RELEASE` to full 40-hex
+`TR_SOURCE_REVISION` also affects retained counter exports from before and
+during that rollout. `counter_coverage_report`, `fleet-budgets`, and
+`shadow_report` recognize otherwise valid seven-hex counter revisions only
+for diagnostics: `legacy_revision_label` blocks that writer/day, and
+`counter_coverage` returns false. These rows cannot cover clean intervals or
+contribute trusted regional rates/percentiles. Their original IDs, revision
+labels, intervals, and workspace/health reads are retained separately in
+`legacy_revision_labels`. A row with both a legacy revision and a wrong region
+appears in both diagnostic lists; deduplicate by row identity when accounting
+for total legacy reads. Full-SHA validation for clean counters is unchanged;
+other malformed evidence (including short revisions in samples or manifests)
+still fails schema validation and cannot certify a day.
+
+Keep those original exports and the reviewed deployment lifetimes as evidence
+that affected UTC days are non-certifiable; do not expand a short SHA, relabel,
+or drop rows to manufacture coverage. Select complete subsequent UTC days only
+after deployment evidence proves both the full source revision and serving
+region pins on every router. A counter-only legacy day can remain in a report
+with a later complete clean suffix; a schema-invalid export must be archived
+separately from the later clean-day export, with its affected days explicitly
+excluded from certification. These format diagnostics do not establish the
+deployment-pin prerequisite or move the earliest possible start above.
 
 Retry identity is independent of serving region and router revision. The
 persisted sample has no separate journal-region field: its verified terminal

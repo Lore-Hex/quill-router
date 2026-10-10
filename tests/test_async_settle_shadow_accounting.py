@@ -881,3 +881,90 @@ def test_shadow_report_mixed_fleet_labels_require_each_writers_region(legacy):
     assert any(g.endswith(':legacy_region_label') for g in result['gaps']) is legacy
     assert (day+':regional_coverage_gap' in result['gaps']) is legacy
     assert result['resets'] == []
+
+
+def seal_regional_proof(rows, proof):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+
+
+def test_legacy_sample_not_attributed_to_primary():
+    rows,days,proof=synthetic_window()
+    for row in rows:
+        if row['kind'] == COUNTER:
+            row['body']['region'] = 'europe-west4'
+    for roster in proof['instance_regions_by_day'].values():
+        for boot in roster:
+            roster[boot] = 'europe-west4'
+    seal_regional_proof(rows, proof)
+    # All truthful European counters; one retained legacy sample still labels primary.
+    original = copy.deepcopy(rows)
+    result=report(rows,days,proof)
+    assert result['status']=='BLOCKED', (result['status'],result['gaps'],list(result['regional_percentiles']))
+    assert rows == original
+    assert rows[-1]['id'] + ':legacy_sample_region' in result['gaps']
+    assert days[0] + ':legacy_sample_region' in result['gaps']
+    assert result['regional_percentiles'] == {}
+    assert result['distinct_samples'] == 1
+    assert result['clean_window_start_us'] is None
+
+
+def test_sample_region_cannot_borrow_another_writers_valid_label():
+    rows,days,proof=synthetic_window()
+    first = rows[0]['body']
+    boot = first['instance']
+    first['region'] = 'europe-west4'
+    proof['instance_regions_by_day'][days[0]][boot]='europe-west4'
+    extra=copy.deepcopy(next(r for r in rows if r['kind']==COUNTER and r['id'].startswith(days[1])))
+    central='00000000-0000-0000-0000-000000000002'
+    extra.update(id=days[0]+'/'+central)
+    extra['body'].update(instance=central,started_at_us=first['started_at_us'],flushed_at_us=first['flushed_at_us'])
+    rows.append(extra)
+    proof['instance_regions_by_day'][days[0]][central]='us-central1'
+    proof['instance_boot_ids_by_day'][days[0]]=sorted([boot,central])
+    next(r['body'] for r in rows if r['id']==days[0]+'/manifest-v1')['instance_boot_ids']=sorted([boot,central])
+    seal_regional_proof(rows, proof)
+    result=report(rows,days,proof)
+    assert result['status']=='BLOCKED', (result['status'],result['gaps'],list(result['regional_percentiles']))
+
+
+def test_restored_clean_suffix_excludes_legacy_sample_percentiles():
+    from dataclasses import replace
+
+    from tests.test_async_settle_shadow_r11_validity import signed_observation
+
+    rows,days,proof=synthetic_window()
+    old=rows[0]['body']
+    new_counter=rows[2]['body']
+    for row in rows:
+        if row['kind'] == COUNTER and row['body'] is not old:
+            row['body']['region'] = 'europe-west4'
+    for roster in proof['instance_regions_by_day'].values():
+        for boot in roster:
+            roster[boot] = 'europe-west4'
+    received=new_counter['started_at_us']
+    value,ctx,_=signed_observation(received,phase='settle',charge=2,authorization_id='auth-after-pin')
+    ctx=replace(ctx,region='europe-west4',journal_region='us-central1')
+    compared=compare(wire(value),ctx,[signer().trusted])
+    assert compared.classification=='exact'
+    body=sample(ctx,compared,observed_us=received,router_us=1,comparator_us=1,booking_us=1,
+                instance=new_counter['instance'],revision='a'*40,admission=copy.deepcopy(rows[-1]['body']['admission']))
+    rows.append(dict(kind=SAMPLE,id=body['authorization_day']+'/'+body['authorization_id'],body=body))
+    for field in ('counts','terminal_counts','comparison_attempts','samples_inserted','admission_observer'):
+        new_counter[field]=copy.deepcopy(old[field])
+    seal_regional_proof(rows, proof)
+    result=report(rows,days,proof)
+    assert result['status']=='PASS',result['gaps']
+    assert result['continuous_seconds']==604800
+    assert any(g.endswith(':legacy_region_label') for g in result['gaps'])
+    # The old counter and sample agree with each other: this is a normal legacy day,
+    # followed by seven complete clean days. Legacy latency must stay unattributed.
+    assert 'us-central1' not in result['regional_percentiles'],result['regional_percentiles']
+    assert days[0] + ':legacy_sample_region' in result['gaps']
+    assert result['regional_percentiles']['europe-west4']['router_settle_us']['count'] == 1
+    assert result['distinct_samples'] == 2
