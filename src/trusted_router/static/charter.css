@@ -904,7 +904,7 @@ tbody tr:hover {
 .marketing-copy,
 .quote-feature,
 .limitation-band {
-  padding: 28px;
+  padding: var(--site-box-inset);
 }
 
 .copy-terminal,
