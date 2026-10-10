@@ -1096,7 +1096,9 @@ This does not extend the
 worker budget, add retries, or relax any evidence gate. Failures remain sticky
 and unacknowledged; rate-limited diagnostics expose only a fixed stage/reason
 and elapsed time, never exception text, SQL parameters, or evidence bodies.
-Shadow transactions set a per-RPC cap as well as the shared deadline. In these
+Shadow transactions set a transaction-control/commit per-RPC cap equal to the
+one-second write budget; each RPC is still clipped to the remaining shared
+time. Point reads also retain their separate 500 ms cap. In these
 per-RPC-capped contexts, if Commit, Begin, or Rollback returns an exact
 `InternalServerError` containing `RST_STREAM` or
 `Received unexpected EOS on DATA frame from server`, and at most two seconds
