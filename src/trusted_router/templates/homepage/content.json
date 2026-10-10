@@ -245,6 +245,55 @@
       "Context"
     ],
     "models": {
+      "fable51": {
+        "name": "Anthropic: Claude Fable 5.1",
+        "id": "anthropic/claude-fable-5.1",
+        "lab_icon": "assets/lab-anthropic.png",
+        "route_labels": [],
+        "providers": 1,
+        "input_per_1m": "$10.55",
+        "output_per_1m": "$52.75",
+        "price_is_from": false,
+        "context": "1M"
+      },
+      "grok47": {
+        "name": "SpaceXAI: Grok 4.7",
+        "id": "x-ai/grok-4.7",
+        "lab_icon": "assets/lab-grok.png",
+        "route_labels": [],
+        "providers": 1,
+        "input_per_1m": "$2.11",
+        "output_per_1m": "$6.33",
+        "price_is_from": false,
+        "context": "500K"
+      },
+      "gpt61sol": {
+        "name": "OpenAI: GPT-6.1 Sol",
+        "id": "openai/gpt-6.1-sol",
+        "lab_icon": "assets/lab-openai.png",
+        "route_labels": [
+          "ZDR"
+        ],
+        "providers": 2,
+        "input_per_1m": "$2.11",
+        "output_per_1m": "$10.55",
+        "price_is_from": false,
+        "context": "1.05M"
+      },
+      "qwen3627": {
+        "name": "Qwen: Qwen3.6 27B",
+        "id": "qwen/qwen3.6-27b",
+        "lab_icon": "assets/lab-qwen.png",
+        "route_labels": [
+          "ZDR",
+          "E2EE"
+        ],
+        "providers": 8,
+        "input_per_1m": "$0.3165",
+        "output_per_1m": "$2.11",
+        "price_is_from": true,
+        "context": "262K"
+      },
       "glm53f": {
         "name": "Z.ai: GLM 5.3 Flash",
         "id": "z-ai/glm-5.3-flash",
@@ -397,28 +446,28 @@
     },
     "lists": {
       "all": [
-        "glm53f",
-        "glm53",
+        "fable51",
+        "grok47",
+        "gpt61sol",
+        "dsv41f",
         "kimik3",
-        "dsv4pro",
-        "dsv4f",
-        "mm3"
+        "gem38"
       ],
       "z": [
-        "gpt6",
-        "gem38",
+        "gpt61sol",
+        "dsv41f",
         "kimik3",
-        "dsv4pro",
+        "gem38",
         "mm3",
-        "glm53f"
+        "glm53"
       ],
       "c": [
-        "glm53f",
-        "glm53",
-        "kimik3",
-        "dsv41f",
         "oss120",
-        "gemma31"
+        "dsv41f",
+        "kimik3",
+        "gemma31",
+        "glm53",
+        "qwen3627"
       ]
     },
     "routing_promises": {

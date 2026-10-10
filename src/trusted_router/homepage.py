@@ -30,6 +30,7 @@ _PUBLISHERS = {
     "z-ai": "zai",
     "moonshotai": "kimi",
     "minimax": "minimax",
+    "qwen": "qwen",
 }
 
 
