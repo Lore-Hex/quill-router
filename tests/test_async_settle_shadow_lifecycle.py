@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from tests.test_async_settle_shadow_accounting import Database
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_evidence import COUNTER, dimensions
@@ -444,3 +446,111 @@ def test_observer_flush_preserves_maximum_and_rounds_cumulative_seconds(shadow_d
         assert flush() == final
     finally:
         rt.executor.shutdown()
+
+
+# Adopted from the independent Round 1 review contract tests.
+def test_retiring_day_contains_failure_streak_and_degradation():
+    import copy
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_evidence import Counters
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(), clock=lambda: now[0])
+    base = dt.datetime(2026, 10, 9, 23, 59, 55, tzinfo=dt.UTC).timestamp()
+    stored = {}
+    class Store:
+        def flush(self, identity, body, deadline):
+            stored[identity] = copy.deepcopy(body)
+    rt = Runtime.__new__(Runtime)
+    rt.store, rt.observer = Store(), observer
+    rt.counters = Counters('us-central1', 'a'*40, clock=lambda: base+now[0])
+    rt.last_flush, rt.observer_flushed, rt.observer_degraded_seconds = 0, {}, {}
+    def flush():
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+100)
+    flush()
+    for tick in (1., 2., 3.):
+        now[0] = tick
+        observer.missed_tick(None, tick)
+    now[0] = 4.
+    observer.install_health(4., health(4.))
+    now[0] = 6.
+    flush()
+    old = next(v for k,v in stored.items() if k.startswith('2026-10-09/'))
+    new = next(v for k,v in stored.items() if k.startswith('2026-10-10/'))
+    assert old['closed']
+    assert old['admission_observer']['max_consecutive_failures'] == 3
+    assert old['admission_observer']['degraded_seconds'] == 1
+    assert new['admission_observer']['max_consecutive_failures'] == 0
+    assert new['admission_observer']['degraded_seconds'] == 0
+
+
+
+
+@pytest.mark.parametrize('retain_old', [False, True])
+@pytest.mark.parametrize('fail_close', [False, True])
+def test_midnight_carries_live_streak_and_splits_fractional_duration(retain_old, fail_close):
+    import copy
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_evidence import Counters
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+
+    now = [0.]
+    base = dt.datetime(2026, 10, 9, 23, 59, 55, tzinfo=dt.UTC).timestamp()
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0])
+    stored = {}
+    failures = [int(fail_close)]
+
+    class Store:
+        def flush(self, identity, body, deadline):
+            if body['closed'] and failures[0]:
+                failures[0] -= 1
+                raise TimeoutError('close failed')
+            stored[identity] = copy.deepcopy(body)
+
+    rt = Runtime.__new__(Runtime)
+    rt.store, rt.observer = Store(), observer
+    rt.counters = Counters('us-central1', 'a'*40, clock=lambda: base+now[0])
+    rt.last_flush, rt.observer_degraded_seconds = 0, {}
+
+    def flush():
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+100)
+
+    flush()
+    if retain_old:
+        rt.counters.retain(base)
+    for tick in (4.5, 4.75):
+        now[0] = tick
+        observer.missed_tick('ws', tick)
+    now[0] = 5.125
+    flush()  # Still degraded, with 0.25 s old-day and 0.125 s new-day.
+    now[0] = 5.25
+    observer.install_workspace('ws', now[0], Admission(0, 2))
+    flush()
+    if retain_old:
+        rt.counters.release(base)
+    now[0] = 6.
+    flush()
+    flush()  # Retried persistence must not duplicate duration or events.
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    new = next(v for k, v in stored.items() if k.startswith('2026-10-10/'))
+    assert old['closed'] and not new['closed']
+    assert old['admission_observer']['max_consecutive_failures'] == 2
+    assert new['admission_observer']['max_consecutive_failures'] == 2
+    assert old['admission_observer']['degraded_seconds'] == 1
+    assert new['admission_observer']['degraded_seconds'] == 1
+    assert old['admission_observer']['missed_ticks'] == 2
+    assert new['admission_observer']['missed_ticks'] == 0
+    assert new['started_at_us'] == int((base+5) * 1e6)
+    assert rt.observer_degraded_seconds['2026-10-10'] == .25

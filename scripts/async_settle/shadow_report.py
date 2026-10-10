@@ -172,15 +172,19 @@ def observer_budget(body: dict[str, Any]) -> dict[str, Any]:
                 degraded_ratio=obs["degraded_seconds"] / duration if duration > 0 else None)
 
 
-def admission_evaluable(row: dict[str, Any], *, allow_unknown: bool = False) -> bool:
+def admission_evaluable(row: dict[str, Any]) -> bool:
     admission = row["admission"]
-    return bool(allow_unknown and admission["prediction"] == "unknown"
-                or admission["prediction"] in {"yes", "no"}
+    return bool(admission["prediction"] in {"yes", "no"}
                 and all(_uint(admission[k]) and admission[k] < 5_000_000
                         for k in ("workspace_age_us", "health_age_us")))
 
 
-def positive_sample(row: dict[str, Any], *, allow_unknown: bool = False) -> bool:
+def positive_sample(row: dict[str, Any]) -> bool:
+    return comparator_positive(row) and admission_evaluable(row)
+
+
+def comparator_positive(row: dict[str, Any]) -> bool:
+    """Independent arithmetic/provenance proof; says nothing about admission."""
     p = row["provenance"]
     booking = row["booking"]
     return bool(row["classification"] in {"exact", "explained-by-catalog-change"}
@@ -194,8 +198,7 @@ def positive_sample(row: dict[str, Any], *, allow_unknown: bool = False) -> bool
         and (booking["attempted_kind"], booking["outcome"]) in {("settle", "settled"), ("refund", "refunded")}
         and (row["classification"] == "exact" and row["python_micro"] == row["booked_micro"]
              or row["classification"] == "explained-by-catalog-change" and row["legacy_frozen_micro"] == row["python_micro"]
-             and row["booked_micro"] == row["rebuilt_micro"] and p["rebuild_matches_booking_view"] is True)
-        and admission_evaluable(row, allow_unknown=allow_unknown))
+             and row["booked_micro"] == row["rebuilt_micro"] and p["rebuild_matches_booking_view"] is True))
 
 
 def known_exclusion(row: dict[str, Any], *, allow_unknown: bool = False) -> bool:
@@ -205,7 +208,7 @@ def known_exclusion(row: dict[str, Any], *, allow_unknown: bool = False) -> bool
         and row["provenance"]["s0_reconstruction"] in {"not_needed", "verified"}
         and row["snapshot_hash"] is not None and row["reason_codes"] and set(row["reason_codes"]) <= COHORT_EXCLUSIONS
         and row["booking"]["source"] == "finalized_authorization" and row["booked_micro"] is not None
-        and admission_evaluable(row, allow_unknown=allow_unknown))
+        and (admission_evaluable(row) or allow_unknown and row["admission"]["prediction"] == "unknown"))
 
 
 def collect_rollbacks(resets: list[dict[str, Any]], serving: list[tuple[int, int, str]],
@@ -544,7 +547,9 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                 or deployment["go_revision"] not in manifest["go_revisions"]):
             gap(row["authorization_id"]+":deployment_unknown", observation_day)
         if (row["classification"] not in {"hash", "identity", "normalization", "evaluator_disagreement"}
-                and not positive_sample(row, allow_unknown=True) and not known_exclusion(row, allow_unknown=True)):
+                and not (comparator_positive(row)
+                    and (admission_evaluable(row) or row["admission"]["prediction"] == "unknown"))
+                and not known_exclusion(row, allow_unknown=True)):
             gap(row["authorization_id"]+":sample_gap", observation_day)
     for identity, counter in counters.items():
         day, boot = identity.split("/")
@@ -621,7 +626,14 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                 end = min(right, high)
     continuous = (end-start)/1e6 if start is not None and end is not None else 0
     completeness = not unresolved and restored_after < high
-    metrics = {"classification": dict(Counter(row["classification"] for row in samples)),
+    # Persisted classifications/counters describe the independent comparator.
+    # Report admission evaluability separately, after reconciling that evidence;
+    # unknown admission cannot become exact, explained, or mismatch evidence.
+    metrics = {"classification": dict(Counter(
+                   "unevaluable" if row["admission"]["prediction"] == "unknown" else row["classification"]
+                   for row in samples)),
+               "comparator_classification": dict(Counter(row["classification"] for row in samples)),
+               "admission_unknown_samples": dict(unknown_samples),
                "prediction": dict(Counter(row["admission"]["prediction"] for row in samples)),
                "signed_delta_histogram": dict(Counter(delta_bin(row["booked_minus_frozen"]) for row in samples if row["booked_minus_frozen"] is not None)),
                "delta_null_count": sum(row["booked_minus_frozen"] is None for row in samples)}
@@ -631,6 +643,20 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
             for total, bucket in zip(denominators, counter["counts"], strict=True):
                 for field in COUNT_FIELDS:
                     total[field] += bucket[field]
+    # Only durable, dimension-matched unknown samples can be removed from
+    # comparator denominators. The checks above reconcile them independently
+    # against prediction_unknown; no unknown count is invented from a budget.
+    for row in samples:
+        if row["admission"]["prediction"] != "unknown":
+            continue
+        bucket = denominators[DIMENSIONS.index((row["adapter"], row["route_type"], row["streamed"]))]
+        category = {"explained-by-catalog-change": "explained", "hash": "mismatch", "identity": "mismatch",
+                    "normalization": "mismatch", "evaluator_disagreement": "mismatch"}.get(row["classification"], row["classification"])
+        if category != "unevaluable":
+            bucket[category] -= 1
+            bucket["unevaluable"] += 1
+        if category in {"exact", "explained"}:
+            bucket["evaluable"] -= 1
     predictions = {kind: sum(counter["admission_observer"]["prediction_"+kind] for identity, counter in counters.items()
                              if identity.split("/")[0] in requested) for kind in ("yes", "no", "unknown")}
     prediction_total = sum(predictions.values())

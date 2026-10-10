@@ -677,7 +677,7 @@ objects have exactly their listed keys, no arbitrary maps or free text.
 | `python_usage`, `go_usage`, `legacy_usage` | null or exact six NormalizedUsage integer fields |
 | `frozen_micro`, `python_micro`, `go_micro`, `booked_micro`, `rebuilt_micro`, `legacy_frozen_micro` | nonnegative int64 or null; kind-dependent expectations (§3.1), booked only from confirmed winner; independent L0 never substituted from P |
 | `python_minus_go`, `booked_minus_frozen`, `rebuilt_minus_frozen`, `booked_minus_rebuilt` | signed int64 or null; no absolute-value loss of direction |
-| `classification`, `reason_codes` | §3 enum; sorted unique list, maximum 8 fixed enum values from §§2–5 |
+| `classification`, `reason_codes` | independent comparator classification (§3 enum), not admission evaluability; sorted unique reason list, maximum 8 fixed enum values from §§2–5; report excludes admission-unknown samples as specified below |
 | `eligibility` | `{requested: boolean, observed: boolean|null, exclusion: enum|null}`; never an admission bit |
 | `booking` | `{attempted_kind: settle|refund, outcome: settled|refunded|pending|unknown, source: finalized_authorization|none, price_source: catalog_at_authorize_time|stage_d_document|unknown}`; compare polarity before booking deltas (§3.1; `src/trusted_router/routes/internal/gateway.py:4597`) |
 | `admission` | `{prediction: yes|no|unknown, reason: enum, tier: int|null, pending_micro: int|null, cap_micro: int|null, workspace_age_us: int|null, health_age_us: int|null, health_p95_us: int|null}` |
@@ -775,6 +775,20 @@ blocks the window; absence of a bucket is never evidence of zero. F2b's maximum
 schema-size and report tests must cover this bounded representation and the
 same reason in multiple adapter/route/stream/phase buckets (parent §8 at
 `docs/design/async-settle-outbox-v1.md:802`).
+
+The persisted sample `classification` and counter `evaluable`/outcome fields
+are **independent comparator diagnostics**: arithmetic can be proven even when
+admission observation is unknown. The report first reconciles those unmodified
+fields and applies every comparator correctness/reset gate. Its public
+`metrics.classification` and `denominators` then classify each durable
+admission-unknown sample as `unevaluable`, removing it from exact, explained,
+mismatch and evaluable totals in its own dimension. The original classifications
+remain visible in `metrics.comparator_classification`. Per-writer
+`metrics.admission_unknown_samples` reconciles those samples separately against
+`admission_observer.prediction_unknown`; the latter also includes prediction
+attempts whose sample was not inserted. Unknown admission never satisfies
+`positive_sample` or seeds the clean clock. A proven comparator disagreement
+still blocks/resets the window regardless of admission evaluability.
 
 Flush cumulative counters at most once per five seconds per active instance,
 including after rate/cap drops, with no synchronous request wait. Transactional
@@ -941,7 +955,11 @@ changes. `late_installs` counts installs beyond 0.5 s;
 counter's lifetime, including a streak continuing into it. `degraded_seconds`
 records monotonic elapsed time with at least one reader at its degradation
 threshold, counting overlapping reader intervals once; it does not depend on
-traffic or `peek()` calls. Keep subsecond precision internally and round the
+traffic or `peek()` calls. Fold observer evidence before acknowledging a retiring
+writer. Split elapsed degradation and maximum streak at UTC midnight even if
+recovery occurs before the next flush; a continuing streak belongs to both days.
+Retain at most three days of observer deltas, matching counter retention, with
+sticky fail-closed coverage on overflow. Keep subsecond precision internally and round the
 cumulative daily duration upward for integer-only evidence JSON, conservatively
 adding less than one second per counter, not per flush. Isolated stale
 predictions still count as unknowns.

@@ -106,8 +106,9 @@ class Runtime:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="settle-shadow")
         self.permit_day, self.permits, self.next_allocate = "", 0, 0.
         self.last_flush = 0.
-        self.observer_flushed: dict[str, int | float] = {}
         self.observer_degraded_seconds: dict[str, float] = {}
+        if self.observer is not None:
+            self.observer.evidence_wall = lambda: self.counters.clock()
         if settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
             try:
                 prewarm_catalog()
@@ -437,6 +438,32 @@ class Runtime:
             return
         self.last_flush = time.monotonic()
         try:
+            # Fold every day's observer evidence before closing/acknowledging
+            # any writer, including days retained by outstanding request work.
+            if self.observer is not None:
+                with self.counters.lock:
+                    self.observer.evidence_wall = lambda: self.counters.clock()
+                    daily, overflow = self.observer.snapshot_daily_counts()
+                    for day, values in sorted(daily.items()):
+                        token = self.counters.observation_day.set(day)
+                        try:
+                            counter = self.counters._day()
+                            counter["started_at_us"] = min(counter["started_at_us"], values["started_at_us"])
+                            observer_counts = counter["admission_observer"]
+                            for key in ("workspace_reads", "health_reads", "read_failures", "missed_ticks", "late_installs"):
+                                self.counters.add(counter, observer_counts, key, int(values.get(key, 0)))
+                            total = self.observer_degraded_seconds.get(day, 0.) + values.get("degraded_seconds", 0.)
+                            self.observer_degraded_seconds[day] = total
+                            self.counters.add(counter, observer_counts, "degraded_seconds",
+                                math.ceil(total) - observer_counts["degraded_seconds"])
+                            observer_counts["max_consecutive_failures"] = max(
+                                observer_counts["max_consecutive_failures"], int(values.get("max_consecutive_failures", 0)))
+                            if overflow:
+                                counter["first_gap_at_us"] = int(self.counters.clock() * 1e6)
+                        finally:
+                            self.counters.observation_day.reset(token)
+                    self.observer_degraded_seconds = {day: value for day, value in
+                        self.observer_degraded_seconds.items() if day in self.counters.days}
             # Persist and acknowledge older days before registering the current
             # writer. Active money/queued tasks retain their receipt day until
             # completion; the next timer then closes it. Failed closes stay in
@@ -454,27 +481,6 @@ class Runtime:
                     # writer until the prior close is acknowledged. No waiting
                     # or I/O is added to the request path.
                     return
-            if self.observer is not None:
-                with self.counters.lock:
-                    counter = self.counters._day()
-                    observer_counts = counter["admission_observer"]
-                    values = self.observer.snapshot_counts()
-                    for key in ("workspace_reads", "health_reads", "read_failures", "missed_ticks", "late_installs", "degraded_seconds"):
-                        value = values.get(key, 0)
-                        delta = max(0, value - self.observer_flushed.get(key, 0))
-                        if key == "degraded_seconds":
-                            day = day_at(self.counters.clock())
-                            self.observer_degraded_seconds = {
-                                day: self.observer_degraded_seconds.get(day, 0.) + delta}
-                            # Evidence JSON is integer-only. Round the cumulative
-                            # daily duration up once, never each flush's delta.
-                            self.counters.add(counter, observer_counts, key,
-                                math.ceil(self.observer_degraded_seconds[day]) - observer_counts[key])
-                        else:
-                            self.counters.add(counter, observer_counts, key, int(delta))
-                        self.observer_flushed[key] = value
-                    observer_counts["max_consecutive_failures"] = max(
-                        observer_counts["max_consecutive_failures"], values["max_consecutive_failures"])
             for identity, body in self.counters.snapshot(closed):
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)

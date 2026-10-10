@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import threading
 import time
 from collections import Counter
@@ -35,18 +36,66 @@ class Observer:
         self.stopped = False
         self.budget_proven = False  # External publisher/scheduling/fleet gate.
         self.failures: Counter[str | None] = Counter()
-        self.failed_ticks: dict[str | None, float] = {}
+        self.failed_ticks: dict[str | None, float] = {}  # Recovery ordering only.
+        self.failed_tick_ids: dict[str | None, set[float]] = {}
+        self.inflight_ticks: dict[str | None, float] = {}
         self.stale: set[str | None] = set()
         self.degraded_since: float | None = None
         self.degraded_seconds = 0.
         self.interval_max_consecutive_failures = 0
+        # Runtime supplies the counter wall clock before starting the observer.
+        self.evidence_wall = wall
+        self.daily_since = clock()
+        self.daily_counts: dict[str, dict[str, int | float]] = {}
+        self.daily_overflow = False
 
     @property
     def progress_ok(self) -> bool:
         return not any(count >= (3 if key is None else 2)
                        for key, count in self.failures.items())
 
+    def _daily_bucket(self, wall: float) -> dict[str, int | float]:
+        day = dt.datetime.fromtimestamp(wall, dt.UTC).date().isoformat()
+        bucket = self.daily_counts.setdefault(day, dict(
+            max_consecutive_failures=0, degraded_seconds=0., started_at_us=int(wall * 1e6)))
+        bucket["started_at_us"] = min(bucket["started_at_us"], int(wall * 1e6))
+        if len(self.daily_counts) > 3:
+            del self.daily_counts[min(self.daily_counts)]
+            self.daily_overflow = True
+        return bucket
+
+    def _account_daily(self, now: float) -> None:
+        # Split monotonic elapsed time at UTC boundaries. Keep fractions until
+        # Runtime takes the ceiling of each day's cumulative duration.
+        wall = self.evidence_wall()
+        left = self.daily_since
+        streak = max(self.failures.values(), default=0)
+        while left < now:
+            left_wall = wall - (now - left)
+            midnight = (left_wall // 86400 + 1) * 86400
+            right = min(now, now - (wall - midnight))
+            bucket = self._daily_bucket(left_wall)
+            bucket["max_consecutive_failures"] = max(bucket["max_consecutive_failures"], streak)
+            if self.degraded_since is not None:
+                bucket["degraded_seconds"] += right - left
+            left = right
+        bucket = self._daily_bucket(wall)
+        bucket["max_consecutive_failures"] = max(bucket["max_consecutive_failures"], streak)
+        self.daily_since = now
+
+    def _count(self, field: str) -> None:
+        self.counts[field] += 1
+        bucket = self._daily_bucket(self.evidence_wall())
+        bucket[field] = bucket.get(field, 0) + 1
+
+    def snapshot_daily_counts(self) -> tuple[dict[str, dict[str, int | float]], bool]:
+        with self.lock:
+            self._account_degradation(self.clock())
+            result, self.daily_counts = self.daily_counts, {}
+            return result, self.daily_overflow
+
     def _account_degradation(self, now: float) -> None:
+        self._account_daily(now)
         # Union of degraded reader intervals, independent of request/peek rate.
         if self.degraded_since is not None:
             self.degraded_seconds += max(0., now - self.degraded_since)
@@ -57,10 +106,15 @@ class Observer:
         if self.stopped:
             return
         self._account_degradation(self.clock())
-        self.counts[field] += 1
-        if tick > self.failed_ticks.get(key, float("-inf")):
+        self._count(field)
+        identities = self.failed_tick_ids.setdefault(key, set())
+        if tick not in identities:
             self.failures[key] += 1
-            self.failed_ticks[key] = tick
+            identities.add(tick)
+        self.failed_ticks[key] = max(tick, self.failed_ticks.get(key, float("-inf")))
+        # At most one executor job per reader can complete out of order. Keep
+        # its identity independently of the newest skipped/late-start tick.
+        identities.intersection_update({self.failed_ticks[key], self.inflight_ticks.get(key)})
         self.stale.add(key)
         self.counts["max_consecutive_failures"] = max(
             self.counts["max_consecutive_failures"], self.failures[key])
@@ -74,6 +128,7 @@ class Observer:
             return False
         self._account_degradation(self.clock())
         self.failures[key] = 0
+        self.failed_tick_ids.pop(key, None)
         self.stale.discard(key)
         self._account_degradation(self.clock())
         return True
@@ -181,7 +236,8 @@ class Observer:
                         self.missed_tick(None, now)
                     next_health = now + 1  # Never enqueue catch-up reads.
                     with self.lock:
-                        self.counts["health_reads"] += 1
+                        self._count("health_reads")
+                        self.inflight_ticks[None] = now
                     health_job = loop.run_in_executor(self.executor, self._health, now)
                     active += 1
                 elif now - next_health > .25:
@@ -199,7 +255,8 @@ class Observer:
                         self.missed_tick(key, now)
                     due[key] = now + 4
                     with self.lock:
-                        self.counts["workspace_reads"] += 1
+                        self._count("workspace_reads")
+                        self.inflight_ticks[key] = now
                     workspace_jobs[key] = loop.run_in_executor(self.executor, self._workspace, key, now)
                 elif now - due[key] > .25:
                     self.missed_tick(key, now)

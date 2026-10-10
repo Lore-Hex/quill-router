@@ -284,3 +284,48 @@ def test_read_failure_preserves_ages_but_invalidates_only_that_workspace():
     assert observer.peek('other')['prediction'] == 'yes'
     observer.install_workspace('ws', .5, Admission(0, 2))
     assert observer.peek('ws')['prediction'] == 'yes'
+
+
+# Adopted from the independent Round 1 review contract tests.
+@pytest.mark.parametrize('cause', ['late_installs', 'read_failures'])
+def test_delayed_callback_counts_its_own_tick_after_scheduler_failures(monkeypatch, cause):
+    from types import SimpleNamespace
+
+    from trusted_router.services import async_settle_shadow_admission as module
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    if cause == 'read_failures':
+        def fail():
+            raise TimeoutError('deadline')
+        observer.health_read = fail
+    jobs = []
+    def submit(executor, function, *args):
+        job = SimpleNamespace(done=lambda: False, function=function, args=args)
+        jobs.append(job)
+        return job
+    ticks = iter([1.3, 2.6, 2.7])
+    async def advance(_):
+        try:
+            now[0] = next(ticks)
+        except StopIteration:
+            jobs[0].function(*jobs[0].args)
+            observer.stopped = True
+    monkeypatch.setattr(module, 'asyncio', SimpleNamespace(
+        get_running_loop=lambda: SimpleNamespace(run_in_executor=submit), sleep=advance))
+    asyncio.run(observer.run())
+    # Actual read tick 0 failed its install bound, followed by skipped ticks
+    # 1.3 and 2.6; no intervening success exists.
+    assert observer.counts[cause] == 1
+    assert observer.counts['missed_ticks'] == 2
+    assert observer.failures[None] == 3
+    assert observer.counts['max_consecutive_failures'] == 3
+    assert not observer.progress_ok
+
+
+    observer.stopped = False
+    observer.install_health(2.6, health(2.6))
+    assert observer.failures[None] == 3  # Same tick cannot recover.
+    observer.install_health(2.7, health(2.7))
+    assert observer.progress_ok and observer.failures[None] == 0
+    assert observer.snapshot_counts()['max_consecutive_failures'] == 3

@@ -580,3 +580,56 @@ def test_unknown_admission_sample_is_not_clock_seed_or_mismatch_but_can_be_toler
     body['admission_observer']['prediction_unknown'] = 1
     with pytest.raises(ValueError, match='contradictory clean sample'):
         report(rows, days, proof)
+
+
+# Adopted from the independent Round 1 review contract tests.
+def test_unknown_admission_is_not_reported_as_exact_or_evaluable():
+    from trusted_router.services.async_settle_shadow_admission import unknown
+
+    rows, days, proof = synthetic_window()
+    tail = copy.deepcopy(rows[-1])
+    tail['id'] += '-tail'
+    tail['body']['authorization_id'] += '-tail'
+    tail['body']['admission'] = unknown('cache_stale')
+    rows.append(tail)
+    body = rows[0]['body']
+    body['samples_inserted'] = body['comparison_attempts'] = 2
+    for bucket in (*body['counts'], *body['terminal_counts']):
+        for key, value in bucket.items():
+            if type(value) is int:
+                bucket[key] *= 2
+    body['admission_observer'].update(prediction_yes=49, prediction_unknown=1)
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS'
+    assert result['metrics']['classification']['exact'] == 1
+    assert sum(row['evaluable'] for row in result['denominators']) == 1
+    assert sum(row['exact'] for row in result['denominators']) == 1
+    assert sum(row['unevaluable'] for row in result['denominators']) == 1
+    assert result['metrics']['classification']['unevaluable'] == 1
+    assert result['metrics']['comparator_classification']['exact'] == 2
+
+
+def test_unknown_admission_keeps_independent_comparator_disagreement_gate():
+    from trusted_router.services.async_settle_shadow_admission import unknown
+
+    rows, days, proof = synthetic_window()
+    row = rows[-1]['body']
+    row['admission'] = unknown('cache_stale')
+    row['classification'] = 'evaluator_disagreement'
+    row['go_micro'] = row['python_micro'] + 1
+    row['python_minus_go'] = -1
+    row['reason_codes'] = ['go_failure']
+    body = rows[0]['body']
+    body['last_mismatch_at_us'] = row['observed_at_us']
+    body['admission_observer'].update(prediction_yes=49, prediction_unknown=1)
+    for bucket in (*body['counts'], *body['terminal_counts']):
+        if bucket['exact']:
+            bucket.update(exact=0, evaluable=0, mismatch=1)
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert result['clean_window_start_us'] is None
+    assert any(reset['reason'] == 'evaluator_disagreement' for reset in result['resets'])
+    assert result['metrics']['classification'] == {'unevaluable': 1}
+    assert result['metrics']['comparator_classification'] == {'evaluator_disagreement': 1}
+    assert sum(row['mismatch'] for row in result['denominators']) == 0
+    assert sum(row['unevaluable'] for row in result['denominators']) == 1
