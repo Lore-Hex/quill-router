@@ -18,6 +18,19 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_deploy_hold.sh
 source "${SCRIPT_DIR}/_deploy_hold.sh"
+# Audit evidence needs an exact source identity, not the short display release
+# or the separate enclave repository's trust-metadata commit.
+CHECKOUT_REVISION="$(git -C "${SCRIPT_DIR}/../.." rev-parse HEAD 2>/dev/null || true)"
+SOURCE_REVISION="${TR_DEPLOY_SOURCE_REVISION:-$CHECKOUT_REVISION}"
+RELEASE_ID="${TR_DEPLOY_RELEASE_ID:-${SOURCE_REVISION:0:7}}"
+if [[ ! "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] ||
+   [[ ! "$RELEASE_ID" =~ ^[0-9a-f]{7,40}$ ]] ||
+   [[ "$SOURCE_REVISION" != "$RELEASE_ID"* ]] ||
+   { [[ -n "$CHECKOUT_REVISION" ]] && [[ "$SOURCE_REVISION" != "$CHECKOUT_REVISION" ]]; }; then
+  echo "refusing rollout: exact source revision must match the checkout and release" >&2
+  exit 1
+fi
+
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
@@ -402,7 +415,8 @@ ENV_VARS=(
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
   "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
-  "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
+  "TR_RELEASE=${RELEASE_ID}"
+  "TR_SOURCE_REVISION=${SOURCE_REVISION}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
   # synthetic job invokes /internal/synthetic/remediate instead.
   "TR_REMEDIATOR_IN_PROCESS_ENABLED=false"

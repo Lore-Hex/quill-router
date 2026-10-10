@@ -383,6 +383,7 @@ class Settings(BaseSettings):
     environment: str = "local"
     homepage_landscape_enabled: bool = False
     release: str = "local"
+    source_revision: str = Field(default="", pattern=r"^(?:[0-9a-f]{40})?$")
     service_name: str = "trusted-router"
     # One image serves several deliberately disjoint process roles. ``combined``
     # preserves the local/test developer experience. Deployed use requires the
