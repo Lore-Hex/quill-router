@@ -37,9 +37,6 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # total bound fences retention. Reads get up to 500 ms for regional latency;
 # commit/control RPCs can use the remainder, never another full budget.
 # Operator range reads retain their separate 200 ms caller deadline.
-# Commit transport resets fail closed before the SDK's two-second backoff;
-# RPCs share the remaining horizon, with no reset sleep extending it. This
-# bounds scheduled I/O, not Python scheduling/GC or late server-side commits.
 # In per-RPC-capped contexts, Commit, Begin and Rollback transport resets
 # fail fast before the SDK's two-second backoff can exceed the shared deadline.
 # Transaction streaming reads use the SDK restart path, bounded by that shared
