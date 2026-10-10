@@ -2,13 +2,12 @@ package watch
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
-	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -18,10 +17,11 @@ import (
 // Monitoring reads Spanner's CPU and the subscriptions' backlogs from Cloud
 // Monitoring, each the highest value of its series over the last Window,
 // aligned a minute at a time. Their points are sampled every minute and
-// visible up to three minutes later, so the newest must be at most Fresh
-// old, four minutes by default: a series older than that is a read that
-// fails, as of a source that has stopped reporting, not a reading that
-// stays as it was.
+// visible up to ReportingDelay later, so each series' newest must be at
+// most Fresh old, four minutes by default: a series older than that is a
+// read that fails, as of a source that has stopped reporting, not a
+// reading that stays as it was; and a series that reported before and is
+// gone fails the read too, since the highest of the rest would hide it.
 type Monitoring struct {
 	Client   *monitoring.MetricClient
 	Project  string
@@ -30,32 +30,40 @@ type Monitoring struct {
 	Window   time.Duration
 	Fresh    time.Duration
 	Clock    func() time.Time
+
+	// seen are the series each filter has answered with, by their labels.
+	mu   sync.Mutex
+	seen map[string]map[string]bool
 }
 
 // align is how Monitoring's points are aligned: a minute, their sampling.
 const align = time.Minute
 
+// ReportingDelay is how long after its sampling a point can take to show:
+// three minutes for Spanner's CPU, two for Pub/Sub's backlogs.
+const ReportingDelay = 3 * time.Minute
+
 // SpannerCPU is the instance's high-priority CPU, read as production's
 // alarm on it reads it (scripts/deploy/spanner-alerts/high-priority-cpu.yaml).
-func (m Monitoring) SpannerCPU(ctx context.Context) (float64, error) {
+func (m *Monitoring) SpannerCPU(ctx context.Context) (float64, error) {
 	return m.highest(ctx, fmt.Sprintf(`resource.type = "spanner_instance" AND resource.labels.instance_id = %q AND `+
 		`metric.type = "spanner.googleapis.com/instance/cpu/utilization_by_priority" AND metric.labels.priority = "high"`,
 		m.Instance))
 }
 
 // Subscriptions are the subscriptions watched.
-func (m Monitoring) Subscriptions() []string { return m.Subs }
+func (m *Monitoring) Subscriptions() []string { return m.Subs }
 
 // Undelivered is a subscription's messages not yet delivered, at their
 // highest over the window.
-func (m Monitoring) Undelivered(ctx context.Context, sub string) (int64, error) {
+func (m *Monitoring) Undelivered(ctx context.Context, sub string) (int64, error) {
 	v, err := m.highest(ctx, subscriptionFilter(sub, "num_undelivered_messages"))
 	return int64(v), err
 }
 
 // OldestAge is the age of a subscription's oldest unacknowledged message,
 // at its highest over the window.
-func (m Monitoring) OldestAge(ctx context.Context, sub string) (time.Duration, error) {
+func (m *Monitoring) OldestAge(ctx context.Context, sub string) (time.Duration, error) {
 	v, err := m.highest(ctx, subscriptionFilter(sub, "oldest_unacked_message_age"))
 	return time.Duration(v * float64(time.Second)), err
 }
@@ -65,10 +73,13 @@ func subscriptionFilter(sub, metric string) string {
 		`metric.type = "pubsub.googleapis.com/subscription/%s"`, sub, metric)
 }
 
-// highest is the highest value of the series the filter names over the
-// last Window, each aligned to its highest a minute at a time and reduced
-// to the highest of them; none, or none newer than Fresh, is an error.
-func (m Monitoring) highest(ctx context.Context, filter string) (float64, error) {
+// highest is the highest point of the series the filter names over the
+// last Window, each aligned to its highest a minute at a time, as the
+// alarm's are; they are reduced to their highest here, not by Monitoring,
+// so that each series is seen: one whose newest point is older than Fresh,
+// one that reported before and is gone, a page Monitoring could not
+// complete, and no series at all are each an error.
+func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error) {
 	if m.Window < align || m.Fresh <= 0 || m.Fresh > m.Window {
 		return 0, fmt.Errorf("watch: a window of at least %v, and freshness above 0 and within it", align)
 	}
@@ -79,47 +90,69 @@ func (m Monitoring) highest(ctx context.Context, filter string) (float64, error)
 		Interval: &monitoringpb.TimeInterval{StartTime: timestamppb.New(now.Add(-m.Window)),
 			EndTime: timestamppb.New(now)},
 		Aggregation: &monitoringpb.Aggregation{AlignmentPeriod: durationpb.New(align),
-			PerSeriesAligner:   monitoringpb.Aggregation_ALIGN_MAX,
-			CrossSeriesReducer: monitoringpb.Aggregation_REDUCE_MAX},
+			PerSeriesAligner: monitoringpb.Aggregation_ALIGN_MAX},
 		View: monitoringpb.ListTimeSeriesRequest_FULL,
 	})
-	found, top, newest := false, 0.0, time.Time{}
+	top := 0.0
+	newest := map[string]time.Time{} // by series
+	// A page at a time, one fetch each, so that each page's execution
+	// errors are seen: the iterator's Next, and its pager, skip an empty
+	// page, errors and all.
+	token := ""
 	for {
-		series, err := it.Next()
-		// A page Monitoring marks incomplete may lack the series past its
-		// ceiling: the read fails, as the watch must not take it as healthy.
-		if page, ok := it.Response.(*monitoringpb.ListTimeSeriesResponse); ok && len(page.GetExecutionErrors()) > 0 {
-			return 0, fmt.Errorf("an incomplete answer for %s: %s", filter, page.GetExecutionErrors()[0].GetMessage())
-		}
-		if errors.Is(err, iterator.Done) {
-			break
-		}
+		page, next, err := it.InternalFetch(1000, token)
 		if err != nil {
 			return 0, err
 		}
-		for _, p := range series.GetPoints() {
-			var v float64
-			switch value := p.GetValue().GetValue().(type) {
-			case *monitoringpb.TypedValue_DoubleValue:
-				v = value.DoubleValue
-			case *monitoringpb.TypedValue_Int64Value:
-				v = float64(value.Int64Value)
-			default:
-				return 0, fmt.Errorf("a point of %T", value)
-			}
-			if !found || v > top {
-				found, top = true, v
-			}
-			if end := p.GetInterval().GetEndTime().AsTime(); end.After(newest) {
-				newest = end
+		token = next
+		if resp, ok := it.Response.(*monitoringpb.ListTimeSeriesResponse); ok && len(resp.GetExecutionErrors()) > 0 {
+			return 0, fmt.Errorf("an incomplete answer for %s: %s", filter, resp.GetExecutionErrors()[0].GetMessage())
+		}
+		for _, series := range page {
+			key := fmt.Sprint(series.GetMetric().GetLabels(), series.GetResource().GetLabels())
+			for _, p := range series.GetPoints() {
+				var v float64
+				switch value := p.GetValue().GetValue().(type) {
+				case *monitoringpb.TypedValue_DoubleValue:
+					v = value.DoubleValue
+				case *monitoringpb.TypedValue_Int64Value:
+					v = float64(value.Int64Value)
+				default:
+					return 0, fmt.Errorf("a point of %T", value)
+				}
+				top = max(top, v)
+				if end := p.GetInterval().GetEndTime().AsTime(); end.After(newest[key]) {
+					newest[key] = end
+				}
 			}
 		}
+		if token == "" {
+			break
+		}
 	}
-	if !found {
+	if len(newest) == 0 {
 		return 0, fmt.Errorf("no point in the last %v for %s", m.Window, filter)
 	}
-	if age := now.Sub(newest); age > m.Fresh {
-		return 0, fmt.Errorf("the newest point is %v old, past %v, for %s", age, m.Fresh, filter)
+	for key, end := range newest {
+		if age := now.Sub(end); age > m.Fresh {
+			return 0, fmt.Errorf("the newest point of %s is %v old, past %v, for %s", key, age, m.Fresh, filter)
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.seen[filter] {
+		if _, ok := newest[key]; !ok {
+			return 0, fmt.Errorf("the series %s reported before and is gone, for %s", key, filter)
+		}
+	}
+	if m.seen == nil {
+		m.seen = map[string]map[string]bool{}
+	}
+	if m.seen[filter] == nil {
+		m.seen[filter] = map[string]bool{}
+	}
+	for key := range newest {
+		m.seen[filter][key] = true
 	}
 	return top, nil
 }
@@ -171,7 +204,7 @@ func (s Store) Booked(ctx context.Context) (int64, error) {
 // Production is the watch's sources in production: Monitoring's and the
 // store's.
 type Production struct {
-	Monitoring
+	*Monitoring
 	Store
 }
 

@@ -11,6 +11,7 @@ import (
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"google.golang.org/api/option"
+	"google.golang.org/genproto/googleapis/api/monitoredres"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -20,31 +21,67 @@ import (
 
 // metrics is a stand-in for Cloud Monitoring's metric service: it answers a
 // request with the points set for its filter, each ending age before the
-// watch's clock, and keeps each request.
+// watch's clock, as one series, and the extra series set for it, each a
+// region's, with points and an age of its own; and keeps each request.
 type metrics struct {
 	monitoringpb.UnimplementedMetricServiceServer
 	mu       sync.Mutex
 	points   map[string][]*monitoringpb.TypedValue // by filter
 	age      time.Duration
+	extra    map[string][]extraSeries // by filter
 	requests []*monitoringpb.ListTimeSeriesRequest
-	// incomplete marks every answer as one Monitoring could not complete.
+	// incomplete marks every answer as one Monitoring could not complete;
+	// errorPage answers first with an empty page marked so, and a next
+	// page; split answers the first series on one page and the rest on a
+	// next.
 	incomplete bool
+	errorPage  bool
+	split      bool
+}
+
+type extraSeries struct {
+	region string
+	values []*monitoringpb.TypedValue
+	age    time.Duration
 }
 
 func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSeriesRequest) (*monitoringpb.ListTimeSeriesResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requests = append(m.requests, req)
-	values, ok := m.points[req.GetFilter()]
-	if !ok {
-		return &monitoringpb.ListTimeSeriesResponse{}, nil
+	resp := &monitoringpb.ListTimeSeriesResponse{}
+	if m.errorPage && req.GetPageToken() == "" {
+		resp.ExecutionErrors = []*status.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
+		resp.NextPageToken = "after-the-error"
+		return resp, nil
 	}
-	var points []*monitoringpb.Point
-	for _, v := range values {
-		points = append(points, &monitoringpb.Point{Value: v,
-			Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.New(start.Add(-m.age))}})
+	series := func(region string, values []*monitoringpb.TypedValue, age time.Duration) *monitoringpb.TimeSeries {
+		var points []*monitoringpb.Point
+		for _, v := range values {
+			points = append(points, &monitoringpb.Point{Value: v,
+				Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.New(start.Add(-age))}})
+		}
+		s := &monitoringpb.TimeSeries{Points: points}
+		if region != "" {
+			s.Resource = &monitoredres.MonitoredResource{Labels: map[string]string{"region": region}}
+		}
+		return s
 	}
-	resp := &monitoringpb.ListTimeSeriesResponse{TimeSeries: []*monitoringpb.TimeSeries{{Points: points}}}
+	var all []*monitoringpb.TimeSeries
+	if values, ok := m.points[req.GetFilter()]; ok {
+		all = append(all, series("", values, m.age))
+	}
+	for _, e := range m.extra[req.GetFilter()] {
+		all = append(all, series(e.region, e.values, e.age))
+	}
+	switch {
+	case m.split && req.GetPageToken() == "" && len(all) > 0:
+		resp.TimeSeries, resp.NextPageToken = all[:1], "the-rest"
+	case m.split:
+		resp.TimeSeries = all[min(1, len(all)):]
+	default:
+		resp.TimeSeries = all
+	}
 	if m.incomplete {
 		resp.ExecutionErrors = []*status.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
 	}
@@ -60,7 +97,7 @@ func integer(v int64) *monitoringpb.TypedValue {
 }
 
 // served is a Monitoring source on a stand-in for the metric service.
-func served(t *testing.T, m *metrics, subs ...string) Monitoring {
+func served(t *testing.T, m *metrics, subs ...string) *Monitoring {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -76,7 +113,7 @@ func served(t *testing.T, m *metrics, subs ...string) Monitoring {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	return Monitoring{Client: client, Project: "proj", Instance: "trusted-router-nam6", Subs: subs,
+	return &Monitoring{Client: client, Project: "proj", Instance: "trusted-router-nam6", Subs: subs,
 		Window: 5 * time.Minute, Fresh: 4 * time.Minute, Clock: func() time.Time { return start }}
 }
 
@@ -89,8 +126,9 @@ func subFilter(sub, metric string) string {
 }
 
 // TestMonitoringReadsAsTheAlarmDoes: Spanner's CPU is the high-priority
-// series production's alarm reads, aligned and reduced to their highest
-// over the window, in the project; its highest point is the reading.
+// series production's alarm reads, aligned to their highest a minute at a
+// time over the window, in the project, each series read on its own; its
+// highest point is the reading.
 func TestMonitoringReadsAsTheAlarmDoes(t *testing.T) {
 	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.21), double(0.34), double(0.3)}}}
 	src := served(t, m)
@@ -104,7 +142,7 @@ func TestMonitoringReadsAsTheAlarmDoes(t *testing.T) {
 	case req.GetName() != "projects/proj":
 		t.Errorf("the project: %s", req.GetName())
 	case a.GetPerSeriesAligner() != monitoringpb.Aggregation_ALIGN_MAX ||
-		a.GetCrossSeriesReducer() != monitoringpb.Aggregation_REDUCE_MAX || a.GetAlignmentPeriod().AsDuration() != time.Minute:
+		a.GetCrossSeriesReducer() != monitoringpb.Aggregation_REDUCE_NONE || a.GetAlignmentPeriod().AsDuration() != time.Minute:
 		t.Errorf("the aggregation: %v", a)
 	case !req.GetInterval().GetEndTime().AsTime().Equal(start) ||
 		!req.GetInterval().GetStartTime().AsTime().Equal(start.Add(-5*time.Minute)):
@@ -167,5 +205,65 @@ func TestAnIncompleteAnswerIsAFailedRead(t *testing.T) {
 	m.incomplete = false
 	if cpu, err := served(t, m).SpannerCPU(context.Background()); err != nil || cpu != 0.1 {
 		t.Fatalf("the same answer complete: %v %v", cpu, err)
+	}
+}
+
+// TestEverySeriesIsReadOnItsOwn: the reading is the highest point of every
+// series, a region's each; a series whose newest point is stale fails the
+// read though another is fresh and low, naming it; one that reported
+// before and is gone fails it too; and one not seen before is read.
+func TestEverySeriesIsReadOnItsOwn(t *testing.T) {
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}},
+		extra: map[string][]extraSeries{cpuFilter: {{region: "b", values: []*monitoringpb.TypedValue{double(0.5)}}}}}
+	src := served(t, m)
+	ctx := context.Background()
+	if cpu, err := src.SpannerCPU(ctx); err != nil || cpu != 0.5 {
+		t.Fatalf("two regions: %v %v", cpu, err)
+	}
+	m.mu.Lock()
+	m.extra[cpuFilter][0].age = 4*time.Minute + time.Second
+	m.mu.Unlock()
+	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "old") || !strings.Contains(err.Error(), "b") {
+		t.Fatalf("a region stale beside a fresh one: %v", err)
+	}
+	m.mu.Lock()
+	m.extra[cpuFilter] = nil
+	m.mu.Unlock()
+	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "gone") || !strings.Contains(err.Error(), "b") {
+		t.Fatalf("a region gone: %v", err)
+	}
+	m.mu.Lock()
+	m.extra[cpuFilter] = []extraSeries{{region: "b", values: []*monitoringpb.TypedValue{double(0.2)}},
+		{region: "c", values: []*monitoringpb.TypedValue{double(0.3)}}}
+	m.mu.Unlock()
+	if cpu, err := src.SpannerCPU(ctx); err != nil || cpu != 0.3 {
+		t.Fatalf("the region back, and one not seen before: %v %v", cpu, err)
+	}
+	// Another source's series are its own: the subscription's are not
+	// expected of the CPU's.
+	if _, err := src.Undelivered(ctx, "auditor"); err == nil {
+		t.Fatal("a subscription with no series is read")
+	}
+	if cpu, err := src.SpannerCPU(ctx); err != nil || cpu != 0.3 {
+		t.Fatalf("the CPU after another filter's read: %v %v", cpu, err)
+	}
+}
+
+// TestEveryPageIsRead: the series on a later page count, and an empty page
+// Monitoring could not complete fails the read though the next page is
+// whole, which the iterator's Next would have skipped.
+func TestEveryPageIsRead(t *testing.T) {
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}},
+		extra: map[string][]extraSeries{cpuFilter: {{region: "b", values: []*monitoringpb.TypedValue{double(0.5)}}}}, split: true}
+	src := served(t, m)
+	ctx := context.Background()
+	if cpu, err := src.SpannerCPU(ctx); err != nil || cpu != 0.5 || len(m.requests) != 2 {
+		t.Fatalf("two pages: %v %v, %d requests", cpu, err, len(m.requests))
+	}
+	m.mu.Lock()
+	m.split, m.errorPage = false, true
+	m.mu.Unlock()
+	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("an empty page that could not be completed, before a whole one: %v", err)
 	}
 }

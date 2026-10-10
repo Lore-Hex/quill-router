@@ -28,20 +28,24 @@ not let a stage run on. A subscription Monitoring reports nothing for is a
 failed read, not an empty backlog.
 
 Monitoring samples Spanner's CPU and the subscriptions' backlogs every
-minute and shows a sample up to three minutes later. The watch reads the
-highest of each over `-window`, a minute at a time, and takes a series whose
-newest point is older than `-fresh` (4 minutes) as a failed read: a source
-that has stopped reporting is not taken to be as it was. An answer
-Monitoring marks as one it could not complete is a failed read too, whatever
-points it carries: the series it lacks may be the one past its ceiling.
+minute and shows a sample up to three minutes later. The watch reads each
+series over `-window`, a minute at a time, and takes the highest point of
+them all. A series whose newest point is older than `-fresh` (4 minutes)
+fails the read, whatever the others show: a region that has stopped
+reporting is not taken to be as it was, and the highest of the rest would
+hide it. A series that reported before and is gone fails the read for the
+same reason. An answer Monitoring marks as one it could not complete is a
+failed read too, whatever points it carries, on any of its pages.
 
 The window must cover what falls between the looks that answer. Those are
 at most `-misses` looks apart, a look starts at most the larger of `-every`
-and `-timeout` after the last, and a sample shows up to `-fresh` late, so
-`-window` must be at least `-misses` times that larger one, plus `-fresh`:
-5 minutes and 30 seconds at the defaults, under the default window of 10
-minutes. The command refuses a shorter window, since a breach that came and
-went between two looks would then be in neither's window.
+and `-timeout` after the last, and a sample shows up to Monitoring's
+reporting delay, three minutes, late, or `-fresh` if that is longer, so
+`-window` must be at least `-misses` times that larger one, plus the larger
+of `-fresh` and three minutes: 5 minutes and 30 seconds at the defaults,
+under the default window of 10 minutes. The command refuses a shorter
+window, since a breach that came and went between two looks would then be
+in neither's window.
 
 ## How soon it stops
 

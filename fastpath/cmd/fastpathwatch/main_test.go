@@ -234,6 +234,7 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		with("-max-cpu", "NaN"), with("-max-cpu", "-0.1"), with("-max-cpu", "0", "-max-overdue", "1"),
 		with("-every", "0s"), with("-timeout", "0s"), with("-misses", "0"),
 		with("-every", "10m", "-window", "5m"), with("-timeout", "10m"), with("-misses", "10", "-window", "5m"),
+		with("-every", "10s", "-timeout", "10s", "-fresh", "2m", "-window", "2m30s"),
 		{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "a", "-workspace", "ws"}}
 	for _, name := range []string{"-database", "-project", "-instance", "-subscriptions", "-workspace"} {
 		var without []string
@@ -310,8 +311,9 @@ func TestAWatchStoppedAsItBeginsExitsZero(t *testing.T) {
 
 // TestTheWindowCoversTheLooks: looks that answer are at most -misses looks
 // apart, a look at most the larger of -every and -timeout after the last,
-// and a sample shows up to -fresh late; a window of exactly that is taken,
-// a second less refused, so no sample falls between the looks.
+// and a sample shows up to Monitoring's reporting delay late, or -fresh if
+// that is longer; a window of exactly that is taken, a second less refused,
+// so no sample falls between the looks.
 func TestTheWindowCoversTheLooks(t *testing.T) {
 	opened := errors.New("not opened")
 	d := production
@@ -319,14 +321,16 @@ func TestTheWindowCoversTheLooks(t *testing.T) {
 		return nil, nil, nil, opened
 	}
 	base := []string{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "a", "-workspace", "ws",
-		"-max-cpu", "0.5", "-every", "1m", "-timeout", "30s", "-misses", "2", "-fresh", "4m"}
-	if code, err := run(context.Background(), append(slices.Clone(base), "-window", "6m"), &bytes.Buffer{}, d); code != 1 ||
-		!errors.Is(err, opened) {
-		t.Fatalf("a window of exactly two looks and the freshness: exit %d, %v", code, err)
-	}
-	if code, err := run(context.Background(), append(slices.Clone(base), "-window", "5m59s"), &bytes.Buffer{}, d); code != 2 ||
-		err == nil || !strings.Contains(err.Error(), "-window") {
-		t.Fatalf("a window a second short: exit %d, %v", code, err)
+		"-max-cpu", "0.5", "-every", "1m", "-timeout", "30s", "-misses", "2"}
+	for _, c := range []struct{ fresh, exact, short string }{{"4m", "6m", "5m59s"}, {"2m", "5m", "4m59s"}} {
+		with := func(window string) []string { return append(slices.Clone(base), "-fresh", c.fresh, "-window", window) }
+		if code, err := run(context.Background(), with(c.exact), &bytes.Buffer{}, d); code != 1 || !errors.Is(err, opened) {
+			t.Fatalf("-fresh %s: a window of exactly two looks and the delay: exit %d, %v", c.fresh, code, err)
+		}
+		if code, err := run(context.Background(), with(c.short), &bytes.Buffer{}, d); code != 2 || err == nil ||
+			!strings.Contains(err.Error(), "-window") {
+			t.Fatalf("-fresh %s: a window a second short: exit %d, %v", c.fresh, code, err)
+		}
 	}
 }
 

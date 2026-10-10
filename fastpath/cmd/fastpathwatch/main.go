@@ -82,7 +82,7 @@ var production = deps{
 			return nil, nil, nil, err
 		}
 		src := watch.Production{
-			Monitoring: watch.Monitoring{Client: metrics, Project: t.project, Instance: t.instance,
+			Monitoring: &watch.Monitoring{Client: metrics, Project: t.project, Instance: t.instance,
 				Subs: t.subscriptions, Window: t.window, Fresh: t.fresh, Clock: time.Now},
 			Store: watch.Store{Store: s, Workspace: t.workspace, Limit: t.limit},
 		}
@@ -103,7 +103,8 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	subs := fs.String("subscriptions", "", "the subscriptions whose backlogs are watched, separated by commas")
 	fs.StringVar(&t.workspace, "workspace", "", "the stage's workspace, turned off once the stage stops")
 	fs.DurationVar(&t.window, "window", 10*time.Minute, "how far back each look reads Monitoring: at least -misses "+
-		"times the larger of -every and -timeout, plus -fresh, so no sample falls between the looks that answer")
+		"times the larger of -every and -timeout, plus the larger of -fresh and Monitoring's reporting delay of three "+
+		"minutes, so no sample falls between the looks that answer")
 	fs.DurationVar(&t.fresh, "fresh", 4*time.Minute,
 		"how old Monitoring's newest point may be: older is a failed read; at most the window")
 	fs.IntVar(&t.limit, "pending-limit", 10_000, "the most pending packs a look reads; more fails the look")
@@ -140,13 +141,15 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 			"least 1, -stop-pid at least 0 and -stop-wait above 0")
 	case *every <= 0 || *timeout <= 0 || *misses < 1:
 		return 2, errors.New("-every and -timeout above 0, and -misses at least 1")
-	case t.window < time.Duration(*misses)*max(*every, *timeout)+t.fresh:
+	case t.window < time.Duration(*misses)*max(*every, *timeout)+max(t.fresh, watch.ReportingDelay):
 		// Looks that answer are at most -misses looks apart, a look at most
 		// the larger of -every and -timeout after the last, and a sample
-		// shows up to -fresh late: a window shorter than that leaves samples
-		// no look reads.
-		return 2, fmt.Errorf("-window %v is under -misses times the larger of -every and -timeout, plus -fresh: %v",
-			t.window, time.Duration(*misses)*max(*every, *timeout)+t.fresh)
+		// shows up to Monitoring's reporting delay late, or -fresh if that
+		// is longer: a window shorter than that leaves samples no look
+		// reads.
+		return 2, fmt.Errorf("-window %v is under -misses times the larger of -every and -timeout, plus the larger "+
+			"of -fresh and Monitoring's reporting delay: %v",
+			t.window, time.Duration(*misses)*max(*every, *timeout)+max(t.fresh, watch.ReportingDelay))
 	}
 	if err := c.Valid(); err != nil {
 		return 2, err
