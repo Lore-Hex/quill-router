@@ -1,5 +1,5 @@
 // Package store reads and writes the fast-admission spike's database
-// (fastpath/schema/spike.sql). Each operation's guards are conditions in the
+// (fastpath/schema/fastpath.sql). Each operation's guards are conditions in the
 // transaction that writes (docs/design/fast-admission-spike.md, §2), and a
 // guard that refuses is a result, not an error. Every transaction carries a
 // tag naming its operation, so Spanner's statistics tell the operations

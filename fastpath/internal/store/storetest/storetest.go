@@ -1,6 +1,6 @@
 // Package storetest runs the store's tests against the Spanner emulator, and
 // only against one on this machine: a fresh instance for each test binary,
-// deleted when it exits, and databases created from spike.sql.
+// deleted when it exits, and databases created from fastpath.sql.
 //
 // The tests opt in with FASTPATH_SPANNER_EMULATOR=1 and SPANNER_EMULATOR_HOST
 // (fastpath/README.md). Without the first they skip, saying why; with it, an
@@ -105,7 +105,7 @@ func (e *Emulator) options() []option.ClientOption {
 	}
 }
 
-// Database creates a database from statements, spike.sql's when they are
+// Database creates a database from statements, fastpath.sql's when they are
 // nil, and returns a client of it; the client closes with the test binary's
 // instance, or when its caller closes it.
 func (e *Emulator) Database(ctx context.Context, name string, statements []string) (*spanner.Client, error) {
@@ -127,6 +127,13 @@ func (e *Emulator) Database(ctx context.Context, name string, statements []strin
 		return nil, fmt.Errorf("creating database %s: %w", name, err)
 	}
 	return spanner.NewClientWithConfig(ctx, e.Path(name), spanner.ClientConfig{DisableNativeMetrics: true}, e.options()...)
+}
+
+// Client is another client of a database Database created, with the extra
+// options given, such as a counting interceptor; its caller closes it.
+func (e *Emulator) Client(ctx context.Context, name string, extra ...option.ClientOption) (*spanner.Client, error) {
+	return spanner.NewClientWithConfig(ctx, e.Path(name), spanner.ClientConfig{DisableNativeMetrics: true},
+		append(e.options(), extra...)...)
 }
 
 // Path is the database's resource name.

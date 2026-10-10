@@ -547,6 +547,44 @@ def test_reviewed_contracts_have_unique_routes_and_canonical_efforts():
     _assert_reviewed_contracts(data["contracts"])
 
 
+def test_reviewed_contract_models_are_sorted():
+    data = json.loads(request_capabilities._CONTRACT_PATH.read_text())
+    for row in data["contracts"]:
+        assert row["models"] == sorted(row["models"]), row["providers"]
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_request_capabilities_reviewer_check(monkeypatch, tmp_path, capsys, stale):
+    from scripts import check_request_capabilities
+
+    # Only fixture contracts are checked: real routes can retire at any refresh.
+    # Both providers serve both models, except for one optional missing pair.
+    providers = ["fixture-a", "fixture-b"]
+    models = ["fixture/model-a", "fixture/model-b"]
+    missing_pair = (providers[1], models[0])
+    endpoints = [
+        ModelEndpoint(
+            id=f"{model_id}@{provider}/byok", model_id=model_id,
+            provider=provider, usage_type="BYOK",
+        )
+        for provider in providers for model_id in models
+        if not stale or (provider, model_id) != missing_pair
+    ]
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", {e.id: e for e in endpoints})
+    path = tmp_path / "contracts.json"
+    path.write_text(json.dumps({"contracts": [{
+        "providers": providers, "models": models,
+        "source": "Fixture documentation", "tools": True,
+    }]}))
+
+    assert check_request_capabilities.main(["--contracts", str(path)]) == (1 if stale else 0)
+    output = capsys.readouterr().out
+    if stale:
+        assert output.splitlines()[1:] == [f"  ({missing_pair[0]}, {missing_pair[1]})"]
+    else:
+        assert "All reviewed provider/model pairs have catalog endpoints." in output
+
+
 def test_catalog_efforts_agree_with_gateway_wire_contract_vectors():
     data = json.loads(Path("tests/fixtures/gateway_effort_contract.json").read_text())
     for case in data["cases"]:

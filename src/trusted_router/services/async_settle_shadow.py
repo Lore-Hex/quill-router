@@ -99,7 +99,7 @@ class Runtime:
         import threading
         self.settings, self.async_runtime, self.store, self.observer = settings, async_runtime, store, observer
         self.signer = ShadowSigner(async_runtime.signer) if async_runtime.signer else None
-        self.counters = Counters(settings.primary_region, settings.release or "unknown")
+        self.counters = Counters(settings.primary_region, settings.source_revision or settings.release or "unknown")
         self.lock = threading.RLock()
         self.tokens, self.refilled = 10., time.monotonic()
         self.pending = self.queued_bytes = 0

@@ -10,13 +10,13 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-// stagingTag marks the staging stand-in's writes, which the spike counts
-// apart, since production stages full records elsewhere (spike plan §2).
-const stagingTag = "spike-staging"
+// stagingTag marks the staging table's writes, counted apart from the
+// lease's.
+const stagingTag = "fastpath-staging"
 
-// StagedRecord is a full request record in the spike's stand-in for staging
-// (design §4.9), keyed by authorization and digest: an authorization can
-// have two, an original and an enclave retry's compacted copy.
+// StagedRecord is a full request record staged until its pack's work is
+// done (design §4.9), keyed by authorization and digest: an authorization
+// can have two, an original and an enclave retry's compacted copy.
 type StagedRecord struct {
 	AuthorizationID string
 	Digest          []byte
@@ -59,7 +59,7 @@ func (s *Store) StageRecord(ctx context.Context, r StagedRecord) error {
 		if retired.Valid {
 			return fmt.Errorf("%w: %v", ErrRetired, r.Ref)
 		}
-		return txn.BufferWrite([]*spanner.Mutation{spanner.InsertOrUpdate("tr_spike_staged",
+		return txn.BufferWrite([]*spanner.Mutation{spanner.InsertOrUpdate("tr_lease_staged",
 			[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
 			[]any{r.AuthorizationID, r.Digest, r.Ref.Workspace, r.Ref.LeaseID, r.Body, r.MessageID, r.PublishTime})})
 	}, spanner.TransactionOptions{TransactionTag: stagingTag})
@@ -70,7 +70,7 @@ func (s *Store) StageRecord(ctx context.Context, r StagedRecord) error {
 // the winner's: the join is never by authorization alone (§4.9). It reports
 // whether there is one.
 func (s *Store) ReadStaged(ctx context.Context, authorization string, digest []byte) (StagedRecord, bool, error) {
-	row, err := s.client.Single().ReadRowWithOptions(ctx, "tr_spike_staged", spanner.Key{authorization, digest},
+	row, err := s.client.Single().ReadRowWithOptions(ctx, "tr_lease_staged", spanner.Key{authorization, digest},
 		[]string{"workspace_id", "lease_id", "body", "message_id", "publish_time"},
 		&spanner.ReadOptions{RequestTag: stagingTag})
 	if spanner.ErrCode(err) == codes.NotFound {
@@ -108,7 +108,7 @@ func (s *Store) DropStaged(ctx context.Context, keys ...StagedKey) error {
 	}
 	mutations := make([]*spanner.Mutation, 0, len(keys))
 	for _, k := range keys {
-		mutations = append(mutations, spanner.Delete("tr_spike_staged", spanner.Key{k.AuthorizationID, k.Digest}))
+		mutations = append(mutations, spanner.Delete("tr_lease_staged", spanner.Key{k.AuthorizationID, k.Digest}))
 	}
 	_, err := s.client.Apply(ctx, mutations, spanner.TransactionTag(stagingTag))
 	return err
@@ -126,7 +126,7 @@ func (s *Store) DropStaged(ctx context.Context, keys ...StagedKey) error {
 func (s *Store) RetiredStaged(ctx context.Context, limit int) ([]StagedKey, error) {
 	var out []StagedKey
 	err := s.client.Single().QueryWithOptions(ctx, spanner.Statement{
-		SQL: `SELECT s.authorization_id, s.record_digest FROM tr_spike_staged@{FORCE_INDEX=tr_spike_staged_by_lease} AS s
+		SQL: `SELECT s.authorization_id, s.record_digest FROM tr_lease_staged@{FORCE_INDEX=tr_lease_staged_by_lease} AS s
 		       LEFT JOIN tr_lease AS l ON l.workspace_id = s.workspace_id AND l.lease_id = s.lease_id
 		       WHERE l.lease_id IS NULL OR l.retire_at IS NOT NULL
 		       LIMIT @limit`,

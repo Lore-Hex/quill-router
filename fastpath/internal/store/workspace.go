@@ -215,7 +215,7 @@ func (s *Store) WorkspaceStatus(ctx context.Context, workspace string) (Workspac
 			func(r *spanner.Row) error { return r.Column(0, &out.CreditReserved) }},
 		{`SELECT COUNT(*) FROM tr_lease_winners WHERE workspace_id = @w AND work_done_at IS NULL`,
 			func(r *spanner.Row) error { return r.Column(0, &out.PendingPacks) }},
-		{`SELECT COUNT(*) FROM tr_spike_staged@{FORCE_INDEX=tr_spike_staged_by_lease} WHERE workspace_id = @w`,
+		{`SELECT COUNT(*) FROM tr_lease_staged@{FORCE_INDEX=tr_lease_staged_by_lease} WHERE workspace_id = @w`,
 			func(r *spanner.Row) error { return r.Column(0, &out.Staged) }},
 	}
 	for _, q := range queries {
@@ -227,4 +227,18 @@ func (s *Store) WorkspaceStatus(ctx context.Context, workspace string) (Workspac
 	}
 	out.ReadTS, err = readTimestamp(ro)
 	return out, err
+}
+
+// Booked is what a workspace has booked on its credit rows, all told: the
+// sum of their total_usage, read by the workspace's key in a strong read.
+func (s *Store) Booked(ctx context.Context, workspace string) (int64, error) {
+	if workspace == "" {
+		return 0, errors.New("store: no workspace")
+	}
+	var booked int64
+	err := s.client.Single().QueryWithOptions(ctx, spanner.Statement{
+		SQL:    `SELECT COALESCE(SUM(total_usage), 0) FROM tr_credit_balance WHERE workspace_id = @w`,
+		Params: map[string]any{"w": workspace},
+	}, spanner.QueryOptions{RequestTag: tag("booked")}).Do(func(r *spanner.Row) error { return r.Column(0, &booked) })
+	return booked, err
 }
