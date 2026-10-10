@@ -26,17 +26,43 @@ type StagedRecord struct {
 	PublishTime     time.Time
 }
 
-// StageRecord stages a full record, at least once: a write in its own
-// transaction, tagged apart, with no guard, since writing it twice leaves
-// one row.
+// ErrRetired means the lease has retired: it closed with every pack's work
+// done, so nothing reads a record staged for it.
+var ErrRetired = errors.New("store: the lease has retired")
+
+// StageRecord stages a full record, at least once, for a lease that has not
+// retired: one transaction, tagged apart, reads the lease's retirement and
+// writes the record, and writing it twice leaves one row. A pack's work
+// waits for its winners' staged records, so a lease that has retired needs
+// none: a record that comes after, a redelivery or a copy no winner names,
+// is staged for no one (ErrRetired), and one whose lease's row is gone,
+// neither (ErrNoLease). The retirement's write and this read exclude each
+// other, so once a workspace's leases have retired and their staged records
+// are dropped, no staged record of it returns.
 func (s *Store) StageRecord(ctx context.Context, r StagedRecord) error {
 	if r.AuthorizationID == "" || len(r.Digest) == 0 || len(r.Body) == 0 || r.MessageID == "" {
 		return errors.New("store: a staged record has an authorization, a digest, a body and a message ID")
 	}
-	_, err := s.client.Apply(ctx, []*spanner.Mutation{spanner.InsertOrUpdate("tr_spike_staged",
-		[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
-		[]any{r.AuthorizationID, r.Digest, r.Ref.Workspace, r.Ref.LeaseID, r.Body, r.MessageID, r.PublishTime})},
-		spanner.TransactionTag(stagingTag))
+	_, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		row, err := txn.ReadRowWithOptions(ctx, "tr_lease", r.Ref.key(), []string{"retire_at"},
+			&spanner.ReadOptions{RequestTag: stagingTag})
+		if spanner.ErrCode(err) == codes.NotFound {
+			return fmt.Errorf("%w: %v", ErrNoLease, r.Ref)
+		}
+		if err != nil {
+			return err
+		}
+		var retired spanner.NullTime
+		if err := row.Column(0, &retired); err != nil {
+			return err
+		}
+		if retired.Valid {
+			return fmt.Errorf("%w: %v", ErrRetired, r.Ref)
+		}
+		return txn.BufferWrite([]*spanner.Mutation{spanner.InsertOrUpdate("tr_spike_staged",
+			[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
+			[]any{r.AuthorizationID, r.Digest, r.Ref.Workspace, r.Ref.LeaseID, r.Body, r.MessageID, r.PublishTime})})
+	}, spanner.TransactionOptions{TransactionTag: stagingTag})
 	return err
 }
 
@@ -93,9 +119,9 @@ func (s *Store) DropStaged(ctx context.Context, keys ...StagedKey) error {
 // row is gone, seven days after (§4.9): a record no winner names, such as a
 // losing terminal's or an enclave retry's compacted copy, one a crash left
 // between its pack's mark and its drop, and one a redelivery staged again
-// after its drop. A lease's row goes only once it has retired, and the
-// stager stages a record only for a lease it finds, so neither kind needs
-// it again. It reads the staged records' index on their lease, in one
+// after its drop, before the lease retired. A lease's row goes only once it
+// has retired, and nothing is staged for a lease retired or gone
+// (StageRecord), so neither kind needs it again. It reads the staged records' index on their lease, in one
 // strong read.
 func (s *Store) RetiredStaged(ctx context.Context, limit int) ([]StagedKey, error) {
 	var out []StagedKey

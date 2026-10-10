@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -31,8 +32,8 @@ func wonLease(t *testing.T, s *Store, winners ...Winner) LeaseRef {
 func TestStagedRecordsJoinByAuthorizationAndDigest(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
-	lease := NewLeaseID()
-	a, _ := NewAuthorizationID(lease)
+	ref := wonLease(t, s)
+	a, _ := NewAuthorizationID(ref.LeaseID)
 	stage := func(ref LeaseRef, digest, body string) {
 		t.Helper()
 		if err := s.StageRecord(ctx, StagedRecord{AuthorizationID: a, Digest: []byte(digest), Ref: ref, Body: []byte(body),
@@ -40,7 +41,6 @@ func TestStagedRecordsJoinByAuthorizationAndDigest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ref := LeaseRef{"ws", lease}
 	stage(ref, "original", "full")
 	stage(ref, "original", "full")
 	stage(ref, "compacted", "retry")
@@ -70,17 +70,16 @@ func TestRetiredStagedReadsWhatNothingNeeds(t *testing.T) {
 		}
 		return k
 	}
-	open := wonLease(t, s)
-	pending := wonLease(t, s)
+	// Each is staged before its lease retires or goes, since nothing is
+	// staged after.
+	open, pending, retired, gone := wonLease(t, s), wonLease(t, s), wonLease(t, s), wonLease(t, s)
+	kept := []StagedKey{stage(open), stage(pending)}
+	dropped := []StagedKey{stage(retired), stage(gone)}
 	execLease(t, pending, closeIt)
-	retired := wonLease(t, s)
 	execLease(t, retired, closeIt)
 	if ok, err := s.MarkPackDone(ctx, retired, 1); err != nil || !ok {
 		t.Fatalf("marking the retired lease's pack done: %v %v", ok, err)
 	}
-	gone := wonLease(t, s)
-	kept := []StagedKey{stage(open), stage(pending)}
-	dropped := []StagedKey{stage(retired), stage(gone)}
 	execLease(t, gone, `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`)
 	// The database is the package's: other tests' records may be read too.
 	seen := map[string]bool{}
@@ -111,6 +110,46 @@ func TestRetiredStagedReadsWhatNothingNeeds(t *testing.T) {
 	}
 	if err := s.DropStaged(ctx, make([]StagedKey, MaxDropStaged+1)...); err == nil {
 		t.Fatal("more staged records dropped at once than a commit holds")
+	}
+}
+
+// TestNothingIsStagedForALeaseRetiredOrGone: a lease closed with a pack's
+// work pending takes a staged record; once the pack's work is done and the
+// lease retires, a redelivery of it, or another record, is refused, and so
+// is one for a lease the store does not have; the records already staged
+// are kept for the sweep.
+func TestNothingIsStagedForALeaseRetiredOrGone(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := wonLease(t, s)
+	a, err := NewAuthorizationID(ref.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := func(ref LeaseRef, digest string) error {
+		return s.StageRecord(ctx, StagedRecord{AuthorizationID: a, Digest: []byte(digest), Ref: ref, Body: []byte("full"),
+			MessageID: "m-" + digest, PublishTime: time.Now()})
+	}
+	execLease(t, ref, closeIt)
+	if err := stage(ref, "before"); err != nil {
+		t.Fatalf("a record for a lease closed with its work pending: %v", err)
+	}
+	if ok, err := s.MarkPackDone(ctx, ref, 1); err != nil || !ok {
+		t.Fatalf("the pack's work: %v %v", ok, err)
+	}
+	for _, digest := range []string{"before", "after"} {
+		if err := stage(ref, digest); !errors.Is(err, ErrRetired) {
+			t.Fatalf("%s, staged for a lease retired: %v", digest, err)
+		}
+	}
+	if _, ok, err := s.ReadStaged(ctx, a, []byte("after")); ok || err != nil {
+		t.Fatalf("a record refused was staged: %v %v", ok, err)
+	}
+	if _, ok, err := s.ReadStaged(ctx, a, []byte("before")); !ok || err != nil {
+		t.Fatalf("the record staged before the lease retired: %v %v", ok, err)
+	}
+	if err := stage(LeaseRef{ref.Workspace, NewLeaseID()}, "nowhere"); !errors.Is(err, ErrNoLease) {
+		t.Fatalf("a record for a lease the store does not have: %v", err)
 	}
 }
 

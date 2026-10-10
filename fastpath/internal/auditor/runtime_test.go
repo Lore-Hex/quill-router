@@ -68,8 +68,10 @@ type flaky struct {
 	failStage int
 	commits   [][]store.CommitRequest
 	// finding, when set, is told of each FindLease, which then waits for
-	// found to close, whatever its context.
-	finding, found chan struct{}
+	// found to close, whatever its context; staging and staged do as much
+	// for StageRecord.
+	finding, found  chan struct{}
+	staging, staged chan struct{}
 }
 
 func (f *flaky) take(n *int) bool {
@@ -109,6 +111,13 @@ func (f *flaky) ReadLease(ctx context.Context, ref store.LeaseRef) (store.Lease,
 }
 
 func (f *flaky) StageRecord(ctx context.Context, r store.StagedRecord) error {
+	if f.staging != nil {
+		select {
+		case f.staging <- struct{}{}:
+		default:
+		}
+		<-f.staged
+	}
 	if f.take(&f.failStage) {
 		return errInjected
 	}

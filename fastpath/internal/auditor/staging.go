@@ -81,8 +81,10 @@ func (s *Stager) Run(ctx context.Context, src StagedSource) error {
 
 // Handle stages one message. A full record's lease is the one its
 // authorization names; one that names none the store has, or a message of
-// another kind, is told and acknowledged, since no retry stages it. A read
-// or a write that fails asks for the message again.
+// another kind, is told and acknowledged, since no retry stages it. One
+// whose lease has retired is acknowledged and staged for no one: the lease's
+// work is done, so it is a redelivery or a copy no winner names. A read or a
+// write that fails asks for the message again.
 func (s *Stager) Handle(ctx context.Context, m Staged) {
 	switch m.Kind() {
 	case settlelog.Outcome:
@@ -113,8 +115,13 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 		return
 	}
 	digest := sha256.Sum256(m.Data())
-	if err := s.store.StageRecord(ctx, store.StagedRecord{AuthorizationID: m.Authorization(), Digest: digest[:],
-		Ref: ref, Body: m.Data(), MessageID: m.ID(), PublishTime: m.Published()}); err != nil {
+	err = s.store.StageRecord(ctx, store.StagedRecord{AuthorizationID: m.Authorization(), Digest: digest[:],
+		Ref: ref, Body: m.Data(), MessageID: m.ID(), PublishTime: m.Published()})
+	switch {
+	case errors.Is(err, store.ErrNoLease):
+		s.alert(m.Authorization(), "a full record of a lease the store does not have")
+	case errors.Is(err, store.ErrRetired):
+	case err != nil:
 		m.Nack()
 		return
 	}
