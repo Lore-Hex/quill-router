@@ -11,8 +11,10 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   `proofs/TerminalOrder.tla` and `proofs/AuditorCommit.tla`. Each action of a
   spec is a function under the spec's name, and each invariant a method.
   `proofs/manifest.toml` names each spec's package and tests.
-- `schema/spike.sql`: the spike's schema (`docs/design/fast-admission-spike.md`,
-  §4), and the package that splits it into statements.
+- `schema/fastpath.sql`: the service's schema, which
+  `scripts/deploy/migrate_fastpath.sh` creates in production
+  (`docs/design/fast-admission-production-rollout.md`, W4), and the package that
+  splits it into statements.
 - `internal/store`: the spike's Spanner store, each operation's guards in the
   transaction that writes. `internal/store/storetest` runs its tests against
   the Spanner emulator.
