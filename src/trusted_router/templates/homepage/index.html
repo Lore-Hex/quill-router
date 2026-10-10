@@ -32,12 +32,13 @@
 </script>
 </head><body><div class="page">{% include "public/_nav.html" %}
 <main id="main">{% include "homepage/top.html" %}
-{% include "homepage/request.html" %}{% include "homepage/models.html" %}
+{% include "homepage/models.html" %}
 {% include "homepage/migrate.html" %}
+{% include "homepage/request.html" %}
 {% include "homepage/verify.html" %}
 {% include "homepage/pricing.html" %}
 {% include "homepage/customers.html" %}
 {% include "homepage/faq.html" %}
 {% include "homepage/closing.html" %}
-</main>{% include "homepage/footer.html" %}
+</main>{% include "public/_footer.html" %}
 </div><div class="copy-feedback" role="status" aria-live="polite"></div><script id="homepage-data" type="application/json" nonce="{{ csp_nonce() }}">{{ homepage_data|tojson }}</script>{% include "public/_signin.html" %}</body></html>

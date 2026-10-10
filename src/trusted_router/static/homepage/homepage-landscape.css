@@ -14,7 +14,7 @@ body :is(a,button,input,summary,[tabindex]):focus-visible{outline:3px solid var(
 .trc,.trm,.trv,.trs,.trf,.trft{max-width:1280px;margin-inline:auto;padding:88px 60px;background:transparent}.trc,.trm,.trv{gap:32px}.trc h2, .trm h2, .trv h2, .trf h2{font-family:var(--heading-font);font-size:clamp(34px,3.6vw,48px);font-weight:600;letter-spacing:-.045em;line-height:1.12;text-wrap:balance}.trc .chd h2{max-width:680px}.trc .m a{font-size:15px;font-weight:550;color:#edf8f5}.trc .m a:hover{text-decoration:underline}.trc .m code{display:block;margin-top:6px}.trc td{padding-block:22px}.trc th{padding-top:6px}.trc .fl button{min-height:36px;color:#adbbb2}.trc .tg{min-height:32px}.trc .alias{border-radius:8px;padding:20px;gap:12px}.trc .alc{min-height:28px;padding:8px 10px}.trc .cft{margin:0}.trc .num small{font-size:10px}.trc .fl .cnt{line-height:1.4}
 #migrate,#pricing{border-block:1px solid #22342a;background:#0a100d}.trm .box{border-radius:10px;overflow:hidden;border-color:#33473b}.trm .l{padding:36px;gap:22px}.trm .lede{margin:0;color:#c4d3c9}.trm .docs{flex-wrap:wrap;gap:12px 20px}.trm .ph2{flex-wrap:wrap;gap:12px;padding:14px}.code-tabs{display:flex;flex-wrap:wrap;gap:4px}.trm .from{width:100%;justify-content:flex-end}.trm .tab,.trm .from button,.trm .cp{min-height:24px}.trm .mcode{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.trm .val{height:auto;min-height:48px;gap:8px;padding:8px 10px}.trm .val code{font-size:12px;white-space:normal;overflow-wrap:anywhere}.trm .agent{font-size:15px}.trm .pf{min-height:64px}.trm pre .cm{color:#adbbb2}.trv .card{border-radius:10px;overflow:hidden}.trv .cap{padding:24px;gap:12px}.trv .cap b{font-size:18px;font-weight:550}.trv .cap p{font-size:14px;line-height:1.65}.trv .flow{grid-template-columns:1fr 48px 1fr 48px 1fr}.trp .terms{line-height:1.8}
 .trs .sp{border-radius:10px;overflow:hidden}.trs .stat{background:#cce8d7;color:#10241a}.trs .stat .who,.trs .stat .body,.trs .stat .go{color:#254b36}.trs .stat .nums{font-family:var(--heading-font);font-size:37px;line-height:1.2;font-weight:550;letter-spacing:-.035em;color:#10241a}.trs .q blockquote{font-family:var(--heading-font);font-size:25px;line-height:1.55;font-weight:400;color:#d6e6dc}.trs .press{background:#101e26}.trs .press p{color:#c5d7e6}.trf h2{position:static;max-width:350px}.trf summary{min-height:68px;font-size:17px;line-height:1.4}.trf details p{color:#bac9bf;font-size:15px;line-height:1.7}
-footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px}.closing-landscape{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:58% 82%;transform:scale(1.4);z-index:-2}.trft .cols{grid-template-columns:repeat(5,1fr);gap:40px 32px;padding-block:44px}.trft .brand{grid-column:1/-1;max-width:none;display:flex;align-items:center;gap:36px}.trft .brand p{max-width:300px;margin:0;color:#bac9bf}.trft .brand-link{color:#edf8f5}.trft .col a{font-size:13px;color:#adbbb2;line-height:1.6}.trft .col a.hot{color:#edf8f5}.trft .col a:hover{text-decoration:underline}.trft .base{flex-wrap:wrap;gap:20px;font-size:12px}.trft .base .r{display:flex;gap:18px}.trft .base a{color:#c4d3c9}
+footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px}.closing-landscape{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:58% 82%;transform:scale(1.4);z-index:-2}.trft .cols{grid-template-columns:repeat(5,1fr);gap:40px 32px;padding-block:44px}.trft .brand{grid-column:1/-1;max-width:none;display:flex;flex-direction:row;align-items:center;gap:36px}.trft .brand p{max-width:300px;margin:0;color:#bac9bf}.trft .brand-link{color:#edf8f5}.trft .col a{font-size:13px;color:#adbbb2;line-height:1.6}.trft .col a.hot{color:#edf8f5}.trft .col a:hover{text-decoration:underline}.trft .base{flex-wrap:wrap;gap:20px;font-size:12px}.trft .base .r{display:flex;gap:18px}.trft .base a{color:#c4d3c9}
 .tipt::after{display:none}.page-tooltip{position:fixed;z-index:100;max-width:min(260px,calc(100vw - 24px));padding:12px 14px;background:#edf8f5;color:#10241a;font:13px/1.5 var(--font);border-radius:6px;box-shadow:0 12px 30px #0008}.tipt{position:relative}.tipt.tag{background:transparent;color:#c4d3c9}
 .signin-modal{padding:28px;border:1px solid #526859;border-radius:12px;width:min(560px,calc(100% - 32px));max-height:80vh;background:#0c1411;color:#edf8f5}.signin-modal::backdrop{background:#000b;backdrop-filter:blur(4px)}.copy-feedback:not(:empty){position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:100;background:#cce8d7;color:#10241a;padding:12px 20px;border-radius:8px;font-size:14px;max-width:calc(100vw - 24px)}
 @media(max-width:1200px){.trh .hero{padding-inline:40px}.trc,.trm,.trv,.trs,.trf,.trft{padding-inline:40px}.trv .card:nth-child(3){grid-column:2;grid-row:3/span 2}.trv .card:nth-child(4){grid-column:1/-1}.trv .flow{grid-template-columns:1fr 55px 1fr 55px 1fr}}
@@ -189,4 +189,84 @@ footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px
 /* A desktop ribbon belongs inside the composition, away from the screen edge. */
 @media(min-width:601px){
  :root:not(.hero-landscape) .trh .hero .labs{margin-bottom:clamp(32px,calc(var(--hero-vh,1svh) * 8),88px)}
+}
+
+/* Homepage v2 hero. Kept last on purpose: these rules override the hero
+   sizing above. The --hero-vh script in index.html stays as it is. */
+/* Note under the hero buttons. */
+.trh .cta-note{margin:16px 0 0;color:#e4eee9;font-size:14px;font-weight:500;line-height:1.4;letter-spacing:.005em;text-align:center;text-shadow:0 1px 2px #000c}
+/* "Copy base URL" is a <button> styled like the secondary link button. */
+.trh button.button{font:inherit;cursor:pointer}
+#top .cta button.button-secondary{font-weight:500}
+/* Desktop: the content block sits in the upper third of the free space between
+   the header and the model strip (1 part above, 2 parts below). */
+@media(min-width:601px){
+ .trh .hero{padding-top:24px}
+ .trh .hero>.copy{top:0}
+ .trh .copy::before{content:"";flex:1 1 0}
+ .trh .copy>.cta-note{flex:2 1 auto}
+ .trh .labs{margin-top:0}
+}
+/* Subtitle-to-button gap is about 1.5x the headline-to-subtitle gap. */
+.trh .copy .sub{margin-bottom:40px}
+:root.hero-compact .trh .copy .sub{margin-bottom:28px}
+:root.hero-short .trh .copy .sub{margin-bottom:16px}
+/* Phones: one-line white note, eyebrow never wider than the headline, and the
+   model strip pinned to the bottom of the hero, clear of bottom address bars. */
+@media(max-width:600px){
+ .trh .cta-note{margin-top:14px;color:#fff;font-size:clamp(12.5px,3.6vw,14px);font-weight:500;letter-spacing:0;white-space:nowrap;text-shadow:0 1px 3px #000}
+ .hero-promises{font-size:clamp(10px,3.1vw,12px);letter-spacing:.06em;gap:12px 22px}
+ .hero-promises li+li::before{left:-12px;top:calc(50% - 1px)}
+ :root .trh .copy h1{font-size:clamp(36px,12.4vw,60px)}
+ .trh .hero>.copy{position:static;top:auto;padding-top:min(var(--hero-lower-target),max(0px,calc(var(--hero-bottom-room) + var(--hero-marquee-room) - 16px)))}
+ :root .trh .hero .labs{position:absolute;left:0;right:0;bottom:max(28px,calc(env(safe-area-inset-bottom) + 16px));width:auto;max-width:none;margin:0}
+}
+/* "Copy base URL" lands on the migration block and flashes its Base URL field. */
+#migrate{scroll-margin-top:24px}
+@keyframes base-url-flash{0%{box-shadow:0 0 0 0 #cce8d700}25%{box-shadow:0 0 0 3px #cce8d7}100%{box-shadow:0 0 0 0 #cce8d700}}
+.trm .field.is-flashing{animation:base-url-flash 1.8s ease-out;border-radius:8px}
+@media(prefers-reduced-motion:reduce){.trm .field.is-flashing{animation:none;outline:2px solid #cce8d7;outline-offset:2px}}
+
+/* Homepage v2 catalog. No routing-promise strip on phones. */
+@media(max-width:700px){.trc .alias{display:none}}
+/* Model catalog as cards from 880px down: two columns at 601-880px, one column
+   at 600px and below. Context comes back on phones. Desktop table (881px and up)
+   is unchanged. */
+@media(max-width:880px){
+ .page .trc table{display:block;overflow:visible;table-layout:auto}
+ .page .trc thead{display:none}
+ .page .trc tbody:not([hidden]){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
+ .page .trc tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:14px 12px;align-content:start;padding:14px;border:1px solid #1E2621;border-radius:8px;background:#0b100d}
+ .page .trc tbody tr:hover{background:#111713}
+ .page .trc td{display:block;border:0;padding:0;min-width:0}
+ .page .trc td:nth-child(1),.page .trc td:nth-child(2){grid-column:1/-1}
+ .page .trc td:nth-child(5){display:block}
+ .page .trc .m{align-items:flex-start;gap:12px}
+ .page .trc .m>div{min-width:0}
+ .page .trc .m a{display:block;font-size:16px;line-height:1.3}
+ .page .trc .m code{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11.5px}
+ .page .trc .tags{gap:6px}
+ .page .trc .num{white-space:nowrap;font-size:12.5px;line-height:1.35}
+ .page .trc .num:before{content:attr(data-label);display:block;margin-bottom:4px;font:500 10px/1.3 var(--mono);letter-spacing:.08em;color:#adbbb2;text-transform:uppercase}
+ .page .trc .num small{display:inline;margin-right:4px;font-size:9.5px;letter-spacing:.04em}
+}
+@media(max-width:600px){
+ .page .trc tbody:not([hidden]){grid-template-columns:1fr;gap:10px}
+}
+
+/* Homepage v2 migration block: two levels. A "Code / Agent prompt" switch comes
+   first; the language tabs and the "from" picker only show under Code. */
+.trm .ph2{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 16px}
+.trm .mode-switch{display:inline-flex;gap:2px;padding:3px;border:1px solid #526859;border-radius:8px;background:#0c1411;justify-self:start}
+.trm .mode{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 14px;border-radius:5px;cursor:pointer;font:500 14px/1 var(--mono);color:#adbbb2;white-space:nowrap}
+.trm .mode:hover{color:#edf8f5;background:#14251c}
+.trm .mode[aria-selected="true"]{color:#10241a;background:#cce8d7}
+.trm .mode[aria-selected="true"]:hover{background:#e5fff2}
+.trm .ph2 .from{width:auto;margin:0;padding:0;justify-content:flex-end}
+.trm .ph2 .code-tabs{grid-column:1/-1}
+@media(max-width:600px){
+ .trm .ph2{grid-template-columns:1fr}
+ .trm .mode-switch{display:flex;width:100%;justify-self:stretch}
+ .trm .mode{flex:1}
+ .trm .ph2 .from{order:3;width:100%;justify-content:flex-start}
 }

@@ -34,6 +34,8 @@ function applySigninTarget() {
         if (creditNote) {
             creditNote.textContent =
                 "Accounts created for this app start at $0. After sign in, add credits and choose the maximum this app may spend.";
+            // setSigninMode() must leave the app-flow note alone.
+            creditNote.dataset.locked = "1";
         }
     }
 }
@@ -58,6 +60,51 @@ function openSigninModal() {
         return;
     if (typeof dialog.showModal === "function" && !dialog.open) {
         dialog.showModal();
+    }
+}
+const SIGNIN_MODES = {
+    signup: {
+        kicker: "Create your account",
+        title: "Get your API key",
+        sub: "No card required. Start with 1 million free tokens.",
+        ask: "Already have an account?",
+        action: "Sign in",
+        to: "signin",
+    },
+    signin: {
+        kicker: "Workspace access",
+        title: "Sign in",
+        sub: "Choose a sign in method to access your TrustedRouter workspace.",
+        ask: "New to TrustedRouter?",
+        action: "Create an account",
+        to: "signup",
+    },
+};
+function signinModeFrom(value) {
+    return value === "signup" ? "signup" : "signin";
+}
+function setSigninMode(mode) {
+    const dialog = document.getElementById("signinModal");
+    if (!dialog)
+        return;
+    const copy = SIGNIN_MODES[mode];
+    dialog.dataset.mode = mode;
+    const kicker = document.getElementById("signinKicker");
+    if (kicker)
+        kicker.textContent = copy.kicker;
+    const title = document.getElementById("signinTitle");
+    if (title)
+        title.textContent = copy.title;
+    const note = document.getElementById("signinCreditNote");
+    if (note && !note.dataset.locked)
+        note.textContent = copy.sub;
+    const ask = document.getElementById("signinSwitchAsk");
+    if (ask)
+        ask.textContent = copy.ask;
+    const switcher = dialog.querySelector("[data-switch-mode]");
+    if (switcher) {
+        switcher.textContent = copy.action;
+        switcher.dataset.switchMode = copy.to;
     }
 }
 function trackFunnelEvent(event) {
@@ -240,11 +287,22 @@ function applyAuthAwareChrome() {
         const replacement = document.createElement("a");
         replacement.href = "/console/api-keys";
         replacement.className = el.className;
-        replacement.textContent =
-            el.textContent && el.textContent.trim().toLowerCase().includes("api key")
+        // The homepage's three API-key buttons (data-homepage-cta) read
+        // "Get my API key" and keep their marker so click tracking survives.
+        const homepageCta = el.hasAttribute("data-homepage-cta");
+        replacement.textContent = homepageCta
+            ? "Get my API key"
+            : el.textContent && el.textContent.trim().toLowerCase().includes("api key")
                 ? "Open console"
                 : "Console";
+        if (homepageCta)
+            replacement.setAttribute("data-homepage-cta", "");
         el.replaceWith(replacement);
+    });
+    // The hero note ("No card required...") is for visitors. Keep its space so
+    // the hero does not shift for signed-in people.
+    document.querySelectorAll(".cta-note").forEach((note) => {
+        note.style.visibility = "hidden";
     });
 }
 function init() {
@@ -258,8 +316,15 @@ function init() {
         const opener = target.closest('[data-action="open-signin"]');
         if (opener) {
             event.preventDefault();
+            setSigninMode(signinModeFrom(opener.dataset.signinMode));
             trackFunnelEvent("sign_in_opened");
             openSigninModal();
+            return;
+        }
+        const switcher = target.closest("[data-switch-mode]");
+        if (switcher) {
+            event.preventDefault();
+            setSigninMode(signinModeFrom(switcher.dataset.switchMode));
             return;
         }
         const copyButton = target.closest('[data-action="copy-code"]');

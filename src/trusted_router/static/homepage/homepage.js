@@ -57,31 +57,39 @@ $$('[data-alias]').forEach(button=>button.addEventListener('click',async()=>{
   track('home.alias_copied',{alias:button.dataset.alias});
  }
 }));
-let lang='py', source='openai';
+let lang='py', source='openai', codeLang='py';
 const migration=$('.trm'), pre=$('.mcode');
+// Two levels: "Code" or "Agent prompt" first; the language tabs and the "from" picker belong to Code.
 function renderCode(){
+ const agent=lang==='agent';
+ $$('.mode',migration).forEach(b=>{const selected=(b.dataset.mode==='agent')===agent;b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1;});
  $$('.tab',migration).forEach(tab=>{const selected=tab.dataset.lang===lang;tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;});
  $$('.from button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.src===source)));
- $('.from').hidden=lang==='agent';
- pre.setAttribute('aria-labelledby','code-tab-'+lang);
- if(lang==='agent'){pre.className='mcode prompt';pre.textContent=AGENT;}
+ $('.code-tabs').hidden=agent;
+ $('.from').hidden=agent;
+ pre.setAttribute('aria-labelledby',agent?'mode-tab-agent':'code-tab-'+lang);
+ if(agent){pre.className='mcode prompt';pre.textContent=AGENT;}
  else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
- $('.pf .hint').textContent=lang==='agent'?DATA.migration.agent_hint:'';
- $('.pf .hint').hidden=lang!=='agent';
- $('[data-copycode]').setAttribute('aria-label',lang==='agent'?'Copy agent prompt':'Copy code');
- $('[data-copycode]').title=lang==='agent'?'Copy agent prompt':'Copy code';
+ $('.pf .hint').textContent=agent?DATA.migration.agent_hint:'';
+ $('.pf .hint').hidden=!agent;
+ $('[data-copycode]').setAttribute('aria-label',agent?'Copy agent prompt':'Copy code');
+ $('[data-copycode]').title=agent?'Copy agent prompt':'Copy code';
 }
-function setLang(value){lang=value;renderCode();track('home.migration_tab',{tab:value,from:source});}
-$$('.tab').forEach((tab,index,tabs)=>{
- tab.addEventListener('click',()=>setLang(tab.dataset.lang));
- tab.addEventListener('keydown',e=>{
+function setLang(value){lang=value;if(value!=='agent')codeLang=value;renderCode();track('home.migration_tab',{tab:value,from:source});}
+function tabKeys(buttons,select){
+ buttons.forEach((button,index)=>button.addEventListener('keydown',e=>{
   let next;
-  if(e.key==='ArrowRight')next=(index+1)%tabs.length;
-  if(e.key==='ArrowLeft')next=(index-1+tabs.length)%tabs.length;
-  if(e.key==='Home')next=0;if(e.key==='End')next=tabs.length-1;
-  if(next!==undefined){e.preventDefault();setLang(tabs[next].dataset.lang);tabs[next].focus();}
- });
-});
+  if(e.key==='ArrowRight')next=(index+1)%buttons.length;
+  if(e.key==='ArrowLeft')next=(index-1+buttons.length)%buttons.length;
+  if(e.key==='Home')next=0;if(e.key==='End')next=buttons.length-1;
+  if(next!==undefined){e.preventDefault();select(buttons[next]);buttons[next].focus();}
+ }));
+}
+const modeLang=button=>button.dataset.mode==='agent'?'agent':codeLang;
+$$('.mode').forEach(button=>button.addEventListener('click',()=>setLang(modeLang(button))));
+tabKeys($$('.mode'),button=>setLang(modeLang(button)));
+$$('.tab').forEach(tab=>tab.addEventListener('click',()=>setLang(tab.dataset.lang)));
+tabKeys($$('.tab'),tab=>setLang(tab.dataset.lang));
 $$('.from button').forEach(button=>button.addEventListener('click',()=>{source=button.dataset.src;renderCode();track('home.migration_tab',{tab:lang,from:source});}));
 $('[data-copy]').addEventListener('click',async e=>{if(await copyText(TRB,e.currentTarget))track('home.base_url_copied');});
 $('[data-copycode]').addEventListener('click',async e=>{
@@ -90,6 +98,20 @@ $('[data-copycode]').addEventListener('click',async e=>{
  if(await copyText(text,e.currentTarget))track(lang==='agent'?'home.agent_prompt_copied':'home.code_copied',{tab:lang,from:source});
 });
 renderCode();
+// Hero "Copy base URL": copy, then bring the visitor to the migration block and flash its Base URL field.
+const heroCopy=$('[data-copy-base-url]');
+heroCopy?.addEventListener('click',async()=>{
+ const ok=await copyText(TRB,heroCopy);
+ if(ok)feedback('Base URL copied');
+ else feedback(`Base URL: ${TRB}`);
+ const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ $('#migrate')?.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});
+ const field=$('.trm .field');
+ if(field){
+  setTimeout(()=>{field.classList.remove('is-flashing');void field.offsetWidth;field.classList.add('is-flashing');},reduce?0:650);
+  setTimeout(()=>field.classList.remove('is-flashing'),3000);
+ }
+});
 const labs=$('.trh .labs');let keyboardInput=false;
 document.addEventListener('keydown',()=>{keyboardInput=true;},true);document.addEventListener('pointerdown',()=>{keyboardInput=false;},true);
 if(labs){labs.addEventListener('focusin',()=>{labs.classList.toggle('paused',keyboardInput);});labs.addEventListener('focusout',()=>{labs.classList.remove('paused');});}

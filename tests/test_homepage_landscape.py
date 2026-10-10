@@ -64,7 +64,7 @@ def test_catalog_prices_and_privacy_follow_application_view(
 
     def changed(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         result = original(model, test_mode=test_mode)
-        if model.id == "z-ai/glm-5.3-flash":
+        if model.id == "deepseek/deepseek-v4.1-flash":
             result.update(prompt_price_sort=1234567, prompt_price="$1.234567/1M",
                           zdr_available=False, e2e_available=False, provider_count=7)
         return result
@@ -72,12 +72,12 @@ def test_catalog_prices_and_privacy_follow_application_view(
     monkeypatch.setattr(dashboard, "_model_view", changed)
     result = homepage_context("https://example.test/v1")
     row = next(row for row in result["homepage_catalog"]["lists"]["all"]
-               if row["id"] == "z-ai/glm-5.3-flash")
+               if row["id"] == "deepseek/deepseek-v4.1-flash")
     assert row["input_price"] == "$1.234567"
     assert row["provider_count"] == 7
     assert row["route_labels"] == []
     for key in ("z", "c"):
-        assert all(row["id"] != "z-ai/glm-5.3-flash"
+        assert all(row["id"] != "deepseek/deepseek-v4.1-flash"
                    for row in result["homepage_catalog"]["lists"][key])
     assert result["homepage_data"]["migration"]["base_url"] == "https://example.test/v1"
 
