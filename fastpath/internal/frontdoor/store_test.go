@@ -66,8 +66,9 @@ func TestAFrontDoorAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
-		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1),
+		spanner.InsertMap("tr_credit_balance", map[string]any{
+			"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
 	c := &clock{now: time.Now()}

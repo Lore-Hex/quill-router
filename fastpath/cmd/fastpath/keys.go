@@ -1,0 +1,118 @@
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"regexp"
+	"strings"
+
+	"google.golang.org/api/option"
+	secretmanager "google.golang.org/api/secretmanager/v1"
+)
+
+// pinnedVersion is a Secret Manager secret version named by its number,
+// never "latest": every node, and every restart of one, reads the same key
+// (docs/design/fast-admission-production-rollout.md, W6).
+var pinnedVersion = regexp.MustCompile(`^projects/[^/]+/secrets/[^/]+/versions/[1-9][0-9]*$`)
+
+// quiet is the Secret Manager client's logger, which logs nothing, whatever
+// GOOGLE_SDK_GO_LOGGING_LEVEL says: the client's debug logging prints each
+// response, and an access's response is the key's own bytes.
+var quiet = slog.New(slog.DiscardHandler)
+
+// sdkLogging is the variable that turns the Google client libraries' logs
+// on; each library reads it as it makes a client's logger.
+const sdkLogging = "GOOGLE_SDK_GO_LOGGING_LEVEL"
+
+// printsSecrets says why the process's environment would print what the
+// node must keep: the client libraries' logs (sdkLogging) print each request
+// and response, the credentials that can read the envelope keys with them,
+// and HTTP/2's debugging (GODEBUG's http2debug) each frame, a Secret
+// Manager answer's key with it. Both are read as the process starts or a
+// client is made, so the node refuses to run under either, before anything
+// else: unsetting one later would be too late. "" is an environment that
+// prints neither.
+func printsSecrets(getenv func(string) string) string {
+	if v := getenv(sdkLogging); v != "" {
+		return fmt.Sprintf("%s=%s prints the client libraries' requests and responses, credentials and keys "+
+			"with them; unset it", sdkLogging, v)
+	}
+	// Go's HTTP/2 code, the standard library's and golang.org/x/net's,
+	// turns its debugging on where GODEBUG holds either text anywhere, so
+	// the node refuses the same.
+	godebug := getenv("GODEBUG")
+	for _, on := range []string{"http2debug=1", "http2debug=2"} {
+		if strings.Contains(godebug, on) {
+			return fmt.Sprintf("GODEBUG holds %s, which prints every HTTP/2 frame, keys with them; remove it", on)
+		}
+	}
+	return ""
+}
+
+// readSecret reads a pinned secret version's payload: the key's own bytes.
+func readSecret(ctx context.Context, name string, opts ...option.ClientOption) ([]byte, error) {
+	if !pinnedVersion.MatchString(name) {
+		return nil, fmt.Errorf("%q is not a secret version pinned by its number", name)
+	}
+	// The quiet logger comes last, so no option given can replace it.
+	svc, err := secretmanager.NewService(ctx, append(opts[:len(opts):len(opts)], option.WithLogger(quiet))...)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := svc.Projects.Secrets.Versions.Access(name).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+	if resp.Payload == nil {
+		return nil, fmt.Errorf("%s has no payload", name)
+	}
+	key, err := base64.StdEncoding.DecodeString(resp.Payload.Data)
+	if err != nil {
+		return nil, fmt.Errorf("%s's payload: %w", name, err)
+	}
+	return key, nil
+}
+
+// keysOf is the node's keys as its flags give them: a file's, for
+// development, or a pinned secret version's with the keys accepted beside
+// it, which go only with a secret. With neither, the node has no key, as an
+// auditor alone needs none.
+func keysOf(ctx context.Context, keyPath, keySecret, accept string, opts ...option.ClientOption) ([]byte, [][]byte,
+	error) {
+	switch {
+	case keyPath != "" && keySecret != "":
+		return nil, nil, errors.New("-key or -key-secret, not both")
+	case accept != "" && keySecret == "":
+		return nil, nil, errors.New("-accept-key-secrets goes with -key-secret")
+	case keyPath != "":
+		key, err := os.ReadFile(keyPath)
+		return key, nil, err
+	case keySecret != "":
+		return readKeys(ctx, keySecret, accept, opts...)
+	}
+	return nil, nil, nil
+}
+
+// readKeys reads the sealing key, from one pinned secret version, and the
+// keys accepted beside it, from a comma-separated list of others.
+func readKeys(ctx context.Context, seal, accept string, opts ...option.ClientOption) ([]byte, [][]byte, error) {
+	key, err := readSecret(ctx, seal, opts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	var accepted [][]byte
+	if accept != "" {
+		for _, name := range strings.Split(accept, ",") {
+			k, err := readSecret(ctx, name, opts...)
+			if err != nil {
+				return nil, nil, err
+			}
+			accepted = append(accepted, k)
+		}
+	}
+	return key, accepted, nil
+}

@@ -32,6 +32,7 @@ const (
 	RefusedAllowance  Refusal = "the lease would take the workspace's exposure past its allowance"
 	RefusedFloor      Refusal = "the lease would leave less headroom outside leases than the floor"
 	RefusedLeaseID    Refusal = "the lease ID is another lease's"
+	RefusedNotServing Refusal = "the owner is not a member serving at that epoch"
 )
 
 // GrantRequest asks for a lease of Amount, L, for a workspace's shard. The
@@ -66,6 +67,9 @@ type GrantResult struct {
 // Grant grants a lease in one read-write transaction, never on a request's
 // path (§4.2). It reads the workspace's credit rows and its leases under the
 // range lock those reads take, so two regions' grants cannot both pass, and
+// refuses an owner that is not a member serving at the epoch named, read in
+// the transaction, so a grant and its owner's leaving are one before the
+// other and a node leaving owns no lease granted after (NodeStatus); it
 // refuses a workspace that is marked in debt, paused, latched or below
 // Config.RequiredTier; a lease that would take the workspace's exposure past
 // Config.Allowance; and one that would leave its signed headroom less than
@@ -86,7 +90,16 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 			}
 			return err
 		}
-		// The switch first: no lease for a workspace not enabled, read in
+		// The owner first: a node marked leaving, or started again since,
+		// takes no lease, so a grant it asked for and a status that found
+		// it owning none cannot cross.
+		if serving, err := memberServing(ctx, txn, req.Owner); err != nil || !serving {
+			if !serving {
+				out.Refused = RefusedNotServing
+			}
+			return err
+		}
+		// Then the switch: no lease for a workspace not enabled, read in
 		// this transaction, so a grant and its workspace's disabling are
 		// one before the other.
 		if enabled, err := workspaceEnabled(ctx, txn, req.Workspace); err != nil || !enabled {
@@ -194,6 +207,25 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 	}
 	out.CommitTS = resp.CommitTs.UTC()
 	return out, nil
+}
+
+// memberServing reads whether the owner's node is a member serving at the
+// owner's epoch (tr_fastpath_member), in the transaction.
+func memberServing(ctx context.Context, txn *spanner.ReadWriteTransaction, who Owner) (bool, error) {
+	row, err := txn.ReadRowWithOptions(ctx, "tr_fastpath_member", spanner.Key{who.Node}, []string{"state", "epoch"},
+		&spanner.ReadOptions{RequestTag: tag("grant")})
+	if spanner.ErrCode(err) == codes.NotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var state string
+	var epoch int64
+	if err := row.Columns(&state, &epoch); err != nil {
+		return false, err
+	}
+	return state == Serving && epoch == who.Epoch, nil
 }
 
 // errRollback ends a transaction whose outcome is a refusal found after a

@@ -70,6 +70,9 @@ func TestTheOwnerAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	who := store.Owner{Node: "owner-1", Epoch: 3}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Member(who.Node, who.Epoch)}); err != nil {
+		t.Fatal(err)
+	}
 	id := store.NewLeaseID()
 	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: id, Region: "us-central1", Owner: who,
 		Amount: 100, KeyStatusVersion: 7})
@@ -159,6 +162,9 @@ func TestARevokedLeaseIsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	who := store.Owner{Node: "owner-1", Epoch: 5}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Member(who.Node, who.Epoch)}); err != nil {
+		t.Fatal(err)
+	}
 	id := store.NewLeaseID()
 	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: id, Region: "us-central1", Owner: who,
 		Amount: 100, KeyStatusVersion: 7})
@@ -217,8 +223,9 @@ func TestAShardIsGrantedItsLeaseByTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := storetest.UniqueID("ws")
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance", map[string]any{
-		"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("owner-1", 4),
+		spanner.InsertMap("tr_credit_balance", map[string]any{
+			"workspace_id": ws, "shard": int64(0), "total_credits": int64(1000), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
 	o, err := New(Config{Epoch: 4, Node: "owner-1", Spanner: s, RenewEvery: time.Hour, Window: 30 * time.Second, Enabled: everyWorkspace,
@@ -275,6 +282,9 @@ func TestTheOwnerAdoptsAgainstTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	who := store.Owner{Node: "owner-1", Epoch: 3}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Member(who.Node, who.Epoch)}); err != nil {
+		t.Fatal(err)
+	}
 	id := store.NewLeaseID()
 	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: id, Region: "us-central1", Owner: who,
 		Amount: 100, KeyStatusVersion: 7})

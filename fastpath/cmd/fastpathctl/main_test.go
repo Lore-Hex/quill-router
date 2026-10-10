@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -69,7 +70,9 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	}
 	for _, args := range [][]string{{"status", "ws"}, {"-database", "d", "status"}, {"-database", "d", "drop", "ws"},
 		{"-database", "d", "status", ""}, {"-database", "d"}, {"-database", "d", "disable-all", "ws"},
-		{"-database", "d", "enable", "ws", "more"}} {
+		{"-database", "d", "enable", "ws", "more"}, {"-database", "d", "node"}, {"-database", "d", "node", ""},
+		{"-database", "d", "node", "a", "b"}, {"-database", "d", "closed"}, {"-database", "d", "closed", "a", "b"},
+		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -177,5 +180,127 @@ func TestAnAnswerNotWrittenIsAFailure(t *testing.T) {
 		if code != 1 || err == nil {
 			t.Errorf("%q with its answer not written: exit %d, %v", args, code, err)
 		}
+	}
+}
+
+// TestNodeSaysWhenANodeMayStop: a node with no row may not stop, exit 3;
+// joined and marked leaving, owning no lease, it may, exit 0.
+func TestNodeSaysWhenANodeMayStop(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	address := storetest.UniqueID("node")
+	node := func() (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, []string{"-database", "d", "node", address}, &out, open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("node wrote %q: %v", out.String(), err)
+		}
+		return code, got
+	}
+	if code, got := node(); code != 3 || got["done"] != false {
+		t.Fatalf("a node with no row: exit %d, %v", code, got)
+	}
+	s, err := store.New(shared, service.Defaults().Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, _, err := s.Join(ctx, address, []string{"owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := s.Heartbeat(ctx, address, epoch, store.Leaving); err != nil || !ok {
+		t.Fatalf("marking the node leaving: %v %v", ok, err)
+	}
+	if code, got := node(); code != 0 || got["done"] != true {
+		t.Fatalf("a node leaving with no lease: exit %d, %v", code, got)
+	}
+}
+
+// TestClosedSaysWhenNothingOfANodeIsLeft: closed exits 3 for a node with
+// no row, and for one owning a lease, open or draining, which it lists,
+// and 0 once every lease of the node's is closed, leaving or not.
+func TestClosedSaysWhenNothingOfANodeIsLeft(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	address := storetest.UniqueID("node")
+	closed := func() (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, []string{"-database", "d", "closed", address}, &out, open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("closed wrote %q: %v", out.String(), err)
+		}
+		return code, got
+	}
+	if code, got := closed(); code != 3 || got["done"] != false {
+		t.Fatalf("a node with no row: exit %d, %v", code, got)
+	}
+	s, err := store.New(shared, service.Defaults().Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, _, err := s.Join(ctx, address, []string{"owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := storetest.UniqueID("ws")
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
+		map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	req := store.GrantRequest{Workspace: ws, LeaseID: store.NewLeaseID(), Region: "us-central1",
+		Owner: store.Owner{Node: address, Epoch: epoch}, Amount: 10}
+	if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	code, got := closed()
+	why, _ := got["why_not"].([]any)
+	if code != 3 || got["done"] != false || len(why) != 2 || !strings.Contains(fmt.Sprint(why[1]), req.LeaseID) {
+		t.Fatalf("a node owning an open lease: exit %d, %v", code, got)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: req.LeaseID}
+	if ok, _, err := s.OwnerMarkDraining(ctx, req.Owner, ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	if code, got := closed(); code != 3 || got["done"] != false {
+		t.Fatalf("a node owning a draining lease: exit %d, %v", code, got)
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.UpdateMap("tr_lease", map[string]any{"workspace_id": ws,
+		"lease_id": req.LeaseID, "state": "closed", "closed_at": time.Now(), "close_kind": "operator"})}); err != nil {
+		t.Fatal(err)
+	}
+	if code, got := closed(); code != 3 || got["done"] != false {
+		t.Fatalf("a node whose every lease is closed, its row still serving: exit %d, %v", code, got)
+	}
+	leave := func(addr string) (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, []string{"-database", "d", "leave", addr}, &out, open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("leave wrote %q: %v", out.String(), err)
+		}
+		return code, got
+	}
+	if code, got := leave(storetest.UniqueID("nobody")); code != 3 || got["found"] != false {
+		t.Fatalf("leaving a node with no row: exit %d, %v", code, got)
+	}
+	if code, got := leave(address); code != 0 || got["found"] != true {
+		t.Fatalf("leaving the node: exit %d, %v", code, got)
+	}
+	if code, got := closed(); code != 0 || got["done"] != true {
+		t.Fatalf("a node fenced, its every lease closed: exit %d, %v", code, got)
 	}
 }

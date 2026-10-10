@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/auditor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/ring"
@@ -346,7 +349,7 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 		start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: db, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
@@ -433,7 +436,7 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 		stops[ln] = start(t, cfg, Clients{Spanner: shared, PubSub: ps})
 	}
 	member := short(config(a))
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: shared, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
@@ -501,7 +504,7 @@ func twoNodes(t *testing.T, name string, set func(owner bool, cfg *Config)) (a, 
 		stops[ln] = start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: db, PubSub: ps})
 	return a, b, stops, db, ws
 }
@@ -829,6 +832,83 @@ func TestEveryPartAgreesOnTheStoresTimes(t *testing.T) {
 		o.HoldLife != 17*time.Minute || f.HoldLife != 17*time.Minute+11*time.Second || r.Skew != 3*time.Second ||
 		r.Grace != 5*time.Minute || r.MaxLife != 17*time.Minute {
 		t.Fatalf("the owner's %+v, the front door's hold life %v, the auditor's %+v", o, f.HoldLife, r)
+	}
+}
+
+// TestTheOverdueAllowancesAreTenMinutes: a drain and a pack's pending work
+// are told of ten minutes past their time by default, and the defaults
+// come through the configuration's setup; zero would tell no one.
+func TestTheOverdueAllowancesAreTenMinutes(t *testing.T) {
+	cfg := Defaults()
+	if cfg.Runtime.DrainOverdue != 10*time.Minute || cfg.Pending.Overdue != 10*time.Minute {
+		t.Fatalf("the defaults: a drain's %v, pending work's %v", cfg.Runtime.DrainOverdue, cfg.Pending.Overdue)
+	}
+	got := cfg.agreed()
+	if got.Runtime.DrainOverdue != 10*time.Minute || got.Pending.Overdue != 10*time.Minute {
+		t.Fatalf("after the setup: a drain's %v, pending work's %v", got.Runtime.DrainOverdue, got.Pending.Overdue)
+	}
+}
+
+// lines is a goroutine-safe writer that keeps what was written.
+type lines struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lines) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lines) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+// TestAProcessWithNoAlertCallbackWritesJSON: a process given no Alert
+// writes each alert as a line of JSON to the default output, standard
+// error, with the kind as the label fastpath_alert: a full record of no
+// lease's authorization, published to the record topic, is told of so.
+func TestAProcessWithNoAlertCallbackWritesJSON(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	out := &lines{}
+	saved := alertOutput
+	alertOutput = out
+	t.Cleanup(func() { alertOutput = saved })
+	ps, _ := fakePubSub(t)
+	cfg := config(listen(t))
+	cfg.Alert = nil
+	start(t, cfg, Clients{Spanner: shared, PubSub: ps})
+	records, err := settlelog.OpenRecords(ps, cfg.RecordTopic, cfg.publish())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer records.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := records.Publish("not-an-authorization", settlelog.FullRecord, []byte("x")).Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	eventually(t, 20*time.Second, "the alert written", func() (bool, error) {
+		for _, l := range strings.Split(out.String(), "\n") {
+			if strings.Contains(l, "not-an-authorization") {
+				line = l
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	var got map[string]any
+	want := map[string]any{"severity": "ERROR", "message": "fastpath alert: " + auditor.AlertNoLeaseAuth,
+		"subject":                       "not-an-authorization",
+		"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "full_record_of_no_authorization"}}
+	if err := json.Unmarshal([]byte(line), &got); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("the line %q: %v, want %v", line, err, want)
 	}
 }
 
@@ -1436,7 +1516,7 @@ func TestTheStagerWaitsForItsCallbacks(t *testing.T) {
 	}
 	ps := pubSub(t)
 	cfg := config(listen(t))
-	cfg.Admission, cfg.Address, cfg.Listener = false, "", nil
+	cfg.Admission, cfg.Address, cfg.Listener = false, storetest.UniqueID("auditor"), nil
 	alerted, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	cfg.Alert = func(subject, what string) {
@@ -1586,4 +1666,95 @@ func TestTheSwitchTurnsANodeOffAndOn(t *testing.T) {
 		d, err := s.Disposition(ctx, e.Auth)
 		return err == nil && d.Outcome == "settled" && d.Cost.Int64 == 30, err
 	})
+}
+
+// TestARotationsPhasesTakeEachOthersEnvelopes: in a key rotation's deploy,
+// a node of the second phase, sealing with the new key and accepting the
+// old, settles a request that a node of the first phase admitted, its owner
+// sealing the envelope with the old key while accepting the new.
+func TestARotationsPhasesTakeEachOthersEnvelopes(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	rotated := bytes.Repeat([]byte{9}, frontdoor.MinKeySize)
+	a, b, _, _, ws := twoNodes(t, "rotation", func(owner bool, cfg *Config) {
+		if owner {
+			cfg.AcceptKeys = [][]byte{rotated}
+		} else {
+			cfg.Key, cfg.AcceptKeys = rotated, [][]byte{key}
+		}
+	})
+	client := &http.Client{Timeout: 10 * time.Second}
+	sealed, _ := admitted(t, frontdoor.Gateway{Client: client, Base: "http://" + b.Addr().String()}, ws, "r1", b)
+	second := frontdoor.Gateway{Client: client, Base: "http://" + a.Addr().String()}
+	settled, err := second.Settle(ctx, frontdoor.SettleOf{Envelope: sealed, Charge: 30,
+		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
+	if err != nil || settled.Status != frontdoor.Won || settled.Charge != 30 {
+		t.Fatalf("the first phase's request settled through the second's node: %+v %v", settled, err)
+	}
+}
+
+// TestAMemberRowSaysWhatAProcessRuns: an admission node that runs an
+// auditor member too is a member with every role, and an auditor member of
+// its own, with no listener, is a member live with the auditor role alone,
+// so a deploy sees what each process runs.
+func TestAMemberRowSaysWhatAProcessRuns(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	both := config(ln)
+	alone := config(ln)
+	alone.Admission, alone.Address, alone.Listener = false, storetest.UniqueID("auditor"), nil
+	ps := pubSub(t)
+	start(t, both, Clients{Spanner: shared, PubSub: ps})
+	start(t, alone, Clients{Spanner: shared, PubSub: ps})
+	s, err := store.New(shared, both.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		address string
+		roles   []string
+	}{{both.Address, []string{"owner", "frontdoor", "auditor"}}, {alone.Address, []string{"auditor"}}} {
+		eventually(t, 10*time.Second, "the member row of "+c.address, func() (bool, error) {
+			st, err := s.NodeStatus(ctx, c.address)
+			if err != nil || !st.Found {
+				return false, err
+			}
+			if !slices.Equal(st.Roles, c.roles) || st.State != store.Serving {
+				return false, fmt.Errorf("the row: %+v", st)
+			}
+			return st.Live, nil
+		})
+	}
+}
+
+// TestAnAlertIsALineOfJSON: the default alert is one line of JSON for
+// Cloud Logging: severity ERROR, the message, the subject, and the alert's
+// kind as the label fastpath_alert, "other" for a message of no kind.
+func TestAnAlertIsALineOfJSON(t *testing.T) {
+	var out bytes.Buffer
+	writeAlert(&out, "lease-1", auditor.AlertGap)
+	writeAlert(&out, "gwa-2", "something new")
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the lines: %q", out.String())
+	}
+	for i, want := range []map[string]any{
+		{"severity": "ERROR", "message": "fastpath alert: " + auditor.AlertGap, "subject": "lease-1",
+			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "gap"}},
+		{"severity": "ERROR", "message": "fastpath alert: something new", "subject": "gwa-2",
+			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "other"}},
+	} {
+		var got map[string]any
+		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("line %d: %q: %v, want %v", i, lines[i], err, want)
+		}
+	}
 }

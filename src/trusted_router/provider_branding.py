@@ -69,6 +69,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     ),
     "jina": ProviderBrand("https://jina.ai/"),
     "krea": ProviderBrand("https://www.krea.ai/"),
+    "elevenlabs": ProviderBrand("https://elevenlabs.io/"),
     "liquid": ProviderBrand("https://www.liquid.ai/"),
     "mancer": ProviderBrand("https://mancer.tech/"),
     "modal": ProviderBrand("https://modal.com/"),

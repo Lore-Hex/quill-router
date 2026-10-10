@@ -965,6 +965,8 @@ class Store(Protocol):
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
         video_pricing_snapshot: str | None = ...,
+        pricing_snapshot: str | None = ...,
+        stage_d_reason: str | None = ...,
         # Deferred settlement. `settlement="deferred_home"` records that this
         # spend is debt owed to the home plane's ledger rather than a debit
         # here; `expires_at` is what lets the reaper reclaim its admitted

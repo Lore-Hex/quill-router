@@ -33,6 +33,8 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+from trusted_router.pricing_approvals import approved_dated_price_transition
+
 DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 
 # Exact, provider-endpoint-scoped transitions confirmed against an upstream
@@ -825,6 +827,11 @@ def check(
         cur_p = _to_decimal(cur["prompt"])
         prev_c = _to_decimal(prev["completion"])
         cur_c = _to_decimal(cur["completion"])
+        approved_pair = approved_dated_price_transition(
+            model_id,
+            (prev_p * 10**12, prev_c * 10**12),
+            (cur_p * 10**12, cur_c * 10**12),
+        )
 
         # Literal 2× spike on either dimension.
         for dim, prv, curv in (
@@ -837,7 +844,7 @@ def check(
                     dim,
                     prv,
                     curv,
-                ) in APPROVED_ENDPOINT_PRICE_TRANSITIONS:
+                ) in APPROVED_ENDPOINT_PRICE_TRANSITIONS or approved_pair:
                     continue
                 ratio = curv / prv
                 failures.append(

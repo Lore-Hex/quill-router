@@ -3,6 +3,7 @@ module github.com/Lore-Hex/quill-router/fastpath
 go 1.24.0
 
 require (
+	cloud.google.com/go/monitoring v1.24.3
 	cloud.google.com/go/pubsub/v2 v2.4.0
 	cloud.google.com/go/spanner v1.88.0
 	google.golang.org/api v0.265.0
@@ -18,7 +19,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.5.3 // indirect
 	cloud.google.com/go/longrunning v0.8.0 // indirect
-	cloud.google.com/go/monitoring v1.24.3 // indirect
 	github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp v1.6.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

@@ -10,8 +10,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -49,8 +51,11 @@ type Config struct {
 	// Region is the settle log's region: the owner's shard keys carry it,
 	// and the ticker ticks its leases.
 	Region string
-	// Key is the fleet's envelope key.
-	Key []byte
+	// Key is the fleet's envelope key, which the node seals with; AcceptKeys
+	// are the keys it also verifies with, a rotation's other key
+	// (docs/design/fast-admission-production-rollout.md, W6).
+	Key        []byte
+	AcceptKeys [][]byte
 	// Shards is every workspace's shard count K (§4.3).
 	Shards int64
 
@@ -124,9 +129,9 @@ func Defaults() Config {
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,
-			Wait: 5 * time.Second},
+			Wait: 5 * time.Second, DrainOverdue: 10 * time.Minute},
 		Ticker:   auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
-		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second},
+		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}
@@ -143,8 +148,11 @@ func (c Config) valid() error {
 	switch {
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
-	case c.Admission && (c.Address == "" || len(c.Key) < frontdoor.MinKeySize || c.Shards < 1):
-		return errors.New("service: an admission node needs its address, a key of at least 32 bytes and a shard count")
+	case c.Address == "":
+		return errors.New("service: a process needs its address, an admission node's host and port as other nodes " +
+			"reach it, or the name of an auditor member's own row")
+	case c.Admission && (len(c.Key) < frontdoor.MinKeySize || c.Shards < 1):
+		return errors.New("service: an admission node needs a key of at least 32 bytes and a shard count")
 	case c.Region == "" || c.SettleTopic == "" || c.RecordTopic == "":
 		return errors.New("service: a process needs its region, the settle log's topic and the record topic")
 	case c.Auditor && (c.SettleSubscription == "" || c.RecordSubscription == ""):
@@ -205,7 +213,7 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		return errors.New("service: a Spanner client and a Pub/Sub client")
 	}
 	if cfg.Alert == nil {
-		cfg.Alert = func(subject, what string) { log.Printf("alert: %s: %s", subject, what) }
+		cfg.Alert = func(subject, what string) { writeAlert(alertOutput, subject, what) }
 	}
 	cfg = cfg.agreed()
 	s, err := store.New(c.Spanner, cfg.Store)
@@ -375,7 +383,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			}
 		}()
 	}
-	node, err := ring.Start(p.ctx, s, cfg.Address, []string{ring.OwnerRole, "frontdoor"}, cfg.Ring)
+	node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
 	if err != nil {
 		return err
 	}
@@ -425,7 +433,8 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	fc := cfg.FrontDoor
 	fc.Enabled = sw.Enabled
 	fc.Owners = owners{self: cfg.Address, local: local, remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
-	fc.Store, fc.Records, fc.Members, fc.Key = s, frontdoor.FromRecords(records), members, cfg.Key
+	fc.Store, fc.Records, fc.Members, fc.Key, fc.Accept = s, frontdoor.FromRecords(records), members, cfg.Key,
+		cfg.AcceptKeys
 	fc.Shards = func(string) int64 { return cfg.Shards }
 	fc.Self, fc.Peers, fc.Node = cfg.Address, frontdoor.HTTPPeers{Client: client, Scheme: "http"}, node
 	fc.Clock = time.Now
@@ -517,9 +526,32 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	return nil
 }
 
+// roles are a process's membership roles (tr_fastpath_member): an
+// admission node's owner and front door, and the auditor's, so that a
+// deploy sees what a node runs (docs/runbooks/fastpath-deploy.md).
+func roles(cfg Config) []string {
+	var out []string
+	if cfg.Admission {
+		out = append(out, ring.OwnerRole, "frontdoor")
+	}
+	if cfg.Auditor {
+		out = append(out, "auditor")
+	}
+	return out
+}
+
 // auditor starts an auditor member: the runtime on the settle log's
 // subscription, the ticker, the pending work and the record topic's stager.
+// One of its own joins the membership with the auditor role, so that a
+// deploy sees it live; one beside an admission node is on the node's row.
 func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
+	if !cfg.Admission {
+		node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+		if err != nil {
+			return err
+		}
+		p.stop(node.Stop)
+	}
 	rc := cfg.Runtime
 	rc.Store, rc.Records, rc.Alert, rc.Clock = s, auditor.FromRecords(records), cfg.Alert, time.Now
 	rt, err := auditor.New(rc)
@@ -735,4 +767,28 @@ func (r reporting) Receive(ctx context.Context, handle func(context.Context, aud
 		r.fail(err)
 	}
 	return err
+}
+
+// alertOutput is where the default alert writes: the process's standard
+// error, which Cloud Logging reads.
+var alertOutput io.Writer = os.Stderr
+
+// writeAlert writes an alert as one line of JSON, as Cloud Logging reads a
+// process's standard error: severity ERROR, the message, the subject, and
+// the alert's kind (auditor.AlertKind) as the label fastpath_alert, which
+// the alert policies match (docs/runbooks/fastpath-alerts.md). It carries
+// what the alert carries: a lease or an authorization and what happened,
+// never a record's contents.
+func writeAlert(w io.Writer, subject, what string) {
+	line, err := json.Marshal(map[string]any{
+		"severity":                      "ERROR",
+		"message":                       "fastpath alert: " + what,
+		"subject":                       subject,
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+	})
+	if err != nil {
+		log.Printf("alert: %s: %s", subject, what)
+		return
+	}
+	fmt.Fprintln(w, string(line))
 }

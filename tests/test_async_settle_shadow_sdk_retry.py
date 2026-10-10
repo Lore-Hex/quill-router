@@ -7,7 +7,12 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
-from google.api_core.exceptions import Aborted, DeadlineExceeded, InternalServerError
+from google.api_core.exceptions import (
+    Aborted,
+    DeadlineExceeded,
+    InternalServerError,
+    ServiceUnavailable,
+)
 from google.cloud.spanner_v1 import KeySet
 from google.cloud.spanner_v1 import _helpers as sdk_helpers
 from google.cloud.spanner_v1.session import Session
@@ -40,6 +45,7 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
         name = 'projects/offline/instances/offline/databases/offline'
         database_id = 'offline'
         _route_to_leader_enabled = False
+        _directed_read_options = None
         _next_nth_request = 1
         log_commit_stats = False
         default_transaction_options = SimpleNamespace(default_read_write_transaction_options=None)
@@ -48,6 +54,8 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
 
         def __init__(self):
             self.calls = []
+            self.read_duration = .01
+            self.commit_duration = .45
             self.errors = []
             self.begin_errors = []
             self.rollback_errors = []
@@ -68,7 +76,7 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
                 raise errors.pop(0)
 
         def query(self, **kwargs):
-            self.rpc('read', kwargs, .01, self.read_errors)
+            self.rpc('read', kwargs, self.read_duration, self.read_errors)
             response = PartialResultSet(metadata=dict(
                 transaction=dict(id=b'offline'), row_type=dict(
                     fields=[dict(name='body', type=dict(code='STRING'))])))
@@ -84,7 +92,7 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
             self.rpc('rollback', kwargs, .2, self.rollback_errors)
 
         def commit(self, **kwargs):
-            self.rpc('commit', kwargs, .45, self.errors)
+            self.rpc('commit', kwargs, self.commit_duration, self.errors)
             return CommitResponse(commit_timestamp=dt.datetime(2026, 10, 10, tzinfo=dt.UTC))
 
         def metadata_and_request_id(self, nth_request, attempt, metadata, span):
@@ -131,7 +139,9 @@ def test_shadow_reset_fails_inside_horizon_without_sdk_sleep(sdk_database, caplo
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
-    assert db.calls == ([('read', .2), ('read', .2)] if operation == 'flush' else [('read', .2)]) + [('commit', .5)]
+    reads = [('read', .5), ('read', .5)] if operation == 'flush' else [('read', .2)]
+    remaining = .98 if operation == 'flush' else .99
+    assert db.calls == reads + [('commit', pytest.approx(remaining))]
     assert 'stage=commit reason=transport_reset' in caplog.text
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -218,7 +228,7 @@ def test_shadow_mutations_only_begin_reset_fails_inside_horizon(sdk_database, ca
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
-    assert db.calls == [('begin', .5)]
+    assert db.calls == [('begin', 1.)]
     assert 'stage=commit reason=transport_reset' in caplog.text
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -245,7 +255,7 @@ def test_shadow_callback_failure_rollback_reset_fails_inside_horizon(sdk_databas
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
-    assert db.calls == [('read', .2), ('rollback', .5)]
+    assert db.calls == [('read', .5), ('rollback', pytest.approx(.99))]
     assert 'stage=callback reason=transport_reset' in caplog.text
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -286,7 +296,7 @@ def test_shadow_aborted_reentry_never_repeats_callback_or_commit(sdk_database, c
     with pytest.raises(RuntimeError, match='^shadow_transaction_retry$'):
         EvidenceStore(db).transaction(callback, clock.monotonic()+1)
     assert len(callbacks) == 1
-    assert db.calls == [('read', .2), ('commit', .5)]
+    assert db.calls == [('read', .2), ('commit', pytest.approx(.99))]
     # Session rolls back the fresh second transaction, which has no id and
     # therefore sends no rollback RPC.
     assert sleeps == [0]
@@ -331,6 +341,55 @@ def test_billing_without_contextvar_deadline_keeps_sdk_retry(sdk_database, messa
     assert sleeps == [2]
     assert clock.monotonic()-started == pytest.approx(2.91)
     assert db.calls == [('read', .2), ('commit', 20.), ('commit', 20.)]
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+
+
+@pytest.mark.parametrize('read_seconds', [.25, .32])
+@pytest.mark.parametrize('commit_seconds', [.3, .6])
+@pytest.mark.parametrize('reset', [False, True])
+def test_regional_flush_and_reset_share_one_sdk_deadline(sdk_database, read_seconds, commit_seconds, reset):
+    db, clock, sleeps = sdk_database
+    db.read_duration = read_seconds
+    db.commit_duration = commit_seconds
+    if reset:
+        db.errors = [InternalServerError('RST_STREAM private evidence')]
+    started = clock.monotonic()
+    identity = dt.datetime.now(dt.UTC).date().isoformat()+'/regional'
+    failure = None
+    try:
+        EvidenceStore(db).flush(identity, {'sequence': 1}, started+1)
+    except Exception as error:
+        failure = error
+    remaining = 1 - 2*read_seconds
+    assert db.calls == [('read', .5), ('read', .5), ('commit', pytest.approx(remaining))]
+    assert sleeps == []
+    assert clock.monotonic()-started == pytest.approx(min(1, 2*read_seconds+commit_seconds))
+    if commit_seconds > remaining:
+        assert type(failure) is DeadlineExceeded
+    elif reset:
+        assert type(failure) is io.SpannerTransportReset
+        assert failure.message == 'transport_reset'
+    else:
+        assert failure is None
+    assert io._SPANNER_RPC_MAX_SECONDS.get() is None
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+
+
+@pytest.mark.parametrize('error_type', [ServiceUnavailable, InternalServerError])
+@pytest.mark.parametrize('budget', [.2, 1.])
+def test_shadow_snapshot_restart_cannot_renew_deadline(sdk_database, error_type, budget):
+    db, clock, sleeps = sdk_database
+    db.read_duration = .08 if budget == .2 else .32
+    db.read_errors = [error_type('RST_STREAM private evidence') for _ in range(4)]
+    started = clock.monotonic()
+    with pytest.raises(DeadlineExceeded):
+        EvidenceStore.query(db.session.snapshot(), point_statement(COUNTER, 'offline'), started+budget)
+    assert clock.monotonic()-started == pytest.approx(budget)
+    assert sleeps == []
+    expected = [.2, .12, .04] if budget == .2 else [.5, .5, .36, .04]
+    assert [name for name, _ in db.calls] == ['read']*len(expected)
+    assert [timeout for _, timeout in db.calls] == pytest.approx(expected)
+    assert io._SPANNER_RPC_MAX_SECONDS.get() is None
     assert io._SPANNER_RPC_DEADLINE.get() is None
 
 

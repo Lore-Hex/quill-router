@@ -129,6 +129,13 @@ func (e *Emulator) Database(ctx context.Context, name string, statements []strin
 	return spanner.NewClientWithConfig(ctx, e.Path(name), spanner.ClientConfig{DisableNativeMetrics: true}, e.options()...)
 }
 
+// Client is another client of a database Database created, with the extra
+// options given, such as a counting interceptor; its caller closes it.
+func (e *Emulator) Client(ctx context.Context, name string, extra ...option.ClientOption) (*spanner.Client, error) {
+	return spanner.NewClientWithConfig(ctx, e.Path(name), spanner.ClientConfig{DisableNativeMetrics: true},
+		append(e.options(), extra...)...)
+}
+
 // Path is the database's resource name.
 func (e *Emulator) Path(name string) string {
 	return "projects/" + project + "/instances/" + e.instance + "/databases/" + name
@@ -162,4 +169,13 @@ func randomHex(n int) string {
 func Enabled(workspace string) *spanner.Mutation {
 	return spanner.InsertOrUpdateMap("tr_fastpath_workspace", map[string]any{
 		"workspace_id": workspace, "enabled": true, "changed_at": spanner.CommitTimestamp})
+}
+
+// Member is the mutation that makes a node a member serving at an epoch,
+// as an owner (tr_fastpath_member), which a test applies before granting
+// leases to it: a grant is taken only for a member serving at its epoch.
+func Member(address string, epoch int64) *spanner.Mutation {
+	return spanner.InsertOrUpdateMap("tr_fastpath_member", map[string]any{
+		"address": address, "epoch": epoch, "roles": []string{"owner"}, "state": "serving",
+		"started_at": spanner.CommitTimestamp, "heartbeat_at": spanner.CommitTimestamp})
 }
