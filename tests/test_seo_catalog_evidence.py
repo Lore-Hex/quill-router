@@ -65,7 +65,7 @@ def test_focused_seo_pages_show_relevant_current_models(
     for model_id, host in (
         ("moonshotai/kimi-k2.7-code", "kimi"),
         ("z-ai/glm-5.2", "zai"),
-        ("google/gemini-3.5-flash", "google-ai-studio"),
+        ("google/gemini-3.6-flash", "google-ai-studio"),
     ):
         serve_on_fixture_route(monkeypatch, model_id, host, author=host)
     for page_key in ("kimi-k2-api", "glm-5-api", "gemini-flash-alternative"):
