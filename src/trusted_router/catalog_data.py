@@ -1757,7 +1757,7 @@ PROVIDERS: dict[str, Provider] = {
             "Abliterate says prompts and completions are discarded after each request, "
             "but they transit an upstream inference provider whose retention is not "
             "identified in its terms. End-to-end ZDR and confidential inference are "
-            "unverified. Paid routes are held pending upstream token-usage accounting."
+            "unverified."
         ),
         provider_policy_url="https://abliterate.ai/terms",
     ),
