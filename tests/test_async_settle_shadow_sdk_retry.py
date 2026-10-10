@@ -268,6 +268,7 @@ def test_shadow_callback_failure_rollback_reset_fails_inside_horizon(sdk_databas
     assert type(failure) is io.SpannerTransportReset
     assert failure.message == 'transport_reset'
     assert failure.__cause__ is None and failure.__suppress_context__
+    assert failure.__context__ is None
     assert db.calls == [
         ('read', min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS)),
         ('rollback', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-.01))),
@@ -276,6 +277,64 @@ def test_shadow_callback_failure_rollback_reset_fails_inside_horizon(sdk_databas
     assert 'private' not in caplog.text and message not in caplog.text
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
     assert io._SPANNER_RPC_DEADLINE.get() is None
+
+
+@pytest.mark.parametrize('message', RESET_MESSAGES)
+@pytest.mark.parametrize('method', ['commit', 'begin_transaction', 'rollback'])
+def test_real_session_transport_reset_discards_private_content(sdk_database, caplog, method, message):
+    db, clock, sleeps = sdk_database
+    private_text = 'PRIVATE_EVIDENCE_DOCUMENT not valid JSON'
+    error = InternalServerError(message+' '+private_text)
+    {'commit': db.errors, 'begin_transaction': db.begin_errors,
+     'rollback': db.rollback_errors}[method].append(error)
+    store = EvidenceStore(db)
+    deadline = clock.monotonic()+WRITE_BUDGET_SECONDS
+    with pytest.raises(io.SpannerTransportReset) as caught:
+        if method == 'rollback':
+            # Streaming read establishes the real transaction id, then flush's
+            # json.loads raises JSONDecodeError with the entire document in .doc.
+            # Session calls Rollback while that callback error is being handled.
+            db.rows = [private_text]
+            store.flush('offline', {'sequence': 1}, deadline)
+        elif method == 'begin_transaction':
+            store.transaction(
+                lambda tx: tx.delete('tr_entities', KeySet(keys=[('kind', private_text)])), deadline)
+        else:
+            store.transaction(read_once, deadline)
+
+    err = caught.value
+    assert type(err) is io.SpannerTransportReset
+    assert err.__context__ is None
+    assert err.__cause__ is None
+    assert err.__suppress_context__ is True
+    assert err.args == ('transport_reset',)
+    for rendered in (repr(err), str(err), repr(err.args), repr(err.__dict__)):
+        assert private_text not in rendered
+        assert message not in rendered
+    # Drop all traceback frames at the transaction boundary, rather than retain
+    # SDK/transaction/callback locals. Python subsequently adds the caller's
+    # frames (including flush); assert that these are the ONLY frames remaining.
+    # Those callers own their inputs, so a globally traceback-free exception is
+    # not possible merely by sanitizing inside EvidenceStore.transaction.
+    frames = []
+    traceback = err.__traceback__
+    while traceback is not None:
+        frames.append(traceback.tb_frame.f_code)
+        traceback = traceback.tb_next
+    expected = [test_real_session_transport_reset_discards_private_content.__code__]
+    if method == 'rollback':
+        expected.append(EvidenceStore.flush.__code__)
+    assert frames == expected
+    assert sleeps == []
+    assert [name for name, _ in db.calls] == (
+        ['begin'] if method == 'begin_transaction' else ['read', method])
+    stage = 'callback' if method == 'rollback' else 'commit'
+    assert f'stage={stage} reason=transport_reset' in caplog.text
+    assert private_text not in caplog.text and message not in caplog.text
+    for record in caplog.records:
+        assert record.exc_info is None
+        assert record.exc_text is None
+        assert record.stack_info is None
 
 
 def test_shadow_read_deadline_exceeded_does_not_rollback(sdk_database, caplog):

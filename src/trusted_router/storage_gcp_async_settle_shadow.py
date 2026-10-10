@@ -154,6 +154,16 @@ class EvidenceStore:
                 return result
         except Exception as error:
             self._report_failure(stage, error, started)
+            if isinstance(error, SpannerTransportReset):
+                # Session rolls back inside its callback exception handler, so
+                # the reset can retain private evidence through __context__.
+                # This fire-and-forget path only counts failures: discard the
+                # SDK/callback traceback too, whose frames retain private locals.
+                # A bare re-raise preserves these cleared links (Python 3.11+);
+                # callers can still add their own frames during propagation.
+                error.__context__ = None
+                error.__cause__ = None
+                error.__traceback__ = None
             raise
 
     def write(self, tx: Any, kind: str, identity: str, body: dict[str, Any], deadline: float) -> None:
