@@ -623,7 +623,7 @@ ENV_VARS=(
   # workspace 45819281-0ce9-4811-a0cd-c660ab3a116d in only after the signer and
   # epoch are provisioned and the §5 fleet budget gate is recorded (design §10
   # "Decisions", enablement order). Rollback: empty the list and redeploy.
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
