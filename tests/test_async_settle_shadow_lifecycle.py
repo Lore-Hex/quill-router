@@ -376,7 +376,7 @@ def test_injected_commit_deadline_failure_is_not_acknowledged(monkeypatch, shado
 
     def slow_commit(*args, **kwargs):
         result = original(*args, **kwargs)
-        # Cross both the 200 ms store budget and the outer one-second budget
+        # Cross both the store budget and the outer one-second worker budget
         # deterministically, even though the fake commit returned successfully.
         shadow_deadline_clock.now += 2
         return result
