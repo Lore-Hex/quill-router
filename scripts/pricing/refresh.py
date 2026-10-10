@@ -65,7 +65,10 @@ from scripts.pricing.base import (
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingest_openrouter_catalog import build_snapshot as build_openrouter_snapshot  # noqa: E402
 
-from trusted_router.model_aliases import canonical_openrouter_model_id  # noqa: E402
+from trusted_router.model_aliases import (  # noqa: E402
+    canonical_openrouter_model_id,
+    merge_openrouter_model_rows,
+)
 from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E402
 from trusted_router.provider_manifest_policy import (  # noqa: E402
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
@@ -1057,8 +1060,7 @@ def _cross_check(
     notes: list[str] = []
     or_models = {
         m["id"]: m
-        for m in or_snapshot.get("models", [])
-        if isinstance(m, dict) and isinstance(m.get("id"), str)
+        for m in merge_openrouter_model_rows(or_snapshot.get("models", []))
     }
     for model_id, by_slug in provider_index.items():
         or_model = or_models.get(model_id)
@@ -1243,8 +1245,7 @@ def _merge_snapshot(
     """
     or_by_id = {
         m["id"]: m
-        for m in or_snapshot.get("models", [])
-        if isinstance(m, dict) and isinstance(m.get("id"), str)
+        for m in merge_openrouter_model_rows(or_snapshot.get("models", []))
     }
     # Per-slug OR-id -> provider-native-id map. Used at endpoint merge
     # time to override `model_id` for providers whose upstream API

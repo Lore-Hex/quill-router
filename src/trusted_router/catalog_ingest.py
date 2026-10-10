@@ -36,7 +36,7 @@ from trusted_router.catalog_data import (
     maker_provider_slug,
 )
 from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
-from trusted_router.model_aliases import canonical_openrouter_model_id
+from trusted_router.model_aliases import merge_openrouter_model_rows
 from trusted_router.pricing import (
     PriceTier,
     _as_positive_int,
@@ -840,11 +840,10 @@ def _ingested_models_and_endpoints(
             native.parameters if native is not None and include_partial else (),
         )
 
-    for raw_model in raw_models:
-        raw_model_id = raw_model.get("id")
-        if not isinstance(raw_model_id, str) or not raw_model_id:
+    for raw_model in merge_openrouter_model_rows(raw_models):
+        model_id = raw_model.get("id")
+        if not isinstance(model_id, str) or not model_id:
             continue
-        model_id = canonical_openrouter_model_id(raw_model_id)
         raw_endpoints = [e for e in (raw_model.get("endpoints") or []) if isinstance(e, dict)]
         if not raw_endpoints:
             continue
@@ -857,7 +856,7 @@ def _ingested_models_and_endpoints(
             slug = raw_ep.get("tr_provider_slug")
             if not isinstance(slug, str) or slug not in PROVIDERS:
                 continue
-            upstream_id = str(raw_ep.get("model_id") or raw_model_id)
+            upstream_id = str(raw_ep.get("model_id") or model_id)
             if _is_provider_deprecated_model(slug, model_id, upstream_id, at=at):
                 continue
             pricing = raw_ep.get("pricing") or {}
@@ -987,7 +986,7 @@ def _ingested_models_and_endpoints(
         )
 
         for prompt_price, completion_price, tiers, slug, raw_ep in per_endpoint_prices:
-            upstream_id = str(raw_ep.get("model_id") or raw_model_id)
+            upstream_id = str(raw_ep.get("model_id") or model_id)
             # A model-wide architecture is not proof that each host accepts
             # images. Keep missing endpoint declarations conservative.
             if slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
