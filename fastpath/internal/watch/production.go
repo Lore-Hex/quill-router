@@ -86,6 +86,11 @@ func (m Monitoring) highest(ctx context.Context, filter string) (float64, error)
 	found, top, newest := false, 0.0, time.Time{}
 	for {
 		series, err := it.Next()
+		// A page Monitoring marks incomplete may lack the series past its
+		// ceiling: the read fails, as the watch must not take it as healthy.
+		if page, ok := it.Response.(*monitoringpb.ListTimeSeriesResponse); ok && len(page.GetExecutionErrors()) > 0 {
+			return 0, fmt.Errorf("an incomplete answer for %s: %s", filter, page.GetExecutionErrors()[0].GetMessage())
+		}
 		if errors.Is(err, iterator.Done) {
 			break
 		}

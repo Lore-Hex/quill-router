@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -229,9 +230,10 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	}
 	full := append(slices.Clone(flags), "-workspace", "ws")
 	with := func(more ...string) []string { return append(slices.Clone(full), more...) }
-	cases := [][]string{with("extra"), with("-window", "30s"), with("-fresh", "6m"), with("-fresh", "0s"),
+	cases := [][]string{with("extra"), with("-window", "30s"), with("-fresh", "11m"), with("-fresh", "0s"),
 		with("-max-cpu", "NaN"), with("-max-cpu", "-0.1"), with("-max-cpu", "0", "-max-overdue", "1"),
 		with("-every", "0s"), with("-timeout", "0s"), with("-misses", "0"),
+		with("-every", "10m", "-window", "5m"), with("-timeout", "10m"), with("-misses", "10", "-window", "5m"),
 		{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "a", "-workspace", "ws"}}
 	for _, name := range []string{"-database", "-project", "-instance", "-subscriptions", "-workspace"} {
 		var without []string
@@ -303,5 +305,50 @@ func TestAWatchStoppedAsItBeginsExitsZero(t *testing.T) {
 	}
 	if !enabled(t, ws) {
 		t.Fatal("the workspace was turned off")
+	}
+}
+
+// TestTheWindowCoversTheLooks: looks that answer are at most -misses looks
+// apart, a look at most the larger of -every and -timeout after the last,
+// and a sample shows up to -fresh late; a window of exactly that is taken,
+// a second less refused, so no sample falls between the looks.
+func TestTheWindowCoversTheLooks(t *testing.T) {
+	opened := errors.New("not opened")
+	d := production
+	d.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		return nil, nil, nil, opened
+	}
+	base := []string{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "a", "-workspace", "ws",
+		"-max-cpu", "0.5", "-every", "1m", "-timeout", "30s", "-misses", "2", "-fresh", "4m"}
+	if code, err := run(context.Background(), append(slices.Clone(base), "-window", "6m"), &bytes.Buffer{}, d); code != 1 ||
+		!errors.Is(err, opened) {
+		t.Fatalf("a window of exactly two looks and the freshness: exit %d, %v", code, err)
+	}
+	if code, err := run(context.Background(), append(slices.Clone(base), "-window", "5m59s"), &bytes.Buffer{}, d); code != 2 ||
+		err == nil || !strings.Contains(err.Error(), "-window") {
+		t.Fatalf("a window a second short: exit %d, %v", code, err)
+	}
+}
+
+// TestAWatchStoppedAsItOpensExitsZero: stopped while it opens its clients,
+// the watch exits 0, having stopped nothing; opening that fails on its own
+// exits 1.
+func TestAWatchStoppedAsItOpensExitsZero(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := production
+	d.open = func(ctx context.Context, _ target) (watch.Sources, *store.Store, func(), error) {
+		cancel()
+		return nil, nil, nil, ctx.Err()
+	}
+	args := append(slices.Clone(flags), "-workspace", "ws")
+	if code, err := run(ctx, args, &bytes.Buffer{}, d); code != 0 || err != nil {
+		t.Fatalf("stopped as it opens: exit %d, %v", code, err)
+	}
+	d.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		return nil, nil, nil, errors.New("no database")
+	}
+	if code, err := run(context.Background(), args, &bytes.Buffer{}, d); code != 1 || err == nil {
+		t.Fatalf("opening that fails: exit %d, %v", code, err)
 	}
 }

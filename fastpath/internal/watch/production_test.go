@@ -11,7 +11,9 @@ import (
 	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"google.golang.org/api/option"
+	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -25,6 +27,8 @@ type metrics struct {
 	points   map[string][]*monitoringpb.TypedValue // by filter
 	age      time.Duration
 	requests []*monitoringpb.ListTimeSeriesRequest
+	// incomplete marks every answer as one Monitoring could not complete.
+	incomplete bool
 }
 
 func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSeriesRequest) (*monitoringpb.ListTimeSeriesResponse, error) {
@@ -40,7 +44,11 @@ func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSe
 		points = append(points, &monitoringpb.Point{Value: v,
 			Interval: &monitoringpb.TimeInterval{EndTime: timestamppb.New(start.Add(-m.age))}})
 	}
-	return &monitoringpb.ListTimeSeriesResponse{TimeSeries: []*monitoringpb.TimeSeries{{Points: points}}}, nil
+	resp := &monitoringpb.ListTimeSeriesResponse{TimeSeries: []*monitoringpb.TimeSeries{{Points: points}}}
+	if m.incomplete {
+		resp.ExecutionErrors = []*status.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
+	}
+	return resp, nil
 }
 
 func double(v float64) *monitoringpb.TypedValue {
@@ -145,5 +153,19 @@ func TestAStaleSeriesIsAFailedRead(t *testing.T) {
 	m.age = 4*time.Minute + time.Second
 	if _, err := served(t, m).SpannerCPU(context.Background()); err == nil || !strings.Contains(err.Error(), "old") {
 		t.Fatalf("a stale point: %v", err)
+	}
+}
+
+// TestAnIncompleteAnswerIsAFailedRead: an answer Monitoring marks as one it
+// could not complete, though it carries a fresh point under the ceiling,
+// fails the read: the series it lacks may be the one past it.
+func TestAnIncompleteAnswerIsAFailedRead(t *testing.T) {
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}}, incomplete: true}
+	if _, err := served(t, m).SpannerCPU(context.Background()); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("an incomplete answer: %v", err)
+	}
+	m.incomplete = false
+	if cpu, err := served(t, m).SpannerCPU(context.Background()); err != nil || cpu != 0.1 {
+		t.Fatalf("the same answer complete: %v %v", cpu, err)
 	}
 }
