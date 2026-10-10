@@ -29,8 +29,8 @@ T = TypeVar("T")
 P = ParamSpec("P")
 
 
-class SpannerCommitTransportReset(InternalServerError):
-    """Content-free reset failure that bypasses the SDK's exact-class retry."""
+class SpannerTransportReset(InternalServerError):
+    """Content-free Commit/Begin/Rollback reset bypassing SDK exact-class retry."""
 
 
 # Total wall-clock budget for a retried transaction. Must sit safely BELOW the
@@ -273,16 +273,16 @@ def configure_spanner_rpc_deadlines(
                 # _helpers._retry's exact class and _check_rst_stream_error's
                 # two markers; never carry the transport's text into diagnostics.
                 if (
-                    _method_name == "commit"
+                    _method_name in ("commit", "begin_transaction", "rollback")
                     and rpc_max is not None
                     and deadline is not None
                     and deadline - time.monotonic() <= 2.0
                     and type(error) is InternalServerError
-                    and any(marker in error.message for marker in (
+                    and any(marker in (getattr(error, "message", None) or "") for marker in (
                         "RST_STREAM", "Received unexpected EOS on DATA frame from server",
                     ))
                 ):
-                    raise SpannerCommitTransportReset("transport_reset") from None
+                    raise SpannerTransportReset("transport_reset") from None
                 raise
 
         setattr(api, method_name, bounded_rpc)
