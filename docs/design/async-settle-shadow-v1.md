@@ -1087,14 +1087,16 @@ headroom for commit processing under a 200 ms cap. This does not extend the
 worker budget, add retries, or relax any evidence gate. Failures remain sticky
 and unacknowledged; rate-limited diagnostics expose only a fixed stage/reason
 and elapsed time, never exception text, SQL parameters, or evidence bodies.
-Shadow transactions set a per-RPC cap as well as the shared deadline. If Commit
-returns an exact `InternalServerError` containing `RST_STREAM` or
+Shadow transactions set a per-RPC cap as well as the shared deadline. In these
+per-RPC-capped contexts, if Commit, Begin, or Rollback returns an exact
+`InternalServerError` containing `RST_STREAM` or
 `Received unexpected EOS on DATA frame from server`, and at most two seconds
 remain, the adapter raises a content-free `transport_reset` failure immediately.
 This bypasses the SDK's exact-class retry before its first two-second sleep;
 the one-second worker/shutdown-flush horizon therefore cannot be extended by
 that sleep. The failure remains a store drop, not a successful flush. Billing
 contexts have no per-RPC cap and retain their existing SDK reset retries.
+Streaming reads use the SDK restart path and are bounded by the shared deadline.
 The horizon bounds scheduled RPC time and prevents this reset backoff; it is
 not a hard real-time guarantee against Python scheduling/GC pauses or proof
 that a timed-out/reset commit did not reach the server. Retention fencing and
