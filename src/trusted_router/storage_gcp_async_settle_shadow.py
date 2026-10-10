@@ -25,7 +25,7 @@ from trusted_router.async_settle_shadow_evidence import (
     validate_sample,
 )
 from trusted_router.detached_jws import canonical
-from trusted_router.storage_gcp_io import spanner_rpc_deadline
+from trusted_router.storage_gcp_io import SpannerTransportReset, spanner_rpc_deadline
 
 FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
                     "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id")
@@ -37,6 +37,14 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # total bound fences retention. Reads get up to 500 ms for regional latency;
 # commit/control RPCs can use the remainder, never another full budget.
 # Operator range reads retain their separate 200 ms caller deadline.
+# The transaction per-RPC cap equals the write budget, still clipped to the
+# remaining shared time. In capped contexts, Commit, Begin and Rollback resets
+# fail fast before the SDK's two-second backoff can exceed the shared deadline.
+# Transaction streaming reads use the SDK restart path, bounded by that shared
+# deadline. EvidenceStore.booking's standalone snapshot read is bounded by its
+# own single timeout, computed once; it does not enter spanner_rpc_deadline.
+# The horizon bounds scheduled RPC time, not Python scheduling/GC or late
+# server-side commits.
 WRITE_BUDGET_SECONDS = 1.0
 RPC_BUDGET_SECONDS = .5
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
@@ -91,7 +99,8 @@ class EvidenceStore:
         # Never stringify exceptions or attach traces: they can contain SQL
         # parameters or evidence. Only fixed categories and timing leave here.
         reason = "other"
-        for cls, label in ((api_errors.DeadlineExceeded, "deadline_exceeded"),
+        for cls, label in ((SpannerTransportReset, "transport_reset"),
+                           (api_errors.DeadlineExceeded, "deadline_exceeded"),
                            (api_errors.Cancelled, "cancelled"),
                            (api_errors.Aborted, "aborted"),
                            (api_errors.ServiceUnavailable, "unavailable"),
@@ -110,10 +119,13 @@ class EvidenceStore:
         sql, params, types = statement
         if sql not in (FINALIZATION_SQL, POINT_SQL, DAY_SQL):
             raise ValueError("unknown shadow statement")
-        return list(reader.execute_sql(
-            FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
-            params=params, param_types=types, timeout=remaining,
-                                       retry=None, request_options={"priority": "PRIORITY_LOW"}))
+        # Snapshot streaming restarts occur even with retry=None. Keep the
+        # deadline active through iteration so each restart consumes its remainder.
+        with spanner_rpc_deadline(deadline, max_rpc_seconds=RPC_BUDGET_SECONDS):
+            return list(reader.execute_sql(
+                FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
+                params=params, param_types=types, timeout=remaining,
+                retry=None, request_options={"priority": "PRIORITY_LOW"}))
 
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
         started = time.monotonic()
