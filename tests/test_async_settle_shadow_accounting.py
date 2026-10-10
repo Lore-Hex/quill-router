@@ -108,8 +108,9 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
 
 
 @pytest.mark.parametrize('rpc_latency', [.141, .163])
+@pytest.mark.parametrize('commit_latency', [.163, .3, .6])
 @pytest.mark.parametrize('budget', [1., .1, .3, .4])
-def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, budget):
+def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
     from types import SimpleNamespace
 
     from google.api_core.exceptions import DeadlineExceeded
@@ -119,18 +120,20 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
     clock = shadow_deadline_clock
     calls = []
 
-    def rpc(**kwargs):
+    def rpc(*, latency, **kwargs):
         calls.append(kwargs)
         timeout = kwargs['timeout']
-        clock.now += min(timeout, rpc_latency)
-        if timeout < rpc_latency:
+        clock.now += min(timeout, latency)
+        if timeout < latency:
             raise DeadlineExceeded('regional round trip exceeds remaining budget')
         return []
 
     class RegionalDatabase(Database):
         def __init__(self):
             super().__init__()
-            self.spanner_api = SimpleNamespace(execute_sql=rpc, commit=rpc)
+            self.spanner_api = SimpleNamespace(
+                execute_sql=lambda **kw: rpc(latency=rpc_latency, **kw),
+                commit=lambda **kw: rpc(latency=commit_latency, **kw))
 
         def execute_sql(self, *args, **kwargs):
             self.spanner_api.execute_sql(timeout=kwargs['timeout'], retry=kwargs['retry'])
@@ -147,18 +150,67 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
     counters.increment(dimensions('openai', 'responses', True), 'authorize_attempts')
     identity, row = counters.snapshot(closed=True)[0]
     started = clock.monotonic()
-    if budget < 3*rpc_latency:
+    if budget < 2*rpc_latency+commit_latency or commit_latency > .5:
         with pytest.raises(DeadlineExceeded):
             EvidenceStore(db).flush(identity, row, started+budget)
-        assert clock.monotonic()-started == pytest.approx(budget)
+        assert clock.monotonic()-started == pytest.approx(min(budget, 2*rpc_latency+.5))
     else:
         EvidenceStore(db).flush(identity, row, started+budget)
         assert json.loads(db.rows[COUNTER, identity]) == row
-        assert clock.monotonic()-started == pytest.approx(3*rpc_latency)
+        assert clock.monotonic()-started == pytest.approx(2*rpc_latency+commit_latency)
         assert len(calls) == 3
-    assert all(0 < call['timeout'] <= .2 for call in calls)
+    assert all(0 < call['timeout'] <= .2 for call in calls[:2])
     if len(calls) == 3:
+        assert 0 < calls[-1]['timeout'] <= .5
         assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
+
+
+@pytest.mark.parametrize('failure_stage', ['begin', 'callback', 'commit'])
+@pytest.mark.parametrize('error_name, reason', [
+    ('DeadlineExceeded', 'deadline_exceeded'), ('Cancelled', 'cancelled'),
+    ('Aborted', 'aborted'), ('ServiceUnavailable', 'unavailable'),
+    ('TimeoutError', 'local_budget'), ('ValueError', 'other'),
+])
+def test_transaction_failure_diagnostics_are_bounded_and_redacted(
+        shadow_deadline_clock, caplog, failure_stage, error_name, reason):
+    from types import SimpleNamespace
+
+    from google.api_core import exceptions
+
+    clock = shadow_deadline_clock
+    cls = {'TimeoutError': TimeoutError, 'ValueError': ValueError}.get(error_name) or getattr(exceptions, error_name)
+    error = cls('private prompt, token, SQL body and customer identifiers')
+
+    def fail():
+        clock.now += .05
+        raise error
+
+    def callback(tx):
+        if failure_stage == 'callback':
+            fail()
+
+    def run(cb, **kw):
+        if failure_stage == 'begin':
+            fail()
+        cb(None)
+        fail()
+
+    store = EvidenceStore(SimpleNamespace(run_in_transaction=run))
+    for _ in range(3):
+        with pytest.raises(cls) as caught:
+            store.transaction(callback, clock.monotonic()+1)
+        assert caught.value is error
+        clock.now += 5
+    assert len(caplog.records) == 1
+    clock.now += 60
+    with pytest.raises(cls):
+        store.transaction(callback, clock.monotonic()+1)
+    assert len(caplog.records) == 2
+    for record in caplog.records:
+        assert record.getMessage() == f'shadow evidence transaction failed stage={failure_stage} reason={reason} elapsed_ms=50'
+        assert record.exc_info is None
+        assert record.stack_info is None
+    assert 'private' not in caplog.text
 
 
 def test_day_reads_are_bounded_and_exact():

@@ -1074,12 +1074,19 @@ pending exposure with all traffic synchronous is not async-load capacity proof.
 
 “One transaction” is not “one RPC”: dedup uses a read and mutation commit;
 SDK begin/commit overhead must be included in measured cost. All shadow storage
-work has a shared **1 second** worker I/O budget, individual RPC deadlines at
-most 200 ms and no longer than the remaining budget, LOW priority and no
+work has a shared **1 second** worker I/O budget, read RPC deadlines at
+most 200 ms, and transaction-control/commit RPC deadlines at most 500 ms,
+always capped by the remaining shared budget, LOW priority and no
 application retry; skip when budget is gone. Use a dedicated single-worker
 executor so shadow cannot fill the money executor's queue. Queueing adds no
 per-request storage. This budget must be measured in every pilot region;
 regional timeouts/drop rates invalidate coverage rather than being hidden.
+The October 10 commit-budget correction separates point-read latency from a
+replicated commit's latency. A 150-163 ms regional round trip leaves too little
+headroom for commit processing under a 200 ms cap. This does not extend the
+worker budget, add retries, or relax any evidence gate. Failures remain sticky
+and unacknowledged; rate-limited diagnostics expose only a fixed stage/reason
+and elapsed time, never exception text, SQL parameters, or evidence bodies.
 Tie accepted observer work to bounded post-response ASGI task lifetime; do not
 assume an unowned daemon thread will get CPU after a Cloud Run request ends.
 Semaphore/queue admission is nonblocking, and the outer task catches failures
