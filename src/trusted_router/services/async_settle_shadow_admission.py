@@ -48,6 +48,7 @@ class Observer:
         self.daily_since = clock()
         self.daily_counts: dict[str, dict[str, int | float]] = {}
         self.daily_overflow = False
+        self.daily_sealed_before = ""
 
     @property
     def progress_ok(self) -> bool:
@@ -56,6 +57,10 @@ class Observer:
 
     def _daily_bucket(self, wall: float) -> dict[str, int | float]:
         day = dt.datetime.fromtimestamp(wall, dt.UTC).date().isoformat()
+        if day < self.daily_sealed_before:
+            # A wall-clock reversal cannot reopen an already sealed day.
+            self.daily_overflow = True
+            return dict(max_consecutive_failures=0, degraded_seconds=0., started_at_us=int(wall * 1e6))
         bucket = self.daily_counts.setdefault(day, dict(
             max_consecutive_failures=0, degraded_seconds=0., started_at_us=int(wall * 1e6)))
         bucket["started_at_us"] = min(bucket["started_at_us"], int(wall * 1e6))
@@ -82,17 +87,27 @@ class Observer:
         bucket = self._daily_bucket(wall)
         bucket["max_consecutive_failures"] = max(bucket["max_consecutive_failures"], streak)
         self.daily_since = now
+        self.daily_sealed_before = max(self.daily_sealed_before,
+            dt.datetime.fromtimestamp(wall, dt.UTC).date().isoformat())
 
     def _count(self, field: str) -> None:
         self.counts[field] += 1
         bucket = self._daily_bucket(self.evidence_wall())
         bucket[field] = bucket.get(field, 0) + 1
 
-    def snapshot_daily_counts(self) -> tuple[dict[str, dict[str, int | float]], bool]:
+    def snapshot_daily_counts(self) -> tuple[dict[str, dict[str, int | float]], bool, str]:
         with self.lock:
             self._account_degradation(self.clock())
-            result, self.daily_counts = self.daily_counts, {}
-            return result, self.daily_overflow
+            # Cumulative copies survive failed/partial folds. Only a sealed,
+            # successfully folded day can be removed; callbacks keep adding
+            # to the open day without changing this snapshot's boundary.
+            return ({day: dict(values) for day, values in self.daily_counts.items()},
+                    self.daily_overflow, self.daily_sealed_before)
+
+    def acknowledge_daily_counts(self, day: str, sealed_before: str) -> None:
+        with self.lock:
+            if day < sealed_before:
+                self.daily_counts.pop(day, None)
 
     def _account_degradation(self, now: float) -> None:
         self._account_daily(now)

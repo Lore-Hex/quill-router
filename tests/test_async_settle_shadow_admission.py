@@ -329,3 +329,25 @@ def test_delayed_callback_counts_its_own_tick_after_scheduler_failures(monkeypat
     observer.install_health(2.7, health(2.7))
     assert observer.progress_ok and observer.failures[None] == 0
     assert observer.snapshot_counts()['max_consecutive_failures'] == 3
+
+
+def test_daily_snapshots_remain_bounded_with_sticky_overflow_and_seals():
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    for day in range(5):
+        now[0] = day * 86400.
+        observer.missed_tick(None, now[0])
+        daily, overflow, sealed_before = observer.snapshot_daily_counts()
+        assert len(daily) == min(day + 1, 3)
+        assert len(observer.daily_counts) == len(daily)  # No destructive drain.
+        assert overflow is (day >= 3)
+    for day in daily:
+        observer.acknowledge_daily_counts(day, sealed_before)
+    assert list(observer.daily_counts) == [sealed_before]
+    assert observer.snapshot_daily_counts()[1] is True
+    # Late accounting cannot reopen a sealed/acknowledged day.
+    observer.evidence_wall = lambda: 0.
+    observer.missed_tick(None, now[0] + 1)
+    assert list(observer.daily_counts) == [sealed_before]
+    assert observer.daily_overflow

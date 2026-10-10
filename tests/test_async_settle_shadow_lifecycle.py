@@ -554,3 +554,136 @@ def test_midnight_carries_live_streak_and_splits_fractional_duration(retain_old,
     assert new['admission_observer']['missed_ticks'] == 0
     assert new['started_at_us'] == int((base+5) * 1e6)
     assert rt.observer_degraded_seconds['2026-10-10'] == .25
+
+
+# Adapted from the independent Round 2 review's midnight reproduction.
+def observer_interleaving_runtime():
+    import copy
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_evidence import Counters
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+
+    base = dt.datetime(2026, 10, 9, 23, 59, 55, tzinfo=dt.UTC).timestamp()
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: base + now[0])
+    stored = {}
+    class Store:
+        def flush(self, identity, body, deadline):
+            stored[identity] = copy.deepcopy(body)
+    rt = Runtime.__new__(Runtime)
+    rt.store, rt.observer = Store(), observer
+    rt.counters = Counters('us-central1', 'a'*40, clock=lambda: base + now[0])
+    rt.last_flush, rt.observer_degraded_seconds = 0, {}
+    def flush():
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+100)
+    flush()
+    return rt, observer, now, stored, flush
+
+# Both failing/healthy cases are adopted from the independent Round 2 review.
+@pytest.mark.parametrize('failing', [False, True])
+@pytest.mark.parametrize('pause_at', ['observer', 'final_snapshot'])
+def test_flush_crossing_midnight_does_not_retire_undrained_observer_day(monkeypatch, failing, pause_at):
+    rt, observer, now, stored, flush = observer_interleaving_runtime()
+    if failing:
+        for tick in (1., 2.):
+            now[0] = tick
+            observer.missed_tick(None, tick)
+    def pause():
+        # Observer lock is released; callbacks never acquire the counter lock.
+        now[0] = 4.875
+        if failing:
+            observer.missed_tick(None, now[0])
+        now[0] = 5.125
+
+    original = observer.snapshot_daily_counts
+    original_counter = rt.counters.snapshot
+    def interleaved_snapshot():
+        values = original()
+        pause()
+        return values
+    def interleaved_counter(*args, **kwargs):
+        if not kwargs.get('retiring_only'):
+            pause()  # The retiring-only pass and current-day check already ran.
+        return original_counter(*args, **kwargs)
+
+    now[0] = 4.75
+    with monkeypatch.context() as patch:
+        if pause_at == 'observer':
+            patch.setattr(observer, 'snapshot_daily_counts', interleaved_snapshot)
+        else:
+            patch.setattr(rt.counters, 'snapshot', interleaved_counter)
+        flush()
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    assert not old['closed']
+    assert '2026-10-09' in observer.daily_counts
+    now[0] = 7.
+    flush()
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    new = next(v for k, v in stored.items() if k.startswith('2026-10-10/'))
+    assert old['closed'] and not new['closed']
+    assert old['admission_observer']['missed_ticks'] == (3 if failing else 0)
+    assert old['admission_observer']['max_consecutive_failures'] == (3 if failing else 0)
+    assert old['admission_observer']['degraded_seconds'] == (1 if failing else 0)
+    assert new['first_gap_at_us'] is None and not new['drops']
+    assert rt.counters._day()['first_gap_at_us'] is None
+    assert not rt.counters._day()['drops']
+
+
+
+def test_failed_tick_between_snapshot_and_flush_stays_on_open_day(monkeypatch):
+    rt, observer, now, stored, flush = observer_interleaving_runtime()
+    original = observer.snapshot_daily_counts
+    def interleaved_snapshot():
+        values = original()
+        now[0] = 2.
+        observer.missed_tick(None, now[0])
+        return values
+    now[0] = 1.
+    with monkeypatch.context() as patch:
+        patch.setattr(observer, 'snapshot_daily_counts', interleaved_snapshot)
+        flush()
+    assert observer.daily_counts['2026-10-09']['missed_ticks'] == 1
+    now[0] = 3.
+    flush()
+    flush()
+    body = next(iter(stored.values()))
+    assert not body['closed']
+    assert body['admission_observer']['missed_ticks'] == 1
+    assert body['admission_observer']['max_consecutive_failures'] == 1
+    assert body['first_gap_at_us'] is None and not body['drops']
+
+
+@pytest.mark.parametrize('fail_after_first_add', [False, True])
+def test_observer_evidence_survives_failed_fold(monkeypatch, fail_after_first_add):
+    rt, observer, now, stored, flush = observer_interleaving_runtime()
+    for tick in (1., 2., 3.):
+        now[0] = tick
+        observer.missed_tick(None, tick)
+    now[0] = 6.
+    original = rt.counters.add
+    def fail_fold(counter, target, key, count=1):
+        if target is counter['admission_observer'] and key == 'missed_ticks':
+            if fail_after_first_add:
+                original(counter, target, key, count)
+            raise ValueError('injected fold failure')
+        original(counter, target, key, count)
+    with monkeypatch.context() as patch:
+        patch.setattr(rt.counters, 'add', fail_fold)
+        flush()
+    assert observer.daily_counts['2026-10-09']['missed_ticks'] == 3
+    assert '2026-10-10' in observer.daily_counts
+    assert not rt.counters.days['2026-10-09']['closed']
+    flush()
+    flush()
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    assert old['closed']
+    assert old['admission_observer']['missed_ticks'] == 3
+    assert old['admission_observer']['max_consecutive_failures'] == 3
+    assert old['admission_observer']['degraded_seconds'] == 2
+    assert '2026-10-09' not in observer.daily_counts

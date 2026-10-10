@@ -956,9 +956,14 @@ counter's lifetime, including a streak continuing into it. `degraded_seconds`
 records monotonic elapsed time with at least one reader at its degradation
 threshold, counting overlapping reader intervals once; it does not depend on
 traffic or `peek()` calls. Fold observer evidence before acknowledging a retiring
-writer. Split elapsed degradation and maximum streak at UTC midnight even if
-recovery occurs before the next flush; a continuing streak belongs to both days.
-Retain at most three days of observer deltas, matching counter retention, with
+writer. Both counter snapshot passes may retire only days sealed by that
+observer snapshot after accounting through their UTC end. A flush spanning
+midnight must leave an unsealed day open for the next flush. Split elapsed
+degradation and maximum streak at UTC midnight even if recovery occurs before
+the next flush; a continuing streak belongs to both days.
+Retain cumulative observer buckets until a sealed day's fold succeeds; repeated
+or partially failed folds apply cumulative totals without duplicating evidence.
+Retain at most three days of observer buckets, matching counter retention, with
 sticky fail-closed coverage on overflow. Keep subsecond precision internally and round the
 cumulative daily duration upward for integer-only evidence JSON, conservatively
 adding less than one second per counter, not per flush. Isolated stale

@@ -438,12 +438,13 @@ class Runtime:
             return
         self.last_flush = time.monotonic()
         try:
+            sealed_before = None
             # Fold every day's observer evidence before closing/acknowledging
             # any writer, including days retained by outstanding request work.
             if self.observer is not None:
                 with self.counters.lock:
                     self.observer.evidence_wall = lambda: self.counters.clock()
-                    daily, overflow = self.observer.snapshot_daily_counts()
+                    daily, overflow, sealed_before = self.observer.snapshot_daily_counts()
                     for day, values in sorted(daily.items()):
                         token = self.counters.observation_day.set(day)
                         try:
@@ -451,8 +452,9 @@ class Runtime:
                             counter["started_at_us"] = min(counter["started_at_us"], values["started_at_us"])
                             observer_counts = counter["admission_observer"]
                             for key in ("workspace_reads", "health_reads", "read_failures", "missed_ticks", "late_installs"):
-                                self.counters.add(counter, observer_counts, key, int(values.get(key, 0)))
-                            total = self.observer_degraded_seconds.get(day, 0.) + values.get("degraded_seconds", 0.)
+                                self.counters.add(counter, observer_counts, key,
+                                    int(values.get(key, 0)) - observer_counts[key])
+                            total = values.get("degraded_seconds", 0.)
                             self.observer_degraded_seconds[day] = total
                             self.counters.add(counter, observer_counts, "degraded_seconds",
                                 math.ceil(total) - observer_counts["degraded_seconds"])
@@ -460,6 +462,7 @@ class Runtime:
                                 observer_counts["max_consecutive_failures"], int(values.get("max_consecutive_failures", 0)))
                             if overflow:
                                 counter["first_gap_at_us"] = int(self.counters.clock() * 1e6)
+                            self.observer.acknowledge_daily_counts(day, sealed_before)
                         finally:
                             self.counters.observation_day.reset(token)
                     self.observer_degraded_seconds = {day: value for day, value in
@@ -468,7 +471,7 @@ class Runtime:
             # writer. Active money/queued tasks retain their receipt day until
             # completion; the next timer then closes it. Failed closes stay in
             # the bounded retention set and are never silently acknowledged.
-            for identity, body in self.counters.snapshot(retiring_only=True):
+            for identity, body in self.counters.snapshot(retiring_only=True, sealed_before=sealed_before):
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)
             # Register even an idle serving instance. The external inventory,
@@ -481,7 +484,7 @@ class Runtime:
                     # writer until the prior close is acknowledged. No waiting
                     # or I/O is added to the request path.
                     return
-            for identity, body in self.counters.snapshot(closed):
+            for identity, body in self.counters.snapshot(closed, sealed_before=sealed_before):
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)
         except Exception:

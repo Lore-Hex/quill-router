@@ -13,7 +13,7 @@ from tests.test_async_settle_shadow import FIXTURE, NOW, context, endpoint, sign
 from tests.test_async_settle_shadow_accounting import synthetic_window
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_compare import Booking
-from trusted_router.async_settle_shadow_evidence import SAMPLE
+from trusted_router.async_settle_shadow_evidence import SAMPLE, day_at
 from trusted_router.services import async_settle_shadow as shadow_module
 from trusted_router.services.async_settle_shadow import Capture, Runtime
 
@@ -35,7 +35,7 @@ def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=None):
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40,
         async_settle_shadow_workspaces='ws-v1'), runtime(), store,
         SimpleNamespace(peek=lambda *a: admission,
-            snapshot_daily_counts=lambda: ({}, False)))
+            snapshot_daily_counts=lambda: ({}, False, day_at(now))))
     rt.signer = signer()
     rt.counters.instance = first['instance']
     rt.counters.clock = lambda: now
