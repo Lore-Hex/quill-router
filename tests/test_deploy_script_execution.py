@@ -644,6 +644,49 @@ def test_control_plane_allocates_cpu_for_background_workers(
         assert ("--no-traffic" in deploy) == (no_traffic == "1")
 
 
+def test_rollout_supplies_full_source_revision_for_shadow_evidence(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_RELEASE"] == "abc12345"
+    assert rendered["TR_SOURCE_REVISION"] == "abc12345" + "0" * 32
+
+
+@pytest.mark.parametrize("revision", ["abc12345", "not-a-commit", "f" * 40])
+def test_rollout_refuses_invalid_source_before_cloud_access(
+    harness: DeployScriptHarness, revision: str,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_SOURCE_REVISION": revision},
+    )
+    assert run.returncode != 0
+    assert "exact source revision" in run.stderr
+    assert not run.calls
+
+
+def test_rollout_derives_source_from_checkout_and_rejects_stale_override(
+    tmp_path: Path,
+) -> None:
+    harness = DeployScriptHarness(tmp_path / "revision-rollout")
+    release = _initialize_bake_harness_repo(harness)
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_RELEASE_ID": release, "TR_DEPLOY_SOURCE_REVISION": ""},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    revision = _cloud_run_job_env(deploy)["TR_SOURCE_REVISION"]
+    assert len(revision) == 40 and revision.startswith(release)
+    stale = harness.run("scripts/deploy/rollout.sh")
+    assert stale.returncode != 0
+    assert "exact source revision" in stale.stderr
+    assert not stale.calls
+
+
 # A live primary revision that predates the Bigtable analytics retirement. The
 # rollout copies only its sticky operator pins; none of these may be copied.
 _LIVE_PRIMARY_ENV = {

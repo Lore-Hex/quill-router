@@ -1486,6 +1486,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             "TR_STORAGE_BACKEND": "spanner-clickhouse",
             "TR_GENERATION_RECORDS_ENABLED": "true",
             "TR_DEPLOY_RELEASE_ID": "abc12345",
+            "TR_DEPLOY_SOURCE_REVISION": "abc12345" + "0" * 32,
             # Reuse the stateful legacy-service tag behavior in the harness.
             "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
         },
