@@ -11,6 +11,8 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from trusted_router.pricing_approvals import approved_dated_price_transition
+
 SOURCES = {
     "x-ai/grok-voice-tts-1.0": "https://docs.x.ai/developers/models/text-to-speech",
     "mistralai/voxtral-mini-tts-2603": "https://docs.mistral.ai/inference/pricing",
@@ -19,22 +21,6 @@ SNAPSHOT = Path(__file__).resolve().parents[2] / "src/trusted_router/data/speech
 GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 ELEVENLABS_URL = "https://elevenlabs.io/pricing/api"
 MICROSOFT_URL = "https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/build-expressive-voice-experiences-with-new-mai-models-in-microsoft-foundry/4524637"
-
-# Reviewed Standard TTS transition published at GEMINI_URL. Unlike the
-# provider-specific runtime schedules in provider_lifecycle, speech snapshots
-# store only current rates. Approve these exact old/new pairs from the dated
-# cutover onward (including a delayed refresh), never arbitrary 2x changes.
-_GEMINI_2027_EFFECTIVE_ON = date(2027, 1, 1)
-_GEMINI_2027_TRANSITIONS = {
-    "google/gemini-3.8-flash-tts": (
-        {"input": 500_000, "output": 9_000_000},
-        {"input": 1_000_000, "output": 18_000_000},
-    ),
-    "google/gemini-3.8-flash-lite-tts": (
-        {"input": 500_000, "output": 6_000_000},
-        {"input": 1_000_000, "output": 12_000_000},
-    ),
-}
 
 
 def parse_elevenlabs_prices(html: str) -> dict[str, int]:
@@ -207,9 +193,12 @@ def refresh() -> None:
     response.raise_for_status()
     token_prices = parse_gemini_token_prices(response.text, today=today)
     for model, rates in token_prices.items():
-        approved_transition = (
-            today >= _GEMINI_2027_EFFECTIVE_ON
-            and (before["token_prices"][model], rates) == _GEMINI_2027_TRANSITIONS.get(model)
+        previous_rates = before["token_prices"][model]
+        approved_transition = approved_dated_price_transition(
+            f"{model} [google-ai-studio:google-ai-studio:{model.removeprefix('google/')}]",
+            (previous_rates["input"], previous_rates["output"]),
+            (rates["input"], rates["output"]),
+            today=today,
         )
         for kind, price in rates.items():
             previous = before["token_prices"][model][kind]
