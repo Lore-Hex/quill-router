@@ -381,7 +381,7 @@ class Counters:
                 booking_pending=0, booking_unknown=0, first_evidence_at_us=None,
                 last_mismatch_at_us=None, first_gap_at_us=None, authorize_shadow_hist=[0]*9,
                 evidence_write_hist=[0]*9,
-                admission_observer=dict.fromkeys("workspace_reads health_reads read_failures missed_ticks prediction_yes prediction_no prediction_unknown".split(), 0))
+                admission_observer=dict.fromkeys("workspace_reads health_reads read_failures missed_ticks late_installs max_consecutive_failures degraded_seconds prediction_yes prediction_no prediction_unknown".split(), 0))
         if len(self.days) > 3:
             # Retain only the observation lifetime. Unflushed evicted writers
             # remain unclosed durably; the current day also retains a gap.
@@ -468,17 +468,24 @@ class Counters:
             if not clean and not excluded:
                 day["first_gap_at_us"] = day["first_gap_at_us"] or now
 
-    def snapshot(self, closed: bool = False, *, retiring_only: bool = False) -> list[tuple[str, dict[str, Any]]]:
+    def snapshot(self, closed: bool = False, *, retiring_only: bool = False,
+                 sealed_before: str | None = None) -> list[tuple[str, dict[str, Any]]]:
         import copy
         with self.lock:
             self._drain_mailbox()
             result = []
+            now = self.clock()
+            today = day_at(now)
             for day, body in sorted(self.days.items()):
-                if retiring_only and (day >= day_at(self.clock()) or self.active.get(day)):
+                # Both snapshot passes use the observer's accounted boundary,
+                # even if midnight passed since the observer snapshot.
+                if day < today and sealed_before is not None and day >= sealed_before:
+                    continue
+                if retiring_only and (day >= today or self.active.get(day)):
                     continue
                 self.add(body, body, "sequence")
-                body["flushed_at_us"] = int(self.clock() * 1e6)
-                body["closed"] = body["closed"] or ((closed or day < day_at(self.clock())) and not self.active.get(day))
+                body["flushed_at_us"] = int(now * 1e6)
+                body["closed"] = body["closed"] or ((closed or day < today) and not self.active.get(day))
                 # Detach the bounded schema using only builtin shallow copies.
                 # Serialization/deep-copy below own no shared mutable state and
                 # hold no lock needed by request capture.

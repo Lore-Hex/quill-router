@@ -677,7 +677,7 @@ objects have exactly their listed keys, no arbitrary maps or free text.
 | `python_usage`, `go_usage`, `legacy_usage` | null or exact six NormalizedUsage integer fields |
 | `frozen_micro`, `python_micro`, `go_micro`, `booked_micro`, `rebuilt_micro`, `legacy_frozen_micro` | nonnegative int64 or null; kind-dependent expectations (§3.1), booked only from confirmed winner; independent L0 never substituted from P |
 | `python_minus_go`, `booked_minus_frozen`, `rebuilt_minus_frozen`, `booked_minus_rebuilt` | signed int64 or null; no absolute-value loss of direction |
-| `classification`, `reason_codes` | §3 enum; sorted unique list, maximum 8 fixed enum values from §§2–5 |
+| `classification`, `reason_codes` | independent comparator classification (§3 enum), not admission evaluability; sorted unique reason list, maximum 8 fixed enum values from §§2–5; report excludes admission-unknown samples as specified below |
 | `eligibility` | `{requested: boolean, observed: boolean|null, exclusion: enum|null}`; never an admission bit |
 | `booking` | `{attempted_kind: settle|refund, outcome: settled|refunded|pending|unknown, source: finalized_authorization|none, price_source: catalog_at_authorize_time|stage_d_document|unknown}`; compare polarity before booking deltas (§3.1; `src/trusted_router/routes/internal/gateway.py:4597`) |
 | `admission` | `{prediction: yes|no|unknown, reason: enum, tier: int|null, pending_micro: int|null, cap_micro: int|null, workspace_age_us: int|null, health_age_us: int|null, health_p95_us: int|null}` |
@@ -758,7 +758,7 @@ Boot ID is a server-generated UUID, not a raw hostname. Proposed body bound is
 | `booking_pending`, `booking_unknown` | cumulative attempts lacking a confirmed booking; never counted as exact or inferred from HTTP 200 |
 | `first_evidence_at_us`, `last_mismatch_at_us`, `first_gap_at_us` | nullable UTC times; gap is sticky, not cleared by later successful flushing |
 | `authorize_shadow_hist`, `evidence_write_hist` | fixed integer microsecond bucket counts: ≤100, 500, 1000, 2000, 5000, 10000, 50000, 200000, >200000 |
-| `admission_observer` | bounded cumulative `{workspace_reads,health_reads,read_failures,missed_ticks,prediction_yes,prediction_no,prediction_unknown}`; no workspace IDs; population/cost evidence for §5 (`src/trusted_router/storage_gcp_async_admission.py:29`, `:78`) |
+| `admission_observer` | bounded cumulative `{workspace_reads,health_reads,read_failures,missed_ticks,late_installs,max_consecutive_failures,degraded_seconds,prediction_yes,prediction_no,prediction_unknown}`; nonnegative int64 counts; `degraded_seconds` is cumulative seconds rounded up once per daily counter; exact field-set validation rejects older/mixed schemas; no workspace IDs; population/cost evidence for §5 (`src/trusted_router/storage_gcp_async_admission.py:29`, `:78`) |
 
 Increment `observed_attempts` and provisionally `observed_unknown` for **every**
 opted-in settle/refund before rate/sample admission. `observed_attempts` equals
@@ -775,6 +775,20 @@ blocks the window; absence of a bucket is never evidence of zero. F2b's maximum
 schema-size and report tests must cover this bounded representation and the
 same reason in multiple adapter/route/stream/phase buckets (parent §8 at
 `docs/design/async-settle-outbox-v1.md:802`).
+
+The persisted sample `classification` and counter `evaluable`/outcome fields
+are **independent comparator diagnostics**: arithmetic can be proven even when
+admission observation is unknown. The report first reconciles those unmodified
+fields and applies every comparator correctness/reset gate. Its public
+`metrics.classification` and `denominators` then classify each durable
+admission-unknown sample as `unevaluable`, removing it from exact, explained,
+mismatch and evaluable totals in its own dimension. The original classifications
+remain visible in `metrics.comparator_classification`. Per-writer
+`metrics.admission_unknown_samples` reconciles those samples separately against
+`admission_observer.prediction_unknown`; the latter also includes prediction
+attempts whose sample was not inserted. Unknown admission never satisfies
+`positive_sample` or seeds the clean clock. A proven comparator disagreement
+still blocks/resets the window regardless of admission evaluability.
 
 Flush cumulative counters at most once per five seconds per active instance,
 including after rate/cap drops, with no synchronous request wait. Transactional
@@ -910,6 +924,69 @@ The 2026-10-09 22:12Z regional probe measured São Paulo–nam6 at roughly
 150 ms per round trip, with 200 ms deadlines failing 1/60 health reads and
 4/60 admission reads, motivating the 500 ms read/control-transaction budgets.
 
+**2026-10-10 bounded-failure amendment.** Three consecutive 60-second regional
+passes against `trusted-router-nam6` at the 500 ms deadline showed one
+health or admission timeout in four of six far-region passes, at sample indices
+12–19 after startup (two passes had none), and none later or in US health/admission
+reads. Europe-west4 health timed out at indices 12 and 17; southamerica-east1
+admission at 19 and health at 17. Steady-state health medians were
+141 ms in europe-west4 and 163 ms in southamerica-east1. This pattern is
+consistent with a fresh gRPC connection being rebalanced/re-established by the
+front end: about three round trips at roughly 150 ms each approaches the
+500 ms deadline. Connection recycling can recur in long-lived processes; a
+single tail event must not permanently disable observation. Read-only evidence:
+`/Users/jperla/.claude/tr-briefs/fleet-pre/run-20261010T042056Z/probe/`,
+`run-20261010T043214Z/probe/`, and `run-20261010T043905Z/probe/` under that same
+`fleet-pre` directory. The reconnect explanation is an inference from timing,
+not a transport trace.
+
+A failed read, start more than 0.25 s late, or install more than 0.5 s after
+read start immediately invalidates only the affected cache (health affects all
+workspaces). Predictions remain `unknown/cache_stale` until the next clean
+read/install; a result from a failed or older tick cannot restore freshness.
+Track consecutive failed ticks separately for health and every workspace key:
+health is not progressing at **3**, a workspace at **2** (its cadence is 4 s).
+A clean subsequent tick resets that reader's streak. A late start followed by a
+late install increments both event counters but is one failed tick. Successful
+installs after a failed tick do not themselves fail merely because the previous
+successful install was a cadence ago. No catch-up reads, retries or deadline
+changes. `late_installs` counts installs beyond 0.5 s;
+`max_consecutive_failures` records the maximum streak seen during the daily
+counter's lifetime, including a streak continuing into it. `degraded_seconds`
+records monotonic elapsed time with at least one reader at its degradation
+threshold, counting overlapping reader intervals once; it does not depend on
+traffic or `peek()` calls. Fold observer evidence before acknowledging a retiring
+writer. Both counter snapshot passes may retire only days sealed by that
+observer snapshot after accounting through their UTC end. A flush spanning
+midnight must leave an unsealed day open for the next flush. Split elapsed
+degradation and maximum streak at UTC midnight even if recovery occurs before
+the next flush; a continuing streak belongs to both days.
+Retain cumulative observer buckets until a sealed day's fold succeeds; repeated
+or partially failed folds apply cumulative totals without duplicating evidence.
+Retain at most three days of observer buckets, matching counter retention, with
+sticky fail-closed coverage on overflow. Keep subsecond precision internally and round the
+cumulative daily duration upward for integer-only evidence JSON, conservatively
+adding less than one second per counter, not per flush. Isolated stale
+predictions still count as unknowns.
+
+Both the §5 fleet gate and §11 report require, **per instance counter**:
+
+- `read_failures + missed_ticks + late_installs ≤ max(3, 0.01 × (health_reads + workspace_reads))`;
+- `max_consecutive_failures ≤ 2`;
+- `prediction_unknown ≤ 0.02 × (prediction_yes + prediction_no + prediction_unknown)`, with `prediction_yes + prediction_no > 0`;
+- `degraded_seconds ≤ 0.01 × ((flushed_at_us - started_at_us) / 1e6)`.
+
+The three-event floor admits an isolated reconnect even in short intervals;
+the 1% event/time budgets keep tails exceptional, and the 2% unknown budget
+bounds lost admission coverage while requiring positive known evidence.
+Three consecutive failures block the historical gate even after live recovery;
+two workspace failures may degrade live progress but must fit the time budget.
+Outputs include each counter's event/read, unknown/prediction and degraded/time
+ratios, numerators, denominators and maximum streak. These are availability
+budgets, not correctness allowances: unknown admission predictions are
+non-evaluable, never mismatches or positive clock seeds. The comparator and
+its zero-correctness-disagreement rules are unchanged.
+
 Cost per opted-in router instance is at most **N/4 + 1 bounded reads/second**
 in steady state, **9/s at N=32**, bounded additionally by the rate limiter;
 zero writes, zero request-triggered reads. Each workspace read inspects at most
@@ -951,8 +1028,12 @@ including rejection of future timestamps; clock anomalies remain unknown
 
 F2b must measure/prove these maxima under pilot scheduling/load, including
 publisher progress and arbitrary read/publication phase, before enablement.
+The component maxima describe cache observations accepted as fresh. Failed or
+late ticks invalidate the affected cache and consume the bounded event/unknown
+budgets above; they never justify a larger freshness or install bound.
 If the budget is exceeded or unproven, observation coverage is unknown;
-skip overdue ticks without catch-up and block/reset the clean interval.
+skip overdue ticks without catch-up, invalidate the affected cache, and block/reset
+the clean interval when the per-counter tolerance above is exceeded.
 **Successful RPCs alone do not satisfy the observation gate.** For the old
 P=2/T=4 cadence, publish at 0,2,4,… and read at 1.5,5.5,9.5,… leaves cached
 timestamp 0 stale at 5.1 despite durable timestamp 4; with T=1, reads at
@@ -974,8 +1055,10 @@ prove lifecycle CPU/timer progress under the actual Cloud Run configuration;
 a thread with no CPU after the response is insufficient. Until that proof and
 a working health source exist, parent §8's prediction/cache-age requirement
 (`docs/design/async-settle-outbox-v1.md:802`) is **unmet**, with F2b owning closure.
-Require known prediction/age evidence for every evaluable sample in the clean
-interval; unknowns block/reset it, and an all-null run can never pass. Known
+Require known prediction/age evidence for every admission-evaluable sample in
+the clean interval. Unknown admission predictions are non-evaluable and must
+fit the per-counter bounds above; they cannot start the clock. Comparator
+unknowns and missing evidence still block/reset it; an all-null run cannot pass. Known
 pending exposure with all traffic synchronous is not async-load capacity proof.
 
 | Request / work | Additional CPU | Additional RPC / commit |
@@ -1085,8 +1168,8 @@ coverage is restored; do not extrapolate a sampled zero into fleet correctness.
 | §8 bullet / requirement | Data field or external artifact | Pass rule |
 |---|---|---|
 | Seven days, admission disabled (`docs/design/async-settle-outbox-v1.md:796`) | sample observation times, day manifests, serving revision/flag roster, reset/gap timestamps | Continuous 604,800 seconds; every serving router admission off and enclave negotiate off; no unresolved gaps or correctness mismatches |
-| Denominators/usage/hash/delta/prediction/cache/timing (`:802`) | counter buckets plus sample `*_usage`, hashes, deltas, `admission`, `timing`, `deployment` | Complete attempted-traffic denominator for opted workspaces; report missing/unknowns, no invented fleet denominator outside opt-in |
-| Zero unexplained amount/normalization/signature/hash/identity; all admitted evaluable (`:811`) | classifications, rejection/mismatch counters, `eligibility`, null amounts | Zero correctness disagreements; 100% of selected otherwise-eligible shadow observations evaluable; “admitted” here means admitted to comparison, **actual async admissions remain zero**; unknown/drop coverage cannot pass |
+| Denominators/usage/hash/delta/prediction/cache/timing (`:802`) | counter buckets plus sample `*_usage`, hashes, deltas, `admission`, `timing`, `deployment` | Complete attempted-traffic denominator for opted workspaces; report missing/unknowns and per-instance §5 ratios; admission unknowns ≤2%, events ≤max(3,1% of reads), max streak ≤2, degraded time ≤1%; no invented fleet denominator outside opt-in |
+| Zero unexplained amount/normalization/signature/hash/identity; all admitted evaluable (`:811`) | classifications, rejection/mismatch counters, `eligibility`, null amounts | Zero correctness disagreements; 100% of selected otherwise-eligible shadow observations evaluable; “admitted” here means admitted to comparison, **actual async admissions remain zero**; comparator unknown/drop coverage cannot pass; admission unknowns remain non-evaluable within §5 bounds |
 | Shared 759-case/hash and wire fixtures (`:813`) | both CI artifact SHAs, evaluator and shadow literal pins, rebased revisions | Byte equality and both repo suites pass; report includes exact builds, no reliance on 93,561 probes |
 | Frozen-main/pricing-matrix/crash/mutation gates (`:816`) | F2b/F2c oracle/mutation manifests plus F1/F proof artifacts | Identical response/counters/reservation winner/generation/side effects and operation traces; all intended mutations killed by assertions |
 | D2, D3, throughput/burst/SLO (`:818`) | independent isolated Spanner load/crash, revocation and unknown-commit reports with regional p50/p95/p99 | All approved targets demonstrated independently; shadow synchronous timing is baseline only, never async handoff/drain capacity proof |
@@ -1153,7 +1236,7 @@ does not add an OTel exporter or logging repair.
 | Legacy returns durable intent, not booking | `booked_micro=null`, `booking_pending`; no comparison against intent amount; bounded later read may document winner but cannot backdate a clean comparison. |
 | Legacy throws / caller cancels | Preserve original exception/cancellation and retry ownership. Observer may fail to run; denominator/completeness must show the gap. Never cancel or retry money on shadow's behalf. |
 | Retry with changed payload or opposite winner | Existing first reservation claimant wins; same-kind payload conflict resets correctness, opposite-kind `winner_polarity` blocks coverage, first sample retained. No second pending intent (`src/trusted_router/storage_gcp_counter_dml.py:753`; §3.1). |
-| Observer cannot populate / timer starved | Prediction unknown with ages/reason; no request refresh, no invented healthy zero. Block window until F2b observation/health proof is met (`src/trusted_router/services/async_settle.py:59`, `:214`; §5). |
+| Observer cannot populate / timer starved | Prediction unknown with ages/reason; no request refresh, no invented healthy zero. Self-recover on the next clean tick; block the window if §5 per-counter bounds or F2b observation/health proof are not met (`src/trusted_router/services/async_settle.py:59`, `:214`; §5). |
 | Proof expires / key rotates / regional failover | Count unevaluable or identity failure as appropriate; never regenerate an old snapshot from a new catalog; retain verification keys for the observation lifetime. |
 | Both enclave switches on / router admission enabled during window | Force local legacy shadow mode; configuration counter. Report rejects the interval if admission is enabled on any serving router. |
 

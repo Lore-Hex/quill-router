@@ -105,7 +105,13 @@ def test_install_deadline_preserves_fail_closed(reader, seconds, prediction):
     observer.install_workspace('ws', 0. if reader == 'workspace' else seconds, Admission(0, 2))
     observer.install_health(0. if reader == 'health' else seconds, health(0))
     assert observer.peek('ws')['prediction'] == prediction
-    assert observer.progress_ok is (prediction == 'yes')
+    assert observer.progress_ok  # A single failure is below either streak threshold.
+    assert observer.counts['late_installs'] == int(seconds > .5)
+    assert observer.counts['max_consecutive_failures'] == int(seconds > .5)
+    observer.install_workspace('ws', seconds, Admission(0, 2))
+    observer.install_health(seconds, health(seconds))
+    assert observer.peek('ws')['prediction'] == 'yes'
+    assert observer.progress_ok
 
 
 def test_maximum_workspaces_share_two_readers_with_health_priority(monkeypatch):
@@ -156,3 +162,192 @@ def test_maximum_workspaces_share_two_readers_with_health_priority(monkeypatch):
     assert all(b - a <= (1.25 if key == "health" else 4.25)
                for key, values in starts.items() for a, b in zip(values, values[1:], strict=False))
     assert predictions == ["yes"] * 32 and observer.progress_ok
+
+
+@pytest.mark.parametrize('reader,threshold', [('health', 3), ('ws', 2)])
+@pytest.mark.parametrize('cause', ['read_failures', 'late_installs', 'missed_ticks'])
+def test_failure_streak_recovers_and_measures_degraded_union(reader, threshold, cause):
+    now = [0.]
+    def fail(*_):
+        raise TimeoutError('deadline')
+    observer = Observer(frozenset({'ws', 'other'}), fail, fail,
+                        clock=lambda: now[0], wall=lambda: now[0])
+    key = None if reader == 'health' else reader
+    for i in range(threshold):
+        now[0] = float(i)
+        observer.install_workspace('other', now[0], Admission(0, 2))
+        if reader != 'health':
+            observer.install_health(now[0], health(now[0]))
+        if cause == 'read_failures':
+            observer._health(now[0]) if key is None else observer._workspace(key, now[0])
+        elif cause == 'late_installs':
+            observer.install_health(now[0] - .55, health(now[0])) if key is None else observer.install_workspace(key, now[0] - .55, Admission(0, 2))
+        else:
+            observer.missed_tick(key, now[0])
+        assert observer.progress_ok is (i + 1 < threshold)
+        assert observer.peek('ws')['prediction'] == 'unknown'
+        assert observer.peek('other')['prediction'] == ('unknown' if key is None else 'yes')
+    assert observer.counts[cause] == threshold
+    assert observer.counts['max_consecutive_failures'] == threshold
+    now[0] += .25
+    assert observer.snapshot_counts()['degraded_seconds'] == .25
+    now[0] += .25
+    observer.install_workspace('ws', now[0], Admission(0, 2))
+    observer.install_health(now[0], health(now[0]))
+    assert observer.peek('ws')['prediction'] == 'yes' and observer.progress_ok
+    assert observer.snapshot_counts()['degraded_seconds'] == .5
+    now[0] += 1
+    assert observer.snapshot_counts()['degraded_seconds'] == .5
+    assert observer.counts['max_consecutive_failures'] == threshold
+
+
+def test_late_start_and_install_are_one_failed_tick_and_old_result_cannot_recover():
+    now = [1.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    observer.missed_tick(None, 1.)
+    now[0] = 1.55
+    observer.install_health(1., health(1.))
+    assert observer.failures[None] == 1
+    assert observer.counts['late_installs'] == observer.counts['missed_ticks'] == 1
+    observer.missed_tick(None, 1.6)
+    observer.install_health(1.55, health(1.55))
+    assert observer.failures[None] == 2 and None in observer.stale
+    observer.install_health(1.7, health(1.7))
+    assert observer.failures[None] == 0 and None not in observer.stale
+
+
+def test_degraded_seconds_is_union_and_maximum_is_not_summed():
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    for tick in (0., 1., 2.):
+        now[0] = tick
+        observer.missed_tick(None, tick)
+        observer.missed_tick('ws', tick)
+    now[0] = 3.
+    assert observer.snapshot_counts()['degraded_seconds'] == 2.
+    observer.install_workspace('ws', 3., Admission(0, 2))
+    now[0] = 4.
+    observer.install_health(4., health(4.))
+    counts = observer.snapshot_counts()
+    assert counts['degraded_seconds'] == 3.
+    assert counts['max_consecutive_failures'] == 3
+    assert observer.snapshot_counts()['max_consecutive_failures'] == 0
+
+
+def test_timer_late_start_stales_until_next_clean_tick_without_catch_up(monkeypatch):
+    from types import SimpleNamespace
+
+    from trusted_router.services import async_settle_shadow_admission as module
+    now = [0.]
+    starts = []
+    samples = []
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(now[0]),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    def submit(executor, function, *args):
+        starts.append((function.__name__, now[0]))
+        function(*args)
+        return SimpleNamespace(done=lambda: True)
+    times = iter([1.375, 2.375, 4.375, 5.375])
+    async def advance(_):
+        samples.append(observer.peek('ws')['prediction'])
+        try:
+            now[0] = next(times)
+        except StopIteration:
+            observer.stopped = True
+    monkeypatch.setattr(module, 'asyncio', SimpleNamespace(
+        get_running_loop=lambda: SimpleNamespace(run_in_executor=submit), sleep=advance))
+    asyncio.run(observer.run())
+    # Late health at 1.375, recovery at 2.375; workspace is independently late
+    # at 4.375 and remains stale until its next four-second tick.
+    assert samples[:3] == ['yes', 'unknown', 'yes']
+    assert observer.counts['missed_ticks'] == 3
+    assert observer.counts['health_reads'] == 5 and observer.counts['workspace_reads'] == 2
+    assert len(starts) == 7  # No catch-up for either missed health interval.
+    assert observer.counts['max_consecutive_failures'] == 1
+
+
+def test_read_failure_preserves_ages_but_invalidates_only_that_workspace():
+    now = [0.]
+    def fail(_):
+        raise TimeoutError('deadline')
+    observer = Observer(frozenset({'ws', 'other'}), fail, lambda: health(now[0]),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    for key in observer.workspaces:
+        observer.install_workspace(key, 0., Admission(0, 2))
+    observer.install_health(0., health(0.))
+    now[0] = .5
+    observer._workspace('ws', 0.)
+    prediction = observer.peek('ws')
+    assert (prediction['prediction'], prediction['reason'], prediction['workspace_age_us']) == ('unknown', 'cache_stale', 500000)
+    assert observer.peek('other')['prediction'] == 'yes'
+    observer.install_workspace('ws', .5, Admission(0, 2))
+    assert observer.peek('ws')['prediction'] == 'yes'
+
+
+# Adopted from the independent Round 1 review contract tests.
+@pytest.mark.parametrize('cause', ['late_installs', 'read_failures'])
+def test_delayed_callback_counts_its_own_tick_after_scheduler_failures(monkeypatch, cause):
+    from types import SimpleNamespace
+
+    from trusted_router.services import async_settle_shadow_admission as module
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    if cause == 'read_failures':
+        def fail():
+            raise TimeoutError('deadline')
+        observer.health_read = fail
+    jobs = []
+    def submit(executor, function, *args):
+        job = SimpleNamespace(done=lambda: False, function=function, args=args)
+        jobs.append(job)
+        return job
+    ticks = iter([1.3, 2.6, 2.7])
+    async def advance(_):
+        try:
+            now[0] = next(ticks)
+        except StopIteration:
+            jobs[0].function(*jobs[0].args)
+            observer.stopped = True
+    monkeypatch.setattr(module, 'asyncio', SimpleNamespace(
+        get_running_loop=lambda: SimpleNamespace(run_in_executor=submit), sleep=advance))
+    asyncio.run(observer.run())
+    # Actual read tick 0 failed its install bound, followed by skipped ticks
+    # 1.3 and 2.6; no intervening success exists.
+    assert observer.counts[cause] == 1
+    assert observer.counts['missed_ticks'] == 2
+    assert observer.failures[None] == 3
+    assert observer.counts['max_consecutive_failures'] == 3
+    assert not observer.progress_ok
+
+
+    observer.stopped = False
+    observer.install_health(2.6, health(2.6))
+    assert observer.failures[None] == 3  # Same tick cannot recover.
+    observer.install_health(2.7, health(2.7))
+    assert observer.progress_ok and observer.failures[None] == 0
+    assert observer.snapshot_counts()['max_consecutive_failures'] == 3
+
+
+def test_daily_snapshots_remain_bounded_with_sticky_overflow_and_seals():
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    for day in range(5):
+        now[0] = day * 86400.
+        observer.missed_tick(None, now[0])
+        daily, overflow, sealed_before = observer.snapshot_daily_counts()
+        assert len(daily) == min(day + 1, 3)
+        assert len(observer.daily_counts) == len(daily)  # No destructive drain.
+        assert overflow is (day >= 3)
+    for day in daily:
+        observer.acknowledge_daily_counts(day, sealed_before)
+    assert list(observer.daily_counts) == [sealed_before]
+    assert observer.snapshot_daily_counts()[1] is True
+    # Late accounting cannot reopen a sealed/acknowledged day.
+    observer.evidence_wall = lambda: 0.
+    observer.missed_tick(None, now[0] + 1)
+    assert list(observer.daily_counts) == [sealed_before]
+    assert observer.daily_overflow

@@ -1999,8 +1999,18 @@ explicit window and coverage before running the offline checklist.
    `regional_budgets` (`reads_per_second`, `pending_rows_per_second`), and a
    hash-checked measured `headroom` artifact. Closed observer counters must
    exactly cover all reviewed router instances, regions, revisions and
-   intervals, with positive known predictions, no failures/missed ticks, and
-   the N/4 workspace plus 1/s health cadence. Repeated intervals use each
+   intervals, with positive known predictions and bounded observer failures:
+   per counter, `read_failures + missed_ticks + late_installs ≤ max(3, 1% of
+   (health_reads + workspace_reads))`, `max_consecutive_failures ≤ 2`, unknown
+   predictions ≤2% of all predictions, and `degraded_seconds ≤ 1%` of its
+   covered interval. Print per-instance ratios. Preserve the N/4 workspace
+   plus 1/s health cadence, no catch-up, and 500 ms read/install bounds.
+   The 2026-10-10 three-pass regional measurement found one reconnect-like
+   startup stall in four of six far-region passes (two had none): roughly three 150 ms round trips can
+   hit 500 ms. §5 of `async-settle-shadow-v1.md` records the evidence and
+   self-recovery rules (health degradation at 3 consecutive failed ticks,
+   workspace at 2). Unknown predictions remain non-evaluable, never mismatches;
+   the `[0,5)` freshness checks and 4.75 s freshness budget remain unchanged. Repeated intervals use each
    instance's peak rate; instances are summed conservatively. Include measured
    `freshness_maxima_seconds`: `publisher_period`, `publisher_jitter`,
    `publication`, `poll_period`, `poll_jitter`, `install`, `skew`,

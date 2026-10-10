@@ -549,3 +549,26 @@ def test_pre_enable_rejects_fast_drain_already_enabled(tmp_path):
     result = pilot.fleet_budgets_pre(data)
     assert result['status'] == 'BLOCKED', result
     assert result['checklist']['dormant'] == 'BLOCKED'
+
+
+@pytest.mark.parametrize('damage', [None, 'failures', 'streak', 'unknown', 'degraded'])
+def test_fleet_bounded_observer_failures(tmp_path, damage):
+    data = fleet_bundle(tmp_path)
+    body = data['rows'][0]['body']
+    obs = body['admission_observer']
+    obs.update(read_failures=360, missed_ticks=360, late_installs=360,
+               max_consecutive_failures=2, prediction_yes=98, prediction_unknown=2,
+               degraded_seconds=864)
+    if damage == 'failures':
+        obs['late_installs'] += 1
+    elif damage == 'streak':
+        obs['max_consecutive_failures'] = 3
+    elif damage == 'unknown':
+        obs['prediction_unknown'] += 1
+    elif damage == 'degraded':
+        obs['degraded_seconds'] += 1
+    result = pilot.fleet_budgets(data)
+    assert result['status'] == ('PASS' if damage is None else 'BLOCKED')
+    ratios = result['observer_budgets'][data['rows'][0]['id']]
+    assert ratios['failure_ratio'] >= .01 and ratios['unknown_ratio'] >= .02
+    assert ratios['degraded_ratio'] >= .01
