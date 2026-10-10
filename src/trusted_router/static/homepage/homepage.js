@@ -59,8 +59,20 @@ $$('[data-alias]').forEach(button=>button.addEventListener('click',async()=>{
 }));
 let lang='py', source='openai', codeLang='py';
 const migration=$('.trm'), pre=$('.mcode');
+// Side by side on desktop, the code column sets the block's height. Hold the tallest
+// height seen so switching views never moves the page below; reset on resize.
+const codeColumn=pre.closest('.r');
+let heldHeight=0;
+function holdCodeHeight(){
+ if(!codeColumn)return;
+ if(innerWidth<=1000){heldHeight=0;codeColumn.style.minHeight='';return;}
+ heldHeight=Math.max(heldHeight,codeColumn.getBoundingClientRect().height);
+ codeColumn.style.boxSizing='border-box';codeColumn.style.minHeight=heldHeight+'px';
+}
+addEventListener('resize',()=>{heldHeight=0;if(codeColumn)codeColumn.style.minHeight='';});
 // Two levels: "Code" or "Agent prompt" first; the language tabs and the "from" picker belong to Code.
 function renderCode(){
+ holdCodeHeight();
  const agent=lang==='agent';
  $$('.mode',migration).forEach(b=>{const selected=(b.dataset.mode==='agent')===agent;b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1;});
  $$('.tab',migration).forEach(tab=>{const selected=tab.dataset.lang===lang;tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;});
