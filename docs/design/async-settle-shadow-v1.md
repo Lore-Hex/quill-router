@@ -1074,8 +1074,8 @@ pending exposure with all traffic synchronous is not async-load capacity proof.
 
 “One transaction” is not “one RPC”: dedup uses a read and mutation commit;
 SDK begin/commit overhead must be included in measured cost. All shadow storage
-work has a shared **1 second** worker I/O budget, read RPC deadlines at
-most 200 ms, and transaction-control/commit RPC deadlines at most 500 ms,
+work has a shared **1 second** worker I/O budget, with read RPC deadlines at
+most 500 ms and transaction-control/commit RPCs using only the remaining time,
 always capped by the remaining shared budget, LOW priority and no
 application retry; skip when budget is gone. Use a dedicated single-worker
 executor so shadow cannot fill the money executor's queue. Queueing adds no
@@ -1083,7 +1083,16 @@ per-request storage. This budget must be measured in every pilot region;
 regional timeouts/drop rates invalidate coverage rather than being hidden.
 The October 10 commit-budget correction separates point-read latency from a
 replicated commit's latency. A 150-163 ms regional round trip leaves too little
-headroom for commit processing under a 200 ms cap. This does not extend the
+headroom for commit processing under a 200 ms cap. Production canary diagnostics
+then exposed a separate read-side problem: Sao Paulo repeatedly exceeded the
+200 ms read cap, and Europe occasionally did too. Shadow point reads now share
+the 500 ms per-RPC cap; operator range reads retain their 200 ms caller deadline.
+Two 320 ms reads plus a 300 ms commit fit the unchanged one-second total budget.
+Canary commits also exhausted their separate 500 ms cap after 355 ms of reads,
+despite 145 ms remaining in the shared budget. Commit/control RPCs therefore
+use the remaining budget rather than a second, shorter deadline. They never
+receive a fresh one-second budget after the reads.
+This does not extend the
 worker budget, add retries, or relax any evidence gate. Failures remain sticky
 and unacknowledged; rate-limited diagnostics expose only a fixed stage/reason
 and elapsed time, never exception text, SQL parameters, or evidence bodies.

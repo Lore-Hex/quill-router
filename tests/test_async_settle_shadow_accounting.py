@@ -107,8 +107,8 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
         validate_counter(identity,broken)
 
 
-@pytest.mark.parametrize('rpc_latency', [.141, .163])
-@pytest.mark.parametrize('commit_latency', [.163, .3, .6])
+@pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32])
+@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2])
 @pytest.mark.parametrize('budget', [1., .1, .3, .4])
 def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
     from types import SimpleNamespace
@@ -150,19 +150,63 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
     counters.increment(dimensions('openai', 'responses', True), 'authorize_attempts')
     identity, row = counters.snapshot(closed=True)[0]
     started = clock.monotonic()
-    if budget < 2*rpc_latency+commit_latency or commit_latency > .5:
+    if budget < 2*rpc_latency+commit_latency:
         with pytest.raises(DeadlineExceeded):
             EvidenceStore(db).flush(identity, row, started+budget)
-        assert clock.monotonic()-started == pytest.approx(min(budget, 2*rpc_latency+.5))
+        assert clock.monotonic()-started == pytest.approx(budget)
     else:
         EvidenceStore(db).flush(identity, row, started+budget)
         assert json.loads(db.rows[COUNTER, identity]) == row
         assert clock.monotonic()-started == pytest.approx(2*rpc_latency+commit_latency)
         assert len(calls) == 3
-    assert all(0 < call['timeout'] <= .2 for call in calls[:2])
+    assert all(0 < call['timeout'] <= .5 for call in calls[:2])
     if len(calls) == 3:
-        assert 0 < calls[-1]['timeout'] <= .5
+        assert 0 < calls[-1]['timeout'] <= 1.
         assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
+
+
+@pytest.mark.parametrize('budget', [.125, .5, 1., 30.])
+def test_slow_shadow_read_still_fails_closed_without_retry(shadow_deadline_clock, budget):
+    from google.api_core.exceptions import DeadlineExceeded
+
+    clock = shadow_deadline_clock
+
+    class SlowDatabase(Database):
+        def execute_sql(self, sql, **kwargs):
+            super().execute_sql(sql, **kwargs)
+            clock.now += kwargs['timeout']
+            raise DeadlineExceeded('regional read did not finish')
+
+    db = SlowDatabase()
+    started = clock.monotonic()
+    with pytest.raises(DeadlineExceeded):
+        EvidenceStore(db).reserve('2026-10-06', started+budget)
+    assert clock.monotonic()-started == pytest.approx(min(.5, budget))
+    assert len(db.transaction_options) == len(db.query_options) == 1
+    timeout, retry, options = db.query_options[0]
+    assert timeout == pytest.approx(min(.5, budget))
+    assert retry is None and options == {'priority': 'PRIORITY_LOW'}
+    assert not db.rows and not db.write_shapes
+
+
+def test_operator_day_scan_keeps_short_deadline(shadow_deadline_clock):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    calls = []
+
+    def execute(sql, **kwargs):
+        calls.append(kwargs)
+        return []
+
+    reader = SimpleNamespace(execute_sql=execute)
+    db = SimpleNamespace(snapshot=lambda: nullcontext(reader))
+    assert EvidenceStore(db).day(SAMPLE, '2026-10-06') == []
+    assert len(calls) == 1
+    assert 0 < calls[0]['timeout'] <= .2
+    assert calls[0]['retry'] is None
+    assert calls[0]['request_options'] == {'priority': 'PRIORITY_LOW'}
+    assert calls[0]['params']['page_size'] == 200
 
 
 @pytest.mark.parametrize('failure_stage', ['begin', 'callback', 'commit'])
@@ -609,7 +653,7 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for timeout, retry, options in db.query_options:
-        assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
+        assert 0 < timeout <= .5 and retry is None and options == {'priority':'PRIORITY_LOW'}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
 
 
