@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -98,6 +99,27 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 	})
 	top := 0.0
 	newest := map[string]time.Time{} // by series
+	// The series seen are remembered as each page arrives, before the read
+	// can fail on that page or a later one: a series stale now, or on a
+	// page Monitoring could not complete, and gone by the next look, is
+	// missed then too. Gone is judged against what was seen before this
+	// read.
+	m.mu.Lock()
+	before := maps.Clone(m.seen[filter])
+	m.mu.Unlock()
+	remember := func(page []*monitoringpb.TimeSeries) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.seen == nil {
+			m.seen = map[string]map[string]bool{}
+		}
+		if m.seen[filter] == nil {
+			m.seen[filter] = map[string]bool{}
+		}
+		for _, series := range page {
+			m.seen[filter][seriesKey(series)] = true
+		}
+	}
 	// A page at a time, one fetch each, so that each page's execution
 	// errors are seen: the iterator's Next, and its pager, skip an empty
 	// page, errors and all.
@@ -108,11 +130,12 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 			return 0, err
 		}
 		token = next
+		remember(page)
 		if resp, ok := it.Response.(*monitoringpb.ListTimeSeriesResponse); ok && len(resp.GetExecutionErrors()) > 0 {
 			return 0, fmt.Errorf("an incomplete answer for %s: %s", filter, resp.GetExecutionErrors()[0].GetMessage())
 		}
 		for _, series := range page {
-			key := fmt.Sprint(series.GetMetric().GetLabels(), series.GetResource().GetLabels())
+			key := seriesKey(series)
 			for _, p := range series.GetPoints() {
 				var v float64
 				switch value := p.GetValue().GetValue().(type) {
@@ -136,27 +159,10 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 	if len(newest) == 0 {
 		return 0, fmt.Errorf("no point in the last %v for %s", m.Window, filter)
 	}
-	// The series seen are remembered before the read can fail on one of
-	// them: a series stale now, gone by the next look, is missed then too.
-	m.mu.Lock()
-	var gone []string
-	for key := range m.seen[filter] {
+	for key := range before {
 		if _, ok := newest[key]; !ok {
-			gone = append(gone, key)
+			return 0, fmt.Errorf("the series %s reported before and is gone, for %s", key, filter)
 		}
-	}
-	if m.seen == nil {
-		m.seen = map[string]map[string]bool{}
-	}
-	if m.seen[filter] == nil {
-		m.seen[filter] = map[string]bool{}
-	}
-	for key := range newest {
-		m.seen[filter][key] = true
-	}
-	m.mu.Unlock()
-	if len(gone) > 0 {
-		return 0, fmt.Errorf("the series %s reported before and is gone, for %s", gone[0], filter)
 	}
 	for key, end := range newest {
 		// The point's newest sample can be Align older than its time.
@@ -165,6 +171,11 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 		}
 	}
 	return top, nil
+}
+
+// seriesKey names a series by its labels, the metric's and the resource's.
+func seriesKey(series *monitoringpb.TimeSeries) string {
+	return fmt.Sprint(series.GetMetric().GetLabels(), series.GetResource().GetLabels())
 }
 
 // Store reads the pending work and what the stage's workspace has booked

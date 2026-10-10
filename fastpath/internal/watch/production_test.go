@@ -12,10 +12,11 @@ import (
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"google.golang.org/api/option"
 	"google.golang.org/genproto/googleapis/api/monitoredres"
-	"google.golang.org/genproto/googleapis/rpc/status"
+	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -37,6 +38,8 @@ type metrics struct {
 	incomplete bool
 	errorPage  bool
 	split      bool
+	// failRest fails the fetch of any page after the first.
+	failRest bool
 }
 
 type extraSeries struct {
@@ -51,7 +54,7 @@ func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSe
 	m.requests = append(m.requests, req)
 	resp := &monitoringpb.ListTimeSeriesResponse{}
 	if m.errorPage && req.GetPageToken() == "" {
-		resp.ExecutionErrors = []*status.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
+		resp.ExecutionErrors = []*rpcstatus.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
 		resp.NextPageToken = "after-the-error"
 		return resp, nil
 	}
@@ -74,6 +77,9 @@ func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSe
 	for _, e := range m.extra[req.GetFilter()] {
 		all = append(all, series(e.region, e.values, e.age))
 	}
+	if m.failRest && req.GetPageToken() != "" {
+		return nil, status.Error(codes.InvalidArgument, "the rest did not come")
+	}
 	switch {
 	case m.split && req.GetPageToken() == "" && len(all) > 0:
 		resp.TimeSeries, resp.NextPageToken = all[:1], "the-rest"
@@ -83,7 +89,7 @@ func (m *metrics) ListTimeSeries(_ context.Context, req *monitoringpb.ListTimeSe
 		resp.TimeSeries = all
 	}
 	if m.incomplete {
-		resp.ExecutionErrors = []*status.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
+		resp.ExecutionErrors = []*rpcstatus.Status{{Code: int32(codes.Unavailable), Message: "a replica did not answer"}}
 	}
 	return resp, nil
 }
@@ -285,5 +291,35 @@ func TestASeriesSeenInAFailedReadIsExpected(t *testing.T) {
 	m.mu.Unlock()
 	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "gone") {
 		t.Fatalf("the region gone after a read it failed: %v", err)
+	}
+}
+
+// TestASeriesOnAPageThatFailedIsExpected: a series on a page Monitoring
+// could not complete, and one on a page before the fetch of the rest
+// failed, are remembered by the read that failed, so once gone the read
+// still fails rather than the rest passing as the whole.
+func TestASeriesOnAPageThatFailedIsExpected(t *testing.T) {
+	for _, way := range []string{"incomplete", "rest-failed"} {
+		// Region b on the first page, region c on the second.
+		m := &metrics{extra: map[string][]extraSeries{cpuFilter: {
+			{region: "b", values: []*monitoringpb.TypedValue{double(0.2)}},
+			{region: "c", values: []*monitoringpb.TypedValue{double(0.1)}}}}}
+		if way == "incomplete" {
+			m.incomplete = true
+		} else {
+			m.split, m.failRest = true, true
+		}
+		src := served(t, m)
+		ctx := context.Background()
+		if _, err := src.SpannerCPU(ctx); err == nil {
+			t.Fatalf("%s: the first read passed", way)
+		}
+		m.mu.Lock()
+		m.incomplete, m.split, m.failRest = false, false, false
+		m.extra[cpuFilter] = m.extra[cpuFilter][1:] // b gone, c stays
+		m.mu.Unlock()
+		if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "gone") {
+			t.Fatalf("%s: the region gone after the read that failed: %v", way, err)
+		}
 	}
 }
