@@ -52,7 +52,8 @@ test("returning-user hint restores console labels without replacing authenticati
   await context.addCookies([{ name: "tr_signed_in", value: "1", url: baseURL }]);
   await page.goto("/");
   await expect(page.locator(".trnav .signin")).toHaveText("Console");
-  await expect(page.locator("#top .hero .button-primary")).toHaveText("Open console");
+  await expect(page.locator("#top .hero .button-primary")).toHaveText("Get my API key");
+  await expect(page.locator("#top .cta-note")).toBeHidden();
   await expect(page.locator("#top .hero .button-primary")).toHaveAttribute("href", "/console/api-keys");
   await expect(page.locator("#signinModal")).not.toBeVisible();
 });

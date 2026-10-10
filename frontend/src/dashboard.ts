@@ -310,11 +310,21 @@ function applyAuthAwareChrome(): void {
     const replacement = document.createElement("a");
     replacement.href = "/console/api-keys";
     replacement.className = (el as HTMLElement).className;
-    replacement.textContent =
-      el.textContent && el.textContent.trim().toLowerCase().includes("api key")
+    // The homepage's three API-key buttons (data-homepage-cta) read
+    // "Get my API key" and keep their marker so click tracking survives.
+    const homepageCta = el.hasAttribute("data-homepage-cta");
+    replacement.textContent = homepageCta
+      ? "Get my API key"
+      : el.textContent && el.textContent.trim().toLowerCase().includes("api key")
         ? "Open console"
         : "Console";
+    if (homepageCta) replacement.setAttribute("data-homepage-cta", "");
     el.replaceWith(replacement);
+  });
+  // The hero note ("No card required...") is for visitors. Keep its space so
+  // the hero does not shift for signed-in people.
+  document.querySelectorAll<HTMLElement>(".cta-note").forEach((note) => {
+    note.style.visibility = "hidden";
   });
 }
 
