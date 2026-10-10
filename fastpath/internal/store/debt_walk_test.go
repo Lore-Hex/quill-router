@@ -411,6 +411,7 @@ func (d *debtWalk) unchanged(ref LeaseRef, kind string, f func()) {
 func (d *debtWalk) grant(ctx context.Context) bool {
 	d.t.Helper()
 	req := grantOf(d.ws, int64(1+d.rng.Intn(20)))
+	req.WorkspaceShard, req.KeyStatusVersion = int64(1+d.probes.Intn(9)), int64(10+d.probes.Intn(90))
 	d.note("grant %d", req.Amount)
 	rows := readRows(d.t, d.ws)
 	ref := LeaseRef{d.ws, req.LeaseID}
