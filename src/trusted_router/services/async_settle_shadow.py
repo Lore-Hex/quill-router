@@ -488,7 +488,7 @@ class Runtime:
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)
         except Exception:
-            self.counters.reason(dimensions(None, None, None), "worker", "store_unavailable")
+            self.counters.flush_failed()
 
     async def maintain_counters(self, stopped: asyncio.Event) -> None:
         while not stopped.is_set():
@@ -553,9 +553,11 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         stopped.set()
-        if maintenance is not None:
-            await maintenance
-        if observer is not None:
-            await observer.close()
-        await asyncio.get_running_loop().run_in_executor(runtime.executor, partial(runtime.flush, time.monotonic()+1, True))
-        runtime.executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            if maintenance is not None:
+                await maintenance
+            if observer is not None:
+                await observer.close()
+            await asyncio.get_running_loop().run_in_executor(runtime.executor, partial(runtime.flush, time.monotonic()+1, True))
+        finally:
+            runtime.executor.shutdown(wait=False, cancel_futures=True)

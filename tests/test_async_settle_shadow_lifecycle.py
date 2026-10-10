@@ -278,6 +278,95 @@ def test_flush_failure_counts_drop_and_preserves_first_gap(shadow_deadline_clock
     rt.executor.shutdown()
 
 
+@pytest.mark.parametrize('previous_gap', [False, True])
+def test_failed_final_flush_keeps_writer_closed_and_unacknowledged(monkeypatch, shadow_deadline_clock, previous_gap):
+    from google.api_core.exceptions import DeadlineExceeded
+
+    db = Database()
+    store = EvidenceStore(db)
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), store)
+    rt.counters.clock = lambda: 1791244801
+    dims = dimensions('openai', 'responses', False)
+    if previous_gap:
+        rt.counters.reason(dims, 'settle', 'usage_missing', 'exclusions')
+    rt.flush(shadow_deadline_clock.monotonic()+1)
+    identity = next(identity for kind, identity in db.rows if kind == COUNTER)
+    snapshots = []
+
+    def fail_close(identity, body, deadline):
+        snapshots.append(body)
+        raise DeadlineExceeded('injected final flush timeout')
+
+    monkeypatch.setattr(store, 'flush', fail_close)
+    rt.counters.clock = lambda: 1791244804
+    try:
+        rt.flush(shadow_deadline_clock.monotonic()+1, closed=True)
+        body = rt.counters.days[identity.split('/')[0]]
+        assert body['closed'] is True
+        assert not json.loads(db.rows[COUNTER, identity])['closed']
+        assert rt.counters.retired_through == ''
+        assert body['first_gap_at_us'] == (1791244801000000 if previous_gap else 1791244804000000)
+        assert body['drops'] == [dict(phase='worker', adapter='unknown', route_type='unknown',
+            streamed=None, reason='store_unavailable', count=1)]
+        # A late acknowledgment must not discard the newly recorded gap.
+        rt.counters.acknowledge(identity, snapshots[0])
+        assert identity.split('/')[0] in rt.counters.days
+        with pytest.raises(ValueError, match='closed shadow day'):
+            rt.counters.increment(dims, 'settle_attempts')
+    finally:
+        rt.executor.shutdown()
+
+
+def test_shutdown_releases_executor_when_final_flush_fails(monkeypatch):
+    from fastapi import FastAPI
+
+    from trusted_router.services import async_settle_shadow as module
+
+    app = FastAPI()
+    app.state.async_settle = runtime()
+    module.install(app, settings(async_settle_enabled=False, async_settle_shadow_workspaces='ws-v1'), None)
+    rt = app.state.async_settle_shadow
+
+    def fail(*args):
+        raise RuntimeError('injected unexpected shutdown failure')
+
+    monkeypatch.setattr(rt, 'flush', fail)
+    try:
+        with pytest.raises(RuntimeError, match='injected unexpected shutdown failure'):
+            asyncio.run(app.router.on_shutdown[0]())
+        with pytest.raises(RuntimeError, match='cannot schedule new futures after shutdown'):
+            rt.executor.submit(lambda: None)
+    finally:
+        rt.executor.shutdown()
+
+
+def test_shutdown_completes_after_final_storage_timeout():
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router.services import async_settle_shadow as module
+
+    def fail(*args):
+        raise DeadlineExceeded('injected shutdown storage timeout')
+
+    app = FastAPI()
+    app.state.async_settle = runtime()
+    module.install(app, settings(async_settle_enabled=False, async_settle_shadow_workspaces='ws-v1'), None)
+    rt = app.state.async_settle_shadow
+    rt.store = SimpleNamespace(flush=fail)
+    try:
+        asyncio.run(app.router.on_shutdown[0]())
+        body = next(iter(rt.counters.days.values()))
+        assert body['closed'] and body['first_gap_at_us'] is not None
+        assert body['drops'][0]['reason'] == 'store_unavailable'
+        with pytest.raises(RuntimeError, match='cannot schedule new futures after shutdown'):
+            rt.executor.submit(lambda: None)
+    finally:
+        rt.executor.shutdown()
+
+
 def test_injected_commit_deadline_failure_is_not_acknowledged(monkeypatch, shadow_deadline_clock):
     db = Database()
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
