@@ -91,13 +91,13 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 		return
 	case settlelog.FullRecord:
 	default:
-		s.alert(m.Authorization(), "a record topic message of no kind the stager knows")
+		s.alert(m.Authorization(), AlertUnknownRecordKind)
 		m.Ack()
 		return
 	}
 	leaseID, err := store.LeaseOfAuthorization(m.Authorization())
 	if err != nil || len(m.Data()) == 0 {
-		s.alert(m.Authorization(), "a full record of no lease's authorization")
+		s.alert(m.Authorization(), AlertNoLeaseAuth)
 		m.Ack()
 		return
 	}
@@ -106,7 +106,7 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 	case errors.Is(err, store.ErrNoLease):
 		// Never granted, or gone seven days after its close with its
 		// work done: no winner of it needs the record.
-		s.alert(m.Authorization(), "a full record of a lease the store does not have")
+		s.alert(m.Authorization(), AlertFullRecordNoLease)
 		m.Ack()
 		return
 	case err != nil:
@@ -118,7 +118,7 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 		Ref: ref, Body: m.Data(), MessageID: m.ID(), PublishTime: m.Published()})
 	switch {
 	case errors.Is(err, store.ErrNoLease):
-		s.alert(m.Authorization(), "a full record of a lease the store does not have")
+		s.alert(m.Authorization(), AlertFullRecordNoLease)
 	case errors.Is(err, store.ErrRetired):
 	case err != nil:
 		m.Nack()
