@@ -658,12 +658,12 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
 
   const facade = page.locator('[data-action="load-video"]');
   await expect(facade).toBeVisible();
+  await facade.scrollIntoViewIfNeeded();
   await expect(facade.locator(".video-embed-poster")).toBeVisible();
   await expect(facade).toContainText("Watch the demo");
-  const posterLoaded = await facade.locator(".video-embed-poster").evaluate(
+  await expect.poll(() => facade.locator(".video-embed-poster").evaluate(
     (image) => image.complete && image.naturalWidth === 1280 && image.naturalHeight === 720,
-  );
-  expect(posterLoaded).toBe(true);
+  )).toBe(true);
 
   // The point of the facade: a privacy-first homepage must not hand Google a
   // pageview to render. Nothing may be requested before the visitor asks.
