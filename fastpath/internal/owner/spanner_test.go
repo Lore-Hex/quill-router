@@ -602,6 +602,49 @@ func TestAWorkspaceOffsLeaseIsNotRenewed(t *testing.T) {
 	}
 }
 
+// TestARetiredOwnerLetsALeaseGoOnceEveryHoldHasHadItsTime: a retired owner
+// renews a lease whose hold, of a request that does not stream, has no
+// terminal, until a hold's life and the grace have passed since it retired;
+// then it renews it no more, and past its cutoff lets it go, for the
+// auditor to finish. Retired again, the time counts from the first.
+func TestARetiredOwnerLetsALeaseGoOnceEveryHoldHasHadItsTime(t *testing.T) {
+	f, sp := spannerFixture(t, 1000, nil, func(c *Config) { c.Grace = time.Minute })
+	ctx := context.Background()
+	f.admit(t, 100, false) // a hold whose terminal never comes
+	f.owner.Retire()
+	f.clock.advance(time.Hour + time.Minute - time.Second) // a second short of its life and the grace
+	sp.mu.Lock()
+	sp.expiry = f.clock.Now().Add(10 * time.Minute) // what the renewal is answered
+	sp.mu.Unlock()
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 || !slices.Equal(rounds[0], []string{"lease-1"}) {
+		t.Fatalf("the lease within its hold's life and the grace: %v", rounds)
+	}
+	f.clock.advance(time.Second)
+	f.owner.Retire() // again: the time counts from the first
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 {
+		t.Fatalf("the lease once every hold has had its time: %v", rounds)
+	}
+	if _, held := f.owner.Lease("lease-1"); !held {
+		t.Fatal("let go within its cutoff")
+	}
+	f.clock.advance(10 * time.Minute) // past the cutoff of the last renewal
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 {
+		t.Fatalf("the lease past its cutoff: %v", rounds)
+	}
+	if _, held := f.owner.Lease("lease-1"); held {
+		t.Fatal("a retired owner's lease, every hold past its time and past its cutoff, is still held")
+	}
+}
+
 // TestALeaseWhosePublishesRecoverIsRenewed: the window counts from when the
 // lease's publishes began failing, and only while they do.
 func TestALeaseWhosePublishesRecoverIsRenewed(t *testing.T) {

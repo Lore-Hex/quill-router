@@ -9,7 +9,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_async_settle_admission.sh': '1fac3e0df16cfa720f4d385a4018e2b350c08a346d4951cf53ca6d8e863aeb1b',
  'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
- 'scripts/deploy/migrate_fastpath.sh': '5215d41eb9c7fee732b7603bfcd92b3d133fda9eb4f4ecba709eb0a72235c59a',
+ 'scripts/deploy/migrate_fastpath.sh': '654ce87bb28cca0ed5f565ae012d72d6c345d759e353936847a5cce2e172004c',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
  'scripts/deploy/migrate_money_primitives.sh': 'a35e4012706fa88f48be8f8d6b5abc7a3f828d36bceea59191784b58007d7e41',
@@ -282,6 +282,7 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'CREATE NULL_FILTERED INDEX tr_settle_outbox_unresolved ON tr_settle_outbox (unresolved_at) '
  'STORING (actual_cost_micro, status)',
  'CREATE INDEX tr_lease_by_state ON tr_lease (state)',
+ 'CREATE INDEX tr_lease_by_owner ON tr_lease (owner_node, state)',
  'CREATE UNIQUE INDEX tr_lease_by_id ON tr_lease (lease_id)',
  'CREATE INDEX tr_lease_winners_by_work ON tr_lease_winners (work_done_at)',
  'CREATE INDEX tr_lease_drain_by_commit ON tr_lease_drain (workspace_id, lease_id, commit_ts, '

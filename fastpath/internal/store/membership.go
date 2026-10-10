@@ -137,6 +137,8 @@ type NodeStatus struct {
 	State string
 	Epoch int64
 	Live  bool
+	// Roles are the row's.
+	Roles []string
 	// OpenLeases are the open leases whose owner is the node, of any of
 	// its epochs.
 	OpenLeases int64
@@ -163,8 +165,9 @@ func (n NodeStatus) Done() (bool, []string) {
 }
 
 // NodeStatus reads a node's row by its address and counts the open leases
-// it owns, through the leases' index on their state, in one read-only
-// transaction.
+// it owns, through the leases' index on their owner, in one read-only
+// transaction: a read of the node's row and one of the index's entries
+// for it, whatever the fleet holds.
 func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, error) {
 	if address == "" {
 		return NodeStatus{}, errors.New("store: no address")
@@ -173,7 +176,7 @@ func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, err
 	defer ro.Close()
 	out := NodeStatus{Address: address}
 	row, err := ro.ReadRowWithOptions(ctx, "tr_fastpath_member", spanner.Key{address},
-		[]string{"state", "epoch", "heartbeat_at"}, &spanner.ReadOptions{RequestTag: tag("node-status")})
+		[]string{"state", "epoch", "roles", "heartbeat_at"}, &spanner.ReadOptions{RequestTag: tag("node-status")})
 	var heartbeat time.Time
 	switch {
 	case spanner.ErrCode(err) == codes.NotFound:
@@ -181,13 +184,13 @@ func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, err
 		return NodeStatus{}, err
 	default:
 		out.Found = true
-		if err := row.Columns(&out.State, &out.Epoch, &heartbeat); err != nil {
+		if err := row.Columns(&out.State, &out.Epoch, &out.Roles, &heartbeat); err != nil {
 			return NodeStatus{}, err
 		}
 	}
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
-		SQL: `SELECT COUNT(*) FROM tr_lease@{FORCE_INDEX=tr_lease_by_state}
-		       WHERE state = 'open' AND owner_node = @node`,
+		SQL: `SELECT COUNT(*) FROM tr_lease@{FORCE_INDEX=tr_lease_by_owner}
+		       WHERE owner_node = @node AND state = 'open'`,
 		Params: map[string]any{"node": address},
 	}, spanner.QueryOptions{RequestTag: tag("node-status")}).Do(func(r *spanner.Row) error {
 		return r.Column(0, &out.OpenLeases)

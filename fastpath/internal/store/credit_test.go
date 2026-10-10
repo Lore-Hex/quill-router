@@ -17,8 +17,9 @@ import (
 func seedWorkspace(t *testing.T, credits ...int64) string {
 	t.Helper()
 	workspace := storetest.UniqueID("ws")
-	// Enabled for the fast path, so its grants are taken (workspace.go).
-	mutations := []*spanner.Mutation{storetest.Enabled(workspace)}
+	// Enabled for the fast path, and the tests' owner a member serving, so
+	// its grants are taken (workspace.go, grant.go).
+	mutations := []*spanner.Mutation{storetest.Enabled(workspace), storetest.Member("node-a", 1)}
 	for shard, c := range credits {
 		mutations = append(mutations, spanner.InsertMap("tr_credit_balance", map[string]any{
 			"workspace_id": workspace, "shard": int64(shard), "total_credits": c, "trust_tier": int64(3)}))

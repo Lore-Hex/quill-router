@@ -167,8 +167,9 @@ func TestDisableAllTurnsEveryWorkspaceOff(t *testing.T) {
 	}
 	var leases []LeaseRef
 	for _, ws := range []string{storetest.UniqueID("ws"), storetest.UniqueID("ws")} {
-		if _, err := db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
-			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
+		if _, err := db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1),
+			spanner.InsertMap("tr_credit_balance",
+				map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
 			t.Fatal(err)
 		}
 		req := grantOf(ws, 10)
