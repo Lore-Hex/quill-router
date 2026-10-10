@@ -567,9 +567,14 @@ func (w *walker) load(m int8, to ac.State) {
 func (w *walker) loadWinners(from ac.State) {
 	w.t.Helper()
 	w.seen["load-winners"]++
-	packs, _, err := w.s.LoadWinners(context.Background(), w.ref)
+	lo := spannerNow(w.t)
+	packs, read, err := w.s.LoadWinners(context.Background(), w.ref)
+	hi := spannerNow(w.t)
 	if err != nil {
 		w.fatalf("the winners' load: %v", err)
+	}
+	if read.Before(lo) || read.After(hi) {
+		w.fatalf("the winners read at %v, between reads at %v and %v", read, lo, hi)
 	}
 	if got := w.winsOf(packs); got != from.Win {
 		w.fatalf("the winners load as %+v, and the shadow stored %+v", got, from.Win)
@@ -1437,9 +1442,14 @@ func (w *walker) check() {
 	if err != nil {
 		w.fatalf("reading the lease: %v", err)
 	}
-	packs, _, err := w.s.LoadWinners(ctx, w.ref)
+	lo := spannerNow(w.t)
+	packs, read, err := w.s.LoadWinners(ctx, w.ref)
+	hi := spannerNow(w.t)
 	if err != nil {
 		w.fatalf("reading the winners: %v", err)
+	}
+	if read.Before(lo) || read.After(hi) {
+		w.fatalf("the winners read at %v, between reads at %v and %v", read, lo, hi)
 	}
 	rows, _, err := w.s.ReadDrainSince(ctx, w.ref, time.Time{})
 	if err != nil {

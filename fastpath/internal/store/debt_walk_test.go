@@ -675,8 +675,13 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 	d.t.Helper()
 	d.note("close %s", l.ref.LeaseID)
 	if !l.stored {
+		// The whole workspace is checked after this commit on its own: a
+		// listing commit that moved a credit row, a mark cleared, would be
+		// covered by the close's repair before the walk's check otherwise.
+		before := headrooms(readRows(d.t, d.ws))
 		d.commit(ctx, l, nil, true)
 		d.checkLeaseRow(l, "S's commit")
+		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
 	rows, read, err := d.s.ReadDrainSince(ctx, l.ref, time.Time{})
 	if err != nil {
@@ -731,6 +736,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			}
 		})
 		d.seen["refused close: undecided"]++
+		before := headrooms(readRows(d.t, d.ws))
 		result, ts, err := walkCommit(d.s, CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.seq,
 			Money: money, Winners: winners}, "")
 		if err != nil {
@@ -759,6 +765,9 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			l.committed[w.RecordID] = true
 		}
 		d.checkLeaseRow(l, "the winners' commit")
+		// The whole workspace, before the close could cover what the
+		// winners' commit did to a credit row.
+		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
 	room := l.room()
 	got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
@@ -824,18 +833,48 @@ func (d *debtWalk) checkPacks(l *debtLease) {
 		d.fatalf("lease %s's packs' winner counts are %v, and the walk's commits stored %v", l.ref.LeaseID, counts,
 			want)
 	}
-	packs, _, err := d.s.LoadWinners(context.Background(), l.ref)
-	if err != nil || len(packs) != len(l.packs) {
-		d.fatalf("lease %s's packs read %d, and the walk's commits stored %d: %v", l.ref.LeaseID, len(packs),
-			len(l.packs), err)
+	ctx := context.Background()
+	lo := spannerNow(d.t)
+	packs, read, err := d.s.LoadWinners(ctx, l.ref)
+	hi := spannerNow(d.t)
+	if err != nil {
+		d.fatalf("lease %s's packs: %v", l.ref.LeaseID, err)
 	}
-	for i, p := range packs {
-		w := l.packs[i]
+	if read.Before(lo) || read.After(hi) {
+		d.fatalf("lease %s's winners read at %v, between reads at %v and %v", l.ref.LeaseID, read, lo, hi)
+	}
+	if why := samePacks(packs, l.packs); why != "" {
+		d.fatalf("lease %s's packs as LoadWinners reads them: %s", l.ref.LeaseID, why)
+	}
+	// Load reads the packs once the lease is not open, listed holds or
+	// not, and none while it is: the same packs then.
+	loaded, err := d.s.Load(ctx, l.ref)
+	if err != nil {
+		d.fatalf("lease %s's load: %v", l.ref.LeaseID, err)
+	}
+	if l.state == "open" {
+		if len(loaded.Packs) != 0 {
+			d.fatalf("lease %s open, and Load reads %d packs", l.ref.LeaseID, len(loaded.Packs))
+		}
+	} else if why := samePacks(loaded.Packs, l.packs); why != "" {
+		d.fatalf("lease %s's packs as Load reads them: %s", l.ref.LeaseID, why)
+	}
+}
+
+// samePacks says how the packs read differ from the walk's, if they do:
+// their number, and each pack's version, work not done, and winners.
+func samePacks(got, want []Pack) string {
+	if len(got) != len(want) {
+		return fmt.Sprintf("%d packs read, and the walk's commits stored %d", len(got), len(want))
+	}
+	for i, p := range got {
+		w := want[i]
 		if p.CommitVersion != w.CommitVersion || p.WorkDoneAt.Valid || len(p.Winners) != len(w.Winners) ||
 			(len(w.Winners) > 0 && !reflect.DeepEqual(p.Winners, w.Winners)) {
-			d.fatalf("lease %s's pack %d is %+v, and its commit stored %+v", l.ref.LeaseID, i, p, w)
+			return fmt.Sprintf("pack %d is %+v, and its commit stored %+v", i, p, w)
 		}
 	}
+	return ""
 }
 
 // check holds the workspace's rows to CreditDebt's claims, after an
