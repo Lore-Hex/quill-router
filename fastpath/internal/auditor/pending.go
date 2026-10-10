@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -33,8 +34,14 @@ type PendingConfig struct {
 	Every time.Duration
 	Limit int
 	Wait  time.Duration
-	// Alert tells a person of a winner whose work cannot be done as it is.
-	Alert func(authorization, what string)
+	// Alert tells a person of a winner whose work cannot be done as it is,
+	// and of a pack whose work has been pending longer than Overdue
+	// (AlertPendingWorkOverdue), once per pack, counted from when the sweep
+	// first saw it, since a pack carries no time of its own; 0 tells no
+	// one. Clock is the sweep's; nil is the wall clock.
+	Alert   func(authorization, what string)
+	Overdue time.Duration
+	Clock   func() time.Time
 }
 
 // Pending does the winners' pending work (§4.8, §4.9): for each pack whose
@@ -50,15 +57,24 @@ type PendingConfig struct {
 // sweep after a crash, do no harm.
 type Pending struct {
 	cfg PendingConfig
+	// firstSaw is when each pack whose work is not done was first seen,
+	// and told whether its being overdue was told; packs done are
+	// forgotten at the next sweep.
+	firstSaw map[string]time.Time
+	told     map[string]bool
 }
 
 // NewPending is the pending work with its configuration.
 func NewPending(cfg PendingConfig) (*Pending, error) {
-	if cfg.Store == nil || cfg.Records == nil || cfg.Every <= 0 || cfg.Limit < 1 || cfg.Wait <= 0 || cfg.Alert == nil {
+	if cfg.Store == nil || cfg.Records == nil || cfg.Every <= 0 || cfg.Limit < 1 || cfg.Wait <= 0 || cfg.Alert == nil ||
+		cfg.Overdue < 0 {
 		return nil, errors.New("auditor: pending work needs a store, the record topic, an interval, a page size, " +
-			"a publish wait and someone to tell")
+			"a publish wait, someone to tell and a non-negative overdue allowance")
 	}
-	return &Pending{cfg: cfg}, nil
+	if cfg.Clock == nil {
+		cfg.Clock = time.Now
+	}
+	return &Pending{cfg: cfg, firstSaw: map[string]time.Time{}, told: map[string]bool{}}, nil
 }
 
 // Run sweeps every Every until ctx ends.
@@ -86,15 +102,39 @@ func (p *Pending) sweep(ctx context.Context) {
 // reading each lease's packs once a page.
 func (p *Pending) sweepPacks(ctx context.Context) {
 	var after store.PendingPack
+	seen := map[string]time.Time{}
+	complete := false
+	defer func() {
+		// Only a sweep that read every page says which packs are gone:
+		// one that ended early, a read failed or ctx ended, keeps what it
+		// knew of the packs it did not reach.
+		if !complete {
+			for k, t := range p.firstSaw {
+				if _, ok := seen[k]; !ok {
+					seen[k] = t
+				}
+			}
+		}
+		p.firstSaw = seen
+		for k := range p.told {
+			if _, ok := seen[k]; !ok {
+				delete(p.told, k)
+			}
+		}
+	}()
 	for ctx.Err() == nil {
 		page, err := p.cfg.Store.PendingPacks(ctx, after, p.cfg.Limit)
 		if err != nil {
 			return
 		}
+		// A pack is first seen when its page is read, not when the sweep
+		// began: a sweep's earlier pages can take long.
+		now := p.cfg.Clock()
 		var ref store.LeaseRef
 		var packs []store.Pack
 		read := false
 		for _, pp := range page {
+			p.overdue(pp, now, seen)
 			if !read || pp.Ref != ref {
 				ref, read = pp.Ref, true
 				if packs, _, err = p.cfg.Store.LoadWinners(ctx, ref); err != nil {
@@ -108,9 +148,25 @@ func (p *Pending) sweepPacks(ctx context.Context) {
 			}
 		}
 		if len(page) < p.cfg.Limit {
+			complete = ctx.Err() == nil
 			return
 		}
 		after = page[len(page)-1]
+	}
+}
+
+// overdue tells of a pack pending longer than Overdue, once, from when the
+// sweep first saw it.
+func (p *Pending) overdue(pp store.PendingPack, now time.Time, seen map[string]time.Time) {
+	key := fmt.Sprintf("%s/%s@%d", pp.Ref.Workspace, pp.Ref.LeaseID, pp.CommitVersion)
+	first, ok := p.firstSaw[key]
+	if !ok {
+		first = now
+	}
+	seen[key] = first
+	if p.cfg.Overdue > 0 && !p.told[key] && now.Sub(first) > p.cfg.Overdue {
+		p.told[key] = true
+		p.cfg.Alert(key, AlertPendingWorkOverdue)
 	}
 }
 
@@ -205,7 +261,7 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		ww := winnerWork{Winner: w, outcome: outcomes[w.Kind]}
 		if err := json.Unmarshal(w.Work, &ww.work); err != nil || ww.work.V != 1 || ww.outcome == "" ||
 			(ww.staged() && len(ww.work.Digest) == 0) {
-			p.cfg.Alert(w.AuthorizationID, "a winner whose pending work cannot be read")
+			p.cfg.Alert(w.AuthorizationID, AlertUnreadableWork)
 			return false, errors.New("auditor: a winner's pending work cannot be read")
 		}
 		winners = append(winners, ww)
@@ -228,7 +284,7 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 	}
 	for _, w := range winners {
 		if len(w.boot) == 0 {
-			p.cfg.Alert(w.AuthorizationID, "a winner whose boot binding no record states")
+			p.cfg.Alert(w.AuthorizationID, AlertNoBootBinding)
 			return false, errors.New("auditor: a winner with no boot binding")
 		}
 	}
