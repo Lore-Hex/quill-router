@@ -29,10 +29,21 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "fastpath:", err)
-		os.Exit(1)
+	os.Exit(start(os.Getenv, run))
+}
+
+// start runs the node, and is its exit code: 1, before the node does
+// anything, if the environment would print its secrets (printsSecrets).
+func start(getenv func(string) string, node func() error) int {
+	if why := printsSecrets(getenv); why != "" {
+		fmt.Fprintln(os.Stderr, "fastpath:", why)
+		return 1
 	}
+	if err := node(); err != nil {
+		fmt.Fprintln(os.Stderr, "fastpath:", err)
+		return 1
+	}
+	return 0
 }
 
 func run() error {
@@ -43,6 +54,11 @@ func run() error {
 	database := flag.String("database", "", "the spike's database: projects/P/instances/I/databases/D")
 	project := flag.String("project", "", "the Pub/Sub project")
 	keyPath := flag.String("key", "", "a file with the fleet's envelope key, at least 32 bytes")
+	keySecret := flag.String("key-secret", "",
+		"the fleet's envelope key as a Secret Manager version pinned by its number: projects/P/secrets/S/versions/N")
+	acceptSecrets := flag.String("accept-key-secrets", "",
+		"keys also accepted when verifying, a rotation's other key, as pinned secret versions, separated by commas; "+
+			"see docs/runbooks/fastpath-key-rotation.md")
 	flag.Int64Var(&cfg.Shards, "shards", cfg.Shards, "every workspace's shard count")
 	topics := flag.String("topics", "settle-log,records", "the settle log's topic and the record topic")
 	subs := flag.String("subscriptions", "auditor,stager", "the auditor's subscriptions to the two topics")
@@ -85,12 +101,9 @@ func run() error {
 	cfg.RecordTopic = "projects/" + *project + "/topics/" + topicNames[1]
 	cfg.SettleSubscription = "projects/" + *project + "/subscriptions/" + subNames[0]
 	cfg.RecordSubscription = "projects/" + *project + "/subscriptions/" + subNames[1]
-	if *keyPath != "" {
-		key, err := os.ReadFile(*keyPath)
-		if err != nil {
-			return err
-		}
-		cfg.Key = key
+	var err error
+	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
