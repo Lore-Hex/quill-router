@@ -49,7 +49,7 @@ def test_page_is_indexable_with_scoped_assets_and_a_real_gate(client: TestClient
     assert "Gateway attestation alone" in response.text
     assert "enterprise@trustedrouter.com" in response.text
     assert "/token-exchange" in client.get("/sitemap-core.xml").text
-    for path in ("/resources", "/about"):
+    for path in ("/resources",):
         assert 'href="/token-exchange"' in client.get(path).text
 
 

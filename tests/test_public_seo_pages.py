@@ -52,7 +52,7 @@ def test_public_footer_links_to_token_exchange(client: TestClient, path: str) ->
     response = client.get(path)
     assert response.status_code == 200
     footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
-    assert 'href="/token-exchange"' in footer
+    assert 'href="https://thetokenexchange.com/"' in footer
 
 
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
