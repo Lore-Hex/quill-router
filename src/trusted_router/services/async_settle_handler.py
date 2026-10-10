@@ -274,7 +274,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 return finish(row, outbox)
             if not synchronous:
                 expected = claims.model_dump(mode="json")
-                expected.update(journal_region=runtime.region, epoch=runtime.epoch,
+                expected.update(journal_region=runtime.effective_journal_region, epoch=runtime.epoch,
                                 iss=runtime.signer.trusted.iss, aud="router-settlement")
                 verify_ticket(value.ticket, [runtime.signer.trusted], expected, now)
                 if not settings.async_settle_pilot_allows(claims.workspace_id):

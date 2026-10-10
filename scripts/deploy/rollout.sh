@@ -795,6 +795,8 @@ deploy_one_region() {
   # match the proxy's 300s upstream read timeout unless explicitly overridden.
   # Settlement and observation loops also run between requests. Allocate CPU
   # for the instance lifetime; minimum instances alone do not provide idle CPU.
+  # Append serving identity per target; never inherit it from the caller or
+  # primary revision. TR_PRIMARY_REGION still names the shared journal region.
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
@@ -810,7 +812,7 @@ deploy_one_region() {
       --network "${TR_CLOUD_RUN_NETWORK:-default}" \
       --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \
       --vpc-egress private-ranges-only \
-      --set-env-vars "$SET_ENV_VARS" \
+      --set-env-vars "${SET_ENV_VARS}|TR_SERVING_REGION=${target}" \
       --update-secrets "$UPDATE_SECRETS" \
       "${REMOVE_SECRETS_ARGS[@]}" \
       ${traffic_arg} \

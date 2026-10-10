@@ -3683,6 +3683,28 @@ def test_rollout_fails_closed_when_the_clickhouse_lb_cannot_be_resolved(
     assert not any("10.128.15.214" in " ".join(call) for call in run.calls)
 
 
+def test_rollout_pins_serving_region_per_target_without_inheritance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hostile = {"TR_SERVING_REGION": "caller-region"}
+    isolated = _rollout_harness_with_live_primary(
+        tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, "TR_SERVING_REGION": "old-primary-region"},
+    )
+    regions = {"us-central1", "us-east4", "europe-west4", "southamerica-east1"}
+    run = isolated.run("scripts/deploy/rollout.sh", extra_env={
+        **hostile, "TR_DEPLOY_TARGET_REGIONS": ",".join(sorted(regions)),
+    })
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert len(deploys) == len(regions)
+    assert {call[call.index("--region") + 1] for call in deploys} == regions
+    for deploy in deploys:
+        rendered = _cloud_run_job_env(deploy)
+        assert rendered["TR_SERVING_REGION"] == deploy[deploy.index("--region") + 1]
+        assert rendered["TR_PRIMARY_REGION"] == "us-central1"
+        assert deploy[deploy.index("--set-env-vars") + 1].count("TR_SERVING_REGION=") == 1
+
+
 def test_rollout_pins_async_admission_and_protection_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
