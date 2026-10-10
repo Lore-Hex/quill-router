@@ -347,7 +347,7 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 		start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: db, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
@@ -434,7 +434,7 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 		stops[ln] = start(t, cfg, Clients{Spanner: shared, PubSub: ps})
 	}
 	member := short(config(a))
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: shared, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
@@ -502,7 +502,7 @@ func twoNodes(t *testing.T, name string, set func(owner bool, cfg *Config)) (a, 
 		stops[ln] = start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: db, PubSub: ps})
 	return a, b, stops, db, ws
 }
@@ -1437,7 +1437,7 @@ func TestTheStagerWaitsForItsCallbacks(t *testing.T) {
 	}
 	ps := pubSub(t)
 	cfg := config(listen(t))
-	cfg.Admission, cfg.Address, cfg.Listener = false, "", nil
+	cfg.Admission, cfg.Address, cfg.Listener = false, storetest.UniqueID("auditor"), nil
 	alerted, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	cfg.Alert = func(subject, what string) {
