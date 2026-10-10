@@ -229,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "a83c650b0fc1bdd65dd5b77e47eb519b913ea7a0f286b3bfda5a7fdbb49760ad",
+  "contract_version": "fd4a6f4123d4cf3760269a9e70ade8b9559c5f2e56fef242d5fa39fe78422231",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -4357,7 +4357,7 @@
     "probes._response_error": "b99b11a62e9d331e655f65b612fb6dbab94885c3accb3dd30989311baa469d13",
     "probes._responses_text": "99429cf72be3c5cd8dadd9569a08bfe1c17a6c42318309a376f4bf12d31bf1fa",
     "probes._rotation_error_type": "1847553b85e456bf3b73b9aac0752f0a8340094e06bda4837e20dd8bc4a22b44",
-    "probes._rotation_max_tokens": "54ae8b8d5204212bb00401c7886ec3ae97790d103418829147c45bc8483698e2",
+    "probes._rotation_max_tokens": "32bb54261542c1bf19475e01d8275a260f10f3be49493902da127fd65ed3b088",
     "probes._rotation_omits_temperature": "fb885a166e3411caf17a956362426bd672ad8a74a9beb15baa627d8a4a9df758",
     "probes._sse_line_error": "bc5e36f9addbf54b9f4045d0817d41e4818a9e78de53769be58e36cc3eee5b33",
     "probes._sse_line_finish_reason": "90dfa40b8825eb4346522c1537f4a118feaa8c80e7f7b163883933748d096144",
