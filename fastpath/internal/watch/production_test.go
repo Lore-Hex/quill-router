@@ -181,14 +181,14 @@ func TestMonitoringReadsEachBacklog(t *testing.T) {
 }
 
 // TestAStaleSeriesIsAFailedRead: a series whose newest point is older than
-// Fresh, as of a source that stopped reporting, fails the read; one exactly
-// that old is read.
+// Fresh less the minute it stands for, as of a source that stopped
+// reporting, fails the read; one exactly that old is read.
 func TestAStaleSeriesIsAFailedRead(t *testing.T) {
-	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}}, age: 4 * time.Minute}
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}}, age: 3 * time.Minute}
 	if cpu, err := served(t, m).SpannerCPU(context.Background()); err != nil || cpu != 0.1 {
 		t.Fatalf("a point as old as allowed: %v %v", cpu, err)
 	}
-	m.age = 4*time.Minute + time.Second
+	m.age = 3*time.Minute + time.Second
 	if _, err := served(t, m).SpannerCPU(context.Background()); err == nil || !strings.Contains(err.Error(), "old") {
 		t.Fatalf("a stale point: %v", err)
 	}
@@ -265,5 +265,25 @@ func TestEveryPageIsRead(t *testing.T) {
 	m.mu.Unlock()
 	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "incomplete") {
 		t.Fatalf("an empty page that could not be completed, before a whole one: %v", err)
+	}
+}
+
+// TestASeriesSeenInAFailedReadIsExpected: a series whose staleness failed
+// a read is remembered by it, so once it is gone the read still fails,
+// rather than the other series passing as the whole.
+func TestASeriesSeenInAFailedReadIsExpected(t *testing.T) {
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}},
+		extra: map[string][]extraSeries{cpuFilter: {{region: "b", values: []*monitoringpb.TypedValue{double(0.2)},
+			age: 4*time.Minute + time.Second}}}}
+	src := served(t, m)
+	ctx := context.Background()
+	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "old") {
+		t.Fatalf("a region stale at the first read: %v", err)
+	}
+	m.mu.Lock()
+	m.extra[cpuFilter] = nil
+	m.mu.Unlock()
+	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Fatalf("the region gone after a read it failed: %v", err)
 	}
 }

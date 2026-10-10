@@ -105,8 +105,8 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	fs.DurationVar(&t.window, "window", 10*time.Minute, "how far back each look reads Monitoring: at least -misses "+
 		"times the larger of -every and -timeout, plus the larger of -fresh and Monitoring's reporting delay of three "+
 		"minutes, so no sample falls between the looks that answer")
-	fs.DurationVar(&t.fresh, "fresh", 4*time.Minute,
-		"how old Monitoring's newest point may be: older is a failed read; at most the window")
+	fs.DurationVar(&t.fresh, "fresh", 4*time.Minute, "how old Monitoring's newest sample may be, its point's time "+
+		"plus the minute it stands for: older is a failed read; above a minute, at most the window")
 	fs.IntVar(&t.limit, "pending-limit", 10_000, "the most pending packs a look reads; more fails the look")
 	var c watch.Ceilings
 	fs.Float64Var(&c.SpannerCPU, "max-cpu", 0, "Spanner's high-priority CPU, 0 to 1, past which the stage stops")
@@ -136,9 +136,9 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		return 2, fmt.Errorf("arguments past the flags: %q", fs.Args())
 	case t.database == "" || t.project == "" || t.instance == "" || t.workspace == "" || len(t.subscriptions) == 0:
 		return 2, errors.New("-database, -project, -instance, -workspace and -subscriptions")
-	case t.window < time.Minute || t.fresh <= 0 || t.fresh > t.window || t.limit < 1 || *pid < 0 || *grace <= 0:
-		return 2, errors.New("-window at least a minute, -fresh above 0 and at most -window, -pending-limit at " +
-			"least 1, -stop-pid at least 0 and -stop-wait above 0")
+	case t.window < watch.Align || t.fresh <= watch.Align || t.fresh > t.window || t.limit < 1 || *pid < 0 || *grace <= 0:
+		return 2, errors.New("-window at least a minute, -fresh above a minute and at most -window, -pending-limit " +
+			"at least 1, -stop-pid at least 0 and -stop-wait above 0")
 	case *every <= 0 || *timeout <= 0 || *misses < 1:
 		return 2, errors.New("-every and -timeout above 0, and -misses at least 1")
 	case t.window < time.Duration(*misses)*max(*every, *timeout)+max(t.fresh, watch.ReportingDelay):

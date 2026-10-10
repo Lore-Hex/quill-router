@@ -30,8 +30,10 @@ failed read, not an empty backlog.
 Monitoring samples Spanner's CPU and the subscriptions' backlogs every
 minute and shows a sample up to three minutes later. The watch reads each
 series over `-window`, a minute at a time, and takes the highest point of
-them all. A series whose newest point is older than `-fresh` (4 minutes)
-fails the read, whatever the others show: a region that has stopped
+them all. An aligned point stands at the end of its minute for the samples
+within it, so a series whose newest point's minute began more than `-fresh`
+(4 minutes) ago, its newest sample that old at most, fails the read,
+whatever the others show: a region that has stopped
 reporting is not taken to be as it was, and the highest of the rest would
 hide it. A series that reported before and is gone fails the read for the
 same reason. An answer Monitoring marks as one it could not complete is a

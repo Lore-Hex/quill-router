@@ -17,11 +17,12 @@ import (
 // Monitoring reads Spanner's CPU and the subscriptions' backlogs from Cloud
 // Monitoring, each the highest value of its series over the last Window,
 // aligned a minute at a time. Their points are sampled every minute and
-// visible up to ReportingDelay later, so each series' newest must be at
-// most Fresh old, four minutes by default: a series older than that is a
-// read that fails, as of a source that has stopped reporting, not a
-// reading that stays as it was; and a series that reported before and is
-// gone fails the read too, since the highest of the rest would hide it.
+// visible up to ReportingDelay later, so each series' newest sample must
+// be at most Fresh old, four minutes by default, its point's time plus
+// the minute it stands for: a series older than that is a read that
+// fails, as of a source that has stopped reporting, not a reading that
+// stays as it was; and a series that reported before and is gone fails
+// the read too, since the highest of the rest would hide it.
 type Monitoring struct {
 	Client   *monitoring.MetricClient
 	Project  string
@@ -36,8 +37,10 @@ type Monitoring struct {
 	seen map[string]map[string]bool
 }
 
-// align is how Monitoring's points are aligned: a minute, their sampling.
-const align = time.Minute
+// Align is how Monitoring's points are aligned: a minute, their sampling.
+// An aligned point stands at the end of its minute for the samples within
+// it, so its newest sample can be a minute older than its time.
+const Align = time.Minute
 
 // ReportingDelay is how long after its sampling a point can take to show:
 // three minutes for Spanner's CPU, two for Pub/Sub's backlogs.
@@ -80,8 +83,8 @@ func subscriptionFilter(sub, metric string) string {
 // one that reported before and is gone, a page Monitoring could not
 // complete, and no series at all are each an error.
 func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error) {
-	if m.Window < align || m.Fresh <= 0 || m.Fresh > m.Window {
-		return 0, fmt.Errorf("watch: a window of at least %v, and freshness above 0 and within it", align)
+	if m.Window < Align || m.Fresh <= Align || m.Fresh > m.Window {
+		return 0, fmt.Errorf("watch: a window of at least %v, and freshness above that and within the window", Align)
 	}
 	now := m.Clock()
 	it := m.Client.ListTimeSeries(ctx, &monitoringpb.ListTimeSeriesRequest{
@@ -89,7 +92,7 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 		Filter: filter,
 		Interval: &monitoringpb.TimeInterval{StartTime: timestamppb.New(now.Add(-m.Window)),
 			EndTime: timestamppb.New(now)},
-		Aggregation: &monitoringpb.Aggregation{AlignmentPeriod: durationpb.New(align),
+		Aggregation: &monitoringpb.Aggregation{AlignmentPeriod: durationpb.New(Align),
 			PerSeriesAligner: monitoringpb.Aggregation_ALIGN_MAX},
 		View: monitoringpb.ListTimeSeriesRequest_FULL,
 	})
@@ -133,16 +136,13 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 	if len(newest) == 0 {
 		return 0, fmt.Errorf("no point in the last %v for %s", m.Window, filter)
 	}
-	for key, end := range newest {
-		if age := now.Sub(end); age > m.Fresh {
-			return 0, fmt.Errorf("the newest point of %s is %v old, past %v, for %s", key, age, m.Fresh, filter)
-		}
-	}
+	// The series seen are remembered before the read can fail on one of
+	// them: a series stale now, gone by the next look, is missed then too.
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var gone []string
 	for key := range m.seen[filter] {
 		if _, ok := newest[key]; !ok {
-			return 0, fmt.Errorf("the series %s reported before and is gone, for %s", key, filter)
+			gone = append(gone, key)
 		}
 	}
 	if m.seen == nil {
@@ -153,6 +153,16 @@ func (m *Monitoring) highest(ctx context.Context, filter string) (float64, error
 	}
 	for key := range newest {
 		m.seen[filter][key] = true
+	}
+	m.mu.Unlock()
+	if len(gone) > 0 {
+		return 0, fmt.Errorf("the series %s reported before and is gone, for %s", gone[0], filter)
+	}
+	for key, end := range newest {
+		// The point's newest sample can be Align older than its time.
+		if age := now.Sub(end) + Align; age > m.Fresh {
+			return 0, fmt.Errorf("the newest point of %s is up to %v old, past %v, for %s", key, age, m.Fresh, filter)
+		}
 	}
 	return top, nil
 }

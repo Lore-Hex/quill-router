@@ -231,7 +231,7 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	full := append(slices.Clone(flags), "-workspace", "ws")
 	with := func(more ...string) []string { return append(slices.Clone(full), more...) }
 	cases := [][]string{with("extra"), with("-window", "30s"), with("-fresh", "11m"), with("-fresh", "0s"),
-		with("-max-cpu", "NaN"), with("-max-cpu", "-0.1"), with("-max-cpu", "0", "-max-overdue", "1"),
+		with("-max-cpu", "NaN"), with("-max-cpu", "-0.1"), with("-max-cpu", "0", "-max-overdue", "1"), with("-fresh", "1m"),
 		with("-every", "0s"), with("-timeout", "0s"), with("-misses", "0"),
 		with("-every", "10m", "-window", "5m"), with("-timeout", "10m"), with("-misses", "10", "-window", "5m"),
 		with("-every", "10s", "-timeout", "10s", "-fresh", "2m", "-window", "2m30s"),
