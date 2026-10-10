@@ -33,6 +33,7 @@ from trusted_router.client_context import (
     ClientPrevOutcome,
     ClientSdk,
 )
+from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
@@ -411,6 +412,9 @@ class GatewayAuthorizeRequest(_Lenient):
     def key_identifier_required(self) -> GatewayAuthorizeRequest:
         if not self.api_key_hash and not self.api_key_lookup_hash:
             raise ValueError("api_key_hash or api_key_lookup_hash is required")
+        self.model = canonical_router_model_id(self.model)
+        if self.models is not None:
+            self.models = [canonical_router_model_id(model) for model in self.models]
         return self
 
     @property

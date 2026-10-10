@@ -202,6 +202,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
 )
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
+from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
     microdollars_to_decimal,
@@ -787,6 +788,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "orchestration_primitive": orchestration_primitive(model.id),
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
+        **({"aliases": router_model_aliases(model.id)} if router_model_aliases(model.id) else {}),
         "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
         "internal_only": model.id == MONITOR_MODEL_ID,
