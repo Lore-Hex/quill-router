@@ -304,6 +304,14 @@ def test_speech_public_prices_are_character_based(client: TestClient) -> None:
         assert "/M characters" in page.text
 
 
+def test_elevenlabs_provider_page_labels_character_limits(client: TestClient) -> None:
+    page = client.get("/providers/elevenlabs")
+    assert page.status_code == 200
+    assert "40000 characters" in page.text
+    assert "/M characters" in page.text
+    assert "elevenlabs/eleven-flash-v2.5" in page.text
+
+
 def test_speech_price_refresh_preserves_snapshot_on_failure(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
