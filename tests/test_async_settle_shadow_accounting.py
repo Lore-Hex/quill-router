@@ -107,6 +107,60 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
         validate_counter(identity,broken)
 
 
+@pytest.mark.parametrize('rpc_latency', [.141, .163])
+@pytest.mark.parametrize('budget', [1., .1, .3, .4])
+def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, budget):
+    from types import SimpleNamespace
+
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
+
+    clock = shadow_deadline_clock
+    calls = []
+
+    def rpc(**kwargs):
+        calls.append(kwargs)
+        timeout = kwargs['timeout']
+        clock.now += min(timeout, rpc_latency)
+        if timeout < rpc_latency:
+            raise DeadlineExceeded('regional round trip exceeds remaining budget')
+        return []
+
+    class RegionalDatabase(Database):
+        def __init__(self):
+            super().__init__()
+            self.spanner_api = SimpleNamespace(execute_sql=rpc, commit=rpc)
+
+        def execute_sql(self, *args, **kwargs):
+            self.spanner_api.execute_sql(timeout=kwargs['timeout'], retry=kwargs['retry'])
+            return super().execute_sql(*args, **kwargs)
+
+        def run_in_transaction(self, callback, **kwargs):
+            result = super().run_in_transaction(callback, **kwargs)
+            self.spanner_api.commit(request_options=kwargs['commit_request_options'])
+            return result
+
+    db = RegionalDatabase()
+    configure_spanner_rpc_deadlines(db)
+    counters = Counters('europe-west4', 'a'*40, clock=lambda: NOW)
+    counters.increment(dimensions('openai', 'responses', True), 'authorize_attempts')
+    identity, row = counters.snapshot(closed=True)[0]
+    started = clock.monotonic()
+    if budget < 3*rpc_latency:
+        with pytest.raises(DeadlineExceeded):
+            EvidenceStore(db).flush(identity, row, started+budget)
+        assert clock.monotonic()-started == pytest.approx(budget)
+    else:
+        EvidenceStore(db).flush(identity, row, started+budget)
+        assert json.loads(db.rows[COUNTER, identity]) == row
+        assert clock.monotonic()-started == pytest.approx(3*rpc_latency)
+        assert len(calls) == 3
+    assert all(0 < call['timeout'] <= .2 for call in calls)
+    if len(calls) == 3:
+        assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
+
+
 def test_day_reads_are_bounded_and_exact():
     sql, params, types = day_statement(SAMPLE,'2026-10-06','2026-10-06/auth',200)
     assert params == dict(kind=SAMPLE,day_start='2026-10-06/',next_day_start='2026-10-07/',after_id='2026-10-06/auth',page_size=200)
@@ -338,7 +392,7 @@ def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at, shadow_
     except Exception as exc:
         failure = exc
     assert isinstance(failure, RuntimeError) and str(failure) == 'shadow_transaction_retry'
-    assert len(calls) == 1 and 0 < horizons[0] <= .2
+    assert len(calls) == 1 and 0 < horizons[0] <= 1
     assert session.transaction.return_value.commit.call_count == int(abort_at == 'commit')
 
 
@@ -499,7 +553,7 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     db = Database()
     granted = EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     assert granted == 100
-    assert db.transaction_options == [dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})]
+    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'})]
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for timeout, retry, options in db.query_options:

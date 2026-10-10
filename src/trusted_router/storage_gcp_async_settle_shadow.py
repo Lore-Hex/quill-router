@@ -30,8 +30,10 @@ POINT_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
 DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start "
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
 
-# The same bound fences both transaction completion and the final write check.
-WRITE_BUDGET_SECONDS = .2
+# Multi-round-trip writes share the worker's one-second budget. The same
+# total bound fences retention; individual RPCs still get at most 200 ms.
+WRITE_BUDGET_SECONDS = 1.0
+RPC_BUDGET_SECONDS = .2
 RETENTION_FENCE = "retention-v1"
 
 
@@ -73,7 +75,7 @@ class EvidenceStore:
 
     @staticmethod
     def query(reader: Any, statement: Statement, deadline: float) -> list[Any]:
-        remaining = min(.2, deadline - time.monotonic())
+        remaining = min(RPC_BUDGET_SECONDS, deadline - time.monotonic())
         if remaining <= 0:
             raise TimeoutError("shadow budget")
         sql, params, types = statement
@@ -92,14 +94,13 @@ class EvidenceStore:
         def once(tx: Any) -> Any:
             nonlocal attempted
             if attempted:
-                # The deadline wrapper can extend timeout_secs=0. The SDK may
-                # re-enter on Aborted, but it must never repeat reads/writes or
+                # The SDK may re-enter on Aborted, but it must never repeat reads/writes or
                 # commit a second attempt. Runtime counts this as a store drop.
                 raise RuntimeError("shadow_transaction_retry")
             attempted = True
             return callback(tx)
-        with spanner_rpc_deadline(rpc_deadline):
-            result = self.database.run_in_transaction(once, timeout_secs=0,
+        with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=RPC_BUDGET_SECONDS):
+            result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
                 commit_request_options={"priority": "PRIORITY_LOW"})
             if time.monotonic() >= rpc_deadline:
                 raise TimeoutError("shadow commit budget")
