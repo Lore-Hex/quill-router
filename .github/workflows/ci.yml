@@ -547,6 +547,10 @@ jobs:
       # the fastpath job runs none of them; they run here.
       - name: The owner, the auditor, the front door, the service and fastpathctl against the emulator
         run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./cmd/fastpathctl/...
+      # The watch's store sources need the emulator; its other tests run in
+      # the fastpath job too.
+      - name: The watch against the emulator
+        run: go test -race -count=1 -p 1 ./internal/watch/... ./cmd/fastpathwatch/...
 
   proofs:
     runs-on: ubuntu-latest

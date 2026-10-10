@@ -129,6 +129,13 @@ func (e *Emulator) Database(ctx context.Context, name string, statements []strin
 	return spanner.NewClientWithConfig(ctx, e.Path(name), spanner.ClientConfig{DisableNativeMetrics: true}, e.options()...)
 }
 
+// Client is another client of a database Database created, with the extra
+// options given, such as a counting interceptor; its caller closes it.
+func (e *Emulator) Client(ctx context.Context, name string, extra ...option.ClientOption) (*spanner.Client, error) {
+	return spanner.NewClientWithConfig(ctx, e.Path(name), spanner.ClientConfig{DisableNativeMetrics: true},
+		append(e.options(), extra...)...)
+}
+
 // Path is the database's resource name.
 func (e *Emulator) Path(name string) string {
 	return "projects/" + project + "/instances/" + e.instance + "/databases/" + name
