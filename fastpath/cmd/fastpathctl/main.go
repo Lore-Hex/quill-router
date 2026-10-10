@@ -75,7 +75,7 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 		return 2, err
 	}
-	usage := errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE, node ADDRESS, or disable-all")
+	usage := errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE, node|closed ADDRESS, or disable-all")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
@@ -85,8 +85,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if fs.NArg() != 1 {
 			return 2, usage
 		}
-	case command != "enable" && command != "disable" && command != "status" && command != "node":
-		return 2, fmt.Errorf("%q is not enable, disable, status, node or disable-all", command)
+	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "closed":
+		return 2, fmt.Errorf("%q is not enable, disable, status, node, closed or disable-all", command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	}
@@ -113,12 +113,17 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 		answer = map[string]any{"workspace": workspace, "enabled": command == "enable", "revoked_leases": revoked,
 			"at": at}
-	case "node":
+	case "node", "closed":
+		// node is the planned replacement's check, closed the forced exit's:
+		// whether anything of the node's is left to the auditor.
 		st, err := s.NodeStatus(ctx, workspace)
 		if err != nil {
 			return 1, err
 		}
 		done, why := st.Done()
+		if command == "closed" {
+			done, why = st.Closed()
+		}
 		answer = map[string]any{"node": st, "done": done, "why_not": why}
 		if !done {
 			code = notDone

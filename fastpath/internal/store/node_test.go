@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -153,5 +155,104 @@ func TestDoneNamesEachThingKeepingANode(t *testing.T) {
 		if done, why := st.Done(); done || len(why) != 1 {
 			t.Errorf("%+v: done %v %v; want one reason", st, done, why)
 		}
+	}
+}
+
+// TestClosedJudgesANodeByItsLeases: a node is closed once it owns no lease
+// open or draining, whatever its row says: not while a lease is open, nor
+// while one is draining, stopped at a gap the auditor does not close, which
+// is listed as such though Done no longer counts it; closed once every
+// lease is, though the node was never marked leaving. The leases listed
+// are bounded, and more are said to be. A node with no row is not closed.
+func TestClosedJudgesANodeByItsLeases(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	address := storetest.UniqueID("node")
+	status := func(step string) NodeStatus {
+		t.Helper()
+		st, err := s.NodeStatus(ctx, address)
+		if err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		return st
+	}
+	if closed, why := status("no row").Closed(); closed || len(why) != 1 {
+		t.Fatalf("a node with no row: closed %v %v", closed, why)
+	}
+	epoch, _, err := s.Join(ctx, address, []string{"owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := seedWorkspace(t, 100)
+	var refs []LeaseRef
+	for range 2 {
+		req := grantOf(ws, 10)
+		req.Owner = Owner{Node: address, Epoch: epoch}
+		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+			t.Fatalf("the grant: %+v %v", got, err)
+		}
+		refs = append(refs, LeaseRef{ws, req.LeaseID})
+	}
+	listed := unclosedListed
+	unclosedListed = 1
+	st := status("two leases open, one listed")
+	unclosedListed = listed
+	if closed, why := st.Closed(); closed || len(st.Unclosed) != 1 || !st.MoreUnclosed || len(why) != 2 {
+		t.Fatalf("two open leases, one listed: %+v, closed %v %v", st, closed, why)
+	}
+	if st = status("two leases open"); len(st.Unclosed) != 2 || st.MoreUnclosed || st.OpenLeases != 2 {
+		t.Fatalf("two open leases: %+v", st)
+	}
+	// The first lease drains and stops at a gap; the node is leaving.
+	if ok, _, err := s.Heartbeat(ctx, address, epoch, Leaving); err != nil || !ok {
+		t.Fatalf("marking the node leaving: %v %v", ok, err)
+	}
+	for _, ref := range refs {
+		if ok, _, err := s.OwnerMarkDraining(ctx, Owner{Node: address, Epoch: epoch}, ref); err != nil || !ok {
+			t.Fatalf("the draining write: %v %v", ok, err)
+		}
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.UpdateMap("tr_lease", map[string]any{
+		"workspace_id": refs[0].Workspace, "lease_id": refs[0].LeaseID, "gap_seq": int64(5)})}); err != nil {
+		t.Fatal(err)
+	}
+	st = status("both draining, one at a gap")
+	done, _ := st.Done()
+	closed, why := st.Closed()
+	if !done || closed || len(why) != 2 || len(st.Unclosed) != 2 || st.Unclosed[0].State != "draining" ||
+		st.Unclosed[0].Gap == st.Unclosed[1].Gap {
+		t.Fatalf("both draining, one at a gap: %+v, done %v, closed %v %v", st, done, closed, why)
+	}
+	for _, l := range st.Unclosed {
+		if l.Gap != (l.Ref == refs[0]) {
+			t.Fatalf("the gap is %s's: %+v", refs[0].LeaseID, st.Unclosed)
+		}
+	}
+	if !strings.Contains(strings.Join(why, "; "), "stopped at a gap") {
+		t.Fatalf("the gap is not said: %v", why)
+	}
+	// Both close, as the auditor or an operator closes them.
+	var closes []*spanner.Mutation
+	for _, ref := range refs {
+		closes = append(closes, spanner.UpdateMap("tr_lease", map[string]any{"workspace_id": ref.Workspace,
+			"lease_id": ref.LeaseID, "state": "closed", "closed_at": time.Now(), "close_kind": "operator"}))
+	}
+	if _, err := shared.Apply(ctx, closes); err != nil {
+		t.Fatal(err)
+	}
+	if st = status("both closed"); len(st.Unclosed) != 0 || st.OpenLeases != 0 {
+		t.Fatalf("both closed: %+v", st)
+	}
+	if closed, why := st.Closed(); !closed || len(why) != 0 {
+		t.Fatalf("both closed: closed %v %v", closed, why)
+	}
+	// A node never marked leaving, its leases closed, is closed, not done.
+	if _, _, err := s.Join(ctx, address, []string{"owner"}); err != nil {
+		t.Fatal(err)
+	}
+	st = status("serving again, nothing left")
+	done, _ = st.Done()
+	if closed, _ := st.Closed(); done || !closed {
+		t.Fatalf("serving with nothing left: done %v, closed %v: %+v", done, closed, st)
 	}
 }

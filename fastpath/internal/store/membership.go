@@ -140,9 +140,48 @@ type NodeStatus struct {
 	// Roles are the row's.
 	Roles []string
 	// OpenLeases are the open leases whose owner is the node, of any of
-	// its epochs.
-	OpenLeases int64
-	ReadTS     time.Time
+	// its epochs; Unclosed are its leases not closed, open or draining, up
+	// to unclosedListed of them, and MoreUnclosed says there were more.
+	OpenLeases   int64
+	Unclosed     []NodeLease
+	MoreUnclosed bool
+	ReadTS       time.Time
+}
+
+// NodeLease is a lease a node owns that is not closed: open, or draining
+// and not yet closed by the auditor. Gap says it is stopped at a gap in its
+// settle log, which the auditor does not close (fastpath-turn-off.md).
+type NodeLease struct {
+	Ref   LeaseRef
+	State string
+	Gap   bool
+}
+
+// unclosedListed bounds the leases a status lists; more are said to be.
+var unclosedListed = 100
+
+// Closed says whether nothing of the node's is left to the auditor: it has
+// a row, so an address mistyped is not taken for a node with nothing left,
+// and owns no lease open or draining, whatever the row says, so a node
+// that stopped before it was marked leaving, and a lease that stopped at a
+// gap once draining, which Done does not count, are judged by the leases;
+// and if not, which leases are left.
+func (n NodeStatus) Closed() (bool, []string) {
+	var why []string
+	if !n.Found {
+		why = append(why, "it has no row: check the address")
+	}
+	for _, l := range n.Unclosed {
+		gap := ""
+		if l.Gap {
+			gap = ", stopped at a gap"
+		}
+		why = append(why, fmt.Sprintf("lease %s of workspace %s is %s%s", l.Ref.LeaseID, l.Ref.Workspace, l.State, gap))
+	}
+	if n.MoreUnclosed {
+		why = append(why, fmt.Sprintf("and more than %d are left", unclosedListed))
+	}
+	return len(why) == 0, why
 }
 
 // Done says whether the node may stop: it has a row, the row says it is
@@ -164,10 +203,11 @@ func (n NodeStatus) Done() (bool, []string) {
 	return len(why) == 0, why
 }
 
-// NodeStatus reads a node's row by its address and counts the open leases
-// it owns, through the leases' index on their owner, in one read-only
-// transaction: a read of the node's row and one of the index's entries
-// for it, whatever the fleet holds.
+// NodeStatus reads a node's row by its address, counts the open leases it
+// owns and lists those not closed, through the leases' index on their
+// owner, in one read-only transaction: a read of the node's row and two of
+// the index's entries for it, whatever the fleet holds, the listed leases'
+// rows read for their gaps.
 func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, error) {
 	if address == "" {
 		return NodeStatus{}, errors.New("store: no address")
@@ -194,6 +234,26 @@ func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, err
 		Params: map[string]any{"node": address},
 	}, spanner.QueryOptions{RequestTag: tag("node-status")}).Do(func(r *spanner.Row) error {
 		return r.Column(0, &out.OpenLeases)
+	})
+	if err != nil {
+		return NodeStatus{}, err
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT workspace_id, lease_id, state, gap_seq IS NOT NULL FROM tr_lease@{FORCE_INDEX=tr_lease_by_owner}
+		       WHERE owner_node = @node AND state IN ('open', 'draining')
+		       ORDER BY state, workspace_id, lease_id LIMIT @limit`,
+		Params: map[string]any{"node": address, "limit": int64(unclosedListed + 1)},
+	}, spanner.QueryOptions{RequestTag: tag("node-status")}).Do(func(r *spanner.Row) error {
+		var l NodeLease
+		if err := r.Columns(&l.Ref.Workspace, &l.Ref.LeaseID, &l.State, &l.Gap); err != nil {
+			return err
+		}
+		if len(out.Unclosed) == unclosedListed {
+			out.MoreUnclosed = true
+			return nil
+		}
+		out.Unclosed = append(out.Unclosed, l)
+		return nil
 	})
 	if err != nil {
 		return NodeStatus{}, err

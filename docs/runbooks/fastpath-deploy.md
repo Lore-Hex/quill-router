@@ -30,7 +30,9 @@ main whose checks all passed.
    ```
 
    must answer `204`. A node its peers cannot reach, or started without the
-   owner role, is found here, before the old one is marked leaving.
+   owner role, is found here, before the old one is marked leaving. A node
+   that runs an auditor member too says so in `"Roles"`; a new node without
+   it does not replace one with it.
 2. Mark the old node leaving, with SIGUSR1 to its process; where it runs as
    a systemd unit named `fastpath`:
 
@@ -74,8 +76,31 @@ main whose checks all passed.
 
    Owning no open lease, it has nothing to hand off.
 
-The auditor role ends leases (`fastpath-turn-off.md`): replace auditor nodes
-one at a time, so one always runs.
+## For each auditor member replaced
+
+The auditor role ends leases (`fastpath-turn-off.md`), so one always runs:
+auditor members are replaced one at a time, and the new one is seen to run
+before the old one stops.
+
+1. Start the new member, at an address of its own (`-address`, which names
+   its row), and check it is a member:
+
+   ```bash
+   fastpathctl -database projects/P/instances/I/databases/D node NEW_ADDRESS
+   ```
+
+   says `"Roles": ["auditor"]` (every role, for a node that runs the
+   admission roles too), `"State": "serving"` and `"Live": true`. Its row
+   says it reaches Spanner and heartbeats; the subscriptions are shared, so
+   its own consumption cannot be told from the old member's while both run.
+2. Stop the old member, with SIGTERM: an auditor member keeps no state of
+   its own, so one stopped loses nothing, and the new one takes the
+   subscriptions' messages from there.
+3. Watch the auditor subscription's oldest unacknowledged message, what
+   `fastpathwatch` reads of it (`fastpath-watch.md`) and W7's alert on it,
+   for ten minutes: it stays under a minute while the new member consumes.
+   Climbing, the new member does not: start the old one again, which takes
+   the backlog up, and look at the new one's logs.
 
 ## A forced exit
 
@@ -97,9 +122,15 @@ gap is filled from the log's archive, work item W2b, which is not built
 yet. So after a forced exit, check that the node's leases do close:
 
 ```bash
-fastpathctl -database projects/P/instances/I/databases/D node OLD_ADDRESS
+fastpathctl -database projects/P/instances/I/databases/D closed OLD_ADDRESS
 ```
 
-exits 0 within the bound above, or says which leases are still open. One
-open past it is stopped at a gap or unreadable: it is a page to a person,
-and the lease is noted with its workspace and ID for the archive rebuild.
+exits 0 once the node owns no lease open or draining, whatever its row
+says: a node killed before it was marked leaving stays `serving` on its
+row, and `closed` judges it by its leases alone. Until then it exits 3 and
+lists each lease left, its workspace, ID and state, and `"Gap": true` for
+one stopped at a gap. `node` is not this check: a draining lease stopped at
+a gap is not open, so `node` says done while the lease is held. One left
+past the bound above is stopped at a gap or unreadable: it is a page to a
+person, and the lease is noted with its workspace and ID for the archive
+rebuild.
