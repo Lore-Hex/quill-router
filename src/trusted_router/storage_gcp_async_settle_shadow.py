@@ -25,7 +25,7 @@ from trusted_router.async_settle_shadow_evidence import (
     validate_sample,
 )
 from trusted_router.detached_jws import canonical
-from trusted_router.storage_gcp_io import spanner_rpc_deadline
+from trusted_router.storage_gcp_io import SpannerTransportReset, spanner_rpc_deadline
 
 FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
                     "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id")
@@ -36,6 +36,11 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # Multi-round-trip writes share the worker's one-second budget. The same
 # total bound fences retention. Reads stay at 200 ms; commit needs headroom
 # for cross-region replication beyond the read's network round trip.
+# In per-RPC-capped contexts, Commit, Begin and Rollback transport resets
+# fail fast before the SDK's two-second backoff can exceed the shared deadline.
+# Streaming reads use the SDK restart path, bounded by that shared deadline.
+# The horizon bounds scheduled RPC time, not Python scheduling/GC or late
+# server-side commits.
 WRITE_BUDGET_SECONDS = 1.0
 RPC_BUDGET_SECONDS = .2
 TRANSACTION_RPC_BUDGET_SECONDS = .5
@@ -90,7 +95,8 @@ class EvidenceStore:
         # Never stringify exceptions or attach traces: they can contain SQL
         # parameters or evidence. Only fixed categories and timing leave here.
         reason = "other"
-        for cls, label in ((api_errors.DeadlineExceeded, "deadline_exceeded"),
+        for cls, label in ((SpannerTransportReset, "transport_reset"),
+                           (api_errors.DeadlineExceeded, "deadline_exceeded"),
                            (api_errors.Cancelled, "cancelled"),
                            (api_errors.Aborted, "aborted"),
                            (api_errors.ServiceUnavailable, "unavailable"),

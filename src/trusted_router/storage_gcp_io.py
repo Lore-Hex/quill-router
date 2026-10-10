@@ -23,8 +23,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ParamSpec, TypeVar, cast
 
+from google.api_core.exceptions import InternalServerError
+
 T = TypeVar("T")
 P = ParamSpec("P")
+
+
+class SpannerTransportReset(InternalServerError):
+    """Content-free Commit/Begin/Rollback reset bypassing SDK exact-class retry."""
 
 
 # Total wall-clock budget for a retried transaction. Must sit safely BELOW the
@@ -182,7 +188,8 @@ def configure_spanner_rpc_deadlines(
     The API wrappers cap each RPC and its generated retry policy to the
     remaining budget. A ContextVar isolates concurrent request threads and also
     stops Transaction.commit's private RST_STREAM retry loop from receiving a
-    fresh budget on every attempt.
+    fresh budget on every attempt. Shadow's per-RPC-capped contexts also fail
+    closed before the SDK's two-second reset backoff can exceed their deadline.
     """
     if max_seconds <= 0:
         raise ValueError("Spanner RPC deadline must be positive")
@@ -230,6 +237,7 @@ def configure_spanner_rpc_deadlines(
             *args: Any,
             _original: Callable[..., Any] = original_method,
             _default_retry: Any = default_retry,
+            _method_name: str = method_name,
             **kwargs: Any,
         ) -> Any:
             remaining = remaining_seconds()
@@ -256,7 +264,26 @@ def configure_spanner_rpc_deadlines(
             counter = _SPANNER_RPC_COUNTER.get()
             if counter is not None:
                 counter.increment()
-            return _original(*args, **kwargs)
+            try:
+                return _original(*args, **kwargs)
+            except InternalServerError as error:
+                deadline = _SPANNER_RPC_DEADLINE.get()
+                # Only shadow sets the per-RPC cap. Billing keeps the SDK's
+                # reset retries, including its private, unbounded sleep. Match
+                # _helpers._retry's exact class and _check_rst_stream_error's
+                # two markers; never carry the transport's text into diagnostics.
+                if (
+                    _method_name in ("commit", "begin_transaction", "rollback")
+                    and rpc_max is not None
+                    and deadline is not None
+                    and deadline - time.monotonic() <= 2.0
+                    and type(error) is InternalServerError
+                    and any(marker in (getattr(error, "message", None) or "") for marker in (
+                        "RST_STREAM", "Received unexpected EOS on DATA frame from server",
+                    ))
+                ):
+                    raise SpannerTransportReset("transport_reset") from None
+                raise
 
         setattr(api, method_name, bounded_rpc)
 
