@@ -35,7 +35,8 @@ def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=None):
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40,
         async_settle_shadow_workspaces='ws-v1'), runtime(), store,
         SimpleNamespace(peek=lambda *a: admission,
-            counts=dict.fromkeys(('workspace_reads', 'health_reads', 'read_failures', 'missed_ticks'), 0)))
+            snapshot_counts=lambda: dict.fromkeys(('workspace_reads', 'health_reads', 'read_failures',
+                'missed_ticks', 'late_installs', 'max_consecutive_failures', 'degraded_seconds'), 0)))
     rt.signer = signer()
     rt.counters.instance = first['instance']
     rt.counters.clock = lambda: now
@@ -68,7 +69,10 @@ def real_exclusion_window(monkeypatch, phase="settle", *, monotonic=None):
         else:
             first[key].extend(actual[key])
     for key, value in actual['admission_observer'].items():
-        first['admission_observer'][key] += value
+        if key == 'max_consecutive_failures':
+            first['admission_observer'][key] = max(first['admission_observer'][key], value)
+        else:
+            first['admission_observer'][key] += value
     rows[-1]['body']['authorization_id'] = 'positive'
     rows[-1]['id'] = days[0] + '/positive'
     rows.extend(dict(kind=SAMPLE, id=identity, body=body) for identity, body in written)

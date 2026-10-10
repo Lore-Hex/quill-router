@@ -381,7 +381,7 @@ class Counters:
                 booking_pending=0, booking_unknown=0, first_evidence_at_us=None,
                 last_mismatch_at_us=None, first_gap_at_us=None, authorize_shadow_hist=[0]*9,
                 evidence_write_hist=[0]*9,
-                admission_observer=dict.fromkeys("workspace_reads health_reads read_failures missed_ticks prediction_yes prediction_no prediction_unknown".split(), 0))
+                admission_observer=dict.fromkeys("workspace_reads health_reads read_failures missed_ticks late_installs max_consecutive_failures degraded_seconds prediction_yes prediction_no prediction_unknown".split(), 0))
         if len(self.days) > 3:
             # Retain only the observation lifetime. Unflushed evicted writers
             # remain unclosed durably; the current day also retains a gap.

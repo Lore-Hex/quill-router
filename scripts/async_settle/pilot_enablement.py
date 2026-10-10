@@ -298,17 +298,18 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
         and bool(counters) and all(pre_time <= r['body']['started_at_us'] for r in counters))
     totals: dict[str, dict[str, float]] = {}
     instance_rates: dict[tuple[str, str], dict[str, float]] = {}
+    observer_budgets = {}
     for row in counters:
         shadow_report.validate_counter(row['id'], row['body'])
         body = row['body']
         duration = (body['flushed_at_us'] - body['started_at_us']) / 1e6
         obs = body['admission_observer']
         n = bundle['workspace_count']
+        observer_budgets[row['id']] = shadow_report.observer_budget(body)
         ok = (duration > 0 and type(n) is int and 1 <= n <= 32 and body['closed']
-              and not any(obs[k] for k in ('read_failures', 'missed_ticks', 'prediction_unknown'))
-              and obs['prediction_yes'] + obs['prediction_no'] > 0
-              and max(1, n * (math.floor(duration / 4) - 1)) <= obs['workspace_reads'] <= n * (math.ceil(duration / 4) + 1)
-              and max(1, math.floor(duration) - 1) <= obs['health_reads'] <= math.ceil(duration) + 1)
+              and observer_budgets[row['id']]['status'] == 'PASS'
+              and max(1, n * (math.floor(duration / 4) - 1) - obs['missed_ticks']) <= obs['workspace_reads'] <= n * (math.ceil(duration / 4) + 1)
+              and max(1, math.floor(duration) - 1 - obs['missed_ticks']) <= obs['health_reads'] <= math.ceil(duration) + 1)
         checks[row['id']] = ok
         if duration > 0:
             region = instance_rates.setdefault((body['region'], body['instance']), {'reads_per_second': 0., 'pending_rows_per_second': 0.})
@@ -349,7 +350,7 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     checks['regional_roster_caps'] = sum(bundle['maximum_router_instances_by_region'].values()) == maximum_instances
     checks['measured_headroom_artifact'] = artifact(bundle['headroom'])
     return checklist(checks, mode='post-opt-in', serving=bundle['serving'], regions=totals, fleet_reads_per_second=total_reads,
-                     freshness_maxima_seconds=maxima, pre_enable=bundle['pre_enable'])
+                     freshness_maxima_seconds=maxima, pre_enable=bundle['pre_enable'], observer_budgets=observer_budgets)
 
 
 def pre_flip(bundle: dict[str, Any]) -> dict[str, Any]:

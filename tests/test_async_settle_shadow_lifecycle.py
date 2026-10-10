@@ -163,7 +163,7 @@ def test_counter_unknown_prediction_blocks_duplicate_observation():
     rows[0]['body']['admission_observer']['prediction_unknown'] = 1
     result = report(rows, days, proof)
     assert result['status'] == 'BLOCKED' and result['clean_window_start_us'] is None
-    assert result['metrics']['prediction_known_fraction'] == .5
+    assert result['metrics']['prediction_known_fraction'] == 8/9
 
 
 def test_verified_cohort_exclusion_cannot_seed_clock_or_hide_unknown():
@@ -403,3 +403,44 @@ def test_runtime_prewarms_only_when_shadow_opted_in(monkeypatch):
         rt = Runtime(settings(async_settle_enabled=admission, async_settle_shadow_workspaces=workspaces), runtime())
         rt.executor.shutdown()
     assert calls == ['warm']
+
+
+def test_observer_flush_preserves_maximum_and_rounds_cumulative_seconds(shadow_deadline_clock):
+    from scripts.async_settle.shadow_report import validate_counter
+    from tests.test_async_settle_shadow import NOW
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_wire import bounded_json
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    db = Database()
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db), observer)
+    rt.counters.clock = lambda: NOW + now[0]
+    rt.counters._day()
+    def flush():
+        rt.last_flush = 0
+        rt.flush(shadow_deadline_clock.monotonic()+1)
+        identity, raw = next((identity, body) for (kind, identity), body in db.rows.items() if kind == COUNTER)
+        body = bounded_json(raw.encode(), 65536, signed=True)
+        validate_counter(identity, body)
+        return body['admission_observer']
+    try:
+        for tick in (0., 1., 2.):
+            now[0] = tick
+            observer.missed_tick(None, tick)
+        now[0] = 2.2
+        first = flush()
+        assert first['max_consecutive_failures'] == 3 and first['degraded_seconds'] == 1
+        now[0] = 2.4
+        second = flush()
+        assert second['max_consecutive_failures'] == 3 and second['degraded_seconds'] == 1
+        observer.install_health(now[0], health(now[0]))
+        now[0] = 4.
+        final = flush()
+        assert final['max_consecutive_failures'] == 3 and final['degraded_seconds'] == 1
+        assert final['missed_ticks'] == 3 and final['late_installs'] == 0
+        assert flush() == final
+    finally:
+        rt.executor.shutdown()

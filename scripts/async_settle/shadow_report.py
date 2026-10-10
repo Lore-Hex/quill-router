@@ -35,7 +35,7 @@ from trusted_router.detached_jws import canonical
 EXIT_CRITERIA = {
     "seven_days_admission_off": "604800 continuous seconds, complete roster and flag coverage",
     "denominators_and_diagnostics": "reconciled dimensional counters; known predictions and ages",
-    "zero_unexplained_all_evaluable": "no mismatch, gap, drop, unknown, or retry conflict",
+    "zero_unexplained_all_evaluable": "no mismatch, gap, drop, comparator unknown, or retry conflict; bounded admission unknowns",
     "shared_fixtures": "both repositories' 759-case and literal build artifacts",
     "frozen_pricing_crash_mutations": "F1/F2b/F2c differential, crash and mutation artifacts",
     "d2_d3_capacity_slo": "independent regional handoff, revocation, drain and load evidence",
@@ -91,8 +91,9 @@ def validate_counter(identity: str, body: dict[str, Any], *, partitions: bool = 
         raise ValueError("counter revision")
     if not isinstance(body["region"], str) or not 1 <= len(body["region"]) <= 128:
         raise ValueError("counter region")
-    observer_fields = set("workspace_reads health_reads read_failures missed_ticks prediction_yes prediction_no prediction_unknown".split())
-    if set(body["admission_observer"]) != observer_fields or not all(_uint(n) for n in body["admission_observer"].values()):
+    observer_fields = set("workspace_reads health_reads read_failures missed_ticks late_installs max_consecutive_failures degraded_seconds prediction_yes prediction_no prediction_unknown".split())
+    observer = body["admission_observer"]
+    if set(observer) != observer_fields or not all(_uint(n) for n in observer.values()):
         raise ValueError("observer schema")
     buckets = body["counts"]
     if not isinstance(buckets, list) or len(buckets) != len(DIMENSIONS):
@@ -149,9 +150,38 @@ def validate_counter(identity: str, body: dict[str, Any], *, partitions: bool = 
             raise ValueError("histogram")
 
 
-def positive_sample(row: dict[str, Any]) -> bool:
-    p = row["provenance"]
+def observer_budget(body: dict[str, Any]) -> dict[str, Any]:
+    """Per-counter bounds, shared by fleet and shadow coverage gates."""
+    obs = body["admission_observer"]
+    reads = obs["health_reads"] + obs["workspace_reads"]
+    failures = sum(obs[k] for k in ("read_failures", "missed_ticks", "late_installs"))
+    known = obs["prediction_yes"] + obs["prediction_no"]
+    predictions = known + obs["prediction_unknown"]
+    duration = (body["flushed_at_us"] - body["started_at_us"]) / 1e6
+    limit = max(3, reads / 100)
+    ok = (duration > 0 and failures * 100 <= max(300, reads) and obs["max_consecutive_failures"] <= 2
+          and known > 0 and obs["prediction_unknown"] * 100 <= predictions * 2
+          and obs["degraded_seconds"] * 100_000_000 <= body["flushed_at_us"] - body["started_at_us"])
+    return dict(status="PASS" if ok else "BLOCKED", reads=reads, failures=failures,
+                failure_limit=limit, failure_ratio=failures / reads if reads else None,
+                max_consecutive_failures=obs["max_consecutive_failures"],
+                known_predictions=known, predictions=predictions,
+                unknown_predictions=obs["prediction_unknown"],
+                unknown_ratio=obs["prediction_unknown"] / predictions if predictions else None,
+                degraded_seconds=obs["degraded_seconds"], covered_seconds=duration,
+                degraded_ratio=obs["degraded_seconds"] / duration if duration > 0 else None)
+
+
+def admission_evaluable(row: dict[str, Any], *, allow_unknown: bool = False) -> bool:
     admission = row["admission"]
+    return bool(allow_unknown and admission["prediction"] == "unknown"
+                or admission["prediction"] in {"yes", "no"}
+                and all(_uint(admission[k]) and admission[k] < 5_000_000
+                        for k in ("workspace_age_us", "health_age_us")))
+
+
+def positive_sample(row: dict[str, Any], *, allow_unknown: bool = False) -> bool:
+    p = row["provenance"]
     booking = row["booking"]
     return bool(row["classification"] in {"exact", "explained-by-catalog-change"}
         and row["eligibility"]["requested"] is True and row["eligibility"]["observed"] is True
@@ -165,19 +195,17 @@ def positive_sample(row: dict[str, Any]) -> bool:
         and (row["classification"] == "exact" and row["python_micro"] == row["booked_micro"]
              or row["classification"] == "explained-by-catalog-change" and row["legacy_frozen_micro"] == row["python_micro"]
              and row["booked_micro"] == row["rebuilt_micro"] and p["rebuild_matches_booking_view"] is True)
-        and admission["prediction"] in {"yes", "no"}
-        and all(_uint(admission[k]) and admission[k] < 5_000_000 for k in ("workspace_age_us", "health_age_us")))
+        and admission_evaluable(row, allow_unknown=allow_unknown))
 
 
-def known_exclusion(row: dict[str, Any]) -> bool:
+def known_exclusion(row: dict[str, Any], *, allow_unknown: bool = False) -> bool:
     """Verified out-of-cohort facts are denominators, never positive clock seeds."""
     return bool(row["classification"] == "unevaluable" and row["eligibility"]["observed"] is False
         and row["provenance"]["binding_verified"] is True and row["provenance"]["raw_matches_body"] is True
         and row["provenance"]["s0_reconstruction"] in {"not_needed", "verified"}
         and row["snapshot_hash"] is not None and row["reason_codes"] and set(row["reason_codes"]) <= COHORT_EXCLUSIONS
         and row["booking"]["source"] == "finalized_authorization" and row["booked_micro"] is not None
-        and row["admission"]["prediction"] in {"yes", "no"}
-        and all(_uint(row["admission"][k]) and row["admission"][k] < 5_000_000 for k in ("workspace_age_us", "health_age_us")))
+        and admission_evaluable(row, allow_unknown=allow_unknown))
 
 
 def collect_rollbacks(resets: list[dict[str, Any]], serving: list[tuple[int, int, str]],
@@ -462,7 +490,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                     gap(identity+":phase_writer_gap", day)
             if (not counter["closed"] or counter["first_gap_at_us"] is not None or counter["counter_overflow"]
                     or counter["dimension_overflow"] or counter["comparison_dropped"] or counter["booking_pending"] or counter["booking_unknown"]
-                    or any(counter["admission_observer"][key] for key in ("prediction_unknown", "read_failures", "missed_ticks"))
+                    or observer_budget(counter)["status"] != "PASS"
                     or any(row["count"] for key in ("drops", "rejections") for row in counter[key])
                     or any(row["observed_unknown"] for row in counter["counts"])
                     or any(row["count"] for row in counter["exclusions"] if row["phase"] == "worker")):
@@ -485,6 +513,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
     low = int(dt.datetime.combine(dt.date.fromisoformat(requested[0]), dt.time(), dt.UTC).timestamp()*1e6)
     high = int(dt.datetime.combine(dt.date.fromisoformat(requested[-1])+dt.timedelta(days=1), dt.time(), dt.UTC).timestamp()*1e6)
     samples = sorted((row for row in samples if low <= row["observed_at_us"] < high), key=lambda row: row["observed_at_us"])
+    unknown_samples: Counter[str] = Counter()
     inserted: Counter[tuple[str, str]] = Counter()
     sample_counts: Counter[tuple[str, str, str, bool | None, str]] = Counter()
     phase_samples: Counter[tuple[Any, ...]] = Counter()
@@ -497,13 +526,15 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         writer = counters.get(writer_id)
         category = {"explained-by-catalog-change": "explained", "hash": "mismatch", "identity": "mismatch",
                     "normalization": "mismatch", "evaluator_disagreement": "mismatch"}.get(row["classification"], row["classification"])
+        if row["admission"]["prediction"] == "unknown":
+            unknown_samples[writer_id] += 1
         eligibility = {True: "observed_eligible", False: "observed_ineligible", None: "observed_unknown"}[row["eligibility"]["observed"]]
         for field in (category, eligibility, row["booking"]["attempted_kind"] + "_attempts"):
             sample_counts[writer_id, row["adapter"], row["route_type"], row["streamed"], field] += 1
         phase_key = (writer_id, row["adapter"], row["route_type"], row["streamed"], row["booking"]["attempted_kind"])
         for field in (category, eligibility, "samples_inserted"):
             phase_samples[(*phase_key, field)] += 1
-        if known_exclusion(row):
+        if known_exclusion(row, allow_unknown=True):
             for reason in row["reason_codes"]:
                 phase_samples[(*phase_key, "exclusion:"+reason)] += 1
         if (writer is None or not writer["started_at_us"] <= row["observed_at_us"] <= writer["flushed_at_us"]):
@@ -513,10 +544,12 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                 or deployment["go_revision"] not in manifest["go_revisions"]):
             gap(row["authorization_id"]+":deployment_unknown", observation_day)
         if (row["classification"] not in {"hash", "identity", "normalization", "evaluator_disagreement"}
-                and not positive_sample(row) and not known_exclusion(row)):
+                and not positive_sample(row, allow_unknown=True) and not known_exclusion(row, allow_unknown=True)):
             gap(row["authorization_id"]+":sample_gap", observation_day)
     for identity, counter in counters.items():
         day, boot = identity.split("/")
+        if day in requested and unknown_samples[identity] > counter["admission_observer"]["prediction_unknown"]:
+            gap(identity+":prediction_count_gap", day)
         if day in requested and counter["samples_inserted"] != inserted[day, boot]:
             gap(identity+":sample_count_gap", day)
         if day in requested:
@@ -601,6 +634,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
     predictions = {kind: sum(counter["admission_observer"]["prediction_"+kind] for identity, counter in counters.items()
                              if identity.split("/")[0] in requested) for kind in ("yes", "no", "unknown")}
     prediction_total = sum(predictions.values())
+    metrics["observer_budgets"] = {identity: observer_budget(counter) for identity, counter in counters.items()
+                                   if identity.split("/")[0] in requested}
     metrics["prediction_attempts"] = predictions
     metrics["prediction_known_fraction"] = (predictions["yes"]+predictions["no"])/prediction_total if prediction_total else None
     region_timing = {}

@@ -34,29 +34,81 @@ class Observer:
         self.executor: ThreadPoolExecutor | None = None
         self.stopped = False
         self.budget_proven = False  # External publisher/scheduling/fleet gate.
-        self.last_health_start: float | None = None
-        self.last_workspace_start: dict[str, float] = {}
-        self.progress_ok = True
+        self.failures: Counter[str | None] = Counter()
+        self.failed_ticks: dict[str | None, float] = {}
+        self.stale: set[str | None] = set()
+        self.degraded_since: float | None = None
+        self.degraded_seconds = 0.
+        self.interval_max_consecutive_failures = 0
+
+    @property
+    def progress_ok(self) -> bool:
+        return not any(count >= (3 if key is None else 2)
+                       for key, count in self.failures.items())
+
+    def _account_degradation(self, now: float) -> None:
+        # Union of degraded reader intervals, independent of request/peek rate.
+        if self.degraded_since is not None:
+            self.degraded_seconds += max(0., now - self.degraded_since)
+        self.degraded_since = now if not self.stopped and not self.progress_ok else None
+
+    def _failure(self, key: str | None, tick: float, field: str) -> None:
+        # Caller holds lock. Count each cause, but only one failed tick per reader.
+        if self.stopped:
+            return
+        self._account_degradation(self.clock())
+        self.counts[field] += 1
+        if tick > self.failed_ticks.get(key, float("-inf")):
+            self.failures[key] += 1
+            self.failed_ticks[key] = tick
+        self.stale.add(key)
+        self.counts["max_consecutive_failures"] = max(
+            self.counts["max_consecutive_failures"], self.failures[key])
+        self.interval_max_consecutive_failures = max(
+            self.interval_max_consecutive_failures, self.failures[key])
+        self._account_degradation(self.clock())
+
+    def _success(self, key: str | None, started: float) -> bool:
+        # A late-start tick or an older in-flight result cannot undo a failure.
+        if started <= self.failed_ticks.get(key, float("-inf")):
+            return False
+        self._account_degradation(self.clock())
+        self.failures[key] = 0
+        self.stale.discard(key)
+        self._account_degradation(self.clock())
+        return True
+
+    def snapshot_counts(self) -> dict[str, int | float]:
+        with self.lock:
+            self._account_degradation(self.clock())
+            result: dict[str, int | float] = dict(self.counts)
+            result["degraded_seconds"] = self.degraded_seconds
+            result["max_consecutive_failures"] = self.interval_max_consecutive_failures
+            # Runtime folds maxima into its daily counter, never subtracts them.
+            self.interval_max_consecutive_failures = max(self.failures.values(), default=0)
+            return result
+
+    def missed_tick(self, key: str | None, tick: float) -> None:
+        with self.lock:
+            self._failure(key, tick, "missed_ticks")
 
     def install_workspace(self, key: str, started: float, value: Admission) -> None:
         if self.stopped or key not in self.workspaces:
             return
         with self.lock:
-            previous = self.last_workspace_start.get(key)
-            self.last_workspace_start[key] = started
-            if self.clock() - started > .5 or previous is not None and started - previous > 4.25:
-                self.progress_ok = False
-            self.entries[key] = (started, value)
+            if self.clock() - started > .5:
+                self._failure(key, started, "late_installs")
+            elif self._success(key, started):
+                self.entries[key] = (started, value)
 
     def install_health(self, started: float, value: dict[str, Any] | None) -> None:
         if self.stopped:
             return
         with self.lock:
-            if (self.clock() - started > .5 or self.last_health_start is not None
-                    and started - self.last_health_start > 1.25):
-                self.progress_ok = False
-            self.last_health_start = started
-            self.health = dict(value) if value is not None else None
+            if self.clock() - started > .5:
+                self._failure(None, started, "late_installs")
+            elif self._success(None, started):
+                self.health = dict(value) if value is not None else None
 
     def peek(self, workspace: str) -> dict[str, Any]:
         if workspace not in self.workspaces or self.stopped:
@@ -64,7 +116,8 @@ class Observer:
         if not self.lock.acquire(blocking=False):
             return unknown("cache_busy")
         try:
-            result = unknown()
+            stale = workspace in self.stale or None in self.stale
+            result = unknown("cache_stale" if stale else "cache_missing")
             item, health = self.entries.get(workspace), self.health
             if item is None or health is None:
                 return result
@@ -77,7 +130,7 @@ class Observer:
                           workspace_age_us=max(0, int(ages[0] * 1e6)),
                           health_age_us=max(0, int(max(ages[1:]) * 1e6)),
                           health_p95_us=int(health["p95_age_seconds"] * 1e6))
-            if not self.progress_ok or not all(0 <= age < 5 for age in ages):
+            if stale or not all(0 <= age < 5 for age in ages):
                 result["reason"] = "cache_stale"
                 return result
             if type(data.pending_micro) is not int or data.pending_micro < 0 or type(data.tier) is not int:
@@ -112,6 +165,7 @@ class Observer:
             if not self.enabled():
                 self.stopped = True
                 with self.lock:
+                    self._account_degradation(self.clock())
                     self.entries.clear()
                     self.health = None
                 return
@@ -124,15 +178,14 @@ class Observer:
                 if not health_pending and active < 2 and tokens >= 1:
                     tokens -= 1
                     if now - next_health > .25:
-                        self.counts["missed_ticks"] += 1
-                        self.progress_ok = False
+                        self.missed_tick(None, now)
                     next_health = now + 1  # Never enqueue catch-up reads.
-                    self.counts["health_reads"] += 1
+                    with self.lock:
+                        self.counts["health_reads"] += 1
                     health_job = loop.run_in_executor(self.executor, self._health, now)
                     active += 1
                 elif now - next_health > .25:
-                    self.counts["missed_ticks"] += 1
-                    self.progress_ok = False
+                    self.missed_tick(None, now)
                     next_health = now + 1
             # Due health has priority. Near its next start, reserve one token;
             # both slots otherwise serve workspaces to sustain 32 / 4 reads/s.
@@ -143,14 +196,13 @@ class Observer:
                         and tokens >= needed):
                     tokens -= 1
                     if now - due[key] > .25:
-                        self.counts["missed_ticks"] += 1
-                        self.progress_ok = False
+                        self.missed_tick(key, now)
                     due[key] = now + 4
-                    self.counts["workspace_reads"] += 1
+                    with self.lock:
+                        self.counts["workspace_reads"] += 1
                     workspace_jobs[key] = loop.run_in_executor(self.executor, self._workspace, key, now)
                 elif now - due[key] > .25:
-                    self.counts["missed_ticks"] += 1
-                    self.progress_ok = False
+                    self.missed_tick(key, now)
                     due[key] = now + 4
             await asyncio.sleep(.01)
 
@@ -158,17 +210,15 @@ class Observer:
         try:
             self.install_workspace(key, started, self.read(key))
         except Exception:
-            self.counts["read_failures"] += 1
             with self.lock:
-                self.entries.pop(key, None)
+                self._failure(key, started, "read_failures")
 
     def _health(self, started: float) -> None:
         try:
             self.install_health(started, self.health_read())
         except Exception:
-            self.counts["read_failures"] += 1
             with self.lock:
-                self.health = None
+                self._failure(None, started, "read_failures")
 
     async def close(self) -> None:
         self.stopped = True
@@ -177,5 +227,7 @@ class Observer:
         if self.executor is not None:
             self.executor.shutdown(wait=False, cancel_futures=True)
         with self.lock:
+            self._account_degradation(self.clock())
+            self.degraded_since = None
             self.entries.clear()
             self.health = None

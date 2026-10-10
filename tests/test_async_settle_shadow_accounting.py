@@ -156,6 +156,7 @@ def synthetic_window():
         start = int(dt.datetime.fromisoformat(day).replace(tzinfo=dt.UTC).timestamp())
         counter = Counters('us-central1','a'*40,clock=lambda start=start:start)
         dims = dimensions('openai','chat.completions',False)
+        counter._day()['admission_observer']['prediction_yes'] = 1
         if day == days[0]:
             for name in ('settle_attempts','envelope_present','observed_attempts','observed_eligible','evaluable','exact'):
                 counter.increment(dims,name)
@@ -504,3 +505,78 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     for timeout, retry, options in db.query_options:
         assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
+
+
+@pytest.mark.parametrize('field', ['late_installs', 'max_consecutive_failures', 'degraded_seconds'])
+def test_observer_counter_requires_new_fields(field):
+    counters = Counters('us-central1', 'a'*40, clock=lambda: NOW)
+    counters._day()
+    identity, body = counters.snapshot()[0]
+    assert body['admission_observer'][field] == 0
+    validate_counter(identity, body)
+    del body['admission_observer'][field]
+    with pytest.raises(ValueError, match='observer schema'):
+        validate_counter(identity, body)
+
+
+@pytest.mark.parametrize('value', [-1, .5, float('nan'), float('inf'), True, '1'])
+def test_observer_degraded_seconds_rejects_invalid_numbers(value):
+    counters = Counters('us-central1', 'a'*40, clock=lambda: NOW)
+    counters._day()
+    identity, body = counters.snapshot()[0]
+    body['admission_observer']['degraded_seconds'] = value
+    with pytest.raises(ValueError):
+        validate_counter(identity, body)
+
+
+@pytest.mark.parametrize('damage', [None, 'failures', 'streak', 'unknown', 'degraded', 'no_known'])
+def test_report_bounded_observer_failures(damage):
+    rows, days, proof = synthetic_window()
+    obs = rows[0]['body']['admission_observer']
+    # At 100 reads, the three-event floor must win over the 1% allowance.
+    obs.update(health_reads=40, workspace_reads=60, read_failures=1, missed_ticks=1,
+               late_installs=1, max_consecutive_failures=2, prediction_yes=98,
+               prediction_unknown=2, degraded_seconds=864)
+    if damage == 'failures':
+        obs['late_installs'] += 1
+    elif damage == 'streak':
+        obs['max_consecutive_failures'] = 3
+    elif damage == 'unknown':
+        obs['prediction_unknown'] += 1
+    elif damage == 'degraded':
+        obs['degraded_seconds'] += 1
+    elif damage == 'no_known':
+        obs.update(prediction_yes=0, prediction_unknown=0)
+    result = report(rows, days, proof)
+    assert result['status'] == ('PASS' if damage is None else 'BLOCKED')
+    budget = result['metrics']['observer_budgets'][rows[0]['id']]
+    assert budget['failure_limit'] == 3 and budget['failure_ratio'] >= .01
+
+
+def test_unknown_admission_sample_is_not_clock_seed_or_mismatch_but_can_be_tolerated():
+    from scripts.async_settle.shadow_report import positive_sample
+    from trusted_router.services.async_settle_shadow_admission import unknown
+    rows, days, proof = synthetic_window()
+    original = rows[-1]
+    tail = copy.deepcopy(original)
+    tail['id'] += '-tail'
+    tail['body']['authorization_id'] += '-tail'
+    tail['body']['admission'] = unknown('cache_stale')
+    rows.append(tail)
+    body = rows[0]['body']
+    body['samples_inserted'] = body['comparison_attempts'] = 2
+    for bucket in (*body['counts'], *body['terminal_counts']):
+        for key, value in bucket.items():
+            if type(value) is int:
+                bucket[key] *= 2
+    body['admission_observer'].update(prediction_yes=49, prediction_unknown=1)
+    assert not positive_sample(tail['body'])
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS' and result['resets'] == []
+    assert result['clean_window_start_us'] == NOW*1000000
+    body['admission_observer']['prediction_unknown'] = 0
+    assert any('prediction_count_gap' in gap for gap in report(rows, days, proof)['gaps'])
+    tail['body']['python_usage']['output_tokens'] += 1
+    body['admission_observer']['prediction_unknown'] = 1
+    with pytest.raises(ValueError, match='contradictory clean sample'):
+        report(rows, days, proof)
