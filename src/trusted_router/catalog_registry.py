@@ -1334,8 +1334,8 @@ for _speech in SPEECH_MODELS.values():
         supported_parameters=("voice", "response_format", "speed"),
         prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.input_token_cost),
         completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.output_token_cost),
-        published_prompt_price_microdollars_per_million_tokens=_speech.input_token_cost,
-        published_completion_price_microdollars_per_million_tokens=_speech.output_token_cost,
+        published_prompt_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.input_token_cost),
+        published_completion_price_microdollars_per_million_tokens=customer_fixed_price_microdollars(_speech.output_token_cost),
         documentation=ModelDocumentation(
             description="Text-to-speech, billed from reported text input and audio output tokens." if _speech.token_billed else "Text-to-speech, billed per input character, not per token.",
             input_format="POST /v1/audio/speech with model, input (text), voice, and response_format.",
