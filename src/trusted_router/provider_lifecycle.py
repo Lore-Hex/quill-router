@@ -71,6 +71,11 @@ ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
 NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
+# Enforcement starts at the public-doc observation; the exact earlier
+# Scaleway end-of-life dates are not recorded in this repository.
+SCALEWAY_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 7, 0, 0, tzinfo=UTC)
+# October 30 00:00 KST (UTC+09).
+UPSTAGE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 29, 15, 0, tzinfo=UTC)
 # Enforcement starts at the confirmed observation, not an invented upstream
 # deprecation date: all three IDs returned UnavailableModel on October 3.
 STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
@@ -176,6 +181,33 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # The supported-models page checked on 2026-10-07 states these models
+    # are already past end of life. Use that fixed observation date rather
+    # than inventing earlier dates or waiting for the catalog bot to delist.
+    # https://www.scaleway.com/en/docs/generative-apis/reference-content/supported-models/
+    _Retirement(
+        provider="scaleway",
+        model_ids=frozenset({
+            "mistralai/pixtral-12b-2409",
+            "qwen/qwen3-coder-30b-a3b-instruct",
+        }),
+        upstream_ids=frozenset({
+            "pixtral-12b-2409",
+            "qwen3-coder-30b-a3b-instruct",
+        }),
+        effective_at=SCALEWAY_OCTOBER_2026_RETIREMENT_AT,
+    ),
+    # Upstage's public model pages checked on 2026-10-07 retire Solar Pro 2
+    # and 3 on October 30 KST. Solar Pro 4 remains a distinct model; never
+    # substitute it for either explicitly requested model.
+    # https://console.upstage.ai/docs/models/solar-pro-2
+    # https://console.upstage.ai/docs/models/solar-pro-3
+    _Retirement(
+        provider="upstage",
+        model_ids=frozenset({"upstage/solar-pro2", "upstage/solar-pro3"}),
+        upstream_ids=frozenset({"solar-pro2", "solar-pro3"}),
+        effective_at=UPSTAGE_OCTOBER_2026_RETIREMENT_AT,
+    ),
     # Nscale's Serverless notices of October 2 and October 6 retire these
     # exact ids "between 2-4 November 2026" and ask customers to switch "by
     # 2 November 2026". No time or zone was given, so stop at the earliest
