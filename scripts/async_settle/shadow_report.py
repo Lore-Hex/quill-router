@@ -369,6 +369,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
     if proof.get("fixture_sha256") != FIXTURE_SHA256 or not all(gates.values()):
         gap("external_proofs_missing")
     inventory = proof.get("instance_boot_ids_by_day", {})
+    regional_inventory = proof.get("instance_regions_by_day", {})
     intervals: list[tuple[int, int]] = []
     for day in requested:
         manifest = manifests.get(day)
@@ -379,6 +380,18 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         if (actual != manifest["instance_boot_ids"] or actual != inventory.get(day) or not actual
                 or manifest["proof_manifest_sha256"] != proof_hash):
             gap(day+":roster_unknown", day)
+        regions = regional_inventory.get(day) if isinstance(regional_inventory, dict) else None
+        if (not isinstance(regions, dict) or not regions
+                or set(regions) != set(manifest["instance_boot_ids"])
+                or any(not isinstance(region, str) or not 1 <= len(region) <= 128
+                       for region in regions.values())):
+            gap(day+":regional_roster_unknown", day)
+            regions = {}
+        regional_writers = {counter["instance"] for identity, counter in counters.items()
+                            if identity.startswith(day+"/")
+                            and regions.get(counter["instance"]) == counter["region"]}
+        if regional_writers != set(regions):
+            gap(day+":regional_coverage_gap", day)
         if manifest["completeness"] != "complete" or manifest["gap_intervals"]:
             gap(day+":manifest_gap", day)
         start, end = manifest["admission_disabled_from_us"], manifest["admission_disabled_until_us"]
@@ -394,6 +407,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         for counter in counters.values():
             if counter["instance"] not in actual or counter["router_revision"] not in manifest["router_revisions"]:
                 continue
+            if regions.get(counter["instance"]) != counter["region"]:
+                continue
             left = max(day_start, start, counter["started_at_us"])
             right = min(day_end, end, counter["flushed_at_us"])
             if left < right:
@@ -401,6 +416,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         for identity, counter in counters.items():
             if not identity.startswith(day+"/"):
                 continue
+            if regions.get(counter["instance"]) != counter["region"]:
+                gap(identity+":legacy_region_label", day)
             persistence = sum(counter[k] for k in (
                 "samples_inserted", "duplicate_samples", "conflicting_samples", "comparison_dropped"))
             if persistence != counter["comparison_attempts"]:
@@ -576,7 +593,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                         if not oldest <= original.authorization_day <= day:
                             continue
                         position = bisect_right(times, counter["flushed_at_us"])
-                        retry = RetryIdentity(phase, counter["region"], original.authorization_day,
+                        retry = RetryIdentity(phase, original.authorization_day,
                             terminal["adapter"], terminal["route_type"], terminal["streamed"])
                         if position and original_can_back_retry(original, times[position - 1], retry,
                                 counter["started_at_us"], counter["flushed_at_us"]):

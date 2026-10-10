@@ -62,7 +62,6 @@ def dimensions(adapter: str | None, route: str | None, streamed: bool | None) ->
 
 class RetryIdentity(NamedTuple):
     kind: str
-    region: str
     authorization_day: str
     adapter: str
     route_type: str
@@ -70,8 +69,14 @@ class RetryIdentity(NamedTuple):
 
 
 def retry_identity(row: dict[str, Any]) -> RetryIdentity:
-    """Verified retry bucket; the adapter separately enforces the durable key."""
-    return RetryIdentity(row["booking"]["attempted_kind"], row["deployment"]["region"],
+    """Logical retry bucket; the adapter separately enforces the durable key.
+
+    Serving geography and revision can change on retry. The verified payload
+    hash already covers terminal.journal_region, checked against signed binding
+    claims by compare(); equality plus binding validity preserves authority
+    identity without adding a field that pre-rollout samples do not carry.
+    """
+    return RetryIdentity(row["booking"]["attempted_kind"],
                          row["authorization_day"], row["adapter"], row["route_type"], row["streamed"])
 
 

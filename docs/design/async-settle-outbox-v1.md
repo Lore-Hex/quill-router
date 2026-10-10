@@ -1900,6 +1900,46 @@ Truncation blocks; do not substitute a partial export and call it complete.
 For a larger history, prepare a separately reviewed bounded export with its
 explicit window and coverage before running the offline checklist.
 
+### Serving-region label transition and the clean window
+
+The seven-day window starts no earlier than the first complete UTC day on
+which every serving router instance carries `TR_SERVING_REGION` set to its
+true serving region. **2026-10-10 is a transition day by construction** and
+cannot certify a clean day; 2026-10-11 is the earliest possible start, subject
+to complete deployment and the other gates. Include retired and overlapping
+revisions in the reviewed roster. Do not reconcile old labels by guessing
+from the primary/journal region or rewrite historical evidence.
+
+The reviewed `proof` must include `instance_regions_by_day`, mapping each UTC
+day to `{instance_boot_id: true_serving_region}` for every router in
+`instance_boot_ids_by_day`. This map is covered by the existing proof-manifest
+hash. It must agree with the pilot bundle's serving lifetimes. Missing maps,
+uncovered writers, and counter labels that disagree with their writer's
+declared region block certification (`regional_roster_unknown`,
+`regional_coverage_gap`, or `legacy_region_label`). A label present elsewhere
+in the fleet does not establish this writer's region.
+
+Pilot coverage reports list legacy-labelled rows as `legacy_region_label`,
+name mixed labels for one instance/day (`mixed_region_labels`), and identify
+coverage that would depend on old labels (`legacy_region_coverage`). Any such
+day is uncertifiable. Fleet reports exclude those rows from regional rates
+and report their workspace/health read counts separately in
+`legacy_region_labels`; they are never attributed to `us-central1` by default.
+Roster membership alone cannot detect an old revision whose primary label
+happens to equal its true region, so deployment evidence that every serving
+instance carries the pin remains a prerequisite to choosing the clean days.
+
+Retry identity is independent of serving region and router revision. The
+persisted sample has no separate journal-region field: its verified terminal
+`payload_hash` covers `journal_region`, and comparison checks terminal
+identity against the signed binding and `Context.journal_region`. At the
+same authorization/day durable key, matching attempted kind, signed
+dimensions, verified payload hashes and compatible binding lifetimes suffice
+for a duplicate. This also handles old/new revision retries without changing
+the sample schema. Report retry backing uses the same logical bucket and
+lifetime check; because counter rows discard retry hashes, it remains an
+existence check, not re-verification of the discarded signed terminal.
+
 ### Exact enablement order and gates
 
 1. Land enclave F2c with `TR_ASYNC_SETTLE_SHADOW=off` and

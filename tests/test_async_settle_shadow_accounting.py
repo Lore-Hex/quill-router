@@ -300,7 +300,7 @@ def synthetic_window():
 
     days = [(dt.date(2026,10,6)+dt.timedelta(days=n)).isoformat() for n in range(8)]
     proof = {gate:'a'*64 for gate in EXTERNAL_GATES}
-    proof.update(fixture_sha256=FIXTURE_SHA256,instance_boot_ids_by_day={})
+    proof.update(fixture_sha256=FIXTURE_SHA256,instance_boot_ids_by_day={},instance_regions_by_day={})
     rows = []
     for day in days:
         start = int(dt.datetime.fromisoformat(day).replace(tzinfo=dt.UTC).timestamp())
@@ -319,6 +319,7 @@ def synthetic_window():
         body['flushed_at_us'] = (start+86400)*1000000
         rows.append(dict(kind=COUNTER,id=identity,body=body))
         proof['instance_boot_ids_by_day'][day] = [counter.instance]
+        proof['instance_regions_by_day'][day] = {counter.instance: 'us-central1'}
         rows.append(dict(kind=CONTROL,id=day+'/manifest-v1',body=dict(v=1,day=day,
             instance_boot_ids=[counter.instance],router_revisions=['a'*40],go_revisions=[sample_row()['deployment']['go_revision']],
             configuration_sha256='c'*64,admission_disabled_from_us=start*1000000,
@@ -523,6 +524,7 @@ def test_report_reviewer_same_boot_uncovered_day():
     boot = rows[0]['body']['instance']
     for day in days:
         proof['instance_boot_ids_by_day'][day] = [boot]
+        proof['instance_regions_by_day'][day] = {boot: 'us-central1'}
     for row in rows:
         if row['kind'] == COUNTER:
             row['body']['instance'] = boot
@@ -575,6 +577,7 @@ def test_writer_union_counts_overlapping_and_adjacent_intervals_once(overlap_us)
             bucket[field] = 0
     rows.append(second)
     proof['instance_boot_ids_by_day'][days[0]].append(boot)
+    proof['instance_regions_by_day'][days[0]][boot] = 'us-central1'
     proof['instance_boot_ids_by_day'][days[0]].sort()
     rows[1]['body']['instance_boot_ids'] = proof['instance_boot_ids_by_day'][days[0]]
     for row in rows:
@@ -598,6 +601,7 @@ def test_writer_union_preserves_actual_midnight_flush_overlap():
     rows[2]['body']['instance'] = boot
     rows[2]['id'] = days[1]+'/'+boot
     proof['instance_boot_ids_by_day'][days[1]] = [boot]
+    proof['instance_regions_by_day'][days[1]] = {boot: 'us-central1'}
     rows[3]['body']['instance_boot_ids'] = [boot]
     for row in rows:
         if row['kind'] == CONTROL:
@@ -783,3 +787,97 @@ def test_unknown_admission_keeps_independent_comparator_disagreement_gate():
     assert result['metrics']['comparator_classification'] == {'evaluator_disagreement': 1}
     assert sum(row['mismatch'] for row in result['denominators']) == 0
     assert sum(row['unevaluable'] for row in result['denominators']) == 1
+
+
+@pytest.mark.parametrize('damage', ['missing_roster', 'legacy_label', 'missing_writer', 'wrong_writer_region'])
+def test_shadow_report_requires_declared_regional_completeness(damage):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+
+    rows, days, proof = synthetic_window()
+    # Damage the final day so a later clean suffix cannot hide the transition.
+    day = days[-1]
+    row = next(row for row in rows if row['kind'] == COUNTER and row['id'].startswith(day))
+    boot = row['body']['instance']
+    if damage == 'missing_roster':
+        del proof['instance_regions_by_day']
+        reason = 'regional_roster_unknown'
+    elif damage == 'missing_writer':
+        other = '00000000-0000-0000-0000-000000000002'
+        proof['instance_regions_by_day'][day][other] = 'europe-west4'
+        proof['instance_boot_ids_by_day'][day] = sorted([boot, other])
+        next(r['body'] for r in rows if r['id'] == day+'/manifest-v1')['instance_boot_ids'] = sorted([boot, other])
+        reason = 'regional_coverage_gap'
+    else:
+        proof['instance_regions_by_day'][day][boot] = 'europe-west4'
+        if damage == 'wrong_writer_region':
+            # Central is a declared region, but for a different writer.
+            other = '00000000-0000-0000-0000-000000000002'
+            extra = copy.deepcopy(row)
+            extra.update(id=day+'/'+other)
+            extra['body']['instance'] = other
+            rows.append(extra)
+            proof['instance_regions_by_day'][day][other] = 'us-central1'
+            proof['instance_boot_ids_by_day'][day] = sorted([boot, other])
+            next(r['body'] for r in rows if r['id'] == day+'/manifest-v1')['instance_boot_ids'] = sorted([boot, other])
+        reason = 'legacy_region_label'
+    for manifest in rows:
+        if manifest['kind'] == CONTROL:
+            manifest['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert any(g.endswith(':'+reason) for g in result['gaps'])
+    if damage in {'legacy_label', 'wrong_writer_region'}:
+        assert day+':regional_coverage_gap' in result['gaps']
+
+
+def test_shadow_report_cross_region_retry_uses_logical_identity():
+    import hashlib
+
+    from tests.test_async_settle_shadow_r7_retry_original import add_retry
+    from trusted_router.detached_jws import canonical
+
+    rows, days, proof = synthetic_window()
+    counter = add_retry(rows, 'settle', day_index=1)
+    counter['body']['region'] = 'europe-west4'
+    proof['instance_regions_by_day'][days[1]][counter['body']['instance']] = 'europe-west4'
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS'
+    assert result['gaps'] == [] and result['resets'] == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_shadow_report_mixed_fleet_labels_require_each_writers_region(legacy):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+
+    rows, days, proof = synthetic_window()
+    day = days[-1]
+    counter = next(row for row in rows if row['kind'] == COUNTER and row['id'].startswith(day))
+    manifest = next(row['body'] for row in rows if row['id'] == day+'/manifest-v1')
+    # Keep a truthful central writer and add two European writers. Even though
+    # both labels belong to the fleet, the pre-pin European row is not clean.
+    for index in (2, 3):
+        boot = f'00000000-0000-0000-0000-{index:012d}'
+        extra = copy.deepcopy(counter)
+        extra['id'] = day+'/'+boot
+        extra['body'].update(instance=boot,
+            region='us-central1' if legacy and index == 2 else 'europe-west4')
+        rows.append(extra)
+        proof['instance_boot_ids_by_day'][day].append(boot)
+        proof['instance_regions_by_day'][day][boot] = 'europe-west4'
+    proof['instance_boot_ids_by_day'][day].sort()
+    manifest['instance_boot_ids'] = proof['instance_boot_ids_by_day'][day]
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == ('BLOCKED' if legacy else 'PASS')
+    assert any(g.endswith(':legacy_region_label') for g in result['gaps']) is legacy
+    assert (day+':regional_coverage_gap' in result['gaps']) is legacy
+    assert result['resets'] == []

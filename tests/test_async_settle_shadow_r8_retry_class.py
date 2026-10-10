@@ -12,6 +12,7 @@ from tests.test_async_settle_shadow import FIXTURE, NOW, context, signer, wire
 from tests.test_async_settle_shadow_accounting import Database, synthetic_window
 from tests.test_async_settle_shadow_r7_retry_original import add_retry
 from tests.test_async_settle_shadow_real_exclusion import real_exclusion_window
+from trusted_router.async_settle_shadow_binding import verify_binding
 from trusted_router.async_settle_shadow_compare import Booking, compare
 from trusted_router.async_settle_shadow_evidence import (
     COUNTER,
@@ -28,8 +29,12 @@ ORIGINAL_CLASSES = (
 )
 
 
-def observation(phase, *, charge=None, failure=False, rebuild=True):
+def observation(phase, *, charge=None, failure=False, rebuild=True, journal_region='us-central1'):
     value = copy.deepcopy(FIXTURE)
+    claims = verify_binding(value['billing_shadow_binding'], [signer().trusted], NOW).model_dump()
+    claims['journal_region'] = journal_region
+    value['billing_shadow_binding'] = signer().sign(claims, NOW)
+    value['terminal']['journal_region'] = journal_region
     amount = 2 if phase == "settle" else 0
     value["terminal"].update(terminal_kind=phase, charge_micro=amount if charge is None else charge)
     value["payload_hash"] = hashlib.sha256(canonical(value["terminal"])).hexdigest()
@@ -40,12 +45,24 @@ def observation(phase, *, charge=None, failure=False, rebuild=True):
     if not rebuild:
         del value["billing_snapshot"]
         changes["rebuild"] = None
-    ctx = context(attempted_kind=phase,
+    ctx = context(attempted_kind=phase, journal_region=journal_region,
         booking=Booking(amount, "settled" if phase == "settle" else "refunded", True), **changes)
     compared = compare(wire(value), ctx, [signer().trusted])
     return sample(ctx, compared, observed_us=NOW * 1000000, router_us=1,
         comparator_us=1, booking_us=1, instance="00000000-0000-0000-0000-000000000001",
         revision="a" * 40)
+
+
+@pytest.mark.parametrize('phase', ['settle', 'refund'])
+def test_verified_journal_region_change_still_conflicts(phase, shadow_deadline_clock):
+    original = observation(phase)
+    retry = observation(phase, journal_region='europe-west4')
+    assert original['classification'] == retry['classification'] == 'exact'
+    assert original['payload_hash'] != retry['payload_hash']
+    identity = original['authorization_day'] + '/' + original['authorization_id']
+    store = EvidenceStore(Database())
+    assert store.insert_sample(identity, original, shadow_deadline_clock.monotonic() + 1) == 'inserted'
+    assert store.insert_sample(identity, retry, shadow_deadline_clock.monotonic() + 1) == 'conflict'
 
 
 def test_exact_retry_cannot_borrow_an_excluded_original(monkeypatch, shadow_deadline_clock):
@@ -103,7 +120,7 @@ def test_adapter_retry_original_class(phase, original_class, shadow_deadline_clo
     if original_class == "expired":
         retry["observed_at_us"] += 3 * 86400_000000
     expected = {"verified-compatible": "duplicate", "verified-different": "conflict",
-        "null-hash": "conflict", "other-kind": "winner_polarity", "other-region": "conflict",
+        "null-hash": "conflict", "other-kind": "winner_polarity", "other-region": "duplicate",
         "retired": "duplicate", "other-stream": "conflict", "other-adapter": "conflict",
         "other-route": "conflict", "expired": "proof_expired"}[original_class]
     # Retention is a separate report/write boundary, not payload classification.
@@ -157,7 +174,7 @@ def test_retry_damage_original_class(phase, outcome, delta, original_class):
     # The report lacks the discarded retry hash. Either verified non-null
     # original can back a possible identical retry or a different-hash conflict;
     # the pairwise adapter test above checks the actual hash relationship.
-    backed = original_class in {"verified-compatible", "verified-different"}
+    backed = original_class in {"verified-compatible", "verified-different", "other-region"}
     assert any(g.endswith(":" + phase + ":retry_original_gap") for g in result["gaps"]) is not backed
     assert result["status"] == ("PASS" if backed and not mismatch and outcome == "duplicate_samples" else "BLOCKED")
     assert bool(result["resets"]) is (mismatch or outcome == "conflicting_samples")

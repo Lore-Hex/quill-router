@@ -43,6 +43,7 @@ def bundle(tmp_path):
         elif row['id'].endswith('/manifest-v1'):
             body['instance_boot_ids'] = [boot]
             proof['instance_boot_ids_by_day'][body['day']] = [boot]
+            proof['instance_regions_by_day'][body['day']] = {boot: 'us-central1'}
     serving = [dict(instance=boot, revision='a'*40, region='us-central1', role='router', intervals=copy.deepcopy(intervals), pins={
         'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': pilot.PILOT,
         'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false'}),
@@ -572,3 +573,58 @@ def test_fleet_bounded_observer_failures(tmp_path, damage):
     ratios = result['observer_budgets'][data['rows'][0]['id']]
     assert ratios['failure_ratio'] >= .01 and ratios['unknown_ratio'] >= .02
     assert ratios['degraded_ratio'] >= .01
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+def test_legacy_region_label_coverage_and_separate_totals(tmp_path, mixed):
+    data = fleet_bundle(tmp_path)
+    original = data['rows'][0]
+    boot = original['body']['instance']
+    # A European writer before the pin reported the primary region. Other
+    # truthful central writers/intervals must not legitimize its old label.
+    day = original['id'].split('/')[0]
+    for row in data['serving']:
+        if row['instance'] == boot:
+            row['region'] = 'europe-west4'
+    for row in data['rows']:
+        if row['kind'] == COUNTER and row is not original:
+            row['body']['region'] = 'europe-west4'
+    if mixed:
+        new = copy.deepcopy(original)
+        split = original['body']['started_at_us'] + 3600_000000
+        original['body']['flushed_at_us'] = split
+        new['body'].update(region='europe-west4', started_at_us=split)
+        data['rows'].append(new)
+        intervals = data['serving'][0]['intervals']
+        intervals[0]['flushed_at_us'] = split
+        intervals.append(dict(day=day, started_at_us=split, flushed_at_us=new['body']['flushed_at_us']))
+    assert pilot.counter_coverage(data) is False
+    coverage = pilot.counter_coverage_report(data)
+    assert coverage['status'] == 'BLOCKED'
+    assert 'legacy_region_label' in coverage['reasons']
+    assert 'legacy_region_coverage' in coverage['reasons']
+    assert ('mixed_region_labels' in coverage['reasons']) is mixed
+    legacy = coverage['legacy_region_labels']
+    assert len(legacy) == 1
+    assert legacy[0]['id'] == original['id']
+    assert legacy[0]['reason'] == 'legacy_region_label'
+    assert legacy[0]['expected_regions'] == ['europe-west4']
+    # Keep budgets declared for both regions: exclusion must be driven by the
+    # writer roster, not by the mere absence of a budget for the old label.
+    data['regional_budgets']['europe-west4'] = data['regional_budgets']['us-central1'].copy()
+    data['maximum_router_instances_by_region']['europe-west4'] = 1
+    result = pilot.fleet_budgets(data)
+    assert result['status'] == 'BLOCKED'
+    assert set(result['regions']) == {'europe-west4'}
+    # Keep the serving-labelled slice even when its ID also has a legacy row.
+    assert result['regions']['europe-west4']['reads_per_second'] == (
+        108000 / (23 * 3600) if mixed else 1.25)
+    assert result['legacy_region_labels'] == legacy
+    assert legacy[0]['workspace_reads'] == 21600
+    assert legacy[0]['health_reads'] == 86400
+    assert legacy[0]['router_revision'] == original['body']['router_revision']
+    assert legacy[0]['started_at_us'] == original['body']['started_at_us']
+    assert legacy[0]['flushed_at_us'] == original['body']['flushed_at_us']
+    # A subsequent all-serving-labelled export can cover the same roster.
+    original['body']['region'] = 'europe-west4'
+    assert pilot.counter_coverage_report(data) == dict(status='PASS', reasons=[], legacy_region_labels=[])

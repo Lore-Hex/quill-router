@@ -828,3 +828,65 @@ def test_observer_evidence_survives_failed_fold(monkeypatch, fail_after_first_ad
     assert old['admission_observer']['max_consecutive_failures'] == 3
     assert old['admission_observer']['degraded_seconds'] == 2
     assert '2026-10-09' not in observer.daily_counts
+
+
+@pytest.mark.parametrize('rolling_upgrade', [False, True])
+@pytest.mark.parametrize('different_payload', [False, True])
+def test_cross_region_retry_worker_accounting(rolling_upgrade, different_payload, shadow_deadline_clock, monkeypatch):
+    """Real adapter + worker: serving moves and pre-pin labels cannot reset correctness."""
+    import copy
+    import hashlib
+    from types import SimpleNamespace
+
+    from tests.test_async_settle_shadow import FIXTURE, NOW, context, endpoint, signer, wire
+    from trusted_router.async_settle_shadow_compare import Booking
+    from trusted_router.async_settle_shadow_evidence import SAMPLE, retry_classification
+    from trusted_router.detached_jws import canonical
+    from trusted_router.services.async_settle import load_runtime
+    from trusted_router.services.async_settle_shadow import Capture
+
+    monkeypatch.setattr(shadow_deadline_clock, 'time', lambda: NOW)
+    db = Database()
+    adapter = EvidenceStore(db)
+    written = []
+    def insert(identity, row, deadline):
+        written.append(row)
+        return adapter.insert_sample(identity, row, deadline)
+    store = SimpleNamespace(reserve=lambda *a: 100, booking=lambda *a: Booking(2, 'settled', True),
+                            insert_sample=insert, flush=adapter.flush)
+    snapshots = []
+    for index, region in enumerate(['' if rolling_upgrade else 'us-central1', 'europe-west4']):
+        cfg = settings(async_settle_enabled=False, release=('a' if index == 0 else 'b')*40,
+                       async_settle_shadow_workspaces='ws-v1', primary_region='us-central1',
+                       serving_region=region, async_settle_authority_epoch=1)
+        async_runtime = load_runtime(cfg, None)
+        async_runtime.signer = runtime().signer
+        rt = Runtime(cfg, async_runtime, store)
+        rt.counters.clock = lambda: NOW
+        rt.signer = signer()
+        ctx = context()
+        envelope = copy.deepcopy(FIXTURE)
+        if index and different_payload:
+            envelope['terminal']['charge_micro'] = 999
+            envelope['payload_hash'] = hashlib.sha256(canonical(envelope['terminal'])).hexdigest()
+        dims = dimensions('openai', 'chat.completions', None)
+        try:
+            with rt.counters.day(NOW):
+                for field in ('settle_attempts', 'observed_attempts', 'observed_unknown'):
+                    rt.counters.increment(dims, field)
+            rt.process(Capture(rt, ctx.body, 'settle', NOW, shadow_deadline_clock.monotonic(),
+                               ctx.authorization, endpoint(), (endpoint(),)),
+                       wire(envelope), {'data': {'settled': True}}, 1, dims)
+            snapshots.append(rt.counters.snapshot()[0][1])
+        finally:
+            rt.executor.shutdown()
+    assert len(written) == 2
+    assert [row['deployment']['region'] for row in written] == ['us-central1', 'europe-west4']
+    assert all(row['provenance']['binding_verified'] for row in written)
+    assert retry_classification(*written) == ('conflict' if different_payload else 'duplicate')
+    assert snapshots[0]['samples_inserted'] == 1
+    assert snapshots[1]['duplicate_samples'] == int(not different_payload)
+    assert snapshots[1]['conflicting_samples'] == int(different_payload)
+    assert (snapshots[1]['last_mismatch_at_us'] is not None) is different_payload
+    assert snapshots[1]['comparison_dropped'] == 0
+    assert len([key for key in db.rows if key[0] == SAMPLE]) == 1
