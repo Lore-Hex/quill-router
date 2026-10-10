@@ -31,9 +31,10 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
 
 # Multi-round-trip writes share the worker's one-second budget. The same
-# total bound fences retention; individual RPCs still get at most 200 ms.
+# total bound fences retention: three RPCs at up to 0.5 s each are bounded
+# by the 1 s transaction horizon, not summed into a 1.5 s budget.
 WRITE_BUDGET_SECONDS = 1.0
-RPC_BUDGET_SECONDS = .2
+RPC_BUDGET_SECONDS = .5
 RETENTION_FENCE = "retention-v1"
 
 

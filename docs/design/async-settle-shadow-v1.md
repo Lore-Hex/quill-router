@@ -1075,11 +1075,18 @@ pending exposure with all traffic synchronous is not async-load capacity proof.
 “One transaction” is not “one RPC”: dedup uses a read and mutation commit;
 SDK begin/commit overhead must be included in measured cost. All shadow storage
 work has a shared **1 second** worker I/O budget, individual RPC deadlines at
-most 200 ms and no longer than the remaining budget, LOW priority and no
+most 500 ms and no longer than the remaining budget, LOW priority and no
 application retry; skip when budget is gone. Use a dedicated single-worker
 executor so shadow cannot fill the money executor's queue. Queueing adds no
 per-request storage. This budget must be measured in every pilot region;
 regional timeouts/drop rates invalidate coverage rather than being hidden.
+On 2026-10-10, after #1655 deployed at approximately 10:50Z, clean revision
+`c07628b` recorded approximately 1,670 `worker/store_unavailable` drops per
+instance in the São Paulo-shaped pair over 2.5 hours (about 11/minute),
+300–520 each in the Europe-sized set and 0–21 in US instances
+(`tr-briefs/lease-shipped-state.md`, 13:5xZ per-instance table, sourced from
+`tr-briefs/evidence/shadow-peek-20261010T135011Z.json`), motivating the
+500 ms per-RPC ceiling within the unchanged one-second transaction horizon.
 Tie accepted observer work to bounded post-response ASGI task lifetime; do not
 assume an unowned daemon thread will get CPU after a Cloud Run request ends.
 Semaphore/queue admission is nonblocking, and the outer task catches failures

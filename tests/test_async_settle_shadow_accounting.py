@@ -107,9 +107,20 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
         validate_counter(identity,broken)
 
 
-@pytest.mark.parametrize('rpc_latency', [.141, .163])
-@pytest.mark.parametrize('budget', [1., .1, .3, .4])
-def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, budget):
+@pytest.mark.parametrize('rpc_latencies,budget,elapsed,succeeds', [
+    *(([latency]*3, budget, min(3*latency, budget), budget >= 3*latency)
+      for latency in (.141, .163) for budget in (1., .1, .3, .4)),
+    pytest.param([.45, .01, .01], 1., .47, True, id='450ms-point-read'),
+    pytest.param([.01, .45, .01], 1., .47, True, id='450ms-fence-read'),
+    pytest.param([.01, .01, .45], 1., .47, True, id='450ms-commit'),
+    pytest.param([.55, .01, .01], 1., .5, False, id='550ms-point-read'),
+    pytest.param([.01, .55, .01], 1., .51, False, id='550ms-fence-read'),
+    pytest.param([.01, .01, .55], 1., .52, False, id='550ms-commit'),
+    pytest.param([.35, .35, .4], 1., 1., False, id='1100ms-worker-horizon'),
+    pytest.param([.35, .35, .4], 2., 1., False, id='1100ms-store-horizon'),
+])
+def test_counter_flush_allows_multiple_bounded_regional_rpcs(
+        shadow_deadline_clock, rpc_latencies, budget, elapsed, succeeds):
     from types import SimpleNamespace
 
     from google.api_core.exceptions import DeadlineExceeded
@@ -120,6 +131,7 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
     calls = []
 
     def rpc(**kwargs):
+        rpc_latency = rpc_latencies[len(calls)]
         calls.append(kwargs)
         timeout = kwargs['timeout']
         clock.now += min(timeout, rpc_latency)
@@ -147,16 +159,15 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
     counters.increment(dimensions('openai', 'responses', True), 'authorize_attempts')
     identity, row = counters.snapshot(closed=True)[0]
     started = clock.monotonic()
-    if budget < 3*rpc_latency:
+    if not succeeds:
         with pytest.raises(DeadlineExceeded):
             EvidenceStore(db).flush(identity, row, started+budget)
-        assert clock.monotonic()-started == pytest.approx(budget)
     else:
         EvidenceStore(db).flush(identity, row, started+budget)
         assert json.loads(db.rows[COUNTER, identity]) == row
-        assert clock.monotonic()-started == pytest.approx(3*rpc_latency)
         assert len(calls) == 3
-    assert all(0 < call['timeout'] <= .2 for call in calls)
+    assert clock.monotonic()-started == pytest.approx(elapsed)
+    assert all(0 < call['timeout'] <= .5 for call in calls)
     if len(calls) == 3:
         assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
 
@@ -557,7 +568,7 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for timeout, retry, options in db.query_options:
-        assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
+        assert 0 < timeout <= .5 and retry is None and options == {'priority':'PRIORITY_LOW'}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
 
 
