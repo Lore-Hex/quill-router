@@ -93,9 +93,12 @@ before the old one stops.
    admission roles too), `"State": "serving"` and `"Live": true`. Its row
    says it reaches Spanner and heartbeats; the subscriptions are shared, so
    its own consumption cannot be told from the old member's while both run.
-2. Stop the old member, with SIGTERM: an auditor member keeps no state of
-   its own, so one stopped loses nothing, and the new one takes the
-   subscriptions' messages from there.
+2. Stop the old member, with SIGTERM, if it runs the auditor role alone:
+   an auditor member keeps no state of its own, so one stopped loses
+   nothing, and the new one takes the subscriptions' messages from there.
+   A node that runs the admission roles too holds leases: it is replaced
+   as a node is, above, SIGUSR1 and `node` exiting 0 before SIGTERM, since
+   SIGTERM alone hands its holds off.
 3. Watch the auditor subscription's oldest unacknowledged message, what
    `fastpathwatch` reads of it (`fastpath-watch.md`) and W7's alert on it,
    for ten minutes: it stays under a minute while the new member consumes.
@@ -119,17 +122,21 @@ gap in its settle log, a record the auditor never received, or one whose
 log it cannot read, it does not close (`fastpath-turn-off.md`): the lease
 stays open, its holds held against the workspace's allowance, until the
 gap is filled from the log's archive, work item W2b, which is not built
-yet. So after a forced exit, check that the node's leases do close:
+yet. So after a forced exit, once the process is gone, fence its row and
+check that its leases do close:
 
 ```bash
+fastpathctl -database projects/P/instances/I/databases/D leave OLD_ADDRESS
 fastpathctl -database projects/P/instances/I/databases/D closed OLD_ADDRESS
 ```
 
-exits 0 once the node owns no lease open or draining, whatever its row
-says: a node killed before it was marked leaving stays `serving` on its
-row, and `closed` judges it by its leases alone. Until then it exits 3 and
-lists each lease left, its workspace, ID and state, and `"Gap": true` for
-one stopped at a gap. `node` is not this check: a draining lease stopped at
+A node killed before it was marked leaving stays `serving` on its row,
+and a grant it asked for could still land after a check: `leave` marks the
+row leaving at whatever epoch, so a grant either landed before it, and is
+counted, or is refused after it. `closed` refuses a row not leaving. It
+exits 0 once the node owns no lease open or draining, whatever else its
+row says. Until then it exits 3 and lists each lease left, its workspace,
+ID and state, and `"Gap": true` for one stopped at a gap. `node` is not this check: a draining lease stopped at
 a gap is not open, so `node` says done while the lease is held. One left
 past the bound above is stopped at a gap or unreadable: it is a page to a
 person, and the lease is noted with its workspace and ID for the archive

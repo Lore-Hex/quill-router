@@ -179,6 +179,9 @@ func TestClosedJudgesANodeByItsLeases(t *testing.T) {
 	if closed, why := status("no row").Closed(); closed || len(why) != 1 {
 		t.Fatalf("a node with no row: closed %v %v", closed, why)
 	}
+	if found, err := s.Leave(ctx, address); err != nil || found {
+		t.Fatalf("leaving a node with no row: %v %v", found, err)
+	}
 	epoch, _, err := s.Join(ctx, address, []string{"owner"})
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +200,7 @@ func TestClosedJudgesANodeByItsLeases(t *testing.T) {
 	unclosedListed = 1
 	st := status("two leases open, one listed")
 	unclosedListed = listed
-	if closed, why := st.Closed(); closed || len(st.Unclosed) != 1 || !st.MoreUnclosed || len(why) != 2 {
+	if closed, why := st.Closed(); closed || len(st.Unclosed) != 1 || !st.MoreUnclosed || len(why) != 3 {
 		t.Fatalf("two open leases, one listed: %+v, closed %v %v", st, closed, why)
 	}
 	if st = status("two leases open"); len(st.Unclosed) != 2 || st.MoreUnclosed || st.OpenLeases != 2 {
@@ -246,13 +249,33 @@ func TestClosedJudgesANodeByItsLeases(t *testing.T) {
 	if closed, why := st.Closed(); !closed || len(why) != 0 {
 		t.Fatalf("both closed: closed %v %v", closed, why)
 	}
-	// A node never marked leaving, its leases closed, is closed, not done.
-	if _, _, err := s.Join(ctx, address, []string{"owner"}); err != nil {
+	// A node never marked leaving, its leases closed, is not closed until
+	// its row is fenced: a grant it asked for could still land. Leave
+	// fences it at whatever epoch, so a grant after is refused and its
+	// process's heartbeat at that epoch is refused too; then it is closed,
+	// though never done, as it was never marked leaving by itself.
+	epoch, _, err = s.Join(ctx, address, []string{"owner"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	st = status("serving again, nothing left")
+	if closed, why := st.Closed(); closed || len(why) != 1 || !strings.Contains(why[0], "serving") {
+		t.Fatalf("serving with nothing left: closed %v %v", closed, why)
+	}
+	if found, err := s.Leave(ctx, address); err != nil || !found {
+		t.Fatalf("leaving the node: %v %v", found, err)
+	}
+	late := grantOf(ws, 10)
+	late.Owner = Owner{Node: address, Epoch: epoch}
+	if got, err := s.Grant(ctx, late); err != nil || got.Refused != RefusedNotServing {
+		t.Fatalf("a grant after the fence: %+v %v", got, err)
+	}
+	if ok, _, err := s.Heartbeat(ctx, address, epoch, Serving); err != nil || ok {
+		t.Fatalf("a serving heartbeat after the fence: %v %v", ok, err)
+	}
+	st = status("fenced, nothing left")
 	done, _ = st.Done()
-	if closed, _ := st.Closed(); done || !closed {
-		t.Fatalf("serving with nothing left: done %v, closed %v: %+v", done, closed, st)
+	if closed, why := st.Closed(); !closed || !done {
+		t.Fatalf("fenced with nothing left: done %v, closed %v %v: %+v", done, closed, why, st)
 	}
 }

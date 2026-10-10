@@ -161,15 +161,19 @@ type NodeLease struct {
 var unclosedListed = 100
 
 // Closed says whether nothing of the node's is left to the auditor: it has
-// a row, so an address mistyped is not taken for a node with nothing left,
-// and owns no lease open or draining, whatever the row says, so a node
-// that stopped before it was marked leaving, and a lease that stopped at a
-// gap once draining, which Done does not count, are judged by the leases;
-// and if not, which leases are left.
+// a row, so an address mistyped is not taken for a node with nothing left;
+// the row says leaving, so no grant lands after the read (Leave fences a
+// node that stopped before it was marked so); and it owns no lease open or
+// draining, so a lease that stopped at a gap once draining, which Done
+// does not count, is judged too; and if not, what is left.
 func (n NodeStatus) Closed() (bool, []string) {
 	var why []string
-	if !n.Found {
+	switch {
+	case !n.Found:
 		why = append(why, "it has no row: check the address")
+	case n.State != Leaving:
+		why = append(why, fmt.Sprintf("it is %s, not leaving: a grant it asked for could still land; leave it first",
+			n.State))
 	}
 	for _, l := range n.Unclosed {
 		gap := ""
@@ -201,6 +205,28 @@ func (n NodeStatus) Done() (bool, []string) {
 		why = append(why, fmt.Sprintf("it owns %d open leases", n.OpenLeases))
 	}
 	return len(why) == 0, why
+}
+
+// Leave marks a node's row leaving, at whatever epoch, for a node that
+// stopped before it was marked so (fastpath-deploy.md): a grant reads the
+// owner's row in its transaction, so one the node asked for either landed
+// before this write, and is counted by the next NodeStatus, or is refused
+// after it. A process still heartbeating at the row's epoch is refused
+// from then on, as after SIGUSR1. It reports whether the row was found.
+func (s *Store) Leave(ctx context.Context, address string) (bool, error) {
+	if address == "" {
+		return false, errors.New("store: no address")
+	}
+	var found bool
+	_, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		n, err := txn.Update(ctx, spanner.Statement{
+			SQL:    `UPDATE tr_fastpath_member SET state = 'leaving' WHERE address = @address`,
+			Params: map[string]any{"address": address},
+		})
+		found = n == 1
+		return err
+	}, spanner.TransactionOptions{TransactionTag: tag("leave")})
+	return found, err
 }
 
 // NodeStatus reads a node's row by its address, counts the open leases it

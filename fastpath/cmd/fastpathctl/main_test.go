@@ -71,7 +71,8 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	for _, args := range [][]string{{"status", "ws"}, {"-database", "d", "status"}, {"-database", "d", "drop", "ws"},
 		{"-database", "d", "status", ""}, {"-database", "d"}, {"-database", "d", "disable-all", "ws"},
 		{"-database", "d", "enable", "ws", "more"}, {"-database", "d", "node"}, {"-database", "d", "node", ""},
-		{"-database", "d", "node", "a", "b"}, {"-database", "d", "closed"}, {"-database", "d", "closed", "a", "b"}} {
+		{"-database", "d", "node", "a", "b"}, {"-database", "d", "closed"}, {"-database", "d", "closed", "a", "b"},
+		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -263,7 +264,7 @@ func TestClosedSaysWhenNothingOfANodeIsLeft(t *testing.T) {
 	}
 	code, got := closed()
 	why, _ := got["why_not"].([]any)
-	if code != 3 || got["done"] != false || len(why) != 1 || !strings.Contains(fmt.Sprint(why[0]), req.LeaseID) {
+	if code != 3 || got["done"] != false || len(why) != 2 || !strings.Contains(fmt.Sprint(why[1]), req.LeaseID) {
 		t.Fatalf("a node owning an open lease: exit %d, %v", code, got)
 	}
 	ref := store.LeaseRef{Workspace: ws, LeaseID: req.LeaseID}
@@ -277,7 +278,29 @@ func TestClosedSaysWhenNothingOfANodeIsLeft(t *testing.T) {
 		"lease_id": req.LeaseID, "state": "closed", "closed_at": time.Now(), "close_kind": "operator"})}); err != nil {
 		t.Fatal(err)
 	}
+	if code, got := closed(); code != 3 || got["done"] != false {
+		t.Fatalf("a node whose every lease is closed, its row still serving: exit %d, %v", code, got)
+	}
+	leave := func(addr string) (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, []string{"-database", "d", "leave", addr}, &out, open)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("leave wrote %q: %v", out.String(), err)
+		}
+		return code, got
+	}
+	if code, got := leave(storetest.UniqueID("nobody")); code != 3 || got["found"] != false {
+		t.Fatalf("leaving a node with no row: exit %d, %v", code, got)
+	}
+	if code, got := leave(address); code != 0 || got["found"] != true {
+		t.Fatalf("leaving the node: exit %d, %v", code, got)
+	}
 	if code, got := closed(); code != 0 || got["done"] != true {
-		t.Fatalf("a node whose every lease is closed: exit %d, %v", code, got)
+		t.Fatalf("a node fenced, its every lease closed: exit %d, %v", code, got)
 	}
 }
