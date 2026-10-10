@@ -34,11 +34,12 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
 
 # Multi-round-trip writes share the worker's one-second budget. The same
-# total bound fences retention. Reads stay at 200 ms; commit needs headroom
-# for cross-region replication beyond the read's network round trip.
+# total bound fences retention. Reads get up to 500 ms for regional latency;
+# commit/control RPCs can use the remainder, never another full budget.
+# Operator range reads retain their separate 200 ms caller deadline.
 WRITE_BUDGET_SECONDS = 1.0
-RPC_BUDGET_SECONDS = .2
-TRANSACTION_RPC_BUDGET_SECONDS = .5
+RPC_BUDGET_SECONDS = .5
+TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
 logger = logging.getLogger(__name__)
 
