@@ -8,6 +8,8 @@
     {
       "id": "google/gemini-3.5-flash",
       "upstream_id": "gemini-3.5-flash",
+      "retirement_at": "2026-10-10T00:00:00Z",
+      "replacement_model_id": "google/gemini-3.6-flash",
       "display_name": "Gemini 3.5 Flash",
       "title": "google/gemini-3.5-flash",
       "context_length": 1048576,

@@ -30,6 +30,7 @@ TOGETHER_OCTOBER_22_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
+GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -376,6 +377,18 @@ _RETIREMENTS = (
             "veo-3.1-lite-generate-preview", "gemini-omni-flash-preview",
         }),
         effective_at=GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT,
+    ),
+    # Google AI Studio's October 10 notice: gemini-3.5-flash "has been
+    # deprecated" in the Gemini API and every call is now served by Gemini 3.6
+    # Flash. Retire the AI Studio routes from the start of that day (no time
+    # given) instead of selling 3.6 weights as 3.5. Vertex, GMI and Atlas
+    # Cloud still serve 3.5 Flash and are unaffected.
+    _Retirement(
+        provider="google-ai-studio",
+        model_ids=frozenset({"google/gemini-3.5-flash"}),
+        upstream_ids=frozenset({"gemini-3.5-flash"}),
+        effective_at=GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.6-flash",),
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
