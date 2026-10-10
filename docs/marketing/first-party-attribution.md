@@ -42,6 +42,7 @@ record.
 
 Structured metadata-only events are shipped through the existing Axiom logger:
 
+1. `acquisition.landing_viewed` (every page load; bounce rate = 1 - engaged / viewed)
 1. `acquisition.landing_engaged`
 2. `acquisition.sign_in_opened`
 3. `acquisition.signup_completed`

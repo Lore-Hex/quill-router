@@ -25,6 +25,7 @@ class MarketingEventRequest(BaseModel):
         "home.cta_clicked.hero",
         "home.cta_clicked.migration",
         "home.cta_clicked.closing",
+        "landing_viewed",
         "landing_engaged",
         "sign_in_opened",
         # The shared sign-in pop-up's "Sign in / Create an account" link.

@@ -20,7 +20,7 @@ CTA_MODULES = ("hero", "migration", "closing")  # trackHomepageCta in homepage.j
     "home.base_url_copied", "home.hero_base_url_copied", "home.agent_prompt_copied",
     "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
     "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
-    "signin_mode_switched", "signup_mode_switched",
+    "signin_mode_switched", "signup_mode_switched", "landing_viewed",
 ])
 def test_homepage_events_use_existing_attributed_pipeline(
     client: TestClient, caplog: pytest.LogCaptureFixture, event: str,

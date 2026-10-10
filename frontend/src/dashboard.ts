@@ -127,6 +127,7 @@ function setSigninMode(mode: SigninMode): void {
 }
 
 type MarketingFunnelEvent =
+  | "landing_viewed"
   | "landing_engaged"
   | "sign_in_opened"
   | "signin_mode_switched"
@@ -145,6 +146,9 @@ function trackFunnelEvent(event: MarketingFunnelEvent): void {
 }
 
 function trackEngagedLanding(): void {
+  // Every page load counts once as "viewed"; "engaged" follows after 1.5 s on
+  // a visible page. Bounce rate = 1 - engaged / viewed.
+  trackFunnelEvent("landing_viewed");
   let sent = false;
   const sendWhenVisible = (): void => {
     if (sent || document.visibilityState !== "visible") return;

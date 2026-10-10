@@ -36,7 +36,8 @@ SOURCE_DATASET = "trusted-router-logs"
 EDGE_REGION = "eu-central-1.aws.edge.axiom.co"
 BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
-        "landing_engaged", "sign_in_opened", "signin_mode_switched", "signup_mode_switched",
+        "landing_viewed", "landing_engaged", "sign_in_opened",
+        "signin_mode_switched", "signup_mode_switched",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
         "experiment_exposed",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",

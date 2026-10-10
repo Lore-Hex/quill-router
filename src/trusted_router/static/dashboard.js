@@ -119,6 +119,9 @@ function trackFunnelEvent(event) {
     });
 }
 function trackEngagedLanding() {
+    // Every page load counts once as "viewed"; "engaged" follows after 1.5 s on
+    // a visible page. Bounce rate = 1 - engaged / viewed.
+    trackFunnelEvent("landing_viewed");
     let sent = false;
     const sendWhenVisible = () => {
         if (sent || document.visibilityState !== "visible")
