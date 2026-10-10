@@ -28,6 +28,8 @@ from typing import Any
 
 import httpx
 
+from trusted_router.model_aliases import merge_openrouter_model_rows
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
 
@@ -234,6 +236,8 @@ def _google_standard_endpoint_rank(slug: str, tag: str) -> int | None:
 
 def slim_model(raw: dict[str, Any], endpoints: list[dict[str, Any]]) -> dict[str, Any]:
     kept = {key: raw.get(key) for key in MODEL_FIELDS if key in raw}
+    # Keep the raw ID until all rows are merged: it determines native-ID
+    # fallbacks and which row wins when OpenRouter lists both spellings.
     kept["endpoints"] = endpoints
     return kept
 
@@ -264,7 +268,7 @@ def build_snapshot() -> dict[str, Any]:
                     continue
                 kept.append(slim_model(model, filtered))
 
-    kept.sort(key=lambda m: str(m["id"]))
+    kept = merge_openrouter_model_rows(kept)
     return {
         "source": "openrouter.ai/api/v1/models + /endpoints",
         "filter": "kept models whose endpoints include one of TR's 9 keyed providers",
