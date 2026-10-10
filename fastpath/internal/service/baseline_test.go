@@ -125,7 +125,7 @@ var baseline = map[string]float64{
 	// The pending work's sweep and its staged records' scan, each every five
 	// seconds.
 	"ExecuteStreamingSql fastpath-pending-packs": 0.3,
-	"ExecuteStreamingSql spike-staging":          0.3,
+	"ExecuteStreamingSql fastpath-staging":       0.3,
 	// The client's sessions, kept up now and then.
 	"BatchCreateSessions": 0.5,
 	"CreateSession":       0.5,
@@ -144,7 +144,7 @@ var observed = map[string]float64{
 	"ExecuteStreamingSql fastpath-scan-expired":  0.5,
 	"ExecuteStreamingSql fastpath-scan-draining": 0.5,
 	"ExecuteStreamingSql fastpath-pending-packs": 0.1,
-	"ExecuteStreamingSql spike-staging":          0.1,
+	"ExecuteStreamingSql fastpath-staging":       0.1,
 }
 
 // TestAnIdleNodesLoadIsTheBaseline: a node with both roles, its front door
