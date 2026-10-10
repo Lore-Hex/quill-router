@@ -126,7 +126,11 @@ function setSigninMode(mode: SigninMode): void {
   }
 }
 
-type MarketingFunnelEvent = "landing_engaged" | "sign_in_opened";
+type MarketingFunnelEvent =
+  | "landing_engaged"
+  | "sign_in_opened"
+  | "signin_mode_switched"
+  | "signup_mode_switched";
 
 function trackFunnelEvent(event: MarketingFunnelEvent): void {
   void fetch("/analytics/events", {
@@ -347,7 +351,10 @@ function init(): void {
     const switcher = target.closest("[data-switch-mode]") as HTMLElement | null;
     if (switcher) {
       event.preventDefault();
-      setSigninMode(signinModeFrom(switcher.dataset.switchMode));
+      const mode = signinModeFrom(switcher.dataset.switchMode);
+      setSigninMode(mode);
+      if (mode === "signin") trackFunnelEvent("signin_mode_switched");
+      else trackFunnelEvent("signup_mode_switched");
       return;
     }
     const copyButton = target.closest('[data-action="copy-code"]') as HTMLElement | null;

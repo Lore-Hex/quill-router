@@ -32,6 +32,7 @@ from trusted_router.acquisition import (
     oauth_attribution_snapshot,
     record_signup_attribution,
     restore_oauth_attribution,
+    same_site_referer_path,
 )
 from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
@@ -50,6 +51,7 @@ from trusted_router.types import ErrorType
 
 OAUTH_STATE_COOKIE = "tr_oauth_state"
 OAUTH_NEXT_COOKIE = "tr_oauth_next"
+OAUTH_FROM_COOKIE = "tr_oauth_from"  # the page the sign-in started on; attribution only
 OAUTH_ATTRIBUTION_COOKIE = "tr_oauth_attribution"
 OAUTH_STATE_COOKIE_MAX_AGE = 600  # 10 minutes
 OAUTH_STATE_VERSION = "v1"
@@ -134,6 +136,7 @@ async def _handle_login(
     response = RedirectResponse(url=url, status_code=302)
     _set_state_cookie(response, state, settings)
     _set_next_cookie(response, next_path, settings)
+    _set_from_cookie(response, same_site_referer_path(request), settings)
     snapshot = oauth_attribution_snapshot(request, settings, state)
     if snapshot:
         response.set_cookie(
@@ -316,6 +319,7 @@ async def _handle_callback(
             starter_credit_microdollars=starter_credit,
             user_id=login.user_id,
             verified_email=info.email,
+            signup_path=_from_target(request),
         )
 
     target = next_target or ("/console/welcome?first=1" if first_time else "/console/api-keys")
@@ -525,6 +529,27 @@ def _next_target(request: Request) -> str | None:
     return _safe_next_path(request.cookies.get(OAUTH_NEXT_COOKIE))
 
 
+def _set_from_cookie(response: Response, from_path: str | None, settings: Settings) -> None:
+    """Remember the page the sign-in started on, so a new account can be counted per page."""
+    safe = _safe_next_path(from_path)
+    if safe is None:
+        return
+    response.set_cookie(
+        key=OAUTH_FROM_COOKIE,
+        value=safe[:256],
+        max_age=OAUTH_STATE_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=settings.environment.lower() not in {"local", "test"},
+        samesite="lax",
+        path="/",
+    )
+
+
+def _from_target(request: Request) -> str | None:
+    safe = _safe_next_path(request.cookies.get(OAUTH_FROM_COOKIE))
+    return safe[:256] if safe else None
+
+
 def _is_credit_delegation_target(value: str | None) -> bool:
     """Identify an app-originated delegated-key flow without trusting hosts.
 
@@ -546,3 +571,4 @@ def _clear_state_and_next_cookies(response: Response, settings: Settings) -> Non
     secure = settings.environment.lower() not in {"local", "test"}
     response.delete_cookie(key=OAUTH_STATE_COOKIE, path="/", secure=secure, samesite="lax")
     response.delete_cookie(key=OAUTH_NEXT_COOKIE, path="/", secure=secure, samesite="lax")
+    response.delete_cookie(key=OAUTH_FROM_COOKIE, path="/", secure=secure, samesite="lax")

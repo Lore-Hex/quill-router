@@ -102,7 +102,7 @@ renderCode();
 const heroCopy=$('[data-copy-base-url]');
 heroCopy?.addEventListener('click',async()=>{
  const ok=await copyText(TRB,heroCopy);
- if(ok)feedback('Base URL copied');
+ if(ok){feedback('Base URL copied');track('home.hero_base_url_copied');}
  else feedback(`Base URL: ${TRB}`);
  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
  $('#migrate')?.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});

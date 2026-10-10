@@ -286,6 +286,7 @@ def record_signup_attribution(
     starter_credit_microdollars: int = 0,
     user_id: str | None = None,
     verified_email: str | None = None,
+    signup_path: str | None = None,
 ) -> None:
     if _privacy_signal_enabled(request):
         return
@@ -351,6 +352,9 @@ def record_signup_attribution(
         "customer_domain_verified": bool(domain),
         "customer_domain_basis": "verified_oauth_email" if domain else "not_linked",
         "domain_observed_at": occurred_at if domain else "",
+        # The page the sign-in started on (path only), so sign-ups can be
+        # counted per page. Empty when the browser sent no same-site referer.
+        "signup_path": signup_path or "",
     }
     _log_conversion("acquisition.signup_completed", record, extra=identity)
     _log_conversion("acquisition.api_key_created", record, extra=identity)
@@ -889,6 +893,28 @@ def _has_explicit_campaign_touch(request: Request) -> bool:
 
 def _privacy_signal_enabled(request: Request) -> bool:
     return request.headers.get("sec-gpc") == "1" or request.headers.get("dnt") == "1"
+
+
+def same_site_referer_path(request: Request) -> str | None:
+    """Path of the same-site page a request came from, for sign-up attribution.
+
+    Browsers send the full page address on same-origin requests. Keep the
+    path only (no query, no fragment) so nothing typed on the page travels.
+    """
+    raw = request.headers.get("referer", "").strip()
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if not host or host != (request.url.hostname or "").lower():
+        return None
+    path = parts.path or "/"
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    return path[:256]
 
 
 def _external_referer_host(request: Request) -> str | None:

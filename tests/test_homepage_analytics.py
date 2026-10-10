@@ -17,9 +17,10 @@ CTA_MODULES = ("hero", "migration", "closing")  # trackHomepageCta in homepage.j
 
 @pytest.mark.parametrize("event", [
     "home.catalog_filter", "home.alias_copied", "home.migration_tab",
-    "home.agent_prompt_opened", "home.base_url_copied", "home.agent_prompt_copied",
-    "home.code_copied", "home.faq_opened", "home.catalog_row_clicked", "home.cta_clicked",
+    "home.base_url_copied", "home.hero_base_url_copied", "home.agent_prompt_copied",
+    "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
     "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
+    "signin_mode_switched", "signup_mode_switched",
 ])
 def test_homepage_events_use_existing_attributed_pipeline(
     client: TestClient, caplog: pytest.LogCaptureFixture, event: str,
@@ -40,7 +41,7 @@ def test_homepage_events_use_existing_attributed_pipeline(
 def test_homepage_events_reject_content_and_onboarding_metadata(
     client: TestClient, extra: dict[str, object],
 ) -> None:
-    response = client.post("/analytics/events", json={"event": "home.cta_clicked", **extra})
+    response = client.post("/analytics/events", json={"event": "home.cta_clicked.hero", **extra})
     assert response.status_code == 400
 
 
@@ -50,9 +51,9 @@ def test_homepage_events_respect_privacy_even_with_existing_attribution(
 ) -> None:
     client.get("/?utm_source=homepage-test")
     caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
-    response = client.post("/analytics/events", json={"event": "home.cta_clicked"}, headers=headers)
+    response = client.post("/analytics/events", json={"event": "home.cta_clicked.hero"}, headers=headers)
     assert response.status_code == 204
-    assert "acquisition.home.cta_clicked" not in caplog.text
+    assert "acquisition.home.cta_clicked.hero" not in caplog.text
 
 
 def test_homepage_events_without_attribution_do_not_create_identifiers(
@@ -60,9 +61,9 @@ def test_homepage_events_without_attribution_do_not_create_identifiers(
 ) -> None:
     client.cookies.clear()
     caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
-    response = client.post("/analytics/events", json={"event": "home.cta_clicked"})
+    response = client.post("/analytics/events", json={"event": "home.cta_clicked.hero"})
     assert response.status_code == 204
-    assert "acquisition.home.cta_clicked" not in caplog.text
+    assert "acquisition.home.cta_clicked.hero" not in caplog.text
     assert not response.cookies
 
 

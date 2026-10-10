@@ -324,7 +324,12 @@ function init() {
         const switcher = target.closest("[data-switch-mode]");
         if (switcher) {
             event.preventDefault();
-            setSigninMode(signinModeFrom(switcher.dataset.switchMode));
+            const mode = signinModeFrom(switcher.dataset.switchMode);
+            setSigninMode(mode);
+            if (mode === "signin")
+                trackFunnelEvent("signin_mode_switched");
+            else
+                trackFunnelEvent("signup_mode_switched");
             return;
         }
         const copyButton = target.closest('[data-action="copy-code"]');

@@ -9,6 +9,7 @@ share fixtures.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -211,6 +212,68 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     assert user.email_verified is True
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     assert live_credit_summary(workspace.id)["total_credits"] == 300_000
+
+
+@pytest.mark.asyncio
+async def test_google_signup_records_the_page_it_started_on(
+    google_client: TestClient, caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = google_client.get(
+        "/auth/google/login",
+        headers={"referer": "http://testserver/pricing?plan=team#compare"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+    # Path only: the query and fragment never leave the browser. (The cookie
+    # jar keeps the quoted wire value; the server unquotes it on read.)
+    assert google_client.cookies.get("tr_oauth_from", "").strip('"') == "/pricing"
+
+    async def fake_exchange(**_: Any) -> str:
+        return "access-token"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub="google-456",
+            email="bob@example.com",
+            email_verified=True,
+            display_name="Bob",
+        )
+
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
+        resp = google_client.get(
+            f"/google_oauth_callback?code=auth-code&state={state}",
+            follow_redirects=False,
+        )
+    assert resp.status_code == 302
+    signup = next(r for r in caplog.records if r.getMessage() == "acquisition.signup_completed")
+    assert signup.signup_path == "/pricing"
+
+
+def test_wallet_signup_records_the_page_it_started_on(
+    client: TestClient, caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_key = "0x" + "2" * 64
+    address = Account.from_key(private_key).address
+    challenge = client.post("/v1/auth/wallet/challenge", json={"address": address}).json()["data"]
+    signature = Account.sign_message(
+        encode_defunct(text=challenge["message"]), private_key=private_key
+    ).signature.hex()
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+    verify = client.post(
+        "/v1/auth/wallet/verify",
+        json={"address": address, "signature": "0x" + signature, "nonce": challenge["nonce"]},
+        headers={"referer": "http://testserver/docs/mcp"},
+    )
+    assert verify.status_code == 200, verify.text
+    signup = next(r for r in caplog.records if r.getMessage() == "acquisition.signup_completed")
+    assert signup.signup_path == "/docs/mcp"
 
 
 @pytest.mark.asyncio
