@@ -214,7 +214,8 @@ def _parse_tables(html: str) -> dict:
             if len(cells) != len(headers):
                 continue
             values = dict(zip(headers, cells, strict=True))
-            name = values["model"].get_text(" ", strip=True).removesuffix("\u2197").strip()
+            name_node = values["model"].find("a") or values["model"]
+            name = name_node.get_text(" ", strip=True).removesuffix("\u2197").strip()
             model_id = _model_id(name)
             if model_id is None:
                 continue
@@ -224,7 +225,7 @@ def _parse_tables(html: str) -> dict:
                 ("output", "completion_micro_per_m"),
                 ("cached input", "prompt_cached_micro_per_m"),
             ):
-                text = values[label].get_text(" ", strip=True)
+                text = _table_rate_text(values[label])
                 # Never interpret per-page/minute/character rates or a pair
                 # of regional/discounted prices as one token rate.
                 if re.fullmatch(r"\$\d+(?:\.\d+)?", text):
@@ -238,6 +239,16 @@ def _parse_tables(html: str) -> dict:
                 raise ValueError(f"mistral: conflicting standard prices for {model_id}")
             out[model_id] = row
     return out
+
+
+def _table_rate_text(cell: Tag) -> str:
+    text = cell.get_text(" ", strip=True)
+    sale, old = cell.find_all("ins"), cell.find_all("del")
+    if len(sale) == len(old) == 1 and len(_DOLLAR_RE.findall(text)) == 2:
+        # October 2026 docs explicitly mark the replaced and effective rates.
+        # The href is a documentation slug, not the canonical model ID.
+        return sale[0].get_text(" ", strip=True).removeprefix("Sale price:").strip()
+    return text
 
 
 def parse(html: str) -> dict:

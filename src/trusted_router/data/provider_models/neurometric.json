@@ -24,6 +24,7 @@
       "supported_features": [
         "chat",
         "completion",
+        "tools",
         "json_mode",
         "structured_outputs"
       ],
@@ -83,7 +84,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 105000,
       "output_token_price_per_m": 410000,
       "reliability": {
@@ -104,7 +105,9 @@
         "account_quota_error_codes": [
           "account_quota_exceeded"
         ]
-      }
+      },
+      "missing_since": "2026-10-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3-VL-8B-Thinking",
@@ -136,7 +139,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 162000,
       "output_token_price_per_m": 1890000,
       "reliability": {
@@ -157,7 +160,9 @@
         "account_quota_error_codes": [
           "account_quota_exceeded"
         ]
-      }
+      },
+      "missing_since": "2026-10-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gemma-4-12B-it",
@@ -277,7 +282,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 120000,
       "reliability": {
@@ -298,7 +303,9 @@
         "account_quota_error_codes": [
           "account_quota_exceeded"
         ]
-      }
+      },
+      "missing_since": "2026-10-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "tool-choice",
@@ -622,7 +629,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "documentation": {
         "description": "Converts a natural-language question into one read-only SQL query using only the database dialect and schema supplied by the caller.",
         "input_format": "Put plain text in the user message with three labeled sections: DIALECT, SCHEMA, and QUESTION. DIALECT identifies the SQL engine. SCHEMA contains the relevant tables, columns, keys, and relationships. QUESTION states the requested result, including exact output columns and ordering when required.",
@@ -650,7 +657,9 @@
         ]
       },
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 120000
+      "output_token_price_per_m": 120000,
+      "missing_since": "2026-10-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Structured Decisions",
@@ -680,7 +689,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "documentation": {
         "description": "Structured Decisions answers one bounded decision about the facts you supply, choosing from labels you define: yes/no, one of several options, or an ordered level. Instead of generating text, it reads the answer from the model's probabilities over your labels, so the result is always exactly one of them, even if the prompt asks for something else. Put rubrics or policies in a system message or in the question. Good for routing, triage, eligibility checks and policy decisions.",
         "input_format": "OpenAI chat completions. Give the labels in one of two ways:\n1) A user message whose content is a JSON object: {\"state\": <facts: string or object>, \"question\": <string>, \"options\": [labels] or {label: description}}. Use \"levels\": [ordered labels] instead of \"options\" for a scale (e.g. [\"low\",\"medium\",\"high\"]).\n2) response_format {\"type\":\"json_schema\"} whose schema has an \"answer\" property with an \"enum\" of labels; the whole conversation is used as the facts.\nSystem messages (rubric, policy, definitions) are included with the facts. Up to about 120 labels per decision. Sampling parameters (temperature, top_p, seed) are accepted and ignored. A request with no labels is answered by text generation instead.",
@@ -708,9 +717,11 @@
         ]
       },
       "input_token_price_per_m": 30000,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "missing_since": "2026-10-10",
+      "routable_reason": "delisted-upstream"
     }
   ],
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T14:07:27Z",
   "model_count": 13
 }
