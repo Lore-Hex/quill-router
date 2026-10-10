@@ -249,7 +249,14 @@ def test_drain_and_status_ownership(env, kind):
 
 @pytest.mark.parametrize('header', [None, 'async-v1', 'sync'])
 @pytest.mark.parametrize('enabled', [False, True])
-def test_dispatch_before_legacy_parser(env, header, enabled):
+def test_dispatch_before_legacy_parser(env, header, enabled, monkeypatch, shadow_deadline_clock):
+    from trusted_router import storage_gcp_async_settle
+    from trusted_router.routes import settlements
+
+    # This checks dispatch, not runner scheduling latency. Keep the fake store
+    # in one clock domain without freezing the event loop or its timeout tests.
+    for module in (handler, settlements, storage_gcp_async_settle):
+        monkeypatch.setattr(module, 'time', shadow_deadline_clock)
     body, _, _ = prepare(env)
     cfg = settings(settle_outbox_enabled=True)
     env[0].trust_settings = cfg
