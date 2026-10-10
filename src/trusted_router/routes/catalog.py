@@ -43,6 +43,7 @@ from trusted_router.image_generation import (
     image_pricing_by_resolution,
     image_supported_parameters,
 )
+from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.model_changes import last_route_changes, timestamp
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
 from trusted_router.openai_service_tiers import (
@@ -541,7 +542,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         slug: str,
         request: Request,
     ) -> dict[str, list[dict[str, Any]]]:
-        model_id = f"{author}/{slug}"
+        model_id = canonical_router_model_id(f"{author}/{slug}")
         model = MODELS.get(model_id)
         if model is None:
             return {"data": []}

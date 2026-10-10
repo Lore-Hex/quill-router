@@ -41,6 +41,7 @@ from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slu
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
+from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.provider_ranking import measured_provider_rank
 from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.types import ErrorType
@@ -828,6 +829,7 @@ def resolve_model_alias(model_id: str) -> str:
     (already vendor-prefixed) short-circuit on the first check, so real ids and
     meta ids (AUTO / fusion / zdr / …) are never altered.
     """
+    model_id = canonical_router_model_id(model_id)
     if model_id in ROUTING_MODEL_ALIAS_TARGETS:
         return ROUTING_MODEL_ALIAS_TARGETS[model_id]
     if model_id in MODELS:
