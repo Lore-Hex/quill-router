@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -346,7 +347,7 @@ func TestARequestFindsItsOwnerOnAnotherNode(t *testing.T) {
 		start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: db, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
@@ -433,7 +434,7 @@ func TestAStoppedOwnersLeaseDrains(t *testing.T) {
 		stops[ln] = start(t, cfg, Clients{Spanner: shared, PubSub: ps})
 	}
 	member := short(config(a))
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: shared, PubSub: ps})
 
 	gw := frontdoor.Gateway{Client: &http.Client{Timeout: 10 * time.Second}, Base: "http://" + a.Addr().String()}
@@ -501,7 +502,7 @@ func twoNodes(t *testing.T, name string, set func(owner bool, cfg *Config)) (a, 
 		stops[ln] = start(t, cfg, Clients{Spanner: db, PubSub: ps})
 	}
 	member := config(a)
-	member.Admission, member.Address, member.Listener = false, "", nil
+	member.Admission, member.Address, member.Listener = false, storetest.UniqueID("auditor"), nil
 	start(t, member, Clients{Spanner: db, PubSub: ps})
 	return a, b, stops, db, ws
 }
@@ -1436,7 +1437,7 @@ func TestTheStagerWaitsForItsCallbacks(t *testing.T) {
 	}
 	ps := pubSub(t)
 	cfg := config(listen(t))
-	cfg.Admission, cfg.Address, cfg.Listener = false, "", nil
+	cfg.Admission, cfg.Address, cfg.Listener = false, storetest.UniqueID("auditor"), nil
 	alerted, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	cfg.Alert = func(subject, what string) {
@@ -1612,5 +1613,45 @@ func TestARotationsPhasesTakeEachOthersEnvelopes(t *testing.T) {
 		Full: []byte(`{"request":"r1","boot":"boot","charge":30}`), Money: []byte(`{"cost":30}`)})
 	if err != nil || settled.Status != frontdoor.Won || settled.Charge != 30 {
 		t.Fatalf("the first phase's request settled through the second's node: %+v %v", settled, err)
+	}
+}
+
+// TestAMemberRowSaysWhatAProcessRuns: an admission node that runs an
+// auditor member too is a member with every role, and an auditor member of
+// its own, with no listener, is a member live with the auditor role alone,
+// so a deploy sees what each process runs.
+func TestAMemberRowSaysWhatAProcessRuns(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	both := config(ln)
+	alone := config(ln)
+	alone.Admission, alone.Address, alone.Listener = false, storetest.UniqueID("auditor"), nil
+	ps := pubSub(t)
+	start(t, both, Clients{Spanner: shared, PubSub: ps})
+	start(t, alone, Clients{Spanner: shared, PubSub: ps})
+	s, err := store.New(shared, both.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		address string
+		roles   []string
+	}{{both.Address, []string{"owner", "frontdoor", "auditor"}}, {alone.Address, []string{"auditor"}}} {
+		eventually(t, 10*time.Second, "the member row of "+c.address, func() (bool, error) {
+			st, err := s.NodeStatus(ctx, c.address)
+			if err != nil || !st.Found {
+				return false, err
+			}
+			if !slices.Equal(st.Roles, c.roles) || st.State != store.Serving {
+				return false, fmt.Errorf("the row: %+v", st)
+			}
+			return st.Live, nil
+		})
 	}
 }

@@ -140,6 +140,14 @@ else
 fi
 wait_index_read_write tr_lease_by_state
 
+if index_exists tr_lease_by_owner; then
+  log "tr_lease_by_owner: already present"
+else
+  apply_ddl "CREATE INDEX tr_lease_by_owner ON tr_lease (owner_node, state)"
+  log "tr_lease_by_owner: created"
+fi
+wait_index_read_write tr_lease_by_owner
+
 if index_exists tr_lease_by_id; then
   log "tr_lease_by_id: already present"
 else

@@ -108,7 +108,7 @@ func (o *Owner) Renew(ctx context.Context) error {
 	var refs []store.LeaseRef
 	var renewing []*Lease
 	for _, l := range leases {
-		if !o.cfg.Enabled(l.workspace) {
+		if o.abandoned(l, now) {
 			l.Close()
 			continue
 		}
@@ -145,12 +145,26 @@ func (o *Owner) Renew(ctx context.Context) error {
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)
 		}
-		if l.letIfAbandoned(now, !o.cfg.Enabled(l.workspace)) {
+		if l.letIfAbandoned(now, o.abandoned(l, now)) {
 			o.Let(l.id)
 		}
 	}
 	o.retryLost()
 	return nil
+}
+
+// abandoned: the owner renews the lease no more, and lets it go past its
+// cutoff, for the auditor to finish (§4.8): its workspace is off, or the
+// owner retired a hold's life and the grace ago, so every hold admitted
+// before has had its time, and one still open, a request whose terminal
+// never came, would otherwise keep the lease, and the node, for ever.
+func (o *Owner) abandoned(l *Lease, now time.Time) bool {
+	if !o.cfg.Enabled(l.workspace) {
+		return true
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.retiring && !now.Before(o.retiredAt.Add(o.cfg.HoldLife+o.cfg.Grace))
 }
 
 // renewable: the owner renews a lease it holds, unless its publishes have

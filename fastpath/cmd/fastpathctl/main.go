@@ -6,6 +6,7 @@
 //	fastpathctl -database projects/P/instances/I/databases/D disable WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D status WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D disable-all
+//	fastpathctl -database projects/P/instances/I/databases/D node ADDRESS
 //
 // disable revokes the workspace's open leases with the switch, and
 // disable-all turns every workspace off and revokes every open lease, the one
@@ -13,8 +14,10 @@
 // the workspace's rows by its keys, read only, and exits 0 once it is off
 // with no lease open or draining, nothing its leases' donors hold, no pack's
 // work pending and no staged record, and 3 until then: turning a workspace
-// off waits on it before any node stops (W2). A command whose answer cannot
-// be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
+// off waits on it before any node stops (W2). node reads a node's row and the
+// open leases it owns, and exits 0 once it is marked leaving and owns none,
+// so a deploy may stop it, and 3 until then (W8). A command whose answer
+// cannot be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
 // emulator instead.
 package main
 
@@ -72,7 +75,7 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 		return 2, err
 	}
-	usage := errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE, or disable-all")
+	usage := errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE, node|leave|closed ADDRESS, or disable-all")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
@@ -82,8 +85,9 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if fs.NArg() != 1 {
 			return 2, usage
 		}
-	case command != "enable" && command != "disable" && command != "status":
-		return 2, fmt.Errorf("%q is not enable, disable, status or disable-all", command)
+	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "leave" &&
+		command != "closed":
+		return 2, fmt.Errorf("%q is not enable, disable, status, node, leave, closed or disable-all", command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	}
@@ -110,6 +114,32 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 		answer = map[string]any{"workspace": workspace, "enabled": command == "enable", "revoked_leases": revoked,
 			"at": at}
+	case "leave":
+		// The forced exit's fence: a node that stopped before it was marked
+		// leaving is marked so, at whatever epoch, so no grant lands after.
+		found, err := s.Leave(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		answer = map[string]any{"address": workspace, "found": found}
+		if !found {
+			code = notDone
+		}
+	case "node", "closed":
+		// node is the planned replacement's check, closed the forced exit's:
+		// whether anything of the node's is left to the auditor.
+		st, err := s.NodeStatus(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		done, why := st.Done()
+		if command == "closed" {
+			done, why = st.Closed()
+		}
+		answer = map[string]any{"node": st, "done": done, "why_not": why}
+		if !done {
+			code = notDone
+		}
 	default:
 		st, err := s.WorkspaceStatus(ctx, workspace)
 		if err != nil {

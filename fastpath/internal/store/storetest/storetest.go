@@ -170,3 +170,12 @@ func Enabled(workspace string) *spanner.Mutation {
 	return spanner.InsertOrUpdateMap("tr_fastpath_workspace", map[string]any{
 		"workspace_id": workspace, "enabled": true, "changed_at": spanner.CommitTimestamp})
 }
+
+// Member is the mutation that makes a node a member serving at an epoch,
+// as an owner (tr_fastpath_member), which a test applies before granting
+// leases to it: a grant is taken only for a member serving at its epoch.
+func Member(address string, epoch int64) *spanner.Mutation {
+	return spanner.InsertOrUpdateMap("tr_fastpath_member", map[string]any{
+		"address": address, "epoch": epoch, "roles": []string{"owner"}, "state": "serving",
+		"started_at": spanner.CommitTimestamp, "heartbeat_at": spanner.CommitTimestamp})
+}
