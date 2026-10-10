@@ -288,6 +288,24 @@ def test_speech_doc_contract(client: TestClient) -> None:
     ]
 
 
+def test_public_speech_guide_explains_billing_units_and_token_hold(client: TestClient) -> None:
+    from bs4 import BeautifulSoup
+
+    from trusted_router.speech import GEMINI_INPUT_LIMIT, GEMINI_OUTPUT_LIMIT
+
+    response = client.get("/docs")
+    assert response.status_code == 200
+    section = BeautifulSoup(response.text, "html.parser").select_one("#text-to-speech")
+    assert section is not None
+    text = section.get_text(" ", strip=True)
+    assert "xAI, Mistral, ElevenLabs, and Microsoft charge by input characters" in text
+    assert "Gemini charges by text-input and audio-output tokens" in text
+    assert f"{GEMINI_INPUT_LIMIT:,} text-input and {GEMINI_OUTPUT_LIMIT:,} audio-output tokens" in text
+    assert "provider-reported usage" in text
+    assert "releases the unused hold" in text
+    assert "Charges use input characters, not tokens" not in text
+
+
 def test_speech_public_prices_are_character_based(client: TestClient) -> None:
     from trusted_router.dashboard import _model_detail_view, _model_view
 

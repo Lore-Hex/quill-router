@@ -1,4 +1,4 @@
-"""Refresh character tariffs independently of token-price normalization."""
+"""Refresh speech tariffs independently of the language-model pricing pipeline."""
 
 from __future__ import annotations
 
@@ -19,6 +19,22 @@ SNAPSHOT = Path(__file__).resolve().parents[2] / "src/trusted_router/data/speech
 GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 ELEVENLABS_URL = "https://elevenlabs.io/pricing/api"
 MICROSOFT_URL = "https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/build-expressive-voice-experiences-with-new-mai-models-in-microsoft-foundry/4524637"
+
+# Reviewed Standard TTS transition published at GEMINI_URL. Unlike the
+# provider-specific runtime schedules in provider_lifecycle, speech snapshots
+# store only current rates. Approve these exact old/new pairs from the dated
+# cutover onward (including a delayed refresh), never arbitrary 2x changes.
+_GEMINI_2027_EFFECTIVE_ON = date(2027, 1, 1)
+_GEMINI_2027_TRANSITIONS = {
+    "google/gemini-3.8-flash-tts": (
+        {"input": 500_000, "output": 9_000_000},
+        {"input": 1_000_000, "output": 18_000_000},
+    ),
+    "google/gemini-3.8-flash-lite-tts": (
+        {"input": 500_000, "output": 6_000_000},
+        {"input": 1_000_000, "output": 12_000_000},
+    ),
+}
 
 
 def parse_elevenlabs_prices(html: str) -> dict[str, int]:
@@ -165,6 +181,7 @@ def parse_character_price(model: str, html: str) -> int:
 
 
 def refresh() -> None:
+    today = datetime.now(UTC).date()
     before = json.loads(SNAPSHOT.read_text())
     prices = {}
     for model, url in SOURCES.items():
@@ -188,15 +205,19 @@ def refresh() -> None:
             prices[model] = price
     response = requests.get(GEMINI_URL, timeout=30)
     response.raise_for_status()
-    token_prices = parse_gemini_token_prices(response.text)
+    token_prices = parse_gemini_token_prices(response.text, today=today)
     for model, rates in token_prices.items():
+        approved_transition = (
+            today >= _GEMINI_2027_EFFECTIVE_ON
+            and (before["token_prices"][model], rates) == _GEMINI_2027_TRANSITIONS.get(model)
+        )
         for kind, price in rates.items():
             previous = before["token_prices"][model][kind]
-            if price >= previous * 2 or price * 2 <= previous:
+            if (price >= previous * 2 or price * 2 <= previous) and not approved_transition:
                 raise ValueError(f"Speech price change requires review: {model} {kind}")
     # Fetch and validate every rate before touching the last-known-good file.
     snapshot = {
-        "checked_on": datetime.now(UTC).date().isoformat(),
+        "checked_on": today.isoformat(),
         "unit": "microdollars_per_million_input_characters",
         "prices": prices,
         "token_prices": token_prices,

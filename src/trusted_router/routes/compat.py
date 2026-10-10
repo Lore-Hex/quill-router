@@ -56,7 +56,7 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
                                 "voice": {"type": "string", "example": "eve"},
                                 "response_format": {
                                     "type": "string",
-                                    "enum": ["mp3", "pcm"],
+                                    "enum": ["mp3", "pcm", "wav"],
                                     "default": "pcm",
                                 },
                                 "speed": {"type": "number", "default": 1},
@@ -76,6 +76,7 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
                     "content": {
                         "audio/mpeg": {"schema": {"type": "string", "format": "binary"}},
                         "audio/pcm": {"schema": {"type": "string", "format": "binary"}},
+                        "audio/wav": {"schema": {"type": "string", "format": "binary"}},
                     },
                 }
             },
