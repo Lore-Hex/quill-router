@@ -1845,6 +1845,18 @@ PROVIDERS: dict[str, Provider] = {
     # posture are explicit, but they are not admitted to the chat gateway. Their
     # credentials either address an asynchronous media/deployment API or their
     # account does not expose exact billable token prices yet.
+    "elevenlabs": Provider(
+        slug="elevenlabs", name="ElevenLabs", supports_chat=False,
+        supports_prepaid=True, supports_byok=False,
+        # Eleven Labs Inc.; https://elevenlabs.io/contact-legal
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+        provider_policy=(
+            "Native text-to-speech with character-based billing. Standard retention "
+            "applies; enterprise Zero Retention Mode is not enabled on this route. "
+            "No confidential-compute or provider-side E2EE claim is made."
+        ),
+        provider_policy_url="https://elevenlabs.io/docs/overview/administration/zero-retention-mode",
+    ),
     "krea": Provider(
         slug="krea",
         name="Krea",
@@ -2346,6 +2358,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sakana",
         "perplexity",
         "krea",
+        "elevenlabs",
         "fal",
         "nvidia-nim",
         "jina",
@@ -3808,6 +3821,12 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "elevenlabs": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="ElevenLabs",
+        source_url="https://elevenlabs.io/contact-legal",
+        note="Eleven Labs Inc. lists its legal address in New York; this is not an inference-residency claim.",
+    ),
     "openai": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="OpenAI",

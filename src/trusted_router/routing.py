@@ -44,6 +44,7 @@ from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.provider_ranking import measured_provider_rank
 from trusted_router.routing_state import Thresholds, parse_thresholds
+from trusted_router.speech import SPEECH_MODELS
 from trusted_router.types import ErrorType
 from trusted_router.video_billing import video_endpoint_for_resolution
 
@@ -339,6 +340,25 @@ def catalog_endpoint_candidates(
     candidates = _sort_endpoint_candidates(candidates, prefs)
     if not prefs.allow_fallbacks:
         return candidates[:1]
+    return candidates
+
+
+def speech_route_endpoint_candidates(
+    inputs: NormalizedRoutingInputs,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Speech uses the same hard privacy, key, and provider policy as text."""
+    if len(inputs.model_ids) != 1 or inputs.model_ids[0] not in SPEECH_MODELS:
+        raise api_error(400, "Model does not support speech", ErrorType.MODEL_NOT_SUPPORTED)
+    if not SPEECH_MODELS[inputs.model_ids[0]].token_billed and (
+        inputs.preferences.max_prompt_price_microdollars_per_million_tokens is not None
+        or inputs.preferences.max_completion_price_microdollars_per_million_tokens is not None
+    ):
+        raise api_error(400, "Token-price limits do not apply to character-billed speech", ErrorType.BAD_REQUEST)
+    model = MODELS[inputs.model_ids[0]]
+    candidates = catalog_endpoint_candidates(model, inputs.preferences)
+    candidates = [(m, e) for m, e in candidates if not e.is_byok]
+    if not candidates:
+        raise api_error(400, "No speech routes match the requested provider filters", ErrorType.MODEL_NOT_SUPPORTED)
     return candidates
 
 

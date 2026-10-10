@@ -37,6 +37,7 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
+from trusted_router.speech import SPEECH_MODELS
 
 SLUG = "gemini"
 URL = "https://ai.google.dev/gemini-api/docs/pricing"
@@ -216,6 +217,15 @@ def _probe_generate_content(*, api_key: str | None, native_id: str) -> bool:
 
 
 def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id: str) -> bool:
+    speech = SPEECH_MODELS.get(model_id)
+    if speech is not None and speech.provider == "google-ai-studio":
+        # These live, explicitly implemented routes use the separate audio tariff
+        # parser, never the text-only generateContent pricing/canary path.
+        row.update(model_type="speech", input_modalities=["text"],
+                   output_modalities=["speech"], endpoints=["audio/speech"],
+                   input_token_price_per_m=speech.input_token_cost,
+                   output_token_price_per_m=speech.output_token_cost)
+        return True
     price = result.prices.get(model_id)
     if price is None:
         return False
@@ -255,7 +265,8 @@ def fetch() -> ProviderPricingResult:
         required_models=required_price_ids,
     )
     result.prices = {
-        model_id: price for model_id, price in result.prices.items() if model_id in live_rows
+        model_id: price for model_id, price in result.prices.items()
+        if model_id in live_rows and model_id not in SPEECH_MODELS
     }
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
@@ -333,7 +344,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     rebuilt = reconcile_manifest_tombstones(
         rows,
         present_rows,
-        priced_ids=set(result.prices),
+        priced_ids=set(result.prices) | {
+            mid for mid in present_rows if mid in SPEECH_MODELS
+            and SPEECH_MODELS[mid].provider == "google-ai-studio"
+        },
         source=result.source,
     )
     guarded = guard_manifest_prune(rows, rebuilt, provider_slug=SLUG)

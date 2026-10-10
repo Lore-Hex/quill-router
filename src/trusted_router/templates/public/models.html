@@ -106,7 +106,11 @@
           <div><span>Input</span><strong>{{ model.prompt_price }}</strong></div>
           <div><span>Cached input</span><strong>{{ model.cached_prompt_price }}</strong></div>
           <div><span>Output</span><strong>{{ model.completion_price }}</strong></div>
+          {% if model.speech %}
+          <div><span>Input limit</span><strong>{{ model.speech.max_input_characters }} characters</strong></div>
+          {% else %}
           <div><span>Context</span><strong title="{{ model.context_length }} tokens">{{ model.context_length_compact }}</strong></div>
+          {% endif %}
         </div>
       </div>
 
@@ -162,7 +166,7 @@
 
   <div class="model-catalog-note">
     <p><strong>API JSON remains</strong> at <code>{{ api_base_url }}/models</code> with an API key. Use <code>trustedrouter/auto</code> for general routing, <code>trustedrouter/eu</code> for EU-focused routes, or a privacy floor such as <code>trustedrouter/zdr</code> or <code>trustedrouter/e2e</code>.</p>
-    <p>Prices are customer prices per one million tokens. Cached input is shown only when a provider publishes a distinct cache-read rate. Filter open weights or browse <a href="/us-ai-models">US</a>, <a href="/eu-ai-models">European</a>, and <a href="/china-ai-models">Chinese</a> model guides.</p>
+    <p>Prices are customer prices per one million tokens unless another billing unit is shown. Character-billed speech is labeled per million input characters; Gemini speech uses text-input and audio-output tokens. Cached input is shown only when a provider publishes a distinct cache-read rate. Filter open weights or browse <a href="/us-ai-models">US</a>, <a href="/eu-ai-models">European</a>, and <a href="/china-ai-models">Chinese</a> model guides.</p>
   </div>
 </section>
 {% endblock %}

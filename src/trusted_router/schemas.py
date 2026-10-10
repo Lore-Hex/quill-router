@@ -364,6 +364,7 @@ class GatewaySettleResponse(BaseModel):
 
 
 class GatewayAuthorizeRequest(_Lenient):
+    speech_input_characters: int | None = Field(default=None, ge=1, le=60_000)
     video_resolution: str | None = None
     # Enclave-derived opaque routing hints; never persist them with activity.
     cache_affinity_key: str | None = Field(default=None, pattern="^[0-9a-f]{64}$", exclude=True)

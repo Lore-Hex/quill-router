@@ -157,6 +157,7 @@ from trusted_router.routing import (
     normalize_routing_inputs,
     provider_route_preferences,
     resolved_route_preferences,
+    speech_route_endpoint_candidates,
     video_route_endpoint_candidates,
 )
 from trusted_router.routing_state import ROUTING_STATE
@@ -199,9 +200,11 @@ from trusted_router.services.user_model_slots import (
     acquire_user_model_slot,
     release_user_model_slot,
 )
+from trusted_router.speech import SPEECH_MODELS
 from trusted_router.stage_d import (
     ESTIMATED_USAGE_SNAPSHOT_MODELS,
     ESTIMATED_USAGE_SNAPSHOT_REASON,
+    SPEECH_SNAPSHOT_REASON,
     billing_pricing_snapshot,
     canonical_pricing_snapshot,
     endpoint_pricing_document,
@@ -319,6 +322,7 @@ _ADDITIONAL_COST_ROUTE_TYPES = frozenset(
         "responses.web_search.planner",
         "chat.completions.web_search.planner",
         "images",
+        "audio.speech",
         "videos",
     }
 )
@@ -1045,9 +1049,30 @@ def _authorize_gateway_sync_impl(
     region = choose_region(settings, body.region or None)
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
+    is_speech_request = body.route_type == "audio.speech"
+    if is_speech_request:
+        if (
+            body.model not in SPEECH_MODELS or body.models
+            or body.speech_input_characters is None
+            or body.service_tier or body.inference_receipt
+            or not body.request_fingerprint
+        ):
+            raise api_error(400, "Invalid speech authorization metadata", ErrorType.BAD_REQUEST)
+        try:
+            speech_spec = SPEECH_MODELS[body.model]
+            speech_quote = speech_spec.quote(body.speech_input_characters)
+            if speech_spec.token_billed:
+                if body.estimated_input_tokens != 8192 or body.output_estimate != 16384:
+                    raise ValueError("Token-billed speech requires its full token limits reserved")
+            elif body.estimated_input_tokens != 0:
+                raise ValueError("Character-billed speech cannot include token usage")
+        except ValueError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
+    elif body.speech_input_characters is not None:
+        raise api_error(400, "Speech usage requires the speech endpoint", ErrorType.BAD_REQUEST)
     def prepare_fingerprint() -> tuple[dict[str, Any], str]:
         fingerprint_body = dict(body_dict)
-        if is_video_request or is_image_request:
+        if is_video_request or is_image_request or is_speech_request:
             # Provider quotes can change between retries. The enclave supplies a
             # keyed content fingerprint, so media idempotency binds to the logical
             # request without storing content or coupling replay to a fresh quote.
@@ -1297,6 +1322,10 @@ def _authorize_gateway_sync_impl(
             pricing_effective_at=pricing_effective_at,
             allowed_providers=video_allowed_providers,
         )
+    elif is_speech_request:
+        if custom_model is not None:
+            raise api_error(400, "Custom models do not support speech", ErrorType.MODEL_NOT_SUPPORTED)
+        endpoint_candidates = speech_route_endpoint_candidates(normalized_routing)
     elif is_image_request:
         if custom_model is not None:
             raise api_error(
@@ -1419,12 +1448,12 @@ def _authorize_gateway_sync_impl(
         service_tier=service_tier,
         estimated_input_tokens=input_tokens,
     )
-    additional_cost_reservation = body.additional_cost_reservation_microdollars
+    additional_cost_reservation = speech_quote if is_speech_request else body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
         if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
             raise api_error(
                 400,
-                "additional cost reservations are only available for hosted search, image, or video",
+                "additional cost reservations require a supported hosted tool or media route",
                 ErrorType.BAD_REQUEST,
             )
         # Hosted tools and asynchronous media are operator-funded, so their
@@ -1489,6 +1518,9 @@ def _authorize_gateway_sync_impl(
         )
     )
     model_usage_type = UsageType.for_endpoint(endpoint)
+    if is_speech_request and not speech_spec.token_billed:
+        # Characters are not tokens. The complete frozen quote is held below.
+        model_estimate = 0
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         for _candidate_model, candidate_endpoint in endpoint_candidates
@@ -1600,7 +1632,11 @@ def _authorize_gateway_sync_impl(
         )
     ):
         stage_d_reason = ESTIMATED_USAGE_SNAPSHOT_REASON
-    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON}:
+    if is_speech_request and speech_spec.token_billed:
+        if app_markup_basis_points:
+            raise api_error(400, "Speech does not support app markups", ErrorType.BAD_REQUEST)
+        stage_d_reason = SPEECH_SNAPSHOT_REASON
+    if stage_d_reason in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON}:
         pricing_snapshot = canonical_pricing_snapshot(
             endpoint_pricing_document(
                 effective_endpoint(candidate_endpoint, at=pricing_effective_at)
@@ -1983,6 +2019,8 @@ def _authorize_gateway_sync_impl(
             native_batch_eligible=native_batch_eligible,
             video_pricing_snapshot=video_snapshot,
             settlement=settlement,
+            **({"pricing_snapshot": pricing_snapshot, "stage_d_reason": stage_d_reason}
+               if stage_d_reason == SPEECH_SNAPSHOT_REASON else {}),
             expires_at=authorization_expires_at,
             # The outstanding increment rides the SAME transaction that
             # inserts the authorization, so an idempotent replay (which
@@ -3771,6 +3809,29 @@ def _settle_gateway_authorization(
         )
         actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
+    if authorization.model_id in SPEECH_MODELS:
+        # A generic refund must still work, but a success may not omit the
+        # character charge, smuggle token usage, or replay under another route.
+        speech_spec = SPEECH_MODELS[authorization.model_id]
+        if success and speech_spec.token_billed:
+            if (body.route_type != "audio.speech" or additional_cost != 0
+                or not 0 < total_input <= 8192 or not 0 < output_tokens <= 16384
+                or cache_read or cache_creation or body.service_tier
+                or actual_cost > authorization.estimated_microdollars):
+                raise api_error(400, "Invalid speech token settlement", ErrorType.BAD_REQUEST)
+        elif success and (
+            body.route_type != "audio.speech"
+            or total_input != 0 or output_tokens != 0
+            or additional_cost != authorization.additional_cost_reservation_microdollars
+            or additional_cost <= 0
+        ):
+            raise api_error(400, "Speech settlement must match its frozen character quote", ErrorType.BAD_REQUEST)
+        if not success and additional_cost:
+            raise api_error(400, "Speech refunds cannot charge for audio", ErrorType.BAD_REQUEST)
+        if not speech_spec.token_billed:
+            actual_cost = 0
+    elif body.route_type == "audio.speech":
+        raise api_error(400, "Authorization is not for speech", ErrorType.BAD_REQUEST)
     if (
         body.route_type == "videos"
         and authorization.video_pricing_snapshot is not None
@@ -3788,7 +3849,7 @@ def _settle_gateway_authorization(
         if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
             raise api_error(
                 400,
-                "additional cost settlement is only available for hosted search, image, or video",
+                "additional cost settlement requires a supported hosted tool or media route",
                 ErrorType.BAD_REQUEST,
             )
         if additional_cost > authorization.additional_cost_reservation_microdollars:

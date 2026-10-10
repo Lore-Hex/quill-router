@@ -105,6 +105,12 @@ _SHARED_LIVE_SCRAPER_OWNERS = {
     "google-vertex": "google_vertex",
 }
 
+# Media-only providers use the hourly speech tariff refresher rather than a
+# chat-token manifest. Keep coverage tied to the actual refresher file.
+_DEDICATED_LIVE_SCRAPERS = {
+    "elevenlabs": ROOT / "scripts" / "pricing" / "speech.py",
+}
+
 
 def _identity_model_id(native_id: str) -> str | None:
     value = native_id.strip()
@@ -1139,6 +1145,8 @@ def _run_audit(
         provider
         for provider, owner in _SHARED_LIVE_SCRAPER_OWNERS.items()
         if owner in scraper_modules
+    } | {
+        provider for provider, path in _DEDICATED_LIVE_SCRAPERS.items() if path.is_file()
     }
     warnings: list[str] = []
     info: list[str] = []
