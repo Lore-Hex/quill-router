@@ -322,8 +322,15 @@ func TestTheWindowCoversTheLooks(t *testing.T) {
 	}
 	base := []string{"-database", "d", "-project", "p", "-instance", "i", "-subscriptions", "a", "-workspace", "ws",
 		"-max-cpu", "0.5", "-every", "1m", "-timeout", "30s", "-misses", "2"}
-	for _, c := range []struct{ fresh, exact, short string }{{"4m", "6m", "5m59s"}, {"2m", "5m", "4m59s"}} {
-		with := func(window string) []string { return append(slices.Clone(base), "-fresh", c.fresh, "-window", window) }
+	for _, c := range []struct{ fresh, exact, short string }{{"4m", "6m", "5m59s"}, {"2m", "5m", "4m59s"}, {"", "7m", "6m59s"}} {
+		// No -fresh: the default, five minutes.
+		with := func(window string) []string {
+			args := slices.Clone(base)
+			if c.fresh != "" {
+				args = append(args, "-fresh", c.fresh)
+			}
+			return append(args, "-window", window)
+		}
 		if code, err := run(context.Background(), with(c.exact), &bytes.Buffer{}, d); code != 1 || !errors.Is(err, opened) {
 			t.Fatalf("-fresh %s: a window of exactly two looks and the delay: exit %d, %v", c.fresh, code, err)
 		}

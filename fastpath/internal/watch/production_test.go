@@ -120,7 +120,7 @@ func served(t *testing.T, m *metrics, subs ...string) *Monitoring {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return &Monitoring{Client: client, Project: "proj", Instance: "trusted-router-nam6", Subs: subs,
-		Window: 5 * time.Minute, Fresh: 4 * time.Minute, Clock: func() time.Time { return start }}
+		Window: 5 * time.Minute, Fresh: 5 * time.Minute, Clock: func() time.Time { return start }}
 }
 
 const cpuFilter = `resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND ` +
@@ -190,11 +190,19 @@ func TestMonitoringReadsEachBacklog(t *testing.T) {
 // Fresh less the minute it stands for, as of a source that stopped
 // reporting, fails the read; one exactly that old is read.
 func TestAStaleSeriesIsAFailedRead(t *testing.T) {
-	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}}, age: 3 * time.Minute}
+	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}}, age: 4 * time.Minute}
 	if cpu, err := served(t, m).SpannerCPU(context.Background()); err != nil || cpu != 0.1 {
 		t.Fatalf("a point as old as allowed: %v %v", cpu, err)
 	}
+	// Monitoring's timeline at its documented delay: a minute's samples
+	// shown three minutes after it ended, read a second into the next
+	// minute, so the newest point is 3m1s old, its newest sample up to
+	// 4m1s: within the default.
 	m.age = 3*time.Minute + time.Second
+	if cpu, err := served(t, m).SpannerCPU(context.Background()); err != nil || cpu != 0.1 {
+		t.Fatalf("a point shown at the documented delay: %v %v", cpu, err)
+	}
+	m.age = 4*time.Minute + time.Second
 	if _, err := served(t, m).SpannerCPU(context.Background()); err == nil || !strings.Contains(err.Error(), "old") {
 		t.Fatalf("a stale point: %v", err)
 	}
@@ -227,7 +235,7 @@ func TestEverySeriesIsReadOnItsOwn(t *testing.T) {
 		t.Fatalf("two regions: %v %v", cpu, err)
 	}
 	m.mu.Lock()
-	m.extra[cpuFilter][0].age = 4*time.Minute + time.Second
+	m.extra[cpuFilter][0].age = 5*time.Minute + time.Second
 	m.mu.Unlock()
 	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "old") || !strings.Contains(err.Error(), "b") {
 		t.Fatalf("a region stale beside a fresh one: %v", err)
@@ -280,7 +288,7 @@ func TestEveryPageIsRead(t *testing.T) {
 func TestASeriesSeenInAFailedReadIsExpected(t *testing.T) {
 	m := &metrics{points: map[string][]*monitoringpb.TypedValue{cpuFilter: {double(0.1)}},
 		extra: map[string][]extraSeries{cpuFilter: {{region: "b", values: []*monitoringpb.TypedValue{double(0.2)},
-			age: 4*time.Minute + time.Second}}}}
+			age: 5*time.Minute + time.Second}}}}
 	src := served(t, m)
 	ctx := context.Background()
 	if _, err := src.SpannerCPU(ctx); err == nil || !strings.Contains(err.Error(), "old") {

@@ -105,7 +105,7 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	fs.DurationVar(&t.window, "window", 10*time.Minute, "how far back each look reads Monitoring: at least -misses "+
 		"times the larger of -every and -timeout, plus the larger of -fresh and Monitoring's reporting delay of three "+
 		"minutes, so no sample falls between the looks that answer")
-	fs.DurationVar(&t.fresh, "fresh", 4*time.Minute, "how old Monitoring's newest sample may be, its point's time "+
+	fs.DurationVar(&t.fresh, "fresh", 5*time.Minute, "how old Monitoring's newest sample may be, its point's time "+
 		"plus the minute it stands for: older is a failed read; above a minute, at most the window")
 	fs.IntVar(&t.limit, "pending-limit", 10_000, "the most pending packs a look reads; more fails the look")
 	var c watch.Ceilings

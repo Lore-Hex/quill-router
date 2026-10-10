@@ -19,7 +19,7 @@ import (
 // Monitoring, each the highest value of its series over the last Window,
 // aligned a minute at a time. Their points are sampled every minute and
 // visible up to ReportingDelay later, so each series' newest sample must
-// be at most Fresh old, four minutes by default, its point's time plus
+// be at most Fresh old, five minutes by default, its point's time plus
 // the minute it stands for: a series older than that is a read that
 // fails, as of a source that has stopped reporting, not a reading that
 // stays as it was; and a series that reported before and is gone fails

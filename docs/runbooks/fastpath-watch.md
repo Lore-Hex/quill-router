@@ -32,7 +32,7 @@ minute and shows a sample up to three minutes later. The watch reads each
 series over `-window`, a minute at a time, and takes the highest point of
 them all. An aligned point stands at the end of its minute for the samples
 within it, so a series whose newest point's minute began more than `-fresh`
-(4 minutes) ago, its newest sample that old at most, fails the read,
+(5 minutes) ago, its newest sample that old at most, fails the read,
 whatever the others show: a region that has stopped
 reporting is not taken to be as it was, and the highest of the rest would
 hide it. A series that reported before and is gone fails the read for the
@@ -44,7 +44,7 @@ at most `-misses` looks apart, a look starts at most the larger of `-every`
 and `-timeout` after the last, and a sample shows up to Monitoring's
 reporting delay, three minutes, late, or `-fresh` if that is longer, so
 `-window` must be at least `-misses` times that larger one, plus the larger
-of `-fresh` and three minutes: 5 minutes and 30 seconds at the defaults,
+of `-fresh` and three minutes: 6 minutes and 30 seconds at the defaults,
 under the default window of 10 minutes. The command refuses a shorter
 window, since a breach that came and went between two looks would then be
 in neither's window.
@@ -59,10 +59,13 @@ to its decision:
 - A ceiling passed in the pending work or the spend, read from the
   database: within an interval and a look, a minute at the defaults.
 - A ceiling passed in Spanner's CPU or a backlog: within the same once
-  Monitoring shows it, which can be four minutes after it happened.
+  Monitoring shows it, which can be four minutes after it happened: its
+  minute's end plus the three minutes it can take to show.
 - A source that stops answering: within `-misses` intervals and a look,
   two minutes at the defaults. Monitoring's series stopping takes
-  `-fresh` more, four minutes, before its reads fail.
+  `-fresh` more, five minutes, before its reads fail; a shorter `-fresh`
+  would fail healthy reads, since a minute's samples can show three
+  minutes after it ended and count a minute older than their point.
 
 Then the stop: the load generator is told at once and stops sending, and
 has `-stop-wait`, a minute, to exit; the workspace is turned off after,
