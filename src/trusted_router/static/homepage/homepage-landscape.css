@@ -253,3 +253,9 @@ footer{border-top:1px solid #2a3b32;background:#0a110d}.trft{padding-bottom:32px
 @media(max-width:600px){
  .page .trc tbody:not([hidden]){grid-template-columns:1fr;gap:10px}
 }
+
+/* Homepage v2 migration block: the "Agent prompt" tab gets a thin outline in the
+   secondary-button colours. Inset shadow, so no layout shift between states. */
+.trm .tab.ag{box-shadow:inset 0 0 0 1px #526859;border-radius:4px}
+.trm .tab.ag:hover{box-shadow:inset 0 0 0 1px #8cab99;background:#14251c;color:#edf8f5}
+.trm .tab.ag[aria-selected="true"]{box-shadow:inset 0 0 0 1px #cce8d7}
