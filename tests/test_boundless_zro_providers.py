@@ -158,3 +158,33 @@ def test_registration_and_published_pricing(client):
     assert not PROVIDERS["hyperbolic"].supports_prepaid
     assert client.get("/providers/hyperbolic").status_code == 200
     assert not any(ep.provider == "hyperbolic" for ep in MODEL_ENDPOINTS.values())
+
+
+def test_zro_duplicate_aliases_do_not_break_hourly_coverage(monkeypatch):
+    from scripts import check_price_coverage as coverage
+
+    monkeypatch.setattr(coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", (
+        ("zro", zro.URL, ("ZRO_API_KEY",), zro.canonical_model_id),
+    ))
+    payload = zro_catalog("glm-5.3-flash", "zro/glm-5.3-flash", "auto", "zro/auto")
+    warnings, info = coverage._model_discovery_audit(
+        fetch_text=lambda _url: "",
+        fetch_json=lambda url, _env: payload if url == zro.URL else {"data": []},
+        published_model_ids=set(),
+    )
+    assert not [warning for warning in warnings if warning.startswith("zro:")]
+    assert any(line.startswith("zro:") for line in info)
+
+
+def test_zro_prefix_only_new_model_still_triggers_coverage(monkeypatch):
+    from scripts import check_price_coverage as coverage
+
+    monkeypatch.setattr(coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", (
+        ("zro", zro.URL, ("ZRO_API_KEY",), zro.canonical_model_id),
+    ))
+    warnings, _ = coverage._model_discovery_audit(
+        fetch_text=lambda _url: "",
+        fetch_json=lambda url, _env: zro_catalog("zro/glm-5.4") if url == zro.URL else {"data": []},
+        published_model_ids=set(),
+    )
+    assert any("zro:" in warning and "glm-5.4" in warning for warning in warnings)

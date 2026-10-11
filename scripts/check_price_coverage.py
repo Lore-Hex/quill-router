@@ -946,7 +946,9 @@ def _model_discovery_audit(
             warnings.append(f"{slug}: model discovery fetch failed ({_safe_fetch_error(url, exc)})")
             continue
         discovered_ids: set[str] = set()
-        for row in _json_model_rows(payload):
+        catalog_rows = _json_model_rows(payload)
+        zro_bare_ids = {row.get("id") for row in catalog_rows if isinstance(row.get("id"), str)} if slug == "zro" else set()
+        for row in catalog_rows:
             if not _active_discovery_row(row):
                 continue
             raw_id = row.get("id") or row.get("name")
@@ -955,6 +957,10 @@ def _model_discovery_audit(
                 if row.get("mode") != "chat" or str(raw_id).startswith("brick-"):
                     continue
             if not isinstance(raw_id, str):
+                continue
+            # Zro advertises identical bare and zro/-prefixed routes. Match the
+            # pricing adapter's collapse without hiding a prefix-only model.
+            if slug == "zro" and raw_id.startswith("zro/") and raw_id[4:] in zro_bare_ids:
                 continue
             provider_alias = raw_id.removeprefix("models/")
             # Preserve already-classified provider-native IDs even when they
