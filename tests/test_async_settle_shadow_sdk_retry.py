@@ -711,3 +711,37 @@ def test_a_flush_defers_a_row_its_remainder_cannot_hold(sdk_database):
         assert all(not body['drops'] for body in rt.counters.days.values())
     finally:
         rt.executor.shutdown()
+
+
+def test_a_current_day_flush_with_a_short_remainder_attempts_nothing(sdk_database):
+    """A flush of the current day alone whose budget cannot hold a whole
+    transaction attempts no RPC, acknowledges nothing and drops nothing: the
+    row waits, and the next flush with a whole budget persists it. This is
+    the remainder gate on its own, apart from the after-a-close rule."""
+    from tests.test_async_settle_ticket import runtime, settings
+    from trusted_router.async_settle_shadow_evidence import dimensions
+    from trusted_router.services.async_settle_shadow import FLUSH_BUDGET_SECONDS, Runtime
+
+    db, clock, sleeps = sdk_database
+    db.read_duration = .5
+    db.commit_duration = .8
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.counters.clock = lambda: 1791244800.
+    acknowledged = []
+    acknowledge = rt.counters.acknowledge
+    rt.counters.acknowledge = lambda identity, body: (acknowledged.append(identity), acknowledge(identity, body))
+    try:
+        rt.counters.increment(dimensions('openai', 'responses', False), 'authorize_attempts')
+        rt.last_flush = 0
+        started = clock.monotonic()
+        rt.flush(started + WRITE_BUDGET_SECONDS - .01)
+        assert db.calls == [] and acknowledged == []
+        assert clock.monotonic() == started
+        assert all(not body['drops'] for body in rt.counters.days.values())
+        rt.last_flush = 0
+        rt.flush(clock.monotonic() + FLUSH_BUDGET_SECONDS)
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        assert len(acknowledged) == 1
+        assert sleeps == []
+    finally:
+        rt.executor.shutdown()
