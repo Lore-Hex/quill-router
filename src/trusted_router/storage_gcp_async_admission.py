@@ -1,15 +1,71 @@
 """One strong, bounded admission read. No writes, entity scans, or fleet scans."""
 from __future__ import annotations
 
-from typing import Any
+import logging
+import threading
+import time
+from typing import Any, Literal
 
+from google.api_core import exceptions as api_errors
 from google.cloud.spanner_v1 import param_types
 
 from trusted_router.services.async_settle import Admission, parse_health_record, valid_health_record
+from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_deadline
 
 # São Paulo to nam6 measured ~150 ms per round trip; allow reads and read+commit.
 READ_DEADLINE_SECONDS = 0.5
 ROW_LIMIT = 1000
+logger = logging.getLogger(__name__)
+_ReadOperation = Literal["admission", "drain_health"]
+_read_failure_lock = threading.Lock()
+_read_failure_logs: dict[tuple[_ReadOperation, str], tuple[float, int]] = {}
+
+
+def _report_read_failure(operation: _ReadOperation, error: Exception, started: float) -> None:
+    # Only fixed categories leave this module: exceptions may contain SQL,
+    # credentials and customer data. Never attach the exception or stack.
+    reason = "other"
+    for cls, label in ((api_errors.DeadlineExceeded, "deadline_exceeded"),
+                       (api_errors.Cancelled, "cancelled"),
+                       (api_errors.Aborted, "aborted"),
+                       (api_errors.ServiceUnavailable, "unavailable"),
+                       (api_errors.InternalServerError, "internal"),
+                       (api_errors.PermissionDenied, "permission_denied"),
+                       (api_errors.ResourceExhausted, "resource_exhausted")):
+        if isinstance(error, cls):
+            reason = label
+            break
+    now = time.monotonic()
+    key = (operation, reason)
+    # Bounded to two operations times eight reasons, regardless of customers.
+    # Count repeats without letting one cause suppress another kind of failure.
+    with _read_failure_lock:
+        next_log, failures = _read_failure_logs.get(key, (0., 0))
+        failures += 1
+        if now < next_log:
+            _read_failure_logs[key] = (next_log, failures)
+            return
+        _read_failure_logs[key] = (now + 60, 0)
+    logger.warning("async admission read failed operation=%s reason=%s elapsed_ms=%d failures=%d",
+                   operation, reason, max(0, round((now-started)*1000)), failures)
+
+
+def _snapshot_rows(database: Any, statement: tuple[str, dict[str, Any], dict[str, Any]],
+                   operation: _ReadOperation) -> list[Any]:
+    started = time.monotonic()
+    sql, params, types = statement
+    try:
+        # retry=None does not disable the SDK's result-stream restarts. Keep
+        # one deadline active through iteration, rather than renewing on restart.
+        with spanner_rpc_deadline(started + READ_DEADLINE_SECONDS):
+            with database.snapshot() as snapshot:
+                return list(snapshot.execute_sql(
+                    sql, params=params, param_types=types, retry=None,
+                    timeout=remaining_rpc_budget(READ_DEADLINE_SECONDS),
+                    request_options={"priority": "PRIORITY_LOW", "request_tag": "tr_async_" + operation}))
+    except Exception as error:
+        _report_read_failure(operation, error, started)
+        raise
 
 
 def admission_statement(workspace_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
@@ -29,11 +85,7 @@ def admission_statement(workspace_id: str) -> tuple[str, dict[str, Any], dict[st
 
 
 def read_admission(database: Any, workspace_id: str) -> Admission:
-    sql, params, types = admission_statement(workspace_id)
-    with database.snapshot() as snapshot:
-        rows = list(snapshot.execute_sql(sql, params=params, param_types=types,
-                                        timeout=READ_DEADLINE_SECONDS, retry=None,
-                                        request_options={"priority": "PRIORITY_LOW"}))
+    rows = _snapshot_rows(database, admission_statement(workspace_id), "admission")
     if len(rows) != 1 or rows[0][0] > ROW_LIMIT:
         raise ValueError("admission unavailable")
     count, amount, tier = rows[0]
@@ -78,8 +130,7 @@ def _query(reader: Any, statement: tuple[str, dict[str, Any], dict[str, Any]]) -
 
 
 def read_health(database: Any) -> dict[str, Any] | None:
-    with database.snapshot() as snapshot:
-        rows = _query(snapshot, control_statement(HEALTH_ID))
+    rows = _snapshot_rows(database, control_statement(HEALTH_ID), "drain_health")
     if len(rows) != 1:
         return None
     return parse_health_record(rows[0][0])
@@ -132,7 +183,6 @@ def publish_health(database: Any) -> dict[str, Any]:
     """
     import datetime as dt
     import json
-    import logging
     import math
     import time
 

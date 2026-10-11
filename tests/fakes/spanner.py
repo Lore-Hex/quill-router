@@ -2293,7 +2293,18 @@ class _FakeSnapshot:
         if rpc_options:
             assert 0 < rpc_options["timeout"] <= 0.5
             assert rpc_options["retry"] is None
-            assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
+            options = dict(rpc_options["request_options"])
+            tag = options.pop("request_tag", None)
+            assert options == {"priority": "PRIORITY_LOW"}
+            # The frozen billing oracle still issues untagged reads. New
+            # diagnostics may tag only these two fixed admission query shapes.
+            if tag is not None:
+                if sql.startswith("SELECT pending.n, pending.amount, trust.trust_tier"):
+                    assert tag == "tr_async_admission"
+                else:
+                    assert sql == "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
+                    assert params == {"kind": "settle_drain_control", "id": "fleet-v1"}
+                    assert tag == "tr_async_drain_health"
         self._reads += 1
         if not self._multi_use and self._reads > 1:
             raise ValueError(

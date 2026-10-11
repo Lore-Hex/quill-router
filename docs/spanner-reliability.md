@@ -75,6 +75,30 @@ rate-limit counter so a crawler cannot create a transactional Spanner hot row.
 The alerts use status, latency, path, and aggregate transaction metadata only;
 they never inspect or export prompts or outputs.
 
+### Admission read failures
+
+The read-only async admission and drain-health observers use request tags
+`tr_async_admission` and `tr_async_drain_health`. Their 500 ms budget is shared
+across Spanner result-stream restarts, not renewed for each RPC. The SDK can
+restart streams on UNAVAILABLE or transport resets even with `retry=None`.
+An exhausted read remains ineligible; it never authorizes from partial results.
+
+Failed reads emit `async admission read failed` with a fixed operation, error
+category, elapsed milliseconds, and failure count. Identical operation/category
+pairs log at most once per minute per process, counting suppressed repetitions
+in the next failure log. Different categories and operations are independent.
+Successful reads remain quiet. No SQL parameters, workspace IDs, exception
+text, or stack traces are attached. This local log limit does not sample the
+Spanner API failure metric or change any alert threshold.
+
+An API-failure alert counts RPCs, not customers or failed inference requests.
+Correlate its window with these tags, billing request logs, and per-method/status
+Monitoring data before assigning impact. Lack of permission to read that data
+is an evidence gap, not proof of no failures. The 2026-10-11 evening alert exposed
+untagged failed admission reads, but its full RPC breakdown was unavailable;
+the stream-budget defect is independently reproduced with the real SDK and is
+not established as the cause of every error in that incident.
+
 New workspaces and their new API keys start with 16 exact billing shards.
 Existing workspaces retain their current shard count until the pause, drain,
 verify, reshard workflow completes; changing the default never rewrites a live

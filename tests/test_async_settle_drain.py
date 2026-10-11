@@ -128,8 +128,8 @@ def test_consumer_off_no_rpc_and_on_bounded_refresh(monkeypatch):
     sql, options = calls[0]
     assert sql == 'SELECT body FROM tr_entities WHERE kind=@kind AND id=@id'
     assert options['params'] == dict(kind=HEALTH_KIND, id=HEALTH_ID)
-    assert options['timeout'] == .5 and options['retry'] is None
-    assert options['request_options'] == {'priority': 'PRIORITY_LOW'}
+    assert 0 < options['timeout'] <= .5 and options['retry'] is None
+    assert options['request_options'] == {'priority': 'PRIORITY_LOW', 'request_tag': 'tr_async_drain_health'}
     assert cache.eligible('ws', 0) and len(calls) == 1
     cfg.async_settle_enabled = False
     cache.health_read_at = float('-inf')
