@@ -37,10 +37,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -82,10 +82,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 12,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 21,
+    "route_count": 23,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -154,10 +154,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -424,10 +424,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 9,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -730,10 +730,10 @@
   },
   "scaleway": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 10,
     "name": "Scaleway",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "scaleway"
   },
@@ -928,10 +928,10 @@
   },
   "zai": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 13,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },

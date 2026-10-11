@@ -263,14 +263,14 @@
       "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
       "created": 1700000000,
       "routable": true,
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 6000
     }
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T22:59:42Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }

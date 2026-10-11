@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T22:59:42Z",
   "model_count": 12,
   "models": [
     {
@@ -139,7 +139,14 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "deepseek/deepseek-v3.2",
@@ -165,7 +172,14 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "z-ai/glm-5.1",
@@ -191,7 +205,14 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "z-ai/glm-5.2",
@@ -219,7 +240,14 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "display_name": "google/gemma-4-31B-it",
@@ -239,7 +267,14 @@
       "upstream_id": "google/gemma-4-31B-it",
       "context_length": 262144,
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "display_name": "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B",
@@ -284,7 +319,14 @@
       "context_length": 1048576,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "display_name": "zai-org/GLM-5.3",
@@ -305,7 +347,14 @@
       "context_length": 1048576,
       "input_token_price_per_m": 1260000,
       "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 234000
+      "cached_input_token_price_per_m": 234000,
+      "supported_features": [
+        "tools",
+        "tool-choice",
+        "parallel-tool-calls",
+        "structured-outputs",
+        "reasoning"
+      ]
     }
   ]
 }

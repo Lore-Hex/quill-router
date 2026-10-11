@@ -1,9 +1,9 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T22:59:42Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 36,
+  "model_count": 37,
   "models": [
     {
       "display_name": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
@@ -773,6 +773,27 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-10-04"
+    },
+    {
+      "display_name": "@cf/cloudflare/clef-omni",
+      "title": "@cf/cloudflare/clef-omni",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "cloudflare/clef-omni",
+      "upstream_id": "@cf/cloudflare/clef-omni",
+      "context_length": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-10-10"
     }
   ]
 }
