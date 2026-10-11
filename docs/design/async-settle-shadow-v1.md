@@ -16,6 +16,8 @@ Source pins inspected read-only:
 
 ## 1. Invariants and numbered decisions
 
+> The rules identified in [v2 §§1.1, 4](async-settle-shadow-v2.md) amend this section once P1, P2 and P4 land; v2 §1.1 defines the exact scope.
+
 Seven consecutive days with **async admission disabled**. Sync books; shadow
 never inserts a second pending intent or calls finalize. Preserve ordinary sync
 outbox behavior, including its durable-but-not-yet-booked outcome. The latter
@@ -77,6 +79,8 @@ ordinary PR B admission behavior remains independently governed by its flags.
 ## 2. Authorize provenance and wire contract
 
 ### 2.1 What PR B actually supplies
+
+> The rules identified in [v2 §4](async-settle-shadow-v2.md) amend this section once P1, P2 and P4 land; v2 §1.1 defines the exact scope.
 
 The response builder calls `authorize_additions` for the exact negotiation
 header (`src/trusted_router/routes/internal/gateway.py:2776`). The replay call
@@ -145,6 +149,8 @@ authorize response and reject inconsistent claim copies locally. Do not call
 the async binder or treat an opaque proof as an admission capability.
 
 ### 2.2 Header and strict parsing
+
+> The rules identified in [v2 §§4, 7](async-settle-shadow-v2.md) amend this section once P1, P2 and P4 land; v2 §1.1 defines the exact scope.
 
 ```http
 POST /internal/gateway/authorize
@@ -290,6 +296,8 @@ by this parser. F2c must obey the bound, and rollout must test the actual
 ingress limit with maximum ordinary auth headers included.
 
 ### 2.3 Cross-repo literal
+
+> The rules identified in [v2 §7.1](async-settle-shadow-v2.md) amend this section once P1 and P2 land; v2 §1.1 defines the exact scope.
 
 The following JSON block, including two-space indentation and one final LF,
 is the proposed **entire contents** of
@@ -457,6 +465,8 @@ Unsupported observed tiers produce the bounded `unsupported_observed` failure
 variant even when the unchanged legacy body retains requested/default tier.
 
 ## 3. Comparator algorithm and classification
+
+> The rules identified in [v2 §§4–5](async-settle-shadow-v2.md) amend this section once P4 land; v2 §1.1 defines the exact scope.
 
 1. At successful authorize, count the opted-in attempt before cohort/header
    exclusions, using only already-available facts. Count replay separately;
@@ -656,6 +666,8 @@ record `usage_missing` rather than interpreting schema defaults as observed zero
 
 ### 4.1 Sample row
 
+> The rules identified in [v2 §7](async-settle-shadow-v2.md) amend this section once P1, P3 and P4 land; v2 §1.1 defines the exact scope.
+
 `kind='async_settle_shadow_sample'`, `id='<YYYY-MM-DD>/<authorization_id>'`.
 Day is UTC **authorize day**, derived from the persisted authorization; it is
 stable over retries crossing midnight. Observation/booking times retain their
@@ -718,6 +730,8 @@ Same-kind changed payload/classification remains a sticky correctness conflict.
 Never count the two polarities as two successful comparisons.
 
 ### 4.2 Counter rows, sampling and completeness
+
+> The rules identified in [v2 §§5–7](async-settle-shadow-v2.md) amend this section once P1, P3 and P4 land; v2 §1.1 defines the exact scope.
 
 **Decision:** a per-instance token bucket, **2 observations/second, burst 10**,
 is acquired before expensive comparator work; one worker, at most 32 pending
@@ -858,6 +872,8 @@ Reusing that transactional activity path for shadow would violate D-S4.
 
 ### 4.3 Retention and bounded reads
 
+> The rules identified in [v2 §7](async-settle-shadow-v2.md) amend this section once P3 land; v2 §1.1 defines the exact scope.
+
 Keep samples, counters and manifests **30 days**; export a content-free report
 with revision/fixture hashes before removal if longer review is needed. A
 separate operator cleanup command deletes only explicit expired day ranges,
@@ -884,6 +900,8 @@ seven-day observation interval reads the requested days plus up to two preceding
 authorization-day prefixes for long calls; include all requested counter days.
 
 ## 5. Admission prediction, cost and latency budget
+
+> The rules identified in [v2 §§3, 5–6, 8](async-settle-shadow-v2.md) amend this section once P3 and P5 land; v2 §1.1 defines the exact scope.
 
 **Decision:** read-only peek of a separate shadow observation cache, populated
 by the bounded timer below; reject calling the current `eligible()` for
@@ -1144,6 +1162,8 @@ that baseline effect separately from F2's incremental router cost.
 
 ## 6. Report, seven-day window and exit criteria
 
+> The rules identified in [v2 §§5, 7–8](async-settle-shadow-v2.md) amend this section once P5 land; v2 §1.1 defines the exact scope.
+
 Proposed `scripts/async_settle/shadow_report.py --day YYYY-MM-DD [--day ...]`
 reads only the bounded day ranges above and an explicit proof manifest. Print:
 coverage interval and completeness; authorize/settle/refund attempt denominators by
@@ -1252,6 +1272,8 @@ does not add an OTel exporter or logging repair.
 
 ## 7. Failure modes and crash points
 
+> The rules identified in [v2 §§4, 6](async-settle-shadow-v2.md) amend this section once P3 and P4 land; v2 §1.1 defines the exact scope.
+
 | Boundary / failure | Required behavior |
 |---|---|
 | Shadow store unavailable | Original money result/exception survives. Bound failed worker I/O, increment local `store_unavailable`, flush later if possible; missing flush gives unknown coverage. Never fall back to operational outbox or money transaction. |
@@ -1276,6 +1298,8 @@ does not add an OTel exporter or logging repair.
 | Both enclave switches on / router admission enabled during window | Force local legacy shadow mode; configuration counter. Report rejects the interval if admission is enabled on any serving router. |
 
 ## 8. PR F2b — router implementation and proof
+
+> The rules identified in [v2 §§10–11](async-settle-shadow-v2.md) amend this section once P1–P5 land; v2 §1.1 defines the exact scope.
 
 Scope: setting/off rollout pin; separate-purpose binding after authorize; bounded
 header observer around legacy settle and refund; independent legacy S0 oracle;
@@ -1306,6 +1330,8 @@ rebased revision, but must attach parent provenance/differential evidence rather
 than absorb unexpected behavior into an exception list.
 
 ## 9. PR F2c — enclave implementation and cross-repo pins
+
+> The rules identified in [v2 §§10–11](async-settle-shadow-v2.md) amend this section once P1–P5 land; v2 §1.1 defines the exact scope.
 
 Scope: exact `on` flag, optional opaque shadow binding/snapshot retention
 separate from `Authorization.async`, pre-sanitization provider observations,
@@ -1350,6 +1376,8 @@ authors; this documentation pass makes no git writes.
 
 ## 10. Mutation gates
 
+> The rules identified in [v2 §§10–11](async-settle-shadow-v2.md) amend this section once P1–P5 land; v2 §1.1 defines the exact scope.
+
 Each mutation must compile and reach a failing assertion; syntax/import failure
 is not a kill. Keep the drift allowlist frozen; catalog explanation is a
 specific checked arithmetic classification, never a new blanket tolerance.
@@ -1370,6 +1398,8 @@ specific checked arithmetic classification, never a new blanket tolerance.
 | Shadow binds async / changes body | No-ticket fixture plus both flags on: exact legacy body/frame oracle and zero async calls must fail the mutation. |
 
 ## 11. Landing, enablement and non-goals
+
+> The rules identified in [v2 §§9–10](async-settle-shadow-v2.md) amend this section once P6 land; v2 §1.1 defines the exact scope.
 
 Land **router F2b first**, tolerating/ignoring the header while off; land
 **enclave F2c second**, shadow and negotiation pinned off. Reviewed enablement:
@@ -1392,6 +1422,8 @@ metadata, or production deployment in this pass. A shadow binding is a
 non-authorizing signature, not a renamed settlement capability.
 
 ## 12. Open items and limits of verification
+
+> The rules identified in [v2 §13](async-settle-shadow-v2.md) amend this section once P6 land; v2 §1.1 defines the exact scope.
 
 For Joseph:
 

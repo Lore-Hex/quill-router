@@ -844,6 +844,8 @@ and absence of a successful completion marker in PR E tests.
 
 ## 8. Shadow phase
 
+> The rules identified in [v2 §§2, 4–8](async-settle-shadow-v2.md) amend this section once P4 and P5 land; v2 §1.1 defines the exact scope.
+
 Run **seven consecutive days** with async admission disabled. For opted-in,
 otherwise eligible traffic, capture signed-snapshot inputs, normalize/evaluate
 with the new Python and enclave Go paths, and compare them to the actual
@@ -877,6 +879,8 @@ A correctness mismatch resets the seven-day clean window after the fix. Missing
 traffic coverage requires fixture/load evidence, not a claim of zero failures.
 
 ## 9. PR sequence (flag-off)
+
+> The rules identified in [v2 §10](async-settle-shadow-v2.md) amend this section once P1–P6 land; v2 §1.1 defines the exact scope.
 
 | PR | Scope | Gate before activation |
 |---|---|---|
@@ -937,6 +941,8 @@ Billing review, CI, attestation and rollout gates remain in force for later PRs.
    the sketch and relies on the versioned 759-case contract.
 
 ### Decisions (2026-10-09, recorded by the gatekeeper at Joseph's instruction to decide from the best available information)
+
+> The rules identified in [v2 §§9, 13](async-settle-shadow-v2.md) amend this section once P6 land; v2 §1.1 defines the exact scope.
 
 1. **Pilot workspace/key.** Workspace `45819281-0ce9-4811-a0cd-c660ab3a116d` (Joseph's operator workspace; already the spend-lease Stage B pilot in `scripts/deploy/rollout.sh`), key hash `key_1ZXjS8vNqWdQ7qRUkZj8Meuj` (prepaid, $5,000 lifetime cap, no auto-refill). The router's 4 authorize / 16 settle in-flight limits per instance (`config.py`) are RPC handler limits released when each RPC returns; they do **not** bound outstanding inference or §6's set I. The pilot's outstanding inference concurrency is operator-set in the AnyEval sweeps and is left **unbounded pending measurement**: the pilot report records the observed maximum, and nothing here strengthens §6's exposure statement. The first pilot **excludes** auto-refill-dependent traffic and metadata-broadcast / budget-notification expectations: the operator key has neither, and the drain's narrower side effects are acceptable for it.
 2. **`pending` for `/decide`.** No. v1 keeps `/decide` synchronous; the cohort stays chat.completions and responses. Revisit after the pilot with its own route/envelope/evaluator fixtures.
@@ -1842,6 +1848,8 @@ flag-off frozen SQL remains valid.
 
 ## PR G — dormant pilot enablement runbook (2026-10-09 decisions)
 
+> The rules identified in [v2 §§9, 13](async-settle-shadow-v2.md) amend this section once P6 land; v2 §1.1 defines the exact scope.
+
 **Landing PR G activates nothing.** `scripts/deploy/rollout.sh` is unchanged:
 shadow workspaces empty, admission/protection/fast drain false, ticket path
 empty, epoch zero, existing drain cadence unchanged. This appendix is the later
@@ -1874,6 +1882,8 @@ legacy settlement SQL changes in PR G.
 
 ### Evidence bundle and read boundaries
 
+> The rules identified in [v2 §§5, 7–8](async-settle-shadow-v2.md) amend this section once P5 land; v2 §1.1 defines the exact scope.
+
 `pilot_enablement.py` has `shadow-serving`, `header-probe`, `fleet-budgets`,
 `fleet-budgets-pre`, `pre-flip`, and `post-flip` subcommands. All checklist commands take
 `--bundle /absolute/evidence.json`; optional `--live` replaces exported database
@@ -1901,6 +1911,8 @@ For a larger history, prepare a separately reviewed bounded export with its
 explicit window and coverage before running the offline checklist.
 
 ### Serving-region label transition and the clean window
+
+> The rules identified in [v2 §§5, 7–9](async-settle-shadow-v2.md) amend this section once P5 and P6 land; v2 §1.1 defines the exact scope.
 
 The seven-day window starts no earlier than the first complete UTC day on
 which every serving router instance carries `TR_SERVING_REGION` set to its
@@ -1972,6 +1984,8 @@ lifetime check; because counter rows discard retry hashes, it remains an
 existence check, not re-verification of the discarded signed terminal.
 
 ### Exact enablement order and gates
+
+> The rules identified in [v2 §§9–10](async-settle-shadow-v2.md) amend this section once P5 and P6 land; v2 §1.1 defines the exact scope.
 
 1. Land enclave F2c with `TR_ASYNC_SETTLE_SHADOW=off` and
    `TR_ASYNC_SETTLE_NEGOTIATE=off`. Verify every traffic-carrying revision and
@@ -2216,6 +2230,8 @@ The current job does not provision this key, and PR G intentionally does not
 add a secret, mount, pin value or production credential.
 
 ### Rollback and truthful status
+
+> The rules identified in [v2 §5.3 (clock-prerequisite paragraph only)](async-settle-shadow-v2.md) amend this section once P5 land; v2 §1.1 defines the exact scope.
 
 First set `TR_ASYNC_SETTLE_ENABLED=false` (and enclave negotiation off), retaining
 protection, keys/epoch, and measured fast drain. All accepted pending work must
