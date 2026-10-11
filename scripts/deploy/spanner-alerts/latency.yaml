@@ -20,6 +20,28 @@ conditions:
       duration: 600s
       trigger:
         count: 1
+  - displayName: "Commit p99 exceeds 1 second in a minute"
+    # A one-minute commit-latency event on nam6 (2026-10-11 09:13Z: every
+    # transaction shape slowed about 7x, pure inserts included) pages the
+    # API-failure policy through the budgeted callers' deadlines without
+    # naming its cause. This condition names it: 60 s alignment and no
+    # duration, so one slow minute pages on its own aligned point. The
+    # threshold is from a replay of this exact aggregation over the seven
+    # days to 2026-10-11 15:00Z (10,069 minutes): median p99 32 ms, p90
+    # 158 ms, 7 minutes above 1 s in five separate events (the 09:14Z
+    # minute: 2.2 s), 2 above 1.5 s. About five pages a week, each a
+    # thirty-fold tail; raise to 1.5 s if that proves too many.
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/request_latencies" AND metric.labels.method = "Commit"'
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_PERCENTILE_99
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 1
+      duration: 0s
+      trigger:
+        count: 1
   - displayName: "Any request p99 exceeds 3 seconds for 10 minutes"
     # CreateSession excursions of 2.7-2.9 s track Cloud Run revision rollouts
     # (155 calls in 48 h on 2026-09-04/05), not Spanner health; Commit keeps its

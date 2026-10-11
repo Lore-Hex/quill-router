@@ -134,6 +134,34 @@ def test_cross_project_backup_uses_an_isolated_project() -> None:
     assert "--service-account=\"$BACKUP_SERVICE_ACCOUNT_EMAIL\"" in reliability
 
 
+def test_latency_commit_condition_names_a_slow_minute() -> None:
+    """A one-minute commit-latency event must page with its cause named: a
+    60 s alignment and no duration, so a single slow aligned point pages,
+    beside the ten-minute 1.5 s condition that one slow minute never reaches.
+    The combiner, comparison and trigger are pinned: AND, LT or a count of two
+    would each keep this single reduced series from paging."""
+    policy = yaml.safe_load(
+        (DEPLOY / "spanner-alerts" / "latency.yaml").read_text(encoding="utf-8")
+    )
+    assert policy["combiner"] == "OR"
+    conditions = {c["displayName"]: c["conditionThreshold"] for c in policy["conditions"]}
+    fast = conditions["Commit p99 exceeds 1 second in a minute"]
+    assert 'metric.labels.method = "Commit"' in fast["filter"]
+    assert fast["aggregations"] == [
+        {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_PERCENTILE_99",
+            "crossSeriesReducer": "REDUCE_MAX",
+        }
+    ]
+    assert fast["comparison"] == "COMPARISON_GT"
+    assert fast["thresholdValue"] == 1
+    assert fast["duration"] == "0s"
+    assert fast["trigger"] == {"count": 1}
+    slow = conditions["Commit p99 exceeds 1.5 seconds for 10 minutes"]
+    assert slow["duration"] == "600s"
+
+
 def test_latency_any_method_condition_excludes_createsession() -> None:
     """CreateSession p99 excursions track revision rollouts, not Spanner health.
 
