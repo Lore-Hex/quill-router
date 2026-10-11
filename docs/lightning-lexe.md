@@ -105,6 +105,24 @@ regressions fail on the old implementation for two- and five-second outages,
 slow failures consuming the window, and scheduler oversleep. This is a bounded
 mitigation, not proof that Lexe's underlying interruption is fixed.
 
+### Nested client-info error classification
+
+Code 100 alone discards the nested error category needed to diagnose failures.
+For code 100 on `GET /v2/node/client_info` only, `lexe_reason` now records up
+to three allowlisted leading error-kind labels from Lexe's
+[NodeApiError Display contract](https://github.com/lexe-app/lexe-public/blob/9abb2625032b5d9e35d5e4b22ebb7f525edad94f/lexe-api-core/src/error.rs).
+For example, a wrapped authentication/expired-token error becomes
+`authentication/auth_expired`; arbitrary suffixes and structured data are
+discarded. Unknown or changed formats remain `unknown`. These are reported
+error categories, not independently proven root causes. No new category
+changes retry, readiness, settlement, or alert behavior.
+
+Historical bodies cannot be recovered from our logs. For a recurrence, ask
+Lexe to correlate the trace with gateway authentication, CONNECT proxy, and
+node availability. Keep the incident open until the underlying failure is
+identified; do not declare a diagnostic deployment to be an upstream
+reliability fix or extend retries blindly.
+
 ## Node 0.10.5 permission expansion (October 1)
 
 Receiving checks began failing at 18:49 UTC while the deployed image and secret
@@ -156,8 +174,9 @@ the request. Caller-supplied trace IDs are replaced, never logged. Unknown
 operations/methods/paths are labeled `unknown`; query parameters are omitted.
 
 Lexe's reviewed [ErrorResponse schema](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api-core/src/error.rs)
-defines `code` as u16 but permits sensitive `msg`/`data`. We retain only that
-integer from a bounded, uncompressed JSON body (at most 4KiB); absent, malformed,
+defines `code` as u16 but permits sensitive `msg`/`data`. We retain that integer
+and the narrowly scoped allowlisted classification described above from a
+bounded, uncompressed JSON body (at most 4KiB); absent, malformed,
 oversized, slow, or unreadable diagnostic bodies leave the code unknown and
 do not replace the original HTTP status. The [trace header contract](https://github.com/lexe-app/lexe-public/blob/aab30588d92549e5a92f3e8754426add8d6e8828/lexe-api/src/trace.rs)
 defines a client-originated 16-character alphanumeric ID. No raw error body,

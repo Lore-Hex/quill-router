@@ -14,6 +14,7 @@ from string import Template
 from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
+from member_badges import build_badges
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -146,8 +147,13 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js"):
         shutil.copyfile(HERE / name, assets / name)
-    # Public request-only page. Never copy the confidential provider PDF or slides.
-    shutil.copyfile(HERE / "providers.html", output / "providers.html")
+    # Shared public pages. The provider deck itself remains private.
+    for page in ("providers", "badge"):
+        for name in (page, f"{page}.html"):
+            shutil.copyfile(HERE / f"{page}.html", output / name)
+    for name in ("badge.css", "badge.js"):
+        shutil.copyfile(HERE / name, assets / name)
+    build_badges(assets / "badges")
     for art in sorted((HERE / "art").glob("*.webp")):
         shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"
@@ -172,7 +178,8 @@ def build(output: Path) -> None:
             f"User-agent: *\nAllow: /\nSitemap: https://{market['domain']}/sitemap.xml\n"
         )
         provider_page = (
-            '<url><loc>https://nytokenexchange.com/providers.html</loc></url>'
+            '<url><loc>https://nytokenexchange.com/providers</loc></url>'
+            '<url><loc>https://nytokenexchange.com/badge</loc></url>'
             if market["slug"] == "new-york" else ""
         )
         (folder / "sitemap.xml").write_text(

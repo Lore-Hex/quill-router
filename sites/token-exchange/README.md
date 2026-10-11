@@ -41,7 +41,7 @@ certificate batches. Preserve them on future publishes. A hostname marked
 
 ### Private provider deck request page
 
-`https://nytokenexchange.com/providers.html` is a public, request-only landing
+`https://nytokenexchange.com/providers` is a public, request-only landing
 page. Its email link opens a request to `providers@trustedrouter.com`; it does
 not submit a form, automatically send mail, or deliver a download. The team
 reviews requests and shares the deck privately. Never add the confidential PDF,
@@ -49,9 +49,39 @@ slide images, or a publicly resolvable deck URL to the build or storage bucket.
 The build includes this page in New York's sitemap only. Existing hosting's
 default static route serves the HTML without DNS, certificate, or URL-map changes.
 
-For a narrow update, publish only the built `providers.html` object and
+The October 10 replacement is seven pages (SHA-256
+`3c8b888b92d1f63d64179a3927b845a03d766aa07aa963bd7359e7ffa3cf4849`).
+It stays in the private outreach workflow, never in this source tree or build.
+The request is reviewed manually; it is not an automated attachment-delivery flow.
+
+For a narrow update, publish only the built `providers` and `providers.html` objects and
 `new-york/sitemap.xml` after the repository and site checks. Do not sync a stale
 full build over other markets. Both objects use a five-minute public cache.
+
+### NYTE member badge
+
+`https://nytokenexchange.com/badge` is the canonical badge builder and usage page.
+The shared `/providers` and `/badge` pages also work on the regional domains via
+their existing default static routes. Every market links them in its supplier
+section; only New York lists them in its sitemap, avoiding duplicate canonicals.
+Keep `.html` aliases for older links. Extensionless objects require `text/html`.
+
+`member_badges.py` generates four script-free SVGs in `assets/badges`: provider
+and enterprise roles, each in light and dark. The builder previews, downloads,
+and copies accessible HTML linking to the badge explanation. Membership must be
+confirmed before display. The mark is not live verification, a security audit,
+or blanket certification; confidential routing uses TrustedRouter's distinct
+evidence-backed badge. No customer or provider is newly certified by this page.
+
+For this content release, publish only the two shared pages and their aliases,
+`assets/badge.css`, `assets/badge.js`, the four generated badge SVGs, the 13 market
+`index.html` files (new supplier links), and `new-york/sitemap.xml`. No DNS,
+certificates, URL maps, backend routes, PDF, slide images, or unrelated assets change.
+Compare generated homepages with live objects first. If main includes unrelated
+unpublished changes, add only the two supplier links to freshly downloaded live
+HTML, preserving existing CSS/JS versions and all other content. Back up each
+target, verify that removing the inserted line restores its original bytes,
+and publish with the observed generation precondition to reject concurrent edits.
 
 ### Commands
 
