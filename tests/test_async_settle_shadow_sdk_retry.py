@@ -62,6 +62,7 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
         def __init__(self):
             self.calls = []
             self.read_duration = .01
+            self.read_durations = []
             self.commit_duration = .45
             self.errors = []
             self.begin_errors = []
@@ -83,7 +84,8 @@ def sdk_database(monkeypatch, shadow_deadline_clock):
                 raise errors.pop(0)
 
         def query(self, **kwargs):
-            self.rpc('read', kwargs, self.read_duration, self.read_errors)
+            duration = self.read_durations.pop(0) if self.read_durations else self.read_duration
+            self.rpc('read', kwargs, duration, self.read_errors)
             response = PartialResultSet(metadata=dict(
                 transaction=dict(id=b'offline'), row_type=dict(
                     fields=[dict(name='body', type=dict(code='STRING'))])))
@@ -406,7 +408,8 @@ def test_regional_flush_and_reset_share_one_sdk_deadline(sdk_database, read_seco
     except Exception as error:
         failure = error
     remaining = 1 - 2*read_seconds
-    assert db.calls == [('read', .5), ('read', .5), ('commit', pytest.approx(remaining))]
+    assert db.calls == [('read', 1.), ('read', pytest.approx(1-read_seconds)),
+                        ('commit', pytest.approx(remaining))]
     assert sleeps == []
     assert clock.monotonic()-started == pytest.approx(min(1, 2*read_seconds+commit_seconds))
     if commit_seconds > remaining:
@@ -420,6 +423,63 @@ def test_regional_flush_and_reset_share_one_sdk_deadline(sdk_database, read_seco
     assert io._SPANNER_RPC_DEADLINE.get() is None
 
 
+@pytest.mark.parametrize('reads', [[.6, .05], [.05, .6]])
+@pytest.mark.parametrize('commit_seconds', [.2, .6])
+def test_regional_read_uses_remaining_total_budget(sdk_database, reads, commit_seconds):
+    db, clock, sleeps = sdk_database
+    db.read_durations = list(reads)
+    db.commit_duration = commit_seconds
+    identity = dt.datetime.now(dt.UTC).date().isoformat()+'/regional-tail'
+    started = clock.monotonic()
+    failure = None
+    try:
+        EvidenceStore(db).flush(identity, {'sequence': 1}, started+1)
+    except Exception as error:
+        failure = error
+    assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+    assert [timeout for _, timeout in db.calls] == pytest.approx([1, 1-reads[0], .35])
+    assert clock.monotonic()-started == pytest.approx(min(1, .65+commit_seconds))
+    assert sleeps == []
+    if commit_seconds > .35:
+        assert type(failure) is DeadlineExceeded
+    else:
+        assert failure is None
+
+
+def test_midnight_counter_rollover_defers_second_regional_transaction(sdk_database):
+    from tests.test_async_settle_ticket import runtime, settings
+    from trusted_router.services.async_settle_shadow import Runtime
+
+    db, clock, sleeps = sdk_database
+    db.read_duration, db.commit_duration = .1, .35
+    today = dt.datetime.combine(dt.datetime.now(dt.UTC).date(), dt.time(), dt.UTC)
+    wall = [(today - dt.timedelta(seconds=10)).timestamp()]
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.counters.clock = lambda: wall[0]
+    try:
+        rt.flush(clock.monotonic()+1)
+        clock.now += 6
+        wall[0] = today.timestamp()+1
+        db.calls.clear()
+        started = clock.monotonic()
+        rt.flush(started+1)
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        assert clock.monotonic()-started == pytest.approx(.55)
+        assert rt.counters.retired_through == (today.date()-dt.timedelta(days=1)).isoformat()
+        assert all(not row['drops'] for row in rt.counters.days.values())
+        # The next bounded maintenance pass registers the new day. The old
+        # closed writer has already been acknowledged and cannot be reopened.
+        clock.now += 6
+        db.calls.clear()
+        rt.flush(clock.monotonic()+1)
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        current = rt.counters.days[today.date().isoformat()]
+        assert not current['closed'] and not current['drops']
+        assert sleeps == []
+    finally:
+        rt.executor.shutdown()
+
+
 @pytest.mark.parametrize('error_type', [ServiceUnavailable, InternalServerError])
 @pytest.mark.parametrize('budget', [.2, 1.])
 def test_shadow_snapshot_restart_cannot_renew_deadline(sdk_database, error_type, budget):
@@ -431,7 +491,7 @@ def test_shadow_snapshot_restart_cannot_renew_deadline(sdk_database, error_type,
         EvidenceStore.query(db.session.snapshot(), point_statement(COUNTER, 'offline'), started+budget)
     assert clock.monotonic()-started == pytest.approx(budget)
     assert sleeps == []
-    expected = [.2, .12, .04] if budget == .2 else [.5, .5, .36, .04]
+    expected = [.2, .12, .04] if budget == .2 else [1., .68, .36, .04]
     assert [name for name, _ in db.calls] == ['read']*len(expected)
     assert [timeout for _, timeout in db.calls] == pytest.approx(expected)
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
