@@ -1390,6 +1390,12 @@ func (d *debtWalk) check(before, after []int64) {
 	if problems, err := d.s.CheckIdentity(ctx, d.ws); err != nil || len(problems) > 0 {
 		d.fatalf("the identity: %v %v", problems, err)
 	}
+	// Every seeded shard is still a row, no more and no fewer, before any
+	// value is compared: a store that dropped an emptied row would otherwise
+	// pass the comparison of the rows left.
+	if err := creditShards(d.ws, len(d.shards.credit)); err != nil {
+		d.fatalf("%v", err)
+	}
 	rows := readRows(d.t, d.ws)
 	var credits int64
 	for _, r := range rows {

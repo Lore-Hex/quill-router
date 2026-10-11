@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -91,6 +92,35 @@ func readRows(t *testing.T, workspace string) []row {
 		t.Fatal(err)
 	}
 	return rows
+}
+
+// creditShards says how the workspace's credit rows differ from the shards
+// seeded, 0 to n-1, if they do: a row dropped, added or renumbered is seen
+// before any value is compared, since readRows returns only what is there.
+func creditShards(workspace string, n int) error {
+	var got []int64
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL:    `SELECT shard FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": workspace},
+	}).Do(func(r *spanner.Row) error {
+		var shard int64
+		if err := r.Column(0, &shard); err != nil {
+			return err
+		}
+		got = append(got, shard)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	want := make([]int64, n)
+	for i := range want {
+		want[i] = int64(i)
+	}
+	if !slices.Equal(got, want) {
+		return fmt.Errorf("the credit rows are shards %v, and %v were seeded", got, want)
+	}
+	return nil
 }
 
 func headrooms(rows []row) []int64 {

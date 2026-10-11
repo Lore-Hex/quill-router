@@ -281,6 +281,9 @@ type walker struct {
 	drainIdx map[string]int8
 }
 
+// walkShards is the credit rows newWalker seeds a workspace with.
+const walkShards = 3
+
 func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	t.Helper()
 	rng := rand.New(rand.NewSource(seed))
@@ -291,7 +294,7 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 		t.Fatal(err)
 	}
 	// One donor or two, and room left on a third shard or none, so raises
-	// and faults reach debt in some walks.
+	// and faults reach debt in some walks: walkShards rows.
 	first := int64(rng.Intn(c.Grant + 1))
 	req := grantOf(seedWorkspace(t, first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3))), int64(c.Grant))
 	// Distinct values the row must keep, so a column dropped from the
@@ -472,7 +475,7 @@ func (w *walker) raise(taken bool) {
 		w.fatalf("the shortfall write: %v", err)
 	case taken && (got.Refused != "" || got.Rise != 1):
 		w.fatalf("the shortfall write: %+v", got)
-	case !taken && got.Refused != RefusedClosed:
+	case !taken && (got.Refused != RefusedClosed || got.Rise != 0 || !got.CommitTS.IsZero()):
 		w.fatalf("a shortfall write on a closed lease: %+v", got)
 	}
 	if taken {
@@ -519,7 +522,7 @@ func (w *walker) appendDoor(a int8, record string, taken bool) {
 		w.fatalf("the append: %v", err)
 	case taken && (got.Refused != "" || got.Raise != 0):
 		w.fatalf("the append: %+v", got)
-	case !taken && got.Refused != RefusedClosed:
+	case !taken && (got.Refused != RefusedClosed || got.Raise != 0 || !got.CommitTS.IsZero()):
 		w.fatalf("an append to a closed lease: %+v", got)
 	}
 	if taken {
@@ -1516,6 +1519,11 @@ func (w *walker) check() {
 		w.checkPacks(loaded.Packs, "the load's")
 	} else if len(loaded.Packs) != 0 {
 		w.fatalf("an open lease's load has winners: %+v", loaded.Packs)
+	}
+	// The three shards newWalker seeded are still rows, no more and no
+	// fewer: the identity check accepts whatever contiguous rows remain.
+	if err := creditShards(w.ref.Workspace, walkShards); err != nil {
+		w.fatalf("%v", err)
 	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
