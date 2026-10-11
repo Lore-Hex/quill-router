@@ -37,6 +37,11 @@ from trusted_router.services.contract_value_preview import safe_value_preview
     ("metadata", {"secret": "private-content"}, "[redacted:object]"),
     ("api_key", "sk-tr-v1-private-secret", "[redacted:string]"),
     ("model", "private-content", "[redacted:string]"),
+    ("tools[0].type", "code_interpreter", "code_interpreter"),
+    ("tools[23].type", "web_search_preview", "web_search_preview"),
+    ("tools[0].type", "private-content", "[redacted:string]"),
+    ("tools[0].type", "sk-tr-v1-private-secret", "[redacted:string]"),
+    ("tools[0].function.description", "code_interpreter", "[redacted:string]"),
 ])
 def test_sink_revalidates_configuration_only(path: str, value: object, expected: object) -> None:
     preview, truncated = safe_value_preview(path, json.dumps(value))

@@ -1,12 +1,23 @@
 # Frozen-main package snapshot
 
-BASE: `fcbb8c4805fd6d43d5f041f85f3985b82df597c1`, plus the source changes recorded in `worktree-pins.json`.
+BASE: `8d781cf096c43cdc29aa54c37f8d3820b80cf587`, plus the source changes recorded in `worktree-pins.json`.
 
-The F1-001 golden was frozen from this worktree without Git writes. Relative to
-BASE, the frozen source diff equals the production source diff: only
-`src/trusted_router/storage_gcp_authorize.py` changes. BASE advances from the
-Round-12 reference to this worktree's HEAD, incorporating already-merged main
-changes separately from F1-001.
+PR G re-froze the touched config/authorize/handler helpers from this worktree
+without Git writes. The original F1-001 archive (`84f0a2092090e8ebf89e7eb56bc5c5d1aabfbb5d07bc73f53fc81e616e275a91`)
+passed all 85 comparisons in default-clock oracle shard 1/4 before re-freezing.
+The new BASE incorporates merged main through 8d781cf0; the worktree manifest
+contains only the three PR G admission-scoping source files. No storage SQL
+changes were absorbed. The regenerated inventory is the union of all eight
+worker JSON files from both CPython 3.12.3 full runs, default and post-cutover:
+**330 modules, 1,630 qualified names, 1,665 execution entries**. The source
+directories `/tmp/pr-g-inv-default` and `/tmp/pr-g-inv-post` each contain four
+JSON files; both clocks independently contain the same 1,665 entries.
+
+Pilot sequencing: install the public enclave keyring in the reviewed
+admission-off step 2, verify it on every serving revision at pre-flip step 7,
+and enable negotiation only in step 8 after the earlier gates pass. The
+dormant `fleet-budgets-pre` gate precedes opt-in; post-opt-in observer evidence
+is separately required by `shadow-serving` before the clock starts.
 
 Re-pin from the repository root without committing local edits:
 

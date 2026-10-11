@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -235,13 +236,14 @@ func (f *fakeSpanner) state() (rounds [][]string, writes, landed []int64, draine
 	return slices.Clone(f.rounds), slices.Clone(f.writes), slices.Clone(f.landed), slices.Clone(f.drained)
 }
 
-func spannerFixture(t *testing.T, allocation int64, overrun func(int64) int64) (*fixture, *fakeSpanner) {
+func spannerFixture(t *testing.T, allocation int64, overrun func(int64) int64, changes ...func(*Config)) (*fixture,
+	*fakeSpanner) {
 	t.Helper()
 	sp := newFakeSpanner()
 	sp.expiry = start.Add(10 * time.Minute)
-	f := newFixture(t, allocation, overrun, func(c *Config) {
+	f := newFixture(t, allocation, overrun, append([]func(*Config){func(c *Config) {
 		c.Spanner, c.Node, c.RenewEvery, c.Window, c.KeyStatus = sp, "owner-1", time.Hour, 30*time.Second, 7
-	})
+	}}, changes...)...)
 	return f, sp
 }
 
@@ -556,6 +558,93 @@ func TestALeaseWhosePublishesFailIsNotRenewed(t *testing.T) {
 	}
 }
 
+// TestAWorkspaceOffsLeaseIsNotRenewed: while the switch does not enable the
+// lease's workspace, as when the node's copy of it has aged out, the owner
+// leaves the lease out of its renewal rounds and closes it, serving its
+// hold; on again, the lease admits nothing, though no renewal has told the
+// owner whether it was revoked meanwhile, and it is renewed again; off past
+// the cutoff, it is let go.
+func TestAWorkspaceOffsLeaseIsNotRenewed(t *testing.T) {
+	var off atomic.Bool
+	f, sp := spannerFixture(t, 1000, nil, func(c *Config) { c.Enabled = func(string) bool { return !off.Load() } })
+	ctx := context.Background()
+	f.admit(t, 100, false) // a hold, so the closed lease is not finished at once
+	off.Store(true)
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 0 {
+		t.Fatalf("a lease of a workspace off was renewed: %v", rounds)
+	}
+	if _, held := f.owner.Lease("lease-1"); !held {
+		t.Fatal("let go within its cutoff")
+	}
+	off.Store(false)
+	if _, err := f.lease.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("a lease seen off admits once the switch is on again, before any renewal: %v", err)
+	}
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 || !slices.Equal(rounds[0], []string{"lease-1"}) {
+		t.Fatalf("the lease once on again: %v", rounds)
+	}
+	off.Store(true)
+	f.clock.advance(10 * time.Minute)
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 {
+		t.Fatalf("a lease of a workspace off was renewed past its cutoff: %v", rounds)
+	}
+	if _, held := f.owner.Lease("lease-1"); held {
+		t.Fatal("a lease of a workspace off, past its cutoff, is still held")
+	}
+}
+
+// TestARetiredOwnerLetsALeaseGoOnceEveryHoldHasHadItsTime: a retired owner
+// renews a lease whose hold, of a request that does not stream, has no
+// terminal, until a hold's life and the grace have passed since it retired;
+// then it renews it no more, and past its cutoff lets it go, for the
+// auditor to finish. Retired again, the time counts from the first.
+func TestARetiredOwnerLetsALeaseGoOnceEveryHoldHasHadItsTime(t *testing.T) {
+	f, sp := spannerFixture(t, 1000, nil, func(c *Config) { c.Grace = time.Minute })
+	ctx := context.Background()
+	f.admit(t, 100, false) // a hold whose terminal never comes
+	f.owner.Retire()
+	f.clock.advance(time.Hour + time.Minute - time.Second) // a second short of its life and the grace
+	sp.mu.Lock()
+	sp.expiry = f.clock.Now().Add(10 * time.Minute) // what the renewal is answered
+	sp.mu.Unlock()
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 || !slices.Equal(rounds[0], []string{"lease-1"}) {
+		t.Fatalf("the lease within its hold's life and the grace: %v", rounds)
+	}
+	f.clock.advance(time.Second)
+	f.owner.Retire() // again: the time counts from the first
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 {
+		t.Fatalf("the lease once every hold has had its time: %v", rounds)
+	}
+	if _, held := f.owner.Lease("lease-1"); !held {
+		t.Fatal("let go within its cutoff")
+	}
+	f.clock.advance(10 * time.Minute) // past the cutoff of the last renewal
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rounds, _, _, _ := sp.state(); len(rounds) != 1 {
+		t.Fatalf("the lease past its cutoff: %v", rounds)
+	}
+	if _, held := f.owner.Lease("lease-1"); held {
+		t.Fatal("a retired owner's lease, every hold past its time and past its cutoff, is still held")
+	}
+}
+
 // TestALeaseWhosePublishesRecoverIsRenewed: the window counts from when the
 // lease's publishes began failing, and only while they do.
 func TestALeaseWhosePublishesRecoverIsRenewed(t *testing.T) {
@@ -624,11 +713,11 @@ func TestLettingAnAbandonedLeaseGoIsOneStep(t *testing.T) {
 	f.lease.mu.Unlock()
 	f.clock.advance(time.Minute)
 	f.lease.Renewed(start.Add(time.Hour))
-	if f.lease.letIfAbandoned(f.clock.Now()) {
+	if f.lease.letIfAbandoned(f.clock.Now(), false) {
 		t.Fatal("a lease a renewal's answer moved past the cutoff is let go")
 	}
 	f.clock.advance(time.Hour)
-	if !f.lease.letIfAbandoned(f.clock.Now()) {
+	if !f.lease.letIfAbandoned(f.clock.Now(), false) {
 		t.Fatal("a lease no longer renewed and past its cutoff is kept")
 	}
 	f.lease.Renewed(start.Add(5 * time.Hour))
@@ -738,7 +827,7 @@ func TestAbandonmentAndARenewalRace(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			abandoned = f.lease.letIfAbandoned(now)
+			abandoned = f.lease.letIfAbandoned(now, false)
 		}()
 		go func() {
 			defer wg.Done()

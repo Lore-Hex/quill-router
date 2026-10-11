@@ -72,9 +72,13 @@ func (o *Owner) every(ctx context.Context, f func()) {
 // takes no renewal is draining, revoked or another process's, and the owner
 // stops using it at once, as LeaseLifecycle's OwnerDrops does: it lets it
 // go, and answers what names it as an owner past its cutoff does. With each
-// round every lease publishes a checkpoint record. A lease the owner no
-// longer renews, its publishes failing, is let go once past its cutoff. The
-// auditor finishes a lease let go so. Rounds run one at a time, and each
+// round every lease publishes a checkpoint record. A lease of a workspace the
+// switch does not enable (W1) is closed, admitting nothing more even once
+// the switch is on again, since it may have been revoked meanwhile and only
+// a renewal would tell; it serves its holds, and is not renewed while the
+// switch is off. A lease the owner no longer renews, its publishes failing
+// or its workspace off, is let go once past its cutoff. The auditor
+// finishes a lease let go so. Rounds run one at a time, and each
 // ends with ctx or the owner, which waits for it to end when it stops.
 func (o *Owner) Renew(ctx context.Context) error {
 	if o.cfg.Spanner == nil {
@@ -104,6 +108,10 @@ func (o *Owner) Renew(ctx context.Context) error {
 	var refs []store.LeaseRef
 	var renewing []*Lease
 	for _, l := range leases {
+		if o.abandoned(l, now) {
+			l.Close()
+			continue
+		}
 		if l.renewable(now) {
 			refs, renewing = append(refs, l.ref()), append(renewing, l)
 		}
@@ -137,12 +145,26 @@ func (o *Owner) Renew(ctx context.Context) error {
 		if final := l.checkpoint(); final != nil {
 			go o.finish(l, final)
 		}
-		if l.letIfAbandoned(now) {
+		if l.letIfAbandoned(now, o.abandoned(l, now)) {
 			o.Let(l.id)
 		}
 	}
 	o.retryLost()
 	return nil
+}
+
+// abandoned: the owner renews the lease no more, and lets it go past its
+// cutoff, for the auditor to finish (§4.8): its workspace is off, or the
+// owner retired a hold's life and the grace ago, so every hold admitted
+// before has had its time, and one still open, a request whose terminal
+// never came, would otherwise keep the lease, and the node, for ever.
+func (o *Owner) abandoned(l *Lease, now time.Time) bool {
+	if !o.cfg.Enabled(l.workspace) {
+		return true
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.retiring && !now.Before(o.retiredAt.Add(o.cfg.HoldLife+o.cfg.Grace))
 }
 
 // renewable: the owner renews a lease it holds, unless its publishes have
@@ -158,14 +180,15 @@ func (l *Lease) failingTooLong(now time.Time) bool {
 	return !l.failedAt.IsZero() && now.Sub(l.failedAt) > l.o.cfg.Window
 }
 
-// letIfAbandoned marks the lease let go if it is no longer renewed and is
-// past its cutoff, in one step under its lock: a renewal's answer that comes
-// after, which a lease let go ignores, cannot bring it back between the
-// check and the letting go.
-func (l *Lease) letIfAbandoned(now time.Time) bool {
+// letIfAbandoned marks the lease let go if it is no longer renewed, its
+// publishes failing too long or its workspace off, and is past its cutoff,
+// in one step under its lock: a renewal's answer that comes after, which a
+// lease let go ignores, cannot bring it back between the check and the
+// letting go.
+func (l *Lease) letIfAbandoned(now time.Time, off bool) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.let || !l.failingTooLong(now) || l.withinCutoff(now) {
+	if l.let || !(off || l.failingTooLong(now)) || l.withinCutoff(now) {
 		return false
 	}
 	l.let = true

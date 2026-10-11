@@ -27,7 +27,7 @@ func BenchmarkAuthorize(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	door, err := New(Config{Owners: Direct{"node-a": local}, Store: &fakeStore{ev: &events{}},
+	door, err := New(Config{Enabled: everyWorkspace, Owners: Direct{"node-a": local}, Store: &fakeStore{ev: &events{}},
 		Records: &fakeRecords{ev: &events{}}, Members: fakeMembers{owners("node-a")}, Key: key,
 		Shards: func(string) int64 { return 1 }, OwnerWait: time.Second, PublishWait: time.Second})
 	if err != nil {

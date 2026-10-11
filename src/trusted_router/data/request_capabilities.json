@@ -167,10 +167,10 @@
         "anthropic"
       ],
       "models": [
+        "anthropic/claude-fable-5",
         "anthropic/claude-opus-4.7",
         "anthropic/claude-opus-4.8",
         "anthropic/claude-opus-5.5",
-        "anthropic/claude-fable-5",
         "anthropic/claude-sonnet-5.5"
       ],
       "reasoning_effort": [
@@ -327,27 +327,7 @@
         "google-vertex"
       ],
       "models": [
-        "google/gemini-3-pro-preview"
-      ],
-      "reasoning_effort": [
-        "none",
-        "minimal",
-        "low",
-        "high"
-      ],
-      "source": "https://ai.google.dev/gemini-api/docs/thinking",
-      "tools": true,
-      "seed": true,
-      "vision": true
-    },
-    {
-      "providers": [
-        "google-vertex"
-      ],
-      "models": [
         "google/gemini-3.1-pro-preview",
-        "google/gemini-3-flash-preview",
-        "google/gemini-3.1-flash-lite-preview",
         "google/gemini-3.5-flash",
         "google/gemini-3.6-flash",
         "google/gemini-3.7-flash",
@@ -367,11 +347,9 @@
     },
     {
       "providers": [
-        "google-ai-studio",
-        "gemini"
+        "google-ai-studio"
       ],
       "models": [
-        "google/gemini-3.7-flash",
         "google/gemini-3.8-flash"
       ],
       "reasoning_effort": [
@@ -392,8 +370,7 @@
       ],
       "models": [
         "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v4-pro",
-        "deepseek/deepseek-v4-pro-20260423"
+        "deepseek/deepseek-v4-pro"
       ],
       "reasoning_effort": [
         "high",
@@ -468,7 +445,6 @@
         "alibaba"
       ],
       "models": [
-        "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-flash-0731",
         "deepseek/deepseek-v4-pro",
         "moonshotai/kimi-k2.5",
@@ -490,37 +466,8 @@
         "qwen/qwen-plus-2025-07-28",
         "qwen/qwen-plus-2025-09-11",
         "qwen/qwen-plus-2025-12-01",
-        "qwen/qwen3-235b-a22b",
-        "qwen/qwen3-235b-a22b-instruct-2507",
-        "qwen/qwen3-235b-a22b-thinking-2507",
-        "qwen/qwen3-30b-a3b",
-        "qwen/qwen3-30b-a3b-instruct-2507",
-        "qwen/qwen3-30b-a3b-thinking-2507",
-        "qwen/qwen3-32b",
-        "qwen/qwen3-8b",
-        "qwen/qwen3-coder-30b-a3b-instruct",
-        "qwen/qwen3-coder-480b-a35b-instruct",
         "qwen/qwen3-coder-flash",
         "qwen/qwen3-coder-flash-2025-07-28",
-        "qwen/qwen3-coder-next",
-        "qwen/qwen3-coder-plus",
-        "qwen/qwen3-coder-plus-2025-07-22",
-        "qwen/qwen3-coder-plus-2025-09-23",
-        "qwen/qwen3-max",
-        "qwen/qwen3-max-2025-09-23",
-        "qwen/qwen3-max-2026-01-23",
-        "qwen/qwen3-max-preview",
-        "qwen/qwen3-vl-235b-a22b-instruct",
-        "qwen/qwen3-vl-235b-a22b-thinking",
-        "qwen/qwen3-vl-30b-a3b-instruct",
-        "qwen/qwen3-vl-30b-a3b-thinking",
-        "qwen/qwen3-vl-32b-instruct",
-        "qwen/qwen3-vl-32b-thinking",
-        "qwen/qwen3-vl-8b-instruct",
-        "qwen/qwen3-vl-8b-thinking",
-        "qwen/qwen3-vl-flash",
-        "qwen/qwen3-vl-flash-2025-10-15",
-        "qwen/qwen3-vl-flash-2026-01-22",
         "qwen/qwen3-vl-plus",
         "qwen/qwen3-vl-plus-2025-09-23",
         "qwen/qwen3-vl-plus-2025-12-19",
@@ -637,7 +584,6 @@
         "google/gemini-3-flash-preview",
         "google/gemini-3.1-flash-lite",
         "google/gemini-3.1-pro-preview",
-        "google/gemini-3.5-flash",
         "google/gemini-3.5-flash-lite",
         "google/gemini-3.6-flash"
       ],

@@ -202,6 +202,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
 )
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
+from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
     microdollars_to_decimal,
@@ -260,6 +261,7 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
     validate_auto_model_order,
     zdr_candidate_models,
 )
+from trusted_router.speech import SPEECH_MODELS, speech_metadata
 
 # Uniform pricing: customer pays cost + 5.5%, floor $0.01/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
@@ -700,6 +702,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    if model.id in SPEECH_MODELS and not SPEECH_MODELS[model.id].token_billed:
+        # Do not advertise a character-billed service as free text generation.
+        pricing = {
+            "input_character": microdollars_per_million_tokens_to_token_decimal(
+                SPEECH_MODELS[model.id].customer_rate
+            ),
+        }
     # The endpoint payloads have always published input_cache_read; the model
     # headline never did, so /v1/models hid the cache-read discount on more
     # than a thousand endpoints. OR convention, same field name.
@@ -787,6 +796,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "orchestration_primitive": orchestration_primitive(model.id),
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
+        **({"aliases": router_model_aliases(model.id)} if router_model_aliases(model.id) else {}),
         "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
         "internal_only": model.id == MONITOR_MODEL_ID,
@@ -863,6 +873,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
     if documentation is not None:
         tr_block["documentation"] = documentation
+    if model.id in SPEECH_MODELS:
+        tr_block["speech"] = speech_metadata(model.id)
+        tr_block["supports_speech"] = True
     usage_estimation = provider_usage_estimation_policy(model.provider)
     if usage_estimation is not None:
         tr_block["usage_estimation"] = usage_estimation
@@ -928,6 +941,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "instruct_type": None,
         },
         "pricing": pricing,
+        **({"supported_voices": list(SPEECH_MODELS[model.id].voices)} if model.id in SPEECH_MODELS else {}),
         "top_provider": {
             "context_length": model.context_length,
             "max_completion_tokens": None,

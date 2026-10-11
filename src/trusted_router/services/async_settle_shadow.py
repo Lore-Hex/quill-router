@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import datetime as dt
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -98,14 +99,16 @@ class Runtime:
         import threading
         self.settings, self.async_runtime, self.store, self.observer = settings, async_runtime, store, observer
         self.signer = ShadowSigner(async_runtime.signer) if async_runtime.signer else None
-        self.counters = Counters(settings.primary_region, settings.release or "unknown")
+        self.counters = Counters(settings.primary_region, settings.source_revision or settings.release or "unknown")
         self.lock = threading.RLock()
         self.tokens, self.refilled = 10., time.monotonic()
         self.pending = self.queued_bytes = 0
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="settle-shadow")
         self.permit_day, self.permits, self.next_allocate = "", 0, 0.
         self.last_flush = 0.
-        self.observer_flushed: dict[str, int] = {}
+        self.observer_degraded_seconds: dict[str, float] = {}
+        if self.observer is not None:
+            self.observer.evidence_wall = lambda: self.counters.clock()
         if settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
             try:
                 prewarm_catalog()
@@ -435,13 +438,49 @@ class Runtime:
             return
         self.last_flush = time.monotonic()
         try:
+            sealed_before = None
+            # Fold every day's observer evidence before closing/acknowledging
+            # any writer, including days retained by outstanding request work.
+            if self.observer is not None:
+                with self.counters.lock:
+                    self.observer.evidence_wall = lambda: self.counters.clock()
+                    daily, overflow, sealed_before = self.observer.snapshot_daily_counts()
+                    for day, values in sorted(daily.items()):
+                        token = self.counters.observation_day.set(day)
+                        try:
+                            counter = self.counters._day()
+                            counter["started_at_us"] = min(counter["started_at_us"], values["started_at_us"])
+                            observer_counts = counter["admission_observer"]
+                            for key in ("workspace_reads", "health_reads", "read_failures", "missed_ticks", "late_installs"):
+                                self.counters.add(counter, observer_counts, key,
+                                    int(values.get(key, 0)) - observer_counts[key])
+                            total = values.get("degraded_seconds", 0.)
+                            self.observer_degraded_seconds[day] = total
+                            self.counters.add(counter, observer_counts, "degraded_seconds",
+                                math.ceil(total) - observer_counts["degraded_seconds"])
+                            observer_counts["max_consecutive_failures"] = max(
+                                observer_counts["max_consecutive_failures"], int(values.get("max_consecutive_failures", 0)))
+                            if overflow:
+                                counter["first_gap_at_us"] = int(self.counters.clock() * 1e6)
+                            self.observer.acknowledge_daily_counts(day, sealed_before)
+                        finally:
+                            self.counters.observation_day.reset(token)
+                    self.observer_degraded_seconds = {day: value for day, value in
+                        self.observer_degraded_seconds.items() if day in self.counters.days}
             # Persist and acknowledge older days before registering the current
             # writer. Active money/queued tasks retain their receipt day until
             # completion; the next timer then closes it. Failed closes stay in
             # the bounded retention set and are never silently acknowledged.
-            for identity, body in self.counters.snapshot(retiring_only=True):
+            for identity, body in self.counters.snapshot(retiring_only=True, sealed_before=sealed_before):
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)
+                if not closed:
+                    # A regional close can consume most of this pass's budget.
+                    # Keep the new day in memory; its next maintenance pass
+                    # gets a full bounded transaction instead of a doomed retry.
+                    with self.counters.lock:
+                        self.counters._day()
+                    return
             # Register even an idle serving instance. The external inventory,
             # not the set of successful writers, remains the roster authority.
             with self.counters.lock:
@@ -452,19 +491,11 @@ class Runtime:
                     # writer until the prior close is acknowledged. No waiting
                     # or I/O is added to the request path.
                     return
-            if self.observer is not None:
-                with self.counters.lock:
-                    counter = self.counters._day()
-                    observer_counts = counter["admission_observer"]
-                    for key in ("workspace_reads", "health_reads", "read_failures", "missed_ticks"):
-                        value = self.observer.counts[key]
-                        self.counters.add(counter, observer_counts, key, max(0, value - self.observer_flushed.get(key, 0)))
-                        self.observer_flushed[key] = value
-            for identity, body in self.counters.snapshot(closed):
+            for identity, body in self.counters.snapshot(closed, sealed_before=sealed_before):
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)
         except Exception:
-            self.counters.reason(dimensions(None, None, None), "worker", "store_unavailable")
+            self.counters.flush_failed()
 
     async def maintain_counters(self, stopped: asyncio.Event) -> None:
         while not stopped.is_set():
@@ -529,9 +560,11 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         stopped.set()
-        if maintenance is not None:
-            await maintenance
-        if observer is not None:
-            await observer.close()
-        await asyncio.get_running_loop().run_in_executor(runtime.executor, partial(runtime.flush, time.monotonic()+1, True))
-        runtime.executor.shutdown(wait=False, cancel_futures=True)
+        try:
+            if maintenance is not None:
+                await maintenance
+            if observer is not None:
+                await observer.close()
+            await asyncio.get_running_loop().run_in_executor(runtime.executor, partial(runtime.flush, time.monotonic()+1, True))
+        finally:
+            runtime.executor.shutdown(wait=False, cancel_futures=True)

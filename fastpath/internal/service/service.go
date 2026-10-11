@@ -10,8 +10,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -49,8 +51,11 @@ type Config struct {
 	// Region is the settle log's region: the owner's shard keys carry it,
 	// and the ticker ticks its leases.
 	Region string
-	// Key is the fleet's envelope key.
-	Key []byte
+	// Key is the fleet's envelope key, which the node seals with; AcceptKeys
+	// are the keys it also verifies with, a rotation's other key
+	// (docs/design/fast-admission-production-rollout.md, W6).
+	Key        []byte
+	AcceptKeys [][]byte
 	// Shards is every workspace's shard count K (§4.3).
 	Shards int64
 
@@ -63,6 +68,9 @@ type Config struct {
 
 	// Store's times are the ones every part agrees on.
 	Store store.Config
+	// Switch is how often a node reads the fast path's switch, which
+	// workspaces it may admit for (switch.go).
+	Switch time.Duration
 	// Ring is how often a node writes its row and a front door reads the
 	// members.
 	Ring time.Duration
@@ -81,6 +89,22 @@ type Config struct {
 	// Stopping bounds how long the HTTP server waits for its requests when
 	// the process stops.
 	Stopping time.Duration
+	// HandOff is how long a stopping admission node's owner has to hand its
+	// leases off (§4.2, spike plan K2): it lists each lease's open holds in
+	// hand-off records and marks the lease draining, and a lease it has not
+	// handed off by then drains by time. Zero hands nothing off.
+	HandOff time.Duration
+	// Leave, once it is closed or sent on, marks the admission node leaving
+	// (spike plan §4, K3): front doors send it no new requests, and its
+	// owner retires, taking nothing new and serving the holds of the
+	// leases it has, each of which ends once its holds have. A stopping
+	// node leaves too.
+	Leave <-chan struct{}
+	// ClockOffset is added to the owner's clock readings: the fault
+	// injector's offset of an owner's clock (spike plan K6), zero for a true
+	// one. The front door reads its clock only for spans of time, which an
+	// offset leaves as they were, and an auditor's parts keep a true clock.
+	ClockOffset time.Duration
 }
 
 // Defaults is the spike's configuration, but for what a deployment names:
@@ -93,7 +117,8 @@ func Defaults() Config {
 		Store: store.Config{LiveFor: 3 * time.Second, Window: 30 * time.Second, Skew: 2 * time.Second,
 			PublishDeadline: 5 * time.Second, MaxLife: maxLife, Grace: time.Minute, Allowance: 1 << 50,
 			RequiredTier: 1},
-		Ring: time.Second,
+		Ring:   time.Second,
+		Switch: time.Second,
 		Owner: owner.Config{AnswerWait: 5 * time.Second, HeartbeatEvery: 30 * time.Second, RenewEvery: 5 * time.Second,
 			KeyStatus: 1, TopUps: owner.TopUps{LowWater: 1000, Cooldown: time.Second, Horizon: time.Minute, Min: 10_000,
 				Max: 10_000_000, IdleAfter: 10 * time.Minute, MaxLife: time.Hour},
@@ -104,10 +129,11 @@ func Defaults() Config {
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,
-			Wait: 5 * time.Second},
+			Wait: 5 * time.Second, DrainOverdue: 10 * time.Minute},
 		Ticker:   auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
-		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second},
+		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute},
 		Stopping: 10 * time.Second,
+		HandOff:  10 * time.Second,
 	}
 }
 
@@ -122,14 +148,17 @@ func (c Config) valid() error {
 	switch {
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
-	case c.Admission && (c.Address == "" || len(c.Key) < frontdoor.MinKeySize || c.Shards < 1):
-		return errors.New("service: an admission node needs its address, a key of at least 32 bytes and a shard count")
+	case c.Address == "":
+		return errors.New("service: a process needs its address, an admission node's host and port as other nodes " +
+			"reach it, or the name of an auditor member's own row")
+	case c.Admission && (len(c.Key) < frontdoor.MinKeySize || c.Shards < 1):
+		return errors.New("service: an admission node needs a key of at least 32 bytes and a shard count")
 	case c.Region == "" || c.SettleTopic == "" || c.RecordTopic == "":
 		return errors.New("service: a process needs its region, the settle log's topic and the record topic")
 	case c.Auditor && (c.SettleSubscription == "" || c.RecordSubscription == ""):
 		return errors.New("service: an auditor member needs its subscriptions to the settle log and the record topic")
-	case c.MaxOutstanding < 1 || c.Ring <= 0 || c.Stopping <= 0:
-		return errors.New("service: a positive subscription bound, ring interval and stopping time")
+	case c.MaxOutstanding < 1 || c.Ring <= 0 || c.Switch <= 0 || c.Stopping <= 0 || c.HandOff < 0:
+		return errors.New("service: a positive subscription bound, ring interval and stopping time, and a hand-off time")
 	}
 	return nil
 }
@@ -167,8 +196,12 @@ func PubSubOptions(region string) []option.ClientOption {
 }
 
 // Run runs the process until ctx ends, or one of its parts fails, and
-// returns once every part has stopped: nil if ctx ended it, else the first
-// failure. A Listener given it is its own, closed however it returns.
+// returns once every part has stopped: the first failure, though ctx ended
+// too, else nil. When ctx ends, the parts run on while the process leaves:
+// an admission node is marked leaving and its owner hands its leases off,
+// within HandOff; then they stop. A part that fails stops them all at once,
+// a leaving under way too (lifecycle). A Listener given it is its own,
+// closed however it returns.
 func Run(ctx context.Context, cfg Config, c Clients) error {
 	if cfg.Listener != nil {
 		defer cfg.Listener.Close()
@@ -180,7 +213,7 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		return errors.New("service: a Spanner client and a Pub/Sub client")
 	}
 	if cfg.Alert == nil {
-		cfg.Alert = func(subject, what string) { log.Printf("alert: %s: %s", subject, what) }
+		cfg.Alert = func(subject, what string) { writeAlert(alertOutput, subject, what) }
 	}
 	cfg = cfg.agreed()
 	s, err := store.New(c.Spanner, cfg.Store)
@@ -198,32 +231,66 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	}
 	defer records.Stop()
 
-	p := &parts{ctx: ctx}
-	p.ctx, p.cancel = context.WithCancel(ctx)
-	defer p.cancel()
-	if cfg.Admission {
-		if err := p.admission(cfg, s, settle, records); err != nil {
-			p.startFailed(ctx, err)
-		}
+	if cfg.ClockOffset != 0 {
+		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
-	if cfg.Auditor && p.ctx.Err() == nil {
-		if err := p.auditor(cfg, c, s, settle, records); err != nil {
-			p.startFailed(ctx, err)
+	return lifecycle(ctx, func(p *parts) {
+		if cfg.Admission {
+			if err := p.admission(cfg, s, settle, records); err != nil {
+				p.startFailed(ctx, err)
+			}
 		}
+		if cfg.Auditor && p.ctx.Err() == nil {
+			if err := p.auditor(cfg, c, s, settle, records); err != nil {
+				p.startFailed(ctx, err)
+			}
+		}
+	})
+}
+
+// lifecycle starts a process's parts with start and runs them until ctx
+// ends or one fails, and returns once every part has stopped: the first
+// failure, whenever it came, else nil. While start runs, ctx's end stops
+// the parts, a start under way too; once they have started, it begins the
+// process's leaving: what whenLeaving was given runs while every part still
+// runs, and then the parts stop. A part's failure stops them at once, a
+// leaving under way too, which it may have left undone, so it is returned
+// though ctx had ended: a failure that ends ctx itself, as a server's whose
+// listener's close does, comes after ctx's end all the same.
+func lifecycle(ctx context.Context, start func(p *parts)) error {
+	p := &parts{caller: ctx, armed: make(chan struct{})}
+	p.ctx, p.cancel = context.WithCancel(context.WithoutCancel(ctx))
+	defer p.cancel()
+	starting := context.AfterFunc(ctx, p.cancel)
+	start(p)
+	if starting() {
+		defer context.AfterFunc(ctx, func() {
+			p.leave()
+			p.cancel()
+		})()
+		close(p.armed)
 	}
 	p.wait()
-	if p.err != nil {
-		return p.err
-	}
-	return nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
 }
 
 // parts are a process's running parts: the first to fail ends them all.
 type parts struct {
+	// caller is Run's context, whose end begins the process's leaving; ctx
+	// is the parts', which ends once it has left, or a part has failed.
+	// armed is closed once the parts have started and caller's end will
+	// begin their leaving.
+	caller context.Context
+	armed  chan struct{}
 	ctx    context.Context
 	cancel context.CancelFunc
 	group  sync.WaitGroup
 	stops  []func()
+	// leaving run when the caller's context ends, while every part still
+	// runs, in order.
+	leaving []func()
 
 	mu  sync.Mutex
 	err error
@@ -270,6 +337,25 @@ func (p *parts) failing(name string) func(error) {
 // stop is run once every part has returned, latest first.
 func (p *parts) stop(f func()) { p.stops = append(p.stops, f) }
 
+// whenLeaving is run when the caller's context ends, before the parts are
+// stopped.
+func (p *parts) whenLeaving(f func()) { p.leaving = append(p.leaving, f) }
+
+// leave runs what whenLeaving was given, unless a part's failure has
+// stopped the process already.
+func (p *parts) leave() {
+	for _, f := range p.leaving {
+		if p.ctx.Err() != nil {
+			return
+		}
+		f()
+	}
+}
+
+// ownersClock is a reading of the owner's clock, offset as the
+// configuration says.
+func (c Config) ownersClock() time.Time { return time.Now().Add(c.ClockOffset) }
+
 func (p *parts) wait() {
 	<-p.ctx.Done()
 	p.group.Wait()
@@ -297,7 +383,7 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			}
 		}()
 	}
-	node, err := ring.Start(p.ctx, s, cfg.Address, []string{ring.OwnerRole, "frontdoor"}, cfg.Ring)
+	node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
 	if err != nil {
 		return err
 	}
@@ -308,9 +394,20 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	}
 	p.stop(members.Stop)
 
+	// The switch is read once before serving, and then every interval: a
+	// node that cannot read it admits for no workspace. The owner asks it
+	// as it makes each hold, and the front door before it routes.
+	sw := &workspaceSwitch{read: s.EnabledWorkspaces, every: cfg.Switch, clock: time.Now}
+	if err := sw.refresh(p.ctx); err != nil {
+		log.Printf("service: reading the fast path's switch: %v", err)
+	}
+	p.run("switch", func(ctx context.Context) error {
+		sw.run(ctx)
+		return nil
+	})
 	oc := cfg.Owner
 	oc.Epoch, oc.Spanner, oc.Node, oc.Records = node.Epoch(), s, cfg.Address, owner.FromRecords(records)
-	oc.NewAuthorization, oc.Clock = store.NewAuthorizationID, time.Now
+	oc.NewAuthorization, oc.Clock, oc.Enabled = store.NewAuthorizationID, cfg.ownersClock, sw.Enabled
 	o, err := owner.New(oc, owner.FromLog(settle))
 	if err != nil {
 		return err
@@ -334,8 +431,10 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	// Once every caller has stopped, its idle connections close.
 	p.stop(transport.CloseIdleConnections)
 	fc := cfg.FrontDoor
+	fc.Enabled = sw.Enabled
 	fc.Owners = owners{self: cfg.Address, local: local, remote: frontdoor.HTTPOwners{Client: client, Scheme: "http"}}
-	fc.Store, fc.Records, fc.Members, fc.Key = s, frontdoor.FromRecords(records), members, cfg.Key
+	fc.Store, fc.Records, fc.Members, fc.Key, fc.Accept = s, frontdoor.FromRecords(records), members, cfg.Key,
+		cfg.AcceptKeys
 	fc.Shards = func(string) int64 { return cfg.Shards }
 	fc.Self, fc.Peers, fc.Node = cfg.Address, frontdoor.HTTPPeers{Client: client, Scheme: "http"}, node
 	fc.Clock = time.Now
@@ -376,6 +475,44 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		handlers.wait()
 		return nil
 	})
+	// The node leaves when Leave says so, and when the process stops: its
+	// owner retires, and its row is marked leaving, within LiveFor; a write
+	// that fails is written again with the node's next heartbeat. A
+	// stopping node's owner then hands its leases off.
+	leave := func(ctx context.Context) {
+		o.Retire()
+		ctx, cancel := context.WithTimeout(ctx, cfg.Store.LiveFor)
+		defer cancel()
+		if err := node.SetState(ctx, store.Leaving); err != nil {
+			log.Printf("fastpath: marking %s leaving: %v", cfg.Address, err)
+		}
+	}
+	if cfg.Leave != nil {
+		p.run("leaving", func(ctx context.Context) error {
+			select {
+			case <-cfg.Leave:
+				// The write ends when the process begins to leave, which
+				// writes the row itself, or when a part fails.
+				lctx, cancel := context.WithCancel(p.caller)
+				defer context.AfterFunc(ctx, cancel)()
+				leave(lctx)
+				cancel()
+			case <-ctx.Done():
+			}
+			return nil
+		})
+	}
+	p.whenLeaving(func() {
+		leave(p.ctx)
+		if cfg.HandOff == 0 {
+			return
+		}
+		hctx, cancel := context.WithTimeout(p.ctx, cfg.HandOff)
+		defer cancel()
+		if err := o.Handoff(hctx); err != nil {
+			log.Printf("fastpath: the owner's hand-off: %v", err)
+		}
+	})
 	// A node whose row another process took stops: its epoch is not the
 	// row's, so its leases' writes are refused.
 	p.run("ring", func(ctx context.Context) error {
@@ -389,9 +526,32 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	return nil
 }
 
+// roles are a process's membership roles (tr_fastpath_member): an
+// admission node's owner and front door, and the auditor's, so that a
+// deploy sees what a node runs (docs/runbooks/fastpath-deploy.md).
+func roles(cfg Config) []string {
+	var out []string
+	if cfg.Admission {
+		out = append(out, ring.OwnerRole, "frontdoor")
+	}
+	if cfg.Auditor {
+		out = append(out, "auditor")
+	}
+	return out
+}
+
 // auditor starts an auditor member: the runtime on the settle log's
 // subscription, the ticker, the pending work and the record topic's stager.
+// One of its own joins the membership with the auditor role, so that a
+// deploy sees it live; one beside an admission node is on the node's row.
 func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
+	if !cfg.Admission {
+		node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+		if err != nil {
+			return err
+		}
+		p.stop(node.Stop)
+	}
 	rc := cfg.Runtime
 	rc.Store, rc.Records, rc.Alert, rc.Clock = s, auditor.FromRecords(records), cfg.Alert, time.Now
 	rt, err := auditor.New(rc)
@@ -607,4 +767,28 @@ func (r reporting) Receive(ctx context.Context, handle func(context.Context, aud
 		r.fail(err)
 	}
 	return err
+}
+
+// alertOutput is where the default alert writes: the process's standard
+// error, which Cloud Logging reads.
+var alertOutput io.Writer = os.Stderr
+
+// writeAlert writes an alert as one line of JSON, as Cloud Logging reads a
+// process's standard error: severity ERROR, the message, the subject, and
+// the alert's kind (auditor.AlertKind) as the label fastpath_alert, which
+// the alert policies match (docs/runbooks/fastpath-alerts.md). It carries
+// what the alert carries: a lease or an authorization and what happened,
+// never a record's contents.
+func writeAlert(w io.Writer, subject, what string) {
+	line, err := json.Marshal(map[string]any{
+		"severity":                      "ERROR",
+		"message":                       "fastpath alert: " + what,
+		"subject":                       subject,
+		"logging.googleapis.com/labels": map[string]string{"fastpath_alert": auditor.AlertKind(what)},
+	})
+	if err != nil {
+		log.Printf("alert: %s: %s", subject, what)
+		return
+	}
+	fmt.Fprintln(w, string(line))
 }

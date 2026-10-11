@@ -21,6 +21,10 @@ PRICING_DOCUMENT_VERSION = 1
 PRICE_HISTORY_VERSION = 1
 PRICING_ROUNDING = "half_up_per_million"
 ESTIMATED_USAGE_SNAPSHOT_REASON = "abliterate_estimated_usage"
+SPEECH_SNAPSHOT_REASON = "speech_token_usage"
+SPEECH_SNAPSHOT_MODELS = frozenset({
+    "google/gemini-3.8-flash-tts", "google/gemini-3.8-flash-lite-tts",
+})
 ESTIMATED_USAGE_SNAPSHOT_MODELS = frozenset({
     "abliterate/abliterate-0.3-fast", "abliterate/abliterate-0.3-balanced",
     "abliterate/abliterate-0.3-clever",
@@ -38,7 +42,7 @@ def billing_pricing_snapshot(authorization: GatewayAuthorization) -> dict[str, A
     joining the heartbeat cohort. Never consult the mutable catalog for eligibility.
     """
     if (
-        authorization.stage_d_reason not in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON}
+        authorization.stage_d_reason not in {"ok", ESTIMATED_USAGE_SNAPSHOT_REASON, SPEECH_SNAPSHOT_REASON}
         or authorization.pricing_snapshot is None
         or authorization.usage_type != "Credits"
         or authorization.custom_model_id is not None
@@ -49,6 +53,12 @@ def billing_pricing_snapshot(authorization: GatewayAuthorization) -> dict[str, A
         or authorization.receipt_fee_basis_points != 0
         or authorization.app_markup_basis_points != 0
         or authorization.custom_model_markup_basis_points != 0
+    ):
+        return None
+    if authorization.stage_d_reason == SPEECH_SNAPSHOT_REASON and (
+        authorization.provider != "google-ai-studio"
+        or authorization.model_id not in SPEECH_SNAPSHOT_MODELS
+        or any(model not in SPEECH_SNAPSHOT_MODELS for model in authorization.candidate_model_ids)
     ):
         return None
     if authorization.stage_d_reason == ESTIMATED_USAGE_SNAPSHOT_REASON and (

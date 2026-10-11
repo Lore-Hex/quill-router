@@ -2901,8 +2901,8 @@ def test_model_shape_omits_cache_read_price_when_absent() -> None:
         "deepseek/deepseek-v4-pro@deepseek/prepaid",
         "moonshotai/kimi-k3@wafer/prepaid",
         "deepseek/deepseek-v4-flash-0731-fast@wafer/prepaid",
-        "xiaomi/mimo-v2.5@xiaomi/prepaid",
-        "xiaomi/mimo-v2.5-pro@xiaomi/prepaid",
+        "xiaomi/mimo-v2.6-flash@xiaomi/prepaid",
+        "xiaomi/mimo-v2.6-pro@xiaomi/prepaid",
     ],
 )
 def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:

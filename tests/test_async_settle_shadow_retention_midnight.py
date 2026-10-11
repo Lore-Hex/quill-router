@@ -4,6 +4,7 @@ import json
 import time
 from types import SimpleNamespace
 
+import pytest
 from starlette.background import BackgroundTasks
 from starlette.datastructures import Headers
 
@@ -139,3 +140,14 @@ def test_retention_and_insert_share_one_timestamp(monkeypatch, shadow_deadline_c
     assert outcome == 'retired'
     assert calls == [boundary - dt.timedelta(microseconds=1)]
     assert inserted_at == []
+
+
+@pytest.mark.parametrize('seconds_before_midnight', [.5, 1.])
+def test_retention_fence_reserves_the_entire_transaction_budget(seconds_before_midnight):
+    from trusted_router.storage_gcp_async_settle_shadow import RetirementBoundary
+
+    row = sample_row()
+    boundary = dt.datetime.fromtimestamp(row['authorize_at_us']/1e6 + 31*86400, dt.UTC)
+    observed = boundary - dt.timedelta(seconds=seconds_before_midnight)
+    with pytest.raises(RetirementBoundary, match='proof_expired'):
+        EvidenceStore(CleanupDatabase()).check_write_day(SAMPLE, row['authorization_day']+'/auth-v1', observed, None)

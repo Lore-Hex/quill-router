@@ -1,5 +1,5 @@
-// Package schema holds the spike's schema, spike.sql, and splits it into the
-// statements Spanner's schema updates take.
+// Package schema holds the fast path's schema, fastpath.sql, and splits it into
+// the statements Spanner's schema updates take.
 package schema
 
 import (
@@ -8,12 +8,12 @@ import (
 	"strings"
 )
 
-//go:embed spike.sql
-var spikeSQL string
+//go:embed fastpath.sql
+var fastpathSQL string
 
-// Statements are spike.sql's statements, in order, without comments.
+// Statements are fastpath.sql's statements, in order, without comments.
 func Statements() ([]string, error) {
-	return Split(spikeSQL)
+	return Split(fastpathSQL)
 }
 
 // Split splits GoogleSQL text into its statements at the semicolons outside

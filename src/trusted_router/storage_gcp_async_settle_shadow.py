@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
+from google.api_core import exceptions as api_errors
 from google.cloud.spanner_v1 import param_types as pt
 
 from trusted_router.async_settle_shadow_compare import Booking
@@ -22,7 +25,7 @@ from trusted_router.async_settle_shadow_evidence import (
     validate_sample,
 )
 from trusted_router.detached_jws import canonical
-from trusted_router.storage_gcp_io import spanner_rpc_deadline
+from trusted_router.storage_gcp_io import SpannerTransportReset, spanner_rpc_deadline
 
 FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
                     "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id")
@@ -30,9 +33,23 @@ POINT_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
 DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start "
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
 
-# The same bound fences both transaction completion and the final write check.
-WRITE_BUDGET_SECONDS = .2
+# Multi-round-trip writes share the worker's one-second budget. The same
+# total bound fences retention. Reads and commit/control RPCs can use the
+# remaining shared time, never a new budget or an earlier per-RPC deadline.
+# Operator range reads retain their separate 200 ms caller deadline.
+# The transaction per-RPC cap equals the write budget, still clipped to the
+# remaining shared time. In capped contexts, Commit, Begin and Rollback resets
+# fail fast before the SDK's two-second backoff can exceed the shared deadline.
+# Transaction streaming reads use the SDK restart path, bounded by that shared
+# deadline. Standalone snapshot reads also keep the caller's shared deadline
+# active throughout stream iteration and any SDK restart.
+# The horizon bounds scheduled RPC time, not Python scheduling/GC or late
+# server-side commits.
+WRITE_BUDGET_SECONDS = 1.0
+RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
+TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
+logger = logging.getLogger(__name__)
 
 
 class RetirementBoundary(ValueError):
@@ -70,40 +87,74 @@ class EvidenceStore:
     def __init__(self, database: Any) -> None:
         self.database = database
         self.rejections: Counter[tuple[str, str]] = Counter()
+        self._failure_log_lock = threading.Lock()
+        self._next_failure_log = 0.
+
+    def _report_failure(self, stage: str, error: Exception, started: float) -> None:
+        now = time.monotonic()
+        with self._failure_log_lock:
+            if now < self._next_failure_log:
+                return
+            self._next_failure_log = now + 60
+        # Never stringify exceptions or attach traces: they can contain SQL
+        # parameters or evidence. Only fixed categories and timing leave here.
+        reason = "other"
+        for cls, label in ((SpannerTransportReset, "transport_reset"),
+                           (api_errors.DeadlineExceeded, "deadline_exceeded"),
+                           (api_errors.Cancelled, "cancelled"),
+                           (api_errors.Aborted, "aborted"),
+                           (api_errors.ServiceUnavailable, "unavailable"),
+                           (TimeoutError, "local_budget")):
+            if isinstance(error, cls):
+                reason = label
+                break
+        logger.warning("shadow evidence transaction failed stage=%s reason=%s elapsed_ms=%d",
+                       stage, reason, max(0, round((now-started)*1000)))
 
     @staticmethod
     def query(reader: Any, statement: Statement, deadline: float) -> list[Any]:
-        remaining = min(.2, deadline - time.monotonic())
+        remaining = min(RPC_BUDGET_SECONDS, deadline - time.monotonic())
         if remaining <= 0:
             raise TimeoutError("shadow budget")
         sql, params, types = statement
         if sql not in (FINALIZATION_SQL, POINT_SQL, DAY_SQL):
             raise ValueError("unknown shadow statement")
-        return list(reader.execute_sql(
-            FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
-            params=params, param_types=types, timeout=remaining,
-                                       retry=None, request_options={"priority": "PRIORITY_LOW"}))
+        # Snapshot streaming restarts occur even with retry=None. Keep the
+        # deadline active through iteration so each restart consumes its remainder.
+        with spanner_rpc_deadline(deadline, max_rpc_seconds=RPC_BUDGET_SECONDS):
+            return list(reader.execute_sql(
+                FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
+                params=params, param_types=types, timeout=remaining,
+                retry=None, request_options={"priority": "PRIORITY_LOW"}))
 
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
-        if time.monotonic() >= deadline:
+        started = time.monotonic()
+        if started >= deadline:
             raise TimeoutError("shadow budget")
         rpc_deadline = min(deadline, time.monotonic() + WRITE_BUDGET_SECONDS)
         attempted = False
+        stage = "begin"
         def once(tx: Any) -> Any:
-            nonlocal attempted
+            nonlocal attempted, stage
             if attempted:
-                # The deadline wrapper can extend timeout_secs=0. The SDK may
-                # re-enter on Aborted, but it must never repeat reads/writes or
+                # The SDK may re-enter on Aborted, but it must never repeat reads/writes or
                 # commit a second attempt. Runtime counts this as a store drop.
                 raise RuntimeError("shadow_transaction_retry")
             attempted = True
-            return callback(tx)
-        with spanner_rpc_deadline(rpc_deadline):
-            result = self.database.run_in_transaction(once, timeout_secs=0,
-                commit_request_options={"priority": "PRIORITY_LOW"})
-            if time.monotonic() >= rpc_deadline:
-                raise TimeoutError("shadow commit budget")
+            stage = "callback"
+            result = callback(tx)
+            stage = "commit"
             return result
+        try:
+            with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
+                result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
+                    commit_request_options={"priority": "PRIORITY_LOW"})
+                if time.monotonic() >= rpc_deadline:
+                    raise TimeoutError("shadow commit budget")
+                return result
+        except Exception as error:
+            self._report_failure(stage, error, started)
+            raise
 
     def write(self, tx: Any, kind: str, identity: str, body: dict[str, Any], deadline: float) -> None:
         # Every insert site, including operator control writes, uses this path.

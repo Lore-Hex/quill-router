@@ -128,7 +128,7 @@ def test_consumer_off_no_rpc_and_on_bounded_refresh(monkeypatch):
     sql, options = calls[0]
     assert sql == 'SELECT body FROM tr_entities WHERE kind=@kind AND id=@id'
     assert options['params'] == dict(kind=HEALTH_KIND, id=HEALTH_ID)
-    assert options['timeout'] <= .2 and options['retry'] is None
+    assert options['timeout'] == .5 and options['retry'] is None
     assert options['request_options'] == {'priority': 'PRIORITY_LOW'}
     assert cache.eligible('ws', 0) and len(calls) == 1
     cfg.async_settle_enabled = False
@@ -160,11 +160,19 @@ def test_publisher_includes_leased_dead_and_legacy_no_workspace(fake_store, monk
 
 def test_publish_empty_has_heartbeat(fake_store):
     value = publish_health(fake_store[1])
+    assert fake_store[1].last_timeout_secs == .5
     assert 'worker_heartbeat' in value
     assert value['worker_heartbeat'] >= value['observed_at']
     assert value['sample_count'] == value['backlog_count'] == value['frozen_micro'] == 0
     assert value['complete']
     assert decode_health(read_health(fake_store[1]), now=time.monotonic(), wall=time.time())
+
+
+@pytest.mark.parametrize('claim', [claim_housekeeping, lambda db: claim_health_publish(db, 2)])
+def test_control_claim_transaction_deadline(fake_store, claim):
+    db = fake_store[1]
+    assert claim(db)
+    assert db.last_timeout_secs == .5
 
 
 def test_housekeeping_cadence_over_fast_polls(fake_store, monkeypatch):

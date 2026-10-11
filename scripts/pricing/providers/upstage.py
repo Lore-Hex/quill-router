@@ -47,25 +47,33 @@ def _promotion(
     active = None
     deadline = None
     previous_end = None
+    open_ended = False
     for line in source.strip().splitlines():
         parts = line.strip().split("|")
         if len(parts) < 3:
             raise RuntimeError("upstage: malformed promotion schedule")
         try:
-            start, end = (datetime.fromisoformat(value.replace("Z", "+00:00")) for value in parts[:2])
+            start = datetime.fromisoformat(parts[0].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(parts[1].replace("Z", "+00:00")) if parts[1] else None
         except ValueError as exc:
             raise RuntimeError("upstage: malformed promotion dates") from exc
-        if start.tzinfo is None or end.tzinfo is None or start >= end:
+        if start.tzinfo is None or (end is not None and (end.tzinfo is None or start >= end)):
             raise RuntimeError("upstage: invalid promotion dates")
-        if previous_end is not None and start < previous_end:
+        if open_ended or (previous_end is not None and start < previous_end):
             raise RuntimeError("upstage: overlapping promotion schedules")
         previous_end = end
+        open_ended = end is None
         if parts[2:] == ["free"]:
             axes = dict.fromkeys(("input", "cached", "output"), 0)
         else:
             axes = {}
+            note_seen = False
             for part in parts[2:]:
                 key, sep, value = part.partition("=")
+                if key == "note" and sep and value and not note_seen:
+                    # Non-price annotation in the published October schedule.
+                    note_seen = True
+                    continue
                 if not sep or key not in {"input", "cached", "output"} or key in axes:
                     raise RuntimeError("upstage: invalid promotion prices")
                 axes[key] = _micro_per_m(value)
@@ -73,10 +81,10 @@ def _promotion(
                 raise RuntimeError("upstage: incomplete promotion prices")
         if axes["cached"] > axes["input"]:
             raise RuntimeError("upstage: cached price exceeds input price")
-        if start <= now < end:
+        if start <= now and (end is None or now < end):
             active = axes
         for transition in (start, end):
-            if transition > now and (deadline is None or transition < deadline):
+            if transition is not None and transition > now and (deadline is None or transition < deadline):
                 deadline = transition
     return active, deadline
 

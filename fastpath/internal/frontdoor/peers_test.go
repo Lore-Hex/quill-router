@@ -137,7 +137,7 @@ func newPeers(t *testing.T) *peersFixture {
 	f := &peersFixture{doorFixture: newDoor(t, 1), now: start, node: &fakeNode{}}
 	f.peers = &fakePeers{ev: f.ev, unreachable: map[string]bool{}}
 	f.view = owners("node-a", "node-b", "node-c", "node-d", "node-e")
-	door, err := New(Config{Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
+	door, err := New(Config{Enabled: everyWorkspace, Owners: f.owners, Store: f.store, Records: f.records, Members: fakeMembers{f.view}, Key: key,
 		Shards: func(string) int64 { return 1 }, OwnerWait: time.Second, PublishWait: time.Second,
 		Self: "node-a", Peers: f.peers, PeerWait: 50 * time.Millisecond, Node: f.node, WithdrawWithin: 5 * time.Second,
 		ProbeEvery: time.Hour, RevokeAfter: 10 * time.Second, RevokeEvery: time.Minute, HoldLife: 3 * time.Hour,
@@ -406,7 +406,7 @@ func TestPeersInTheProcess(t *testing.T) {
 	ev := &events{}
 	view := owners("node-x", "node-a", "node-c")
 	door := func(self string, to Owners, peers Peers) *FrontDoor {
-		d, err := New(Config{Owners: to, Store: &fakeStore{ev: ev}, Records: &fakeRecords{ev: ev},
+		d, err := New(Config{Enabled: everyWorkspace, Owners: to, Store: &fakeStore{ev: ev}, Records: &fakeRecords{ev: ev},
 			Members: fakeMembers{view}, Key: key, Shards: func(string) int64 { return 1 }, OwnerWait: time.Second,
 			PublishWait: time.Second, Self: self, Peers: peers, PeerWait: time.Second})
 		if err != nil {

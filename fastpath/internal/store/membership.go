@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -125,4 +126,167 @@ func (s *Store) Members(ctx context.Context) ([]Member, time.Time, error) {
 		members[i].Live = read.Sub(members[i].HeartbeatAt) < s.cfg.LiveFor
 	}
 	return members, read, nil
+}
+
+// NodeStatus is what stopping a node waits for (the production rollout's
+// W8): its row, and the open leases it owns, as one read-only snapshot.
+type NodeStatus struct {
+	Address string
+	// Found says the node has a row; State, Epoch and Live are the row's.
+	Found bool
+	State string
+	Epoch int64
+	Live  bool
+	// Roles are the row's.
+	Roles []string
+	// OpenLeases are the open leases whose owner is the node, of any of
+	// its epochs; Unclosed are its leases not closed, open or draining, up
+	// to unclosedListed of them, and MoreUnclosed says there were more.
+	OpenLeases   int64
+	Unclosed     []NodeLease
+	MoreUnclosed bool
+	ReadTS       time.Time
+}
+
+// NodeLease is a lease a node owns that is not closed: open, or draining
+// and not yet closed by the auditor. Gap says it is stopped at a gap in its
+// settle log, which the auditor does not close (fastpath-turn-off.md).
+type NodeLease struct {
+	Ref   LeaseRef
+	State string
+	Gap   bool
+}
+
+// unclosedListed bounds the leases a status lists; more are said to be.
+var unclosedListed = 100
+
+// Closed says whether nothing of the node's is left to the auditor: it has
+// a row, so an address mistyped is not taken for a node with nothing left;
+// the row says leaving, so no grant lands after the read (Leave fences a
+// node that stopped before it was marked so); and it owns no lease open or
+// draining, so a lease that stopped at a gap once draining, which Done
+// does not count, is judged too; and if not, what is left.
+func (n NodeStatus) Closed() (bool, []string) {
+	var why []string
+	switch {
+	case !n.Found:
+		why = append(why, "it has no row: check the address")
+	case n.State != Leaving:
+		why = append(why, fmt.Sprintf("it is %s, not leaving: a grant it asked for could still land; leave it first",
+			n.State))
+	}
+	for _, l := range n.Unclosed {
+		gap := ""
+		if l.Gap {
+			gap = ", stopped at a gap"
+		}
+		why = append(why, fmt.Sprintf("lease %s of workspace %s is %s%s", l.Ref.LeaseID, l.Ref.Workspace, l.State, gap))
+	}
+	if n.MoreUnclosed {
+		why = append(why, fmt.Sprintf("and more than %d are left", unclosedListed))
+	}
+	return len(why) == 0, why
+}
+
+// Done says whether the node may stop: it has a row, the row says it is
+// leaving, and it owns no open lease, so the holds it admitted have ended
+// and its leases are draining or closed; and if not, why not. A node with
+// no row is never done, so an address mistyped is not taken for one that
+// left.
+func (n NodeStatus) Done() (bool, []string) {
+	var why []string
+	switch {
+	case !n.Found:
+		why = append(why, "it has no row: check the address")
+	case n.State != Leaving:
+		why = append(why, fmt.Sprintf("it is %s, not leaving", n.State))
+	}
+	if n.OpenLeases > 0 {
+		why = append(why, fmt.Sprintf("it owns %d open leases", n.OpenLeases))
+	}
+	return len(why) == 0, why
+}
+
+// Leave marks a node's row leaving, at whatever epoch, for a node that
+// stopped before it was marked so (fastpath-deploy.md): a grant reads the
+// owner's row in its transaction, so one the node asked for either landed
+// before this write, and is counted by the next NodeStatus, or is refused
+// after it. A process still heartbeating at the row's epoch is refused
+// from then on, as after SIGUSR1. It reports whether the row was found.
+func (s *Store) Leave(ctx context.Context, address string) (bool, error) {
+	if address == "" {
+		return false, errors.New("store: no address")
+	}
+	var found bool
+	_, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		n, err := txn.Update(ctx, spanner.Statement{
+			SQL:    `UPDATE tr_fastpath_member SET state = 'leaving' WHERE address = @address`,
+			Params: map[string]any{"address": address},
+		})
+		found = n == 1
+		return err
+	}, spanner.TransactionOptions{TransactionTag: tag("leave")})
+	return found, err
+}
+
+// NodeStatus reads a node's row by its address, counts the open leases it
+// owns and lists those not closed, through the leases' index on their
+// owner, in one read-only transaction: a read of the node's row and two of
+// the index's entries for it, whatever the fleet holds, the listed leases'
+// rows read for their gaps.
+func (s *Store) NodeStatus(ctx context.Context, address string) (NodeStatus, error) {
+	if address == "" {
+		return NodeStatus{}, errors.New("store: no address")
+	}
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	out := NodeStatus{Address: address}
+	row, err := ro.ReadRowWithOptions(ctx, "tr_fastpath_member", spanner.Key{address},
+		[]string{"state", "epoch", "roles", "heartbeat_at"}, &spanner.ReadOptions{RequestTag: tag("node-status")})
+	var heartbeat time.Time
+	switch {
+	case spanner.ErrCode(err) == codes.NotFound:
+	case err != nil:
+		return NodeStatus{}, err
+	default:
+		out.Found = true
+		if err := row.Columns(&out.State, &out.Epoch, &out.Roles, &heartbeat); err != nil {
+			return NodeStatus{}, err
+		}
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT COUNT(*) FROM tr_lease@{FORCE_INDEX=tr_lease_by_owner}
+		       WHERE owner_node = @node AND state = 'open'`,
+		Params: map[string]any{"node": address},
+	}, spanner.QueryOptions{RequestTag: tag("node-status")}).Do(func(r *spanner.Row) error {
+		return r.Column(0, &out.OpenLeases)
+	})
+	if err != nil {
+		return NodeStatus{}, err
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT workspace_id, lease_id, state, gap_seq IS NOT NULL FROM tr_lease@{FORCE_INDEX=tr_lease_by_owner}
+		       WHERE owner_node = @node AND state IN ('open', 'draining')
+		       ORDER BY state, workspace_id, lease_id LIMIT @limit`,
+		Params: map[string]any{"node": address, "limit": int64(unclosedListed + 1)},
+	}, spanner.QueryOptions{RequestTag: tag("node-status")}).Do(func(r *spanner.Row) error {
+		var l NodeLease
+		if err := r.Columns(&l.Ref.Workspace, &l.Ref.LeaseID, &l.State, &l.Gap); err != nil {
+			return err
+		}
+		if len(out.Unclosed) == unclosedListed {
+			out.MoreUnclosed = true
+			return nil
+		}
+		out.Unclosed = append(out.Unclosed, l)
+		return nil
+	})
+	if err != nil {
+		return NodeStatus{}, err
+	}
+	if out.ReadTS, err = readTimestamp(ro); err != nil {
+		return NodeStatus{}, err
+	}
+	out.Live = out.Found && out.ReadTS.Sub(heartbeat) < s.cfg.LiveFor
+	return out, nil
 }

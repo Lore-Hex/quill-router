@@ -64,3 +64,24 @@ def test_venice_omni_flash_is_not_the_retired_preview() -> None:
     assert not provider_lifecycle.provider_model_retired(
         "venice", "google/gemini-omni-flash", "gemini-omni-flash-text-to-video", at=_CUTOFF,
     )
+
+
+_FLASH_CUTOFF = datetime(2026, 10, 10, tzinfo=UTC)
+
+
+def test_ai_studio_gemini_35_flash_retires_while_other_hosts_stay() -> None:
+    assert provider_lifecycle.GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT == _FLASH_CUTOFF
+    retired = provider_lifecycle.provider_model_retired
+    model = "google/gemini-3.5-flash"
+    assert not retired("google-ai-studio", model, "gemini-3.5-flash", at=_FLASH_CUTOFF - timedelta(microseconds=1))
+    assert retired("google-ai-studio", model, "gemini-3.5-flash", at=_FLASH_CUTOFF)
+    for provider, upstream in (
+        ("google-vertex", "gemini-3.5-flash"), ("gmi", model), ("atlas-cloud", model),
+    ):
+        assert not retired(provider, model, upstream, at=_FLASH_CUTOFF)
+    assert not retired("google-ai-studio", "google/gemini-3.6-flash", "gemini-3.6-flash", at=_FLASH_CUTOFF)
+    [entry] = [
+        entry for entry in provider_lifecycle.provider_retirements()
+        if entry.effective_at == _FLASH_CUTOFF and model in entry.model_ids
+    ]
+    assert entry.replacement_model_ids == ("google/gemini-3.6-flash",)

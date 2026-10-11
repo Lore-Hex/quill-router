@@ -23,8 +23,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ParamSpec, TypeVar, cast
 
+from google.api_core.exceptions import InternalServerError
+
 T = TypeVar("T")
 P = ParamSpec("P")
+
+
+class SpannerTransportReset(InternalServerError):
+    """Content-free Commit/Begin/Rollback reset bypassing SDK exact-class retry."""
 
 
 # Total wall-clock budget for a retried transaction. Must sit safely BELOW the
@@ -48,6 +54,9 @@ _ROLLBACK_FLOOR_SECONDS = 2.0
 _SPANNER_RPC_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "trusted_router_spanner_rpc_deadline",
     default=None,
+)
+_SPANNER_RPC_MAX_SECONDS: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "trusted_router_spanner_rpc_max_seconds", default=None,
 )
 
 
@@ -92,13 +101,20 @@ _STRICT_RPC_DEADLINE: contextvars.ContextVar[bool] = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def spanner_rpc_deadline(deadline: float) -> Iterator[None]:
+def spanner_rpc_deadline(deadline: float, *, max_rpc_seconds: float | None = None) -> Iterator[None]:
     """Absolute completion/handoff deadline, including rollback and retries.
 
     Async statements reserve cleanup time; cleanup has a bounded 50 ms floor
     even if a late RPC/scheduler wakeup crosses the deadline. It cannot borrow
     the legacy two-second floor. A failed rollback never permits transaction reuse.
+    An optional per-RPC cap is independent of the shared transaction deadline.
     """
+    if max_rpc_seconds is not None and not 0 < max_rpc_seconds < float("inf"):
+        raise ValueError("Spanner per-RPC budget must be finite and positive")
+    existing_max = _SPANNER_RPC_MAX_SECONDS.get()
+    rpc_max = existing_max if max_rpc_seconds is None else (
+        min(existing_max, max_rpc_seconds) if existing_max is not None else max_rpc_seconds)
+    maximum = _SPANNER_RPC_MAX_SECONDS.set(rpc_max)
     existing = _SPANNER_RPC_DEADLINE.get()
     token = _SPANNER_RPC_DEADLINE.set(min(deadline, existing) if existing else deadline)
     strict = _STRICT_RPC_DEADLINE.set(True)
@@ -108,6 +124,7 @@ def spanner_rpc_deadline(deadline: float) -> Iterator[None]:
     finally:
         _STRICT_RPC_DEADLINE.reset(strict)
         _SPANNER_RPC_DEADLINE.reset(token)
+        _SPANNER_RPC_MAX_SECONDS.reset(maximum)
 
 
 def spanner_rpc_budget(max_seconds: float) -> Callable[[Callable[P, T]], Callable[P, T]]:
@@ -171,7 +188,8 @@ def configure_spanner_rpc_deadlines(
     The API wrappers cap each RPC and its generated retry policy to the
     remaining budget. A ContextVar isolates concurrent request threads and also
     stops Transaction.commit's private RST_STREAM retry loop from receiving a
-    fresh budget on every attempt.
+    fresh budget on every attempt. Shadow's per-RPC-capped contexts also fail
+    closed before the SDK's two-second reset backoff can exceed their deadline.
     """
     if max_seconds <= 0:
         raise ValueError("Spanner RPC deadline must be positive")
@@ -219,9 +237,13 @@ def configure_spanner_rpc_deadlines(
             *args: Any,
             _original: Callable[..., Any] = original_method,
             _default_retry: Any = default_retry,
+            _method_name: str = method_name,
             **kwargs: Any,
         ) -> Any:
             remaining = remaining_seconds()
+            rpc_max = _SPANNER_RPC_MAX_SECONDS.get()
+            if rpc_max is not None:
+                remaining = min(remaining, rpc_max)
             requested_timeout = kwargs.get("timeout", gapic_v1.method.DEFAULT)
             if (
                 requested_timeout is gapic_v1.method.DEFAULT
@@ -242,7 +264,29 @@ def configure_spanner_rpc_deadlines(
             counter = _SPANNER_RPC_COUNTER.get()
             if counter is not None:
                 counter.increment()
-            return _original(*args, **kwargs)
+            try:
+                return _original(*args, **kwargs)
+            except InternalServerError as error:
+                deadline = _SPANNER_RPC_DEADLINE.get()
+                # Only shadow sets the per-RPC cap. Billing keeps the SDK's
+                # reset retries, including its private, unbounded sleep. Match
+                # _helpers._retry's exact class and _check_rst_stream_error's
+                # two markers; never carry the transport's text into diagnostics.
+                transport_reset = (
+                    _method_name in ("commit", "begin_transaction", "rollback")
+                    and rpc_max is not None
+                    and deadline is not None
+                    and deadline - time.monotonic() <= 2.0
+                    and type(error) is InternalServerError
+                    and any(marker in (getattr(error, "message", None) or "") for marker in (
+                        "RST_STREAM", "Received unexpected EOS on DATA frame from server",
+                    ))
+                )
+                if not transport_reset:
+                    raise
+            # Leave the handler so the private transport error is not retained
+            # as __context__; suppressing its display alone is insufficient.
+            raise SpannerTransportReset("transport_reset") from None
 
         setattr(api, method_name, bounded_rpc)
 

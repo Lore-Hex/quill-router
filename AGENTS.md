@@ -34,6 +34,10 @@ uv run ruff check . && uv run mypy && uv run pytest -q
   produces an enormous unrelated diff.
 * Coverage must stay **≥ 70%**.
 * `uv run mypy` is a real gate. Green ruff + pytest locally still fails CI without it.
+* `uv run pytest` selects what CI's release jobs run: it skips `proof_oracle` (over an hour
+  of frozen-main differentials; CI shards it) and `provider_health` (live provider state).
+  When you touch async settle or billing, run the oracle explicitly:
+  `uv run pytest -q -n 4 -m proof_oracle tests/test_async_settle_proof_oracle.py`.
 
 **Run the FULL suite, not just your new file.** Test pollution here is real: this repo has a
 module-global `STORE` proxy that forwards via `__getattr__`, and `monkeypatch.setattr(STORE, ...)`

@@ -13,6 +13,10 @@ def test_web_search_docs_publish_contract_and_privacy_boundary(client: TestClien
     assert "Exa receives those queries" in response.text
     assert "trustedrouter/zdr" in response.text
     assert "trustedrouter/e2e" in response.text
+    assert "/v1/chat/completions" in response.text
+    assert "openrouter:web_search" in response.text
+    assert '"max_tool_calls": 1' in response.text
+    assert "not implemented and return explicit errors" in response.text
 
 
 def test_web_search_docs_are_discoverable(client: TestClient) -> None:

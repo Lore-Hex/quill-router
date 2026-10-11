@@ -1,12 +1,16 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "ed6bbb023696afafe13006b6cf01129716044bd3263dc9e31dcccd942c8a99e1"
+inputs_sha256 = "b54013033ed5b87d2d0c40c4ac236f5089e853b64c65d0ad30f7fe943d74257e"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
-"TerminalOrder.cfg" = 674936
-"TerminalOrder.undeclared.cfg" = 3564
+"TerminalOrder.cfg" = 1047716
+"TerminalOrder.appends.cfg" = 13322
+"TerminalOrder.list.cfg" = 5256
+"TerminalOrder.reaps.cfg" = 342632
+"TerminalOrder.rows.cfg" = 1594624
+"TerminalOrder.undeclared.cfg" = 8324
 
 [[guard]]
 action = "OwnerHeartbeat"
@@ -50,7 +54,9 @@ breaks = "nothing"
 reaches = "new states"
 why = '''
 A4 is an assumption about the enclave, and it carries its weight in
-FrontDoorAppend, where removing it breaks ReleasedHoldOwesNothing. Without it
+FrontDoorAppend, where removing its guard lets a front door append a refund
+for a hold whose enclave then delivers, and RefundOnlyWhenNothingDelivered
+breaks. Without it
 the owner may settle a hold whose enclave never delivered: new states, none of
 which a claim reads differently, since the owner decides one terminal per
 hold, so a settle it takes and a release exclude each other whatever the
@@ -59,6 +65,21 @@ enclave did.
 
 [[guard]]
 action = "OwnerSettle"
+text = '''/\ ownerWinner[a] = 0'''
+breaks = "AckedOwnerTerminalWins"
+
+[[guard]]
+action = "OwnerRefund"
+text = '''/\ OwnerActive'''
+breaks = "AckedOwnerRecordWithinBoundary"
+
+[[guard]]
+action = "OwnerRefund"
+text = '''/\ Refunds(a)'''
+breaks = "RefundOnlyWhenNothingDelivered"
+
+[[guard]]
+action = "OwnerRefund"
 text = '''/\ ownerWinner[a] = 0'''
 breaks = "AckedOwnerTerminalWins"
 
@@ -158,6 +179,16 @@ text = '''/\ ~(deadlinePassed /\ IssuedBeforeCutoff(acked + 1))'''
 breaks = "AckedOwnerRecordWithinBoundary"
 
 [[guard]]
+action = "Answer"
+text = '''/\ enc[a] = "open"'''
+breaks = "RefundOnlyWhenNothingDelivered"
+
+[[guard]]
+action = "Answer"
+text = '''/\ HbAcked(a)'''
+breaks = "NoLiveRequestReleased"
+
+[[guard]]
 action = "CutoffPass"
 text = '''/\ ~ownerCutoff'''
 breaks = "nothing"
@@ -204,32 +235,13 @@ breaks = "NoLiveRequestReleased"
 
 [[guard]]
 action = "EnclaveDeliver"
-text = '''/\ a \notin Streams'''
+text = '''/\ enc[a] = IF a \in Streams THEN "permitted" ELSE "open"'''
 breaks = "NoLiveRequestReleased"
 
 [[guard]]
-action = "EnclaveDeliver"
-text = '''/\ enc[a] = "open"'''
-breaks = "nothing"
-reaches = "no new state"
-why = '''
-A fact about the enclave: it delivers once, and not after it has given up.
-Without the guard an enclave that gave up could deliver after all. That
-matters only for a hold that can be released, and a request that does not
-stream never is: OwnerRelease asks for a declared stream.
-'''
-
-[[guard]]
 action = "EnclaveGiveUp"
-text = '''/\ enc[a] = "open"'''
-breaks = "nothing"
-reaches = "new states"
-why = '''
-A fact about the enclave: one that has delivered does not go back to having
-delivered nothing. No claim reads the enclave's state for a stream that was
-answered: NoStreamClosedOver reads the owner's acknowledgement, which
-stays.
-'''
+text = '''/\ enc[a] \in {"open", "permitted"}'''
+breaks = "RefundOnlyWhenNothingDelivered"
 
 [[guard]]
 action = "FrontDoorAppend"
@@ -238,8 +250,8 @@ breaks = "NoAckedDrainRowLost"
 
 [[guard]]
 action = "FrontDoorAppend"
-text = '''/\ Settles(a)'''
-breaks = "ReleasedHoldOwesNothing"
+text = '''/\ Settles(a) \/ Refunds(a)'''
+breaks = "RefundOnlyWhenNothingDelivered"
 
 [[guard]]
 action = "FrontDoorAppend"
@@ -349,58 +361,99 @@ It keeps drain[drainApplied + 1] defined: there is no next row to apply.
 '''
 
 [[guard]]
+action = "Listed"
+text = '''/\ a \in Listable'''
+breaks = "nothing"
+reaches = "new states"
+why = '''
+The model's bound on which holds a hand-off may name, which each
+configuration chooses. The claims hold whichever holds are listed: a listing
+makes a hold known, so the close waits for it and the auditor may reap it,
+and neither changes a winner the claims read. TerminalOrder.list.cfg lists
+one.
+'''
+
+[[guard]]
+action = "Listed"
+text = '''/\ a \notin listed'''
+breaks = "nothing"
+reaches = "no new state"
+why = '''
+Listing a hold already listed leaves listed as it was: a step to the same
+state, which the specification's stuttering allows anyway.
+'''
+
+[[guard]]
+action = "Listed"
+text = '''/\ lease # "closed"'''
+breaks = "NoListedHoldClosedOver"
+cfg = "list"
+
+[[guard]]
 action = "AuditorReap"
 text = '''/\ lease = "draining"'''
 breaks = "nothing"
 reaches = "no new state"
 why = '''
-No claim here rests on the draining mark (see PublishTick's row). A reap
-needs a durable heartbeat, which needs S, which needs a tick.
+No claim here rests on the draining mark (see PublishTick's row), and the
+reap's other guards keep it to a draining lease anyway: it needs S, which is
+stored only from a tick, published only for a draining lease; and after the
+close every known hold has its winner, Close's own guard, and no hold
+becomes known, since S does not move and Listed needs an unclosed lease.
 '''
 
 [[guard]]
 action = "AuditorReap"
 text = '''/\ S # NoS'''
 breaks = "nothing"
-reaches = "no new state"
+reaches = "new states"
 why = '''
-No claim rests on "no reap before S". HbDurable(a) is false until S is
-stored, and even without both a reap row appended early only waits in the
-drain log: ApplyDrain reads the log once S is stored, and the first
-terminal in order still decides.
+No claim rests on "no reap before S". Known(a) needs S for a heartbeat but
+not for a listing, so without the guard the auditor may reap a listed hold
+before S is stored; the reap row only waits in the drain log, which
+ApplyDrain reads once S is stored, and the first terminal in order still
+decides.
 '''
 
 [[guard]]
 action = "AuditorReap"
-text = '''/\ drainApplied = Len(drain)'''
+text = '''/\ DrainRows(a) = {}'''
 breaks = "TypeOK"
 why = '''
-It models the reap transaction reading the hold's rows first. With no
-guard at all in its place the auditor could insert reap rows without end,
-which only TypeOK's bound on the drain log notices. That a reap row behind
-an unread settle row merely loses is the survivor reap-without-reading-rows.
+The store's one reap row per hold (store.Reap refuses a hold with a row in
+the drain log), which MaxRows counts and TypeOK states. Without it the
+auditor may reap a hold again before its first reap row is applied. A reap
+row behind another row of the hold's loses in the order and is safe, which
+the survivor reap-without-reading-rows checks.
 '''
 
 [[guard]]
 action = "AuditorReap"
-text = '''/\ HbDurable(a)'''
+text = '''/\ Known(a)'''
 breaks = "nothing"
 reaches = "new states"
 why = '''
-What the auditor can see, not a rule it chooses to follow: it learns of a
-hold from the log. A reap of a hold it never saw is only another terminal
-in the drain log, and first-in-order still decides.
+An enabling condition. The store reaps only a stored open hold, one the
+auditor knows from a durable heartbeat or listing, and charges its last
+snapshot; amounts are not modeled here, and a reap row of a hold it does
+not know is a terminal like any other, first in the order or behind. What
+rests on Known is Close's wait for every known hold, which the mutants
+close-over-a-stream and close-over-a-listed-hold break, and the reap's
+progress (auditor-never-reaps, auditor-never-reaps-a-listed-hold).
 '''
 
 [[guard]]
 action = "AuditorReap"
 text = '''/\ winner[a] = NoWinner'''
-breaks = "TypeOK"
+breaks = "nothing"
+reaches = "new states"
 why = '''
-One reap row per hold. Without it the auditor could append reap rows for a
-decided hold without end. Each would lose to the hold's winner, since
-ApplyDrain keeps the first, so only TypeOK's bound on the drain log
-notices.
+Without it the auditor may reap a hold whose winner is an owner record
+already booked, when the hold has no drain row (DrainRows(a) = {} rules out
+a drain row's winner): one row more, since that guard still allows one reap
+a hold, and it loses to the stored winner, as ApplyDrain keeps the first.
+The store refuses that reap (RefusedNoHold: booking the owner's terminal
+deleted the hold); the guard saves the row, not a claim.
 '''
 
 [[guard]]
@@ -425,5 +478,5 @@ breaks = "NoAckedDrainRowLost"
 
 [[guard]]
 action = "Close"
-text = '''/\ \A a \in Auths : HbDurable(a) => winner[a] # NoWinner'''
+text = '''/\ \A a \in Auths : Known(a) => winner[a] # NoWinner'''
 breaks = "DurableHeartbeatNeverReleased"

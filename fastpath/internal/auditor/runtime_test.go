@@ -68,8 +68,10 @@ type flaky struct {
 	failStage int
 	commits   [][]store.CommitRequest
 	// finding, when set, is told of each FindLease, which then waits for
-	// found to close, whatever its context.
-	finding, found chan struct{}
+	// found to close, whatever its context; staging and staged do as much
+	// for StageRecord.
+	finding, found  chan struct{}
+	staging, staged chan struct{}
 }
 
 func (f *flaky) take(n *int) bool {
@@ -109,6 +111,13 @@ func (f *flaky) ReadLease(ctx context.Context, ref store.LeaseRef) (store.Lease,
 }
 
 func (f *flaky) StageRecord(ctx context.Context, r store.StagedRecord) error {
+	if f.staging != nil {
+		select {
+		case f.staging <- struct{}{}:
+		default:
+		}
+		<-f.staged
+	}
 	if f.take(&f.failStage) {
 		return errInjected
 	}
@@ -272,8 +281,9 @@ func (f *runtimeFixture) grant() store.LeaseRef {
 	f.t.Helper()
 	ctx := context.Background()
 	ws := storetest.UniqueID("ws")
-	if _, err := f.db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_credit_balance", map[string]any{
-		"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
+	if _, err := f.db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member(grantee.Node, grantee.Epoch),
+		spanner.InsertMap("tr_credit_balance", map[string]any{
+			"workspace_id": ws, "shard": int64(0), "total_credits": int64(100_000), "trust_tier": int64(3)})}); err != nil {
 		f.t.Fatal(err)
 	}
 	id := store.NewLeaseID()
@@ -1301,5 +1311,117 @@ func TestAnUnlistedLeaseClosesOnlyOnceItsHoldsCouldHaveEnded(t *testing.T) {
 	tickAt(end.Add(2 * time.Second))
 	if l := f.loaded(); l.Lease.State != "closed" {
 		t.Fatalf("not closed the skew allowance after its holds' end: %+v", l.Lease)
+	}
+}
+
+// TestADrainStillGoingPastEveryHoldsTimeIsTold: a lease still draining once
+// its expiry plus a hold's longest life, the grace and the allowance has
+// passed, as one whose reaps the record topic keeps refusing, is told of
+// once, at the first tick past that, and not before; with no allowance,
+// never.
+func TestADrainStillGoingPastEveryHoldsTimeIsTold(t *testing.T) {
+	for _, allowance := range []time.Duration{10 * time.Minute, 0} {
+		f := newRuntimeFixture(t)
+		ctx := context.Background()
+		rt := f.runtime(func(c *Config) { c.DrainOverdue = allowance })
+		handleAll(rt, on(t, f.ref, hb(1, "a", 1, 10)))
+		if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+			t.Fatalf("the draining write: %v %v", ok, err)
+		}
+		row, _, err := f.s.ReadLease(ctx, f.ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.records.mu.Lock()
+		f.records.failing = 1 << 20 // every reap's full record refused: the drain never ends
+		f.records.mu.Unlock()
+		n := int64(0)
+		tickAt := func(at time.Time) {
+			n++
+			handleAll(rt, on(t, f.ref, tick(n, at)))
+			round(rt)
+		}
+		told := func() int {
+			c := 0
+			for _, a := range f.alerted() {
+				if a == AlertDrainOverdue {
+					c++
+				}
+			}
+			return c
+		}
+		tickAt(row.FenceTime.Time.Add(2 * time.Second))                     // the fence tick: S
+		due := row.Expiry.Add(5*time.Minute + time.Minute + 10*time.Minute) // MaxLife, the grace, the allowance
+		tickAt(due.Add(-time.Microsecond))
+		if told() != 0 {
+			t.Fatalf("allowance %v: told before the drain was overdue", allowance)
+		}
+		want := 1
+		if allowance == 0 {
+			want = 0
+		}
+		tickAt(due)
+		if got := told(); got != want {
+			t.Fatalf("allowance %v: told %d times at the bound", allowance, got)
+		}
+		tickAt(due.Add(time.Hour))
+		if got := told(); got != want {
+			t.Fatalf("allowance %v: told %d times after", allowance, got)
+		}
+		if l := f.loaded(); l.Lease.State != "draining" {
+			t.Fatalf("the lease: %+v", l.Lease)
+		}
+	}
+}
+
+// TestADrainOverdueIsToldThoughItsBoundaryIsNotStored: a draining lease
+// whose boundary commit keeps failing, so its drain cannot move, is told
+// of once past the bound all the same.
+func TestADrainOverdueIsToldThoughItsBoundaryIsNotStored(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	rt := f.runtime(func(c *Config) { c.DrainOverdue = 10 * time.Minute })
+	handleAll(rt, on(t, f.ref, hb(1, "a", 1, 10)))
+	round(rt)
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.store.mu.Lock()
+	f.store.failCommit = 1 << 20 // every commit, the boundary's included, fails
+	f.store.mu.Unlock()
+	n := int64(1)
+	tickAt := func(at time.Time) {
+		n++
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+		round(rt)
+	}
+	told := func() int {
+		c := 0
+		for _, a := range f.alerted() {
+			if a == AlertDrainOverdue {
+				c++
+			}
+		}
+		return c
+	}
+	due := row.Expiry.Add(5*time.Minute + time.Minute + 10*time.Minute)
+	tickAt(due.Add(-time.Microsecond))
+	if told() != 0 {
+		t.Fatal("told before the bound")
+	}
+	tickAt(due)
+	if told() != 1 {
+		t.Fatalf("told %d times at the bound", told())
+	}
+	tickAt(due.Add(time.Minute))
+	if told() != 1 {
+		t.Fatalf("told %d times after", told())
+	}
+	if l, _, err := f.s.ReadLease(ctx, f.ref); err != nil || l.BoundarySeq.Valid {
+		t.Fatalf("the boundary was stored, so the commits did not fail: %+v %v", l, err)
 	}
 }

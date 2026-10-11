@@ -104,10 +104,12 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "glm-5-2-260617"}]}
     if "abliterate.ai" in url:
         return {"data": [{"id": "abliterate-0.3-fast"}]}
-    if "api.system1models.ai" in url:
+    if "api.decisionmodels.io" in url:
         return {"data": [{"id": "s1-fast"}]}
     if "api.lyceum.technology" in url:
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
+    if "llm.eu.greenference.com" in url:
+        return {"data": [{"id": "greenference/glm-5.3-flash"}]}
     if "api.privatemode.ai" in url:
         return {"data": [{"id": "gpt-oss-120b"}]}
     if "api.regolo.ai" in url:
@@ -230,6 +232,31 @@ def test_shared_gemini_scraper_covers_ai_studio_and_vertex() -> None:
     assert not any("google-vertex: NO price source" in warning for warning in warnings)
     assert "google-ai-studio: live scraper ✓" in info
     assert "google-vertex: live scraper ✓" in info
+
+
+@pytest.mark.parametrize("refresher_present", [True, False])
+def test_elevenlabs_coverage_requires_the_hourly_speech_refresher(
+    refresher_present: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import trusted_router.catalog as catalog
+
+    monkeypatch.setattr(catalog, "GATEWAY_PREPAID_PROVIDER_SLUGS", {"elevenlabs"})
+    if not refresher_present:
+        monkeypatch.setattr(
+            check_price_coverage, "_DEDICATED_LIVE_SCRAPERS",
+            {"elevenlabs": tmp_path / "missing.py"},
+        )
+    warnings, info, hard_failures = audit(
+        max_age_days=14, now=dt.datetime(2026, 6, 7, tzinfo=dt.UTC),
+        check_model_discovery=False,
+    )
+    if refresher_present:
+        assert not warnings and not hard_failures
+        assert any(row.startswith("elevenlabs: live scraper") for row in info)
+        workflow = (check_price_coverage.ROOT / ".github/workflows/refresh-prices.yml").read_text()
+        assert "python -m scripts.pricing.speech" in workflow
+    else:
+        assert any(row.startswith("elevenlabs: NO price source") for row in hard_failures)
 
 
 @pytest.mark.parametrize("manifest_state", ["missing", "invalid", "stale"])

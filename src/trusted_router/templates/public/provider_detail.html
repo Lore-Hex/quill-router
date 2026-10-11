@@ -169,7 +169,7 @@
             <span class="muted-copy">—</span>
             {% endif %}
           </td>
-          <td>{{ model.context_length }}</td>
+          <td>{% if model.speech %}{{ model.speech.max_input_characters }} characters{% else %}{{ model.context_length }}{% endif %}</td>
           <td>{{ model.prompt_price }}</td>
           <td>{{ model.cached_prompt_price }}</td>
           <td>{{ model.completion_price }}</td>

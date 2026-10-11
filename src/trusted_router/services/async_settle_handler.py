@@ -277,6 +277,8 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 expected.update(journal_region=runtime.region, epoch=runtime.epoch,
                                 iss=runtime.signer.trusted.iss, aud="router-settlement")
                 verify_ticket(value.ticket, [runtime.signer.trusted], expected, now)
+                if not settings.async_settle_pilot_allows(claims.workspace_id):
+                    return duplicate(outbox, row) or sync_required("not_eligible")
                 if not claims.async_eligible:
                     return duplicate(outbox, row) or sync_required("not_eligible")
                 if runtime.admission is None or not runtime.admission.eligible(

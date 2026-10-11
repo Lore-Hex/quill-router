@@ -152,6 +152,32 @@ def test_mistral_docs_keeps_large_three_separate() -> None:
     assert prices["mistralai/mistral-large-4"]["completion_micro_per_m"] == 2_090_000
 
 
+def test_mistral_sale_markup_preserves_model_id_and_current_rates() -> None:
+    html = _table("Mistral Large 4").replace(
+        "</a></td>", "</a><span>Sale price</span></td>",
+    )
+    for current, previous in [("$0.68", "$1.36"), ("$2.09", "$4.18"), ("$0.07", "$0.14")]:
+        html = html.replace(current, (
+            f'<del><span class="sr-only">Original price: </span>{previous}</del>'
+            f'<ins><span class="sr-only">Sale price: </span>{current}</ins>'
+        ))
+    assert parse(html) == {
+        "mistralai/mistral-large-4": {
+            "prompt_micro_per_m": 680_000, "completion_micro_per_m": 2_090_000,
+            "prompt_cached_micro_per_m": 70_000,
+        }
+    }
+
+
+@pytest.mark.parametrize("markup", [
+    "<del>$1.36</del><ins>$0.68</ins><ins>$0.34</ins>",
+    "<del>$1.36</del><ins>$0.68</ins> $0.34",
+    "<del>$1.36</del><ins>$0.68 /1000 Pages</ins>",
+])
+def test_mistral_sale_rates_still_reject_ambiguous_prices(markup: str) -> None:
+    assert parse(_table("Mistral Large 4", markup)) == {}
+
+
 @pytest.mark.parametrize("price", ["$4 /1000 Pages", "$0.68 $1.36", "Free", "-", "\u20ac0.68"])
 def test_mistral_docs_rejects_ambiguous_or_non_token_rates(price: str) -> None:
     assert parse(_table("Mistral Large 4", price)) == {}

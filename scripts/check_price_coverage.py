@@ -49,6 +49,7 @@ from scripts.pricing.providers import (
     decart,
     fal,
     featherless,
+    greenference,
     inception,
     io_net,
     jina,
@@ -102,6 +103,12 @@ _ZAI_MODEL_RE = re.compile(r"\bglm-\d+(?:\.\d+)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?(?
 _SHARED_LIVE_SCRAPER_OWNERS = {
     "google-ai-studio": "gemini",
     "google-vertex": "google_vertex",
+}
+
+# Media-only providers use the hourly speech tariff refresher rather than a
+# chat-token manifest. Keep coverage tied to the actual refresher file.
+_DEDICATED_LIVE_SCRAPERS = {
+    "elevenlabs": ROOT / "scripts" / "pricing" / "speech.py",
 }
 
 
@@ -497,6 +504,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         nscale._canonical_id,
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
+    ("greenference", greenference.URL, ("GREENFERENCE_API_KEY",), greenference.canonical_model_id),
     ("byteplus", byteplus.URL, ("BYTEPLUS_API_KEY",), byteplus.canonical_model_id),
     ("system1models", system1models.URL, (), system1models.canonical_model_id),
     ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
@@ -540,6 +548,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nscale,
     nvidia_nim,
     lyceum,
+    greenference,
     byteplus,
     recraft,
     system1models,
@@ -1136,6 +1145,8 @@ def _run_audit(
         provider
         for provider, owner in _SHARED_LIVE_SCRAPER_OWNERS.items()
         if owner in scraper_modules
+    } | {
+        provider for provider, path in _DEDICATED_LIVE_SCRAPERS.items() if path.is_file()
     }
     warnings: list[str] = []
     info: list[str] = []

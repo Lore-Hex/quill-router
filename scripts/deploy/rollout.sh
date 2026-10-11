@@ -18,6 +18,19 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_deploy_hold.sh
 source "${SCRIPT_DIR}/_deploy_hold.sh"
+# Audit evidence needs an exact source identity, not the short display release
+# or the separate enclave repository's trust-metadata commit.
+CHECKOUT_REVISION="$(git -C "${SCRIPT_DIR}/../.." rev-parse HEAD 2>/dev/null || true)"
+SOURCE_REVISION="${TR_DEPLOY_SOURCE_REVISION:-$CHECKOUT_REVISION}"
+RELEASE_ID="${TR_DEPLOY_RELEASE_ID:-${SOURCE_REVISION:0:7}}"
+if [[ ! "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] ||
+   [[ ! "$RELEASE_ID" =~ ^[0-9a-f]{7,40}$ ]] ||
+   [[ "$SOURCE_REVISION" != "$RELEASE_ID"* ]] ||
+   { [[ -n "$CHECKOUT_REVISION" ]] && [[ "$SOURCE_REVISION" != "$CHECKOUT_REVISION" ]]; }; then
+  echo "refusing rollout: exact source revision must match the checkout and release" >&2
+  exit 1
+fi
+
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
@@ -90,6 +103,11 @@ SECRET_ENVS=(
   "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
   "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
   "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+  # Async settle purpose key, design runbook step 2: the Ed25519 PEM is a Secret
+  # Manager version mounted as a FILE at this path, never an environment value.
+  # Mandatory on purpose: a missing secret must fail the deploy loudly instead of
+  # shipping a revision whose signer silently loads as absent.
+  "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest"
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
@@ -397,7 +415,8 @@ ENV_VARS=(
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
   "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
-  "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
+  "TR_RELEASE=${RELEASE_ID}"
+  "TR_SOURCE_REVISION=${SOURCE_REVISION}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
   # synthetic job invokes /internal/synthetic/remediate instead.
   "TR_REMEDIATOR_IN_PROCESS_ENABLED=false"
@@ -610,12 +629,28 @@ ENV_VARS=(
   "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
-  # PR B is dormant. Do not inherit a purpose key path from an old revision.
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
+  # Admission and protection stay off until the runbook's step 8; nothing in this
+  # block issues a ticket. Do not inherit any of these values from an old revision.
+  # Shadow phase (design §8, shadow appendix §11): a non-empty list installs the
+  # router-side comparator runtime (observer, counter maintenance, evidence
+  # store) for the named workspaces, so it is NOT dormant. Opt the pilot
+  # workspace 45819281-0ce9-4811-a0cd-c660ab3a116d in only after the signer and
+  # epoch are provisioned and the §5 fleet budget gate is recorded (design §10
+  # "Decisions", enablement order). Rollback: empty the list and redeploy.
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
-  "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="
-  "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=0"
+  # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
+  # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
+  # so no revision inherits a path. kid/issuer/audience are the public identity
+  # of that key and of the enclave keyring; epoch 1 records that authority is
+  # provisioned. The shadow binding is signed by this same signer, so without it
+  # no evaluable shadow sample can exist.
+  "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE=/secrets/async-settle/ticket.pem"
+  "TR_ASYNC_SETTLE_TICKET_KID=tr-async-settle-2026-10a"
+  "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
+  "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
+  "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
@@ -772,15 +807,19 @@ deploy_one_region() {
   # /chat and /synth stream through /chat-proxy/v1 for browser CORS.
   # Synth can legitimately take several model calls before final output, so
   # match the proxy's 300s upstream read timeout unless explicitly overridden.
+  # Settlement and observation loops also run between requests. Allocate CPU
+  # for the instance lifetime; minimum instances alone do not provide idle CPU.
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
       --port 8080 \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
+      --no-cpu-throttling \
       --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \
       --min "$min_instances" \
       --min-instances "$revision_min_instances" \
+      --max-instances "$TR_CLOUD_RUN_MAX_INSTANCES" \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-300}" \
       --network "${TR_CLOUD_RUN_NETWORK:-default}" \
       --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \

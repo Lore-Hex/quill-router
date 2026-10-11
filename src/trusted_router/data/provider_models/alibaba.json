@@ -3,7 +3,7 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T22:59:42Z",
   "price_scale": "microdollars_per_million",
   "model_count": 87,
   "models": [
@@ -12,7 +12,7 @@
       "upstream_id": "glm-5.2",
       "display_name": "Glm 5.2",
       "title": "glm-5.2",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
@@ -33,7 +33,7 @@
       "upstream_id": "kimi-k2.7-code",
       "display_name": "Kimi K2.7 Code",
       "title": "kimi-k2.7-code",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 894000,
       "output_token_price_per_m": 3713000,
@@ -55,7 +55,7 @@
       "upstream_id": "qwen3.7-max-2026-06-08",
       "display_name": "Qwen3.7 Max 2026 06 08",
       "title": "qwen3.7-max-2026-06-08",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 7500000,
@@ -76,7 +76,7 @@
       "upstream_id": "qwen3.7-plus",
       "display_name": "Qwen3.7 Plus",
       "title": "qwen3.7-plus",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 1600000,
@@ -111,7 +111,7 @@
       "upstream_id": "qwen3.7-plus-2026-05-26",
       "display_name": "Qwen3.7 Plus 2026 05 26",
       "title": "qwen3.7-plus-2026-05-26",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 1600000,
@@ -146,7 +146,7 @@
       "upstream_id": "qwen3.7-max-2026-05-20",
       "display_name": "Qwen3.7 Max 2026 05 20",
       "title": "qwen3.7-max-2026-05-20",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 7500000,
@@ -167,7 +167,7 @@
       "upstream_id": "qwen3.7-max",
       "display_name": "Qwen3.7 Max",
       "title": "qwen3.7-max",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 7500000,
@@ -188,7 +188,7 @@
       "upstream_id": "glm-5.1",
       "display_name": "Glm 5.1",
       "title": "glm-5.1",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 131072,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
@@ -244,14 +244,15 @@
           "output_token_price_per_m": 960000,
           "cached_input_token_price_per_m": 12000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "moonshotai/kimi-k2.5",
       "upstream_id": "kimi-k2.5",
       "display_name": "Kimi K2.5",
       "title": "kimi-k2.5",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 574000,
       "output_token_price_per_m": 3011000,
@@ -289,14 +290,15 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-v4-pro",
       "display_name": "Deepseek V4 Pro",
       "title": "deepseek-v4-pro",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 2400000,
       "output_token_price_per_m": 4800000,
@@ -317,7 +319,7 @@
       "upstream_id": "qwen3.6-flash-2026-04-16",
       "display_name": "Qwen3.6 Flash 2026 04 16",
       "title": "qwen3.6-flash-2026-04-16",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 1500000,
@@ -352,7 +354,7 @@
       "upstream_id": "qwen3.6-flash",
       "display_name": "Qwen3.6 Flash",
       "title": "qwen3.6-flash",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 1500000,
@@ -387,7 +389,7 @@
       "upstream_id": "qwen3.6-35b-a3b",
       "display_name": "Qwen3.6 35b A3b",
       "title": "qwen3.6-35b-a3b",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 131072,
       "input_token_price_per_m": 375000,
       "output_token_price_per_m": 2250000,
@@ -422,7 +424,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-32b",
@@ -443,14 +446,15 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3.6-plus",
       "upstream_id": "qwen3.6-plus",
       "display_name": "Qwen3.6 Plus",
       "title": "qwen3.6-plus",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
@@ -485,7 +489,7 @@
       "upstream_id": "qwen3.6-plus-2026-04-02",
       "display_name": "Qwen3.6 Plus 2026 04 02",
       "title": "qwen3.6-plus-2026-04-02",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
@@ -520,7 +524,7 @@
       "upstream_id": "qwen3.5-122b-a10b",
       "display_name": "Qwen3.5 122b A10b",
       "title": "qwen3.5-122b-a10b",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 3200000,
@@ -541,7 +545,7 @@
       "upstream_id": "qwen3.5-397b-a17b",
       "display_name": "Qwen3.5 397b A17b",
       "title": "qwen3.5-397b-a17b",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3600000,
@@ -562,7 +566,7 @@
       "upstream_id": "qwen3.5-35b-a3b",
       "display_name": "Qwen3.5 35b A3b",
       "title": "qwen3.5-35b-a3b",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000,
@@ -583,7 +587,7 @@
       "upstream_id": "qwen3.5-27b",
       "display_name": "Qwen3.5 27b",
       "title": "qwen3.5-27b",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2400000,
@@ -604,7 +608,7 @@
       "upstream_id": "qwen3.5-plus",
       "display_name": "Qwen3.5 Plus",
       "title": "qwen3.5-plus",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 2400000,
@@ -639,7 +643,7 @@
       "upstream_id": "qwen3.5-plus-2026-02-15",
       "display_name": "Qwen3.5 Plus 2026 02 15",
       "title": "qwen3.5-plus-2026-02-15",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 2400000,
@@ -674,7 +678,7 @@
       "upstream_id": "qwen-vl-ocr-2025-11-20",
       "display_name": "Qwen VL OCR 2025 11 20",
       "title": "qwen-vl-ocr-2025-11-20",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 70000,
       "output_token_price_per_m": 160000,
@@ -696,7 +700,7 @@
       "upstream_id": "qwen-vl-ocr",
       "display_name": "Qwen VL OCR",
       "title": "qwen-vl-ocr",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 70000,
       "output_token_price_per_m": 160000,
@@ -718,7 +722,7 @@
       "upstream_id": "qwen3.5-flash-2026-02-23",
       "display_name": "Qwen3.5 Flash 2026 02 23",
       "title": "qwen3.5-flash-2026-02-23",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
@@ -739,7 +743,7 @@
       "upstream_id": "qwen3-vl-plus-2025-12-19",
       "display_name": "Qwen3 VL Plus 2025 12 19",
       "title": "qwen3-vl-plus-2025-12-19",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 1600000,
@@ -815,7 +819,8 @@
           "output_token_price_per_m": 15000000,
           "cached_input_token_price_per_m": 300000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-coder-next",
@@ -862,7 +867,8 @@
           "output_token_price_per_m": 9600000,
           "cached_input_token_price_per_m": 160000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen-mt-turbo",
@@ -883,14 +889,15 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen-mt-plus",
       "upstream_id": "qwen-mt-plus",
       "display_name": "Qwen MT Plus",
       "title": "qwen-mt-plus",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000,
@@ -911,7 +918,7 @@
       "upstream_id": "qwen-mt-lite",
       "display_name": "Qwen MT Lite",
       "title": "qwen-mt-lite",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000,
@@ -932,7 +939,7 @@
       "upstream_id": "qwen-mt-flash",
       "display_name": "Qwen MT Flash",
       "title": "qwen-mt-flash",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000,
@@ -953,7 +960,7 @@
       "upstream_id": "qwen-plus-2025-07-28",
       "display_name": "Qwen Plus 2025 07 28",
       "title": "qwen-plus-2025-07-28",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 4000000,
@@ -988,7 +995,7 @@
       "upstream_id": "qwen-plus-2025-09-11",
       "display_name": "Qwen Plus 2025 09 11",
       "title": "qwen-plus-2025-09-11",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 4000000,
@@ -1023,7 +1030,7 @@
       "upstream_id": "qwen-plus-2025-12-01",
       "display_name": "Qwen Plus 2025 12 01",
       "title": "qwen-plus-2025-12-01",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 4000000,
@@ -1058,7 +1065,7 @@
       "upstream_id": "qwen-plus",
       "display_name": "Qwen Plus",
       "title": "qwen-plus",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 4000000,
@@ -1093,7 +1100,7 @@
       "upstream_id": "qwen-flash-2025-07-28",
       "display_name": "Qwen Flash 2025 07 28",
       "title": "qwen-flash-2025-07-28",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000,
@@ -1128,7 +1135,7 @@
       "upstream_id": "qwen-flash",
       "display_name": "Qwen Flash",
       "title": "qwen-flash",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000,
@@ -1178,7 +1185,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-thinking",
@@ -1200,7 +1208,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-30b-a3b-instruct",
@@ -1222,7 +1231,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-30b-a3b-thinking",
@@ -1244,7 +1254,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-32b-instruct",
@@ -1266,7 +1277,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-32b-thinking",
@@ -1288,7 +1300,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-8b-instruct",
@@ -1310,7 +1323,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-8b-thinking",
@@ -1332,7 +1346,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-flash",
@@ -1374,7 +1389,8 @@
           "output_token_price_per_m": 960000,
           "cached_input_token_price_per_m": 12000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-flash-2025-10-15",
@@ -1416,14 +1432,15 @@
           "output_token_price_per_m": 960000,
           "cached_input_token_price_per_m": 12000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-vl-plus-2025-09-23",
       "upstream_id": "qwen3-vl-plus-2025-09-23",
       "display_name": "Qwen3 VL Plus 2025 09 23",
       "title": "qwen3-vl-plus-2025-09-23",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 1600000,
@@ -1465,7 +1482,7 @@
       "upstream_id": "qwen3-vl-plus",
       "display_name": "Qwen3 VL Plus",
       "title": "qwen3-vl-plus",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 262144,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 1600000,
@@ -1521,7 +1538,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-next-80b-a3b-thinking",
@@ -1542,7 +1560,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-max-2025-09-23",
@@ -1583,7 +1602,8 @@
           "output_token_price_per_m": 15000000,
           "cached_input_token_price_per_m": 300000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-max-preview",
@@ -1624,7 +1644,8 @@
           "output_token_price_per_m": 15000000,
           "cached_input_token_price_per_m": 300000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-max",
@@ -1665,7 +1686,8 @@
           "output_token_price_per_m": 15000000,
           "cached_input_token_price_per_m": 300000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-coder-30b-a3b-instruct",
@@ -1706,7 +1728,8 @@
           "output_token_price_per_m": 6000000,
           "cached_input_token_price_per_m": 120000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-coder-480b-a35b-instruct",
@@ -1747,14 +1770,15 @@
           "output_token_price_per_m": 22500000,
           "cached_input_token_price_per_m": 450000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-coder-flash",
       "upstream_id": "qwen3-coder-flash",
       "display_name": "Qwen3 Coder Flash",
       "title": "qwen3-coder-flash",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1500000,
@@ -1801,7 +1825,7 @@
       "upstream_id": "qwen3-coder-flash-2025-07-28",
       "display_name": "Qwen3 Coder Flash 2025 07 28",
       "title": "qwen3-coder-flash-2025-07-28",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1500000,
@@ -1888,7 +1912,8 @@
           "output_token_price_per_m": 60000000,
           "cached_input_token_price_per_m": 600000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-coder-plus-2025-07-22",
@@ -1935,7 +1960,8 @@
           "output_token_price_per_m": 60000000,
           "cached_input_token_price_per_m": 600000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-coder-plus-2025-09-23",
@@ -1982,7 +2008,8 @@
           "output_token_price_per_m": 60000000,
           "cached_input_token_price_per_m": 600000
         }
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-30b-a3b-instruct-2507",
@@ -2003,7 +2030,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-30b-a3b-thinking-2507",
@@ -2024,7 +2052,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-30b-a3b",
@@ -2045,7 +2074,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-235b-a22b-instruct-2507",
@@ -2066,7 +2096,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
@@ -2087,7 +2118,8 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3-235b-a22b",
@@ -2108,14 +2140,15 @@
       ],
       "output_modalities": [
         "text"
-      ]
+      ],
+      "missing_since": "2026-10-10"
     },
     {
       "id": "qwen/qwen3.5-flash",
       "upstream_id": "qwen3.5-flash",
       "display_name": "Qwen3.5 Flash",
       "title": "qwen3.5-flash",
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
@@ -2140,7 +2173,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 40000
@@ -2154,7 +2187,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_modalities": [
         "text",
@@ -2196,7 +2229,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1048576,
       "input_modalities": [
         "text",
@@ -2238,7 +2271,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "context_length": 1000000,
       "input_token_price_per_m": 138000,
       "output_token_price_per_m": 275000,
@@ -2259,7 +2292,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-03"
@@ -2273,7 +2306,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
@@ -2287,7 +2320,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
@@ -2301,7 +2334,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-21"
@@ -2345,7 +2378,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-09-01"
@@ -2359,7 +2392,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-09-01"
@@ -2373,7 +2406,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-09-23"
@@ -2387,7 +2420,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-09-23"
@@ -2401,7 +2434,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1791283544,
+      "created": 1791673103,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-09-27"

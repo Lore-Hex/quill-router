@@ -140,10 +140,15 @@ func (o *Owner) shardLocked(key ShardKey) *shard {
 // (§4.4), and asks for a top-up when the shard's room is low. With no lease
 // that takes it, it answers ErrNoRoom, and the top-up it asks for is sized
 // to take it too: the front door tries another shard's owner, or answers
-// that the request should wait.
+// that the request should wait. A workspace the switch does not enable is
+// ErrOff, with no lease asked for; each lease asks the switch again as it
+// makes the hold.
 func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 	if err := a.valid(); err != nil {
 		return Admitted{}, err
+	}
+	if !o.cfg.Enabled(key.Workspace) {
+		return Admitted{}, ErrOff
 	}
 	o.mu.Lock()
 	leases := slices.Clone(o.shardLocked(key).leases)
@@ -164,19 +169,46 @@ func (o *Owner) Admit(key ShardKey, a Admission) (Admitted, error) {
 	return Admitted{}, ErrNoRoom
 }
 
+// Retire stops the owner taking anything new, as a node marked leaving
+// does (spike plan §4, K3): it asks for no lease and takes none, a grant
+// answered after it included, and each lease it holds admits nothing more
+// (Lease.Close), serving its holds, its next checkpoint returning its free
+// room and its final one, once no hold is open, ending it. A request it can
+// no longer take is ErrNoRoom, for the front door to take elsewhere. A
+// lease still held once every hold admitted before could have lived, a
+// hold's life and the grace, is renewed no more and let go past its cutoff
+// (abandoned), for the auditor to finish.
+func (o *Owner) Retire() {
+	o.mu.Lock()
+	if !o.retiring {
+		o.retiring, o.retiredAt = true, o.cfg.Clock()
+	}
+	leases := make([]*Lease, 0, len(o.leases))
+	for _, l := range o.leases {
+		leases = append(leases, l)
+	}
+	o.mu.Unlock()
+	for _, l := range leases {
+		l.Close()
+	}
+}
+
 // topUp asks for another lease for the shard once its room is below the
 // low-water mark, a request found no lease to take it (unmet, with need, the
 // request's estimate and buffer, which the lease is sized for too), or an
 // ask's answer was lost, room or not; one ask at a time, none within the
-// cooldown of the last, and none once the owner stops. The grant is a
-// Spanner transaction off the request's path.
+// cooldown of the last, none once the owner stops, and none for a workspace
+// the switch does not enable, asked as the ask is made: a lost ask waits
+// for it to be on again. The grant is a Spanner transaction off the
+// request's path.
 func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	t := o.cfg.TopUps
 	if t == (TopUps{}) {
 		return
 	}
 	cooling := func(sh *shard, now time.Time) bool {
-		return o.stopped || o.handoff != nil || sh.asking || (!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
+		return o.stopped || o.handoff != nil || o.retiring || sh.asking ||
+			(!sh.askedAt.IsZero() && now.Sub(sh.askedAt) < t.Cooldown)
 	}
 	o.mu.Lock()
 	sh := o.shardLocked(key)
@@ -205,7 +237,7 @@ func (o *Owner) topUp(key ShardKey, unmet bool, need int64) {
 	} else {
 		now = o.cfg.Clock()
 	}
-	if cooling(sh, now) {
+	if cooling(sh, now) || !o.cfg.Enabled(key.Workspace) {
 		return
 	}
 	if req == nil {

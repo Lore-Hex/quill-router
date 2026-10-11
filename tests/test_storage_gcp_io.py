@@ -453,6 +453,45 @@ def test_configure_spanner_rpc_deadlines_caps_commit_and_retry_budget(
     assert retry._timeout == pytest.approx(7.0, abs=0.001)
 
 
+def test_per_rpc_cap_is_nested_context_local_and_does_not_shorten_total_budget(monkeypatch):
+    import contextvars
+
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    api = _CommitApi()
+    database = _CommitDatabase(api)
+    configure_spanner_rpc_deadlines(database, max_seconds=7.)
+    with pytest.raises(ValueError, match='injected'):
+        with io_mod.spanner_rpc_deadline(clock.now+1, max_rpc_seconds=.2):
+            assert io_mod.remaining_rpc_budget(10) == pytest.approx(1.)
+            database.run_in_transaction(_txn, timeout_secs=1.)
+            assert database.timeouts == [pytest.approx(1.)]
+            with io_mod.spanner_rpc_deadline(clock.now+10, max_rpc_seconds=.5):
+                api.commit()
+            with io_mod.spanner_rpc_deadline(clock.now+1, max_rpc_seconds=.1):
+                api.commit()
+            with io_mod.spanner_rpc_deadline(clock.now+1):
+                api.commit()
+            contextvars.Context().run(api.commit)
+            clock.now += .95
+            api.commit()
+            clock.now += .1
+            with pytest.raises(DeadlineExceeded):
+                api.commit()
+            raise ValueError('injected')
+    api.commit()
+    assert [call['timeout'] for call in api.calls] == pytest.approx([.2, .2, .1, .2, 7., .05, 7.])
+    assert [call['retry']._timeout for call in api.calls] == pytest.approx([.2, .2, .1, .2, 7., .05, 7.])
+
+
+@pytest.mark.parametrize('limit', [0., -1., float('inf'), float('nan')])
+def test_invalid_per_rpc_cap_does_not_install_a_deadline(limit):
+    with pytest.raises(ValueError, match='finite and positive'):
+        with io_mod.spanner_rpc_deadline(0., max_rpc_seconds=limit):
+            pytest.fail('invalid cap entered')
+    assert io_mod.remaining_rpc_budget(7.) == 7.
+
+
 def test_commit_rst_retry_cannot_receive_a_fresh_transaction_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

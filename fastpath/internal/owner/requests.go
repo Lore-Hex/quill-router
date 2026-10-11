@@ -38,6 +38,9 @@ var (
 	ErrDeadlinePassed = errors.New("owner: the heartbeat's record was acknowledged after the deadline it echoed")
 	// ErrTooLarge: a record larger than the settle log carries.
 	ErrTooLarge = errors.New("owner: a record past the settle log's size")
+	// ErrOff: the workspace is not enabled for the fast path (the
+	// production rollout's W1). No hold is made, and no lease asked for.
+	ErrOff = errors.New("owner: the workspace is not enabled for the fast path")
 )
 
 // maxRecord is the largest record the owner hands over: the settle log
@@ -127,13 +130,22 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 	l.holds[auth] = h
 	now := l.o.cfg.Clock()
 	done := l.o.cfg.TopUps.over(now, l.lastAdmit, l.takenAt)
-	if done || !l.withinCutoff(now) {
+	// The switch is asked as the hold is made, with it counted: a request
+	// that stalled after the owner's first look, as in minting, makes no
+	// hold once the switch is off.
+	off := !l.o.cfg.Enabled(l.workspace)
+	if done || off || !l.withinCutoff(now) {
 		l.held -= h.estimate
 		l.buffer -= h.counted()
 		delete(l.holds, auth)
 		if done {
 			// Gone idle or old since the last renewal round looked.
 			l.closing = true
+		}
+		switch {
+		case off:
+			return Admitted{}, ErrOff
+		case done:
 			return Admitted{}, ErrClosing
 		}
 		return Admitted{}, ErrPastCutoff

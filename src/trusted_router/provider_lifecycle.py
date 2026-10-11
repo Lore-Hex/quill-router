@@ -30,6 +30,7 @@ TOGETHER_OCTOBER_22_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
+GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -58,6 +59,9 @@ DEEPINFRA_KIMI_K25_RETIREMENT_AT = datetime(2026, 9, 7, 0, 0, tzinfo=UTC)
 DEEPINFRA_SEPTEMBER_10_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 DEEPINFRA_MIMO_V25_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
 DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
+DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
+# 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
+XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2027, 1, 28, 0, 0, tzinfo=UTC)
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
@@ -67,6 +71,11 @@ ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 AZURE_COMMAND_A_PLUS_RETIREMENT_AT = datetime(2026, 10, 16, 0, 0, tzinfo=UTC)
 WANDB_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
 NSCALE_NOVEMBER_2026_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
+# Enforcement starts at the public-doc observation; the exact earlier
+# Scaleway end-of-life dates are not recorded in this repository.
+SCALEWAY_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 7, 0, 0, tzinfo=UTC)
+# October 30 00:00 KST (UTC+09).
+UPSTAGE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 29, 15, 0, tzinfo=UTC)
 # Enforcement starts at the confirmed observation, not an invented upstream
 # deprecation date: all three IDs returned UnavailableModel on October 3.
 STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
@@ -172,6 +181,33 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # The supported-models page checked on 2026-10-07 states these models
+    # are already past end of life. Use that fixed observation date rather
+    # than inventing earlier dates or waiting for the catalog bot to delist.
+    # https://www.scaleway.com/en/docs/generative-apis/reference-content/supported-models/
+    _Retirement(
+        provider="scaleway",
+        model_ids=frozenset({
+            "mistralai/pixtral-12b-2409",
+            "qwen/qwen3-coder-30b-a3b-instruct",
+        }),
+        upstream_ids=frozenset({
+            "pixtral-12b-2409",
+            "qwen3-coder-30b-a3b-instruct",
+        }),
+        effective_at=SCALEWAY_OCTOBER_2026_RETIREMENT_AT,
+    ),
+    # Upstage's public model pages checked on 2026-10-07 retire Solar Pro 2
+    # and 3 on October 30 KST. Solar Pro 4 remains a distinct model; never
+    # substitute it for either explicitly requested model.
+    # https://console.upstage.ai/docs/models/solar-pro-2
+    # https://console.upstage.ai/docs/models/solar-pro-3
+    _Retirement(
+        provider="upstage",
+        model_ids=frozenset({"upstage/solar-pro2", "upstage/solar-pro3"}),
+        upstream_ids=frozenset({"solar-pro2", "solar-pro3"}),
+        effective_at=UPSTAGE_OCTOBER_2026_RETIREMENT_AT,
+    ),
     # Nscale's Serverless notices of October 2 and October 6 retire these
     # exact ids "between 2-4 November 2026" and ask customers to switch "by
     # 2 November 2026". No time or zone was given, so stop at the earliest
@@ -374,6 +410,18 @@ _RETIREMENTS = (
         }),
         effective_at=GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT,
     ),
+    # Google AI Studio's October 10 notice: gemini-3.5-flash "has been
+    # deprecated" in the Gemini API and every call is now served by Gemini 3.6
+    # Flash. Retire the AI Studio routes from the start of that day (no time
+    # given) instead of selling 3.6 weights as 3.5. Vertex, GMI and Atlas
+    # Cloud still serve 3.5 Flash and are unaffected.
+    _Retirement(
+        provider="google-ai-studio",
+        model_ids=frozenset({"google/gemini-3.5-flash"}),
+        upstream_ids=frozenset({"gemini-3.5-flash"}),
+        effective_at=GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.6-flash",),
+    ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
     # DeepSeek V4 Pro 0813 route, dedicated deployments and other providers
@@ -465,6 +513,25 @@ _RETIREMENTS = (
         model_ids=frozenset({"xiaomi/mimo-v2.5-pro-ultraspeed"}),
         upstream_ids=frozenset({"mimo-v2.5-pro-ultraspeed"}),
         effective_at=XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
+    ),
+    # Xiaomi's October 9 notice: from 2026-10-14 18:00 UTC+8 its API serves
+    # MiMo V2.6 weights (billed at V2.6 rates) for the V2.5 ids, and from
+    # October 21 10:00 UTC+8 the ids error. Retire at the substitution, not
+    # the hard shutoff: a pinned V2.5 request must never get V2.6. Only
+    # Xiaomi's direct routes; DeepInfra and other hosts keep their V2.5.
+    _Retirement(
+        provider="xiaomi",
+        model_ids=frozenset({"xiaomi/mimo-v2.5-pro"}),
+        upstream_ids=frozenset({"mimo-v2.5-pro"}),
+        effective_at=XIAOMI_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-pro",),
+    ),
+    _Retirement(
+        provider="xiaomi",
+        model_ids=frozenset({"xiaomi/mimo-v2.5"}),
+        upstream_ids=frozenset({"mimo-v2.5"}),
+        effective_at=XIAOMI_MIMO_V25_RETIREMENT_AT,
+        replacement_model_ids=("xiaomi/mimo-v2.6-flash",),
     ),
     # Fireworks announced that these Serverless routes retire on 2026-08-27.
     # The two Kimi retirements apply only to the separately billed Fast
@@ -783,6 +850,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"inclusionAI/Ling-3.0-flash-Fin"}),
         effective_at=DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT,
         replacement_model_ids=("inclusionai/ling-3.0-flash-vl",),
+    ),
+    # DeepInfra's October 9 notices deprecate Qwen3 Max and Qwen3 Max Thinking
+    # on 2026-10-10 and redirect later requests to the different Qwen3.8 Max
+    # weights. Retire DeepInfra's routes at 00:00 UTC (date only) rather than
+    # accept the substitution; other providers' routes are unaffected.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"qwen/qwen3-max", "qwen/qwen3-max-thinking"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-Max", "Qwen/Qwen3-Max-Thinking"}),
+        effective_at=DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-max",),
     ),
     # Google Cloud's October 5 notice: Vertex (Gemini Enterprise) requests to
     # Gemini 3.6 Flash fail with 404 from November 19, 2026 and to Gemini 3.7

@@ -1024,9 +1024,11 @@ def _credits_endpoint(provider: str):
     )
 
 
-def test_default_endpoint_routing_prefers_reliable_host_over_flaky() -> None:
-    # parasail/novita/gmi are demoted below reliable hosts, so default routing
-    # tries deepinfra before parasail even when parasail is listed first.
+def test_default_endpoint_routing_prefers_reliable_host_over_flaky(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "trusted_router.routing.measured_provider_rank",
+        lambda provider, sort: 0 if provider == "deepinfra" else 2000,
+    )
     flaky = _credits_endpoint("parasail")
     reliable = _credits_endpoint("deepinfra")
     # Sorting providers is model-local. Reuse one model to isolate provider
@@ -1050,6 +1052,7 @@ def test_explicit_provider_order_overrides_reliability_preference() -> None:
 
 
 def _serve_glm_52_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    drop_routes(monkeypatch, "z-ai/glm-5.2")
     for host, prompt in (("baseten", 900_000), ("parasail", 1_000_000), ("zai", 800_000)):
         serve_on_fixture_route(
             monkeypatch, "z-ai/glm-5.2", host, author="zai",
@@ -1057,7 +1060,7 @@ def _serve_glm_52_on_fixture_routes(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def test_glm_52_defaults_to_parasail_with_fallbacks_intact(
+def test_glm_52_defaults_to_parasail_without_funded_host_with_fallbacks_intact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _serve_glm_52_on_fixture_routes(monkeypatch)
@@ -1175,8 +1178,8 @@ def test_provider_incident_preference_preserves_model_and_explicit_pins(
         assert [endpoint.provider for _, endpoint in confidential] == ["chutes"]
 
 
-def test_same_preference_tier_keeps_catalog_order() -> None:
-    # Two reliable hosts share the default tier -> original order preserved.
+def test_same_preference_tier_keeps_catalog_order(monkeypatch) -> None:
+    monkeypatch.setattr("trusted_router.routing.measured_provider_rank", lambda provider, sort: 0)
     a = _credits_endpoint("deepinfra")
     b = _credits_endpoint("cerebras")
     ordered = _sort_endpoint_candidates([a, b], provider_route_preferences({}))

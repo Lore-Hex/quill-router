@@ -107,6 +107,156 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
         validate_counter(identity,broken)
 
 
+@pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32])
+@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2])
+@pytest.mark.parametrize('budget', [1., .1, .3, .4])
+def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
+    from types import SimpleNamespace
+
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
+
+    clock = shadow_deadline_clock
+    calls = []
+
+    def rpc(*, latency, **kwargs):
+        calls.append(kwargs)
+        timeout = kwargs['timeout']
+        clock.now += min(timeout, latency)
+        if timeout < latency:
+            raise DeadlineExceeded('regional round trip exceeds remaining budget')
+        return []
+
+    class RegionalDatabase(Database):
+        def __init__(self):
+            super().__init__()
+            self.spanner_api = SimpleNamespace(
+                execute_sql=lambda **kw: rpc(latency=rpc_latency, **kw),
+                commit=lambda **kw: rpc(latency=commit_latency, **kw))
+
+        def execute_sql(self, *args, **kwargs):
+            self.spanner_api.execute_sql(timeout=kwargs['timeout'], retry=kwargs['retry'])
+            return super().execute_sql(*args, **kwargs)
+
+        def run_in_transaction(self, callback, **kwargs):
+            result = super().run_in_transaction(callback, **kwargs)
+            self.spanner_api.commit(request_options=kwargs['commit_request_options'])
+            return result
+
+    db = RegionalDatabase()
+    configure_spanner_rpc_deadlines(db)
+    counters = Counters('europe-west4', 'a'*40, clock=lambda: NOW)
+    counters.increment(dimensions('openai', 'responses', True), 'authorize_attempts')
+    identity, row = counters.snapshot(closed=True)[0]
+    started = clock.monotonic()
+    if budget < 2*rpc_latency+commit_latency:
+        with pytest.raises(DeadlineExceeded):
+            EvidenceStore(db).flush(identity, row, started+budget)
+        assert clock.monotonic()-started == pytest.approx(budget)
+    else:
+        EvidenceStore(db).flush(identity, row, started+budget)
+        assert json.loads(db.rows[COUNTER, identity]) == row
+        assert clock.monotonic()-started == pytest.approx(2*rpc_latency+commit_latency)
+        assert len(calls) == 3
+    assert all(0 < call['timeout'] <= 1. for call in calls[:2])
+    if len(calls) == 3:
+        assert 0 < calls[-1]['timeout'] <= 1.
+        assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
+
+
+@pytest.mark.parametrize('budget', [.125, .5, 1., 30.])
+def test_slow_shadow_read_still_fails_closed_without_retry(shadow_deadline_clock, budget):
+    from google.api_core.exceptions import DeadlineExceeded
+
+    clock = shadow_deadline_clock
+
+    class SlowDatabase(Database):
+        def execute_sql(self, sql, **kwargs):
+            super().execute_sql(sql, **kwargs)
+            clock.now += kwargs['timeout']
+            raise DeadlineExceeded('regional read did not finish')
+
+    db = SlowDatabase()
+    started = clock.monotonic()
+    with pytest.raises(DeadlineExceeded):
+        EvidenceStore(db).reserve('2026-10-06', started+budget)
+    assert clock.monotonic()-started == pytest.approx(min(1., budget))
+    assert len(db.transaction_options) == len(db.query_options) == 1
+    timeout, retry, options = db.query_options[0]
+    assert timeout == pytest.approx(min(1., budget))
+    assert retry is None and options == {'priority': 'PRIORITY_LOW'}
+    assert not db.rows and not db.write_shapes
+
+
+def test_operator_day_scan_keeps_short_deadline(shadow_deadline_clock):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    calls = []
+
+    def execute(sql, **kwargs):
+        calls.append(kwargs)
+        return []
+
+    reader = SimpleNamespace(execute_sql=execute)
+    db = SimpleNamespace(snapshot=lambda: nullcontext(reader))
+    assert EvidenceStore(db).day(SAMPLE, '2026-10-06') == []
+    assert len(calls) == 1
+    assert 0 < calls[0]['timeout'] <= .2
+    assert calls[0]['retry'] is None
+    assert calls[0]['request_options'] == {'priority': 'PRIORITY_LOW'}
+    assert calls[0]['params']['page_size'] == 200
+
+
+@pytest.mark.parametrize('failure_stage', ['begin', 'callback', 'commit'])
+@pytest.mark.parametrize('error_name, reason', [
+    ('DeadlineExceeded', 'deadline_exceeded'), ('Cancelled', 'cancelled'),
+    ('Aborted', 'aborted'), ('ServiceUnavailable', 'unavailable'),
+    ('TimeoutError', 'local_budget'), ('ValueError', 'other'),
+])
+def test_transaction_failure_diagnostics_are_bounded_and_redacted(
+        shadow_deadline_clock, caplog, failure_stage, error_name, reason):
+    from types import SimpleNamespace
+
+    from google.api_core import exceptions
+
+    clock = shadow_deadline_clock
+    cls = {'TimeoutError': TimeoutError, 'ValueError': ValueError}.get(error_name) or getattr(exceptions, error_name)
+    error = cls('private prompt, token, SQL body and customer identifiers')
+
+    def fail():
+        clock.now += .05
+        raise error
+
+    def callback(tx):
+        if failure_stage == 'callback':
+            fail()
+
+    def run(cb, **kw):
+        if failure_stage == 'begin':
+            fail()
+        cb(None)
+        fail()
+
+    store = EvidenceStore(SimpleNamespace(run_in_transaction=run))
+    for _ in range(3):
+        with pytest.raises(cls) as caught:
+            store.transaction(callback, clock.monotonic()+1)
+        assert caught.value is error
+        clock.now += 5
+    assert len(caplog.records) == 1
+    clock.now += 60
+    with pytest.raises(cls):
+        store.transaction(callback, clock.monotonic()+1)
+    assert len(caplog.records) == 2
+    for record in caplog.records:
+        assert record.getMessage() == f'shadow evidence transaction failed stage={failure_stage} reason={reason} elapsed_ms=50'
+        assert record.exc_info is None
+        assert record.stack_info is None
+    assert 'private' not in caplog.text
+
+
 def test_day_reads_are_bounded_and_exact():
     sql, params, types = day_statement(SAMPLE,'2026-10-06','2026-10-06/auth',200)
     assert params == dict(kind=SAMPLE,day_start='2026-10-06/',next_day_start='2026-10-07/',after_id='2026-10-06/auth',page_size=200)
@@ -156,6 +306,7 @@ def synthetic_window():
         start = int(dt.datetime.fromisoformat(day).replace(tzinfo=dt.UTC).timestamp())
         counter = Counters('us-central1','a'*40,clock=lambda start=start:start)
         dims = dimensions('openai','chat.completions',False)
+        counter._day()['admission_observer']['prediction_yes'] = 1
         if day == days[0]:
             for name in ('settle_attempts','envelope_present','observed_attempts','observed_eligible','evaluable','exact'):
                 counter.increment(dims,name)
@@ -337,7 +488,7 @@ def test_sdk_abort_cannot_repeat_evidence_attempt(monkeypatch, abort_at, shadow_
     except Exception as exc:
         failure = exc
     assert isinstance(failure, RuntimeError) and str(failure) == 'shadow_transaction_retry'
-    assert len(calls) == 1 and 0 < horizons[0] <= .2
+    assert len(calls) == 1 and 0 < horizons[0] <= 1
     assert session.transaction.return_value.commit.call_count == int(abort_at == 'commit')
 
 
@@ -498,9 +649,137 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     db = Database()
     granted = EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     assert granted == 100
-    assert db.transaction_options == [dict(timeout_secs=0, commit_request_options={'priority':'PRIORITY_LOW'})]
+    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'})]
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for timeout, retry, options in db.query_options:
-        assert 0 < timeout <= .2 and retry is None and options == {'priority':'PRIORITY_LOW'}
+        assert 0 < timeout <= 1. and retry is None and options == {'priority':'PRIORITY_LOW'}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
+
+
+@pytest.mark.parametrize('field', ['late_installs', 'max_consecutive_failures', 'degraded_seconds'])
+def test_observer_counter_requires_new_fields(field):
+    counters = Counters('us-central1', 'a'*40, clock=lambda: NOW)
+    counters._day()
+    identity, body = counters.snapshot()[0]
+    assert body['admission_observer'][field] == 0
+    validate_counter(identity, body)
+    del body['admission_observer'][field]
+    with pytest.raises(ValueError, match='observer schema'):
+        validate_counter(identity, body)
+
+
+@pytest.mark.parametrize('value', [-1, .5, float('nan'), float('inf'), True, '1'])
+def test_observer_degraded_seconds_rejects_invalid_numbers(value):
+    counters = Counters('us-central1', 'a'*40, clock=lambda: NOW)
+    counters._day()
+    identity, body = counters.snapshot()[0]
+    body['admission_observer']['degraded_seconds'] = value
+    with pytest.raises(ValueError):
+        validate_counter(identity, body)
+
+
+@pytest.mark.parametrize('damage', [None, 'failures', 'streak', 'unknown', 'degraded', 'no_known'])
+def test_report_bounded_observer_failures(damage):
+    rows, days, proof = synthetic_window()
+    obs = rows[0]['body']['admission_observer']
+    # At 100 reads, the three-event floor must win over the 1% allowance.
+    obs.update(health_reads=40, workspace_reads=60, read_failures=1, missed_ticks=1,
+               late_installs=1, max_consecutive_failures=2, prediction_yes=98,
+               prediction_unknown=2, degraded_seconds=864)
+    if damage == 'failures':
+        obs['late_installs'] += 1
+    elif damage == 'streak':
+        obs['max_consecutive_failures'] = 3
+    elif damage == 'unknown':
+        obs['prediction_unknown'] += 1
+    elif damage == 'degraded':
+        obs['degraded_seconds'] += 1
+    elif damage == 'no_known':
+        obs.update(prediction_yes=0, prediction_unknown=0)
+    result = report(rows, days, proof)
+    assert result['status'] == ('PASS' if damage is None else 'BLOCKED')
+    budget = result['metrics']['observer_budgets'][rows[0]['id']]
+    assert budget['failure_limit'] == 3 and budget['failure_ratio'] >= .01
+
+
+def test_unknown_admission_sample_is_not_clock_seed_or_mismatch_but_can_be_tolerated():
+    from scripts.async_settle.shadow_report import positive_sample
+    from trusted_router.services.async_settle_shadow_admission import unknown
+    rows, days, proof = synthetic_window()
+    original = rows[-1]
+    tail = copy.deepcopy(original)
+    tail['id'] += '-tail'
+    tail['body']['authorization_id'] += '-tail'
+    tail['body']['admission'] = unknown('cache_stale')
+    rows.append(tail)
+    body = rows[0]['body']
+    body['samples_inserted'] = body['comparison_attempts'] = 2
+    for bucket in (*body['counts'], *body['terminal_counts']):
+        for key, value in bucket.items():
+            if type(value) is int:
+                bucket[key] *= 2
+    body['admission_observer'].update(prediction_yes=49, prediction_unknown=1)
+    assert not positive_sample(tail['body'])
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS' and result['resets'] == []
+    assert result['clean_window_start_us'] == NOW*1000000
+    body['admission_observer']['prediction_unknown'] = 0
+    assert any('prediction_count_gap' in gap for gap in report(rows, days, proof)['gaps'])
+    tail['body']['python_usage']['output_tokens'] += 1
+    body['admission_observer']['prediction_unknown'] = 1
+    with pytest.raises(ValueError, match='contradictory clean sample'):
+        report(rows, days, proof)
+
+
+# Adopted from the independent Round 1 review contract tests.
+def test_unknown_admission_is_not_reported_as_exact_or_evaluable():
+    from trusted_router.services.async_settle_shadow_admission import unknown
+
+    rows, days, proof = synthetic_window()
+    tail = copy.deepcopy(rows[-1])
+    tail['id'] += '-tail'
+    tail['body']['authorization_id'] += '-tail'
+    tail['body']['admission'] = unknown('cache_stale')
+    rows.append(tail)
+    body = rows[0]['body']
+    body['samples_inserted'] = body['comparison_attempts'] = 2
+    for bucket in (*body['counts'], *body['terminal_counts']):
+        for key, value in bucket.items():
+            if type(value) is int:
+                bucket[key] *= 2
+    body['admission_observer'].update(prediction_yes=49, prediction_unknown=1)
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS'
+    assert result['metrics']['classification']['exact'] == 1
+    assert sum(row['evaluable'] for row in result['denominators']) == 1
+    assert sum(row['exact'] for row in result['denominators']) == 1
+    assert sum(row['unevaluable'] for row in result['denominators']) == 1
+    assert result['metrics']['classification']['unevaluable'] == 1
+    assert result['metrics']['comparator_classification']['exact'] == 2
+
+
+def test_unknown_admission_keeps_independent_comparator_disagreement_gate():
+    from trusted_router.services.async_settle_shadow_admission import unknown
+
+    rows, days, proof = synthetic_window()
+    row = rows[-1]['body']
+    row['admission'] = unknown('cache_stale')
+    row['classification'] = 'evaluator_disagreement'
+    row['go_micro'] = row['python_micro'] + 1
+    row['python_minus_go'] = -1
+    row['reason_codes'] = ['go_failure']
+    body = rows[0]['body']
+    body['last_mismatch_at_us'] = row['observed_at_us']
+    body['admission_observer'].update(prediction_yes=49, prediction_unknown=1)
+    for bucket in (*body['counts'], *body['terminal_counts']):
+        if bucket['exact']:
+            bucket.update(exact=0, evaluable=0, mismatch=1)
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert result['clean_window_start_us'] is None
+    assert any(reset['reason'] == 'evaluator_disagreement' for reset in result['resets'])
+    assert result['metrics']['classification'] == {'unevaluable': 1}
+    assert result['metrics']['comparator_classification'] == {'evaluator_disagreement': 1}
+    assert sum(row['mismatch'] for row in result['denominators']) == 0
+    assert sum(row['unevaluable'] for row in result['denominators']) == 1

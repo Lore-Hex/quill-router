@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from tests.test_async_settle_shadow_accounting import Database
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_evidence import COUNTER, dimensions
@@ -163,7 +165,7 @@ def test_counter_unknown_prediction_blocks_duplicate_observation():
     rows[0]['body']['admission_observer']['prediction_unknown'] = 1
     result = report(rows, days, proof)
     assert result['status'] == 'BLOCKED' and result['clean_window_start_us'] is None
-    assert result['metrics']['prediction_known_fraction'] == .5
+    assert result['metrics']['prediction_known_fraction'] == 8/9
 
 
 def test_verified_cohort_exclusion_cannot_seed_clock_or_hide_unknown():
@@ -276,6 +278,95 @@ def test_flush_failure_counts_drop_and_preserves_first_gap(shadow_deadline_clock
     rt.executor.shutdown()
 
 
+@pytest.mark.parametrize('previous_gap', [False, True])
+def test_failed_final_flush_keeps_writer_closed_and_unacknowledged(monkeypatch, shadow_deadline_clock, previous_gap):
+    from google.api_core.exceptions import DeadlineExceeded
+
+    db = Database()
+    store = EvidenceStore(db)
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), store)
+    rt.counters.clock = lambda: 1791244801
+    dims = dimensions('openai', 'responses', False)
+    if previous_gap:
+        rt.counters.reason(dims, 'settle', 'usage_missing', 'exclusions')
+    rt.flush(shadow_deadline_clock.monotonic()+1)
+    identity = next(identity for kind, identity in db.rows if kind == COUNTER)
+    snapshots = []
+
+    def fail_close(identity, body, deadline):
+        snapshots.append(body)
+        raise DeadlineExceeded('injected final flush timeout')
+
+    monkeypatch.setattr(store, 'flush', fail_close)
+    rt.counters.clock = lambda: 1791244804
+    try:
+        rt.flush(shadow_deadline_clock.monotonic()+1, closed=True)
+        body = rt.counters.days[identity.split('/')[0]]
+        assert body['closed'] is True
+        assert not json.loads(db.rows[COUNTER, identity])['closed']
+        assert rt.counters.retired_through == ''
+        assert body['first_gap_at_us'] == (1791244801000000 if previous_gap else 1791244804000000)
+        assert body['drops'] == [dict(phase='worker', adapter='unknown', route_type='unknown',
+            streamed=None, reason='store_unavailable', count=1)]
+        # A late acknowledgment must not discard the newly recorded gap.
+        rt.counters.acknowledge(identity, snapshots[0])
+        assert identity.split('/')[0] in rt.counters.days
+        with pytest.raises(ValueError, match='closed shadow day'):
+            rt.counters.increment(dims, 'settle_attempts')
+    finally:
+        rt.executor.shutdown()
+
+
+def test_shutdown_releases_executor_when_final_flush_fails(monkeypatch):
+    from fastapi import FastAPI
+
+    from trusted_router.services import async_settle_shadow as module
+
+    app = FastAPI()
+    app.state.async_settle = runtime()
+    module.install(app, settings(async_settle_enabled=False, async_settle_shadow_workspaces='ws-v1'), None)
+    rt = app.state.async_settle_shadow
+
+    def fail(*args):
+        raise RuntimeError('injected unexpected shutdown failure')
+
+    monkeypatch.setattr(rt, 'flush', fail)
+    try:
+        with pytest.raises(RuntimeError, match='injected unexpected shutdown failure'):
+            asyncio.run(app.router.on_shutdown[0]())
+        with pytest.raises(RuntimeError, match='cannot schedule new futures after shutdown'):
+            rt.executor.submit(lambda: None)
+    finally:
+        rt.executor.shutdown()
+
+
+def test_shutdown_completes_after_final_storage_timeout():
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from trusted_router.services import async_settle_shadow as module
+
+    def fail(*args):
+        raise DeadlineExceeded('injected shutdown storage timeout')
+
+    app = FastAPI()
+    app.state.async_settle = runtime()
+    module.install(app, settings(async_settle_enabled=False, async_settle_shadow_workspaces='ws-v1'), None)
+    rt = app.state.async_settle_shadow
+    rt.store = SimpleNamespace(flush=fail)
+    try:
+        asyncio.run(app.router.on_shutdown[0]())
+        body = next(iter(rt.counters.days.values()))
+        assert body['closed'] and body['first_gap_at_us'] is not None
+        assert body['drops'][0]['reason'] == 'store_unavailable'
+        with pytest.raises(RuntimeError, match='cannot schedule new futures after shutdown'):
+            rt.executor.submit(lambda: None)
+    finally:
+        rt.executor.shutdown()
+
+
 def test_injected_commit_deadline_failure_is_not_acknowledged(monkeypatch, shadow_deadline_clock):
     db = Database()
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
@@ -285,7 +376,7 @@ def test_injected_commit_deadline_failure_is_not_acknowledged(monkeypatch, shado
 
     def slow_commit(*args, **kwargs):
         result = original(*args, **kwargs)
-        # Cross both the 200 ms store budget and the outer one-second budget
+        # Cross both the store budget and the outer one-second worker budget
         # deterministically, even though the fake commit returned successfully.
         shadow_deadline_clock.now += 2
         return result
@@ -403,3 +494,288 @@ def test_runtime_prewarms_only_when_shadow_opted_in(monkeypatch):
         rt = Runtime(settings(async_settle_enabled=admission, async_settle_shadow_workspaces=workspaces), runtime())
         rt.executor.shutdown()
     assert calls == ['warm']
+
+
+def test_observer_flush_preserves_maximum_and_rounds_cumulative_seconds(shadow_deadline_clock):
+    from scripts.async_settle.shadow_report import validate_counter
+    from tests.test_async_settle_shadow import NOW
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_wire import bounded_json
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: now[0])
+    db = Database()
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db), observer)
+    rt.counters.clock = lambda: NOW + now[0]
+    rt.counters._day()
+    def flush():
+        rt.last_flush = 0
+        rt.flush(shadow_deadline_clock.monotonic()+1)
+        identity, raw = next((identity, body) for (kind, identity), body in db.rows.items() if kind == COUNTER)
+        body = bounded_json(raw.encode(), 65536, signed=True)
+        validate_counter(identity, body)
+        return body['admission_observer']
+    try:
+        for tick in (0., 1., 2.):
+            now[0] = tick
+            observer.missed_tick(None, tick)
+        now[0] = 2.2
+        first = flush()
+        assert first['max_consecutive_failures'] == 3 and first['degraded_seconds'] == 1
+        now[0] = 2.4
+        second = flush()
+        assert second['max_consecutive_failures'] == 3 and second['degraded_seconds'] == 1
+        observer.install_health(now[0], health(now[0]))
+        now[0] = 4.
+        final = flush()
+        assert final['max_consecutive_failures'] == 3 and final['degraded_seconds'] == 1
+        assert final['missed_ticks'] == 3 and final['late_installs'] == 0
+        assert flush() == final
+    finally:
+        rt.executor.shutdown()
+
+
+# Adopted from the independent Round 1 review contract tests.
+def test_retiring_day_contains_failure_streak_and_degradation():
+    import copy
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_evidence import Counters
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(), clock=lambda: now[0])
+    base = dt.datetime(2026, 10, 9, 23, 59, 55, tzinfo=dt.UTC).timestamp()
+    stored = {}
+    class Store:
+        def flush(self, identity, body, deadline):
+            stored[identity] = copy.deepcopy(body)
+    rt = Runtime.__new__(Runtime)
+    rt.store, rt.observer = Store(), observer
+    rt.counters = Counters('us-central1', 'a'*40, clock=lambda: base+now[0])
+    rt.last_flush, rt.observer_flushed, rt.observer_degraded_seconds = 0, {}, {}
+    def flush():
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+100)
+    flush()
+    for tick in (1., 2., 3.):
+        now[0] = tick
+        observer.missed_tick(None, tick)
+    now[0] = 4.
+    observer.install_health(4., health(4.))
+    now[0] = 6.
+    flush()
+    old = next(v for k,v in stored.items() if k.startswith('2026-10-09/'))
+    flush()  # New-day registration has its own bounded maintenance pass.
+    new = next(v for k,v in stored.items() if k.startswith('2026-10-10/'))
+    assert old['closed']
+    assert old['admission_observer']['max_consecutive_failures'] == 3
+    assert old['admission_observer']['degraded_seconds'] == 1
+    assert new['admission_observer']['max_consecutive_failures'] == 0
+    assert new['admission_observer']['degraded_seconds'] == 0
+
+
+
+
+@pytest.mark.parametrize('retain_old', [False, True])
+@pytest.mark.parametrize('fail_close', [False, True])
+def test_midnight_carries_live_streak_and_splits_fractional_duration(retain_old, fail_close):
+    import copy
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_evidence import Counters
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+
+    now = [0.]
+    base = dt.datetime(2026, 10, 9, 23, 59, 55, tzinfo=dt.UTC).timestamp()
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0])
+    stored = {}
+    failures = [int(fail_close)]
+
+    class Store:
+        def flush(self, identity, body, deadline):
+            if body['closed'] and failures[0]:
+                failures[0] -= 1
+                raise TimeoutError('close failed')
+            stored[identity] = copy.deepcopy(body)
+
+    rt = Runtime.__new__(Runtime)
+    rt.store, rt.observer = Store(), observer
+    rt.counters = Counters('us-central1', 'a'*40, clock=lambda: base+now[0])
+    rt.last_flush, rt.observer_degraded_seconds = 0, {}
+
+    def flush():
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+100)
+
+    flush()
+    if retain_old:
+        rt.counters.retain(base)
+    for tick in (4.5, 4.75):
+        now[0] = tick
+        observer.missed_tick('ws', tick)
+    now[0] = 5.125
+    flush()  # Still degraded, with 0.25 s old-day and 0.125 s new-day.
+    now[0] = 5.25
+    observer.install_workspace('ws', now[0], Admission(0, 2))
+    flush()
+    if retain_old:
+        rt.counters.release(base)
+    now[0] = 6.
+    flush()
+    flush()  # Retried persistence must not duplicate duration or events.
+    flush()  # Register the new day after a retained/retried old-day close.
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    new = next(v for k, v in stored.items() if k.startswith('2026-10-10/'))
+    assert old['closed'] and not new['closed']
+    assert old['admission_observer']['max_consecutive_failures'] == 2
+    assert new['admission_observer']['max_consecutive_failures'] == 2
+    assert old['admission_observer']['degraded_seconds'] == 1
+    assert new['admission_observer']['degraded_seconds'] == 1
+    assert old['admission_observer']['missed_ticks'] == 2
+    assert new['admission_observer']['missed_ticks'] == 0
+    assert new['started_at_us'] == int((base+5) * 1e6)
+    assert rt.observer_degraded_seconds['2026-10-10'] == .25
+
+
+# Adapted from the independent Round 2 review's midnight reproduction.
+def observer_interleaving_runtime():
+    import copy
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow_admission import health
+    from trusted_router.async_settle_shadow_evidence import Counters
+    from trusted_router.services.async_settle import Admission
+    from trusted_router.services.async_settle_shadow_admission import Observer
+
+    base = dt.datetime(2026, 10, 9, 23, 59, 55, tzinfo=dt.UTC).timestamp()
+    now = [0.]
+    observer = Observer(frozenset({'ws'}), lambda _: Admission(0, 2), lambda: health(),
+                        clock=lambda: now[0], wall=lambda: base + now[0])
+    stored = {}
+    class Store:
+        def flush(self, identity, body, deadline):
+            stored[identity] = copy.deepcopy(body)
+    rt = Runtime.__new__(Runtime)
+    rt.store, rt.observer = Store(), observer
+    rt.counters = Counters('us-central1', 'a'*40, clock=lambda: base + now[0])
+    rt.last_flush, rt.observer_degraded_seconds = 0, {}
+    def flush():
+        rt.last_flush = 0
+        rt.flush(time.monotonic()+100)
+    flush()
+    return rt, observer, now, stored, flush
+
+# Both failing/healthy cases are adopted from the independent Round 2 review.
+@pytest.mark.parametrize('failing', [False, True])
+@pytest.mark.parametrize('pause_at', ['observer', 'final_snapshot'])
+def test_flush_crossing_midnight_does_not_retire_undrained_observer_day(monkeypatch, failing, pause_at):
+    rt, observer, now, stored, flush = observer_interleaving_runtime()
+    if failing:
+        for tick in (1., 2.):
+            now[0] = tick
+            observer.missed_tick(None, tick)
+    def pause():
+        # Observer lock is released; callbacks never acquire the counter lock.
+        now[0] = 4.875
+        if failing:
+            observer.missed_tick(None, now[0])
+        now[0] = 5.125
+
+    original = observer.snapshot_daily_counts
+    original_counter = rt.counters.snapshot
+    def interleaved_snapshot():
+        values = original()
+        pause()
+        return values
+    def interleaved_counter(*args, **kwargs):
+        if not kwargs.get('retiring_only'):
+            pause()  # The retiring-only pass and current-day check already ran.
+        return original_counter(*args, **kwargs)
+
+    now[0] = 4.75
+    with monkeypatch.context() as patch:
+        if pause_at == 'observer':
+            patch.setattr(observer, 'snapshot_daily_counts', interleaved_snapshot)
+        else:
+            patch.setattr(rt.counters, 'snapshot', interleaved_counter)
+        flush()
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    assert not old['closed']
+    assert '2026-10-09' in observer.daily_counts
+    now[0] = 7.
+    flush()
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    flush()  # The old close and new registration cannot share a regional budget.
+    new = next(v for k, v in stored.items() if k.startswith('2026-10-10/'))
+    assert old['closed'] and not new['closed']
+    assert old['admission_observer']['missed_ticks'] == (3 if failing else 0)
+    assert old['admission_observer']['max_consecutive_failures'] == (3 if failing else 0)
+    assert old['admission_observer']['degraded_seconds'] == (1 if failing else 0)
+    assert new['first_gap_at_us'] is None and not new['drops']
+    assert rt.counters._day()['first_gap_at_us'] is None
+    assert not rt.counters._day()['drops']
+
+
+
+def test_failed_tick_between_snapshot_and_flush_stays_on_open_day(monkeypatch):
+    rt, observer, now, stored, flush = observer_interleaving_runtime()
+    original = observer.snapshot_daily_counts
+    def interleaved_snapshot():
+        values = original()
+        now[0] = 2.
+        observer.missed_tick(None, now[0])
+        return values
+    now[0] = 1.
+    with monkeypatch.context() as patch:
+        patch.setattr(observer, 'snapshot_daily_counts', interleaved_snapshot)
+        flush()
+    assert observer.daily_counts['2026-10-09']['missed_ticks'] == 1
+    now[0] = 3.
+    flush()
+    flush()
+    body = next(iter(stored.values()))
+    assert not body['closed']
+    assert body['admission_observer']['missed_ticks'] == 1
+    assert body['admission_observer']['max_consecutive_failures'] == 1
+    assert body['first_gap_at_us'] is None and not body['drops']
+
+
+@pytest.mark.parametrize('fail_after_first_add', [False, True])
+def test_observer_evidence_survives_failed_fold(monkeypatch, fail_after_first_add):
+    rt, observer, now, stored, flush = observer_interleaving_runtime()
+    for tick in (1., 2., 3.):
+        now[0] = tick
+        observer.missed_tick(None, tick)
+    now[0] = 6.
+    original = rt.counters.add
+    def fail_fold(counter, target, key, count=1):
+        if target is counter['admission_observer'] and key == 'missed_ticks':
+            if fail_after_first_add:
+                original(counter, target, key, count)
+            raise ValueError('injected fold failure')
+        original(counter, target, key, count)
+    with monkeypatch.context() as patch:
+        patch.setattr(rt.counters, 'add', fail_fold)
+        flush()
+    assert observer.daily_counts['2026-10-09']['missed_ticks'] == 3
+    assert '2026-10-10' in observer.daily_counts
+    assert not rt.counters.days['2026-10-09']['closed']
+    flush()
+    flush()
+    old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    assert old['closed']
+    assert old['admission_observer']['missed_ticks'] == 3
+    assert old['admission_observer']['max_consecutive_failures'] == 3
+    assert old['admission_observer']['degraded_seconds'] == 2
+    assert '2026-10-09' not in observer.daily_counts

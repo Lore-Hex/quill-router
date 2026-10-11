@@ -167,7 +167,26 @@ def test_no_key_or_authority_never_invalidates_authorize():
 def test_rollout_never_inherits_key_file():
     source = Path('scripts/deploy/rollout.sh').read_text()
     lines = [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE' in line]
-    assert lines == ['"TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE="']
+    # One literal mount path: never `${...}` inherited from the environment or a previous revision.
+    assert lines == ['"TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE=/secrets/async-settle/ticket.pem"']
+    pins = dict(line.strip().strip('"').split('=', 1) for line in source.splitlines()
+                if line.strip().startswith('"TR_ASYNC_SETTLE_'))
+    assert not any('$' in value for value in pins.values())
+    # The mandatory secret block mounts the same path as a file, so a missing secret fails the deploy.
+    mandatory_secrets = source.split('SECRET_ENVS=(', 1)[1].split(')', 1)[0]
+    mounts = dict(line.strip().strip('"').split('=', 1) for line in mandatory_secrets.splitlines()
+                  if line.strip().startswith('"/'))
+    assert mounts == {pins['TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE']: 'trustedrouter-async-settle-ticket-key:latest'}
+    assert 'add_secret_env_if_exists' not in source.split('trustedrouter-async-settle-ticket-key')[0].rsplit('\n', 2)[-2]
+    # Public identity of the purpose key: distinct from the speculation shadow kid, enclave-checked audience,
+    # provisioned (positive) epoch, with admission and protection still off.
+    assert pins['TR_ASYNC_SETTLE_TICKET_KID'] == 'tr-async-settle-2026-10a'
+    assert pins['TR_ASYNC_SETTLE_TICKET_KID'] != Settings().speculation_shadow_kid
+    assert pins['TR_ASYNC_SETTLE_TICKET_ISSUER'] == 'https://api.trustedrouter.com'
+    assert pins['TR_ASYNC_SETTLE_TICKET_AUDIENCE'] == 'router-settlement'
+    assert pins['TR_ASYNC_SETTLE_AUTHORITY_EPOCH'] == '1'
+    assert pins['TR_ASYNC_SETTLE_ENABLED'] == 'false'
+    assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'false'
     assert Settings().async_settle_enabled is False
     assert Settings().async_settle_protection is False
     assert [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_PROTECTION' in line] == [

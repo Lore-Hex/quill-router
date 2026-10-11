@@ -7,6 +7,8 @@ from google.cloud.spanner_v1 import param_types
 
 from trusted_router.services.async_settle import Admission, parse_health_record, valid_health_record
 
+# São Paulo to nam6 measured ~150 ms per round trip; allow reads and read+commit.
+READ_DEADLINE_SECONDS = 0.5
 ROW_LIMIT = 1000
 
 
@@ -30,7 +32,7 @@ def read_admission(database: Any, workspace_id: str) -> Admission:
     sql, params, types = admission_statement(workspace_id)
     with database.snapshot() as snapshot:
         rows = list(snapshot.execute_sql(sql, params=params, param_types=types,
-                                        timeout=0.2, retry=None,
+                                        timeout=READ_DEADLINE_SECONDS, retry=None,
                                         request_options={"priority": "PRIORITY_LOW"}))
     if len(rows) != 1 or rows[0][0] > ROW_LIMIT:
         raise ValueError("admission unavailable")
@@ -72,7 +74,7 @@ def unresolved_statement() -> tuple[str, dict[str, Any], dict[str, Any]]:
 def _query(reader: Any, statement: tuple[str, dict[str, Any], dict[str, Any]]) -> list[Any]:
     sql, params, types = statement
     return list(reader.execute_sql(sql, params=params, param_types=types,
-                timeout=0.2, retry=None, request_options={"priority": "PRIORITY_LOW"}))
+                timeout=READ_DEADLINE_SECONDS, retry=None, request_options={"priority": "PRIORITY_LOW"}))
 
 
 def read_health(database: Any) -> dict[str, Any] | None:
@@ -117,7 +119,7 @@ def _claim_cadence(database: Any, identity: str, interval_seconds: float) -> boo
         _write_control(transaction, identity, {"observed_at": now})
         return True
 
-    return bool(database.run_in_transaction(txn, timeout_secs=0.2))
+    return bool(database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS))
 
 
 def publish_health(database: Any) -> dict[str, Any]:
@@ -178,6 +180,6 @@ def publish_health(database: Any) -> dict[str, Any]:
             return  # A slower old pass cannot overwrite a newer observation.
         _write_control(transaction, HEALTH_ID, value)
 
-    database.run_in_transaction(txn, timeout_secs=0.2)
+    database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS)
     logging.getLogger(__name__).info("async_drain.health %s", json.dumps(value))
     return value

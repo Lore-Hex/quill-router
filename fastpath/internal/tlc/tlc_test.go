@@ -1,8 +1,10 @@
 package tlc
 
 import (
+	"math/rand"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -255,4 +257,108 @@ func TestBindConfigurationRefusesWhatChangesTheModel(t *testing.T) {
 	dir := copyWith("")
 	refused(dir, leaseLifecycleConstants[1:], "MaxHolds is assigned, and is no constant the test declares")
 	refused(dir, append([]string{"MaxOwners"}, leaseLifecycleConstants...), "MaxOwners is not assigned")
+}
+
+// The patterns the line readers took the place of, which they must agree
+// with on every line.
+var (
+	nodePattern    = regexp.MustCompile(`^(-?\d+) \[label="((?:[^"\\]|\\.)*)"((?:,tooltip="(?:[^"\\]|\\.)*"|,style = filled)*)\];?$`)
+	tooltipPattern = regexp.MustCompile(`,tooltip="(?:[^"\\]|\\.)*"`)
+	edgePattern    = regexp.MustCompile(`^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)",color="black",fontcolor="black"\];$`)
+)
+
+// TestTheLineReadersAgreeWithThePatterns holds edgeOf and nodeOf to the
+// patterns, on lines as TLC writes them and on each changed a byte or a
+// character at a time, seeded: what each takes, and what it reads.
+func TestTheLineReadersAgreeWithThePatterns(t *testing.T) {
+	lines := []string{
+		`-11 [label="/\\ x = 0\n/\\ s = {}",style = filled]`,
+		`22 [label="/\\ x = 1\n/\\ s = {\"a\"}",tooltip="/\\ x = 1\n/\\ s = {\"a\"}"];`,
+		`22 [label="x",tooltip="y",style = filled];`,
+		`22 [label="x",style = filled,tooltip="y"]`,
+		`22 [label="x",style = filled,style = filled]`,
+		`3 [label="",tooltip=""]`,
+		`3 [label="a]\"b\\",tooltip="c\"],style = filled"]`,
+		`-9 [label="é € \\\"q\\\\"];`,
+		`-11 -> 22 [label="Step",color="black",fontcolor="black"];`,
+		`22 -> 22 [label="Stay(1)",color="black",fontcolor="black"];`,
+		`0 -> -0 [label="A \"b\" \\c",color="black",fontcolor="black"];`,
+		`7 -> 8 [label="x -> y",color="black",fontcolor="black"];`,
+		`1 -> 2 [label="",color="black",fontcolor="black"];`,
+		`+1 [label=""]`,
+		`١ [label=""]`,
+		`1 -> ١ [label="x",color="black",fontcolor="black"];`,
+		// A sign or a digit not ASCII at each fingerprint's place, which the
+		// patterns refuse but for a minus sign. Seeded changes reach these
+		// only by chance, and a change to the alphabet moves them.
+		`+1 -> 2 [label="Step",color="black",fontcolor="black"];`,
+		`1 -> +2 [label="Step",color="black",fontcolor="black"];`,
+		`+1 -> +2 [label="Step",color="black",fontcolor="black"];`,
+		`-1 -> -2 [label="Step",color="black",fontcolor="black"];`,
+		`١ -> 1 [label="Step",color="black",fontcolor="black"];`,
+		`-١ -> 1 [label="Step",color="black",fontcolor="black"];`,
+		`1 -> -١ [label="Step",color="black",fontcolor="black"];`,
+		`-١ [label=""]`,
+		`+-1 [label=""]`,
+		`--1 [label=""]`,
+		`1 [label="a` + "\n" + `b"]`,
+		`1 -> 2 [label="a` + "\\\n" + `b",color="black",fontcolor="black"];`,
+		`1 [label="a",tooltip="b` + "\\\n" + `c"]`,
+		`1 [label="a` + "\r" + `b"]`,
+		`1 [label="a` + "\\\r" + `b"]`,
+		`1 -> 2 [label="a` + "\\\r" + `b",color="black",fontcolor="black"];`,
+		`1 [label="a",tooltip="b` + "\\\r" + `c"]`,
+		`{rank = same; -11;}`,
+		`strict digraph DiskGraph {`,
+	}
+	alphabet := []string{`"`, `\`, `]`, `;`, `,`, ` `, `-`, `+`, `>`, `0`, `9`, `١`, `a`, `=`, `[`, `é`, `€`, "\x80",
+		"\n", "\r"}
+	rng := rand.New(rand.NewSource(20261008))
+	check := func(line string) {
+		t.Helper()
+		m := edgePattern.FindStringSubmatch(line)
+		from, to, label, ok := edgeOf(line)
+		if ok != (m != nil) || ok && (from != m[1] || to != m[2] || label != m[3]) {
+			t.Fatalf("an edge line %q: read %q %q %q %v, the pattern %q", line, from, to, label, ok, m)
+		}
+		m = nodePattern.FindStringSubmatch(line)
+		fp, label, initial, ok := nodeOf(line)
+		if ok != (m != nil) || ok && (fp != m[1] || label != m[2] ||
+			initial != (tooltipPattern.ReplaceAllString(m[3], "") == ",style = filled")) {
+			t.Fatalf("a node line %q: read %q %q %v %v, the pattern %q", line, fp, label, initial, ok, m)
+		}
+	}
+	taken := 0
+	for _, line := range lines {
+		check(line)
+		for range 2000 {
+			changed := line
+			for range 1 + rng.Intn(3) {
+				at := rng.Intn(len(changed) + 1)
+				switch rng.Intn(3) {
+				case 0: // a byte gone
+					if at < len(changed) {
+						changed = changed[:at] + changed[at+1:]
+					}
+				case 1: // a character more
+					changed = changed[:at] + alphabet[rng.Intn(len(alphabet))] + changed[at:]
+				default: // a piece of the line again
+					if at < len(changed) {
+						end := at + rng.Intn(len(changed)-at) + 1
+						changed = changed[:end] + changed[at:end] + changed[end:]
+					}
+				}
+			}
+			check(changed)
+			if _, _, _, ok := edgeOf(changed); ok {
+				taken++
+			} else if _, _, _, ok := nodeOf(changed); ok {
+				taken++
+			}
+		}
+	}
+	// The changed lines both taken and refused, so agreement means both.
+	if taken == 0 || taken == len(lines)*2000 {
+		t.Fatalf("%d of the changed lines taken", taken)
+	}
 }

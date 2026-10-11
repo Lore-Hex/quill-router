@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any, NoReturn
 
 # Mirror enclave-go/internal/trustedrouter/contract_value.go. No arbitrary
@@ -31,7 +32,13 @@ ENUMS = {
     "provider.billing": "byok prepaid credits",
     "response_format.type": "text json_object json_schema",
     "text.format.type": "text json_object json_schema",
+    "tools[].type": """function custom namespace tool_search web_search web_search_preview
+        file_search code_interpreter computer computer_use_preview image_generation mcp
+        local_shell shell apply_patch openrouter:web_search openrouter:datetime
+        openrouter:web_fetch openrouter:image_generation openrouter:apply_patch
+        trustedrouter:advisor trustedrouter:synth""",
 }
+TOOL_TYPE_PATH = re.compile(r"tools\[[0-9]{1,6}\]\.type")
 # Diagnostic values, not a declaration that the API supports these options.
 ARRAY_ENUMS = {
     "include": """code_interpreter_call.outputs computer_call_output.output.image_url
@@ -43,6 +50,8 @@ MARKERS = frozenset(f"[redacted:{kind}]" for kind in ("string", "number", "boole
 
 
 def _safe_value(path: str, value: Any) -> Any:
+    if TOOL_TYPE_PATH.fullmatch(path):
+        path = "tools[].type"
     allowed = path in OPTIONS or path in ENUMS or path in ARRAY_ENUMS
     if value is None:
         return None

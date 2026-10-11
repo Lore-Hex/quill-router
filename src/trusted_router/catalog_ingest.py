@@ -36,6 +36,7 @@ from trusted_router.catalog_data import (
     maker_provider_slug,
 )
 from trusted_router.image_generation import OPENAI_IMAGE_MODEL_IDS
+from trusted_router.model_aliases import merge_openrouter_model_rows
 from trusted_router.pricing import (
     PriceTier,
     _as_positive_int,
@@ -286,6 +287,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "scaleway",
         "regolo",
         "lyceum",
+        "greenference",
         "byteplus",
         "privatemode",
         "featherless",
@@ -838,7 +840,7 @@ def _ingested_models_and_endpoints(
             native.parameters if native is not None and include_partial else (),
         )
 
-    for raw_model in raw_models:
+    for raw_model in merge_openrouter_model_rows(raw_models):
         model_id = raw_model.get("id")
         if not isinstance(model_id, str) or not model_id:
             continue
@@ -1127,6 +1129,7 @@ def _supplemental_provider_models_and_endpoints(
         "scaleway",
         "regolo",
         "lyceum",
+        "greenference",
         "byteplus",
         "privatemode",
         "featherless",

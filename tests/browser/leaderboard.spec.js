@@ -60,7 +60,9 @@ for (const width of [390, 1280]) {
     await page.locator("#lb-models [data-lb-row]:visible summary").first().click();
     await expect(page.locator("#lb-models details[open] dl")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    expect(await page.locator("#lb-models img").first().evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+    await expect.poll(() => page.locator("#lb-models img").first().evaluate(
+      img => img.complete && img.naturalWidth > 0,
+    )).toBe(true);
     expect(errors).toEqual([]);
     await page.screenshot({ path: `/tmp/tr-leaderboard-improved-${width}.png`, fullPage: false });
   });

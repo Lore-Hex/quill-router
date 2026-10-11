@@ -92,6 +92,18 @@ func Open(key []byte, sealed string) (Envelope, error) {
 	return e, nil
 }
 
+// OpenWith opens a sealed envelope with whichever of the keys sealed it: a
+// rotation's two keys, while some node seals with each (docs/design/
+// fast-admission-production-rollout.md, W6).
+func OpenWith(keys [][]byte, sealed string) (Envelope, error) {
+	for _, key := range keys {
+		if e, err := Open(key, sealed); err == nil {
+			return e, nil
+		}
+	}
+	return Envelope{}, ErrSeal
+}
+
 // canonical decodes base64url without padding, and only as Seal encodes it:
 // no character the encoding does not write, its unused bits zero.
 func canonical(part string) ([]byte, error) {

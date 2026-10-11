@@ -60,6 +60,12 @@ type Config struct {
 	NewAuthorization func(lease string) (string, error)
 	// Clock is the owner's clock.
 	Clock func() time.Time
+	// Enabled is the fast path's switch (the production rollout's W1): the
+	// owner admits for a workspace only while it says the workspace is
+	// enabled, asked as the hold is made, so a request that stalls past the
+	// switch turning off makes no hold, and it asks for no lease for one
+	// that is not.
+	Enabled func(workspace string) bool
 
 	// Spanner is the store an owner renews its leases in and writes their
 	// shortfalls and draining to, nil for one that writes nothing there.
@@ -90,8 +96,9 @@ type Config struct {
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
-		c.NewAuthorization == nil || c.Clock == nil || c.KeyStatus < 0 || c.Grace < 0 || c.FirstHeartbeat < 0 {
-		return errors.New("owner: an epoch, positive durations, an authorization minter and a clock")
+		c.NewAuthorization == nil || c.Clock == nil || c.Enabled == nil || c.KeyStatus < 0 || c.Grace < 0 ||
+		c.FirstHeartbeat < 0 {
+		return errors.New("owner: an epoch, positive durations, an authorization minter, a clock and the switch")
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
 		return errors.New("owner: a store needs the owner's address, a renewal interval and the expiry window")
@@ -150,7 +157,11 @@ type Owner struct {
 	// from its start the owner takes no lease.
 	handoff    chan struct{}
 	handoffErr error
-	leases     map[string]*Lease
+	// retiring is set once the owner takes nothing new (Retire), at
+	// retiredAt.
+	retiring  bool
+	retiredAt time.Time
+	leases    map[string]*Lease
 	// retired are the leases the owner let go, each with its workers' end:
 	// none is taken again, since a lease's records are numbered once.
 	retired map[string]<-chan struct{}
@@ -206,8 +217,8 @@ func (o *Owner) take(lease, workspace string, allocation int64, expiry time.Time
 	now := o.cfg.Clock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.stopped || o.handoff != nil {
-		return nil, errors.New("owner: stopped, or handing its leases off")
+	if o.stopped || o.handoff != nil || o.retiring {
+		return nil, errors.New("owner: stopped, retiring, or handing its leases off")
 	}
 	if _, ok := o.leases[lease]; ok {
 		return nil, fmt.Errorf("owner: lease %s is held already", lease)

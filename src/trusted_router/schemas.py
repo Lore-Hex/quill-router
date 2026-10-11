@@ -33,6 +33,7 @@ from trusted_router.client_context import (
     ClientPrevOutcome,
     ClientSdk,
 )
+from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
@@ -363,6 +364,7 @@ class GatewaySettleResponse(BaseModel):
 
 
 class GatewayAuthorizeRequest(_Lenient):
+    speech_input_characters: int | None = Field(default=None, ge=1, le=60_000)
     video_resolution: str | None = None
     # Enclave-derived opaque routing hints; never persist them with activity.
     cache_affinity_key: str | None = Field(default=None, pattern="^[0-9a-f]{64}$", exclude=True)
@@ -411,6 +413,9 @@ class GatewayAuthorizeRequest(_Lenient):
     def key_identifier_required(self) -> GatewayAuthorizeRequest:
         if not self.api_key_hash and not self.api_key_lookup_hash:
             raise ValueError("api_key_hash or api_key_lookup_hash is required")
+        self.model = canonical_router_model_id(self.model)
+        if self.models is not None:
+            self.models = [canonical_router_model_id(model) for model in self.models]
         return self
 
     @property

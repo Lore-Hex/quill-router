@@ -1,0 +1,4 @@
+#!/bin/sh
+# A stand-in for sleep in the tests of scripts/deploy/migrate_fastpath.sh: a
+# wait for an index takes no time.
+exit 0

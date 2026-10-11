@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from trusted_router.errors import error_response, not_supported
 
 
 def register_compat_stub_routes(router: APIRouter) -> None:
-    @router.post("/audio/speech")
-    async def audio_speech() -> JSONResponse:
-        return not_supported()
-
     @router.post("/audio/transcriptions")
     async def audio_transcriptions() -> JSONResponse:
         return not_supported()
@@ -22,12 +18,16 @@ def register_compat_stub_routes(router: APIRouter) -> None:
     @router.get("/private/models/{author}/{slug}")
     async def private_model(author: str, slug: str) -> JSONResponse:
         _ = (author, slug)
-        return error_response(404, "Private models are not supported", "private_models_not_supported")
+        return error_response(
+            404, "Private models are not supported", "private_models_not_supported"
+        )
 
     @router.get("/private/models/{author}/{slug}/endpoints")
     async def private_model_endpoints(author: str, slug: str) -> JSONResponse:
         _ = (author, slug)
-        return error_response(404, "Private models are not supported", "private_models_not_supported")
+        return error_response(
+            404, "Private models are not supported", "private_models_not_supported"
+        )
 
     _add_guardrail_stubs(router)
     _add_current_openrouter_stubs(router)
@@ -35,6 +35,55 @@ def register_compat_stub_routes(router: APIRouter) -> None:
 
 def register_gateway_compat_stub_routes(router: APIRouter) -> None:
     """Control-plane stubs for media operations implemented by the gateway."""
+
+    @router.post(
+        "/audio/speech",
+        response_class=Response,
+        openapi_extra={
+            "summary": "Generate speech",
+            "description": "Text-to-speech on the attested API origin. Billing uses characters or reported tokens according to the model. Returns raw audio, not JSON. Discover voices and prices with /models?output_modalities=speech. Audio is buffered and settled before delivery; not incremental synthesis streaming. Idempotency replays return 409 because audio is not stored.",
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["model", "input", "voice"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "model": {"type": "string", "example": "x-ai/grok-voice-tts-1.0"},
+                                "input": {"type": "string", "minLength": 1, "maxLength": 60000},
+                                "voice": {"type": "string", "example": "eve"},
+                                "response_format": {
+                                    "type": "string",
+                                    "enum": ["mp3", "pcm", "wav"],
+                                    "default": "pcm",
+                                },
+                                "speed": {"type": "number", "default": 1},
+                                "provider": {"type": "object"},
+                                "metadata": {"type": "object"},
+                                "user": {"type": "string"},
+                                "session_id": {"type": "string"},
+                                "tags": {"type": "object"},
+                            },
+                        }
+                    }
+                },
+            },
+            "responses": {
+                "200": {
+                    "description": "Raw audio; X-Generation-Id identifies billing metadata and X-Usage-Cost is the USD charge.",
+                    "content": {
+                        "audio/mpeg": {"schema": {"type": "string", "format": "binary"}},
+                        "audio/pcm": {"schema": {"type": "string", "format": "binary"}},
+                        "audio/wav": {"schema": {"type": "string", "format": "binary"}},
+                    },
+                }
+            },
+        },
+    )
+    async def audio_speech() -> JSONResponse:
+        return not_supported()
 
     @router.post("/videos")
     async def videos() -> JSONResponse:

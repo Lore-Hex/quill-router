@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"sync"
@@ -386,7 +387,7 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 		t.Fatalf("a drop that failed: done %v, %v; want %v", done, events, want)
 	}
 	if done, events, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { s.body = []byte("not json") }); done ||
-		len(alerts) != 1 || slices.Contains(events, "publish a") {
+		!slices.Equal(alerts, []string{"a: " + AlertNoBootBinding}) || slices.Contains(events, "publish a") {
 		t.Fatalf("a full record that states no boot binding: done %v, %v, told %v", done, events, alerts)
 	}
 
@@ -428,11 +429,12 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 
 	pack.Winners = append(pack.Winners, store.Winner{AuthorizationID: "d", Kind: "settle",
 		Work: encoded(map[string]any{"v": 2, "digest": sum("d")})})
-	if done, events, alerts, _, _ := run(func(*fakePending, *fakeTopic) {}); done || len(events) != 0 || len(alerts) != 1 {
+	if done, events, alerts, _, _ := run(func(*fakePending, *fakeTopic) {}); done || len(events) != 0 ||
+		!slices.Equal(alerts, []string{"d: " + AlertUnreadableWork}) {
 		t.Fatalf("a winner whose work cannot be read: done %v, %v, told %v", done, events, alerts)
 	}
 	pack.Winners[3].Work = encoded(Work{V: 1})
-	if done, _, alerts, _, _ := run(func(*fakePending, *fakeTopic) {}); done || len(alerts) != 1 {
+	if done, _, alerts, _, _ := run(func(*fakePending, *fakeTopic) {}); done || !slices.Equal(alerts, []string{"d: " + AlertUnreadableWork}) {
 		t.Fatalf("a settle with no digest: done %v, told %v", done, alerts)
 	}
 	pack.WorkDoneAt = spanner.NullTime{Time: start, Valid: true}
@@ -515,14 +517,17 @@ func TestTheStagerStagesFullRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range []*fakeStaged{{auth: a, kind: "settle", data: []byte("x")},
-		{auth: "gwa-not-a-lease", kind: settlelog.FullRecord, data: []byte("x")},
-		{auth: gone, kind: settlelog.FullRecord, data: []byte("x")},
-		{auth: a, kind: settlelog.FullRecord}} {
+	for _, c := range []struct {
+		m    *fakeStaged
+		want string
+	}{{&fakeStaged{auth: a, kind: "settle", data: []byte("x")}, AlertUnknownRecordKind},
+		{&fakeStaged{auth: "gwa-not-a-lease", kind: settlelog.FullRecord, data: []byte("x")}, AlertNoLeaseAuth},
+		{&fakeStaged{auth: gone, kind: settlelog.FullRecord, data: []byte("x")}, AlertFullRecordNoLease},
+		{&fakeStaged{auth: a, kind: settlelog.FullRecord}, AlertNoLeaseAuth}} {
 		alerts = nil
-		stager.Handle(ctx, m)
-		if m.acked != 1 || len(alerts) != 1 {
-			t.Fatalf("%+v: acknowledged %d, told %v", m, m.acked, alerts)
+		stager.Handle(ctx, c.m)
+		if c.m.acked != 1 || !slices.Equal(alerts, []string{c.want}) {
+			t.Fatalf("%+v: acknowledged %d, told %v, want %q", c.m, c.m.acked, alerts, c.want)
 		}
 	}
 	f.store.failFind = 1
@@ -539,5 +544,223 @@ func TestTheStagerStagesFullRecords(t *testing.T) {
 	stager.Handle(ctx, again)
 	if again.acked != 1 {
 		t.Fatalf("staged at last: acknowledged %d", again.acked)
+	}
+	// Once the lease has retired, a record is acknowledged, staged for no
+	// one and told to no one: a redelivery, or a copy no winner names.
+	if _, err := f.db.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{SQL: `UPDATE tr_lease SET retire_at = CURRENT_TIMESTAMP()
+		       WHERE workspace_id = @w AND lease_id = @l`, Params: map[string]any{"w": f.ref.Workspace, "l": f.ref.LeaseID}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	alerts = nil
+	late := &fakeStaged{auth: a, kind: settlelog.FullRecord, data: []byte("late")}
+	stager.Handle(ctx, late)
+	if _, ok, err := f.s.ReadStaged(ctx, a, sum("late")); ok || err != nil || late.acked != 1 || late.nacked != 0 ||
+		len(alerts) != 0 {
+		t.Fatalf("a record for a lease retired: staged %v %v, acknowledged %d, again %d, told %v", ok, err, late.acked,
+			late.nacked, alerts)
+	}
+	// A lease's row that goes between the stager finding it and staging,
+	// seven days after it retired, is told and acknowledged, as one never
+	// found.
+	f.store.staging, f.store.staged = make(chan struct{}, 1), make(chan struct{})
+	vanished := &fakeStaged{auth: a, kind: settlelog.FullRecord, data: []byte("gone")}
+	alerts = nil
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		stager.Handle(ctx, vanished)
+	}()
+	<-f.store.staging
+	if _, err := f.db.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{SQL: `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`,
+			Params: map[string]any{"w": f.ref.Workspace, "l": f.ref.LeaseID}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(f.store.staged)
+	<-handled
+	if _, ok, err := f.s.ReadStaged(ctx, a, sum("gone")); ok || err != nil || vanished.acked != 1 || vanished.nacked != 0 ||
+		!slices.Equal(alerts, []string{AlertFullRecordNoLease}) {
+		t.Fatalf("a record whose lease went while it was staged: staged %v %v, acknowledged %d, again %d, told %v", ok,
+			err, vanished.acked, vanished.nacked, alerts)
+	}
+}
+
+// TestAPackPendingTooLongIsTold: a pack whose work is still not done
+// longer than Overdue after the sweep first saw it is told of once, at the
+// first sweep past that; once its work is done, it is forgotten.
+func TestAPackPendingTooLongIsTold(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	db, err := emulator.Database(ctx, storetest.UniqueID("overdue")[:20], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	f := newRuntimeFixtureOn(t, db)
+	a, err := store.NewAuthorizationID(f.ref.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := f.runtime()
+	body := encoded(map[string]any{"a": a, "boot": boot})
+	settled2 := settle(2, a, 40, 0)
+	settled2.Digest = sum(string(body))
+	handleAll(rt, on(t, f.ref, hb(1, a, 1, 10)), on(t, f.ref, settled2))
+	round(rt)
+	clock := start
+	var alerts []string
+	p, err := NewPending(PendingConfig{Store: f.s, Records: &fakeTopic{}, Every: time.Hour, Limit: 1, Wait: time.Second,
+		Overdue: 10 * time.Minute, Clock: func() time.Time { return clock },
+		Alert: func(subject, what string) { alerts = append(alerts, subject+": "+what) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("%s/%s@%d", f.ref.Workspace, f.ref.LeaseID, 1)
+	p.sweep(ctx) // first seen
+	clock = start.Add(10 * time.Minute)
+	p.sweep(ctx) // exactly the allowance: not past it
+	if len(alerts) != 0 {
+		t.Fatalf("told within the allowance: %v", alerts)
+	}
+	clock = start.Add(10*time.Minute + time.Second)
+	p.sweep(ctx)
+	p.sweep(ctx)
+	if want := []string{key + ": " + AlertPendingWorkOverdue}; !slices.Equal(alerts, want) {
+		t.Fatalf("told %v, want %v once", alerts, want)
+	}
+	stager, err := NewStager(f.s, func(string, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stager.Handle(ctx, &fakeStaged{auth: a, kind: settlelog.FullRecord, data: body})
+	p.sweep(ctx) // the work done
+	p.sweep(ctx) // the pack gone from the pending ones: forgotten
+	if len(p.firstSaw) != 0 || len(p.told) != 0 || len(alerts) != 1 {
+		t.Fatalf("after the work was done: first saw %v, told %v, alerts %v", p.firstSaw, p.told, alerts)
+	}
+}
+
+// failingPacks is a pending store whose read of the packs fails while
+// fail is set.
+type failingPacks struct {
+	PendingStore
+	mu   sync.Mutex
+	fail bool
+}
+
+func (f *failingPacks) PendingPacks(ctx context.Context, after store.PendingPack, limit int) ([]store.PendingPack, error) {
+	f.mu.Lock()
+	fail := f.fail
+	f.mu.Unlock()
+	if fail {
+		return nil, errors.New("a failure the test injected")
+	}
+	return f.PendingStore.PendingPacks(ctx, after, limit)
+}
+
+// pendingFixture is a lease with one or more packs whose work is not done,
+// each a settle whose full record is not staged, on a database of its own.
+func pendingFixture(t *testing.T, settles int) *runtimeFixture {
+	t.Helper()
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	db, err := emulator.Database(ctx, storetest.UniqueID("pending")[:20], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	f := newRuntimeFixtureOn(t, db)
+	rt := f.runtime()
+	for i := range settles {
+		a, err := store.NewAuthorizationID(f.ref.LeaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seq := int64(2*i + 1)
+		settled := settle(seq+1, a, 40, 0)
+		settled.Digest = sum(a)
+		handleAll(rt, on(t, f.ref, hb(seq, a, 1, 10)), on(t, f.ref, settled))
+		round(rt) // a commit, so a pack, per settle
+	}
+	return f
+}
+
+// TestAPackPendingTooLongIsToldThoughASweepFailed: a sweep whose read of
+// the packs fails forgets nothing: a pack first seen before it is still
+// told of at the allowance from then, and one told of is not told of
+// again after such a sweep.
+func TestAPackPendingTooLongIsToldThoughASweepFailed(t *testing.T) {
+	f := pendingFixture(t, 1)
+	ctx := context.Background()
+	clock := start
+	st := &failingPacks{PendingStore: f.s}
+	var alerts []string
+	p, err := NewPending(PendingConfig{Store: st, Records: &fakeTopic{}, Every: time.Hour, Limit: 1, Wait: time.Second,
+		Overdue: 10 * time.Minute, Clock: func() time.Time { return clock },
+		Alert: func(subject, what string) { alerts = append(alerts, what) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.sweep(ctx) // first seen
+	st.fail = true
+	clock = start.Add(9 * time.Minute)
+	p.sweep(ctx) // fails: forgets nothing
+	st.fail = false
+	clock = start.Add(11 * time.Minute)
+	p.sweep(ctx)
+	if !slices.Equal(alerts, []string{AlertPendingWorkOverdue}) {
+		t.Fatalf("told %v after a sweep that failed", alerts)
+	}
+	st.fail = true
+	clock = start.Add(12 * time.Minute)
+	p.sweep(ctx)
+	st.fail = false
+	clock = start.Add(13 * time.Minute)
+	p.sweep(ctx)
+	if len(alerts) != 1 {
+		t.Fatalf("told %v: again after a sweep that failed", alerts)
+	}
+}
+
+// TestAPackIsFirstSeenWhenItsPageIsRead: a pack on a later page of a sweep
+// is first seen when that page is read, not when the sweep began, so a
+// sweep whose earlier pages took long does not make it overdue at once.
+func TestAPackIsFirstSeenWhenItsPageIsRead(t *testing.T) {
+	f := pendingFixture(t, 2)
+	ctx := context.Background()
+	// The clock as the sweeps read it: the first sweep's first page at
+	// start, its second eleven minutes later (and its empty last page);
+	// the second sweep a second after that.
+	reads := []time.Duration{0, 11 * time.Minute, 11 * time.Minute}
+	calls := 0
+	clock := func() time.Time {
+		calls++
+		if calls <= len(reads) {
+			return start.Add(reads[calls-1])
+		}
+		return start.Add(11*time.Minute + time.Second)
+	}
+	var alerts []string
+	p, err := NewPending(PendingConfig{Store: f.s, Records: &fakeTopic{}, Every: time.Hour, Limit: 1, Wait: time.Second,
+		Overdue: 10 * time.Minute, Clock: clock, Alert: func(subject, what string) { alerts = append(alerts, subject) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.sweep(ctx)
+	if calls != 3 || len(alerts) != 0 {
+		t.Fatalf("the first sweep read the clock %d times and told %v", calls, alerts)
+	}
+	p.sweep(ctx)
+	if want := []string{fmt.Sprintf("%s/%s@%d", f.ref.Workspace, f.ref.LeaseID, 1)}; !slices.Equal(alerts, want) {
+		t.Fatalf("told %v, want the first pack alone, %v", alerts, want)
 	}
 }

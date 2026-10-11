@@ -69,6 +69,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     ),
     "jina": ProviderBrand("https://jina.ai/"),
     "krea": ProviderBrand("https://www.krea.ai/"),
+    "elevenlabs": ProviderBrand("https://elevenlabs.io/"),
     "liquid": ProviderBrand("https://www.liquid.ai/"),
     "mancer": ProviderBrand("https://mancer.tech/"),
     "modal": ProviderBrand("https://modal.com/"),
@@ -83,8 +84,16 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "scaleway": ProviderBrand("https://www.scaleway.com/"),
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
-    "system1models": ProviderBrand("https://system1models.ai/"),
-    "system1models-eu": ProviderBrand("https://system1models.ai/eu"),
+    "greenference": ProviderBrand("https://greenference.com/"),
+    # Keep public IDs and regional credentials stable across the provider rebrand.
+    "system1models": ProviderBrand(
+        "https://decisionmodels.io/",
+        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The Global route uses the peer-to-peer tier.",
+    ),
+    "system1models-eu": ProviderBrand(
+        "https://decisionmodels.io/eu",
+        description="Formerly System1 Models. Existing model IDs and API keys are unchanged. The EU route remains EU-only.",
+    ),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),

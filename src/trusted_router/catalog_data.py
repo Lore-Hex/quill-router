@@ -1757,7 +1757,7 @@ PROVIDERS: dict[str, Provider] = {
             "Abliterate says prompts and completions are discarded after each request, "
             "but they transit an upstream inference provider whose retention is not "
             "identified in its terms. End-to-end ZDR and confidential inference are "
-            "unverified. Paid routes are held pending upstream token-usage accounting."
+            "unverified."
         ),
         provider_policy_url="https://abliterate.ai/terms",
     ),
@@ -1845,6 +1845,18 @@ PROVIDERS: dict[str, Provider] = {
     # posture are explicit, but they are not admitted to the chat gateway. Their
     # credentials either address an asynchronous media/deployment API or their
     # account does not expose exact billable token prices yet.
+    "elevenlabs": Provider(
+        slug="elevenlabs", name="ElevenLabs", supports_chat=False,
+        supports_prepaid=True, supports_byok=False,
+        # Eleven Labs Inc.; https://elevenlabs.io/contact-legal
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+        provider_policy=(
+            "Native text-to-speech with character-based billing. Standard retention "
+            "applies; enterprise Zero Retention Mode is not enabled on this route. "
+            "No confidential-compute or provider-side E2EE claim is made."
+        ),
+        provider_policy_url="https://elevenlabs.io/docs/overview/administration/zero-retention-mode",
+    ),
     "krea": Provider(
         slug="krea",
         name="Krea",
@@ -1920,6 +1932,28 @@ PROVIDERS: dict[str, Provider] = {
         # IO.NET Inc., Delaware corporation: public privacy policy section 1.
         # Operator jurisdiction is not US-only inference; Canada is also declared.
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "greenference": Provider(
+        slug="greenference",
+        name="Greenference",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_headquarters_country="FR",
+        provider_policy=(
+            "Greenference SAS's DPA commits to EU-only inference, no persistent "
+            "prompt/output storage and no training or secondary use. Shared prefix "
+            "caches remain in volatile GPU memory until eviction or instance restart; "
+            "they are not account-isolated and have no fixed maximum lifetime. "
+            "Content-free operational metadata is retained. Greenference runs its "
+            "own serving software on rented EU compute; this is contractual ZDR, "
+            "not verified confidential compute or E2EE. Its current electricity "
+            "mix is unverified, not a 100% renewable-energy commitment."
+        ),
+        provider_policy_url="https://greenference.com/legal/dpa",
     ),
     "lyceum": Provider(
         slug="lyceum",
@@ -2044,13 +2078,13 @@ PROVIDERS: dict[str, Provider] = {
     **{
         slug: Provider(
             slug=slug,
-            name=f"System1 Models ({tier})",
+            name=f"Decision Models ({tier})",
             supports_chat=False,
             supports_prepaid=True,
             supports_byok=False,
             stores_content=False,
             provider_policy=(
-                "Typed decision models, not chat completions. System1 states that prompts "
+                "Typed decision models, not chat completions. Decision Models states that prompts "
                 "and outputs are processed in memory, never stored or used for training. "
                 "Operational billing metadata is retained. No confidential-compute or "
                 "E2EE claim is made. "
@@ -2059,7 +2093,7 @@ PROVIDERS: dict[str, Provider] = {
                    "Global uses spare EU capacity and may use worldwide capacity for opted-in keys; "
                    "it is not an EU residency guarantee.")
             ),
-            provider_policy_url="https://system1models.ai/legal/privacy",
+            provider_policy_url="https://decisionmodels.io/legal/privacy",
             provider_headquarters_country="DE",
         )
         for slug, tier in (("system1models", "Global"), ("system1models-eu", "EU"))
@@ -2229,6 +2263,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "system1models",
         "system1models-eu",
         "lyceum",
+        "greenference",
         "privatemode",
         "telluvian",
         "vercel-ai-gateway",
@@ -2323,6 +2358,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sakana",
         "perplexity",
         "krea",
+        "elevenlabs",
         "fal",
         "nvidia-nim",
         "jina",
@@ -3785,6 +3821,12 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "elevenlabs": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="ElevenLabs",
+        source_url="https://elevenlabs.io/contact-legal",
+        note="Eleven Labs Inc. lists its legal address in New York; this is not an inference-residency claim.",
+    ),
     "openai": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="OpenAI",
@@ -4120,10 +4162,10 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     **{
         slug: ModelOrigin(
             country=None,
-            lab_name="System1 Models (serving namespace)",
-            source_url="https://system1models.ai/models",
+            lab_name="Decision Models (serving namespace)",
+            source_url="https://decisionmodels.io/models",
             note=(
-                "System1's regional profiles serve Plumb, Winnow and JevOmni "
+                "Decision Models' regional profiles serve open-weight "
                 "decision models. The serving company's German jurisdiction "
                 "does not establish the origin of the underlying weights."
             ),

@@ -20,6 +20,9 @@ const (
 	// Busy: no lease took the authorize. The gateway waits Retry-After
 	// (503); it is never 402 (§4.4).
 	Busy Status = "busy"
+	// Off: the workspace is not enabled for the fast path (the production
+	// rollout's switch); the gateway takes today's path.
+	Off Status = "off"
 	// Accepted: a heartbeat taken, with the deadline it grants.
 	Accepted Status = "accepted"
 	// Retry: a heartbeat not taken, which stops the stream (§4.3); the

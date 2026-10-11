@@ -381,7 +381,7 @@ class Counters:
                 booking_pending=0, booking_unknown=0, first_evidence_at_us=None,
                 last_mismatch_at_us=None, first_gap_at_us=None, authorize_shadow_hist=[0]*9,
                 evidence_write_hist=[0]*9,
-                admission_observer=dict.fromkeys("workspace_reads health_reads read_failures missed_ticks prediction_yes prediction_no prediction_unknown".split(), 0))
+                admission_observer=dict.fromkeys("workspace_reads health_reads read_failures missed_ticks late_installs max_consecutive_failures degraded_seconds prediction_yes prediction_no prediction_unknown".split(), 0))
         if len(self.days) > 3:
             # Retain only the observation lifetime. Unflushed evicted writers
             # remain unclosed durably; the current day also retains a gap.
@@ -423,21 +423,37 @@ class Counters:
         if reason not in REASONS or group not in {"drops", "exclusions", "rejections"}:
             raise ValueError("unknown reason")
         with self.lock:
-            day = self._day()
-            if group != "exclusions" or reason not in COHORT_EXCLUSIONS:
-                day["first_gap_at_us"] = day["first_gap_at_us"] or int(self.clock() * 1e6)
-            a, r, s = dims
-            identity = dict(phase=phase, adapter=a, route_type=r, streamed=s, reason=reason)
-            for row in day[group]:
-                if all(row[k] == v for k, v in identity.items()):
-                    self.add(day, row, "count")
-                    return
-            if sum(len(day[key]) for key in ("drops", "exclusions", "rejections")) >= 128:
-                self.add(day, day, "dimension_overflow")
-                day["counter_overflow"] = True
-                day["first_gap_at_us"] = day["first_gap_at_us"] or int(self.clock()*1e6)
-            else:
-                day[group].append({**identity, "count": 1})
+            self._reason(self._day(), dims, phase, reason, group)
+
+    def flush_failed(self) -> None:
+        """Retain a failed close as a gap without reopening request accounting."""
+        with self.lock:
+            key = self.observation_day.get() or day_at(self.clock())
+            day = self.days.get(key)
+            if day is None:
+                day = self._day()
+            if day["closed"]:
+                # snapshot() seals before I/O. Only the flush owner may append
+                # this failure; an older close must not acknowledge the gap.
+                self.add(day, day, "sequence")
+            self._reason(day, dimensions(None, None, None), "worker", "store_unavailable", "drops")
+
+    def _reason(self, day: dict[str, Any], dims: tuple[str, str, bool | None],
+                phase: str, reason: str, group: str) -> None:
+        if group != "exclusions" or reason not in COHORT_EXCLUSIONS:
+            day["first_gap_at_us"] = day["first_gap_at_us"] or int(self.clock() * 1e6)
+        a, r, s = dims
+        identity = dict(phase=phase, adapter=a, route_type=r, streamed=s, reason=reason)
+        for row in day[group]:
+            if all(row[k] == v for k, v in identity.items()):
+                self.add(day, row, "count")
+                return
+        if sum(len(day[key]) for key in ("drops", "exclusions", "rejections")) >= 128:
+            self.add(day, day, "dimension_overflow")
+            day["counter_overflow"] = True
+            day["first_gap_at_us"] = day["first_gap_at_us"] or int(self.clock()*1e6)
+        else:
+            day[group].append({**identity, "count": 1})
 
     def histogram(self, field: str, microseconds: int) -> None:
         with self.lock:
@@ -468,17 +484,24 @@ class Counters:
             if not clean and not excluded:
                 day["first_gap_at_us"] = day["first_gap_at_us"] or now
 
-    def snapshot(self, closed: bool = False, *, retiring_only: bool = False) -> list[tuple[str, dict[str, Any]]]:
+    def snapshot(self, closed: bool = False, *, retiring_only: bool = False,
+                 sealed_before: str | None = None) -> list[tuple[str, dict[str, Any]]]:
         import copy
         with self.lock:
             self._drain_mailbox()
             result = []
+            now = self.clock()
+            today = day_at(now)
             for day, body in sorted(self.days.items()):
-                if retiring_only and (day >= day_at(self.clock()) or self.active.get(day)):
+                # Both snapshot passes use the observer's accounted boundary,
+                # even if midnight passed since the observer snapshot.
+                if day < today and sealed_before is not None and day >= sealed_before:
+                    continue
+                if retiring_only and (day >= today or self.active.get(day)):
                     continue
                 self.add(body, body, "sequence")
-                body["flushed_at_us"] = int(self.clock() * 1e6)
-                body["closed"] = body["closed"] or ((closed or day < day_at(self.clock())) and not self.active.get(day))
+                body["flushed_at_us"] = int(now * 1e6)
+                body["closed"] = body["closed"] or ((closed or day < today) and not self.active.get(day))
                 # Detach the bounded schema using only builtin shallow copies.
                 # Serialization/deep-copy below own no shared mutable state and
                 # hold no lock needed by request capture.

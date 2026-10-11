@@ -77,6 +77,31 @@ def test_empty_template_schedule_uses_regular_rates():
     assert deadline is None
 
 
+@pytest.mark.parametrize("day,prompt,deadline", [
+    (10, 90_000, datetime(2026, 10, 11, tzinfo=UTC)),
+    (11, 150_000, None),
+    (12, 150_000, None),
+])
+def test_annotated_and_open_ended_promotion_schedule(day, prompt, deadline):
+    schedule = (
+        "2026-09-11T00:00:00Z|2026-10-11T00:00:00Z|input=0.09|cached=0.018|output=0.36|note=short\n"
+        "2026-10-11T00:00:00Z||input=0.15|cached=0.03|output=0.60"
+    )
+    prices, until = upstage._parse_pricing_document(document(schedule), now=datetime(2026, 10, day, tzinfo=UTC))
+    assert prices["upstage/solar-pro4"].tiers[0].prompt_micro_per_m == prompt
+    assert until == deadline
+
+
+@pytest.mark.parametrize("schedule", [
+    "2026-10-11T00:00:00Z||input=0.15|cached=0.03|output=0.60\n2026-10-12T00:00:00Z||free",
+    "2026-10-11T00:00:00Z||input=0.15|cached=0.03|output=0.60|discount=0.1",
+    "2026-10-11T00:00:00Z||input=0.15|cached=0.03|output=0.60|note=x|note=y",
+])
+def test_open_ended_schedule_still_rejects_overlap_and_unknown_price_axes(schedule):
+    with pytest.raises(RuntimeError):
+        upstage._parse_pricing_document(document(schedule), now=datetime(2026, 10, 12, tzinfo=UTC))
+
+
 @pytest.mark.parametrize("value", [None, 123, "nonsense", "2026-09-15"])
 def test_invalid_promotion_expiry_fails_closed(value):
     raw = {"generated_at": "2026-09-14T00:00:00Z", "pricing_valid_until": value}

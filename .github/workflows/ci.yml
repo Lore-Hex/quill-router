@@ -148,7 +148,10 @@ jobs:
       TR_CONFORMANCE_SPANNER_PG_DSN: postgresql://localhost:5434/tr-conformance
     services:
       postgres:
-        image: postgres:17
+        # Same Docker Official Image as postgres:17, verified 2026-10-09.
+        # ECR avoids Docker Hub's shared-runner anonymous pull limit. Pin the
+        # multi-architecture index so changing registries cannot change bytes.
+        image: public.ecr.aws/docker/library/postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
         env:
           POSTGRES_PASSWORD: tr
         ports:
@@ -539,11 +542,15 @@ jobs:
           exit 1
       - name: The store against the emulator
         run: go test -race -count=1 -p 1 ./internal/store/...
-      # The owner's, the auditor's, the front door's and the service's tests
-      # against the store skip without the emulator, so the fastpath job runs
-      # none of them; they run here.
-      - name: The owner, the auditor, the front door and the service against the emulator
-        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/...
+      # The owner's, the auditor's, the front door's, the service's and
+      # fastpathctl's tests against the store skip without the emulator, so
+      # the fastpath job runs none of them; they run here.
+      - name: The owner, the auditor, the front door, the service and fastpathctl against the emulator
+        run: go test -race -count=1 -p 1 ./internal/owner/... ./internal/auditor/... ./internal/frontdoor/... ./internal/service/... ./cmd/fastpathctl/...
+      # The watch's store sources need the emulator; its other tests run in
+      # the fastpath job too.
+      - name: The watch against the emulator
+        run: go test -race -count=1 -p 1 ./internal/watch/... ./cmd/fastpathwatch/...
 
   proofs:
     runs-on: ubuntu-latest

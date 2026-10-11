@@ -427,7 +427,9 @@ A trace has to say enough to put every step in an order the specs can check.
   it could not order named.
 
 Traces go to a local file and then to the spike's bucket, one object per
-process per run. TLC is not fed traces (§5.1).
+process per run. TLC is not fed traces (§5.1). How `tracecheck` maps a run
+onto the shadows, which model one lease with a few authorizations, and what
+it reports, is in `fast-admission-tracecheck.md`.
 
 ## 7. Steps
 
@@ -455,9 +457,16 @@ Each step is a pull request, with its tests, reviewed before the next.
   numbers, each finding, and the design changes they call for. Then
   `destroy`.
 
-S1 to S6 need no decision and no infrastructure. S7 waits for D1 to D3.
+S1 to S6 need no decision and no infrastructure. S7 and S8 are superseded:
+on 2026-10-09 Joseph chose no separate project, so the service is installed
+and tested in production a stage at a time
+(`fast-admission-production-rollout.md`), and the runs §5 describes run
+there, on a workspace of our own.
 
 ## 8. Decisions for Joseph
+
+Superseded on 2026-10-09: there is no separate project
+(`fast-admission-production-rollout.md`).
 
 - **D1. Where Spanner runs:** A, B or C in §3. The recommendation is A.
 - **D2. Compute:** a managed instance group of VMs, as in §3.

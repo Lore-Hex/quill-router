@@ -60,12 +60,19 @@ type Members interface {
 
 // Config is a front door's.
 type Config struct {
+	// Enabled says whether a workspace is enabled for the fast path; an
+	// authorize for one that is not is Off, and goes to no owner.
+	Enabled func(workspace string) bool
 	Owners  Owners
 	Store   Store
 	Records RecordLog
 	Members Members
-	// Key is the fleet's envelope key, which owners seal with.
-	Key []byte
+	// Key is the fleet's envelope key, which owners seal with; Accept are
+	// the keys an envelope may also be sealed with, a rotation's other key,
+	// verified as Key is (docs/design/fast-admission-production-rollout.md,
+	// W6).
+	Key    []byte
+	Accept [][]byte
 	// Shards is a workspace's shard count K (§4.3), at least 1.
 	Shards func(workspace string) int64
 	// OwnerWait bounds a call to an owner: one not answered by then is an
@@ -150,10 +157,15 @@ type failure struct {
 
 // New is a front door with its configuration.
 func New(cfg Config) (*FrontDoor, error) {
-	if cfg.Owners == nil || cfg.Store == nil || cfg.Records == nil || cfg.Members == nil ||
+	if cfg.Enabled == nil || cfg.Owners == nil || cfg.Store == nil || cfg.Records == nil || cfg.Members == nil ||
 		len(cfg.Key) < MinKeySize || cfg.Shards == nil || cfg.OwnerWait <= 0 || cfg.PublishWait <= 0 {
-		return nil, errors.New("frontdoor: owners, a store, the record topic, the members, a key of at least " +
-			"32 bytes, the workspaces' shard counts and positive waits")
+		return nil, errors.New("frontdoor: the switch, owners, a store, the record topic, the members, a key of " +
+			"at least 32 bytes, the workspaces' shard counts and positive waits")
+	}
+	for _, k := range cfg.Accept {
+		if len(k) < MinKeySize {
+			return nil, errors.New("frontdoor: every key accepted is at least 32 bytes")
+		}
 	}
 	if (cfg.Peers != nil && (cfg.Self == "" || cfg.PeerWait <= 0)) ||
 		(cfg.Node != nil && (cfg.WithdrawWithin <= 0 || cfg.ProbeEvery <= 0)) || cfg.RevokeAfter < 0 ||
@@ -193,6 +205,12 @@ type Authorized struct {
 	EndOfLife time.Time
 }
 
+// keys are the keys an envelope may be sealed with: the fleet's, then those
+// it accepts.
+func (f *FrontDoor) keys() [][]byte {
+	return append([][]byte{f.cfg.Key}, f.cfg.Accept...)
+}
+
 // Authorize sends an authorize to its shard's owner, the shard its own hash
 // picks (§4.3). If that owner has no lease to take it, or cannot be reached,
 // a sharded workspace tries one other shard's owner, and then is Busy
@@ -202,6 +220,9 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 	k := f.cfg.Shards(a.Workspace)
 	if a.Workspace == "" || k < 1 || a.Estimate < 0 || len(a.Boot) == 0 {
 		return Authorized{Status: Invalid}
+	}
+	if !f.cfg.Enabled(a.Workspace) {
+		return Authorized{Status: Off}
 	}
 	if f.Withdrawn() {
 		return Authorized{Status: Busy}
@@ -259,7 +280,7 @@ type HeartbeatOf struct {
 // peer if this front door cannot reach it. One that no owner answers gets
 // Retry, which stops the stream (§4.3).
 func (f *FrontDoor) Heartbeat(ctx context.Context, hb HeartbeatOf) HeartbeatAnswer {
-	env, err := Open(f.cfg.Key, hb.Envelope)
+	env, err := OpenWith(f.keys(), hb.Envelope)
 	if err != nil {
 		return HeartbeatAnswer{Status: Invalid}
 	}
@@ -306,7 +327,7 @@ type TerminalAnswer struct {
 // record topic first, and only once that is acknowledged is the settle sent
 // to its owner, or to the drain log, with the full record's digest.
 func (f *FrontDoor) Settle(ctx context.Context, s SettleOf) TerminalAnswer {
-	env, err := Open(f.cfg.Key, s.Envelope)
+	env, err := OpenWith(f.keys(), s.Envelope)
 	if err != nil || s.Charge < 0 || len(s.Full) == 0 || len(s.Money) == 0 {
 		return TerminalAnswer{Status: Invalid}
 	}
@@ -339,7 +360,7 @@ func rowID(req OwnerTerminal, money []byte) string {
 
 // Refund records a refund (§4.5).
 func (f *FrontDoor) Refund(ctx context.Context, r RefundOf) TerminalAnswer {
-	env, err := Open(f.cfg.Key, r.Envelope)
+	env, err := OpenWith(f.keys(), r.Envelope)
 	if err != nil || len(r.Money) == 0 {
 		return TerminalAnswer{Status: Invalid}
 	}

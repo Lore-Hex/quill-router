@@ -124,8 +124,8 @@
     },
     {
       "provider": "google-ai-studio",
-      "model": "google/gemini-3.7-flash",
-      "upstream_id": "gemini-3.7-flash",
+      "model": "google/gemini-3.8-flash",
+      "upstream_id": "gemini-3.8-flash",
       "adapter": "compatible",
       "wire": {
         "none": "low",

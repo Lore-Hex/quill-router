@@ -54,8 +54,7 @@ func (s staged) Published() time.Time  { return s.d.PublishTime }
 func (s staged) Ack()                  { s.d.Ack() }
 func (s staged) Nack()                 { s.d.Nack() }
 
-// Stager is the record topic's consumer (§4.9), standing for production's
-// staging in ClickHouse (spike plan §2): it stages each full record under
+// Stager is the record topic's consumer (§4.9): it stages each full record under
 // its authorization and digest, with its lease, and acknowledges it only
 // once written, so an outage of the stage loses nothing. An outcome is
 // acknowledged as it comes: the topic's export keeps it, and nothing reads
@@ -81,8 +80,10 @@ func (s *Stager) Run(ctx context.Context, src StagedSource) error {
 
 // Handle stages one message. A full record's lease is the one its
 // authorization names; one that names none the store has, or a message of
-// another kind, is told and acknowledged, since no retry stages it. A read
-// or a write that fails asks for the message again.
+// another kind, is told and acknowledged, since no retry stages it. One
+// whose lease has retired is acknowledged and staged for no one: the lease's
+// work is done, so it is a redelivery or a copy no winner names. A read or a
+// write that fails asks for the message again.
 func (s *Stager) Handle(ctx context.Context, m Staged) {
 	switch m.Kind() {
 	case settlelog.Outcome:
@@ -90,13 +91,13 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 		return
 	case settlelog.FullRecord:
 	default:
-		s.alert(m.Authorization(), "a record topic message of no kind the stager knows")
+		s.alert(m.Authorization(), AlertUnknownRecordKind)
 		m.Ack()
 		return
 	}
 	leaseID, err := store.LeaseOfAuthorization(m.Authorization())
 	if err != nil || len(m.Data()) == 0 {
-		s.alert(m.Authorization(), "a full record of no lease's authorization")
+		s.alert(m.Authorization(), AlertNoLeaseAuth)
 		m.Ack()
 		return
 	}
@@ -105,7 +106,7 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 	case errors.Is(err, store.ErrNoLease):
 		// Never granted, or gone seven days after its close with its
 		// work done: no winner of it needs the record.
-		s.alert(m.Authorization(), "a full record of a lease the store does not have")
+		s.alert(m.Authorization(), AlertFullRecordNoLease)
 		m.Ack()
 		return
 	case err != nil:
@@ -113,8 +114,13 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 		return
 	}
 	digest := sha256.Sum256(m.Data())
-	if err := s.store.StageRecord(ctx, store.StagedRecord{AuthorizationID: m.Authorization(), Digest: digest[:],
-		Ref: ref, Body: m.Data(), MessageID: m.ID(), PublishTime: m.Published()}); err != nil {
+	err = s.store.StageRecord(ctx, store.StagedRecord{AuthorizationID: m.Authorization(), Digest: digest[:],
+		Ref: ref, Body: m.Data(), MessageID: m.ID(), PublishTime: m.Published()})
+	switch {
+	case errors.Is(err, store.ErrNoLease):
+		s.alert(m.Authorization(), AlertFullRecordNoLease)
+	case errors.Is(err, store.ErrRetired):
+	case err != nil:
 		m.Nack()
 		return
 	}

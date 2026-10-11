@@ -327,6 +327,12 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_async_settle_drain_health.sh
+      - name: Apply the fast admission service's own tables (empty; nothing writes them until W1's switch enables a workspace)
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_fastpath.sh
       - name: Sync shared public analytics snapshots
         id: snapshot-sync
         # Publishing the public snapshot builder MUST NOT gate the control

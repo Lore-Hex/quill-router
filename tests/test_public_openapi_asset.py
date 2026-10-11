@@ -268,3 +268,14 @@ def test_public_openapi_documents_key_paging_and_bulk_delete() -> None:
     assert hashes["minItems"] == 1
     assert hashes["maxItems"] == 1000
     assert hashes["items"] == {"type": "string"}
+
+
+@pytest.mark.parametrize("source", ["generated", "published"])
+def test_public_openapi_documents_speech_wav(source: str) -> None:
+    schema = _generator().build_public_schema() if source == "generated" else json.loads(JSON_PATH.read_bytes())
+    operation = schema["paths"]["/v1/audio/speech"]["post"]
+    request = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert set(request["properties"]["response_format"]["enum"]) == {"mp3", "pcm", "wav"}
+    assert operation["responses"]["200"]["content"]["audio/wav"] == {
+        "schema": {"type": "string", "format": "binary"}
+    }

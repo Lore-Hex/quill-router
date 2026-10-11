@@ -608,7 +608,11 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     assert deploy[deploy.index("--region") + 1] == region
     assert deploy[deploy.index("--min") + 1] == service_min
     assert deploy[deploy.index("--min-instances") + 1] == "2"
+    # Declared autoscaling ceiling per revision (async-settle §5 fleet budget caps = 2x).
+    assert deploy[deploy.index("--max-instances") + 1] == "12"
     assert deploy[deploy.index("--concurrency") + 1] == "8"
+    assert deploy.count("--no-cpu-throttling") == 1
+    assert "--cpu-throttling" not in deploy
     assert "--no-traffic" in deploy
     assert any(
         call[0:4] == ["gcloud", "run", "revisions", "describe"]
@@ -619,6 +623,68 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
         call[0] == "curl" and "staged-probe---" in call[-1]
         for call in run.calls
     )
+
+
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_control_plane_allocates_cpu_for_background_workers(
+    harness: DeployScriptHarness, no_traffic: str,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_NO_TRAFFIC": no_traffic},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploys = [call for call in run.calls if call[3:5] == ["run", "deploy"]]
+    assert deploys
+    for deploy in deploys:
+        assert deploy.count("--no-cpu-throttling") == 1
+        assert "--cpu-throttling" not in deploy
+        assert deploy[deploy.index("--min") + 1] == "8"
+        assert deploy[deploy.index("--max-instances") + 1] == "12"
+        assert ("--no-traffic" in deploy) == (no_traffic == "1")
+
+
+def test_rollout_supplies_full_source_revision_for_shadow_evidence(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_RELEASE"] == "abc12345"
+    assert rendered["TR_SOURCE_REVISION"] == "abc12345" + "0" * 32
+
+
+@pytest.mark.parametrize("revision", ["abc12345", "not-a-commit", "f" * 40])
+def test_rollout_refuses_invalid_source_before_cloud_access(
+    harness: DeployScriptHarness, revision: str,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_SOURCE_REVISION": revision},
+    )
+    assert run.returncode != 0
+    assert "exact source revision" in run.stderr
+    assert not run.calls
+
+
+def test_rollout_derives_source_from_checkout_and_rejects_stale_override(
+    tmp_path: Path,
+) -> None:
+    harness = DeployScriptHarness(tmp_path / "revision-rollout")
+    release = _initialize_bake_harness_repo(harness)
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_RELEASE_ID": release, "TR_DEPLOY_SOURCE_REVISION": ""},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    revision = _cloud_run_job_env(deploy)["TR_SOURCE_REVISION"]
+    assert len(revision) == 40 and revision.startswith(release)
+    stale = harness.run("scripts/deploy/rollout.sh")
+    assert stale.returncode != 0
+    assert "exact source revision" in stale.stderr
+    assert not stale.calls
 
 
 # A live primary revision that predates the Bigtable analytics retirement. The
@@ -3667,6 +3733,9 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
         "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/old/ticket.pem",
+        "TR_ASYNC_SETTLE_TICKET_KID": "old-kid",
+        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://old.example",
+        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "old-audience",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
     }
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
@@ -3674,12 +3743,21 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
+    # Runbook step 2: the purpose signer is provisioned as literals (Secret Manager
+    # file mount plus public identity, positive epoch) while admission and
+    # protection stay off. None of it is inherited from the caller's environment.
     assert {name: rendered[name] for name in hostile} == {
         "TR_ASYNC_SETTLE_ENABLED": "false",
         "TR_ASYNC_SETTLE_PROTECTION": "false",
-        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "",
-        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "0",
+        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
+        "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
+        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
+        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
+        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
     }
+    secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
+    bindings = deploy[deploy.index(secret_flag) + 1].split(",")
+    assert "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest" in bindings
 
 
 def test_rollout_pins_dormant_drain_knobs_without_inheritance(

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,15 +18,15 @@ var key = ShardKey{Workspace: "ws-1", Region: "us-central1", Shard: 2}
 // shardFixture is an owner with top-ups: a shard below 50 asks, at most
 // every 10 s, for what it charged over a minute plus its holds' needs,
 // between 10 and 1000; a lease idle 5 minutes, or an hour old, closes.
-func shardFixture(t *testing.T) (*fixture, *fakeSpanner) {
+func shardFixture(t *testing.T, changes ...func(*Config)) (*fixture, *fakeSpanner) {
 	t.Helper()
 	sp := newFakeSpanner()
 	sp.expiry = start.Add(2 * time.Hour)
-	f := newFixture(t, 1000, nil, func(c *Config) {
+	f := newFixture(t, 1000, nil, append([]func(*Config){func(c *Config) {
 		c.Spanner, c.Node, c.RenewEvery, c.Window, c.KeyStatus = sp, "owner-1", time.Hour, 30*time.Second, 7
 		c.TopUps = TopUps{LowWater: 50, Cooldown: 10 * time.Second, Horizon: time.Minute, Min: 10, Max: 1000,
 			IdleAfter: 5 * time.Minute, MaxLife: time.Hour}
-	})
+	}}, changes...)...)
 	return f, sp
 }
 
@@ -203,6 +204,41 @@ func TestALostGrantIsAskedForAgainTheSame(t *testing.T) {
 	}
 }
 
+// TestNoLeaseIsAskedForAWorkspaceOff: while the switch does not enable the
+// workspace, as when the node's copy of it has aged out, a lost ask is not
+// asked again at a renewal round; on again, it is.
+func TestNoLeaseIsAskedForAWorkspaceOff(t *testing.T) {
+	var off atomic.Bool
+	f, sp := shardFixture(t, func(c *Config) { c.Enabled = func(string) bool { return !off.Load() } })
+	ctx := context.Background()
+	sp.mu.Lock()
+	sp.lostGrants = 1
+	sp.mu.Unlock()
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	asking := func() bool {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return f.owner.shards[key].asking
+	}
+	waitFor(t, "the lost answer", func() bool { return len(sp.granted()) == 1 && !asking() })
+	off.Store(true)
+	f.clock.advance(10 * time.Second)
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if asking() || len(sp.granted()) != 1 {
+		t.Fatalf("a lost ask asked again for a workspace off: %+v", sp.granted())
+	}
+	off.Store(false)
+	if err := f.owner.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	l := f.waitLeases(t, 1)[0]
+	if grants := sp.granted(); len(grants) != 2 || grants[1] != grants[0] || l.id != grants[0].LeaseID {
+		t.Fatalf("the asks once on again: %+v, the lease taken %s", grants, l.id)
+	}
+}
+
 // TestStopWaitsForAnAsk: Stop returns only once an ask under way has ended;
 // a lease granted after Stop began is not taken.
 func TestStopWaitsForAnAsk(t *testing.T) {
@@ -365,6 +401,53 @@ func TestAClosingLeaseIsNoRoom(t *testing.T) {
 		t.Fatalf("admitted under %s, and the open lease is %s", got.Lease, b.id)
 	}
 	waitFor(t, "the ask for the shard's room", func() bool { return len(sp.granted()) == 3 })
+}
+
+// TestARetiringOwnerTakesNothingNew: once the owner retires, its leases
+// admit nothing more and a request it cannot take is ErrNoRoom, with no
+// lease asked for, the cooldown past or not; and a grant asked before it
+// retired and answered after is not taken.
+func TestARetiringOwnerTakesNothingNew(t *testing.T) {
+	f, sp := shardFixture(t)
+	askedAt := func() time.Time {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return f.owner.shards[key].askedAt
+	}
+	_, _ = f.owner.Admit(key, Admission{Estimate: 1, Boot: boot})
+	a := f.waitLeases(t, 1)[0] // 10
+	admitTo(t, f, 5)
+	f.clock.advance(time.Minute) // the cooldown passes
+	sp.mu.Lock()
+	sp.grantGate = make(chan struct{})
+	sp.mu.Unlock()
+	_, _ = f.owner.Admit(key, Admission{Estimate: 5, Boot: boot}) // room 0: an ask, held at the store
+	waitFor(t, "the held ask", func() bool { return len(sp.granted()) == 2 })
+	f.owner.Retire()
+	sp.mu.Lock()
+	close(sp.grantGate)
+	sp.grantGate = nil
+	sp.mu.Unlock()
+	waitFor(t, "the held ask's end", func() bool {
+		f.owner.mu.Lock()
+		defer f.owner.mu.Unlock()
+		return !f.owner.shards[key].asking
+	})
+	if ls := f.leases(key); len(ls) != 1 || ls[0] != a {
+		t.Fatalf("a retiring owner's leases: %d", len(ls))
+	}
+	// No ask is outstanding and the cooldown has passed: still none is made.
+	asked := askedAt()
+	f.clock.advance(time.Minute)
+	if _, err := f.owner.Admit(key, Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrNoRoom) {
+		t.Fatalf("a request to a retiring owner: %v", err)
+	}
+	if _, err := a.Admit(Admission{Estimate: 1, Boot: boot}); !errors.Is(err, ErrClosing) {
+		t.Fatalf("a request to a retiring owner's lease: %v", err)
+	}
+	if got := askedAt(); !got.Equal(asked) || len(sp.granted()) != 2 {
+		t.Fatalf("an ask at %v by a retiring owner, its last at %v; %d grants", got, asked, len(sp.granted()))
+	}
 }
 
 // lostAsk makes the shard's next ask lose its answer, the grant made, and

@@ -507,6 +507,21 @@ MUTATIONS += [
 ]
 
 
+# PR G: changing policy must gate fresh work, not erase accepted work.
+MUTATIONS += [
+    ('skip-allowlist', [(HANDLER, [
+        ('if not settings.async_settle_pilot_allows(claims.workspace_id):', 'if False:'),
+    ])], 'test_pilot_workspace_settle[ws-v2-200]'),
+    ('allowlist-off-by-one-id', [('src/trusted_router/config.py', [
+        ('workspace_id in self._async_settle_pilot_workspace_ids',
+         'workspace_id[:-1] in self._async_settle_pilot_workspace_ids'),
+    ])], 'test_pilot_workspace_settle[ws-v1-202]'),
+    ('cap-override-ignored', [(HANDLER, [
+        ('claims.workspace_id, settings.async_settle_pilot_cap_micro):', 'claims.workspace_id, 0):'),
+    ])], 'test_pilot_settle_cap_override[5000001-3]'),
+]
+
+
 def main() -> None:
     results = []
     evidence = Path(os.environ.get('ASYNC_SETTLE_MUTATION_OUTPUT_DIR', '/tmp'))

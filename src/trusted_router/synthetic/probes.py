@@ -2370,8 +2370,7 @@ async def provider_rotation_probe(
         "provider": {"only": [provider]},
         "metadata": {"trustedrouter_synthetic": "true"},
     }
-    if not _rotation_omits_temperature(provider, model):
-        body["temperature"] = 0
+    body.update(_rotation_sampling_parameters(provider, model))
     started = time.perf_counter()
     served_provider = provider
     served_model = model
@@ -2517,8 +2516,7 @@ async def provider_throughput_probe(
             "trustedrouter_probe": "throughput",
         },
     }
-    if not _rotation_omits_temperature(provider, model):
-        body["temperature"] = 0
+    body.update(_rotation_sampling_parameters(provider, model))
 
     started = clock()
     served_provider = provider
@@ -2670,6 +2668,8 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
             "minimax-m",
             "mercury",
             "fugu",
+            "muse-spark",
+            "mistral-large-4",
         )
     ):
         return 512
@@ -2707,6 +2707,14 @@ def _rotation_omits_temperature(provider: str, model: str) -> bool:
             and ("claude-opus-4.7" in model_l or "claude-opus-4.8" in model_l)
         )
     )
+
+
+def _rotation_sampling_parameters(provider: str, model: str) -> dict[str, int]:
+    if _rotation_omits_temperature(provider, model):
+        return {}
+    # Mistral's default top_p is incompatible with greedy sampling. These
+    # are probe-owned settings, not overrides of customer sampling choices.
+    return {"temperature": 0, **({"top_p": 1} if provider.lower() == "mistral" else {})}
 
 
 def _rotation_error_sample(

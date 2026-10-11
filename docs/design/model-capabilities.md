@@ -67,6 +67,18 @@ rejection that removes the parameter. Every row requires a source, and each
 provider/model pair occurs only once across all rows. Keep evidence
 provider-scoped; native support does not verify every host.
 
+Keep each row's `models` list sorted. During review, run
+`uv run python scripts/check_request_capabilities.py` to list reviewed
+provider/model pairs with no endpoint in the catalog built from repo data
+(exit 1 for stale pairs, 0 when clean; no network). Check
+`data/provider_models/*.json`, their `routable` flags, and `provider_lifecycle`
+before removing stale pairs; keep contracts for routes that still exist today
+even if a future cutover will retire them. To review past all scheduled
+cutovers, set `TR_ENVIRONMENT=test` and `TR_LIFECYCLE_CLOCK_OVERRIDE` before
+running the tool, using the clock calculation in CI's `test-post-cutover` job.
+This is a reviewer tool, not a CI or hourly refresh gate: routine refreshes
+and retirements can legitimately leave contracts with no route.
+
 Gateway review: quill-cloud-proxy `2f3a86c1bfb6f105184d1bf3b4548fa6c9ad688c`:
 
 - `internal/llm/byok.go` and `reasoning_control.go`: effort forwarding;
