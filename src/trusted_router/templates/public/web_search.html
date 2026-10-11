@@ -1,20 +1,22 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<div class="content-reader" data-content-toc>
+<div class="content-document">
 
-<section class="marketing-split" aria-label="Responses web search quickstart">
-  <div class="marketing-copy">
-    <span class="eyebrow">Attested hosted tool</span>
+<section class="content-section" aria-label="Responses web search quickstart">
+  <div class="content-prose">
+    <span class="content-label">Attested hosted tool</span>
     <h2>Search the live web through the Responses API.</h2>
     <p>Add an OpenAI-compatible <code>web_search</code> tool. TrustedRouter asks the selected model for bounded search queries, calls Exa from inside the attested gateway, and returns cited source material without sending the original request body through the control plane.</p>
-    <ul class="check-list">
+    <ul class="plain-list">
       <li><code>web_search</code> and <code>web_search_preview</code></li>
       <li>Non-streaming and Responses SSE lifecycle events</li>
       <li>URL citation annotations and optional full source lists</li>
       <li>At most three search calls per response</li>
     </ul>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>OpenAI Python SDK</span><span>Responses</span></div>
+  <div class="content-example">
+    <span class="content-label">OpenAI Python SDK · Responses</span>
     <pre><code>from openai import OpenAI
 
 client = OpenAI(
@@ -38,17 +40,17 @@ print(response.output_text)</code></pre>
   </div>
 </section>
 
-<section class="marketing-split" style="margin-top:48px" aria-label="Chat Completions web search quickstart">
-  <div class="marketing-copy">
-    <span class="eyebrow">Chat Completions</span>
+<section class="content-section" aria-label="Chat Completions web search quickstart">
+  <div class="content-prose">
+    <span class="content-label">Chat Completions</span>
     <h2>The same search engine for Chat.</h2>
     <p><code>/v1/chat/completions</code> also accepts <code>web_search</code> and <code>web_search_preview</code>. These TrustedRouter compatibility aliases use the same Exa execution and controls as Responses, with at most three search calls. Set <code>max_tool_calls</code> to a value from 1 to 3.</p>
     <p>The OpenRouter-style <code>openrouter:web_search</code> tool remains supported with a <code>parameters</code> object and a <code>max_uses</code> budget of up to 30. Use one hosted search tool per request.</p>
     <p>Chat results include <code>citations</code>, <code>search_results</code>, and URL annotations. Streaming uses Chat completion chunks; set <code>stream_options.include_usage</code> to receive final usage and search cost.</p>
     <p>Function tools remain caller-executed. Hosted tools such as <code>file_search</code>, <code>code_interpreter</code>, and <code>mcp</code>, plus free-form <code>custom</code> tools, are not implemented and return explicit errors.</p>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>Chat request</span><span>JSON</span></div>
+  <div class="content-example">
+    <span class="content-label">Chat request · JSON</span>
     <pre><code>{
   "model": "anthropic/claude-sonnet-5",
   "messages": [{
@@ -64,35 +66,35 @@ print(response.output_text)</code></pre>
   </div>
 </section>
 
-<section style="margin-top:48px">
-  <h2 class="section-center">Search controls</h2>
-  <div class="marketing-grid three">
-    <div class="marketing-card">
-      <span class="card-label">Context</span>
+<section class="content-section">
+  <h2>Search controls</h2>
+  <div class="content-examples">
+    <div class="content-example">
+      <span class="content-label">Context</span>
       <h3>Bound the evidence.</h3>
       <p>Set <code>search_context_size</code> to <code>low</code>, <code>medium</code>, or <code>high</code>. Larger contexts return more source material and can increase latency and model input cost.</p>
     </div>
-    <div class="marketing-card">
-      <span class="card-label">Domains</span>
+    <div class="content-example">
+      <span class="content-label">Domains</span>
       <h3>Constrain sources.</h3>
       <p>Use <code>filters.allowed_domains</code> or <code>filters.blocked_domains</code>. A request may use one list, not both.</p>
     </div>
-    <div class="marketing-card">
-      <span class="card-label">Location</span>
+    <div class="content-example">
+      <span class="content-label">Location</span>
       <h3>Localize results.</h3>
       <p>Pass <code>user_location</code> with a two-letter country code. Precise city, region, and timezone controls are rejected until implemented.</p>
     </div>
   </div>
 </section>
 
-<section class="marketing-split" style="margin-top:48px">
-  <div class="marketing-copy">
-    <span class="eyebrow">Streaming</span>
+<section class="content-section">
+  <div class="content-prose">
+    <span class="content-label">Streaming</span>
     <h2>Observe the search lifecycle.</h2>
     <p>Streaming responses emit <code>response.web_search_call.in_progress</code>, <code>response.web_search_call.searching</code>, and <code>response.web_search_call.completed</code> before normal output text events and <code>response.completed</code>.</p>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>Source filter</span><span>JSON</span></div>
+  <div class="content-example">
+    <span class="content-label">Source filter · JSON</span>
     <pre><code>{
   "type": "web_search",
   "search_context_size": "low",
@@ -107,16 +109,16 @@ print(response.output_text)</code></pre>
   </div>
 </section>
 
-<section class="quote-feature" style="margin-top:48px">
-  <div>
-    <span class="eyebrow">Privacy boundary</span>
+<section class="content-section">
+  <div class="content-prose">
+    <span class="content-label">Privacy boundary</span>
     <h2>Search is an explicit external disclosure.</h2>
-  </div>
-  <div>
     <p>The model can derive search queries from your prompt. Exa receives those queries plus configured filters and returns results to the enclave. Exa does not receive the original request body directly, but generated queries can contain prompt-derived information.</p>
     <p>TrustedRouter therefore rejects hosted web search on <code>trustedrouter/zdr</code>, <code>trustedrouter/e2e</code>, <code>trustedrouter/confidential</code>, and <code>trustedrouter/eu</code> routes until Exa has an approved compatible posture. Do not attach <code>web_search</code> to sensitive requests unless this disclosure is acceptable.</p>
-    <p><a class="btn" href="/legal/subprocessors">Review subprocessors</a> <a class="btn ghost" href="https://trust.trustedrouter.com">Verify the gateway</a></p>
+    <p class="content-links"><a class="btn" href="/legal/subprocessors">Review subprocessors</a> <a class="btn ghost" href="https://trust.trustedrouter.com">Verify the gateway</a></p>
   </div>
 </section>
 
+</div>
+</div>
 {% endblock %}

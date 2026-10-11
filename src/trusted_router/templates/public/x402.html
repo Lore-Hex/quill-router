@@ -1,10 +1,12 @@
 {% extends "public/_base.html" %}
 
 {% block body %}
-<section class="public-section docs-section">
-  <div class="panel">
-    <div class="panel-head"><h2>x402 stablecoin funding</h2><span class="pill">API-key required</span></div>
-    <div class="panel-body">
+<div class="content-reader" data-content-toc>
+<div class="content-document">
+
+  <div class="content-section">
+    <div class="content-heading"><h2>x402 stablecoin funding</h2><span class="content-label">API-key required</span></div>
+    <div class="content-body">
       <p>x402 is a funding rail for prepaid credits. It does not run inside the enclave and it does not carry prompts. Agents use a normal TrustedRouter API key, add credits with stablecoin when needed, then retry the same attested API call.</p>
       <pre><code>curl {{ control_plane_api_base_url }}/billing/x402/fund \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
@@ -14,10 +16,10 @@
     </div>
   </div>
 
-  <div class="docs-grid">
-    <div class="panel">
-      <div class="panel-head"><h2>Settle after payment</h2><span class="pill good">idempotent</span></div>
-      <div class="panel-body">
+  <div class="content-document">
+    <div class="content-section">
+      <div class="content-heading"><h2>Settle after payment</h2><span class="content-label">idempotent</span></div>
+      <div class="content-body">
         <pre><code>curl {{ control_plane_api_base_url }}/billing/x402/settle \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
@@ -25,9 +27,9 @@
         <p>Stripe webhooks also settle the same payment. If the webhook wins the race, the settle call returns the current state without double-crediting.</p>
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-head"><h2>Boundary</h2><span class="pill">control plane only</span></div>
-      <div class="panel-body">
+    <div class="content-section">
+      <div class="content-heading"><h2>Boundary</h2><span class="content-label">control plane only</span></div>
+      <div class="content-body">
         <ul class="plain-list">
           <li>x402 endpoints require a <span class="mono">sk-tr-...</span> key.</li>
           <li>Workspace is derived from the key, never from request body input.</li>
@@ -39,15 +41,19 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head"><h2>Agent retry loop</h2><span class="pill">recommended</span></div>
-    <div class="panel-body">
-      <pre><code>1. Call /v1/chat/completions or /v1/responses.
-2. If TrustedRouter returns insufficient credits, call {{ control_plane_api_base_url }}/billing/x402/fund.
-3. Pay using the payment-required header.
-4. Poll {{ control_plane_api_base_url }}/billing/x402/settle with backoff: 5s, 10s, 20s, 30s, then every 60s.
-5. Retry the original attested inference call after credits land.</code></pre>
+  <div class="content-section">
+    <div class="content-heading"><h2>Agent retry loop</h2><span class="content-label">recommended</span></div>
+    <div class="content-body">
+      <ol class="content-prose">
+        <li>Call <code>/v1/chat/completions</code> or <code>/v1/responses</code>.</li>
+        <li>If TrustedRouter returns insufficient credits, call <code>{{ control_plane_api_base_url }}/billing/x402/fund</code>.</li>
+        <li>Pay using the <code>payment-required</code> header.</li>
+        <li>Poll <code>{{ control_plane_api_base_url }}/billing/x402/settle</code> with backoff: 5s, 10s, 20s, 30s, then every 60s.</li>
+        <li>Retry the original attested inference call after credits land.</li>
+      </ol>
     </div>
   </div>
-</section>
+
+</div>
+</div>
 {% endblock %}

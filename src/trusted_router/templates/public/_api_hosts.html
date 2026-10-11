@@ -1,7 +1,7 @@
-<section id="two-hosts" class="routing-feature-section" style="margin-top:40px">
+<section id="two-hosts" class="{{ 'content-section' if docs_content_layout else 'routing-feature-section' }}"{% if not docs_content_layout %} style="margin-top:40px"{% endif %}>
   <h2>Two hosts: inference and account management</h2>
   <p>Use the attested gateway for inference and the control plane for key management. Both accept <code>Authorization: Bearer &lt;API key&gt;</code>; key management requires a management key.</p>
-  <div class="model-table-wrap"><table>
+  <div class="{{ 'content-reference' if docs_content_layout else 'model-table-wrap' }}"><table{% if docs_content_layout %} data-reference-table{% endif %}>
     <thead><tr><th>Host</th><th>What it serves</th></tr></thead>
     <tbody>
       <tr><td><code>{{ api_base_url }}</code></td><td>Inference: <code>POST /v1/chat/completions</code>, <code>/v1/responses</code>, <code>/v1/messages</code>, <code>/v1/embeddings</code>, images, and videos. Also <code>GET /v1/models</code> and <code>GET /v1/key</code> (inspect the current key).</td></tr>

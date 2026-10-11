@@ -1,15 +1,17 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<div class="content-reader" data-content-toc>
+<div class="content-document">
 
-<section class="marketing-split" aria-label="Request tagging quickstart">
-  <div class="marketing-copy">
-    <span class="eyebrow">Cost allocation metadata</span>
+<section aria-label="Request tagging quickstart" class="content-section">
+  <div class="content-prose">
+    <span class="content-label">Cost allocation metadata</span>
     <h2>Attribute every request without putting metadata in the prompt.</h2>
     <p>Attach up to 50 AWS style tags to Chat Completions, Responses, Messages, or Embeddings. TrustedRouter stores the effective tag set with generation metadata and keeps it out of provider request bodies.</p>
     <p>Use tags for environment, application, team, project, cost center, customer tier, or any other non sensitive business dimension.</p>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>OpenAI Python SDK</span><span>extra_body</span></div>
+  <div class="content-example">
+    <div class="content-label"><span>OpenAI Python SDK</span><span>extra_body</span></div>
     <pre><code>from openai import OpenAI
 
 client = OpenAI(
@@ -36,35 +38,35 @@ response = client.chat.completions.create(
   </div>
 </section>
 
-<section style="margin-top:48px">
-  <h2 class="section-center">The contract</h2>
-  <div class="marketing-grid three">
-    <div class="marketing-card">
-      <span class="card-label">Shape</span>
+<section class="content-section">
+  <h2 >The contract</h2>
+  <div class="content-examples">
+    <div class="content-example">
+      <span class="content-label">Shape</span>
       <h3>A string map.</h3>
       <p>Send <code>tags</code> as a JSON object. Keys and values are case sensitive strings. Empty values are allowed. Empty keys are not.</p>
     </div>
-    <div class="marketing-card">
-      <span class="card-label">Limits</span>
+    <div class="content-example">
+      <span class="content-label">Limits</span>
       <h3>Fifty tags per request.</h3>
       <p>Keys may contain 128 Unicode characters. Values may contain 256. The effective compact map is capped at 4 KiB.</p>
     </div>
-    <div class="marketing-card">
-      <span class="card-label">Characters</span>
+    <div class="content-example">
+      <span class="content-label">Characters</span>
       <h3>A portable AWS style set.</h3>
       <p>Use Unicode letters, numbers, and spaces plus <code>+ - = . _ : / @</code>. The prefixes <code>aws:</code> and <code>trustedrouter:</code> are reserved.</p>
     </div>
   </div>
 </section>
 
-<section class="marketing-split" style="margin-top:48px">
-  <div class="marketing-copy">
-    <span class="eyebrow">Defaults</span>
+<section class="content-section">
+  <div class="content-prose">
+    <span class="content-label">Defaults</span>
     <h2>Set defaults once on an API key.</h2>
     <p><code>POST /v1/keys</code> and <code>PATCH /v1/keys/{hash}</code> accept the same tag map. Request tags override key defaults. The merged result is frozen when TrustedRouter authorizes the request, so retries and later key edits cannot rewrite historical attribution.</p>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>API key defaults</span><span>curl</span></div>
+  <div class="content-example">
+    <div class="content-label"><span>API key defaults</span><span>curl</span></div>
     <pre><code>curl {{ control_plane_api_base_url }}/keys \
   -H "Authorization: Bearer $MANAGEMENT_KEY" \
   -H "Content-Type: application/json" \
@@ -78,21 +80,21 @@ response = client.chat.completions.create(
   </div>
 </section>
 
-<section style="margin-top:48px">
-  <h2 class="section-center">OpenRouter attribution compatibility</h2>
-  <div class="marketing-grid two">
-    <div class="marketing-card">
+<section class="content-section">
+  <h2 >OpenRouter attribution compatibility</h2>
+  <div class="content-examples">
+    <div class="content-example">
       <h3>Body fields</h3>
-      <ul class="check-list">
+      <ul>
         <li><code>user</code> identifies a stable end user</li>
         <li><code>session_id</code> groups related requests</li>
         <li><code>trace</code> carries Broadcast metadata</li>
         <li><code>tags</code> allocates TrustedRouter usage and cost</li>
       </ul>
     </div>
-    <div class="marketing-card">
+    <div class="content-example">
       <h3>Headers</h3>
-      <ul class="check-list">
+      <ul>
         <li><code>X-Session-Id</code></li>
         <li><code>HTTP-Referer</code></li>
         <li><code>X-OpenRouter-Title</code> and <code>X-Title</code></li>
@@ -101,17 +103,17 @@ response = client.chat.completions.create(
       </ul>
     </div>
   </div>
-  <p class="section-center">When enabled for Chat Completions or Responses, TrustedRouter returns route metadata in <code>openrouter_metadata</code>. It never includes credentials, tags, trace contents, prompts, or outputs.</p>
+  <p >When enabled for Chat Completions or Responses, TrustedRouter returns route metadata in <code>openrouter_metadata</code>. It never includes credentials, tags, trace contents, prompts, or outputs.</p>
 </section>
 
-<section class="marketing-split" style="margin-top:48px">
-  <div class="marketing-copy">
-    <span class="eyebrow">Query usage</span>
+<section class="content-section">
+  <div class="content-prose">
+    <span class="content-label">Query usage</span>
     <h2>Filter or group activity by one tag.</h2>
     <p>Use exact matches for cost allocation. Tag filters operate on a bounded recent/date scan and the response reports whether that scan was truncated. Tag values are private to the workspace and are never included in public provider rankings.</p>
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>Activity API</span><span>GET</span></div>
+  <div class="content-example">
+    <div class="content-label"><span>Activity API</span><span>GET</span></div>
     <pre><code># Individual generations
 GET /v1/activity?group_by=none&amp;tag_key=team&amp;tag_value=legal
 
@@ -120,9 +122,9 @@ GET /v1/activity?group_by=tag:team</code></pre>
   </div>
 </section>
 
-<section class="quote-feature" style="margin-top:48px">
+<section class="content-section">
   <div>
-    <span class="eyebrow">Trust boundary</span>
+    <span class="content-label">Trust boundary</span>
     <h2>Tags are router metadata, not model input.</h2>
   </div>
   <div>
@@ -131,4 +133,6 @@ GET /v1/activity?group_by=tag:team</code></pre>
   </div>
 </section>
 
+</div>
+</div>
 {% endblock %}
