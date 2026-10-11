@@ -1,4 +1,20 @@
-"""Pure exact-shape primitives for the dormant shadow-v2 byte contract."""
+"""Pure exact-shape primitives for the dormant shadow-v2 byte contract.
+
+Retained JSON-object constraint inventory (sample/counter standalone v1 object
+validators; wire complete v1 raw decoder plus validator): exact retained keys,
+container types, booleans, integer range/type, finite numbers and bounded nesting
+are delegated to their closed v1 schemas. New keys/types/nesting belong to the
+new-field schemas. Duplicate keys, UTF-8/BOM/raw-control validity and numeric
+lexemes are already rejected by the legacy wire decoder; they have no analogue
+in an already decoded object. Wrapper byte budgets are the three size deltas.
+Canonical ASCII-escaped spelling of ALL raw string tokens (keys included) is
+transport-spelling; surrogate exclusion on retained object strings is
+scalar-string. Escaped NUL/control characters, noncharacters and other Unicode
+scalars are not additionally banned here. Exact v2 tags and invariants involving
+new fields are new-field checks. The oracle must never reuse this decoder to
+validate retained fields: see the independently executed references and raw
+paired transports in test_async_settle_shadow_v2_evidence.
+"""
 from __future__ import annotations
 
 import datetime as dt
@@ -150,13 +166,13 @@ def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
         # bounds depth and integers, and rejects duplicate keys and surrogates.
         try:
             value = bounded_json(raw, limit, signed=True)
-            # Only canonical string spellings: retained escapes are representable,
-            # but escaped identity/key aliases remain forbidden, even nested.
-            for token in re.finditer(rb'"(?:[^"\\]|\\.)*"', raw):
-                require(token.group() == canonical(json.loads(token.group())), "json_encoding")
+            # Local import avoids the schema/delta definition cycle. The one
+            # executable table owns the disclosed retained transport policy.
+            from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
+            apply_deltas("retained-transport", raw)
             return value
         except ValueError as exc:
-            raise ValueError("duplicate_key" if str(exc) == "json_duplicate" else str(exc)) from exc
+            raise ValueError({"json_duplicate": "duplicate_key", "transport-spelling": "json_encoding"}.get(str(exc), str(exc))) from exc
     require(all(32 <= c <= 126 and c != 92 for c in raw), "json_encoding")
     depth = 0
     quoted = False

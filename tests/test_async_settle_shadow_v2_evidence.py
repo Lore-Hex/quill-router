@@ -1071,6 +1071,31 @@ def test_retained_coverage_inventory(name: str) -> None:
     assert {path for case, path in PARITY_CASES if case == name} == expected
 
 
+def reference_projection(shape: str, value: Any) -> Any:
+    """Test-owned wrapper removal; the old side calls no v2 validation helper."""
+    if shape == "sample":
+        additions = set("proof_kind original_terminal_receipt health_source health_slot prediction_basis".split())
+    elif shape == "counter":
+        additions = set("""day boot authorize_attempts authorize_fresh authorize_replay
+settle_attempts refund_attempts A B C proof_compared proof_certificate proof_observed
+requested_eligible requested_excluded requested_unknown eligible_demand event_seq durable_event_hwm
+checkpoint_seq receipt_count receipt_chain_sha256 loss_count reset_count diagnostics buckets publisher
+checkpoint_attempts checkpoint_failures checkpoint_recoveries unknown_commits unreconciled_commits irrecoverable_losses""".split())
+    elif shape == "wire":
+        additions = {"variant", "policy_version"}
+    else:
+        return value
+    old = {**{k: v for k, v in value.items() if k not in additions}, "v": 1}
+    if shape in ("sample", "counter"):
+        old["policy_version"] = "shadow-v1"
+    if shape == "counter":
+        for field in ("exclusions", "rejections", "drops"):
+            if isinstance(old.get(field), list):
+                old[field] = [r for r in old[field] if not isinstance(r, dict)
+                              or not isinstance(r.get("reason"), str) or r["reason"] not in APPROVED_NEW_REASONS]
+    return old
+
+
 def v1_delegate(shape: str, value: Any) -> None:
     from scripts.async_settle.shadow_report import validate_counter
     from trusted_router import async_settle_shadow_binding as old_binding
@@ -1078,13 +1103,13 @@ def v1_delegate(shape: str, value: Any) -> None:
     from trusted_router import async_settle_shadow_wire as old_wire
     from trusted_router.detached_jws import b64encode
     if shape == "sample":
-        old.validate_sample(projection.sample_projection(value), value["authorization_day"] + "/" + value["authorization_id"])
+        old.validate_sample(reference_projection("sample", value), value["authorization_day"] + "/" + value["authorization_id"])
     elif shape == "counter":
-        validate_counter(value["day"] + "/" + value["instance"], projection.counter_projection(value))
+        validate_counter(value["day"] + "/" + value["instance"], reference_projection("counter", value))
     elif shape == "wire":
-        old_wire.parse_header((b64encode(canonical(projection.wire_projection(value))),))
+        old_wire.parse_header((b64encode(canonical(reference_projection("wire", value))),))
     elif shape == "binding":
-        old_binding.validate_claims(projection.binding_projection(value), CONSTRUCTION["binding"][1]["iat"])
+        old_binding.validate_claims(value, CONSTRUCTION["binding"][1]["iat"])
     else:
         model = {"observed": billing.Eligibility, "raw-usage": billing.RawUsage, "normal-usage": billing.NormalizedUsage}[shape]
         model.model_validate(value)
@@ -1105,16 +1130,14 @@ def constructed_acceptor(shape: str, value: Any) -> None:
         schema = e.SAMPLE if shape == "sample" else e.COUNTER
         # Only v2 parts; retained values were already checked by the LIVE v1.
         s.require(type(value) is dict and set(value) == set(schema.fields))
-        s.decode(canonical(value), schema.limit, retained_strings=True)
         for key, check in (e.SAMPLE_NEW_FIELDS if shape == "sample" else e.COUNTER_NEW_FIELDS).items():
             check(value[key])
         s.require(type(value["v"]) is int and value["v"] == 2 and value["policy_version"] == "shadow-v2")
         (e._sample if shape == "sample" else e._counter)(value)
     elif shape == "wire":
-        s.decode(canonical(value), 8192, retained_strings=True)
         s.require(value["variant"] == "compared" and type(value["v"]) is int and value["v"] == 2 and value["policy_version"] == "shadow-v2")
     for delta in deltas.DELTAS:
-        if delta.shape == shape and delta.direction != "v2-only-broaden":
+        if delta.shape in (shape, "retained-object" if shape in ("sample", "counter") else shape) and delta.direction != "v2-only-broaden":
             assert not delta.predicate(value)
 
 
@@ -1224,6 +1247,7 @@ DELTA_NAMES = {
     "excluded-admission", "strict-dimension", "strict-diagnostic-array", "v2-counter-reasons",
     "wire-wrapper-size", "sample-wrapper-size", "counter-wrapper-size",
     "certificate-issuer-bound", "certificate-origin", "certificate-authority",
+    "transport-spelling", "scalar-string",
 }
 
 
@@ -1236,6 +1260,14 @@ def test_delta_inventory() -> None:
 @pytest.mark.parametrize("name", sorted(DELTA_NAMES))
 def test_independent_delta_oracle(name: str) -> None:
     delta = next(d for d in deltas.DELTAS if d.name == name)
+    if name == "transport-spelling":
+        assert delta.predicate(b'{"x":"\\u0061"}')
+        assert not delta.predicate(b'{"x":"a"}')
+        return
+    if name == "scalar-string":
+        assert delta.predicate({"region": "\ud800"})
+        assert not delta.predicate({"region": "é\x00\n"})
+        return
     if name.endswith("wrapper-size"):
         limit = 65536 if name.startswith("counter") else 8192
         for offset, expected in ((-1, False), (0, False), (1, True)):
@@ -1352,14 +1384,29 @@ def test_certificate_common_constraints_in_every_branch(origin: str, authority: 
         assert not accepts(lambda v: cert.validate_claims(v, base["iat"]), {**base, field: "unsupported"})
 
 
+# Policy shadow-v2 §4/§7: independent literal, never sourced from production.
+APPROVED_NEW_REASONS = frozenset("""original_receipt_locator_gap
+original_receipt_identity_gap original_receipt_digest_gap original_receipt_backing_gap
+original_receipt_missing candidate_receipt_size receipt_locator_size exclusion_conflict
+missing_signer missing_context transport_failure local_work_overflow evaluator_failed
+ambiguous_fallback evidence_schema_gap evidence_identity_gap""".split())
+
+
 @pytest.mark.parametrize("field", ["exclusions", "rejections", "drops"])
-@pytest.mark.parametrize("reason", sorted(retained.REASONS | deltas.NEW_COUNTER_REASONS))
-def test_all_counter_reason_members(field: str, reason: str) -> None:
+@pytest.mark.parametrize("reason", sorted(retained.REASONS | APPROVED_NEW_REASONS))
+def test_all_counter_reason_members(field: str, reason: str, monkeypatch: pytest.MonkeyPatch) -> None:
     value = copy.deepcopy(CONSTRUCTION["counter"][1])
     value[field][0]["reason"] = reason
+    seen = []
+    delegate = retained.validate_counter
+    def spy(key: str, body: Any) -> None:
+        seen.append(copy.deepcopy(body))
+        delegate(key, body)
+    monkeypatch.setattr(retained, "validate_counter", spy)
     e.COUNTER(value)
+    assert seen[0][field] == ([] if reason in APPROVED_NEW_REASONS else value[field])
     old = projection.counter_projection(value)
-    assert (len(old[field]) == 0) is (reason in deltas.NEW_COUNTER_REASONS)
+    assert (len(old[field]) == 0) is (reason in APPROVED_NEW_REASONS)
     value[field][0]["count"] = -1
     assert not accepts(e.COUNTER, value)
 
@@ -1444,3 +1491,182 @@ assert not any(n.startswith(("trusted_router.services", "trusted_router.storage"
         env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
         capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_independent_policy_vocabularies() -> None:
+    from trusted_router.async_settle_shadow_evidence import REASONS
+    assert deltas.NEW_COUNTER_REASONS == APPROVED_NEW_REASONS
+    assert not APPROVED_NEW_REASONS & REASONS
+    assert not deltas.NEW_COUNTER_REASONS & retained.REASONS
+    for value in ("typed", "legacy", "local", "spend_lease", "regional_lease", "federated", "deferred_home", "unsupported", ""):
+        assert deltas.broadening("certificate-origin", {"settle_origin": value}) is (value == "legacy")
+        assert deltas.broadening("certificate-authority", {"billing_authority": value}) is (value in {"spend_lease", "regional_lease", "federated", "deferred_home"})
+    for value in ("exact", "explained-by-catalog-change", "hash", "identity", "normalization", "evaluator_disagreement", "requires_review", "unevaluable", "unsupported", ""):
+        assert deltas.clean({"classification": value}) is (value in {"exact", "explained-by-catalog-change"})
+
+
+@pytest.mark.parametrize("reason", sorted(APPROVED_NEW_REASONS))
+@pytest.mark.parametrize("field", ["exclusions", "rejections", "drops"])
+def test_new_reason_closed_rows(reason: str, field: str) -> None:
+    base = copy.deepcopy(CONSTRUCTION["counter"][1])
+    base[field][0]["reason"] = reason
+    assert projection.counter_projection(base)[field] == []
+    for key, bad in (("extra", 1), ("count", True), ("count", -1), ("phase", "bogus"),
+                     ("adapter", "bogus"), ("route_type", "bogus"), ("streamed", 0)):
+        value = copy.deepcopy(base)
+        value[field][0][key] = bad
+        assert not accepts(e.COUNTER, value), (reason, field, key)
+    for key in base[field][0]:
+        value = copy.deepcopy(base)
+        del value[field][0][key]
+        assert not accepts(e.COUNTER, value), (reason, field, key)
+
+
+def v1_raw_wire(raw: bytes) -> None:
+    """Independent reference: complete live legacy RAW decoder plus validator."""
+    from trusted_router.async_settle_shadow_wire import parse_header
+    from trusted_router.detached_jws import b64encode
+    parse_header((b64encode(raw),))
+
+
+def constructed_raw_wire(raw: bytes, legacy_raw: bytes) -> None:
+    v1_raw_wire(legacy_raw)
+    value = json.loads(raw)  # No v2 retained decoder on the expected side.
+    s.require(value["variant"] == "compared" and type(value["v"]) is int
+              and value["v"] == 2 and value["policy_version"] == "shadow-v2")
+    for delta in deltas.DELTAS:
+        if delta.shape == "retained-transport":
+            assert not delta.predicate(raw)
+        elif delta.shape == "wire":
+            assert not delta.predicate(value)
+    assert len(raw) <= 8192
+
+
+def raw_token_variant(value: Any, target: tuple[Any, ...], key_token: bool,
+                      mode: str, path: tuple[Any, ...] = ()) -> bytes:
+    """Independent JSON emitter: preserve the selected spelling on BOTH sides."""
+    def token(text: str, selected: bool) -> bytes:
+        if not selected:
+            return json.dumps(text, ensure_ascii=True).encode()
+        if mode == "alias":
+            units = text[0].encode("utf-16-be")
+            escaped = "".join(f"\\u{int.from_bytes(units[i:i + 2]):04X}" for i in range(0, len(units), 2))
+            return b'"' + escaped.encode() + json.dumps(text[1:])[1:].encode()
+        if mode == "control":
+            return b'"' + b'\x01' + b'"'
+        if mode == "utf8":
+            return json.dumps(text, ensure_ascii=False).encode()
+        return json.dumps(text, ensure_ascii=True).encode()
+    if isinstance(value, dict):
+        return b"{" + b",".join(token(k, key_token and path + (k,) == target) + b":" +
+            raw_token_variant(v, target, key_token, mode, path + (k,)) for k, v in value.items()) + b"}"
+    if isinstance(value, list):
+        return b"[" + b",".join(raw_token_variant(v, target, key_token, mode, path + (i,)) for i, v in enumerate(value)) + b"]"
+    if isinstance(value, str):
+        return token(value, not key_token and path == target)
+    return json.dumps(value).encode()
+
+
+RAW_TOKEN_CASES = []
+for _name, (_shape, _base) in CONSTRUCTION.items():
+    if _shape != "wire":
+        continue
+    for _path in sorted(independent_paths(_name), key=str):
+        if not _path or _path[0] in ("v", "variant", "policy_version"):
+            continue
+        if isinstance(_path[-1], str):
+            RAW_TOKEN_CASES.append((_name, _path, True))
+        if isinstance(parity_get(_base, _path), str):
+            RAW_TOKEN_CASES.append((_name, _path, False))
+
+
+@pytest.mark.parametrize("name,path,key_token", RAW_TOKEN_CASES,
+                         ids=[n + ":" + ".".join(map(str, p)) + (":key" if k else ":value") for n, p, k in RAW_TOKEN_CASES])
+def test_raw_retained_token_pairs(name: str, path: tuple[Any, ...], key_token: bool) -> None:
+    base = copy.deepcopy(CONSTRUCTION[name][1])
+    for scalar in (None, "é", "😀", "\n", "\x00") if not key_token else (None,):
+        value = copy.deepcopy(base)
+        if scalar is not None:
+            parity_get(value, path[:-1])[path[-1]] = scalar
+        old = reference_projection("wire", value)
+        for mode in ("canonical", "utf8", "alias", "control"):
+            raw = raw_token_variant(value, path, key_token, mode)
+            legacy_raw = raw_token_variant(old, path, key_token, mode)
+            if mode != "control":
+                assert json.loads(raw) == value
+                assert json.loads(legacy_raw) == old
+            expected = accepts(lambda pair: constructed_raw_wire(*pair), (raw, legacy_raw))
+            assert accepts(contract.parse_terminal, raw) is expected, (path, scalar, mode)
+            if scalar is None:
+                assert accepts(v1_raw_wire, legacy_raw) is (mode != "control")
+                assert expected is (mode in ("canonical", "utf8"))
+
+
+@pytest.mark.parametrize("shape,path", [("counter", ("region",)), ("sample", ("deployment", "instance"))])
+@pytest.mark.parametrize("scalar", ["\ud800", "\udfff", "a\ud800b", "é", "😀", "\uffff", "\x00", "\n", "\t", "\\", '"'])
+def test_retained_object_scalar_edges(shape: str, path: tuple[str, ...], scalar: str) -> None:
+    value = copy.deepcopy(CONSTRUCTION["counter" if shape == "counter" else "sample-settle"][1])
+    parity_get(value, path[:-1])[path[-1]] = scalar
+    old = accepts(lambda v: v1_delegate(shape, v), value)
+    assert old is (shape == "counter" or scalar.isascii())
+    expected = old and not any(0xd800 <= ord(c) <= 0xdfff for c in scalar)
+    assert accepts(lambda v: constructed_acceptor(shape, v), value) is expected
+    assert accepts(lambda v: v2_acceptor(shape, v), value) is expected
+
+
+def test_oracle_never_redecodes_retained_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = s.decode
+    def guard(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
+        assert not retained_strings, "oracle called the v2 retained decoder"
+        return original(raw, limit)
+    monkeypatch.setattr(s, "decode", guard)
+    for name in ("sample-settle", "counter", "wire-settle-full"):
+        shape, value = CONSTRUCTION[name]
+        constructed_acceptor(shape, value)
+    value = CONSTRUCTION["wire-settle-full"][1]
+    constructed_raw_wire(canonical(value), canonical(reference_projection("wire", value)))
+
+
+OBJECT_TOKEN_CASES = []
+for _name in ("sample-settle", "sample-refund", "counter"):
+    _shape, _base = CONSTRUCTION[_name]
+    _old = reference_projection(_shape, _base)
+    for _path in sorted(independent_paths(_name), key=str):
+        if not _path or _path[0] not in _old or _path[0] in ("v", "policy_version"):
+            continue
+        if isinstance(_path[-1], str):
+            OBJECT_TOKEN_CASES.append((_name, _path, True))
+        if isinstance(parity_get(_base, _path), str):
+            OBJECT_TOKEN_CASES.append((_name, _path, False))
+
+
+def constructed_raw_object(shape: str, raw: bytes) -> None:
+    # Sample/counter parity is with standalone object validators, so the raw
+    # spelling is decoded by stdlib JSON independently before that reference.
+    value = json.loads(raw)
+    constructed_acceptor(shape, value)
+    for delta in deltas.DELTAS:
+        if delta.shape == "retained-transport":
+            assert not delta.predicate(raw)
+    assert len(raw) <= (8192 if shape == "sample" else 65536)
+
+
+@pytest.mark.parametrize("name,path,key_token", OBJECT_TOKEN_CASES,
+                         ids=[n + ":" + ".".join(map(str, p)) + (":key" if k else ":value") for n, p, k in OBJECT_TOKEN_CASES])
+def test_raw_stored_retained_token_pairs(name: str, path: tuple[Any, ...], key_token: bool) -> None:
+    shape, base = CONSTRUCTION[name]
+    parser = e.SAMPLE.parse if shape == "sample" else e.COUNTER.parse
+    for scalar in (None, "é", "\n") if not key_token else (None,):
+        value = copy.deepcopy(base)
+        if scalar is not None:
+            parity_get(value, path[:-1])[path[-1]] = scalar
+        for mode in ("canonical", "utf8", "alias", "control"):
+            raw = raw_token_variant(value, path, key_token, mode)
+            if mode != "control":
+                decoded = json.loads(raw)
+                assert decoded == value
+                assert accepts(lambda v: v1_delegate(shape, v), decoded) == accepts(lambda v: v1_delegate(shape, v), value)
+            expected = accepts(lambda data: constructed_raw_object(shape, data), raw)
+            assert accepts(parser, raw) is expected, (path, scalar, mode)
+            if scalar is None:
+                assert expected is (mode in ("canonical", "utf8"))

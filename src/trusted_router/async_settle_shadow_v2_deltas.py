@@ -3,9 +3,21 @@
 Strengthen/size predicates reject after retained delegation. Broaden predicates
 identify only new vocabularies; they never excuse a failed retained constraint.
 The exclusion certificate is a new object, not a relaxed price binding.
+
+Parity reference: sample/counter use the standalone v1 object validators;
+wire uses the complete legacy decoder-plus-validator on raw bytes (with only
+v2 wrapper fields removed and the version restored, preserving retained tokens).
+The §4.2/§7 round-1 conservative transport resolution requires canonical
+ASCII-escaped JSON string tokens, including keys, on every v2 retained transport.
+This is stricter than v1 wire decoding. Retained object strings additionally
+exclude surrogate code points, unlike the standalone v1 counter validator.
+Escaped controls and Unicode scalar values remain permitted in retained fields
+where their v1 validator permits them; new fields keep their own strict schemas.
 """
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -19,6 +31,27 @@ original_receipt_identity_gap original_receipt_digest_gap original_receipt_backi
 original_receipt_missing candidate_receipt_size receipt_locator_size exclusion_conflict
 missing_signer missing_context transport_failure local_work_overflow evaluator_failed
 ambiguous_fallback evidence_schema_gap evidence_identity_gap""".split())
+
+
+def transport_spelling(raw: bytes) -> bool:
+    """Reject noncanonical string tokens, not whitespace or object-key ordering.
+
+    Malformed JSON is still owned by the retained decoder; token decoding here
+    can also raise ValueError, which is a rejection, never an acceptance escape.
+    """
+    return any(token.group() != canonical(json.loads(token.group()))
+               for token in re.finditer(rb'"(?:[^"\\]|\\.)*"', raw))
+
+
+def scalar_string(value: Any) -> bool:
+    """The shared retained decoder's sole extra object-string restriction."""
+    if isinstance(value, str):
+        return re.search(r"[\ud800-\udfff]", value) is not None
+    if isinstance(value, dict):
+        return any(scalar_string(k) or scalar_string(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(scalar_string(v) for v in value)
+    return False
 
 
 def clean(v: Any) -> bool:
@@ -52,6 +85,8 @@ class Delta:
 
 
 DELTAS = (
+    Delta("transport-spelling", "retained-transport", "strengthen", "§4.2 / §7 (round-1 lexical resolution)", transport_spelling),
+    Delta("scalar-string", "retained-object", "strengthen", "§4.2 / §7 (Unicode scalar strings)", scalar_string),
     Delta("clean-requires-eligible", "sample", "strengthen", "§2", lambda v: clean(v) and v["eligibility"]["observed"] is not True),
     # Subsumes the former clean-usage (null-only) exception.
     Delta("clean-requires-normalized-usage", "sample", "strengthen", "§2", unnormalized),
