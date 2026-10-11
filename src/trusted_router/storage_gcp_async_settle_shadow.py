@@ -34,19 +34,19 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
            "AND id<@next_day_start AND id>@after_id ORDER BY id LIMIT @page_size")
 
 # Multi-round-trip writes share the worker's one-second budget. The same
-# total bound fences retention. Reads get up to 500 ms for regional latency;
-# commit/control RPCs can use the remainder, never another full budget.
+# total bound fences retention. Reads and commit/control RPCs can use the
+# remaining shared time, never a new budget or an earlier per-RPC deadline.
 # Operator range reads retain their separate 200 ms caller deadline.
 # The transaction per-RPC cap equals the write budget, still clipped to the
 # remaining shared time. In capped contexts, Commit, Begin and Rollback resets
 # fail fast before the SDK's two-second backoff can exceed the shared deadline.
 # Transaction streaming reads use the SDK restart path, bounded by that shared
-# deadline. EvidenceStore.booking's standalone snapshot read is bounded by its
-# own single timeout, computed once; it does not enter spanner_rpc_deadline.
+# deadline. Standalone snapshot reads also keep the caller's shared deadline
+# active throughout stream iteration and any SDK restart.
 # The horizon bounds scheduled RPC time, not Python scheduling/GC or late
 # server-side commits.
 WRITE_BUDGET_SECONDS = 1.0
-RPC_BUDGET_SECONDS = .5
+RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
 logger = logging.getLogger(__name__)
