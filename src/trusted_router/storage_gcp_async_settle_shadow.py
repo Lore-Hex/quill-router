@@ -1,6 +1,7 @@
 """Shadow-only complete-key transactions and indexed day reads; no money writes."""
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import logging
@@ -55,6 +56,8 @@ RPC_BUDGET_SECONDS = 1.0
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
 logger = logging.getLogger(__name__)
+_ACTIVE_READ: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "shadow_active_read", default=None)
 
 
 class RetirementBoundary(ValueError):
@@ -88,6 +91,23 @@ def day_statement(kind: str, day: str, after_id: str = "", page_size: int = 200)
             dict(kind=pt.STRING, day_start=pt.STRING, next_day_start=pt.STRING, after_id=pt.STRING, page_size=pt.INT64))
 
 
+def read_operation(statement: Statement) -> str:
+    """Fixed labels only: SQL parameters and entity IDs never become telemetry."""
+    sql, params, _ = statement
+    if sql == FINALIZATION_SQL:
+        return "booking_read"
+    if sql == DAY_SQL:
+        return "day_read"
+    if sql == POINT_SQL:
+        if params.get("kind") == COUNTER:
+            return "counter_read"
+        if params.get("kind") == SAMPLE:
+            return "sample_read"
+        if params.get("kind") == CONTROL:
+            return "retention_fence_read" if params.get("id") == RETENTION_FENCE else "control_read"
+    return "unknown"
+
+
 class EvidenceStore:
     def __init__(self, database: Any) -> None:
         self.database = database
@@ -113,8 +133,10 @@ class EvidenceStore:
             if isinstance(error, cls):
                 reason = label
                 break
-        logger.warning("shadow evidence transaction failed stage=%s reason=%s elapsed_ms=%d",
-                       stage, reason, max(0, round((now-started)*1000)))
+        active = _ACTIVE_READ.get()
+        operation = active[0] if stage == "callback" and active else "unknown"
+        logger.warning("shadow evidence transaction failed stage=%s reason=%s elapsed_ms=%d operation=%s",
+                       stage, reason, max(0, round((now-started)*1000)), operation)
 
     @staticmethod
     def query(reader: Any, statement: Statement, deadline: float) -> list[Any]:
@@ -124,13 +146,22 @@ class EvidenceStore:
         sql, params, types = statement
         if sql not in (FINALIZATION_SQL, POINT_SQL, DAY_SQL):
             raise ValueError("unknown shadow statement")
+        operation = read_operation(statement)
+        active = _ACTIVE_READ.get()
+        if active is not None:
+            active[0] = operation
         # Snapshot streaming restarts occur even with retry=None. Keep the
         # deadline active through iteration so each restart consumes its remainder.
         with spanner_rpc_deadline(deadline, max_rpc_seconds=RPC_BUDGET_SECONDS):
-            return list(reader.execute_sql(
+            rows = list(reader.execute_sql(
                 FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
                 params=params, param_types=types, timeout=remaining,
-                retry=None, request_options={"priority": "PRIORITY_LOW"}))
+                retry=None, request_options={"priority": "PRIORITY_LOW", "request_tag": "tr_shadow_" + operation}))
+        # Preserve the active read on failure, but never blame a completed read
+        # for a later callback/commit failure. The transaction owns this context.
+        if active is not None:
+            active[0] = "unknown"
+        return rows
 
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
         started = time.monotonic()
@@ -139,6 +170,7 @@ class EvidenceStore:
         rpc_deadline = min(deadline, time.monotonic() + WRITE_BUDGET_SECONDS)
         attempted = False
         stage = "begin"
+        token = _ACTIVE_READ.set(["unknown"])
         def once(tx: Any) -> Any:
             nonlocal attempted, stage
             if attempted:
@@ -160,6 +192,8 @@ class EvidenceStore:
         except Exception as error:
             self._report_failure(stage, error, started)
             raise
+        finally:
+            _ACTIVE_READ.reset(token)
 
     def write(self, tx: Any, kind: str, identity: str, body: dict[str, Any], deadline: float) -> None:
         # Every insert site, including operator control writes, uses this path.

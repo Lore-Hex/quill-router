@@ -190,7 +190,7 @@ def test_slow_shadow_read_still_fails_closed_without_retry(shadow_deadline_clock
     assert len(db.transaction_options) == len(db.query_options) == 1
     timeout, retry, options = db.query_options[0]
     assert timeout == pytest.approx(min(RPC_BUDGET_SECONDS, budget))
-    assert retry is None and options == {'priority': 'PRIORITY_LOW'}
+    assert retry is None and options == {'priority': 'PRIORITY_LOW', 'request_tag': 'tr_shadow_control_read'}
     assert not db.rows and not db.write_shapes
 
 
@@ -210,7 +210,7 @@ def test_operator_day_scan_keeps_short_deadline(shadow_deadline_clock):
     assert len(calls) == 1
     assert 0 < calls[0]['timeout'] <= .2
     assert calls[0]['retry'] is None
-    assert calls[0]['request_options'] == {'priority': 'PRIORITY_LOW'}
+    assert calls[0]['request_options'] == {'priority': 'PRIORITY_LOW', 'request_tag': 'tr_shadow_day_read'}
     assert calls[0]['params']['page_size'] == 200
 
 
@@ -256,7 +256,7 @@ def test_transaction_failure_diagnostics_are_bounded_and_redacted(
         store.transaction(callback, clock.monotonic()+1)
     assert len(caplog.records) == 2
     for record in caplog.records:
-        assert record.getMessage() == f'shadow evidence transaction failed stage={failure_stage} reason={reason} elapsed_ms=50'
+        assert record.getMessage() == f'shadow evidence transaction failed stage={failure_stage} reason={reason} elapsed_ms=50 operation=unknown'
         assert record.exc_info is None
         assert record.stack_info is None
     assert 'private' not in caplog.text
@@ -657,8 +657,9 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'})]
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
-    for timeout, retry, options in db.query_options:
-        assert 0 < timeout <= RPC_BUDGET_SECONDS and retry is None and options == {'priority':'PRIORITY_LOW'}
+    for (timeout, retry, options), operation in zip(db.query_options, ('control_read', 'retention_fence_read'), strict=True):
+        assert 0 < timeout <= RPC_BUDGET_SECONDS and retry is None
+        assert options == {'priority':'PRIORITY_LOW', 'request_tag': 'tr_shadow_' + operation}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
 
 
