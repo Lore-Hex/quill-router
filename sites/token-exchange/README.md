@@ -77,6 +77,11 @@ For this content release, publish only the two shared pages and their aliases,
 `assets/badge.css`, `assets/badge.js`, the four generated badge SVGs, the 13 market
 `index.html` files (new supplier links), and `new-york/sitemap.xml`. No DNS,
 certificates, URL maps, backend routes, PDF, slide images, or unrelated assets change.
+Compare generated homepages with live objects first. If main includes unrelated
+unpublished changes, add only the two supplier links to freshly downloaded live
+HTML, preserving existing CSS/JS versions and all other content. Back up each
+target, verify that removing the inserted line restores its original bytes,
+and publish with the observed generation precondition to reject concurrent edits.
 
 ### Commands
 
