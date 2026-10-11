@@ -32,5 +32,8 @@ def badge_svg(theme: str) -> str:
 
 def build_badges(output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
+    # Rebuilding an existing output directory must not re-publish retired marks.
+    for theme in ("light", "dark"):
+        (output / f"nyte-provider-{theme}.svg").unlink(missing_ok=True)
     for theme in ("light", "dark"):
         (output / f"nyte-enterprise-{theme}.svg").write_text(badge_svg(theme))

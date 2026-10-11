@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from build import build, load_markets
+from member_badges import build_badges
 
 
 class MemberBadgeTests(unittest.TestCase):
@@ -62,6 +63,17 @@ class MemberBadgeTests(unittest.TestCase):
         js = (self.root / "assets" / "badge.js").read_text()
         self.assertIn("navigator.clipboard.writeText", js)
         self.assertIn("copy manually", js)
+
+    def test_rebuild_removes_only_retired_provider_marks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            for theme in ("dark", "light"):
+                (output / f"nyte-provider-{theme}.svg").write_text("old provider badge")
+            (output / "unrelated.svg").write_text("preserve unrelated assets")
+            build_badges(output)
+            self.assertFalse(list(output.glob("nyte-provider-*.svg")))
+            self.assertEqual(len(list(output.glob("nyte-enterprise-*.svg"))), 2)
+            self.assertEqual((output / "unrelated.svg").read_text(), "preserve unrelated assets")
 
 
 if __name__ == "__main__":
