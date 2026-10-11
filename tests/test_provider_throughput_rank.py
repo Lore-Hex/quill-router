@@ -82,7 +82,7 @@ def test_current_markup_preserves_precise_data_and_ignores_model_rows():
         parse_snapshot("<html>failure</html>", now=NOW)
 
 
-def test_cloudflare_credit_preference_does_not_change_measurements_or_explicit_sort(monkeypatch):
+def test_cloudflare_fallback_preference_preserves_measurements_and_explicit_choices(monkeypatch):
     from dataclasses import replace
 
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
@@ -90,21 +90,42 @@ def test_cloudflare_credit_preference_does_not_change_measurements_or_explicit_s
 
     base = next(e for e in MODEL_ENDPOINTS.values() if e.usage_type == "Credits")
     model = MODELS[base.model_id]
-    cloudflare = replace(base, provider="cloudflare-workers-ai", id="cf", prompt_price_microdollars_per_million_tokens=200)
+    cloudflare = replace(base, provider="cloudflare-workers-ai", id="cf", prompt_price_microdollars_per_million_tokens=50)
     direct = replace(base, provider="deepinfra", id="direct", prompt_price_microdollars_per_million_tokens=100)
-    candidates = [(model, direct), (model, cloudflare)]
-    monkeypatch.setattr("trusted_router.routing.measured_provider_rank", lambda provider, sort: 1 if provider == "deepinfra" else 2)
+    candidates = [(model, cloudflare), (model, direct)]
+    monkeypatch.setattr("trusted_router.routing.measured_provider_rank", lambda provider, sort: 1 if provider == "deepinfra" else 0)
     measured = copy.deepcopy(ranking._RANKS)
-    assert _sort_endpoint_candidates(candidates, RoutePreferences())[0][1] == cloudflare
+    assert [e for _, e in _sort_endpoint_candidates(candidates, RoutePreferences())] == [direct, cloudflare]
     for sort in ("price", "latency", "throughput"):
-        assert _sort_endpoint_candidates(candidates, RoutePreferences(sort=sort))[0][1] == direct
+        assert _sort_endpoint_candidates(candidates, RoutePreferences(sort=sort))[0][1] == cloudflare
     assert _sort_endpoint_candidates(candidates, RoutePreferences(order=("deepinfra",)))[0][1] == direct
+    assert _sort_endpoint_candidates(candidates, RoutePreferences(order=("cloudflare-workers-ai",)))[0][1] == cloudflare
     byok = [(model, direct), (model, replace(cloudflare, usage_type="BYOK"))]
-    assert _sort_endpoint_candidates(byok, RoutePreferences())[0][1] == direct
+    assert _sort_endpoint_candidates(byok, RoutePreferences())[0][1].provider == "cloudflare-workers-ai"
     assert ranking._RANKS == measured
 
 
-def test_cloudflare_preference_preserves_primary_model_order():
+@pytest.mark.parametrize("direct_rank,cloudflare_rank,first", [
+    (0, 0, "deepinfra"),
+    (ranking.UNKNOWN_RANK, ranking.UNKNOWN_RANK, "deepinfra"),
+    (2_000, 0, "cloudflare-workers-ai"),
+    (2_000, 2_001, "deepinfra"),
+])
+def test_cloudflare_fallback_floor_respects_health(monkeypatch, direct_rank, cloudflare_rank, first):
+    from dataclasses import replace
+
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+    from trusted_router.routing import RoutePreferences, _sort_endpoint_candidates
+
+    base = next(e for e in MODEL_ENDPOINTS.values() if e.usage_type == "Credits")
+    model = MODELS[base.model_id]
+    candidates = [(model, replace(base, provider=p, id=p)) for p in ("cloudflare-workers-ai", "deepinfra")]
+    ranks = {"deepinfra": direct_rank, "cloudflare-workers-ai": cloudflare_rank}
+    monkeypatch.setattr("trusted_router.routing.measured_provider_rank", lambda provider, sort: ranks[provider])
+    assert _sort_endpoint_candidates(candidates, RoutePreferences())[0][1].provider == first
+
+
+def test_cloudflare_fallback_preserves_primary_model_order():
     from dataclasses import replace
 
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
@@ -113,10 +134,26 @@ def test_cloudflare_preference_preserves_primary_model_order():
     base = next(e for e in MODEL_ENDPOINTS.values() if e.usage_type == "Credits")
     primary = MODELS[base.model_id]
     fallback = replace(primary, id="test/fallback")
-    direct = replace(base, provider="deepinfra", id="direct")
-    cloudflare = replace(base, provider="cloudflare-workers-ai", id="cf", model_id=fallback.id)
-    candidates = [(primary, direct), (fallback, cloudflare)]
-    assert _sort_endpoint_candidates(candidates, RoutePreferences()) == candidates
+    for first_provider, second_provider in (("deepinfra", "cloudflare-workers-ai"), ("cloudflare-workers-ai", "deepinfra")):
+        first = replace(base, provider=first_provider, id="first")
+        second = replace(base, provider=second_provider, id="second", model_id=fallback.id)
+        candidates = [(primary, first), (fallback, second)]
+        assert _sort_endpoint_candidates(candidates, RoutePreferences()) == candidates
+
+
+@pytest.mark.parametrize("provider_options", [{}, {"only": ["cloudflare-workers-ai"]}, {"order": ["cloudflare-workers-ai"], "allow_fallbacks": False}])
+def test_cloudflare_remains_available_when_only_route_or_explicitly_selected(monkeypatch, provider_options):
+    from tests.fixture_routes import serve_on_fixture_route
+    from trusted_router.config import Settings
+    from trusted_router.routing import chat_route_endpoint_candidates
+
+    model_id = "unit/cloudflare-fallback"
+    serve_on_fixture_route(monkeypatch, model_id, "cloudflare-workers-ai", author="unit")
+    candidates = chat_route_endpoint_candidates(
+        {"model": model_id, "provider": {"usage": "credits", **provider_options}},
+        Settings(environment="test"),
+    )
+    assert [endpoint.provider for _, endpoint in candidates] == ["cloudflare-workers-ai"]
 
 
 def test_cloudflare_preference_never_bypasses_privacy_floor(monkeypatch):
