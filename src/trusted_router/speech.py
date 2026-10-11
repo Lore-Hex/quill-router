@@ -61,6 +61,16 @@ GEMINI_OUTPUT_LIMIT = 16384
 GEMINI_VOICES = tuple(
     "Zephyr Puck Charon Kore Fenrir Leda Orus Aoede Callirrhoe Autonoe Enceladus Iapetus Umbriel Algieba Despina Erinome Algenib Rasalgethi Laomedeia Achernar Alnilam Schedar Gacrux Pulcherrima Achird Zubenelgenubi Vindemiatrix Sadachbia Sadaltager Sulafat".split()
 )
+ELEVENLABS_VOICES = (
+    "JBFqnCBsd6RMkjVDRZzb",  # George
+    "EXAVITQu4vr4xnSDxMaL",  # Sarah
+    "Xb7hH8MSUJpSbSDYk0k2",  # Alice
+    "XrExE9yKIg1WjnnlVkGX",  # Matilda
+    "hpp4J3VqNfWAUOO0d1Us",  # Bella
+    "cgSgspJ2msm6clMCkdW9",  # Jessica
+    "FGY2WhTYpPnrIDTdsKH5",  # Laura
+    "pFZP5JQG7iQjIQuC4Bku",  # Lily
+)
 for _rates in _TOKEN_PRICES.values():
     if set(_rates) != {"input", "output"} or any(
         type(v) is not int or v <= 0 for v in _rates.values()
@@ -129,7 +139,7 @@ for _slug, _native, _limit in (
         "elevenlabs",
         _native,
         _PRICES[_id],
-        ("JBFqnCBsd6RMkjVDRZzb",),
+        ELEVENLABS_VOICES,
         ("pcm", "mp3"),
         _limit,
         1,
