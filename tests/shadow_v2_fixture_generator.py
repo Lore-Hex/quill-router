@@ -142,7 +142,7 @@ def build() -> dict[str, Any]:
         oldest_unresolved_age_us=0, dead_count=0)
     health_claim = wrapped(authority="local", slot=NOW // 2, claim_at_us=NOW * 1000000, owner_boot_id="issuer")
     hist = {"bounds_us": [100, 500, 1000, 2000, 5000, 10000, 50000, 200000], "counts": [0] * 9}
-    counter = wrapped(day=DAY, boot="issuer", router_revision=REV, region="us-central1",
+    counter = wrapped(day=DAY, boot="issuer", instance="00000000-0000-0000-0000-000000000001", sequence=1, router_revision=REV, region="us-central1",
         **dict.fromkeys(e.COUNTS + e.CHECKPOINT_FIELDS, 0), eligible_demand=0, event_seq=0,
         durable_event_hwm=0, checkpoint_seq=1, receipt_count=0, receipt_chain_sha256=None,
         loss_count=0, reset_count=0, diagnostics={}, buckets=[],
@@ -226,7 +226,7 @@ def build() -> dict[str, Any]:
         variant("partition-bucket", {"phase": "authorize", "dimensions": dims, **dict.fromkeys(e.COUNTS, 0), "eligible_demand": 0}, "BUCKET"),
         variant("finite-dimensions", dims, "COUNTER_DIMENSIONS"),
         variant("diagnostic-bucket", {**dims, "phase": "worker", "reason": "original_receipt_missing", "count": 1}, "COUNT_DIAGNOSTIC"),
-        variant("legacy-phase-bucket", {**dims, "phase": "settle", **dict.fromkeys(e.LEGACY_PHASE_FIELDS, 0)}, "LEGACY_PHASE_COUNT"),
+        variant("legacy-phase-bucket", {**counter, "terminal_counts": [{**dims, "phase": "settle", **dict.fromkeys(e.LEGACY_PHASE_FIELDS, 0)}]}, "COUNTER"),
     ])
     files["sample.json"].append(variant("counterfactual-prediction", {"prediction": "yes", "reason": "eligible", "health_source": "shadow_observation", "health_slot": NOW // 2, "prediction_basis": "counterfactual_backlog_v2", "basis_sha256": ZERO}, "PREDICTION"))
     files["controls.json"].append(variant("gap-interval", {"interval": interval, "reason": "writer_closure_gap"}, "GAP_INTERVAL"))
@@ -407,7 +407,7 @@ def build() -> dict[str, Any]:
         row_case("counter.json", "combined-diagnostics-" + str(count), obj, "COUNTER", count == 128)
     for field in ("exclusions", "rejections", "drops", "terminal_counts"):
         obj = copy.deepcopy(counter)
-        row = files["counter.json"][4]["object"] if field == "terminal_counts" else rows[0]
+        row = files["counter.json"][4]["object"]["terminal_counts"][0] if field == "terminal_counts" else rows[0]
         obj[field] = [row, copy.deepcopy(row)]
         row_case("counter.json", "duplicate-" + field, obj, "COUNTER", False)
     obj = copy.deepcopy(sample)
@@ -461,6 +461,53 @@ def build() -> dict[str, Any]:
             obj = copy.deepcopy(compared)
             (obj if field == "billing_shadow_binding" else obj["observed"])[field] = value
             files["terminal_compared_full.json"].append({"name": field + "-retained-" + str(index), **wire(obj, "accept")})
+
+    for classification in ("exact", "explained-by-catalog-change"):
+        base = copy.deepcopy(sample)
+        base["classification"] = classification
+        if classification == "explained-by-catalog-change":
+            base.update(booked_micro=3, rebuilt_micro=3, rebuilt_snapshot_hash="f" * 64,
+                        booked_minus_frozen=None, booked_minus_rebuilt=None, rebuilt_minus_frozen=None)
+            base["provenance"]["rebuild_matches_booking_view"] = True
+        for damage in ("excluded", "unknown", "prompt-sum", "reasoning", "null"):
+            obj = copy.deepcopy(base)
+            if damage in ("excluded", "unknown"):
+                obj["eligibility"]["observed"] = False if damage == "excluded" else None
+                obj["eligibility"]["exclusion"] = "service_tier" if damage == "excluded" else None
+                obj["admission"]["prediction"] = "no"
+            else:
+                for field in ("python_usage", "go_usage", "legacy_usage"):
+                    if damage == "null":
+                        obj[field] = None
+                    elif damage == "prompt-sum":
+                        obj[field]["total_prompt_tokens"] += 1
+                    else:
+                        obj[field]["reasoning_tokens"] = obj[field]["output_tokens"] + 1
+            row_case("sample.json", "clean-" + classification + "-" + damage, obj, "SAMPLE", False)
+            files["sample.json"][-1]["expected_gap"] = "clean-requires-eligible" if damage in ("excluded", "unknown") else "clean-requires-normalized-usage"
+            obj["classification"] = "unevaluable"
+            row_case("sample.json", "diagnostic-" + classification + "-" + damage, obj, "SAMPLE", True)
+
+    for classification, observed, damage in itertools.product(
+            ("exact", "explained-by-catalog-change"), (False, None), ("prompt-sum", "reasoning")):
+        obj = copy.deepcopy(sample)
+        obj["classification"] = classification
+        if classification == "explained-by-catalog-change":
+            obj.update(booked_micro=3, rebuilt_micro=3, rebuilt_snapshot_hash="f" * 64,
+                       booked_minus_frozen=None, booked_minus_rebuilt=None, rebuilt_minus_frozen=None)
+            obj["provenance"]["rebuild_matches_booking_view"] = True
+        obj["eligibility"].update(observed=observed, exclusion="service_tier" if observed is False else None)
+        obj["admission"]["prediction"] = "no"
+        for field in ("python_usage", "go_usage", "legacy_usage"):
+            if damage == "prompt-sum":
+                obj[field]["total_prompt_tokens"] += 1
+            else:
+                obj[field]["reasoning_tokens"] = obj[field]["output_tokens"] + 1
+        label = "mixed-clean-" + classification + "-" + str(observed) + "-" + damage
+        row_case("sample.json", label, obj, "SAMPLE", False)
+        files["sample.json"][-1]["expected_gap"] = "clean-requires-eligible"
+        obj["classification"] = "unevaluable"
+        row_case("sample.json", label.replace("mixed-clean", "mixed-diagnostic"), obj, "SAMPLE", True)
 
     return {filename: wrapped(variants=variants) for filename, variants in files.items()}
 

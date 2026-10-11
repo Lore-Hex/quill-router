@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from pydantic import TypeAdapter, create_model
 
+from trusted_router import async_settle_shadow_v2_retained as retained
 from trusted_router.async_settle_shadow_v2_contract import (
     COHORT_EXCLUSIONS,
     RequestedFacts,
@@ -15,6 +17,7 @@ from trusted_router.async_settle_shadow_v2_contract import (
     fit_decision,
     validate_identity,
 )
+from trusted_router.async_settle_shadow_v2_deltas import apply_deltas, broadening
 from trusted_router.async_settle_shadow_v2_evidence import (
     CERTIFICATE_RECORD,
     COMMITTED_IDENTITIES,
@@ -51,11 +54,29 @@ AUDIENCE = "router-shadow-exclusion"
 LIFETIME = 172800
 CERTIFICATE_BYTES = 2048
 HEADER = Schema({"alg": literal("EdDSA"), "kid": text(64), "typ": literal(TYP)}, 132)
-CLAIMS = versioned({**IDENTITY_FIELDS, "iss": name, "aud": literal(AUDIENCE),
-    "iat": integer, "exp": integer, "requested_route": name, "requested_streamed": boolean,
+COMMON_FIELDS = frozenset((*IDENTITY_FIELDS, "iss", "iat", "exp", "async_eligible")) - {"settle_origin", "billing_authority"}
+# Reuse the copied v1 field definitions independently for EVERY actual origin
+# and authority. No repaired/substituted workspace or other identity is valid.
+CommonClaims = create_model("CommonClaims", __base__=retained.Frozen,
+    **{k: (retained.ShadowClaims.model_fields[k].annotation,
+           retained.ShadowClaims.model_fields[k]) for k in COMMON_FIELDS})  # type: ignore[call-overload]
+
+
+def validate_common(claims: dict[str, Any]) -> None:
+    CommonClaims.model_validate({k: claims[k] for k in COMMON_FIELDS})
+    TypeAdapter(retained.TicketClaims.model_fields["async_eligible"].rebuild_annotation()).validate_python(claims["async_eligible"])
+    validate_identity(claims)
+    apply_deltas("certificate", claims)
+    require(claims["settle_origin"] == "typed" or broadening("certificate-origin", claims))
+    require(claims["billing_authority"] == "local" or broadening("certificate-authority", claims))
+
+
+CLAIMS = versioned({**dict.fromkeys(COMMON_FIELDS, lambda value: None),
+    "settle_origin": lambda value: None, "billing_authority": lambda value: None,
+    "aud": literal(AUDIENCE), "requested_route": name, "requested_streamed": boolean,
     "reason": literal(*sorted(COHORT_EXCLUSIONS)), "facts_sha256": digest,
     "candidate_set_sha256": nullable(digest), "router_revision": revision,
-    "original_receipt": LOCATOR, "async_eligible": literal(False)}, 1401, validate_identity)
+    "original_receipt": LOCATOR}, 1401, validate_common)
 
 
 def validate_claims(claims: dict[str, Any], now: int) -> None:

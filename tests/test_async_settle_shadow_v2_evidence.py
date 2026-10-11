@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,13 @@ import pytest
 
 from tests.test_async_settle_shadow_v2_contract import CASES, fixture, proof, signer
 from trusted_router import async_settle_shadow_v2_certificate as cert
+from trusted_router import async_settle_shadow_v2_contract as contract
+from trusted_router import async_settle_shadow_v2_deltas as deltas
 from trusted_router import async_settle_shadow_v2_evidence as e
+from trusted_router import async_settle_shadow_v2_projection as projection
+from trusted_router import async_settle_shadow_v2_retained as retained
 from trusted_router import async_settle_shadow_v2_schema as s
+from trusted_router import billing_snapshot as billing
 from trusted_router.detached_jws import canonical
 
 
@@ -333,7 +339,7 @@ def test_g3_g4_partition_schemas_reject_false_equations() -> None:
 
 def test_no_runtime_imports_or_calls_to_new_modules() -> None:
     root = Path(__file__).parents[1] / "src"
-    new = {"async_settle_shadow_v2_" + suffix for suffix in ("schema", "contract", "certificate", "evidence")}
+    new = {path.stem for path in root.rglob("async_settle_shadow_v2_*.py")}
     for path in root.rglob("*.py"):
         tree = ast.parse(path.read_text())
         if path.stem not in new:
@@ -341,7 +347,10 @@ def test_no_runtime_imports_or_calls_to_new_modules() -> None:
         else:
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("trusted_router"):
-                    assert (node.module == "trusted_router" and all(n.name == "billing_snapshot" for n in node.names)) or node.module.rsplit(".", 1)[-1] in new | {"detached_jws", "async_settle_shadow_wire", "billing_snapshot"}, str(path)
+                    if path.stem == "async_settle_shadow_v2_retained" and node.module == "trusted_router.async_settle_shadow_evidence":
+                        assert [n.name for n in node.names] == ["REASONS"]
+                        continue  # Verbatim local import; private resolver is exercised by the pure import probe.
+                    assert (node.module == "trusted_router" and all(n.name == "billing_snapshot" or n.name in new for n in node.names)) or node.module.rsplit(".", 1)[-1] in new | {"detached_jws", "async_settle_shadow_wire", "billing_snapshot"}, str(path)
                 if isinstance(node, ast.Import):
                     assert all(not n.name.startswith("trusted_router") for n in node.names), str(path)
 
@@ -734,29 +743,6 @@ def test_v1_v2_catalog_change_invariants(change: str | None) -> None:
     assert_sample_conformance(v, change is None)
 
 
-# Port of review-2/parity_scan.py: same object, explicit mutation grid, including
-# optional/empty-array fields the original 3,556-case scan did not reach.
-# This is the ONLY acceptance-difference allowlist. Every entry must be witnessed.
-PARITY_ALLOWLIST = {
-    "certificate-issuer-bound": {"shape": "binding_claims", "condition": "issuer length 129..512",
-        "v1": "accept", "v2": "reject", "design": "§4.1: new certificate issuer is at most 128 bytes"},
-    "certificate-origin": {"shape": "binding_claims", "condition": "settle_origin legacy",
-        "v1": "reject", "v2": "accept", "design": "§4.1: actual origins, not forced typed"},
-    "certificate-authority": {"shape": "binding_claims", "condition": "nonlocal bounded billing authority",
-        "v1": "reject", "v2": "accept", "design": "§4.1: actual authorities, not forced local"},
-    "clean-winner-conflict": {"shape": "sample", "condition": "clean classification with winner_polarity reason",
-        "v1": "accept", "v2": "reject", "design": "§2 / §8 G9: known winner disagreement cannot be clean"},
-    "strict-diagnostic-array": {"shape": "counter", "condition": "empty dict/string in a diagnostic array",
-        "v1": "accept", "v2": "reject", "design": "§7: existing diagnostics arrays; §8 G1 no coercions"},
-    "excluded-admission": {"shape": "sample", "condition": "observed false and admission yes",
-        "v1": "accept", "v2": "reject", "design": "§2 / §5: B is never admission yes"},
-    "strict-dimension": {"shape": "counter", "condition": "integer 0/1 in streamed dimension",
-        "v1": "accept", "v2": "reject", "design": "§7: stream dimension is boolean or null"},
-    "clean-usage": {"shape": "sample", "condition": "clean comparison with all usage null",
-        "v1": "accept", "v2": "reject", "design": "§2: A requires normalized Python/Go/legacy usage"},
-}
-
-
 def parity_paths(value: Any, path: tuple[Any, ...] = ()) -> Any:
     yield path
     if isinstance(value, dict):
@@ -787,6 +773,8 @@ def parity_mutations(value: Any) -> Any:
         yield "control", chr(code)
     for item in ("é", "中", "😀", "\u2028", "x\\y", 'x"y', "x\ty", "a/b", "x y"):
         yield "unicode-escape", item
+    for item in ENUM_VALUES:
+        yield "enum-vocabulary", item
     if isinstance(value, str):
         for length in (0, 1, 40, 41, 64, 65, 128, 129, 512, 513, 2048, 2049):
             yield "domain-string-length", (value[:1] or "a") * length
@@ -813,29 +801,27 @@ def parity_accept(check: Any, value: Any) -> bool:
 
 
 def retained_parity_shapes() -> list[tuple[str, dict[str, Any], Any, Any]]:
-    from scripts.async_settle.shadow_report import COUNTER_FIELDS, validate_counter
+    from scripts.async_settle.shadow_report import validate_counter
     from trusted_router import async_settle_shadow_evidence as olde
     from trusted_router import async_settle_shadow_v2_contract as contract
     from trusted_router import async_settle_shadow_wire as oldw
     from trusted_router.detached_jws import b64encode
 
     def old_sample(v: dict[str, Any]) -> None:
-        old = {k: val for k, val in v.items() if k not in set(e.SAMPLE.fields) - olde.SAMPLE_FIELDS}
-        old.update(v=1, policy_version="shadow-v1")
+        old = projection.sample_projection(v)
         olde.validate_sample(old, v["authorization_day"] + "/" + v["authorization_id"])
 
     def old_counter(v: dict[str, Any]) -> None:
-        old = {k: val for k, val in v.items() if k not in set(e.COUNTER.fields) - COUNTER_FIELDS}
-        old.update(v=1, policy_version="shadow-v1", sequence=v["checkpoint_seq"], instance="00000000-0000-0000-0000-000000000001")
+        old = projection.counter_projection(v)
         validate_counter(v["day"] + "/" + old["instance"], old)
 
     def old_wire(v: dict[str, Any]) -> None:
-        old = {k: val for k, val in v.items() if k not in ("policy_version", "variant")}
-        old["v"] = 1
+        old = projection.wire_projection(v)
         oldw.parse_header((b64encode(canonical(old)),))
 
     sample = copy.deepcopy(fixture("sample")[0]["object"])
     sample["classification"] = "unevaluable"
+    sample["reason_codes"] = ["usage_missing"]
     wire = copy.deepcopy(fixture("terminal_compared_full")[0]["object"])
     # Populate every optional DTO field from the retained defaults.
     wire["observed"] = oldw.billing.Eligibility().model_dump(mode="json")
@@ -849,175 +835,11 @@ def retained_parity_shapes() -> list[tuple[str, dict[str, Any], Any, Any]]:
     counter["terminal_counts"] = [dict(phase="settle", adapter="openai", route_type="chat.completions", streamed=False, **dict.fromkeys(e.LEGACY_PHASE_FIELDS, 0))]
     shapes = [("sample", sample, old_sample, e.SAMPLE), ("wire", wire, old_wire, lambda v: contract.parse_terminal(canonical(v))),
               ("counter", counter, old_counter, e.COUNTER)]
-    # Signed price-binding claims are not redefined by P1. Audit the common
-    # server identity projection against v1 binding validation, holding each
-    # purpose's own extra fields fixed. Never import binding from production v2.
-    from trusted_router import async_settle_shadow_binding as old_binding
-    from trusted_router.detached_jws import b64decode
-    old_claims = json.loads(b64decode(fixture("purpose_rejections")[0]["binding"].split(".")[1]))
-    p = proof()
-    old_claims.update(iat=p["now"], exp=p["now"] + 172800)
-    base = {k: old_claims[k] for k in (*e.IDENTITY_FIELDS, "iss", "iat", "exp", "async_eligible")}
-    claims = {**p["claims"], **base}
-    def old_identity(v: dict[str, Any]) -> None:
-        if set(v) != set(base):
-            raise ValueError("identity")
-        old_binding.validate_claims({**old_claims, **v}, p["now"])
-    def new_identity(v: dict[str, Any]) -> None:
-        if set(v) != set(base):
-            raise ValueError("identity")
-        cert.validate_claims({**claims, **v}, p["now"])
-    shapes.append(("binding_claims", base, old_identity, new_identity))
     return shapes
 
 
-def parity_difference(shape: str, value: dict[str, Any], old: bool, new: bool) -> str | None:
-    if shape == "binding_claims":
-        if old and not new and isinstance(value.get("iss"), str) and 128 < len(value["iss"]) <= 512:
-            return "certificate-issuer-bound"
-        if new and not old and value.get("settle_origin") == "legacy":
-            return "certificate-origin"
-        if new and not old and value.get("billing_authority") in ("spend_lease", "regional_lease", "federated", "deferred_home"):
-            return "certificate-authority"
-    if not old or new:
-        return None
-    if shape == "sample":
-        if value.get("classification") in ("exact", "explained-by-catalog-change") and "winner_polarity" in value.get("reason_codes", []):
-            return "clean-winner-conflict"
-        if value.get("eligibility", {}).get("observed") is False and value.get("admission", {}).get("prediction") == "yes":
-            return "excluded-admission"
-        if value.get("classification") in ("exact", "explained-by-catalog-change") and all(value[k] is None for k in ("python_usage", "go_usage", "legacy_usage")):
-            return "clean-usage"
-    if shape == "counter":
-        if any(type(value[field]) is not list for field in ("exclusions", "rejections", "drops")):
-            return "strict-diagnostic-array"
-        for field in ("counts", "terminal_counts", "exclusions", "rejections", "drops"):
-            if any(type(row.get("streamed")) is int for row in value[field]):
-                return "strict-dimension"
-    return None
-
-
-def test_systematic_retained_parity(tmp_path: Path) -> None:
-    from scripts.async_settle.shadow_report import COUNTER_FIELDS
-    from trusted_router.async_settle_shadow_evidence import SAMPLE_FIELDS
-    rows: list[dict[str, Any]] = []
-    differences: list[dict[str, Any]] = []
-    witnessed: set[str] = set()
-    def compare(shape: str, path: tuple[Any, ...], mutation: str, value: dict[str, Any], old: Any, new: Any) -> None:
-        a, b = parity_accept(old, value), parity_accept(new, value)
-        row = dict(shape=shape, path=list(path), mutation=mutation, old=a, new=b)
-        rows.append(row)
-        if a != b:
-            allowed = parity_difference(shape, value, a, b)
-            row["allowlist"] = allowed
-            differences.append(row)
-            row["changed"] = parity_get(value, path) if path else value
-            if allowed in PARITY_ALLOWLIST:
-                witnessed.add(allowed)
-    for shape, base, old, new in retained_parity_shapes():
-        assert parity_accept(old, base) and parity_accept(new, base), shape
-        for path in parity_paths(base):
-            if path and path[0] in ("v", "policy_version", "variant"):
-                continue
-            retained = SAMPLE_FIELDS if shape == "sample" else COUNTER_FIELDS | {"checkpoint_seq"} if shape == "counter" else base
-            if path and path[0] not in retained:
-                continue
-            for mutation, item in parity_mutations(parity_get(base, path)):
-                if not path:
-                    if mutation not in ("missing-key", "extra-key"):
-                        continue
-                    removed = set(base) - set(item)
-                    if removed and (not removed <= set(retained) or removed & {"v", "policy_version", "variant"}):
-                        continue
-                    value = copy.deepcopy(item)
-                else:
-                    value = copy.deepcopy(base)
-                    parity_get(value, path[:-1])[path[-1]] = item
-                compare(shape, path, mutation, value, old, new)
-        if shape == "sample":
-            import itertools
-            for classification, observed, admission, usage in itertools.product(
-                ("unevaluable", "normalization", "exact", "explained-by-catalog-change"), (True, False, None), ("yes", "no", "unknown"), ("equal", "null", "inconsistent", "disagree")):
-                value = copy.deepcopy(base)
-                value.update(classification=classification)
-                value["eligibility"]["observed"] = observed
-                value["admission"]["prediction"] = admission
-                if usage == "null":
-                    value.update(python_usage=None, go_usage=None, legacy_usage=None)
-                elif usage == "inconsistent":
-                    for field in ("python_usage", "go_usage", "legacy_usage"):
-                        value[field]["reasoning_tokens"] = 2
-                elif usage == "disagree":
-                    value["go_usage"]["total_prompt_tokens"] += 1
-                compare(shape, (), "cross-clean-usage-provenance", value, old, new)
-        if shape == "sample":
-            import itertools
-            for clean, bound, raw, rebuilt, phase, outcome, winner in itertools.product(
-                ("exact", "explained-by-catalog-change"), (False, True), (False, True), (False, True),
-                ("settle", "refund"), ("settled", "refunded", "unknown"), (False, True)):
-                value = copy.deepcopy(base)
-                value.update(classification=clean, reason_codes=["winner_polarity"] if winner else [])
-                value["provenance"].update(binding_verified=bound, raw_matches_body=raw, rebuild_matches_booking_view=rebuilt)
-                value["booking"].update(attempted_kind=phase, outcome=outcome)
-                for delta in ("python_minus_go", "booked_minus_frozen", "rebuilt_minus_frozen", "booked_minus_rebuilt"):
-                    value[delta] = None
-                if clean == "explained-by-catalog-change":
-                    value.update(booked_micro=3, rebuilt_micro=3, rebuilt_snapshot_hash="f" * 64)
-                compare(shape, (), "cross-clean-provenance-booking-winner", value, old, new)
-        if shape == "wire":
-            import itertools
-            for error, terminal, raw, payload in itertools.product((None, "malformed_usage"), (False, True), (False, True), (False, True)):
-                value = copy.deepcopy(base)
-                value.update(go_error=error)
-                for field, present in (("terminal", terminal), ("raw_usage", raw), ("payload_hash", payload)):
-                    if not present:
-                        value[field] = None
-                compare(shape, (), "cross-error-presence", value, old, new)
-        if shape == "counter":
-            for field in ("exclusions", "rejections", "drops", "terminal_counts"):
-                for altered in ("count", "reason", "phase", "adapter"):
-                    value = copy.deepcopy(base)
-                    row = copy.deepcopy(value[field][0])
-                    if altered == "count":
-                        row["count" if field != "terminal_counts" else e.LEGACY_PHASE_FIELDS[0]] += 1
-                    elif altered == "reason":
-                        if field == "terminal_counts":
-                            continue
-                        row["reason"] = "raw_usage"
-                    else:
-                        row[altered] = "refund" if altered == "phase" else "other"
-                    value[field].append(row)
-                    compare(shape, (), "cross-diagnostic-identity-" + altered, value, old, new)
-            for count in (127, 128, 129):
-                value = copy.deepcopy(base)
-                unique = [dict(phase=phase, adapter=a, route_type=r, streamed=stream, reason="usage_missing", count=1)
-                          for phase in ("authorize", "settle", "refund", "worker") for a, r, stream in e.FIXED_DIMENSIONS]
-                value.update(exclusions=unique[:64], rejections=unique[64:count], drops=[])
-                compare(shape, (), "cross-combined-diagnostic-bound", value, old, new)
-        if shape == "binding_claims":
-            for field, values in (("settle_origin", ("typed", "legacy")), ("billing_authority", ("local", "spend_lease", "regional_lease", "federated", "deferred_home"))):
-                for item in values:
-                    value = {**base, field: item}
-                    compare(shape, (field,), "certificate-enum", value, old, new)
-            for delta in (-172801, -172800, -1, 0, 1):
-                for duration in (172799, 172800, 172801):
-                    value = {**base, "iat": base["iat"] + delta, "exp": base["iat"] + delta + duration}
-                    compare(shape, (), "cross-validity-window", value, old, new)
-            for authorization in ("x", "x" * 64, "x" * 65):
-                import uuid
-                value = {**base, "authorization_id": authorization,
-                    "generation_id": "gen-" + uuid.uuid5(uuid.NAMESPACE_URL, "trustedrouter:" + authorization).hex}
-                compare(shape, (), "cross-generation-identity", value, old, new)
-    report = dict(comparisons=len(rows), differences=differences, rows=rows)
-    (tmp_path / "parity.json").write_text(json.dumps(report))
-    if destination := os.environ.get("SHADOW_V2_PARITY_REPORT"):
-        Path(destination).write_text(json.dumps(report))
-    assert not [r for r in differences if r["allowlist"] not in PARITY_ALLOWLIST], differences
-    assert witnessed == set(PARITY_ALLOWLIST), (witnessed, PARITY_ALLOWLIST)
-
-
 @pytest.mark.parametrize("file,vector", [(file, v) for file in ("sample", "counter", "terminal_compared_full")
-    for v in fixture(file) if any(tag in v["name"] for tag in ("-prompt-sum", "-reasoning", "-escaped-", "region-", "-retained-"))], ids=lambda v: v["name"] if isinstance(v, dict) else v)
+    for v in fixture(file) if v.get("expected") == "accept" and any(tag in v["name"] for tag in ("-prompt-sum", "-reasoning", "-escaped-", "region-", "-retained-"))], ids=lambda v: v["name"] if isinstance(v, dict) else v)
 def test_shared_retained_domain_vectors(file: str, vector: dict[str, Any]) -> None:
     from trusted_router import async_settle_shadow_v2_contract as contract
     shape = {"sample": "sample", "counter": "counter", "terminal_compared_full": "wire"}[file]
@@ -1048,31 +870,577 @@ def test_retained_strings_do_not_weaken_locator_aliases() -> None:
         contract.COMPARED_FULL(wire)
 
 
-def test_parity_allowlist_has_live_witnesses() -> None:
-    shapes = {name: (base, old, new) for name, base, old, new in retained_parity_shapes()}
-    seen = set()
-    for shape, damage in (("sample", "exclusion"), ("sample", "usage"), ("sample", "winner"), ("counter", "dimension"), ("counter", "array"), ("binding_claims", "issuer"), ("binding_claims", "origin"), ("binding_claims", "authority")):
-        base, old, new = shapes[shape]
+
+
+# Construction audit: no acceptance-difference matcher exists in this harness.
+
+VENDORED = {
+    "src/trusted_router/async_settle_ticket.py": ("NativeIdentity", "TicketClaims"),
+    "src/trusted_router/storage_models.py": ("generation_id_for_authorization",),
+    "src/trusted_router/async_settle_shadow_binding.py": ("LIFETIME", "FIXTURE_SHA256", "ShadowClaims", "binding_valid_at", "validate_claims"),
+    "src/trusted_router/async_settle_shadow_evidence.py": ("ADAPTERS", "ROUTES", "DIMENSIONS", "COUNT_FIELDS", "PHASE_FIELDS", "REASONS", "CLASSIFICATIONS", "SAMPLE_FIELDS", "OBJECT_FIELDS", "validate_sample"),
+    "scripts/async_settle/shadow_report.py": ("COUNTER_FIELDS", "_uint", "validate_counter", "_validate_counter"),
+}
+
+
+def ast_members(path: Path) -> dict[str, Any]:
+    result = {}
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            result[node.name] = node
+        elif isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            result.setdefault(node.targets[0].id, node)
+    return result
+
+
+@pytest.mark.parametrize("source,member", [(src, member) for src, members in VENDORED.items() for member in members])
+def test_verbatim_retained_pins(source: str, member: str) -> None:
+    root = Path(__file__).parents[1]
+    original = ast_members(root / source)[member]
+    frozen = ast_members(root / "src/trusted_router/async_settle_shadow_v2_retained.py")[member]
+    assert ast.dump(frozen, include_attributes=False) == ast.dump(original, include_attributes=False)
+    if isinstance(original, ast.Assign):
+        module = source.removeprefix("src/").removesuffix(".py").replace("/", ".")
+        actual = getattr(importlib.import_module(module), member)
+        if member == "NativeIdentity":
+            from pydantic import TypeAdapter
+            assert TypeAdapter(getattr(retained, member)).json_schema() == TypeAdapter(actual).json_schema()
+        else:
+            assert getattr(retained, member) == actual
+
+
+def construction_shapes() -> list[tuple[str, str, dict[str, Any]]]:
+    seeds = {name: base for name, base, _, _ in retained_parity_shapes()}
+    result = []
+    for phase in ("settle", "refund"):
+        sample = copy.deepcopy(seeds["sample"])
+        sample["booking"].update(attempted_kind=phase, outcome="settled" if phase == "settle" else "refunded")
+        result.append(("sample-" + phase, "sample", sample))
+        for mode in ("full", "hash-only", "failure"):
+            wire = copy.deepcopy(seeds["wire"])
+            wire["terminal"]["terminal_kind"] = phase
+            if mode == "hash-only":
+                del wire["billing_snapshot"]
+            if mode == "failure":
+                wire.update(terminal=None, payload_hash=None, go_error="malformed_usage")
+            result.append(("wire-" + phase + "-" + mode, "wire", wire))
+    result.append(("counter", "counter", seeds["counter"]))
+    from trusted_router.detached_jws import b64decode
+    binding = json.loads(b64decode(fixture("purpose_rejections")[0]["binding"].split(".")[1]))
+    result.append(("binding", "binding", binding))
+    result.extend((name, name, value) for name, value in (
+        ("observed", billing.Eligibility().model_dump(mode="json")),
+        ("raw-usage", seeds["wire"]["raw_usage"]),
+        ("normal-usage", seeds["wire"]["terminal"]["usage"])))
+    return result
+
+
+CONSTRUCTION = {name: (shape, base) for name, shape, base in construction_shapes()}
+
+
+def schema_paths(schema: dict[str, Any], path: tuple[Any, ...] = (), defs: Any = None) -> set[tuple[Any, ...]]:
+    """Independent DTO inventory, never reading the seed or parity_paths."""
+    defs = schema.get("$defs", {}) if defs is None else defs
+    if "$ref" in schema:
+        return schema_paths(defs[schema["$ref"].split("/")[-1]], path, defs)
+    result = {path}
+    for branch in schema.get("anyOf", []):
+        result |= schema_paths(branch, path, defs)
+    for key, value in schema.get("properties", {}).items():
+        result |= schema_paths(value, (*path, key), defs)
+    if "items" in schema:
+        result |= schema_paths(schema["items"], (*path, 0), defs)
+    return result
+
+
+def independent_paths(name: str) -> set[tuple[Any, ...]]:
+    # Original source constants/DTOs own this inventory, not v2 Schema.fields.
+    from scripts.async_settle.shadow_report import COUNTER_FIELDS
+    from trusted_router import async_settle_shadow_binding as old_binding
+    from trusted_router import async_settle_shadow_evidence as old
+    from trusted_router import async_settle_shadow_wire as old_wire
+    shape, _ = CONSTRUCTION[name]
+    if shape == "sample":
+        paths = {(), *((k,) for k in old.SAMPLE_FIELDS)}
+        for key, fields in old.OBJECT_FIELDS.items():
+            paths.update((key, field) for field in fields.split())
+        for key in ("python_usage", "go_usage", "legacy_usage", "raw_usage"):
+            model = billing.RawUsage if key == "raw_usage" else billing.NormalizedUsage
+            paths |= schema_paths(model.model_json_schema(), (key,))
+        paths.add(("reason_codes", 0))
+        return paths
+    if shape == "counter":
+        paths = {(), *((k,) for k in COUNTER_FIELDS)}
+        for key, fields in (("counts", {"adapter", "route_type", "streamed", *old.COUNT_FIELDS}),
+                            ("terminal_counts", {"adapter", "route_type", "streamed", "phase", *old.PHASE_FIELDS}),
+                            *((k, {"phase", "adapter", "route_type", "streamed", "reason", "count"}) for k in ("exclusions", "rejections", "drops"))):
+            paths.add((key, 0))
+            paths.update((key, 0, field) for field in fields)
+        paths.update((key, 0) for key in ("authorize_shadow_hist", "evidence_write_hist"))
+        # Extract the retained validator's observer_fields assignment, not a v2 declaration.
+        node = ast_members(Path(__file__).parents[1] / "scripts/async_settle/shadow_report.py")["_validate_counter"]
+        observer = next(n.value for n in ast.walk(node) if isinstance(n, ast.Assign)
+                        and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "observer_fields")
+        fields = eval(compile(ast.Expression(observer), "<observer-schema>", "eval"), {"set": set})  # noqa: S307 - repository AST only
+        paths.update(("admission_observer", k) for k in fields)
+        return paths
+    if shape == "wire":
+        fields = old_wire.KEYS - ({"billing_snapshot"} if "hash-only" in name else set())
+        paths = {(), *((k,) for k in fields)}
+        for key, model in (("billing_snapshot", billing.BillingSnapshot), ("terminal", billing.TerminalEnvelope),
+                           ("observed", billing.Eligibility), ("raw_usage", billing.RawUsage)):
+            if key in fields and not (key == "terminal" and "failure" in name):
+                paths |= schema_paths(model.model_json_schema(), (key,))
+        return paths
+    model = {"binding": old_binding.ShadowClaims, "observed": billing.Eligibility,
+             "raw-usage": billing.RawUsage, "normal-usage": billing.NormalizedUsage}[shape]
+    return schema_paths(model.model_json_schema())
+
+
+def exercised_paths(name: str) -> set[tuple[Any, ...]]:
+    shape, base = CONSTRUCTION[name]
+    dropped = projection.SAMPLE_ADDITIONS if shape == "sample" else projection.COUNTER_ADDITIONS if shape == "counter" else {"variant", "policy_version"} if shape == "wire" else set()
+    return {path for path in parity_paths(base) if not path or path[0] not in dropped}
+
+
+def enum_inventory() -> set[Any]:
+    values: set[Any] = set(retained.REASONS) | set(deltas.NEW_COUNTER_REASONS)
+    root = Path(__file__).parents[1]
+    for path in (*VENDORED, "src/trusted_router/async_settle_shadow_wire.py",
+                 "src/trusted_router/async_settle_shadow_v2_deltas.py",
+                 "src/trusted_router/async_settle_shadow_v2_evidence.py",
+                 "src/trusted_router/async_settle_shadow_v2_certificate.py",
+                 "src/trusted_router/async_settle_shadow_v2_contract.py"):
+        for node in ast.walk(ast.parse((root / path).read_text())):
+            elements = node.elts if isinstance(node, (ast.Set, ast.Tuple, ast.List)) else node.args if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "literal" else ()
+            values.update(item.value for item in elements if isinstance(item, ast.Constant)
+                          and isinstance(item.value, (str, bool, int)))
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            values.update(value.get("enum", []))
+            if "const" in value:
+                values.add(value["const"])
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    for model in (billing.BillingSnapshot, billing.TerminalEnvelope, billing.RawUsage,
+                  billing.NormalizedUsage, billing.Eligibility, retained.ShadowClaims):
+        visit(model.model_json_schema())
+    return values
+
+
+ENUM_VALUES = sorted(enum_inventory(), key=lambda v: (type(v).__name__, str(v)))
+
+
+def required_mutation_counts(value: Any) -> dict[str, int]:
+    counts = {"type": 8, "integer-boundary": 6, "string-length": 12,
+              "printable-ascii": 95, "control": 33, "unicode-escape": 9,
+              "enum-vocabulary": len(ENUM_VALUES)}
+    if isinstance(value, str):
+        counts["domain-string-length"] = 12
+    if isinstance(value, dict):
+        counts.update({"extra-key": 1, "missing-key": len(value)})
+    if isinstance(value, list):
+        counts.update({"duplicate-identity": 1, "reordered-array": 1})
+        if value and isinstance(value[0], dict):
+            counts["duplicate-identity-different-count"] = 1
+    return counts
+
+
+REQUIRED_CLASSES = {"type", "integer-boundary", "string-length", "printable-ascii", "control", "unicode-escape", "enum-vocabulary"}
+
+
+@pytest.mark.parametrize("name", list(CONSTRUCTION))
+def test_retained_coverage_inventory(name: str) -> None:
+    expected = independent_paths(name)
+    assert exercised_paths(name) == expected
+    _, base = CONSTRUCTION[name]
+    for path in expected:
+        value = parity_get(base, path)
+        classes = {kind for kind, _ in parity_mutations(value)}
+        assert REQUIRED_CLASSES <= classes, (name, path, classes)
+        assert Counter(kind for kind, _ in parity_mutations(value)) == required_mutation_counts(value)
+        if isinstance(value, dict):
+            assert {"extra-key", "missing-key"} <= classes
+        if isinstance(value, list):
+            assert value, ("unpopulated homogeneous array", name, path)
+            assert {"duplicate-identity", "reordered-array"} <= classes
+    # Assert the actual scheduled work as well as the walk; losing a group fails.
+    assert {path for case, path in PARITY_CASES if case == name} == expected
+
+
+def v1_delegate(shape: str, value: Any) -> None:
+    from scripts.async_settle.shadow_report import validate_counter
+    from trusted_router import async_settle_shadow_binding as old_binding
+    from trusted_router import async_settle_shadow_evidence as old
+    from trusted_router import async_settle_shadow_wire as old_wire
+    from trusted_router.detached_jws import b64encode
+    if shape == "sample":
+        old.validate_sample(projection.sample_projection(value), value["authorization_day"] + "/" + value["authorization_id"])
+    elif shape == "counter":
+        validate_counter(value["day"] + "/" + value["instance"], projection.counter_projection(value))
+    elif shape == "wire":
+        old_wire.parse_header((b64encode(canonical(projection.wire_projection(value))),))
+    elif shape == "binding":
+        old_binding.validate_claims(projection.binding_projection(value), CONSTRUCTION["binding"][1]["iat"])
+    else:
+        model = {"observed": billing.Eligibility, "raw-usage": billing.RawUsage, "normal-usage": billing.NormalizedUsage}[shape]
+        model.model_validate(value)
+
+
+def v2_acceptor(shape: str, value: Any) -> None:
+    if shape in ("sample", "counter", "wire"):
+        {"sample": e.SAMPLE, "counter": e.COUNTER, "wire": lambda v: contract.parse_terminal(canonical(v))}[shape](value)
+    elif shape == "binding":
+        projection.validate_binding_claims(value, CONSTRUCTION["binding"][1]["iat"])
+    else:
+        {"observed": contract.observed, "raw-usage": contract.wire_raw_usage, "normal-usage": contract.NORMAL_USAGE}[shape](value)
+
+
+def constructed_acceptor(shape: str, value: Any) -> None:
+    v1_delegate(shape, value)
+    if shape in ("sample", "counter"):
+        schema = e.SAMPLE if shape == "sample" else e.COUNTER
+        # Only v2 parts; retained values were already checked by the LIVE v1.
+        s.require(type(value) is dict and set(value) == set(schema.fields))
+        s.decode(canonical(value), schema.limit, retained_strings=True)
+        for key, check in (e.SAMPLE_NEW_FIELDS if shape == "sample" else e.COUNTER_NEW_FIELDS).items():
+            check(value[key])
+        s.require(type(value["v"]) is int and value["v"] == 2 and value["policy_version"] == "shadow-v2")
+        (e._sample if shape == "sample" else e._counter)(value)
+    elif shape == "wire":
+        s.decode(canonical(value), 8192, retained_strings=True)
+        s.require(value["variant"] == "compared" and type(value["v"]) is int and value["v"] == 2 and value["policy_version"] == "shadow-v2")
+    for delta in deltas.DELTAS:
+        if delta.shape == shape and delta.direction != "v2-only-broaden":
+            assert not delta.predicate(value)
+
+
+def accepts(check: Any, value: Any) -> bool:
+    try:
+        check(value)
+        return True
+    except (ValueError, TypeError, KeyError, OverflowError, AttributeError, OSError, AssertionError):
+        return False
+
+
+PARITY_CASES = [(name, path) for name in CONSTRUCTION for path in sorted(exercised_paths(name), key=str)]
+
+
+@pytest.mark.parametrize("name,path", PARITY_CASES, ids=[name + ":" + ".".join(map(str, path)) for name, path in PARITY_CASES])
+def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
+    shape, base = CONSTRUCTION[name]
+    executed: Counter[str] = Counter()
+    for mutation, item in parity_mutations(parity_get(base, path)):
+        executed[mutation] += 1
         value = copy.deepcopy(base)
-        if damage == "exclusion":
-            value["eligibility"]["observed"] = False
-        elif damage == "usage":
-            value.update(classification="exact", python_usage=None, go_usage=None, legacy_usage=None)
-        elif damage == "winner":
-            value.update(classification="exact", reason_codes=["winner_polarity"], booked_minus_frozen=None, booked_minus_rebuilt=None)
-        elif damage == "dimension":
+        if path:
+            parity_get(value, path[:-1])[path[-1]] = item
+        else:
+            value = item
+        actual = accepts(lambda v: v2_acceptor(shape, v), value)
+        expected = accepts(lambda v: constructed_acceptor(shape, v), value)
+        assert actual == expected, (name, path, mutation, item, actual, expected)
+    assert executed == required_mutation_counts(parity_get(base, path))
+
+
+@pytest.mark.parametrize("shape", ["sample", "counter", "wire", "binding", "observed", "raw-usage", "normal-usage"])
+def test_projection_preserves_every_retained_value(shape: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    name = next(name for name, (kind, _) in CONSTRUCTION.items() if kind == shape)
+    base = CONSTRUCTION[name][1]
+    project = {"sample": projection.sample_projection, "counter": projection.counter_projection,
+               "wire": projection.wire_projection, "binding": projection.binding_projection,
+               "observed": projection.observed_projection, "raw-usage": projection.usage_projection,
+               "normal-usage": projection.usage_projection}[shape]
+    dropped = projection.SAMPLE_ADDITIONS if shape == "sample" else projection.COUNTER_ADDITIONS if shape == "counter" else {"variant", "policy_version"} if shape == "wire" else set()
+    for path in independent_paths(name) - {(), ("v",), ("policy_version",)}:
+        value = copy.deepcopy(base)
+        parity_get(value, path[:-1])[path[-1]] = {"sentinel": [None, "untouched", 1]}
+        expected = {k: v for k, v in value.items() if k not in dropped}
+        if shape in ("sample", "counter", "wire"):
+            expected["v"] = 1
+        if shape in ("sample", "counter"):
+            expected["policy_version"] = "shadow-v1"
+        assert project(value) == expected, (shape, path)
+        assert parity_get(project(value), path) is parity_get(value, path) or path[0] in ("exclusions", "rejections", "drops")
+    assert project({**base, "unknown_retained_field": 17})["unknown_retained_field"] == 17
+    # Spy on the actual delegate, not just the projection helper.
+    if shape in ("sample", "counter"):
+        captured = []
+        def spy(*args: Any, **kwargs: Any) -> None:
+            captured.append(args[0] if shape == "sample" else args[1])
+            raise ValueError("spy reached")
+        monkeypatch.setattr(retained, "validate_" + shape, spy)
+        for path in independent_paths(name) - {(), ("v",), ("policy_version",)}:
+            value = copy.deepcopy(base)
+            parity_get(value, path[:-1])[path[-1]] = "mutation-arrives-unchanged"
+            # Identity arguments are evaluated before the delegate; use strings.
+            with pytest.raises(ValueError):
+                (e.SAMPLE if shape == "sample" else e.COUNTER)(value)
+            assert parity_get(captured[-1], path) == "mutation-arrives-unchanged"
+
+
+def clean_sample(classification: str = "exact") -> dict[str, Any]:
+    value = copy.deepcopy(fixture("sample")[0]["object"])
+    value["classification"] = classification
+    if classification == "explained-by-catalog-change":
+        value.update(booked_micro=3, rebuilt_micro=3, rebuilt_snapshot_hash="f" * 64,
+                     booked_minus_frozen=None, booked_minus_rebuilt=None, rebuilt_minus_frozen=None)
+        value["provenance"]["rebuild_matches_booking_view"] = True
+    return value
+
+
+@pytest.mark.parametrize("classification", ["exact", "explained-by-catalog-change"])
+@pytest.mark.parametrize("damage", ["excluded", "unknown", "prompt-sum", "reasoning", "null"])
+def test_clean_design_assertions(classification: str, damage: str) -> None:
+    value = clean_sample(classification)
+    if damage in ("excluded", "unknown"):
+        value["eligibility"]["observed"] = False if damage == "excluded" else None
+        value["admission"]["prediction"] = "no"
+    else:
+        for field in ("python_usage", "go_usage", "legacy_usage"):
+            if damage == "null":
+                value[field] = None
+            elif damage == "prompt-sum":
+                value[field]["total_prompt_tokens"] += 1
+            else:
+                value[field]["reasoning_tokens"] = value[field]["output_tokens"] + 1
+    v1_delegate("sample", value)
+    for run in (e.SAMPLE, e.SAMPLE.serialize, lambda v: e.SAMPLE.parse(canonical(v))):
+        with pytest.raises(ValueError):
+            run(value)
+    value["classification"] = "unevaluable"
+    e.SAMPLE(value)
+    value["deployment"]["instance"] = ""
+    with pytest.raises(ValueError):
+        e.SAMPLE(value)
+
+
+# Expectations are hand-written, independent of the production predicates.
+DELTA_NAMES = {
+    "clean-requires-eligible", "clean-requires-normalized-usage", "clean-winner-conflict",
+    "excluded-admission", "strict-dimension", "strict-diagnostic-array", "v2-counter-reasons",
+    "wire-wrapper-size", "sample-wrapper-size", "counter-wrapper-size",
+    "certificate-issuer-bound", "certificate-origin", "certificate-authority",
+}
+
+
+def test_delta_inventory() -> None:
+    assert {d.name for d in deltas.DELTAS} == DELTA_NAMES
+    assert len(deltas.DELTAS) == len(DELTA_NAMES)
+    assert all(d.design.startswith("§") and callable(d.predicate) for d in deltas.DELTAS)
+
+
+@pytest.mark.parametrize("name", sorted(DELTA_NAMES))
+def test_independent_delta_oracle(name: str) -> None:
+    delta = next(d for d in deltas.DELTAS if d.name == name)
+    if name.endswith("wrapper-size"):
+        limit = 65536 if name.startswith("counter") else 8192
+        for offset, expected in ((-1, False), (0, False), (1, True)):
+            value = {"pad": ""}
+            value["pad"] = "x" * (limit + offset - len(canonical(value)))
+            assert len(canonical(value)) == limit + offset
+            assert delta.predicate(value) is expected
+        # Size is also charged on encoded transport, independently of retained
+        # validity. Valid near-boundary padding cannot excuse a mixed defect.
+        shape = name.split("-", 1)[0]
+        seed = {"sample": "sample-settle", "counter": "counter", "wire": "wire-settle-full"}[shape]
+        base = copy.deepcopy(CONSTRUCTION[seed][1])
+        parser = {"sample": e.SAMPLE.parse, "counter": e.COUNTER.parse, "wire": contract.parse_terminal}[shape]
+        for offset in (-1, 0, 1):
+            raw = canonical(base)
+            padded = raw + b" " * (limit + offset - len(raw))
+            assert accepts(parser, padded) is (offset <= 0)
+            damaged = copy.deepcopy(base)
+            if shape == "sample":
+                damaged["deployment"]["instance"] = ""
+            elif shape == "counter":
+                damaged["region"] = ""
+            else:
+                damaged["terminal"]["workspace_id"] = "bad space"
+            raw = canonical(damaged)
+            assert not accepts(parser, raw + b" " * (limit + offset - len(raw)))
+        return
+    if name.startswith("certificate"):
+        value = proof()["claims"]
+        field, witness, near = {
+            "certificate-issuer-bound": ("iss", "x" * 129, "x" * 128),
+            "certificate-origin": ("settle_origin", "legacy", "typed"),
+            "certificate-authority": ("billing_authority", "federated", "local"),
+        }[name]
+        value[field] = witness
+        assert delta.predicate(value) is True
+        assert accepts(lambda v: cert.validate_claims(v, v["iat"]), value) is (name != "certificate-issuer-bound")
+        value[field] = near
+        assert delta.predicate(value) is False
+        cert.validate_claims(value, value["iat"])
+        value["workspace_id"] = "bad space"
+        assert delta.predicate(value) is False  # A different failure cannot be called issuer/origin/authority.
+        with pytest.raises(ValueError):
+            cert.validate_claims(value, value["iat"])
+        value[field] = witness
+        with pytest.raises(ValueError):
+            cert.validate_claims(value, value["iat"])
+        return
+    if name == "v2-counter-reasons":
+        for reason, expected in (("candidate_receipt_size", True), ("usage_missing", False), ("candidate_receipt_sizeX", False)):
+            row = dict(phase="worker", adapter="unknown", route_type="unknown", streamed=None, reason=reason, count=1)
+            assert delta.predicate(row) is expected
+            value = copy.deepcopy(CONSTRUCTION["counter"][1])
+            value["drops"] = [row]
+            assert accepts(e.COUNTER, value) is (reason != "candidate_receipt_sizeX")
+            row["count"] = -1
+            assert not accepts(e.COUNTER, value)
+        return
+    if name.startswith("strict"):
+        value = copy.deepcopy(CONSTRUCTION["counter"][1])
+        if name == "strict-dimension":
             value["counts"][0]["streamed"] = 0
-        elif damage == "issuer":
-            value["iss"] = "x" * 129
-        elif damage == "origin":
-            value["settle_origin"] = "legacy"
-        elif damage == "authority":
-            value["billing_authority"] = "federated"
         else:
             value["drops"] = {}
-        a, b = parity_accept(old, value), parity_accept(new, value)
-        assert a != b
-        key = parity_difference(shape, value, a, b)
-        assert key in PARITY_ALLOWLIST
-        seen.add(key)
-    assert seen == set(PARITY_ALLOWLIST)
+        assert delta.predicate(value) is True
+        v1_delegate("counter", value)
+        assert not accepts(e.COUNTER, value)
+        if name == "strict-dimension":
+            value["counts"][0]["streamed"] = False
+        else:
+            value["drops"] = []
+        assert delta.predicate(value) is False
+        e.COUNTER(value)
+        value["region"] = ""
+        assert delta.predicate(value) is False
+        assert not accepts(e.COUNTER, value)
+        return
+    value = clean_sample()
+    if name == "clean-requires-eligible":
+        value["eligibility"]["observed"] = None
+    elif name == "clean-requires-normalized-usage":
+        for key in ("python_usage", "go_usage", "legacy_usage"):
+            value[key]["total_prompt_tokens"] += 1
+    elif name == "clean-winner-conflict":
+        value.update(reason_codes=["winner_polarity"], booked_minus_frozen=None, booked_minus_rebuilt=None)
+    else:
+        value["classification"] = "unevaluable"
+        value["eligibility"]["observed"] = False
+    assert delta.predicate(value) is True
+    v1_delegate("sample", value)
+    assert not accepts(e.SAMPLE, value)
+    if name == "excluded-admission":
+        value["admission"]["prediction"] = "no"
+    else:
+        value["classification"] = "unevaluable"
+    assert delta.predicate(value) is False
+    e.SAMPLE(value)
+    value["deployment"]["instance"] = ""
+    assert delta.predicate(value) is False
+    assert not accepts(e.SAMPLE, value)
+
+
+@pytest.mark.parametrize("origin", ["typed", "legacy"])
+@pytest.mark.parametrize("authority", ["local", "spend_lease", "regional_lease", "federated", "deferred_home"])
+def test_certificate_common_constraints_in_every_branch(origin: str, authority: str) -> None:
+    base = proof()["claims"]
+    base.update(settle_origin=origin, billing_authority=authority)
+    cert.validate_claims(base, base["iat"])
+    for field in cert.COMMON_FIELDS:
+        # Invalid independently of origin/authority and issuer: no safe substitutions.
+        damaged = {**base, field: -1 if type(base[field]) is int else 0 if type(base[field]) is bool else "bad space"}
+        assert not accepts(lambda v: cert.validate_claims(v, base["iat"]), damaged), (origin, authority, field)
+    for field in ("settle_origin", "billing_authority"):
+        assert not accepts(lambda v: cert.validate_claims(v, base["iat"]), {**base, field: "unsupported"})
+
+
+@pytest.mark.parametrize("field", ["exclusions", "rejections", "drops"])
+@pytest.mark.parametrize("reason", sorted(retained.REASONS | deltas.NEW_COUNTER_REASONS))
+def test_all_counter_reason_members(field: str, reason: str) -> None:
+    value = copy.deepcopy(CONSTRUCTION["counter"][1])
+    value[field][0]["reason"] = reason
+    e.COUNTER(value)
+    old = projection.counter_projection(value)
+    assert (len(old[field]) == 0) is (reason in deltas.NEW_COUNTER_REASONS)
+    value[field][0]["count"] = -1
+    assert not accepts(e.COUNTER, value)
+
+
+@pytest.mark.parametrize("date,expected", [("2300-01-01", False), ("2300-01-02", True)])
+def test_inherited_calendar_float_boundary(date: str, expected: bool) -> None:
+    value = copy.deepcopy(CONSTRUCTION["sample-settle"][1])
+    value.update(authorize_at_us=10413878399999999, authorization_day=date,
+                 observed_at_us=10413878400000001, booking_observed_at_us=10413878400000002)
+    value["original_terminal_receipt"]["day"] = "2300-01-02"
+    assert accepts(lambda v: v1_delegate("sample", v), value) is expected
+    assert accepts(e.SAMPLE, value) is expected
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_wire_aggregate_byte_boundary(offset: int) -> None:
+    value = copy.deepcopy(CONSTRUCTION["wire-settle-full"][1])
+    value["observed"]["authority"] = ""
+    value["observed"]["authority"] = "x" * (8192 + offset - len(canonical(value)))
+    assert len(canonical(value)) == 8192 + offset
+    v1_delegate("wire", value)
+    assert accepts(lambda v: contract.parse_terminal(canonical(v)), value) is (offset <= 0)
+    assert next(d for d in deltas.DELTAS if d.name == "wire-wrapper-size").predicate(value) is (offset > 0)
+    value["terminal"]["workspace_id"] = "bad space"
+    assert not accepts(lambda v: contract.parse_terminal(canonical(v)), value)
+
+
+@pytest.mark.parametrize("name,schema,base", CASES, ids=[name for name, _, _ in CASES])
+def test_all_sized_objects_encoded_boundary(name: str, schema: s.Schema, base: Any) -> None:
+    raw = canonical(base)
+    for offset in (-1, 0, 1):
+        length = schema.limit + offset
+        if length < len(raw):
+            continue  # A base exactly at its limit has no whitespace to remove.
+        padded = raw + b" " * (length - len(raw))
+        if offset <= 0:
+            assert schema.parse(padded) == base, name
+        else:
+            with pytest.raises(ValueError):
+                schema.parse(padded)
+
+
+@pytest.mark.parametrize("shape", ["wire", "binding", "observed", "raw-usage", "normal-usage"])
+def test_dto_projection_reaches_delegate_unchanged(shape: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    name = next(name for name, (kind, _) in CONSTRUCTION.items() if kind == shape)
+    base = CONSTRUCTION[name][1]
+    captured: list[Any] = []
+    def spy(value: Any, *args: Any, **kwargs: Any) -> Any:
+        if shape == "wire":
+            from trusted_router.detached_jws import b64decode
+            value = json.loads(b64decode(value[0]))
+        captured.append(value)
+        raise ValueError("captured")
+    if shape == "wire":
+        monkeypatch.setattr(contract, "retained_header", spy)
+    elif shape == "binding":
+        monkeypatch.setattr(retained, "validate_claims", spy)
+    else:
+        model = {"observed": billing.Eligibility, "raw-usage": billing.RawUsage, "normal-usage": billing.NormalizedUsage}[shape]
+        monkeypatch.setattr(model, "model_validate", spy)
+    for path in independent_paths(name) - {(), ("v",), ("policy_version",)}:
+        value = copy.deepcopy(base)
+        parity_get(value, path[:-1])[path[-1]] = "unchanged-probe"
+        captured.clear()
+        with pytest.raises(ValueError):
+            v2_acceptor(shape, value)
+        assert len(captured) == 1, (shape, path)
+        assert parity_get(captured[0], path) == "unchanged-probe", (shape, path)
+
+
+def test_counter_validation_stays_pure_at_runtime() -> None:
+    script = '''
+import json, sys
+from pathlib import Path
+from trusted_router.async_settle_shadow_v2_evidence import COUNTER
+counter = json.loads(Path("tests/fixtures/async_settlement/shadow_v2/counter.json").read_bytes())["variants"][0]["object"]
+COUNTER(counter)
+assert "trusted_router.async_settle_shadow_evidence" not in sys.modules
+assert not any(n.startswith(("trusted_router.services", "trusted_router.storage", "trusted_router.routes")) or n == "trusted_router.main" for n in sys.modules)
+'''
+    result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).parents[1],  # noqa: S603 - fixed local probe
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+        capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr

@@ -1,11 +1,17 @@
 """Dormant shadow-v2 cohort and terminal transport contract; no live dependencies."""
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from trusted_router import async_settle_shadow_v2_retained as retained
 from trusted_router import billing_snapshot as billing
+from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
+from trusted_router.async_settle_shadow_v2_projection import (
+    observed_projection,
+    usage_projection,
+    wire_projection,
+)
 from trusted_router.async_settle_shadow_v2_schema import (
     POLICY,
     Schema,
@@ -29,7 +35,7 @@ from trusted_router.async_settle_shadow_wire import parse_header as retained_hea
 from trusted_router.async_settle_shadow_wire import snapshot_from_object
 from trusted_router.detached_jws import b64decode, b64encode, canonical
 
-FIXTURE_MANIFEST_SHA256 = "438d18b01f141fa84efb166426fc55fd569ffd2616991ee0c9d3df378cc27990"
+FIXTURE_MANIFEST_SHA256 = "dc364e152a770b2904c41f13b3af54625da4fcb7652571129e7481e195b1d9e7"
 RECEIPT_BYTES = 2048
 CANDIDATE_BYTES = 65536
 CANDIDATES = 128
@@ -69,7 +75,7 @@ CANDIDATE_SET = array(CANDIDATE, CANDIDATES, 1)
 
 def generation_id(authorization_id: str) -> str:
     identity(authorization_id)
-    return "gen-" + uuid.uuid5(uuid.NAMESPACE_URL, "trustedrouter:" + authorization_id).hex
+    return retained.generation_id_for_authorization(authorization_id)
 
 
 def validate_identity(value: Any) -> None:
@@ -182,7 +188,6 @@ SERVER_OBSERVATION = Schema({"authorization_id": identity, "terminal_kind": lite
     "route_type": nullable(name), "streamed": nullable(boolean)}, 1024)
 EXCLUDED = versioned({"variant": literal("excluded"), "certificate": text(2048, r"[A-Za-z0-9_.-]+"),
                       "attempt": ATTEMPT, "go_revision": revision}, EXCLUDED_BYTES)
-RAW_USAGE = Schema({k: integer for k in "input_tokens output_tokens cache_read_tokens cache_creation_tokens reasoning_tokens".split()}, 1024)
 def _retained_schema(model: type[billing.Frozen], limit: int, validator: Any = None) -> Schema:
     # Exact keys come from the retained DTO; its validator owns the value domain.
     def validate(value: Any) -> None:
@@ -193,51 +198,46 @@ def _retained_schema(model: type[billing.Frozen], limit: int, validator: Any = N
     return Schema(dict.fromkeys(model.model_fields, lambda value: None), limit, validate)
 
 
-def _retained_terminal(value: Any) -> None:
-    # Use the wire validator's nonzero-refund diagnostic path as well as its
-    # native ID bounds. A billing DTO alone would reject that retained evidence.
-    retained_header((b64encode(canonical({"v": 1, "billing_shadow_binding": "",
-        "raw_usage": {"input_tokens": 0, "output_tokens": 0}, "observed": {},
-        "terminal": value, "payload_hash": "0" * 64, "go_error": None,
-        "go_evaluator": "billing-v1", "go_revision": "0" * 40, "handoff_prepare_us": 0})),))
-
-
-def _retained_candidate(value: Any) -> None:
-    require(type(value.get("tiers")) is list)
-    billing.Candidate.model_validate({**value, "tiers": tuple(value["tiers"])})
-    require(len(value["endpoint_id"]) <= 128 and len(value["model_id"]) <= 128)
-
-
-NORMAL_USAGE = _retained_schema(billing.NormalizedUsage, 1024)
-TERMINAL = _retained_schema(billing.TerminalEnvelope, 4096, _retained_terminal)
-RATES = _retained_schema(billing.Rates, 1024)
-TIER = _retained_schema(billing.Tier, 1200)
-PRICED_CANDIDATE = _retained_schema(billing.Candidate, LOCAL_BYTES, _retained_candidate)
+NORMAL_USAGE = _retained_schema(billing.NormalizedUsage, 1024,
+    lambda v: billing.NormalizedUsage.model_validate(usage_projection(v)))
 SNAPSHOT = _retained_schema(billing.BillingSnapshot, INLINE_BYTES, snapshot_from_object)
 
 
 def observed(value: Any) -> None:
-    billing.Eligibility.model_validate(value)
+    billing.Eligibility.model_validate(observed_projection(value))
 
 
 def wire_raw_usage(value: Any) -> None:
-    billing.RawUsage.model_validate(value)
+    billing.RawUsage.model_validate(usage_projection(value))
 
 
 def _compared(v: Any) -> None:
     # This module is pure transitively. Keep the retained DTO/refund special
     # case in its original validator instead of maintaining a second parser.
-    retained = {k: value for k, value in v.items() if k not in ("variant", "policy_version")}
-    retained["v"] = 1
-    retained_header((b64encode(canonical(retained)),))
+    try:
+        retained_header((b64encode(canonical(wire_projection(v))),))
+    except ValueError as exc:
+        raise ValueError("evidence_schema_gap") from exc
+    apply_deltas("wire", v)
+
+
+class ComparedSchema(Schema):
+    def __call__(self, value: Any) -> None:
+        try:
+            _compared(value)
+        except (KeyError, TypeError, AttributeError, OverflowError) as exc:
+            raise ValueError("evidence_schema_gap") from exc
+        super().__call__(value)
 
 
 # Only the new discriminator is typed here. The pure retained parser owns all
 # retained fields and cross-field rules, including optional snapshot semantics.
 COMPARED_FIELDS = {"variant": literal("compared"),
                    **dict.fromkeys(RETAINED_WIRE_FIELDS - {"v", "billing_snapshot"}, lambda value: None)}
-COMPARED_FULL = versioned({**COMPARED_FIELDS, "billing_snapshot": SNAPSHOT}, WIRE_BYTES, _compared, retained_strings=True)
-COMPARED_HASH_ONLY = versioned(COMPARED_FIELDS, WIRE_BYTES, _compared, retained_strings=True)
+COMPARED_FULL = ComparedSchema({"v": literal(2), "policy_version": literal(POLICY),
+    **COMPARED_FIELDS, "billing_snapshot": lambda value: None}, WIRE_BYTES, retained_strings=True)
+COMPARED_HASH_ONLY = ComparedSchema({"v": literal(2), "policy_version": literal(POLICY),
+    **COMPARED_FIELDS}, WIRE_BYTES, retained_strings=True)
 
 
 def parse_terminal(raw: bytes) -> dict[str, Any]:
