@@ -1580,6 +1580,16 @@
           "kit": "{radius.panel}"
         }
       ]
+    },
+    "shared_content_layout": {
+      "reference": "docs/brand/content-layout.md",
+      "status": "Provider-routing reference approved; wider adoption pending",
+      "principles": [
+        "One outer panel per meaningful section; unboxed examples and consistent reading sizes.",
+        "Pale-blue technical labels, underlined links, lavender information notes; reserve warning colors for actual warning states.",
+        "No sticky mobile navigation or visible instructions explaining scrolling. Use accessible visual controls.",
+        "Compact mobile reference disclosures preserve complete details; desktop tables and section navigation retain useful width."
+      ]
     }
   },
   "migration": {

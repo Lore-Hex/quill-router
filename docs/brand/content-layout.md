@@ -35,3 +35,19 @@ Reader spacing is deliberately tighter within reference entries and notes. Navig
 For Field / Effect / Values tables, `data-reference-accordion` plus a concise `data-purpose` on every row enables native mobile disclosures through 900px. The first entry starts open; readers may open multiple entries. The original desktop table and all technical content remain intact. Enhancement requires a valid three-column table and removes cloned IDs and redundant visual cell labels. Without JavaScript the original table remains available.
 
 Mobile and tablet layouts have no Contents bar or sticky navigation. The desktop sidebar remains visible from 1400px, with full heading labels, original anchors and active-location highlighting.
+
+## Proposed rollout scope
+
+Keep the current PR focused on shared foundations and documentation adoption. Provider routing is approved as the reference; docs hub, agent setup and telemetry are the next proposed batch, not yet migrated. Complete remaining documentation coverage before calling items14/17 finished for docs.
+
+Use one later site-adoption PR, reviewed internally in these groups rather than one PR per category:
+
+| Review group | Representative views and risks |
+| --- | --- |
+| Public information and discovery | Pricing, model catalog, provider/model details, status and articles: readable tables, filters, comparison layouts and technical notes. |
+| Account and authentication | Console API keys, activity, credits, settings, sign-in and consent: forms, errors, empty/loading states and authenticated behavior. |
+| Homepage and conversion flows | Already-approved homepage plus shared navigation, footer and sign-in pop-up: regression checks first; migrate only patterns that actually improve these layouts. |
+
+This is a sequencing recommendation, not authorization for further edits. Exchange sites use their own design and are outside the TrustedRouter rollout.
+
+For each group, agents inventory routes and states, choose representative pattern samples for user approval, capture every changed view, run structural/interaction checks, and independently inspect screenshots. Record inspected coverage and unresolved failures; do not equate generated screenshots with review. Authenticated coverage requires real authorized signed-in states. Escalate new design decisions and exceptions to the user, not routine page-by-page QA.
