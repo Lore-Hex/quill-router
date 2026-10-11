@@ -16,33 +16,39 @@ function setup(cookie) {
    assert.match(match[1], /data-action="open-signin"/);
    const index = links.length;
    links.push({className: match[1].match(/class="([^"]+)"/)[1], textContent: match[2],
+    hasAttribute: attribute => match[1].includes(attribute),
     replaceWith: replacement => {links[index] = replacement;}});
   }
  }
  const classes = links.map(a => a.className);
+ const note = {style: {}};
  const context = vm.createContext({document: {cookie,
-  querySelectorAll: () => links,
-  createElement: () => ({}),
+  querySelectorAll: selector => selector === '.cta-note' ? [note] : links,
+  createElement: () => ({attrs: {}, setAttribute(name, value) {this.attrs[name] = value;}}),
  }});
  vm.runInContext(auth, context);
  vm.runInContext('applyAuthAwareChrome()', context);
  links.classes = classes;
+ links.note = note;
  return links;
 }
 test('signed-out homepage keeps its API key links with a normal navigation fallback', () => {
  const links = setup('');
  assert.equal(links.length, 3);
- assert.deepEqual(links.map(a => a.textContent), ['Get your API key', 'Get your API key', 'Get your API key']);
+ assert.deepEqual(links.map(a => a.textContent), ['Create my API key', 'Create my API key', 'Create my API key']);
+ assert.equal(links.note.style.visibility, undefined);
 });
-test('returning visitors get console labels and retain button styles', () => {
+test('returning visitors get API key links, retain button styles, and lose the visitor note', () => {
  const links = setup('other=1; tr_signed_in=1');
- assert.deepEqual(links.map(a => a.textContent), ['Open console', 'Open console', 'Open console']);
+ assert.deepEqual(links.map(a => a.textContent), ['Get my API key', 'Get my API key', 'Get my API key']);
  links.forEach((a, index) => {
   assert.equal(a.href, '/console/api-keys');
   assert.equal(a.className, links.classes[index]);
   assert.match(a.className, /button/);
   assert.equal(a['data-action'], undefined);
+  assert.equal(a.attrs['data-homepage-cta'], '');
  });
+ assert.equal(links.note.style.visibility, 'hidden');
 });
 test('delegated homepage analytics survives auth-aware replacement and excludes header sign-in', () => {
  const links = setup('tr_signed_in=1');
