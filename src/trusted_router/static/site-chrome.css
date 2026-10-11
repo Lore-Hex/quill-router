@@ -2,12 +2,6 @@
  * the homepage included (templates/public/_nav.html), plus the console and
  * auth layouts. Colours, type and spacing come from tokens.css. */
 
-:root {
-  /* How far text sits inside any box: cards, panels, doc sections, tables
-     and code boxes all share it, so left edges line up page to page. */
-  --site-box-inset: 24px;
-}
-
 .skip-link {
   position: absolute;
   top: -90px;

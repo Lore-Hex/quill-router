@@ -34,13 +34,13 @@
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/site-chrome.css?v={{ static_version|default('local') }}">
-  {% if is_docs_page %}<link rel="stylesheet" href="/static/docs-layout.css?v={{ static_version|default('local') }}">{% endif %}
+  <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
 </head>
 <body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
-  <main id="main" class="wrap public-wrap{% if is_docs_page %} docs-page{% endif %}">
+  <main id="main" class="wrap public-wrap">
     {% block hero %}
     <section class="public-hero marketing-hero">
       <div>
@@ -81,7 +81,7 @@
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
   <script defer src="/static/site-chrome.js?v={{ static_version|default('local') }}"></script>
   <script defer src="/static/homepage/status.js?v={{ static_version|default('local') }}"></script>
-  {% if is_docs_page %}<script defer src="/static/docs-layout.js?v={{ static_version|default('local') }}"></script>{% endif %}
+  <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
   {% block body_scripts %}{% endblock %}
 </body>
 </html>
