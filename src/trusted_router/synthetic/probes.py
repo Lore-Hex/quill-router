@@ -2714,12 +2714,20 @@ def _rotation_omits_temperature(provider: str, model: str) -> bool:
     )
 
 
-def _rotation_sampling_parameters(provider: str, model: str) -> dict[str, int]:
+def _rotation_sampling_parameters(provider: str, model: str) -> dict[str, int | str]:
     if _rotation_omits_temperature(provider, model):
         return {}
     # Mistral's default top_p is incompatible with greedy sampling. These
     # are probe-owned settings, not overrides of customer sampling choices.
-    return {"temperature": 0, **({"top_p": 1} if provider.lower() == "mistral" else {})}
+    parameters: dict[str, int | str] = {
+        "temperature": 0, **({"top_p": 1} if provider.lower() == "mistral" else {})
+    }
+    if provider.lower() == "meta" and "muse-spark" in model.lower():
+        # Muse's private reasoning consumes the same bounded output budget.
+        # Keep health/throughput probes focused on visible token flow; never
+        # override customer requests or assume other hosts accept this level.
+        parameters["reasoning_effort"] = "minimal"
+    return parameters
 
 
 def _rotation_error_sample(

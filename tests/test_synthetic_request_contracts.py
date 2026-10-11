@@ -68,3 +68,32 @@ async def test_greedy_probe_uses_explicit_valid_nucleus_sampling(
             monitor_region="test", api_key="test-key", provider=provider, model=model,
         )
     assert sample.error_type not in {"probe_config_error", "empty_stream"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("throughput", [False, True])
+@pytest.mark.parametrize("provider", ["meta", "other-host"])
+@pytest.mark.parametrize("model", ["meta/muse-spark-1.2", "meta/muse-spark-1.3"])
+async def test_meta_probes_preserve_visible_output_budget(
+    throughput: bool, provider: str, model: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if provider == "meta":
+            assert payload["reasoning_effort"] == "minimal"
+        else:
+            assert "reasoning_effort" not in payload
+        assert payload["max_tokens"] >= 512
+        return httpx.Response(200, content=(
+            b'data: {"choices":[{"delta":{"content":"PONG"},"finish_reason":"stop"}]}\n\n'
+            b'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":128}}\n\n'
+            b'data: [DONE]\n\n'
+        ))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = provider_throughput_probe if throughput else provider_rotation_probe
+        sample = await probe(
+            client, SyntheticTarget("rotation", "https://gateway.test/v1", "test"),
+            monitor_region="test", api_key="test-key", provider=provider, model=model,
+        )
+    assert sample.error_type not in {"probe_config_error", "empty_stream"}
