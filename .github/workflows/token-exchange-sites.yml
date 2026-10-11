@@ -59,6 +59,7 @@ jobs:
             sleep 1
           done
           node sites/token-exchange/verify.cjs /tmp/token-exchange-build
+          node sites/token-exchange/verify-badge.cjs http://127.0.0.1:8089
       - name: Stale data and every component-state combination
         env:
           NODE_PATH: /tmp/exchange-browser/node_modules

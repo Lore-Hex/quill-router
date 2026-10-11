@@ -38,6 +38,7 @@ class ProviderPageTests(unittest.TestCase):
         cls.parser.feed(cls.page)
 
     def test_request_only_no_pdf_or_private_slides(self):
+        self.assertEqual((self.root / "providers").read_text(), self.page)
         self.assertFalse(list(self.root.rglob("*.pdf")))
         for resource in self.parser.links + self.parser.resources:
             self.assertNotIn(".pdf", resource.lower())
@@ -45,6 +46,9 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn("Shared privately on request", self.page)
         self.assertIn("No public download", self.page)
         self.assertIn("not guarantees", self.page)
+        self.assertIn("Updated seven-page PDF", self.page)
+        self.assertNotIn("13-page", self.page)
+        self.assertIn('href="/badge"', self.page)
         self.assertFalse(self.parser.forms)
 
     def test_mailto_request_contains_correct_recipient_and_context(self):
@@ -59,7 +63,7 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn("My role:", query["body"][0])
 
     def test_metadata_and_new_york_only_sitemap(self):
-        url = "https://nytokenexchange.com/providers.html"
+        url = "https://nytokenexchange.com/providers"
         self.assertIn(f'<link rel="canonical" href="{url}">', self.page)
         self.assertIn(f'<meta property="og:url" content="{url}">', self.page)
         self.assertTrue((self.root / "assets" / "archivo.woff2").is_file())
