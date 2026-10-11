@@ -65,6 +65,7 @@ class RetainedSchema(Schema):
             (delegate_sample if shape == "sample" else delegate_counter)(value)
         except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
             raise ValueError("evidence_schema_gap") from exc
+        apply_deltas("retained-object", value)
         super().__call__(value)
         apply_deltas(shape, value)
 

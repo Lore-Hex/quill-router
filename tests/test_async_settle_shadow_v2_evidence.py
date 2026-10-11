@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -1152,6 +1153,21 @@ def accepts(check: Any, value: Any) -> bool:
 PARITY_CASES = [(name, path) for name in CONSTRUCTION for path in sorted(exercised_paths(name), key=str)]
 
 
+def assert_retained_round_trip(shape: str, value: Any) -> None:
+    schemas = {"sample": e.SAMPLE, "counter": e.COUNTER, "normal-usage": contract.NORMAL_USAGE}
+    if shape == "wire":
+        schema = contract.COMPARED_FULL if "billing_snapshot" in value else contract.COMPARED_HASH_ONLY
+    else:
+        schema = schemas.get(shape)
+    if schema is not None:
+        assert schema.parse(schema.serialize(value)) == value
+    else:
+        # Binding/observed/raw-usage expose validators, not Schema codecs.
+        decoded = json.loads(canonical(value))
+        v2_acceptor(shape, decoded)
+        assert decoded == value
+
+
 @pytest.mark.parametrize("name,path", PARITY_CASES, ids=[name + ":" + ".".join(map(str, path)) for name, path in PARITY_CASES])
 def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
     shape, base = CONSTRUCTION[name]
@@ -1166,6 +1182,8 @@ def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
         actual = accepts(lambda v: v2_acceptor(shape, v), value)
         expected = accepts(lambda v: constructed_acceptor(shape, v), value)
         assert actual == expected, (name, path, mutation, item, actual, expected)
+        if actual:
+            assert_retained_round_trip(shape, value)
     assert executed == required_mutation_counts(parity_get(base, path))
 
 
@@ -1255,6 +1273,59 @@ def test_delta_inventory() -> None:
     assert {d.name for d in deltas.DELTAS} == DELTA_NAMES
     assert len(deltas.DELTAS) == len(DELTA_NAMES)
     assert all(d.design.startswith("§") and callable(d.predicate) for d in deltas.DELTAS)
+
+
+# Independent route inventory, not expanded from production Delta.shape strings.
+DELTA_ROUTES = [
+    ("transport-spelling", "retained-transport", seed) for seed in ("sample-settle", "counter", "wire-settle-full")
+] + [
+    ("scalar-string", "retained-object", seed) for seed in ("sample-settle", "counter")
+] + [
+    ("clean-requires-eligible", "sample", "sample-settle"),
+    ("clean-requires-normalized-usage", "sample", "sample-settle"),
+    ("clean-winner-conflict", "sample", "sample-settle"),
+    ("excluded-admission", "sample", "sample-settle"),
+    ("strict-dimension", "counter", "counter"),
+    ("strict-diagnostic-array", "counter", "counter"),
+    ("v2-counter-reasons", "counter-row", "counter"),
+    ("wire-wrapper-size", "wire", "wire-settle-full"),
+    ("sample-wrapper-size", "sample", "sample-settle"),
+    ("counter-wrapper-size", "counter", "counter"),
+    ("certificate-issuer-bound", "certificate", "certificate"),
+    ("certificate-origin", "certificate", "certificate"),
+    ("certificate-authority", "certificate", "certificate"),
+]
+
+
+@pytest.mark.parametrize("name,shape,seed", DELTA_ROUTES, ids=[n + ":" + seed for n, _, seed in DELTA_ROUTES])
+def test_delta_enforcing_routes(name: str, shape: str, seed: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert {n for n, _, _ in DELTA_ROUTES} == DELTA_NAMES
+    delta = next(d for d in deltas.DELTAS if d.name == name)
+    assert delta.shape == shape
+    if seed == "certificate":
+        value = proof()["claims"]
+        value.update(settle_origin="legacy", billing_authority="federated")
+        schema = cert.CLAIMS
+    else:
+        value = copy.deepcopy(CONSTRUCTION[seed][1])
+        schema = {"sample-settle": e.SAMPLE, "counter": e.COUNTER, "wire-settle-full": contract.COMPARED_FULL}[seed]
+        if name == "v2-counter-reasons":
+            value["drops"][0]["reason"] = "candidate_receipt_size"
+    schema(value)
+    assert schema.parse(schema.serialize(value)) == value
+    calls = []
+    def reject(witness: Any) -> bool:
+        calls.append(witness)
+        # Force a rejection at this particular table entry, including denial
+        # of the explicitly approved broadening witnessed above. This detects
+        # missing calls even where another schema redundantly rejects defects.
+        return name not in {"v2-counter-reasons", "certificate-origin", "certificate-authority"}
+    monkeypatch.setattr(deltas, "DELTAS", tuple(replace(d, predicate=reject) if d.name == name else d for d in deltas.DELTAS))
+    for check, witness in ((schema, value), (schema.parse, canonical(value)), (schema.serialize, value)):
+        calls.clear()
+        with pytest.raises(ValueError):
+            check(witness)
+        assert calls, (name, seed, check)
 
 
 @pytest.mark.parametrize("name", sorted(DELTA_NAMES))
@@ -1603,15 +1674,59 @@ def test_raw_retained_token_pairs(name: str, path: tuple[Any, ...], key_token: b
 
 
 @pytest.mark.parametrize("shape,path", [("counter", ("region",)), ("sample", ("deployment", "instance"))])
-@pytest.mark.parametrize("scalar", ["\ud800", "\udfff", "a\ud800b", "é", "😀", "\uffff", "\x00", "\n", "\t", "\\", '"'])
-def test_retained_object_scalar_edges(shape: str, path: tuple[str, ...], scalar: str) -> None:
+@pytest.mark.parametrize("key_token", [False, True])
+@pytest.mark.parametrize("scalar", ["\ud800", "\udfff", "a\ud800b", "\ud83d\ude00", "\ud800\udc00", "x\ud800\udc00y",
+                                    "é", "😀", "\U00010000", "x\U00010000y", "\uffff", "\x00", "\n", "\t", "\\", '"'])
+def test_retained_object_scalar_edges(shape: str, path: tuple[str, ...], key_token: bool, scalar: str) -> None:
     value = copy.deepcopy(CONSTRUCTION["counter" if shape == "counter" else "sample-settle"][1])
-    parity_get(value, path[:-1])[path[-1]] = scalar
+    parent = parity_get(value, path[:-1])
+    if key_token:
+        # Retained maps have closed keys: scalar key substitutions reject even
+        # when the string itself is valid. No arbitrary-key map is retained.
+        parent[scalar] = parent.pop(path[-1])
+    else:
+        parent[path[-1]] = scalar
     old = accepts(lambda v: v1_delegate(shape, v), value)
-    assert old is (shape == "counter" or scalar.isascii())
+    assert old is (not key_token and (shape == "counter" or scalar.isascii()))
     expected = old and not any(0xd800 <= ord(c) <= 0xdfff for c in scalar)
     assert accepts(lambda v: constructed_acceptor(shape, v), value) is expected
     assert accepts(lambda v: v2_acceptor(shape, v), value) is expected
+    schema = e.COUNTER if shape == "counter" else e.SAMPLE
+    assert accepts(schema.serialize, value) is expected
+    if expected:
+        assert_retained_round_trip(shape, value)
+    # Canonical raw surrogate pairs decode to genuine scalars; the raw and
+    # native domains intentionally differ. Compute this without v2 helpers.
+    decoded = json.loads(canonical(value))
+    raw_expected = not key_token and (shape == "counter" or scalar.isascii()) and not any(
+        0xd800 <= ord(c) <= 0xdfff for c in parity_get(decoded, path))
+    assert accepts(schema.parse, canonical(value)) is raw_expected
+    if raw_expected:
+        assert schema.parse(canonical(value)) == decoded
+        assert_retained_round_trip(shape, decoded)
+
+
+@pytest.mark.parametrize("scalar", ["\ud83d\ude00", "\ud800\udc00", "x\ud800\udc00y"])
+def test_native_counter_surrogate_pair_respects_scalar_delta(scalar: str) -> None:
+    # Round-5 review's three failing attacks, preserved as native objects.
+    value = copy.deepcopy(CONSTRUCTION["counter"][1])
+    value["region"] = scalar
+    v1_delegate("counter", value)
+    assert deltas.scalar_string(value)
+    assert not accepts(lambda v: constructed_acceptor("counter", v), value)
+    assert not accepts(e.COUNTER, value)
+    assert not accepts(e.COUNTER.serialize, value)
+
+
+def test_scalar_delta_precedes_serialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    value = copy.deepcopy(CONSTRUCTION["counter"][1])
+    value["region"] = "\ud83d\ude00"
+    def forbidden(value: Any) -> bytes:
+        pytest.fail("original native object reached serialization before scalar rejection")
+    monkeypatch.setattr(s, "canonical", forbidden)
+    for check in (e.COUNTER, e.COUNTER.serialize):
+        with pytest.raises(ValueError, match="scalar-string"):
+            check(value)
 
 
 def test_oracle_never_redecodes_retained_fields(monkeypatch: pytest.MonkeyPatch) -> None:
