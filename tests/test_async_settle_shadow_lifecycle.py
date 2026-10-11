@@ -8,8 +8,8 @@ import pytest
 from tests.test_async_settle_shadow_accounting import Database
 from tests.test_async_settle_ticket import runtime, settings
 from trusted_router.async_settle_shadow_evidence import COUNTER, dimensions
-from trusted_router.services.async_settle_shadow import Runtime
-from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
+from trusted_router.services.async_settle_shadow import FLUSH_BUDGET_SECONDS, Runtime
+from trusted_router.storage_gcp_async_settle_shadow import WRITE_BUDGET_SECONDS, EvidenceStore
 
 
 def test_timer_flushes_without_sample_work_and_keeps_idle_roster(shadow_deadline_clock):
@@ -37,12 +37,12 @@ def test_counter_timer_flushes_rate_drops_and_failure_is_sticky(shadow_deadline_
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
     dims = dimensions('openai', 'responses', True)
     rt.counters.reason(dims, 'settle', 'rate_limit')
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     first = next(json.loads(body) for (kind, _), body in db.rows.items() if kind == COUNTER)
     assert first['drops'] == [dict(phase='settle', adapter='openai', route_type='responses', streamed=True, reason='rate_limit', count=1)]
     gap = first['first_gap_at_us']
     rt.last_flush = 0
-    rt.flush(shadow_deadline_clock.monotonic()+1, True)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS, True)
     final = next(json.loads(body) for (kind, _), body in db.rows.items() if kind == COUNTER)
     assert final['closed'] is True and final['first_gap_at_us'] == gap and gap is not None
     rt.executor.shutdown()
@@ -271,7 +271,7 @@ def test_flush_failure_counts_drop_and_preserves_first_gap(shadow_deadline_clock
     rt.counters.clock = lambda:1791244801
     rt.counters.reason(dimensions('openai','responses',False),'settle','usage_missing','exclusions')
     rt.counters.clock = lambda:1791244804
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     body = rt.counters.snapshot()[0][1]
     assert body['first_gap_at_us'] == 1791244801000000
     assert body['drops'] == [dict(phase='worker',adapter='unknown',route_type='unknown',streamed=None,reason='store_unavailable',count=1)]
@@ -289,7 +289,7 @@ def test_failed_final_flush_keeps_writer_closed_and_unacknowledged(monkeypatch, 
     dims = dimensions('openai', 'responses', False)
     if previous_gap:
         rt.counters.reason(dims, 'settle', 'usage_missing', 'exclusions')
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     identity = next(identity for kind, identity in db.rows if kind == COUNTER)
     snapshots = []
 
@@ -300,7 +300,7 @@ def test_failed_final_flush_keeps_writer_closed_and_unacknowledged(monkeypatch, 
     monkeypatch.setattr(store, 'flush', fail_close)
     rt.counters.clock = lambda: 1791244804
     try:
-        rt.flush(shadow_deadline_clock.monotonic()+1, closed=True)
+        rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS, closed=True)
         body = rt.counters.days[identity.split('/')[0]]
         assert body['closed'] is True
         assert not json.loads(db.rows[COUNTER, identity])['closed']
@@ -376,15 +376,15 @@ def test_injected_commit_deadline_failure_is_not_acknowledged(monkeypatch, shado
 
     def slow_commit(*args, **kwargs):
         result = original(*args, **kwargs)
-        # Cross both the store budget and the outer one-second worker budget
-        # deterministically, even though the fake commit returned successfully.
-        shadow_deadline_clock.now += 2
+        # Cross the transaction's budget deterministically, even though the
+        # fake commit returned successfully.
+        shadow_deadline_clock.now += WRITE_BUDGET_SECONDS
         return result
 
     monkeypatch.setattr(db, 'run_in_transaction', slow_commit)
     monkeypatch.setattr(rt.counters, 'acknowledge', lambda *args: acknowledged.append(args))
     try:
-        rt.flush(shadow_deadline_clock.monotonic()+1)
+        rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
         body = rt.counters.snapshot()[0][1]
         assert acknowledged == []
         assert body['drops'] == [dict(phase='worker', adapter='unknown', route_type='unknown',
@@ -405,7 +405,7 @@ def test_long_lived_writer_closes_seven_clean_days_before_new_writer(shadow_dead
     for n in range(8):
         now[0] = 1791244800. + 86400*n
         rt.last_flush = 0
-        rt.flush(shadow_deadline_clock.monotonic()+1)
+        rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
         assert all(not body['drops'] for body in rt.counters.days.values()), rt.counters.days
         assert rt.counters.retired_through == (day_at(now[0]-86400) if n else '')
         for prior in range(n):
@@ -419,7 +419,7 @@ def test_long_lived_writer_closes_seven_clean_days_before_new_writer(shadow_dead
         rt.counters.increment(dims, 'authorize_fresh')
         now[0] += 10
         rt.last_flush = 0
-        rt.flush(shadow_deadline_clock.monotonic()+1)
+        rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
         assert all(not body['drops'] for body in rt.counters.days.values()), rt.counters.days
     writes = [(params['id'], params) for _, params, _ in db.trace]
     # Each prior close's point read precedes the new day's first write/read.
@@ -440,10 +440,10 @@ def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch, shadow_
     rt.counters.clock = lambda: now[0]
     received = now[0]
     rt.counters.retain(received)
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     now[0] += 86400
     rt.last_flush = 0
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     old = day_at(received) + '/' + rt.counters.instance
     assert not json.loads(db.rows[COUNTER, old])['closed']
     assert (COUNTER, day_at(now[0]) + '/' + rt.counters.instance) not in db.rows
@@ -455,12 +455,12 @@ def test_rollover_retains_inflight_receipt_and_failed_close(monkeypatch, shadow_
         return original(identity, body, deadline)
     monkeypatch.setattr(store, 'flush', fail_close)
     rt.last_flush = 0
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     assert day_at(received) in rt.counters.days
     assert not json.loads(db.rows[COUNTER, old])['closed']
     monkeypatch.setattr(store, 'flush', original)
     rt.last_flush = 0
-    rt.flush(shadow_deadline_clock.monotonic()+1)
+    rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
     assert json.loads(db.rows[COUNTER, old])['closed']
     assert day_at(received) not in rt.counters.days
     rt.executor.shutdown()
@@ -512,7 +512,7 @@ def test_observer_flush_preserves_maximum_and_rounds_cumulative_seconds(shadow_d
     rt.counters._day()
     def flush():
         rt.last_flush = 0
-        rt.flush(shadow_deadline_clock.monotonic()+1)
+        rt.flush(shadow_deadline_clock.monotonic()+FLUSH_BUDGET_SECONDS)
         identity, raw = next((identity, body) for (kind, identity), body in db.rows.items() if kind == COUNTER)
         body = bounded_json(raw.encode(), 65536, signed=True)
         validate_counter(identity, body)

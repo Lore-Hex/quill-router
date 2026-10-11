@@ -30,7 +30,15 @@ from trusted_router.billing_snapshot import BillingSnapshot
 from trusted_router.config import Settings
 from trusted_router.detached_jws import canonical
 from trusted_router.services.async_settle_shadow_admission import Observer
+from trusted_router.storage_gcp_async_settle_shadow import RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS
 from trusted_router.storage_models import GatewayAuthorization, generation_id_for_authorization
+
+# A counter flush is at most two evidence transactions, closing a day that
+# retired and registering the current one; a shadow observation is a permit
+# reservation, the booking read, the sample and such a flush, each at its
+# longest from the slowest region.
+FLUSH_BUDGET_SECONDS = 2*WRITE_BUDGET_SECONDS
+OBSERVATION_BUDGET_SECONDS = 2*WRITE_BUDGET_SECONDS + RPC_BUDGET_SECONDS + FLUSH_BUDGET_SECONDS
 
 
 @dataclass
@@ -299,7 +307,7 @@ class Runtime:
         auth = capture.authorization
         if auth is None or not self.opted(auth.workspace_id):
             return
-        deadline = time.monotonic() + 1
+        deadline = time.monotonic() + OBSERVATION_BUDGET_SECONDS
         self.counters.increment(dims, "comparison_attempts")
         failure_reason = "store_unavailable"
         persisted = False
@@ -433,6 +441,25 @@ class Runtime:
                 self.counters.increment(dims, "comparison_dropped")
             self.flush(deadline)
 
+    def flush_now(self, closed: bool = False) -> None:
+        """A flush with its budget from when it runs, not from when it was
+        queued behind the worker's observations."""
+        deadline = time.monotonic() + FLUSH_BUDGET_SECONDS
+        if closed:
+            self.flush(deadline, True)
+        else:
+            self.flush(deadline)
+
+    @staticmethod
+    def transaction_deadline(deadline: float) -> float | None:
+        """One transaction's budget within the flush's, or None when the
+        remainder cannot hold one: that row waits for the next flush rather
+        than start a transaction that must time out."""
+        now = time.monotonic()
+        if now + WRITE_BUDGET_SECONDS > deadline + 1e-9:
+            return None
+        return now + WRITE_BUDGET_SECONDS
+
     def flush(self, deadline: float, closed: bool = False) -> None:
         if self.store is None or not closed and time.monotonic()-self.last_flush < 5:
             return
@@ -472,7 +499,9 @@ class Runtime:
             # completion; the next timer then closes it. Failed closes stay in
             # the bounded retention set and are never silently acknowledged.
             for identity, body in self.counters.snapshot(retiring_only=True, sealed_before=sealed_before):
-                self.store.flush(identity, body, deadline)
+                if (transaction := self.transaction_deadline(deadline)) is None:
+                    return
+                self.store.flush(identity, body, transaction)
                 self.counters.acknowledge(identity, body)
                 if not closed:
                     # A regional close can consume most of this pass's budget.
@@ -492,7 +521,9 @@ class Runtime:
                     # or I/O is added to the request path.
                     return
             for identity, body in self.counters.snapshot(closed, sealed_before=sealed_before):
-                self.store.flush(identity, body, deadline)
+                if (transaction := self.transaction_deadline(deadline)) is None:
+                    return
+                self.store.flush(identity, body, transaction)
                 self.counters.acknowledge(identity, body)
         except Exception:
             self.counters.flush_failed()
@@ -502,8 +533,7 @@ class Runtime:
             # Only one outstanding flush; it shares the bounded single worker
             # with observations, never waits in an HTTP handler, and never
             # accumulates a timer retry queue.
-            await asyncio.get_running_loop().run_in_executor(
-                self.executor, partial(self.flush, time.monotonic()+1))
+            await asyncio.get_running_loop().run_in_executor(self.executor, self.flush_now)
             try:
                 await asyncio.wait_for(stopped.wait(), timeout=5)
             except TimeoutError:
@@ -565,6 +595,6 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
                 await maintenance
             if observer is not None:
                 await observer.close()
-            await asyncio.get_running_loop().run_in_executor(runtime.executor, partial(runtime.flush, time.monotonic()+1, True))
+            await asyncio.get_running_loop().run_in_executor(runtime.executor, partial(runtime.flush_now, True))
         finally:
             runtime.executor.shutdown(wait=False, cancel_futures=True)

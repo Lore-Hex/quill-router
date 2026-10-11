@@ -41,3 +41,27 @@ Deployment is not verification. Require healthy serving revisions, new durable
 comparison samples, and regional post-release diagnostics before claiming this
 incident resolved. The separate SDK transport-reset retry repair in PR #1668
 is not included in this change.
+
+## Second repair (2026-10-11)
+
+After d99b0624a reached every region (revisions of f9bb2ec68, 23:37 UTC),
+the failures fell from about 1.6 to about 0.9 per minute over the next 48
+minutes (42 lines of `shadow evidence transaction failed`): callback reads
+timing out at the 500 ms read cap from europe-west4 and southamerica-east1,
+and commits at the remainder of the one-second transaction budget, 410 to
+480 ms on average. The Spanner "API failures" policy's threshold is one per
+minute, so the alert stayed within reach of a busy minute.
+
+The remaining cause is the budget itself. A transaction from a secondary
+region makes two leader reads and a cross-region commit, each measured at up
+to about 500 ms, and an observation makes up to three such transactions, so
+one second per transaction and one per observation are below what the
+slowest region needs. The shadow is a background worker, so its budgets are
+sized for that region: two seconds per transaction, a read up to one of
+them and the commit the remainder, and three seconds per observation. The
+operator day scans keep their 200 ms deadline. The deterministic tests
+pin their expectations to the constants and add 450 ms reads with a
+two-second budget.
+
+Verification: zero such lines per region over thirty minutes on the new
+revisions, and no new incident of the policy.
