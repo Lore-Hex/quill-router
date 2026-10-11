@@ -75,6 +75,14 @@ class RouteImpact:
             )
         return lines
 
+    @property
+    def needs_action(self) -> bool:
+        return self.stops_working or bool(self.privacy_losses)
+
+    @property
+    def provider_count(self) -> int:
+        return len({route.split(" (", 1)[0] for route in self.remaining})
+
     def text(self, provider: str) -> str:
         parts = [] if self.stops_working else [
             f"{_FAILOVER} Requests restricted to {provider} will fail."
@@ -99,18 +107,62 @@ class RouteNotice:
     def when(self) -> str:
         return self.cutover.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+    @property
+    def short_date(self) -> str:
+        cutover = self.cutover.astimezone(UTC)
+        day = f"{cutover:%b} {cutover.day}, {cutover.year}"
+        return day if (cutover.hour, cutover.minute) == (0, 0) else f"{day}, {cutover:%H:%M} UTC"
+
+    @property
+    def provider_label(self) -> str:
+        provider = PROVIDERS.get(self.provider)
+        return provider.name if provider else self.provider
+
     def headline(self) -> str:
         return f"{self.model} — {self.provider_name} retires at {self.when}."
 
+    def consequence(self) -> str:
+        """One short sentence: what happens, and what to do if anything."""
+        if self.impact.stops_working:
+            switch = (
+                "Switch to " + " or ".join(self.impact.replacements) + "."
+                if self.impact.replacements else "Choose another model."
+            )
+            return f"It stops working. {switch}"
+        sentence = (
+            f"{self.impact.provider_count} other providers still serve it; "
+            "requests switch automatically."
+        )
+        for label in self.impact.privacy_losses:
+            short = label.split(" (", 1)[0]
+            sentence += (
+                f" This was its last {short} route: requests requiring {label} will fail; "
+                "TrustedRouter will not lower their privacy requirement."
+            )
+        return sentence
+
     def text(self) -> str:
-        return " ".join([self.headline(), *self.impact.lines()])
+        return f"{self.headline()} {self.consequence()}"
 
     def html(self) -> str:
-        details = "".join(f"<br>{html.escape(line)}" for line in self.impact.lines())
-        return (
-            f"<li><b>{html.escape(self.model)}</b> — {html.escape(self.provider_name)} "
-            f"stops serving it.{details}</li>"
+        model = f"<b>{html.escape(self.model)}</b>"
+        date = f"<b>{html.escape(self.short_date)}</b>"
+        if self.impact.stops_working:
+            switch = (
+                "Switch to " + " or ".join(f"<b>{html.escape(r)}</b>" for r in self.impact.replacements) + "."
+                if self.impact.replacements else "Choose another model."
+            )
+            return f"<li>{model} stops working on {date}. {switch}</li>"
+        body = (
+            f"<li>{model} — {html.escape(self.provider_label)} stops serving it on {date}. "
+            f"{self.impact.provider_count} other providers still serve it."
         )
+        for label in self.impact.privacy_losses:
+            short = html.escape(label.split(" (", 1)[0])
+            body += (
+                f" <b>Requests that require {short} will fail</b>: this was its last {short} route."
+            )
+        return body + "</li>"
 
 
 @dataclass(frozen=True)
@@ -192,60 +244,66 @@ def _recipients(workspace_id: str, service: EmailService) -> list[str]:
     return [email for email in sorted(emails) if service.can_receive_product_email(email)]
 
 
-def _by_cutover(notices: list[RouteNotice]) -> list[tuple[str, list[RouteNotice]]]:
-    groups: dict[str, list[RouteNotice]] = {}
-    for notice in sorted(notices, key=lambda item: (item.cutover, item.model, item.provider)):
-        groups.setdefault(notice.when, []).append(notice)
-    return list(groups.items())
+_FONT = (
+    "font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;"
+    "font-size:14px;color:#1f2328;line-height:1.5"
+)
+_ACTION_BOX = "border-left:4px solid #c62828;background:#fdecea;padding:10px 14px;margin:12px 0"
+_INFO_BOX = "border-left:4px solid #8c959f;background:#f6f8fa;padding:10px 14px;margin:12px 0"
+
+
+def _sorted(notices: list[RouteNotice]) -> list[RouteNotice]:
+    return sorted(notices, key=lambda item: (item.cutover, item.model, item.provider))
+
+
+def _section(title: str, notices: list[RouteNotice], style: str) -> str:
+    if not notices:
+        return ""
+    items = "".join(notice.html() for notice in _sorted(notices))
+    return (
+        f'<div style="{style}"><b>{html.escape(title)}</b>'
+        f'<ul style="margin:6px 0 0;padding-left:20px">{items}</ul></div>'
+    )
 
 
 def build_retirement_notice_email(
     settings: Settings, *, recipient: str, workspace_id: str, notices: list[RouteNotice],
 ) -> EmailMessage:
     url = f"https://{settings.trusted_domain}/models"
-    lead = f"Upcoming route changes for your TrustedRouter workspace {workspace_id}:"
     footer = (
         "You received this email because you are an owner or admin of this workspace "
         "and it used these routes in the last 30 days."
     )
-    stopping = sorted({notice.model for notice in notices if notice.impact.stops_working})
-    groups = _by_cutover(notices)
-
-    text = [lead]
-    if stopping:
-        text.append("ACTION NEEDED — these models will stop working: " + ", ".join(stopping))
-    for when, group in groups:
-        text.append(f"== {when} ==")
-        text.extend(notice.text() for notice in group)
-    text += [_FAILOVER, f"Models and routes: {url}", footer]
-
-    action = (
-        '<div style="border-left:4px solid #c62828;background:#fdecea;padding:10px 14px;margin:12px 0">'
-        "<b>Action needed:</b> these models will stop working — "
-        + ", ".join(f"<b>{html.escape(model)}</b>" for model in stopping)
-        + "</div>"
-        if stopping else ""
+    action = [notice for notice in notices if notice.impact.needs_action]
+    info = [notice for notice in notices if not notice.impact.needs_action]
+    count = len({notice.model for notice in action})
+    subject = (
+        f"Action needed: {count} model{'s' if count != 1 else ''} you use will stop working"
+        if action else "Upcoming TrustedRouter route changes (no action needed)"
     )
-    sections = "".join(
-        f'<h3 style="margin:18px 0 6px">{html.escape(when)}</h3>'
-        f'<ul style="margin:0;padding-left:20px;line-height:1.5">'
-        + "".join(notice.html() for notice in group)
-        + "</ul>"
-        for when, group in groups
-    )
+
+    text = [f"Upcoming model changes for your TrustedRouter workspace {workspace_id}."]
+    if action:
+        text.append("ACTION NEEDED")
+        text.extend(notice.text() for notice in _sorted(action))
+    if info:
+        text.append("NO ACTION NEEDED")
+        text.extend(notice.text() for notice in _sorted(info))
+        text.append(_FAILOVER)
+    text += [f"Models and routes: {url}", footer]
+
     return EmailMessage(
         to=recipient,
-        subject=f"Upcoming TrustedRouter route retirements ({len(notices)})",
+        subject=subject,
         text_body="\n\n".join(text),
         html_body=(
-            '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;'
-            'font-size:14px;color:#1f2328;max-width:640px">'
-            '<h2 style="margin:0 0 4px">Upcoming route retirements</h2>'
-            f'<p style="margin:0 0 8px;color:#57606a">Workspace <b>{html.escape(workspace_id)}</b></p>'
-            + action + sections
-            + f'<p style="margin:16px 0 8px">{html.escape(_FAILOVER)}</p>'
-            + f'<p><a href="{html.escape(url, quote=True)}">Models and routes</a></p>'
-            + f'<p style="color:#57606a"><small>{html.escape(footer)}</small></p></div>'
+            f'<div style="{_FONT};max-width:600px">'
+            '<h2 style="margin:0 0 4px;font-size:20px">Upcoming model changes</h2>'
+            f'<p style="margin:0;color:#57606a">Workspace <code>{html.escape(workspace_id)}</code></p>'
+            + _section("Action needed", action, _ACTION_BOX)
+            + _section("No action needed — requests switch providers automatically", info, _INFO_BOX)
+            + f'<p><a href="{html.escape(url, quote=True)}">See models and routes</a></p>'
+            + f'<p style="color:#57606a;font-size:12px">{html.escape(footer)}</p></div>'
         ),
         reply_to=settings.support_email,
         mail_class="retirement_notice",
@@ -343,21 +401,27 @@ def _preview(
         for notice in notices:
             key = (notice.cutover, notice.model, notice.provider)
             routes.setdefault(key, (notice, set()))[1].add(workspace_id)
+    ordered = [routes[key] for key in sorted(routes)]
+    action = [(notice, ws) for notice, ws in ordered if notice.impact.needs_action]
+    info = [(notice, ws) for notice, ws in ordered if not notice.impact.needs_action]
     total_recipients = sum(len(addresses) for addresses in recipients.values())
     title = f"Retirement notice preview for {current.date().isoformat()} (UTC)"
     summary = (
-        f"{len(routes)} retiring routes · {len(by_workspace)} workspaces · "
-        f"{total_recipients} eligible recipients"
+        f"{len(action)} need customer action · {len(info)} fail over automatically · "
+        f"{len(by_workspace)} workspaces · {total_recipients} eligible recipients"
     )
-    lines = [title, summary, "== Retiring routes =="]
-    for (_, _, _), (notice, workspaces) in sorted(routes.items()):
-        lines.append(f"{notice.text()} [{len(workspaces)} workspaces]")
+
+    lines = [title, summary]
+    for heading, group in (("== Action needed ==", action), ("== No action needed ==", info)):
+        if group:
+            lines.append(heading)
+            lines.extend(f"{notice.text()} [{len(ws)} workspaces]" for notice, ws in group)
     lines += [_FAILOVER, "== Workspaces =="]
-    for workspace_id, notices in sorted(by_workspace.items()):
-        models = ", ".join(sorted({notice.model for notice in notices}))
-        lines.append(
-            f"Workspace {workspace_id}: {len(recipients[workspace_id])} eligible recipients — {models}"
-        )
+    lines.extend(
+        f"Workspace {workspace_id}: {len(recipients[workspace_id])} eligible recipients — "
+        f"{len(notices)} models"
+        for workspace_id, notices in sorted(by_workspace.items())
+    )
     body = "\n\n".join(lines)
     if not STORE.record_webhook_event_once("retirement_notice_preview", current.date().isoformat()):
         return RetirementNoticePassResult(workspaces=len(by_workspace))
@@ -365,35 +429,47 @@ def _preview(
     if not operator:
         log.info("retirement_notice.preview\n%s", body)
         return RetirementNoticePassResult(workspaces=len(by_workspace))
+
     cell = 'style="padding:6px 10px;border-bottom:1px solid #d0d7de;vertical-align:top"'
-    rows = "".join(
-        f"<tr><td {cell}><b>{html.escape(notice.when)}</b></td>"
-        f"<td {cell}><b>{html.escape(notice.model)}</b><br>{html.escape(notice.provider_name)}</td>"
-        f"<td {cell}>{len(workspaces)}</td>"
-        f"<td {cell}>{'<br>'.join(html.escape(line) for line in notice.impact.lines())}</td></tr>"
-        for (_, _, _), (notice, workspaces) in sorted(routes.items())
-    )
+
+    def table(group: list[tuple[RouteNotice, set[str]]], outcome: str) -> str:
+        head = (
+            f'<tr><th align="left" {cell}>Date</th><th align="left" {cell}>Model</th>'
+            f'<th align="left" {cell}>Leaving</th><th align="left" {cell}>{html.escape(outcome)}</th>'
+            f'<th align="right" {cell}>Workspaces</th></tr>'
+        )
+        rows = "".join(
+            f"<tr><td {cell}><b>{html.escape(notice.short_date)}</b></td>"
+            f"<td {cell}><b>{html.escape(notice.model)}</b></td>"
+            f"<td {cell}>{html.escape(notice.provider_label)}</td>"
+            f"<td {cell}>{html.escape(notice.consequence())}</td>"
+            f'<td align="right" {cell}>{len(ws)}</td></tr>'
+            for notice, ws in group
+        )
+        return f'<table style="border-collapse:collapse;width:100%">{head}{rows}</table>'
+
+    blocks = ""
+    if action:
+        blocks += f'<div style="{_ACTION_BOX}"><b>Action needed ({len(action)})</b></div>' + table(action, "What happens")
+    if info:
+        blocks += f'<div style="{_INFO_BOX}"><b>No action needed ({len(info)})</b></div>' + table(info, "Fallback")
     workspace_rows = "".join(
-        f"<li><code>{html.escape(workspace_id)}</code> — {len(recipients[workspace_id])} eligible recipients"
-        f" — {html.escape(', '.join(sorted({notice.model for notice in notices})))}</li>"
+        f"<li><code>{html.escape(workspace_id[:8])}</code> — {len(recipients[workspace_id])} eligible recipients, "
+        f"{len(notices)} models</li>"
         for workspace_id, notices in sorted(by_workspace.items())
     )
     accepted = service.send(EmailMessage(
         to=operator,
-        subject=f"TrustedRouter retirement notice preview — {len(routes)} routes, {len(by_workspace)} workspaces",
+        subject=f"Retirement preview: {len(action)} need action, {len(info)} automatic",
         text_body=body,
         html_body=(
-            '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;'
-            'font-size:14px;color:#1f2328;max-width:760px">'
-            f'<h2 style="margin:0 0 4px">{html.escape(title)}</h2>'
-            f'<p style="margin:0 0 12px"><b>{html.escape(summary)}</b></p>'
-            '<h3 style="margin:12px 0 6px">Retiring routes</h3>'
-            '<table style="border-collapse:collapse;width:100%">'
-            f'<tr><th align="left" {cell}>Cutover</th><th align="left" {cell}>Route</th>'
-            f'<th align="left" {cell}>Workspaces</th><th align="left" {cell}>Impact</th></tr>'
-            f"{rows}</table>"
-            f'<p style="color:#57606a">{html.escape(_FAILOVER)}</p>'
-            f'<h3 style="margin:12px 0 6px">Workspaces</h3><ul>{workspace_rows}</ul></div>'
+            f'<div style="{_FONT};max-width:760px">'
+            f'<h2 style="margin:0 0 4px;font-size:20px">{html.escape(title)}</h2>'
+            f'<p style="margin:0 0 8px"><b>{html.escape(summary)}</b></p>'
+            + blocks
+            + f'<p style="color:#57606a;font-size:12px">{html.escape(_FAILOVER)}</p>'
+            + '<details><summary><b>Workspaces</b></summary>'
+            + f'<ul style="font-size:13px">{workspace_rows}</ul></details></div>'
         ),
         mail_class="retirement_notice_preview",
         sender_profile="alerts",
