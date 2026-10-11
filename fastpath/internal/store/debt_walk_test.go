@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"math/rand"
 	"os"
 	"reflect"
@@ -83,7 +84,8 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"a return its place changes", "a pack of several winners", "refused grant: " + string(RefusedInDebt),
 		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
 		"refused grant: " + string(RefusedAllowance), "refused grant: " + string(RefusedFloor),
-		"refused grant: the floor alone", "a grant beside a listed lease"} {
+		"refused grant: the floor alone", "a grant beside a listed lease", "a listed hold",
+		"refused grant: the listed holds alone", "refused close: holds open"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -121,6 +123,9 @@ type debtLease struct {
 	expiry   time.Time
 	boundary int64
 	closedAt within
+	// holds is the lease's open holds, which S's commit listed, by
+	// authorization: each its estimate, until a release winner ends it.
+	holds map[string]int64
 }
 
 // donor is one of a lease's donors as the walk books it: its credit shard,
@@ -372,15 +377,21 @@ func (d *debtWalk) leaseWant(l *debtLease) leaseWant {
 // grantRefusal is the store's answer to a grant of amount, as the store
 // checks, in its order, from what the walk knows: a debt mark on a credit
 // row; the workspace's exposure, every lease's unbooked allocation while it
-// is open or draining with its holds not listed, against the allowance; and
-// the headroom outside leases against the floor. "" is a grant. The walk's
-// workspace is never paused and keeps the tier that allows leases, which
-// the store checks before the exposure.
+// is open or draining with its holds not listed, and its open holds'
+// estimates once they are listed, against the allowance; and the headroom
+// outside leases against the floor. "" is a grant. The walk's workspace is
+// never paused and keeps the tier that allows leases, which the store
+// checks before the exposure.
 func (d *debtWalk) grantRefusal(rows []row, amount int64) Refusal {
-	var exposure, headroom int64
+	var exposure, listed, headroom int64
 	for _, l := range d.leases {
-		if l.state == "open" || l.state == "draining" && !l.stored {
+		switch {
+		case l.state == "open" || l.state == "draining" && !l.stored:
 			exposure += max(l.room(), 0)
+		case l.state == "draining":
+			for _, estimate := range l.holds {
+				listed += estimate
+			}
 		}
 	}
 	for _, r := range rows {
@@ -389,7 +400,10 @@ func (d *debtWalk) grantRefusal(rows []row, amount int64) Refusal {
 	switch {
 	case slices.ContainsFunc(rows, func(r row) bool { return r.marked }):
 		return RefusedInDebt
-	case exposure > d.s.cfg.Allowance-amount:
+	case exposure+listed > d.s.cfg.Allowance-amount:
+		if exposure <= d.s.cfg.Allowance-amount {
+			d.seen["refused grant: the listed holds alone"]++
+		}
 		return RefusedAllowance
 	case headroom < d.s.cfg.Floor+amount:
 		if headroom >= amount {
@@ -523,6 +537,19 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	req := CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money}
 	if boundary {
 		req.Boundary, req.HoldsListedSeq = &Boundary{S: seq, T: walkTick}, &seq
+		// Two closes in three list a hold or two still open, each a listed
+		// hold with an estimate and no snapshot yet, drawn from the probes'
+		// source so the walk's own draws are as they were.
+		if d.probes.Intn(3) > 0 {
+			l.holds = map[string]int64{}
+			for i := range 1 + d.probes.Intn(2) {
+				auth := fmt.Sprintf("%s-h%d", l.ref.LeaseID, i)
+				l.holds[auth] = int64(1 + d.probes.Intn(20))
+				req.PutHolds = append(req.PutHolds, HoldRow{AuthorizationID: auth, Estimate: l.holds[auth],
+					Deadline: walkTick, Listed: true})
+				d.seen["a listed hold"]++
+			}
+		}
 	}
 	// The store gets a copy (walkCommit), so what the walk expects, from
 	// money and req, is what it generated, whatever the call does with its
@@ -547,7 +574,41 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 		l.boundary = seq
 	}
 	l.stored = l.stored || boundary
+	d.checkHolds(l)
 	return got[0]
+}
+
+// checkHolds holds the lease's hold rows to the walk's open holds: one row
+// per hold, listed, its estimate, and none once they are released.
+func (d *debtWalk) checkHolds(l *debtLease) {
+	d.t.Helper()
+	got := map[string]int64{}
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL:    `SELECT authorization_id, estimate, listed FROM tr_lease_hold WHERE workspace_id = @w AND lease_id = @l`,
+		Params: map[string]any{"w": l.ref.Workspace, "l": l.ref.LeaseID},
+	}).Do(func(r *spanner.Row) error {
+		var auth string
+		var estimate int64
+		var listed bool
+		if err := r.Columns(&auth, &estimate, &listed); err != nil {
+			return err
+		}
+		if !listed {
+			return fmt.Errorf("hold %s is not listed", auth)
+		}
+		got[auth] = estimate
+		return nil
+	})
+	if err != nil {
+		d.fatalf("reading lease %s's holds: %v", l.ref.LeaseID, err)
+	}
+	want := l.holds
+	if want == nil {
+		want = map[string]int64{}
+	}
+	if !reflect.DeepEqual(got, want) {
+		d.fatalf("lease %s's holds are %v, and the walk's are %v", l.ref.LeaseID, got, want)
+	}
 }
 
 // book books a charge, carrying a shortfall total that sometimes raises the
@@ -705,11 +766,15 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		d.checkLeaseRow(l, "S's commit")
 		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
-	// With the holds listed, the lease's exposure is its listed holds',
-	// none here, not its remaining allocation: a grant beside it is
-	// answered so, and the close goes on with the lease.
+	// With the holds listed, the lease's exposure is its listed holds'
+	// estimates, not its remaining allocation: a grant beside it is answered
+	// so, and the whole workspace is checked at once after one that lands,
+	// before the close could cover what it did; then the close goes on with
+	// the lease.
+	before := headrooms(readRows(d.t, d.ws))
 	if d.grantFrom(ctx, d.probes) {
 		d.seen["a grant beside a listed lease"]++
+		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
 	rows, read, err := d.s.ReadDrainSince(ctx, l.ref, time.Time{})
 	if err != nil {
@@ -754,12 +819,45 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 			l.seq)
 	}
 	now := row.Expiry
+	if len(l.holds) > 0 {
+		// A hold still open holds the close back first, whatever the drain
+		// log holds, and the refusal moves nothing. The holds end with a
+		// release winner each, a commit of its own, which deletes their rows.
+		d.unchanged(l.ref, "close", func() {
+			got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
+			if err != nil || got.Refused != RefusedHoldsOpen || got.Released != 0 || got.NewVersion != 0 ||
+				!got.CommitTS.IsZero() {
+				d.fatalf("a close over open holds: %+v %v", got, err)
+			}
+		})
+		d.seen["refused close: holds open"]++
+		var releases []Winner
+		for _, auth := range slices.Sorted(maps.Keys(l.holds)) {
+			releases = append(releases, Winner{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release"})
+		}
+		result, ts, err := walkCommit(d.s, CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.seq,
+			Winners: releases}, "")
+		if err != nil {
+			d.fatalf("committing the holds' releases: %v", err)
+		}
+		d.landed("commit", ts)
+		if result.State != l.state || len(result.Faults) != 0 {
+			d.fatalf("the releases' commit left lease %s %+v, and the walk has it %q", l.ref.LeaseID, result, l.state)
+		}
+		l.advance(d, "the holds' releases' commit", result.NewVersion)
+		l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: releases})
+		d.checkPacks(l)
+		l.holds = nil
+		d.checkHolds(l)
+		d.checkLeaseRow(l, "the releases' commit")
+	}
 	if len(winners) > 0 {
 		// Still, a row whose winner is not stored holds the close back,
 		// and the refusal moves nothing, every row read at once after it.
 		d.unchanged(l.ref, "close", func() {
 			got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
-			if err != nil || got.Refused != RefusedUndecided || got.Released != 0 {
+			if err != nil || got.Refused != RefusedUndecided || got.Released != 0 || got.NewVersion != 0 ||
+				!got.CommitTS.IsZero() {
 				d.fatalf("a close over undecided drain rows: %+v %v", got, err)
 			}
 		})
@@ -970,6 +1068,7 @@ func (d *debtWalk) check(before, after []int64) {
 		if err := checkReads(d.s, l.ref, d.leaseWant(l)); err != nil {
 			d.fatalf("lease %s: %v", l.ref.LeaseID, err)
 		}
+		d.checkHolds(l)
 	}
 	// Each lease's money is what the walk did to it, column by column, and
 	// its front doors' raises are its drain rows', in two reads of the whole
