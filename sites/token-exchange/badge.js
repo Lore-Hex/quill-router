@@ -7,10 +7,10 @@
     const theme = document.querySelector('input[name="theme"]:checked').value;
     const path = `/assets/badges/nyte-enterprise-${theme}.svg`;
     preview.src = path;
-    preview.alt = 'NYTE enterprise buyer';
+    preview.alt = 'NYTE Privacy Secured — Confidential AI';
     document.getElementById('preview').className = `preview ${theme}`;
     document.getElementById('download').href = path;
-    code.textContent = `<a href="https://nytokenexchange.com/badge" aria-label="About NYTE enterprise buyer membership">\n  <img src="https://nytokenexchange.com${path}"\n       alt="NYTE enterprise buyer — New York Token Exchange"\n       width="320" height="88" loading="lazy" style="max-width:100%;height:auto">\n</a>`;
+    code.textContent = `<a href="https://nytokenexchange.com/badge" aria-label="NYTE Privacy Secured: requirements and evidence">\n  <img src="https://nytokenexchange.com${path}"\n       alt="NYTE Privacy Secured — Confidential AI"\n       width="320" height="88" loading="lazy" style="max-width:100%;height:auto">\n</a>`;
     status.textContent = '';
   }
   document.querySelectorAll('input[type="radio"]').forEach(input => input.addEventListener('change', update));

@@ -1,4 +1,4 @@
-"""Membership branding must not claim blanket security certification."""
+"""The privacy seal must bind its claim to eligible enterprise AI routes."""
 
 import tempfile
 import unittest
@@ -21,7 +21,7 @@ class MemberBadgeTests(unittest.TestCase):
     def test_clean_alias_metadata_and_membership_scope(self):
         self.assertEqual(self.page, (self.root / "badge.html").read_text())
         self.assertIn('rel="canonical" href="https://nytokenexchange.com/badge"', self.page)
-        for copy in ("not a live membership check", "does not establish membership", "only while your membership is active", "route-specific evidence"):
+        for copy in ("NYTE requires every AI route", "not an optional tier", "not a live verification result", "provider-side E2EE", "fail closed", "client TLS terminates inside the attested gateway", "route-specific evidence"):
             self.assertIn(copy, self.page)
         self.assertIn('href="https://trustedrouter.com/badge"', self.page)
         self.assertFalse(list(self.root.rglob("*.pdf")))
@@ -30,16 +30,19 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertEqual(len(list((self.root / "assets" / "badges").glob("*.svg"))), 2)
         self.assertNotIn('name="role"', self.page)
         self.assertNotIn('nyte-provider-', self.page)
-        self.assertIn('exclusively for active enterprise buyers', self.page)
+        self.assertIn('exclusively for enterprise buyers', self.page)
         for role in ("enterprise",):
             for theme in ("dark", "light"):
                 name = f"nyte-{role}-{theme}.svg"
                 svg = (self.root / "assets" / "badges" / name).read_text()
                 parsed = ET.fromstring(svg)  # noqa: S314 - generated locally, never untrusted XML
                 self.assertEqual(parsed.attrib["viewBox"], "0 0 320 88")
-                self.assertIn(f"NYTE {role} buyer", svg)
-                self.assertIn("ENTERPRISE BUYER", svg)
-                self.assertIn("not a security certification", svg)
+                self.assertIn("NYTE Privacy Secured", svg)
+                self.assertIn('id="privacy-lock"', svg)
+                self.assertIn("PRIVACY SECURED", svg)
+                self.assertIn("CONFIDENTIAL AI", svg)
+                self.assertNotIn("ENTERPRISE BUYER", svg)
+                self.assertIn("not a product-wide security certification", svg)
                 self.assertNotIn("<script", svg)
                 self.assertNotIn("href=", svg)
                 self.assertIn(f'/assets/badges/{name}" download', self.page)
