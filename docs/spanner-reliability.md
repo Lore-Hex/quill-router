@@ -175,6 +175,15 @@ capacity.
 
 ### Latency and API failures
 
+A one-minute commit-latency event (2026-10-11 09:13Z: every transaction shape
+about 7x slower, pure inserts included, throughput down) reaches the
+API-failure policy through the budgeted callers' deadlines. The request-latency
+policy's "Commit p99 exceeds 500 milliseconds for 2 minutes" condition pages
+beside it and names the cause; the ten-minute conditions do not see a single
+slow minute. Check `SPANNER_SYS.TXN_STATS_TOP_MINUTE` per transaction shape:
+when shapes that touch no contended row slowed too, the lock waits of that
+minute are a consequence, not the cause.
+
 Separate Spanner server latency from network and application latency. Inspect
 the `method`, `status`, and serving-region labels. `ABORTED` is tracked by the
 contention policy; unexpected statuses are tracked by the API-failure policy.
