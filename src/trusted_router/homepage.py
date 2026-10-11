@@ -1,7 +1,8 @@
 """Application data for the approved landscape homepage.
 
 The public catalog and /models view remain the source of prices and privacy.
-The marketing fixture contributes copy and editorial ordering, never live values.
+The default selection shares /models' Featured list. The marketing fixture
+contributes copy and privacy-tab ordering, never live values.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ _PUBLISHERS = {
     "z-ai": "zai",
     "moonshotai": "kimi",
     "minimax": "minimax",
+    "qwen": "qwen",
 }
 
 
@@ -70,7 +72,7 @@ def live_model_count() -> int:
 def homepage_context(api_base_url: str) -> dict[str, Any]:
     # Lazy imports avoid the dashboard renderer's import cycle. Reuse its exact
     # Credits-only pricing/provider aggregation instead of duplicating it here.
-    from trusted_router.dashboard import _model_view, _price
+    from trusted_router.dashboard import MODEL_DISCOVERY_PRIORITY, _model_view, _price
     from trusted_router.routes.catalog import _current_catalog_payload
 
     content = _content()
@@ -79,10 +81,14 @@ def homepage_context(api_base_url: str) -> dict[str, Any]:
     icons = publisher_icons()
     views: dict[str, dict[str, Any]] = {}
     lists: dict[str, list[dict[str, Any]]] = {}
-    for key, selected in content["catalog"]["lists"].items():
+    for key in ("all", "z", "c"):
+        # The default view shares /models' hand-selected Featured list.
+        selected = MODEL_DISCOVERY_PRIORITY if key == "all" else tuple(
+            content["catalog"]["models"][fixture_id]["id"]
+            for fixture_id in content["catalog"]["lists"][key]
+        )
         rows = []
-        for fixture_id in selected:
-            model_id = content["catalog"]["models"][fixture_id]["id"]
+        for model_id in selected:
             if model_id not in public_ids or model_id not in MODELS:
                 continue
             if model_id not in views:

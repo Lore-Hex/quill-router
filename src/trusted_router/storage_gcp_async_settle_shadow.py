@@ -45,8 +45,13 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # active throughout stream iteration and any SDK restart.
 # The horizon bounds scheduled RPC time, not Python scheduling/GC or late
 # server-side commits.
-WRITE_BUDGET_SECONDS = 1.0
-RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
+# A transaction from a secondary region makes two leader reads and a
+# cross-region commit, each measured at up to ~500 ms from southamerica-east1
+# and europe-west4 (docs/incidents/2026-10-10-shadow-regional-read-deadline.md),
+# so a transaction gets two seconds, a read up to one of them, and the commit
+# the remainder; the shadow is a background worker, sized for its slowest region.
+WRITE_BUDGET_SECONDS = 2.0
+RPC_BUDGET_SECONDS = 1.0
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
 logger = logging.getLogger(__name__)

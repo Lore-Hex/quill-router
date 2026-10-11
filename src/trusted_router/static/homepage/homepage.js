@@ -57,32 +57,50 @@ $$('[data-alias]').forEach(button=>button.addEventListener('click',async()=>{
   track('home.alias_copied',{alias:button.dataset.alias});
  }
 }));
-let lang='py', source='openai';
+let lang='py', source='openai', codeLang='py';
 const migration=$('.trm'), pre=$('.mcode');
-function renderCode(){
- $$('.tab',migration).forEach(tab=>{const selected=tab.dataset.lang===lang;tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;});
- $$('.from button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.src===source)));
- $('.from').hidden=lang==='agent';
- pre.setAttribute('aria-labelledby','code-tab-'+lang);
- if(lang==='agent'){pre.className='mcode prompt';pre.textContent=AGENT;}
- else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
- $('.pf .hint').textContent=lang==='agent'?DATA.migration.agent_hint:'';
- $('.pf .hint').hidden=lang!=='agent';
- $('[data-copycode]').setAttribute('aria-label',lang==='agent'?'Copy agent prompt':'Copy code');
- $('[data-copycode]').title=lang==='agent'?'Copy agent prompt':'Copy code';
+// Side by side on desktop, the code column sets the block's height. Hold the tallest
+// height seen so switching views never moves the page below; reset on resize.
+const codeColumn=pre.closest('.r');
+let heldHeight=0;
+function holdCodeHeight(){
+ if(!codeColumn)return;
+ if(innerWidth<=1000){heldHeight=0;codeColumn.style.minHeight='';return;}
+ heldHeight=Math.max(heldHeight,codeColumn.getBoundingClientRect().height);
+ codeColumn.style.boxSizing='border-box';codeColumn.style.minHeight=heldHeight+'px';
 }
-function setLang(value){lang=value;renderCode();track('home.migration_tab',{tab:value,from:source});}
-$$('.tab').forEach((tab,index,tabs)=>{
- tab.addEventListener('click',()=>setLang(tab.dataset.lang));
- tab.addEventListener('keydown',e=>{
+addEventListener('resize',()=>{heldHeight=0;if(codeColumn)codeColumn.style.minHeight='';});
+// Two levels: "Code" or "Agent prompt" first; native pickers belong to Code.
+function renderCode(){
+ holdCodeHeight();
+ const agent=lang==='agent';
+ $$('.mode',migration).forEach(b=>{const selected=(b.dataset.mode==='agent')===agent;b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1;});
+ $('#migration-language').value=codeLang;
+ $('#migration-source').value=source;
+ $('.code-options').hidden=agent;
+ pre.setAttribute('aria-labelledby',agent?'mode-tab-agent':'mode-tab-code');
+ if(agent){pre.className='mcode prompt';pre.textContent=AGENT;}
+ else{pre.className='mcode';pre.innerHTML=migCode(lang,source);}
+ $('.pf .hint').textContent=agent?DATA.migration.agent_hint:'';
+ $('.pf .hint').hidden=!agent;
+ $('[data-copycode]').setAttribute('aria-label',agent?'Copy agent prompt':'Copy code');
+ $('[data-copycode]').title=agent?'Copy agent prompt':'Copy code';
+}
+function setLang(value){lang=value;if(value!=='agent')codeLang=value;renderCode();track('home.migration_tab',{tab:value,from:source});}
+function tabKeys(buttons,select){
+ buttons.forEach((button,index)=>button.addEventListener('keydown',e=>{
   let next;
-  if(e.key==='ArrowRight')next=(index+1)%tabs.length;
-  if(e.key==='ArrowLeft')next=(index-1+tabs.length)%tabs.length;
-  if(e.key==='Home')next=0;if(e.key==='End')next=tabs.length-1;
-  if(next!==undefined){e.preventDefault();setLang(tabs[next].dataset.lang);tabs[next].focus();}
- });
-});
-$$('.from button').forEach(button=>button.addEventListener('click',()=>{source=button.dataset.src;renderCode();track('home.migration_tab',{tab:lang,from:source});}));
+  if(e.key==='ArrowRight')next=(index+1)%buttons.length;
+  if(e.key==='ArrowLeft')next=(index-1+buttons.length)%buttons.length;
+  if(e.key==='Home')next=0;if(e.key==='End')next=buttons.length-1;
+  if(next!==undefined){e.preventDefault();select(buttons[next]);buttons[next].focus();}
+ }));
+}
+const modeLang=button=>button.dataset.mode==='agent'?'agent':codeLang;
+$$('.mode').forEach(button=>button.addEventListener('click',()=>setLang(modeLang(button))));
+tabKeys($$('.mode'),button=>setLang(modeLang(button)));
+$('#migration-language').addEventListener('change',e=>setLang(e.currentTarget.value));
+$('#migration-source').addEventListener('change',e=>{source=e.currentTarget.value;renderCode();track('home.migration_tab',{tab:lang,from:source});});
 $('[data-copy]').addEventListener('click',async e=>{if(await copyText(TRB,e.currentTarget))track('home.base_url_copied');});
 $('[data-copycode]').addEventListener('click',async e=>{
  const clean=pre.cloneNode(true);$$('.del',clean).forEach(n=>n.remove());$$('.add',clean).forEach(n=>n.append('\n'));
@@ -90,6 +108,23 @@ $('[data-copycode]').addEventListener('click',async e=>{
  if(await copyText(text,e.currentTarget))track(lang==='agent'?'home.agent_prompt_copied':'home.code_copied',{tab:lang,from:source});
 });
 renderCode();
+// Hero migration shortcut: copy the prompt and reveal it in the migration block.
+const heroMigrate=$('[data-migrate-with-agent]');
+heroMigrate?.addEventListener('click',async()=>{
+ // Start the clipboard write inside the click gesture; show the prompt even
+ // if the browser is still waiting for clipboard permission.
+ const copying=copyText(AGENT,heroMigrate);
+ const example=$('#migration-example');
+ if(example)example.open=true;
+ setLang('agent');
+ pre.focus({preventScroll:true});
+ const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ $('#migrate')?.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});
+ if(await copying){
+  feedback('Agent prompt copied. Paste it into your agent.');
+  track('home.hero_agent_prompt_copied');
+ }else feedback('Could not copy. Use the prompt’s copy button or select the text to copy it.');
+});
 const labs=$('.trh .labs');let keyboardInput=false;
 document.addEventListener('keydown',()=>{keyboardInput=true;},true);document.addEventListener('pointerdown',()=>{keyboardInput=false;},true);
 if(labs){labs.addEventListener('focusin',()=>{labs.classList.toggle('paused',keyboardInput);});labs.addEventListener('focusout',()=>{labs.classList.remove('paused');});}

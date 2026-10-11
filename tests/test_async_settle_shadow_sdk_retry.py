@@ -408,7 +408,10 @@ def test_regional_flush_and_reset_share_one_sdk_deadline(sdk_database, read_seco
     except Exception as error:
         failure = error
     remaining = 1 - 2*read_seconds
-    assert db.calls == [('read', 1.), ('read', pytest.approx(1-read_seconds)),
+    # Each read is given the read budget, clipped by what the caller's second
+    # has left; the commit the remainder.
+    assert db.calls == [('read', pytest.approx(min(RPC_BUDGET_SECONDS, 1))),
+                        ('read', pytest.approx(min(RPC_BUDGET_SECONDS, 1-read_seconds))),
                         ('commit', pytest.approx(remaining))]
     assert sleeps == []
     assert clock.monotonic()-started == pytest.approx(min(1, 2*read_seconds+commit_seconds))
@@ -448,7 +451,7 @@ def test_regional_read_uses_remaining_total_budget(sdk_database, reads, commit_s
 
 def test_midnight_counter_rollover_defers_second_regional_transaction(sdk_database):
     from tests.test_async_settle_ticket import runtime, settings
-    from trusted_router.services.async_settle_shadow import Runtime
+    from trusted_router.services.async_settle_shadow import FLUSH_BUDGET_SECONDS, Runtime
 
     db, clock, sleeps = sdk_database
     db.read_duration, db.commit_duration = .1, .35
@@ -457,12 +460,12 @@ def test_midnight_counter_rollover_defers_second_regional_transaction(sdk_databa
     rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
     rt.counters.clock = lambda: wall[0]
     try:
-        rt.flush(clock.monotonic()+1)
+        rt.flush(clock.monotonic()+FLUSH_BUDGET_SECONDS)
         clock.now += 6
         wall[0] = today.timestamp()+1
         db.calls.clear()
         started = clock.monotonic()
-        rt.flush(started+1)
+        rt.flush(started+FLUSH_BUDGET_SECONDS)
         assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
         assert clock.monotonic()-started == pytest.approx(.55)
         assert rt.counters.retired_through == (today.date()-dt.timedelta(days=1)).isoformat()
@@ -471,7 +474,7 @@ def test_midnight_counter_rollover_defers_second_regional_transaction(sdk_databa
         # closed writer has already been acknowledged and cannot be reopened.
         clock.now += 6
         db.calls.clear()
-        rt.flush(clock.monotonic()+1)
+        rt.flush(clock.monotonic()+FLUSH_BUDGET_SECONDS)
         assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
         current = rt.counters.days[today.date().isoformat()]
         assert not current['closed'] and not current['drops']
@@ -491,7 +494,12 @@ def test_shadow_snapshot_restart_cannot_renew_deadline(sdk_database, error_type,
         EvidenceStore.query(db.session.snapshot(), point_statement(COUNTER, 'offline'), started+budget)
     assert clock.monotonic()-started == pytest.approx(budget)
     assert sleeps == []
-    expected = [.2, .12, .04] if budget == .2 else [1., .68, .36, .04]
+    # Each restart is given the read budget, clipped by what the caller's
+    # deadline has left, until nothing is.
+    expected, left = [], budget
+    while left > 1e-9:
+        expected.append(min(RPC_BUDGET_SECONDS, left))
+        left -= db.read_duration
     assert [name for name, _ in db.calls] == ['read']*len(expected)
     assert [timeout for _, timeout in db.calls] == pytest.approx(expected)
     assert io._SPANNER_RPC_MAX_SECONDS.get() is None
@@ -543,3 +551,197 @@ def test_wrapper_requires_exact_error_class_and_shared_deadline(sdk_database, me
         assert caught.value is error
     finally:
         io._SPANNER_RPC_MAX_SECONDS.reset(token)
+
+
+@pytest.mark.parametrize('read_seconds,commit_seconds', [(.5, .8), (.45, .8), (.2, .3)])
+def test_a_regional_observation_fits_its_budget_end_to_end(shadow_deadline_clock, read_seconds, commit_seconds):
+    """One observation from the slowest region: the permit reservation, the
+    booking read, the sample and a counter flush, each transaction two leader
+    reads and a cross-region commit, finishes inside the observation budget
+    with no drop. The budget is checked through the Runtime, each store call
+    refusing a deadline its regional cost would pass, not transaction by
+    transaction."""
+    from types import SimpleNamespace
+
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from tests.test_async_settle_shadow import NOW, context, signer, wire
+    from tests.test_async_settle_ticket import runtime, settings
+    from trusted_router.async_settle_shadow_compare import Booking
+    from trusted_router.async_settle_shadow_evidence import dimensions
+    from trusted_router.services.async_settle_shadow import (
+        OBSERVATION_BUDGET_SECONDS,
+        Capture,
+        Runtime,
+    )
+
+    clock = shadow_deadline_clock
+    transaction = 2*read_seconds+commit_seconds
+    costs = {'reserve': transaction, 'booking': read_seconds, 'insert_sample': transaction, 'flush': transaction}
+    answers = {'reserve': 100, 'booking': Booking(2, 'settled', True), 'insert_sample': 'inserted', 'flush': None}
+    calls = []
+
+    def step(name):
+        def run(*args):
+            deadline = args[-1]
+            calls.append(name)
+            if clock.monotonic()+costs[name] > deadline:
+                raise DeadlineExceeded(f'{name} needs {costs[name]}s, {deadline-clock.monotonic():.2f}s left')
+            clock.now += costs[name]
+            return answers[name]
+        return run
+
+    store = SimpleNamespace(**{name: step(name) for name in costs})
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40, async_settle_shadow_workspaces='ws-v1'),
+                 runtime(), store)
+    rt.signer = signer()
+    rt.last_flush = -1e9  # a flush is due
+    rt.counters.clock = lambda: NOW  # the counters' day is the capture's, so its flush runs now
+    dims = dimensions('openai', 'chat.completions', None)
+    with rt.counters.day(NOW):
+        for field in ('settle_attempts', 'observed_attempts', 'observed_unknown'):
+            rt.counters.increment(dims, field)
+    ctx = context()
+    started = clock.monotonic()
+    try:
+        rt.process(Capture(rt, ctx.body, 'settle', NOW, 0, ctx.authorization), wire(), {'data': {'settled': True}}, 1, dims)
+        body = rt.counters.snapshot()[0][1]
+        assert body['drops'] == [], [d['reason'] for d in body['drops']]
+        assert calls == ['reserve', 'booking', 'insert_sample', 'flush']
+        assert clock.monotonic()-started == pytest.approx(3*transaction+read_seconds)
+        assert 3*transaction+read_seconds <= OBSERVATION_BUDGET_SECONDS
+    finally:
+        rt.executor.shutdown()
+
+
+def test_a_maintenance_flush_is_budgeted_from_when_it_runs(sdk_database):
+    """A maintenance flush queued behind the worker's observations gets its
+    budget from when it runs: the queue wait, thirty seconds here, takes
+    nothing from it. The flush is queued through maintain_counters, behind a
+    task that holds the single worker until the clock has moved."""
+    import asyncio
+    import threading
+
+    from tests.test_async_settle_ticket import runtime, settings
+    from trusted_router.services.async_settle_shadow import Runtime
+
+    db, clock, sleeps = sdk_database
+    db.read_duration = .5
+    db.commit_duration = .8
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.last_flush = -1e9
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        held.set()
+        release.wait(10)
+
+    async def run():
+        stopped = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        blocker = loop.run_in_executor(rt.executor, hold)
+        maintenance = asyncio.ensure_future(rt.maintain_counters(stopped))
+        await loop.run_in_executor(None, held.wait, 10)
+        clock.now += 30  # the flush waits in the queue while the worker is held
+        stopped.set()
+        release.set()
+        await blocker
+        await maintenance
+
+    try:
+        asyncio.run(run())
+        assert sleeps == []
+        # The transaction ran to its commit: a deadline from the queue time
+        # would have ended it before its first read.
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+    finally:
+        rt.executor.shutdown()
+
+
+def test_a_flush_defers_a_row_its_remainder_cannot_hold(sdk_database):
+    """A flush that closes a day that retired and registers the current one
+    runs two transactions, each on a budget of its own within the flush's;
+    given a budget that holds one transaction and a fraction, it runs the
+    close whole, attempts nothing for the current day, which waits
+    unacknowledged, and the next flush with a whole budget persists it."""
+    from tests.test_async_settle_ticket import runtime, settings
+    from trusted_router.async_settle_shadow_evidence import day_at, dimensions
+    from trusted_router.services.async_settle_shadow import FLUSH_BUDGET_SECONDS, Runtime
+
+    db, clock, sleeps = sdk_database
+    started = clock.monotonic()
+    assert Runtime.transaction_deadline(started + WRITE_BUDGET_SECONDS) == pytest.approx(started + WRITE_BUDGET_SECONDS)
+    assert Runtime.transaction_deadline(started + 2*WRITE_BUDGET_SECONDS) == pytest.approx(started + WRITE_BUDGET_SECONDS)
+    assert Runtime.transaction_deadline(started + WRITE_BUDGET_SECONDS - .01) is None
+    db.read_duration = .5
+    db.commit_duration = .8
+    transaction = 2*.5+.8
+    now = [1791244800.]
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.counters.clock = lambda: now[0]
+    dims = dimensions('openai', 'responses', False)
+    acknowledged = []
+    acknowledge = rt.counters.acknowledge
+    rt.counters.acknowledge = lambda identity, body: (acknowledged.append(identity), acknowledge(identity, body))
+    try:
+        rt.counters.increment(dims, 'authorize_attempts')
+        rt.last_flush = 0
+        rt.flush(clock.monotonic() + FLUSH_BUDGET_SECONDS)  # day one's writer registered
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        old = day_at(now[0]) + '/' + rt.counters.instance
+        db.calls.clear()
+        now[0] += 86400  # day one retires; the current day's counters begin
+        rt.counters.increment(dims, 'authorize_attempts')
+        new = day_at(now[0]) + '/' + rt.counters.instance
+        rt.last_flush = 0
+        started = clock.monotonic()
+        rt.flush(started + WRITE_BUDGET_SECONDS + .5)  # holds one transaction and a fraction
+        # Day one's close ran whole; the current day was not attempted.
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        assert clock.monotonic()-started == pytest.approx(transaction)
+        assert acknowledged[-1:] == [old] and new not in acknowledged
+        db.calls.clear()
+        rt.last_flush = 0
+        started = clock.monotonic()
+        rt.flush(started + FLUSH_BUDGET_SECONDS)  # a whole budget: the current day persists
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        assert new in acknowledged
+        assert all(timeout >= .5 for _, timeout in db.calls)
+        assert sleeps == []
+        assert all(not body['drops'] for body in rt.counters.days.values())
+    finally:
+        rt.executor.shutdown()
+
+
+def test_a_current_day_flush_with_a_short_remainder_attempts_nothing(sdk_database):
+    """A flush of the current day alone whose budget cannot hold a whole
+    transaction attempts no RPC, acknowledges nothing and drops nothing: the
+    row waits, and the next flush with a whole budget persists it. This is
+    the remainder gate on its own, apart from the after-a-close rule."""
+    from tests.test_async_settle_ticket import runtime, settings
+    from trusted_router.async_settle_shadow_evidence import dimensions
+    from trusted_router.services.async_settle_shadow import FLUSH_BUDGET_SECONDS, Runtime
+
+    db, clock, sleeps = sdk_database
+    db.read_duration = .5
+    db.commit_duration = .8
+    rt = Runtime(settings(async_settle_enabled=False, release='a'*40), runtime(), EvidenceStore(db))
+    rt.counters.clock = lambda: 1791244800.
+    acknowledged = []
+    acknowledge = rt.counters.acknowledge
+    rt.counters.acknowledge = lambda identity, body: (acknowledged.append(identity), acknowledge(identity, body))
+    try:
+        rt.counters.increment(dimensions('openai', 'responses', False), 'authorize_attempts')
+        rt.last_flush = 0
+        started = clock.monotonic()
+        rt.flush(started + WRITE_BUDGET_SECONDS - .01)
+        assert db.calls == [] and acknowledged == []
+        assert clock.monotonic() == started
+        assert all(not body['drops'] for body in rt.counters.days.values())
+        rt.last_flush = 0
+        rt.flush(clock.monotonic() + FLUSH_BUDGET_SECONDS)
+        assert [name for name, _ in db.calls] == ['read', 'read', 'commit']
+        assert len(acknowledged) == 1
+        assert sleeps == []
+    finally:
+        rt.executor.shutdown()

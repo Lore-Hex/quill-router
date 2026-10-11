@@ -36,14 +36,14 @@ SOURCE_DATASET = "trusted-router-logs"
 EDGE_REGION = "eu-central-1.aws.edge.axiom.co"
 BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
-        "landing_engaged", "sign_in_opened", "first_call_started", "first_call_failed",
+        "landing_viewed", "landing_engaged", "sign_in_opened",
+        "signin_mode_switched", "signup_mode_switched",
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
         "experiment_exposed",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",
-        "home.agent_prompt_opened", "home.base_url_copied", "home.agent_prompt_copied",
+        "home.base_url_copied", "home.hero_agent_prompt_copied", "home.agent_prompt_copied",
         "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
-        "home.cta_clicked", "home.cta_clicked.hero", "home.cta_clicked.migration",
-        "home.cta_clicked.closing",
+        "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
     )
 )
 CONVERSION_EVENTS = frozenset(
@@ -64,7 +64,8 @@ FIRST_FIELDS = ("first_utm_source", "first_utm_medium", "first_utm_campaign", "f
 EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_domain_basis",
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
-FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host",
+FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path",
+          "page_path",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
@@ -145,6 +146,11 @@ def project_event(
             output[field] = row[field]
     for field in FIRST_FIELDS:
         output[field] = safe_path(row.get(field)) if field.endswith("path") else safe_label(row.get(field))
+    if row.get("signup_path"):
+        # The page a sign-up started on; present on signup_completed rows only.
+        output["signup_path"] = safe_path(row["signup_path"])
+    if event in {"acquisition.landing_viewed", "acquisition.landing_engaged"}:
+        output["page_path"] = safe_path(row.get("page_path"))
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
     if row.get('first_utm_source'):
         output['first_utm_source'] = canonical_source(row['first_utm_source'], output['first_referrer_domain'])
