@@ -2314,15 +2314,20 @@ def _rotation_error_type(
     # A 503 "service unavailable" is downtime, not a missing catalog model.
     # Only explicit model error types or client-side validation responses
     # justify removing an attempt from provider availability.
-    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or (
+    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES:
+        return "unsupported_route"
+    # Parameter rejection does not mean the model is missing. Providers often
+    # say "not supported" in both cases; classify the specific field first.
+    if status in {400, 422} and any(
+        marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS
+    ):
+        return "probe_config_error"
+    if (
         status in {400, 404, 422}
         and any(marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS)
     ):
         return "unsupported_route"
-    if raw_type in _PROBE_CONFIG_ERROR_TYPES or (
-        status in {400, 422}
-        and any(marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS)
-    ):
+    if raw_type in _PROBE_CONFIG_ERROR_TYPES:
         return "probe_config_error"
     if raw_source == "router":
         return "router_error"
