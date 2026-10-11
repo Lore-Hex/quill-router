@@ -42,6 +42,50 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Featherless's authenticated GET https://api.featherless.ai/v1/models,
+        # verified 2026-10-11: XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B reports
+        # prompt=0.0000004312 and completion=0.00000112 USD/token (4x), with
+        # model_class=qwen3_5-9b. Its docs describe niche-model multipliers:
+        # https://featherless.ai/docs/request-pricing-and-credits
+        # Snapshot and manifest checks use the same native route label.
+        (
+            "xiaomi/mimo-v2.6-distill-qwen-9b "
+            "[featherless:featherless:XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B]",
+            "prompt",
+            Decimal("0.0000001078"),
+            Decimal("0.0000004312"),
+        ),
+        (
+            "xiaomi/mimo-v2.6-distill-qwen-9b "
+            "[featherless:featherless:XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000112"),
+        ),
+        # Wafer's authenticated GET https://pass.wafer.ai/v1/models,
+        # verified 2026-10-11, reports wafer.pricing in cents per million:
+        # DeepSeek-V4.1-Flash input=30, output=120, cache_read=1 (600000 microcents);
+        # Qwen3.8-27B input=42, output=255, cache_read=9 (8500000 microcents);
+        # DeepSeek-V4-Flash-0423 input=14, output=28, cache_read=3 (2800000 microcents).
+        # Snapshot and manifest checks use these same native route labels.
+        (
+            "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash]",
+            "completion",
+            Decimal("0.0000006"),
+            Decimal("0.0000012"),
+        ),
+        (
+            "qwen/qwen3.8-27b [wafer:wafer:Qwen3.8-27B]",
+            "prompt",
+            Decimal("0.00000011"),
+            Decimal("0.00000042"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0423 [wafer:wafer:DeepSeek-V4-Flash-0423]",
+            "prompt",
+            Decimal("0.00000007"),
+            Decimal("0.00000014"),
+        ),
         # NextBit's first-party GET https://api.nextbit256.com/v1/models,
         # verified 2026-09-14: exact deepseek:v4-flash-0731 per-token rates.
         # Cached input independently fell from $0.07/M to $0.012/M.

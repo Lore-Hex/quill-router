@@ -144,7 +144,11 @@ def test_featherless_routes_qwen38_flash_next_at_its_native_id(
 
 def test_featherless_discovers_only_first_party_models(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    manifest = tmp_path / "featherless.json"
+    manifest.write_text(json.dumps({"models": []}))
+    monkeypatch.setattr(featherless.CATALOG, "manifest_path", manifest)
     listing = {
         "data": [
             {
