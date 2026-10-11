@@ -44,6 +44,7 @@ from scripts.pricing.providers import (
     akashml,
     arcee,
     bfl,
+    boundless,
     byteplus,
     confidential_ai,
     decart,
@@ -80,6 +81,7 @@ from scripts.pricing.providers import (
     tencent,
     upstage,
     wandb,
+    zro,
 )
 from scripts.pricing.video_sources import (
     VIDEO_PRICE_PROVIDER_SLUGS,
@@ -505,6 +507,8 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
     ),
     ("lyceum", lyceum.URL, ("LYCEUM_API_KEY",), lyceum.canonical_model_id),
     ("greenference", greenference.URL, ("GREENFERENCE_API_KEY",), greenference.canonical_model_id),
+    ("boundless", boundless.URL, ("BOUNDLESS_API_KEY",), boundless.canonical_model_id),
+    ("zro", zro.URL, ("ZRO_API_KEY",), zro.canonical_model_id),
     ("byteplus", byteplus.URL, ("BYTEPLUS_API_KEY",), byteplus.canonical_model_id),
     ("system1models", system1models.URL, (), system1models.canonical_model_id),
     ("system1models-eu", system1models_eu.URL, (), system1models_eu.canonical_model_id),
@@ -549,6 +553,8 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     nvidia_nim,
     lyceum,
     greenference,
+    boundless,
+    zro,
     byteplus,
     recraft,
     system1models,
