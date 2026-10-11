@@ -1,0 +1,53 @@
+# Shared content layout
+
+Provider routing is the approved reference for checklist items 14 (alignment) and 17 (phone readability). The components are opt-in and loaded by the public, homepage, console, authentication and dashboard shells. The docs hub retains main’s content and composition with desktop navigation only. Other templates retain their existing designs.
+
+## Design rules
+
+- On the provider-routing reference, use one outer panel per meaningful section. Collections and hubs may use shared rules and alignment instead; do not impose panels on every page. Group examples with headings and whitespace; give code a subtle background, without nested bordered cards.
+- Pale headings lead; pale-blue technical labels remain subordinate. Underline actual links. Neutral body copy and 16px reference text maintain a consistent reading size.
+- Documentation notes use the lavender information-note token, not live-warning colors or warning triangles. Keep the essential qualification visible in a native disclosure summary; supporting details may collapse.
+- Never add visible instructional filler such as “Scroll sideways to see the full example.” Prefer sensible wrapping and recognizable, accessible controls. Keep assistive-technology labels and keyboard access.
+- Technical paths may wrap at slashes/dots without altering their copied text. Preserve meaningful code formatting.
+
+## Component contract
+
+`content-section`, `content-prose`, `content-group`, `content-examples`, `content-example`, `content-details`, `content-note` and `content-disclosure` share typography and spacing. Definition lists keep term/description order on phones and use paired desktop columns.
+
+`data-reference-table` enhances simple tables while retaining headers and roles. Tables with merged cells or nested tables are excluded. `data-reference-compact` specifically expects three columns: field, explanation, accepted values. Do not apply it blindly to arbitrary tables. Reference entries stack through 900px; desktop tables must retain comfortable field and value widths.
+
+The code enhancement supplies arrow buttons only when needed, preserves keyboard scrolling, and updates on resize, font load and disclosure opening.
+
+## Adoption and review
+
+The broad docs rollout was rejected and rolled back on 2026-10-11 because it weakened grouping, badges and step sequences. Further adoption is deferred and requires a new design decision. Preserve existing useful structures; choose layouts by reading task rather than applying the provider reference mechanically. Known narrow-screen issues on other pages remain separate follow-up work.
+
+Agents own automated checks and parallel visual review; the user reviews design direction, not every page. Capture every changed view at appropriate widths, inspect hierarchy, grouping, readable code, spacing and expanded states, and distinguish baseline problems from regressions. Screenshot generation and zero overflow alone do not establish readability. Signed-out console captures do not establish authenticated-console coverage.
+
+## Long-page navigation
+
+Wrap long content in `[data-content-toc]` with a `.content-document` child. Navigation derives its labels and anchors from h2 headings, preserves existing section IDs and generates collision-safe missing IDs. At 1400px and wider it uses a sticky right rail with enough remaining width for examples; smaller screens omit section navigation to preserve reading space. The site header remains in normal flow. Current location is highlighted, navigation focuses the destination heading. Section history returns to section headings; JavaScript-disabled pages retain the readable document without generated navigation.
+
+Reader spacing is deliberately tighter within reference entries and notes. Navigation is not a substitute for reviewing content length and reading effort.
+
+## Compact mobile settings
+
+For Field / Effect / Values tables, `data-reference-accordion` plus a concise `data-purpose` on every row enables native mobile disclosures through 900px. The first entry starts open; readers may open multiple entries. The original desktop table and all technical content remain intact. Enhancement requires a valid three-column table and removes cloned IDs and redundant visual cell labels. Without JavaScript the original table remains available.
+
+Mobile and tablet layouts have no Contents bar or sticky navigation. The desktop sidebar remains visible from 1400px, with full heading labels, original anchors and active-location highlighting.
+
+## Proposed rollout scope
+
+PR #1683 is limited to shared opt-in foundations, the approved provider-routing reference, and desktop navigation on the otherwise unchanged docs hub. Checklist items 14/17 remain incomplete across the site. The rejected broad rollout is not part of the final change.
+
+Use one later site-adoption PR, reviewed internally in these groups rather than one PR per category:
+
+| Review group | Representative views and risks |
+| --- | --- |
+| Public information and discovery | Pricing, model catalog, provider/model details, status and articles: readable tables, filters, comparison layouts and technical notes. |
+| Account and authentication | Console API keys, activity, credits, settings, sign-in and consent: forms, errors, empty/loading states and authenticated behavior. |
+| Homepage and conversion flows | Already-approved homepage plus shared navigation, footer and sign-in pop-up: regression checks first; migrate only patterns that actually improve these layouts. |
+
+This is a sequencing recommendation, not authorization for further edits. Exchange sites use their own design and are outside the TrustedRouter rollout.
+
+For each group, agents inventory routes and states, choose representative pattern samples for user approval, capture every changed view, run structural/interaction checks, and independently inspect screenshots. Record inspected coverage and unresolved failures; do not equate generated screenshots with review. Authenticated coverage requires real authorized signed-in states. Escalate new design decisions and exceptions to the user, not routine page-by-page QA.

@@ -1,16 +1,18 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<div class="content-reader" data-content-toc>
+<div class="content-document">
 
-<section class="marketing-split" aria-label="Provider routing and pinning">
-  <div class="marketing-copy">
-    <span class="eyebrow">OpenRouter-compatible routing controls</span>
-    <h2>Pin, prefer, or exclude providers per request.</h2>
+<section class="content-section" aria-label="Provider routing and pinning">
+  <div class="content-prose">
+    <span class="content-label">OpenRouter-compatible routing controls</span>
+    <h2 data-toc-label="Overview">Pin, prefer, or exclude providers per request.</h2>
     <p>Every Chat Completions and Responses request accepts a <code>provider</code> object that narrows which providers may serve it and in what order. Hard filters fail with <code>400</code> before inference when nothing matches. Unknown options also return <code>400</code>. OpenRouter options recognized but not implemented by this release return <code>501 not_supported_in_alpha</code>. Accepted router options never disappear silently.</p>
     <p>Lists accept either a JSON array or one comma-separated string. Provider slugs are the ones on the <a href="/providers">providers page</a> and in <a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a>.</p>
   </div>
-  <div class="marketing-grid two">
-    <div class="marketing-card">
-      <span class="card-label">Pin one provider</span>
+  <div class="content-examples">
+    <div class="content-example">
+      <span class="content-label">Pin one provider</span>
       <h3><code>only</code> + no fallbacks</h3>
       <pre><code>{
   "model": "deepseek/deepseek-v4-pro",
@@ -20,8 +22,8 @@
   }
 }</code></pre>
     </div>
-    <div class="marketing-card">
-      <span class="card-label">Prefer, then fail over</span>
+    <div class="content-example">
+      <span class="content-label">Prefer, then fail over</span>
       <h3><code>order</code></h3>
       <pre><code>{
   "model": "trustedrouter/auto",
@@ -32,94 +34,155 @@
 }</code></pre>
     </div>
   </div>
-  <p style="margin-top:12px">Rejected field names and status codes are emitted as bounded operational metadata so compatibility demand can be measured. Field values, request bodies, prompts, and outputs are excluded, and Sentry remains outside the enclave.</p>
+  <p>Rejected field names and status codes are emitted as bounded operational metadata so compatibility demand can be measured. Field values, request bodies, prompts, and outputs are excluded, and Sentry remains outside the enclave.</p>
 </section>
 
-<section class="status-section" style="margin-top:48px" id="recommended-models">
-  <div class="status-section-head"><div>
-    <h2>Recommended automatic routes</h2>
+<section class="content-section" id="recommended-models">
+  <div class="content-prose"><div>
+    <h2 data-toc-label="Automatic routes">Recommended automatic routes</h2>
     <p><code>trustedrouter/auto</code> starts with <a href="/models/z-ai/glm-5.3-flash">GLM 5.3 Flash</a>, then <a href="/models/z-ai/glm-5.3">GLM 5.3</a>, followed by DeepSeek, Kimi, and the rest of the fallback pool. Your provider, privacy, and capability requirements still determine which routes qualify.</p>
     <p><code>trustedrouter/cheap</code> includes both GLM models alongside lower-cost alternatives. It orders the pool by published input plus output token prices, so GLM 5.3 remains a higher-cost fallback. Set <code>provider.max_price</code> to enforce your per-token price ceiling.</p>
   </div></div>
 </section>
 
-<section class="status-section" style="margin-top:48px" id="fields">
-  <div class="status-section-head">
+<section class="content-section" id="fields">
+  <div class="content-prose">
     <div>
-      <h2>The <code>provider</code> object</h2>
-      <p>Every field is optional. Filters compose: <code>only</code> and <code>ignore</code> narrow the candidate set, <code>order</code> and <code>sort</code> arrange it, and <code>allow_fallbacks</code> decides whether anything past the first candidate may serve.</p>
+      <h2 data-toc-label="Provider settings">Provider settings</h2>
+      <p>Add these optional settings inside the <code>provider</code> object in your API request. They control which providers can handle it. Filters compose: <code>only</code> and <code>ignore</code> narrow the candidate set, <code>order</code> and <code>sort</code> arrange it, and <code>allow_fallbacks</code> decides whether anything past the first candidate may serve.</p>
     </div>
   </div>
-  <div class="leaderboard-table-wrap">
-    <table class="activity-table status-table">
-      <thead><tr><th>Field</th><th>Values</th><th>Effect</th></tr></thead>
+  <div class="content-reference">
+    <table data-reference-table data-reference-compact data-reference-accordion>
+      <thead><tr><th>Field</th><th>Effect</th><th>Values</th></tr></thead>
       <tbody>
-        <tr><td><code>only</code></td><td>Provider slugs (array or comma string)</td><td>Allowlist. Candidates outside it are removed; an empty result is a <code>400</code>.</td></tr>
-        <tr><td><code>ignore</code></td><td>Provider slugs</td><td>Blocklist, applied after <code>only</code>.</td></tr>
-        <tr><td><code>order</code></td><td>Provider slugs</td><td>Soft preferred order while fallbacks are enabled; unlisted providers remain eligible afterward. Combine with <code>allow_fallbacks: false</code> or use <code>only</code> for a hard restriction.</td></tr>
-        <tr><td><code>allow_fallbacks</code></td><td><code>true</code> (default) / <code>false</code></td><td><code>false</code> serves only the single first candidate; a top-level <code>allow_fallbacks</code> is also accepted, and disagreeing values are a <code>400</code>.</td></tr>
-        <tr><td><code>sort</code></td><td><code>price</code>, <code>latency</code>, <code>throughput</code>, or <code>{"by":"price","partition":"model|none"}</code></td><td>Orders endpoints by tracked metrics. The default <code>model</code> partition preserves the primary and fallback model order; <code>none</code> sorts every endpoint together.</td></tr>
-        <tr><td><code>require_parameters</code></td><td><code>true</code> / <code>false</code> (default)</td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td></tr>
-        <tr><td><code>max_price</code></td><td><code>{"prompt":"0.15","completion":"0.40"}</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td></tr>
-        <tr><td><code>preferred_max_latency</code></td><td>Seconds, or a percentile object</td><td>Prefers routes meeting the requested time to first token. A soft preference, not a timeout.</td></tr>
-        <tr><td><code>preferred_min_throughput</code></td><td>Tokens per second, or a percentile object</td><td>Prefers routes meeting the requested output speed. Other eligible routes remain available for fallback.</td></tr>
-        <tr><td><code>zdr</code></td><td><code>true</code> / <code>false</code></td><td><code>true</code> restricts routing to endpoints with a tracked zero-data-retention guarantee.</td></tr>
-        <tr><td><code>min_privacy</code></td><td><code>any</code>, <code>no_store</code>, <code>zdr</code>, <code>confidential</code> (aliases <code>e2e</code>, <code>e2ee</code>)</td><td>A hard privacy floor: no endpoint with the required tracked guarantee means a <code>400</code>, never a downgrade.</td></tr>
-        <tr><td><code>data_collection</code></td><td><code>allow</code>, <code>deny</code></td><td>OpenRouter-compatible preference against providers that retain data; use <code>min_privacy</code> when the floor must be unrelaxable.</td></tr>
-        <tr><td><code>usage</code></td><td><code>credits</code>, <code>byok</code> (aliases <code>prepaid</code>, <code>bring-your-own-key</code>; also accepted as <code>usage_type</code> or <code>billing</code>)</td><td>Restricts billing path — platform credits or your own upstream key.</td></tr>
-        <tr><td><code>jurisdiction</code></td><td><code>us</code> (also accepted as <code>country</code>, <code>headquarters_country</code>, <code>provider_country</code>)</td><td>Restricts to providers headquartered in that jurisdiction.</td></tr>
+        <tr data-purpose="Allow specific providers"><td><code>only</code></td><td>Allowlist. Candidates outside it are removed; an empty result is a <code>400</code>.</td><td>Provider slugs (array or comma string)</td></tr>
+        <tr data-purpose="Exclude providers"><td><code>ignore</code></td><td>Blocklist, applied after <code>only</code>.</td><td>Provider slugs</td></tr>
+        <tr data-purpose="Set your preferred order"><td><code>order</code></td><td>Soft preferred order while fallbacks are enabled; unlisted providers remain eligible afterward. Combine with <code>allow_fallbacks: false</code> or use <code>only</code> for a hard restriction.</td><td>Provider slugs</td></tr>
+        <tr data-purpose="Control fallback routing"><td><code>allow_fallbacks</code></td><td><code>false</code> serves only the single first candidate; a top-level <code>allow_fallbacks</code> is also accepted, and disagreeing values are a <code>400</code>.</td><td><code>true</code> (default) / <code>false</code></td></tr>
+        <tr data-purpose="Choose how routes are ranked"><td><code>sort</code></td><td>Orders endpoints by tracked metrics. The default <code>model</code> partition preserves the primary and fallback model order; <code>none</code> sorts every endpoint together.</td><td><code>price</code>, <code>latency</code>, <code>throughput</code>, or <code class="content-value-code">{
+  "by": "price",
+  "partition": "model|none"
+}</code></td></tr>
+        <tr data-purpose="Require parameter support"><td><code>require_parameters</code></td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td><td><code>true</code> / <code>false</code> (default)</td></tr>
+        <tr data-purpose="Set a price ceiling"><td><code>max_price</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td><td><code class="content-value-code">{
+  "prompt": "0.15",
+  "completion": "0.40"
+}</code></td></tr>
+        <tr data-purpose="Prefer a faster first token"><td><code>preferred_max_latency</code></td><td>Prefers routes meeting the requested time to first token. A soft preference, not a timeout.</td><td>Seconds, or a percentile object</td></tr>
+        <tr data-purpose="Prefer faster output"><td><code>preferred_min_throughput</code></td><td>Prefers routes meeting the requested output speed. Other eligible routes remain available for fallback.</td><td>Tokens per second, or a percentile object</td></tr>
+        <tr data-purpose="Require zero data retention"><td><code>zdr</code></td><td><code>true</code> restricts routing to endpoints with a tracked zero-data-retention guarantee.</td><td><code>true</code> / <code>false</code></td></tr>
+        <tr data-purpose="Set a minimum privacy level"><td><code>min_privacy</code></td><td>A hard privacy floor: no endpoint with the required tracked guarantee means a <code>400</code>, never a downgrade.</td><td><code>any</code>, <code>no_store</code>, <code>zdr</code>, <code>confidential</code> (aliases <code>e2e</code>, <code>e2ee</code>)</td></tr>
+        <tr data-purpose="Set a data-retention preference"><td><code>data_collection</code></td><td>OpenRouter-compatible preference against providers that retain data; use <code>min_privacy</code> when the floor must be unrelaxable.</td><td><code>allow</code>, <code>deny</code></td></tr>
+        <tr data-purpose="Choose the billing path"><td><code>usage</code></td><td>Restricts billing path — platform credits or your own upstream key.</td><td><code>credits</code>, <code>byok</code> (aliases <code>prepaid</code>, <code>bring-your-own-key</code>; also accepted as <code>usage_type</code> or <code>billing</code>)</td></tr>
+        <tr data-purpose="Choose provider jurisdiction"><td><code>jurisdiction</code></td><td>Restricts to providers headquartered in that jurisdiction.</td><td><code>us</code> (also accepted as <code>country</code>, <code>headquarters_country</code>, <code>provider_country</code>)</td></tr>
       </tbody>
     </table>
   </div>
-  <p style="margin-top:12px"><code>quantizations</code>, <code>enforce_distillable_text</code>, non-token <code>max_price</code> units, and <code>sort: "exacto"</code> return <code>501 not_supported_in_alpha</code>. Quantization metadata is available for reviewed endpoints; filtering by it is not implemented.</p>
+  <details class="content-note content-disclosure">
+    <summary><svg class="content-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v7m0-11v1"/></svg><span>Unsupported options return <code>501</code></span></summary>
+    <div class="content-disclosure-body">
+    <ul>
+      <li><code>quantizations</code> and <code>enforce_distillable_text</code></li>
+      <li>Non-token <code>max_price</code> units</li>
+      <li><code>sort: "exacto"</code></li>
+    </ul>
+    <p>Error: <code>501 not_supported_in_alpha</code>. Quantization metadata is available for reviewed endpoints; filtering by it is not implemented.</p>
+    </div>
+  </details>
 </section>
 
-<section class="status-section" style="margin-top:48px" id="precision-metadata">
-  <h2>Published weight formats</h2>
-  <p><a href="/docs/model-precision">Precision metadata API guide</a> and <a href="/model-precision">model precision overview</a>.</p>
+<section class="content-section" id="precision-metadata">
+  <h2 data-toc-label="Model formats">Published weight formats</h2>
+  <p class="content-links"><a href="/docs/model-precision">Precision metadata API guide</a> <a href="/model-precision">Model precision overview</a></p>
   <p>Model pages and endpoint JSON include reviewed weight formats for Tinfoil, Privatemode, NEAR AI, and Chutes deployments. The same model can have different formats at different providers. Unreviewed endpoints return <code>null</code> and display Unknown.</p>
-  <p><code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code>. The full catalog includes these under <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
-  <p>The precision object links the published serving code and pinned model configuration, with a review date and model revision. <code>quantization</code> names the primary format; <code>weight_formats</code>, <code>label</code>, and <code>notes</code> describe mixed formats and higher-precision exclusions. <code>kv_cache_dtype</code> is separate: an FP8 cache does not imply FP8 weights.</p>
-  <p>This is a reviewed configuration snapshot, not per-request proof of the loaded weights. <code>evidence_type</code> is <code>published_serving_config</code> and <code>runtime_verified</code> is false. Provider changes require a new review; workload attestation alone does not establish serving precision.</p>
+
+  <div class="content-group">
+    <h3>Look up a model's endpoints</h3>
+    <pre class="content-code-wrap"><code>GET /v1/<wbr>models/<wbr>{author}/<wbr>{slug}/<wbr>endpoints</code></pre>
+    <p>The response includes <code>quantization</code> and <code>trustedrouter.precision</code>. In the full catalog, find these at:</p>
+    <pre class="content-code-wrap"><code>trustedrouter.<wbr>endpoints[].<wbr>quantization
+trustedrouter.<wbr>endpoints[].<wbr>precision</code></pre>
+  </div>
+
+  <div class="content-group">
+    <h3>Read the precision metadata</h3>
+    <p>The precision object links the published serving code and pinned model configuration, with a review date and model revision.</p>
+    <dl class="content-details">
+      <dt><code>quantization</code></dt>
+      <dd>Names the primary format.</dd>
+      <dt><code>weight_formats</code>, <code>label</code>, <code>notes</code></dt>
+      <dd>Describe mixed formats and higher-precision exclusions.</dd>
+      <dt><code>kv_cache_dtype</code></dt>
+      <dd>Describes the cache separately. An FP8 cache does not imply FP8 weights.</dd>
+    </dl>
+  </div>
+
+  <details class="content-note content-disclosure">
+    <summary><svg class="content-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v7m0-11v1"/></svg><span>Reviewed configuration, not per-request proof</span></summary>
+    <div class="content-disclosure-body">
+    <p>This is a reviewed configuration snapshot, not per-request proof of the loaded weights.</p>
+    <pre class="content-code-wrap"><code>evidence_type: published_serving_config
+runtime_verified: false</code></pre>
+    <p>Provider changes require a new review; workload attestation alone does not establish serving precision.</p>
+    </div>
+  </details>
 </section>
 
-<section class="status-section" style="margin-top:48px" id="performance-preferences">
-  <h2>Performance preferences</h2>
-  <p><a href="/docs/performance-routing">Performance routing API guide</a> and <a href="/performance-routing">performance routing overview</a>.</p>
-  <p>Following <a href="https://openrouter.ai/docs/guides/routing/provider-selection">OpenRouter's provider-selection interface</a>, use a number for p50 or an object with <code>p50</code>, <code>p75</code>, <code>p90</code>, and <code>p99</code>. All supplied thresholds must be met to receive priority. Throughput p90 means a rate achieved by at least 90% of measured requests.</p>
-  <pre><code>{"provider": {"preferred_max_latency": {"p90": 3}, "preferred_min_throughput": 40}}</code></pre>
-  <p>Measurements use successful streaming requests with reported token counts from the last five minutes, scoped to the gateway region and control-plane instance. Storage is bounded and routing adds no analytics query. Cold instances and routes without recent measurements retain normal fallback ordering. These are best-effort preferences, not performance guarantees. Explicit provider order, model fallback order, privacy requirements, and allowlists still apply.</p>
-  <p>Performance preferences apply to synchronous Chat Completions, Responses, and Messages. Other endpoint types return <code>501</code> rather than accepting preferences they cannot measure.</p>
+<section class="content-section" id="performance-preferences">
+  <h2 data-toc-label="Performance">Performance preferences</h2>
+  <p class="content-links"><a href="/docs/performance-routing">Performance routing API guide</a> <a href="/performance-routing">Performance routing overview</a></p>
+  <div class="content-group">
+    <h3>Set your preferred speed</h3>
+    <p>Following <a href="https://openrouter.ai/docs/guides/routing/provider-selection">OpenRouter's provider-selection interface</a>, use a number for p50 or an object with <code>p50</code>, <code>p75</code>, <code>p90</code>, and <code>p99</code>.</p>
+    <p>All supplied thresholds must be met to receive priority. Throughput p90 means a rate achieved by at least 90% of measured requests.</p>
+    <pre><code>{
+  "provider": {
+    "preferred_max_latency": {"p90": 3},
+    "preferred_min_throughput": 40
+  }
+}</code></pre>
+  </div>
+  <div class="content-group">
+    <h3>How measurements work</h3>
+    <p>Measurements use successful streaming requests with reported token counts from the last five minutes, scoped to the gateway region and control-plane instance. Storage is bounded and routing adds no analytics query.</p>
+    <p>Cold instances and routes without recent measurements retain normal fallback ordering.</p>
+  </div>
+  <div class="content-note">
+    <h3>Preferences, not guarantees</h3>
+    <p>These are best-effort preferences, not performance guarantees. Explicit provider order, model fallback order, privacy requirements, and allowlists still apply.</p>
+    <p>Performance preferences apply to synchronous Chat Completions, Responses, and Messages. Other endpoint types return <code>501</code> rather than accepting preferences they cannot measure.</p>
+  </div>
 </section>
 
-<section class="status-section" style="margin-top:48px" id="parameter-contract">
-  <div class="status-section-head"><div>
-    <h2>Parameter contract</h2>
+<section class="content-section" id="parameter-contract">
+  <div class="content-prose"><div>
+    <h2 data-toc-label="Request errors">Parameter contract</h2>
     <p>TrustedRouter validates the current OpenRouter request field, provider field, and plugin names at the attested boundary. This catches spelling mistakes and API drift before authorization or billing.</p>
   </div></div>
-  <div class="marketing-grid two">
-    <div class="marketing-card">
-      <span class="card-label">Unknown option</span>
-      <h3><code>400 invalid_request_error</code></h3>
+  <div class="content-examples">
+    <div class="content-example">
+      <h3>Unknown option</h3>
+      <pre class="content-code-wrap"><code>400 invalid_request_error</code></pre>
       <p>The error names the exact field in <code>error.param</code>, such as <code>provider.future_option</code>.</p>
     </div>
-    <div class="marketing-card">
-      <span class="card-label">Known but unavailable</span>
-      <h3><code>501 not_supported_in_alpha</code></h3>
+    <div class="content-example">
+      <h3>Known but unavailable</h3>
+      <pre class="content-code-wrap"><code>501 not_supported_in_alpha</code></pre>
       <p>The field is part of OpenRouter's API, but this TrustedRouter release cannot honor it. The request stops before inference.</p>
     </div>
   </div>
 </section>
 
-<section class="status-section" style="margin-top:48px" id="suffixes">
-  <div class="status-section-head">
+<section class="content-section" id="suffixes">
+  <div class="content-prose">
     <div>
-      <h2>Model-id suffixes</h2>
+      <h2 data-toc-label="Model shortcuts">Model-id suffixes</h2>
       <p>Two OpenRouter-style shortcuts set <code>provider.sort</code> from the model id itself.</p>
     </div>
   </div>
-  <div class="leaderboard-table-wrap">
-    <table class="activity-table status-table">
+  <div class="content-reference">
+    <table data-reference-table>
       <thead><tr><th>Suffix</th><th>Equivalent</th></tr></thead>
       <tbody>
         <tr><td><code>deepseek/deepseek-v4-pro:nitro</code></td><td><code>provider.sort = "throughput"</code></td></tr>
@@ -127,7 +190,19 @@
       </tbody>
     </table>
   </div>
-  <p style="margin-top:12px">A suffix takes precedence over an explicit <code>provider.sort</code> in the same request. Discover which providers serve a model &mdash; with privacy badges, prices, and live performance &mdash; on that model's page under <a href="/models">models</a>, or programmatically via <a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a>. Pinned requests still produce <a href="/docs/receipts">signed receipts</a> naming the provider that actually served.</p>
+  <div class="content-note">
+    <h3>Suffixes take precedence</h3>
+    <p>A suffix takes precedence over an explicit <code>provider.sort</code> in the same request.</p>
+  </div>
+  <div class="content-group">
+    <h3>Discover providers and verify requests</h3>
+    <p>Find which providers serve a model, with privacy badges, prices, and live performance, on that model's page under <a href="/models">models</a>.</p>
+    <p>For programmatic discovery, use the <a href="https://api.trustedrouter.com/v1/models">models API</a>:</p>
+    <pre class="content-code-wrap"><code>GET /v1/models</code></pre>
+    <p>Pinned requests still produce <a href="/docs/receipts">signed receipts</a> naming the provider that actually served.</p>
+  </div>
 </section>
 
+</div>
+</div>
 {% endblock %}

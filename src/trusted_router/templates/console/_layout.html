@@ -14,6 +14,8 @@
   {% block head_extra %}{% endblock %}
   <script defer src="/static/console.js?v={{ static_version|default('local') }}"></script>
   {% block scripts %}{% endblock %}
+<link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
+<script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
 </head>
 <body class="console">
   <header class="console-topbar">

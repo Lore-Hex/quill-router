@@ -1,5 +1,10 @@
 {% extends "public/_base.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/docs-hub.css?v={{ static_version|default('local') }}">
+{% endblock %}
 {% block body %}
+<div class="docs-main-reader" data-content-toc>
+<div class="content-document">
 
 <section class="marketing-split" aria-label="Quickstart">
   <div class="marketing-copy">
@@ -299,4 +304,6 @@ with httpx.Client() as client:
   <p>Other routes report a settled or durable charge when known; an unknown cost is omitted, not shown as zero. BYOK, partner minimums, orchestration, hosted search, video, refunds, receipt surcharges, and custom or app markups retain their existing billing and reporting contracts.</p>
 </section>
 
+</div>
+</div>
 {% endblock %}

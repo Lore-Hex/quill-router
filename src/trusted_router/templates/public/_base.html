@@ -34,6 +34,7 @@
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/site-chrome.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/content-layout.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
 </head>
@@ -80,6 +81,7 @@
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
   <script defer src="/static/site-chrome.js?v={{ static_version|default('local') }}"></script>
   <script defer src="/static/homepage/status.js?v={{ static_version|default('local') }}"></script>
+  <script defer src="/static/content-layout.js?v={{ static_version|default('local') }}"></script>
   {% block body_scripts %}{% endblock %}
 </body>
 </html>
