@@ -44,33 +44,70 @@ TRANSIENT_READ_ERRORS = (
 TRANSIENT_READ_STATUSES = {500, 502, 503, 504}
 READ_RETRY_DELAYS = (1., 2., 4., 8.)
 READ_RECOVERY_SECONDS = 15.
+CLIENT_INFO_ERROR_KINDS = {
+    "Authentication error": "authentication",
+    "Auth token or auth request is expired": "auth_expired",
+    "User failed authentication": "unauthenticated",
+    "User not authorized": "unauthorized",
+    "Client authentication failed; cert missing or malformed": "client_auth",
+    "Client lacks the required permission": "insufficient_scope",
+    "Client is too old to handle the response; upgrade required": "upgrade_required",
+    "Error connecting to a remote HTTP service": "connect",
+    "Unknown Reqwest client error": "http_client",
+    "Error building the HTTP request": "request_build",
+    "Request timed out": "timeout",
+    "Error decoding/deserializing the HTTP response body": "decode",
+    "General server error": "server",
+    "Server is at capacity": "capacity",
+    "Database error": "database",
+    "Could not proxy request to node": "proxy",
+    "Error occurred during provisioning": "provision",
+    "Request measurement doesn't match current enclave measurement": "measurement_mismatch",
+    "Wrong user pk": "user_mismatch",
+    "Given node pk doesn't match node pk derived from seed": "node_mismatch",
+}
 
 
 class LexeHTTPError(RuntimeError):
-    def __init__(self, status: int, code: int | None) -> None:
+    def __init__(self, status: int, code: int | None, reason: str = "unknown") -> None:
         super().__init__("Lexe request unavailable")
         self.status = status
         self.code = code
+        self.reason = reason
 
 
-def error_code(response: httpx.Response) -> int | None:
+def error_details(response: httpx.Response, *, client_info: bool) -> tuple[int | None, str]:
     # Lexe ErrorResponse has a u16 code; msg/data can contain payment secrets.
     # Do not decompress diagnostic bodies or retain arbitrary provider text.
     if (response.headers.get("content-type", "").split(";")[0].strip() != "application/json"
             or response.headers.get("content-encoding", "identity") != "identity"):
-        return None
+        return None, "unknown"
     body = bytearray()
     deadline = time.monotonic() + 1
     try:
         for chunk in response.iter_bytes():
             if len(body) + len(chunk) > 4096 or time.monotonic() > deadline:
-                return None
+                return None, "unknown"
             body.extend(chunk)
         data = json.loads(body)
     except (httpx.HTTPError, ValueError, RecursionError):
-        return None
+        return None, "unknown"
     code = data.get("code") if isinstance(data, dict) else None
-    return code if type(code) is int and 0 <= code <= 65535 else None
+    if type(code) is not int or not 0 <= code <= 65535:
+        return None, "unknown"
+    # SdkApiError::command wraps NodeApiError's fixed Display prefix in msg.
+    # Read only up to three leading enum labels for this content-free endpoint;
+    # never retain the raw message, structured data, or arbitrary suffixes.
+    message = data.get("msg")
+    reasons = []
+    if client_info and code == 100 and isinstance(message, str):
+        for _ in range(3):
+            prefix, separator, message = message.partition(": ")
+            reason = CLIENT_INFO_ERROR_KINDS.get(prefix)
+            if not separator or reason is None:
+                break
+            reasons.append(reason)
+    return code, "/".join(reasons) if reasons else "unknown"
 
 
 class LexeReadinessError(ValueError):
@@ -134,8 +171,9 @@ class Lexe:
                 is_http = isinstance(exc, LexeHTTPError)
                 status = exc.status if isinstance(exc, LexeHTTPError) else 0
                 code = exc.code if isinstance(exc, LexeHTTPError) and exc.code is not None else "unknown"
+                reason = exc.reason if isinstance(exc, LexeHTTPError) else "unknown"
                 retryable = safe_read and (not is_http or status in TRANSIENT_READ_STATUSES)
-                detail = f"{context} error_type={type(exc).__name__} http_status={status} lexe_code={code}"
+                detail = f"{context} error_type={type(exc).__name__} http_status={status} lexe_code={code} lexe_reason={reason}"
                 if retryable and attempt <= len(READ_RETRY_DELAYS):
                     if recovery_deadline is None:
                         recovery_deadline = time.monotonic() + READ_RECOVERY_SECONDS
@@ -166,7 +204,8 @@ class Lexe:
     def _request_once(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         with self.client.stream(method, path, follow_redirects=False, **kwargs) as response:
             if response.status_code != 200:
-                raise LexeHTTPError(response.status_code, error_code(response))
+                code, reason = error_details(response, client_info=method == "GET" and path == "/v2/node/client_info")
+                raise LexeHTTPError(response.status_code, code, reason)
             body = bytearray()
             for chunk in response.iter_bytes():
                 body.extend(chunk)
