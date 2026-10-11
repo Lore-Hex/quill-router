@@ -134,6 +134,18 @@ def test_cross_project_backup_uses_an_isolated_project() -> None:
     assert "--service-account=\"$BACKUP_SERVICE_ACCOUNT_EMAIL\"" in reliability
 
 
+def test_reliability_script_leaves_capacity_to_terraform() -> None:
+    """Terraform autoscales the instance (infra/spanner_trusted_router.tf); a
+    fixed processing-unit count in this script once sat at 600 while the
+    instance ran at 1000, and an apply would have cut it. The script sets no
+    capacity on the source instance (the DR instance's creation keeps its own
+    minimal size)."""
+    script = (DEPLOY / "spanner_reliability.sh").read_text(encoding="utf-8")
+    assert "SPANNER_PROCESSING_UNITS" not in script
+    assert 'spanner instances update "$SPANNER_INSTANCE_ID"' not in script
+    assert "processingUnits" not in script
+
+
 def test_latency_commit_condition_names_a_slow_minute() -> None:
     """A one-minute commit-latency event must page with its cause named: a
     60 s alignment and no duration, so a single slow aligned point pages,

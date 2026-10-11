@@ -56,14 +56,16 @@ require_production_topology() {
 }
 
 ensure_source_protection() {
-  local drop_protection processing_units retention
-  log "ensuring Spanner deletion protection, PITR, capacity, and incremental backups"
+  local drop_protection retention
+  # Capacity is Terraform's (infra/spanner_trusted_router.tf: an autoscaler
+  # between its floor and ceiling), never this script's: a fixed number here
+  # once sat at 600 while the instance ran at 1000, and an apply would have
+  # cut it.
+  log "ensuring Spanner deletion protection, PITR, and incremental backups"
   drop_protection="$(source_gc spanner databases describe "$SPANNER_DATABASE_ID" \
     --instance="$SPANNER_INSTANCE_ID" --format='value(enableDropProtection)')"
   retention="$(source_gc spanner databases describe "$SPANNER_DATABASE_ID" \
     --instance="$SPANNER_INSTANCE_ID" --format='value(versionRetentionPeriod)')"
-  processing_units="$(source_gc spanner instances describe "$SPANNER_INSTANCE_ID" \
-    --format='value(processingUnits)')"
   if [ "$drop_protection" != "True" ]; then
     run source_gc spanner databases update "$SPANNER_DATABASE_ID" \
       --instance="$SPANNER_INSTANCE_ID" \
@@ -74,11 +76,6 @@ ensure_source_protection() {
     run source_gc spanner databases ddl update "$SPANNER_DATABASE_ID" \
       --instance="$SPANNER_INSTANCE_ID" \
       --ddl="ALTER DATABASE \`${SPANNER_DATABASE_ID}\` SET OPTIONS (version_retention_period = '7d')"
-  fi
-  if [ "$processing_units" != "$SPANNER_PROCESSING_UNITS" ]; then
-    run source_gc spanner instances update "$SPANNER_INSTANCE_ID" \
-      --processing-units="$SPANNER_PROCESSING_UNITS" \
-      --quiet
   fi
   if ! source_gc spanner backup-schedules describe incremental-every-4h \
       --instance="$SPANNER_INSTANCE_ID" \
