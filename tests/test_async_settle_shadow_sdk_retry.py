@@ -570,6 +570,47 @@ def test_shadow_snapshot_restart_cannot_renew_deadline(sdk_database, error_type,
     assert io._SPANNER_RPC_DEADLINE.get() is None
 
 
+@pytest.mark.parametrize('operation', ['admission', 'drain_health'])
+@pytest.mark.parametrize('error_type', [ServiceUnavailable, InternalServerError])
+@pytest.mark.parametrize('during_iteration', [False, True])
+def test_admission_snapshot_restarts_share_one_budget(
+        sdk_database, monkeypatch, operation, error_type, during_iteration):
+    from trusted_router import storage_gcp_async_admission as admission
+
+    db, clock, sleeps = sdk_database
+    monkeypatch.setattr(admission, 'time', clock, raising=False)
+    db.snapshot = lambda: nullcontext(db.session.snapshot())
+    db.read_duration = .2
+    db.read_errors = [error_type('RST_STREAM private SQL parameters') for _ in range(4)]
+    if during_iteration:
+        original = db.query
+
+        def query(**kwargs):
+            # Exercise a reset after the RPC returned its iterator as well.
+            yield from original(**kwargs)
+
+        db.spanner_api.execute_streaming_sql = query
+        db._trusted_router_rpc_deadlines = False
+        io.configure_spanner_rpc_deadlines(db)
+    started = clock.monotonic()
+    failure = None
+    try:
+        if operation == 'admission':
+            admission.read_admission(db, 'private-workspace')
+        else:
+            admission.read_health(db)
+    except Exception as error:
+        failure = error
+    # Before the repair, the real SDK retries all four failures with a fresh
+    # 500 ms budget each, consuming a full second before returning a result.
+    assert clock.monotonic()-started <= .5
+    assert type(failure) is DeadlineExceeded
+    assert db.calls == [('read', .5), ('read', pytest.approx(.3)), ('read', pytest.approx(.1))]
+    assert sleeps == []
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+    assert io._SPANNER_RPC_MAX_SECONDS.get() is None
+
+
 @pytest.mark.parametrize('method', ['commit', 'begin_transaction', 'rollback'])
 @pytest.mark.parametrize('message', [None, 'missing', 'rst_stream',
                                     'received unexpected EOS on DATA frame from server'])
