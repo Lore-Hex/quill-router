@@ -3,6 +3,10 @@
 Reviewed 2026-10-11. Boundless and Zro passed native streaming and non-streaming
 GLM-5.3-Flash probes; all 20 Boundless and 5 Zro priced models passed PONG canaries
 with integer token accounting. Routing activation also requires gateway rollout.
+The serving catalog admits 16 Boundless routes and 5 Zro routes: existing
+Claude first-party-only policy excludes three Boundless Claude reseller routes,
+and the immutable DeepSeek Pro 0813 leaf retains its frozen provider set.
+Native availability does not override either policy.
 
 ## Discovery and pricing
 
@@ -43,3 +47,7 @@ plane. Copy credentials to each cloud's native store and preserve existing
 Azure sealed bundle entries. AWS egress uses dedicated ports 8111 and 8112.
 Roll out verified gateways before releasing catalog routes; no fallback should
 mask forced-provider production smokes. Hyperbolic's rejected key is not deployed.
+
+Provider branding uses the official Boundless icon (`https://boundless.network/icon.svg`),
+Zro mark (`https://zro.moonmath.ai/zro-mark-black.png`), and Hyperbolic favicon
+(`https://hyperbolic.ai/favicon-light.ico`). Social cards use the existing renderer.

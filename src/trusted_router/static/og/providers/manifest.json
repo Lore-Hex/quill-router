@@ -98,6 +98,15 @@
     "route_mode": "Prepaid",
     "slug": "bfl"
   },
+  "boundless": {
+    "card_version": 2,
+    "model_count": 16,
+    "name": "Boundless",
+    "privacy": "Policy documented",
+    "route_count": 16,
+    "route_mode": "Prepaid",
+    "slug": "boundless"
+  },
   "byteplus": {
     "card_version": 2,
     "model_count": 11,
@@ -322,6 +331,15 @@
     "route_count": 0,
     "route_mode": "Catalog profile",
     "slug": "huggingface"
+  },
+  "hyperbolic": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Hyperbolic",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "hyperbolic"
   },
   "inception": {
     "card_version": 2,
@@ -943,5 +961,14 @@
     "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "zero-g"
+  },
+  "zro": {
+    "card_version": 2,
+    "model_count": 5,
+    "name": "Zro (MoonMath)",
+    "privacy": "Zero retention",
+    "route_count": 5,
+    "route_mode": "Prepaid",
+    "slug": "zro"
   }
 }

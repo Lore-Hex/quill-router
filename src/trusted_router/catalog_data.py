@@ -133,6 +133,16 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "zro": (
+        "Checked zro.moonmath.ai/docs/privacy and its API documentation. These "
+        "declare EU/US inference placement but do not establish the API operator's "
+        "headquarters country. Excluded from corporate jurisdiction filters."
+    ),
+    "hyperbolic": (
+        "Checked hyperbolic.ai/docs and the current OpenAPI specification. The "
+        "inference account and contracting operator jurisdiction are not yet "
+        "verified; the supplied credential is rejected. Excluded from jurisdiction filters."
+    ),
     "abliterate": (
         "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
         "a legal operating entity or headquarters country, and the terms refer "
