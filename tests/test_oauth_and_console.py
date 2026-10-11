@@ -214,6 +214,34 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
     assert live_credit_summary(workspace.id)["total_credits"] == 300_000
 
 
+@pytest.mark.parametrize("provider", ["google", "github"])
+@pytest.mark.parametrize(("referer", "expected"), [
+    (None, None),
+    ("https://other.example/pricing", None),
+    ("http://testserver//invalid", None),
+    ("http://testserver/docs?query=private", "/docs"),
+])
+def test_restarted_oauth_does_not_reuse_an_abandoned_signup_page(
+    request: pytest.FixtureRequest, provider: str, referer: str | None, expected: str | None,
+) -> None:
+    client: TestClient = request.getfixturevalue(f"{provider}_client")
+    first = client.get(
+        f"/auth/{provider}/login", headers={"referer": "http://testserver/pricing"},
+        follow_redirects=False,
+    )
+    assert first.status_code == 302
+    assert client.cookies.get("tr_oauth_from", "").strip('"') == "/pricing"
+    first_state = client.cookies.get("tr_oauth_state")
+    retry = client.get(
+        f"/auth/{provider}/login", headers={"referer": referer} if referer else {},
+        follow_redirects=False,
+    )
+    assert retry.status_code == 302
+    assert client.cookies.get("tr_oauth_state") != first_state
+    value = client.cookies.get("tr_oauth_from")
+    assert (value.strip('"') if value else None) == expected
+
+
 @pytest.mark.asyncio
 async def test_google_signup_records_the_page_it_started_on(
     google_client: TestClient, caplog: pytest.LogCaptureFixture,

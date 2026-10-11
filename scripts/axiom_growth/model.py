@@ -41,7 +41,7 @@ BROWSER_EVENTS = frozenset(
         "onboarding_call_started", "onboarding_call_succeeded", "onboarding_call_failed",
         "experiment_exposed",
         "home.catalog_filter", "home.alias_copied", "home.migration_tab",
-        "home.base_url_copied", "home.hero_base_url_copied", "home.agent_prompt_copied",
+        "home.base_url_copied", "home.hero_agent_prompt_copied", "home.agent_prompt_copied",
         "home.code_copied", "home.faq_opened", "home.catalog_row_clicked",
         "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
     )
@@ -65,6 +65,7 @@ EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_doma
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
 FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path",
+          "page_path",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
@@ -148,6 +149,8 @@ def project_event(
     if row.get("signup_path"):
         # The page a sign-up started on; present on signup_completed rows only.
         output["signup_path"] = safe_path(row["signup_path"])
+    if event in {"acquisition.landing_viewed", "acquisition.landing_engaged"}:
+        output["page_path"] = safe_path(row.get("page_path"))
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
     if row.get('first_utm_source'):
         output['first_utm_source'] = canonical_source(row['first_utm_source'], output['first_referrer_domain'])

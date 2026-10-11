@@ -612,6 +612,10 @@ def log_browser_funnel_event(
             "anonymous_fingerprint": _fingerprint(context.anonymous_id),
             **_safe_touch_log_fields(touch),
             **_click_id_log_fields(touch),
+            # Keep campaign attribution intact; page counts describe the page
+            # that sent this event, not the visitor's original landing page.
+            **({"page_path": same_site_referer_path(request) or ""}
+               if event in {"landing_viewed", "landing_engaged"} else {}),
             **({
                 "attempt_id": attempt_id, "flow": "welcome_test",
                 "http_status": http_status, "elapsed_ms": elapsed_ms,

@@ -445,14 +445,6 @@
       }
     },
     "lists": {
-      "all": [
-        "fable51",
-        "grok47",
-        "gpt61sol",
-        "dsv41f",
-        "kimik3",
-        "gem38"
-      ],
       "z": [
         "gpt61sol",
         "dsv41f",

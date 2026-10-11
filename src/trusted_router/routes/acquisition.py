@@ -17,7 +17,7 @@ class MarketingEventRequest(BaseModel):
         "home.alias_copied",
         "home.migration_tab",
         "home.base_url_copied",
-        "home.hero_base_url_copied",
+        "home.hero_agent_prompt_copied",
         "home.agent_prompt_copied",
         "home.code_copied",
         "home.faq_opened",

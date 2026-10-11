@@ -533,6 +533,11 @@ def _set_from_cookie(response: Response, from_path: str | None, settings: Settin
     """Remember the page the sign-in started on, so a new account can be counted per page."""
     safe = _safe_next_path(from_path)
     if safe is None:
+        # A fresh login must not inherit attribution from an abandoned attempt.
+        response.delete_cookie(
+            key=OAUTH_FROM_COOKIE, path="/",
+            secure=settings.environment.lower() not in {"local", "test"}, samesite="lax",
+        )
         return
     response.set_cookie(
         key=OAUTH_FROM_COOKIE,

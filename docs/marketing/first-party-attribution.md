@@ -54,6 +54,12 @@ Structured metadata-only events are shipped through the existing Axiom logger:
 9. `acquisition.credit_purchase_completed`
 10. `acquisition.retained_api_usage_7d`
 
+For per-page views and engagement, group by `page_path`, the same-site page
+that sent the event. `landing_path` remains the original campaign landing;
+`signup_path` is the page where sign-up started. Missing page referrers and
+historical events without `page_path` export as `(unknown)`, never as the
+campaign landing. Page paths use the exporter's existing privacy filters.
+
 `public.page_view` is a server-request metric and is deliberately labeled
 `measurement_tier=server_request`. Paid-landing reports should use
 `acquisition.landing_engaged`, which is emitted only after JavaScript has seen
