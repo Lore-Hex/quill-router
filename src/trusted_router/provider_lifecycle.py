@@ -60,6 +60,7 @@ DEEPINFRA_SEPTEMBER_10_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 DEEPINFRA_MIMO_V25_RETIREMENT_AT = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
 DEEPINFRA_LING_30_FLASH_FIN_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
 DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
+DEEPINFRA_GRANITE_42_RETIREMENT_AT = datetime(2026, 10, 18, 0, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
 XIAOMI_MIMO_V25_RETIREMENT_AT = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
 GOOGLE_VERTEX_GEMINI_36_FLASH_RETIREMENT_AT = datetime(2026, 11, 19, 0, 0, tzinfo=UTC)
@@ -861,6 +862,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"Qwen/Qwen3-Max", "Qwen/Qwen3-Max-Thinking"}),
         effective_at=DEEPINFRA_QWEN3_MAX_THINKING_RETIREMENT_AT,
         replacement_model_ids=("qwen/qwen3.8-max",),
+    ),
+    # DeepInfra's October 11 notices deprecate Granite 4.2 3B and 30B on
+    # 2026-10-18 and redirect later requests to the different Granite 4.2 8B
+    # weights. Retire DeepInfra's routes at 00:00 UTC (date only) instead of
+    # accepting the substitution; other providers' routes are unaffected.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"ibm-granite/granite-4.2-3b", "ibm-granite/granite-4.2-30b"}),
+        upstream_ids=frozenset({"ibm-granite/granite-4.2-3b", "ibm-granite/granite-4.2-30b"}),
+        effective_at=DEEPINFRA_GRANITE_42_RETIREMENT_AT,
+        replacement_model_ids=("ibm-granite/granite-4.2-8b",),
     ),
     # Google Cloud's October 5 notice: Vertex (Gemini Enterprise) requests to
     # Gemini 3.6 Flash fail with 404 from November 19, 2026 and to Gemini 3.7
