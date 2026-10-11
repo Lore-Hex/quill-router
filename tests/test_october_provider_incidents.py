@@ -41,6 +41,24 @@ def test_perplexity_stays_visible_without_managed_billing_routes() -> None:
     assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "blocked"
 
 
+def test_held_perplexity_tariff_is_available_only_for_settlement() -> None:
+    from trusted_router.catalog import endpoint_for_id, endpoints_for_model
+    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+
+    identity = "perplexity/sonar@perplexity/prepaid"
+    held = HELD_PREPAID_SETTLEMENT_ENDPOINTS[identity]
+    assert held.request_price_microdollars > 0
+    assert _endpoint_for_id_compat(identity) == held
+    assert endpoint_for_id(identity) is None
+    assert held not in endpoints_for_model(held.model_id)
+    assert all(
+        endpoint.usage_type == "Credits"
+        and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
+        for endpoint in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values()
+    )
+
+
 @pytest.mark.parametrize("provider", ["crusoe", "sambanova"])
 def test_rejected_operator_credentials_block_only_prepaid(
     monkeypatch: pytest.MonkeyPatch, provider: str,
