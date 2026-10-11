@@ -454,12 +454,17 @@ def test_perplexity_sonar_charges_fixed_request_fee_and_tokens_once() -> None:
 
 
 def test_perplexity_routes_publish_the_manifest_request_fee() -> None:
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
     # Every routable row of the committed manifest; a delisted one is not expected.
     raw = json.loads((_PROVIDER_MODELS_DIR / "perplexity.json").read_text(encoding="utf-8"))
     for row in raw["models"]:
         if row.get("routable") is False:
             continue
         endpoint = endpoint_for_id(f"{row['id']}@perplexity/prepaid")
+        if "perplexity" in PREPAID_PROVIDER_HOLD_REASONS:
+            assert endpoint is None, row["id"]
+            continue
         assert endpoint is not None, row["id"]
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.request_price_microdollars == customer_fixed_price_microdollars(

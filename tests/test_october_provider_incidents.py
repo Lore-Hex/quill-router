@@ -8,6 +8,37 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
+
+def test_perplexity_billing_hold_survives_fresh_catalog_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert PREPAID_PROVIDER_HOLD_REASONS["perplexity"] == "billing-contract-unverified"
+    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
+    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
+    endpoints = {
+        provider: ModelEndpoint(
+            id=provider, model_id="perplexity/sonar", provider=provider,
+            usage_type="Credits", upstream_id="sonar",
+        )
+        for provider in ("perplexity", "other-provider")
+    }
+    assert catalog_ingest._filter_unserved_provider_endpoints(endpoints) == {
+        "other-provider": endpoints["other-provider"],
+    }
+
+
+def test_perplexity_stays_visible_without_managed_billing_routes() -> None:
+    from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS, provider_to_openrouter_shape
+
+    assert "perplexity" in PROVIDERS
+    assert not any(
+        endpoint.provider == "perplexity" and endpoint.usage_type == "Credits"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
+    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "blocked"
 
 
 @pytest.mark.parametrize("provider", ["crusoe", "sambanova"])
