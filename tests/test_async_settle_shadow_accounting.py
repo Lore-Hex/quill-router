@@ -113,7 +113,9 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
 
 
 @pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32, .45])
-@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2])
+# 2.9 and 3.2 with two .45 reads sit just under and just over the default
+# four-second budget, so the matrix keeps a default-budget expiry case.
+@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2, 2.9, 3.2])
 @pytest.mark.parametrize('budget', [WRITE_BUDGET_SECONDS, 1., .1, .3, .4])
 def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
     from types import SimpleNamespace
