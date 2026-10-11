@@ -18,6 +18,7 @@ from trusted_router.dashboard import (
     MODEL_COMPARE_PAGE_SIZE,
     OPENROUTER_PAID_LANDING_PATHS,
     OPENROUTER_PAID_LANDING_VARIANTS,
+    _seo_comparison_title,
     assigned_openrouter_landing_path,
 )
 from trusted_router.marketing_experiments import (
@@ -124,6 +125,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/compare</loc>" in core.text
     assert "<loc>https://trustedrouter.com/compare/cloudflare-ai-gateway</loc>" in core.text
     assert "<loc>https://trustedrouter.com/resources</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/new-york-token-exchange</loc>" in core.text
     assert "<loc>https://trustedrouter.com/badge</loc>" in core.text
     assert "<loc>https://trustedrouter.com/customers/robot-robot-human</loc>" in core.text
     assert "<loc>https://trustedrouter.com/careers</loc>" in core.text
@@ -143,6 +145,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in models.text
     )
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" not in models.text
+    assert "<loc>https://trustedrouter.com/models/qwen/qwen-3-8-27b/pricing</loc>" not in models.text
 
     providers = client.get("/sitemap-providers.xml")
     assert providers.status_code == 200
@@ -1412,6 +1415,56 @@ def test_model_comparison_pages_are_public(
     assert "FAQPage" in json.dumps(comparison_schema)
 
 
+def test_model_comparison_search_titles_surface_buyer_decision_factors() -> None:
+    gemma = Model(
+        id="google/gemma-4-31b-it",
+        name="Google: Gemma 4 31B",
+        provider="google",
+        context_length=128_000,
+    )
+    gpt_oss = Model(
+        id="openai/gpt-oss-120b",
+        name="OpenAI: gpt-oss-120b",
+        provider="openai",
+        context_length=128_000,
+    )
+    deepseek = Model(
+        id="deepseek/deepseek-v4-flash",
+        name="DeepSeek: DeepSeek V4 Flash 0423",
+        provider="deepseek",
+        context_length=128_000,
+    )
+    nemotron = Model(
+        id="nvidia/nemotron-3-ultra-550b-a55b",
+        name="NVIDIA: Nemotron 3 Ultra",
+        provider="nvidia",
+        context_length=128_000,
+    )
+
+    assert _seo_comparison_title(gemma, gpt_oss) == (
+        "Gemma 4 31B vs gpt-oss-120b: Price, Speed & Context"
+    )
+    assert _seo_comparison_title(deepseek, nemotron) == (
+        "DeepSeek V4 Flash 0423 vs Nemotron 3 Ultra: Price & Speed"
+    )
+
+
+def test_model_comparison_meta_description_leads_with_generated_verdict(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_glm_51(monkeypatch)
+    response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
+
+    assert response.status_code == 200
+    match = re.search(r'<meta name="description" content="([^"]+)">', response.text)
+    assert match is not None
+    description = html_lib.unescape(match.group(1))
+    assert "Kimi K2.6" in description
+    assert "published input-plus-output rate" in description
+    assert "compare current API pricing" not in description
+    assert len(description) <= 160
+
+
 def test_model_comparison_surfaces_distinct_measured_route_metrics(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1591,6 +1644,7 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
         "/llm-failover",
         "/latest-model-apis",
         "/minimax-m3-api",
+        "/new-york-token-exchange",
         "/portkey-alternative",
         "/private-llm-api",
         "/rankings",
@@ -1610,6 +1664,33 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     assert 'href="https://discord.gg/FREVts9KAG"' in footer.text
     footer_markup = footer.text.split('<footer class="site-footer"', maxsplit=1)[1]
     assert 'href="/china-ai-models"' not in footer_markup
+
+
+def test_new_york_token_exchange_page_and_discovery_links(client: TestClient) -> None:
+    landing = client.get("/new-york-token-exchange")
+    homepage = client.get("/")
+    resources = client.get("/resources")
+
+    assert landing.status_code == homepage.status_code == resources.status_code == 200
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/new-york-token-exchange">'
+        in landing.text
+    )
+    assert "New York Token Exchange, or NYTE" in landing.text
+    assert "not a cryptocurrency, securities, or financial exchange" in landing.text
+    assert landing.text.count('href="https://nytokenexchange.com/"') >= 2
+    assert 'href="https://nytokenexchange.com/">New York Token Exchange</a>' in homepage.text
+    assert 'href="https://nytokenexchange.com/">New York Token Exchange</a>' in resources.text
+
+
+def test_homepage_consolidates_ai_router_intent(client: TestClient) -> None:
+    homepage = client.get("/")
+    router = client.get("/best-llm-router")
+
+    assert homepage.status_code == router.status_code == 200
+    assert '<a href="/best-llm-router">AI router comparison</a>' in homepage.text
+    assert "<title>Best AI Router &amp; LLM Gateway 2026: Providers Compared</title>" in router.text
+    assert "Every AI router in this comparison" in router.text
 
 
 def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -> None:
