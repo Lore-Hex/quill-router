@@ -73,14 +73,17 @@ UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.ite
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
-def _cents_to_micro_per_m(value: object) -> int | None:
+def _cents_to_micro_per_m(value: object, *, microcents: bool = False) -> int | None:
     try:
         parsed = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
     if parsed < 0:
         return None
-    return int((parsed * Decimal("10000")).to_integral_value(ROUND_HALF_UP))
+    # One cent is 10,000 microdollars or 1,000,000 microcents. Round only
+    # after converting the provider's most precise published unit.
+    scale = Decimal("0.01") if microcents else Decimal("10000")
+    return int((parsed * scale).to_integral_value(ROUND_HALF_UP))
 
 
 def _positive_int(value: object) -> int | None:
@@ -218,7 +221,12 @@ def fetch() -> ProviderPricingResult:
         completion = _cents_to_micro_per_m(pricing.get("output_cents_per_million"))
         if prompt is None or completion is None:
             continue
-        cache_read = _cents_to_micro_per_m(pricing.get("cache_read_cents_per_million"))
+        if "cache_read_microcents_per_million" in pricing:
+            cache_read = _cents_to_micro_per_m(
+                pricing["cache_read_microcents_per_million"], microcents=True
+            )
+        else:
+            cache_read = _cents_to_micro_per_m(pricing.get("cache_read_cents_per_million"))
         price = ModelPrice(
             prompt_micro_per_m=prompt,
             completion_micro_per_m=completion,

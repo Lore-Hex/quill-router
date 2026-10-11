@@ -24,6 +24,152 @@ AZURE_OPENROUTER_ABSENT_IDS = frozenset(
 AZURE_SPIKE_TARGET = "x-ai/grok-4.20-reasoning"
 
 
+@pytest.mark.parametrize(("route", "dimension", "old", "new"), [
+    (
+        "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash]",
+        "completion", "0.0000006", "0.0000012",
+    ),
+    (
+        "qwen/qwen3.8-27b [wafer:wafer:Qwen3.8-27B]",
+        "prompt", "0.00000011", "0.00000042",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-0423 [wafer:wafer:DeepSeek-V4-Flash-0423]",
+        "prompt", "0.00000007", "0.00000014",
+    ),
+])
+def test_october_11_wafer_approval_is_exact(route, dimension, old, new):
+    before = {route: {"prompt": "1", "completion": "1", dimension: old}}
+    after = {route: {**before[route], dimension: new}}
+    assert check(before, after)[0] == []
+
+    # No wildcard for later increases, different baselines, dimensions or routes.
+    assert check(before, {route: {
+        **after[route], dimension: str(Decimal(new) + Decimal("0.000000000001")),
+    }})[0]
+    assert check({route: {
+        **before[route], dimension: str(Decimal(old) / 2),
+    }}, after)[0]
+    other_dimension = "prompt" if dimension == "completion" else "completion"
+    assert check(
+        {route: {"prompt": "1", "completion": "1", other_dimension: old}},
+        {route: {"prompt": "1", "completion": "1", other_dimension: new}},
+    )[0]
+    for other_route in (route.replace("wafer:wafer:", "other:other:"), route + " cached-input"):
+        assert check({other_route: before[route]}, {other_route: after[route]})[0]
+
+
+@pytest.mark.parametrize(("dimension", "old", "new"), [
+    ("prompt", "0.0000001078", "0.0000004312"),
+    ("completion", "0.00000028", "0.00000112"),
+])
+def test_october_11_featherless_approval_is_exact(dimension, old, new):
+    route = (
+        "xiaomi/mimo-v2.6-distill-qwen-9b "
+        "[featherless:featherless:XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B]"
+    )
+    before = {route: {"prompt": "1", "completion": "1", dimension: old}}
+    after = {route: {**before[route], dimension: new}}
+    assert check(before, after)[0] == []
+    assert check(before, {route: {
+        **after[route], dimension: str(Decimal(new) + Decimal("0.000000000001")),
+    }})[0]
+    assert check({route: {
+        **before[route], dimension: str(Decimal(old) / 2),
+    }}, after)[0]
+    other_dimension = "prompt" if dimension == "completion" else "completion"
+    assert check(
+        {route: {"prompt": "1", "completion": "1", other_dimension: old}},
+        {route: {"prompt": "1", "completion": "1", other_dimension: new}},
+    )[0]
+    for other_route in (
+        route.replace("featherless:featherless:", "other:other:"), route + " cached-input",
+    ):
+        assert check({other_route: before[route]}, {other_route: after[route]})[0]
+
+
+def test_october_11_featherless_snapshot_and_manifest_spikes_pass(tmp_path, monkeypatch):
+    model_id = "xiaomi/mimo-v2.6-distill-qwen-9b"
+    native = "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B"
+    paths = []
+    for side, prompt, completion in (
+        ("before", 107_800, 280_000), ("after", 431_200, 1_120_000),
+    ):
+        snapshot = _write(tmp_path, side + ".json", _make_endpoint_snapshot(
+            ("1", "1"),
+            [("featherless", native, str(Decimal(prompt) / 10**12),
+              str(Decimal(completion) / 10**12))],
+            model_id=model_id,
+        ))
+        directory = tmp_path / side
+        directory.mkdir()
+        (directory / "featherless.json").write_text(json.dumps({
+            "provider": "featherless", "models": [{
+                "id": model_id, "upstream_id": native,
+                "input_token_price_per_m": prompt,
+                "output_token_price_per_m": completion,
+            }],
+        }))
+        paths.append((snapshot, directory))
+    args = (paths[0][0], paths[1][0], paths[0][1], paths[1][1])
+    assert check_price_spike.spiking_providers(*args) == {}
+    for pair in check_price_spike.route_pairs(*args):
+        assert pair is not None
+        assert check(*pair)[0] == []
+
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    assert check_price_spike.spiking_providers(*args) == {
+        "featherless": [f"{model_id} [featherless:featherless:{native}]"] * 2,
+    }
+
+
+def test_october_11_wafer_snapshot_and_manifest_spikes_pass(tmp_path, monkeypatch):
+    cases = [
+        ("deepseek/deepseek-v4.1-flash", "DeepSeek-V4.1-Flash",
+         (200_000, 600_000, 10_000), (300_000, 1_200_000, 6_000)),
+        ("qwen/qwen3.8-27b", "Qwen3.8-27B",
+         (110_000, 2_500_000, 50_000), (420_000, 2_550_000, 85_000)),
+        ("deepseek/deepseek-v4-flash-0423", "DeepSeek-V4-Flash-0423",
+         (70_000, 250_000, 20_000), (140_000, 280_000, 28_000)),
+    ]
+    paths = []
+    for side in ("before", "after"):
+        directory = tmp_path / side
+        directory.mkdir()
+        models, manifest_rows = [], []
+        for model_id, native, old, new in cases:
+            prompt, completion, cached = old if side == "before" else new
+            models.extend(_make_endpoint_snapshot(
+                ("1", "1"),
+                [("wafer", native, str(Decimal(prompt) / 10**12),
+                  str(Decimal(completion) / 10**12))],
+                model_id=model_id,
+            )["models"])
+            manifest_rows.append({
+                "id": model_id, "upstream_id": native,
+                "input_token_price_per_m": prompt,
+                "output_token_price_per_m": completion,
+                "cached_input_token_price_per_m": cached,
+            })
+        snapshot = _write(tmp_path, side + ".json", {"models": models})
+        (directory / "wafer.json").write_text(json.dumps({
+            "provider": "wafer", "models": manifest_rows,
+        }))
+        paths.append((snapshot, directory))
+    args = (paths[0][0], paths[1][0], paths[0][1], paths[1][1])
+    assert check_price_spike.spiking_providers(*args) == {}
+    for pair in check_price_spike.route_pairs(*args):
+        assert pair is not None
+        assert check(*pair)[0] == []
+
+    # Both comparisons use the same native route labels, hence duplicate holds.
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    held = check_price_spike.spiking_providers(*args)
+    assert sorted(held["wafer"]) == sorted(
+        [f"{model_id} [wafer:wafer:{native}]" for model_id, native, _, _ in cases] * 2
+    )
+
+
 @pytest.mark.parametrize(("suffix", "dimension", "old", "new"), [
     ("", "prompt", "0.00000015", "0.00000066"),
     ("", "completion", "0.0000006", "0.00000198"),

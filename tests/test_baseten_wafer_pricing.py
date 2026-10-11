@@ -4,6 +4,8 @@ import json
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten, wafer
 from trusted_router import provider_lifecycle
@@ -27,6 +29,37 @@ class FakeResponse:
 
     def json(self) -> dict:
         return self._payload
+
+
+@pytest.mark.parametrize(("native", "input_cents", "output_cents", "rounded", "microcents", "cached"), [
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, 600_000, 6_000),
+    ("Qwen3.8-27B", 42, 255, 9, 8_500_000, 85_000),
+    ("DeepSeek-V4-Flash-0423", 14, 28, 3, 2_800_000, 28_000),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, 0, 0),
+])
+def test_wafer_cache_microcents_override_rounded_cents(
+    monkeypatch, httpx_mock, native, input_cents, output_cents, rounded, microcents, cached,
+):
+    monkeypatch.setattr(wafer, "EXPECTED_MODELS", [])
+    monkeypatch.setattr(wafer, "_DISCOVERED_MANIFEST_ROWS", {})
+    monkeypatch.setattr(wafer, "UPSTREAM_ID_MAP", {})
+    httpx_mock.add_response(url=wafer.URL, json={"data": [{
+        "id": native,
+        "wafer": {"pricing": {
+            "input_cents_per_million": input_cents,
+            "output_cents_per_million": output_cents,
+            "cache_read_cents_per_million": rounded,
+            "cache_read_microcents_per_million": microcents,
+        }},
+    }]})
+
+    result = wafer.fetch()
+
+    assert len(result.prices) == 1
+    price = next(iter(result.prices.values()))
+    assert price.prompt_micro_per_m == input_cents * 10_000
+    assert price.completion_micro_per_m == output_cents * 10_000
+    assert price.tiers[0].prompt_cached_micro_per_m == cached
 
 
 def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None:  # noqa: ANN001

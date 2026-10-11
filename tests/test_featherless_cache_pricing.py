@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import pytest
 
 from scripts.pricing.openai_catalog import openai_model_price
 from scripts.pricing.providers import featherless
+
+NO_TABLE_PRICES = (
+    Path(__file__).parent / "fixtures/pricing/featherless_request_pricing_2026-10-11.html"
+).read_text(encoding="utf-8")
 
 PRICES = """
 <table><tr><th>Family</th><th>Model Class</th><th>Input</th>
@@ -169,3 +176,97 @@ def test_missing_cache_column_does_not_become_output_price(monkeypatch):
 def test_conflicting_duplicate_price_fails_closed(monkeypatch):
     with pytest.raises(RuntimeError, match="conflicting"):
         _normalize(monkeypatch, [_row()], PRICES + PRICES.replace("$0.15</td>", "$0.12</td>"))
+
+
+def test_table_free_fetch_uses_api_prices_and_removes_committed_cache_discount(
+    monkeypatch, tmp_path, capsys,
+):
+    from scripts.pricing import refresh
+    from trusted_router.pricing import cache_token_prices_microdollars
+
+    # Multiple rows exercise one warning per fetch, not one per model. Use an
+    # authenticated rate different from the former class price on purpose.
+    rows = [
+        {
+            **_row(native, prompt="0.0000007", completion="0.0000018"),
+            "available_on_current_plan": True,
+        }
+        for native in featherless.CURATED_NATIVE_MODELS
+    ]
+    for row in rows:
+        row["pricing"].update(input=0.7, output=1.8, image=0, request=0)
+    original = deepcopy(rows)
+    by_native = {row["id"]: row for row in rows}
+
+    def api(url, *, extra_headers):
+        assert extra_headers == {"Authorization": "Bearer test-key"}
+        if url.startswith(featherless.URL + "?"):
+            return {"data": rows}
+        return by_native[unquote(url.removeprefix(featherless.URL + "/"))]
+
+    old_rows = [
+        {
+            "id": featherless.CATALOG.model_id(row["id"]),
+            "upstream_id": row["id"],
+            "input_token_price_per_m": 1_400_000,
+            "output_token_price_per_m": 4_400_000,
+            "cached_input_token_price_per_m": 150_000,
+        }
+        for row in rows
+    ]
+    manifest = tmp_path / "featherless.json"
+    manifest.write_text(json.dumps({"provider": "featherless", "models": old_rows}))
+    summary = tmp_path / "summary.txt"
+    monkeypatch.setenv("FEATHERLESS_API_KEY", "test-key")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr(featherless, "fetch_json", api)
+    monkeypatch.setattr(featherless, "fetch_html", lambda _url: NO_TABLE_PRICES)
+    monkeypatch.setattr(featherless.CATALOG, "manifest_path", manifest)
+    monkeypatch.setattr(featherless.CATALOG, "upstream_id_map", {})
+    monkeypatch.setattr(featherless.CATALOG, "discovered_rows", {})
+    monkeypatch.setattr(featherless.CATALOG, "_fetched", False)
+
+    result = featherless.fetch()
+
+    assert set(result.prices) == set(featherless.CATALOG.spec.expected_models)
+    for price in result.prices.values():
+        assert price.prompt_micro_per_m == 700_000
+        assert price.completion_micro_per_m == 1_800_000
+        assert price.tiers[0].prompt_cached_micro_per_m is None
+    assert rows == original
+    assert capsys.readouterr().err.count("no published cache prices") == 1
+    assert summary.read_text().count("no published cache prices") == 1
+
+    featherless.write_provider_manifest(result)
+    refreshed_rows = json.loads(manifest.read_text())["models"]
+    assert len(refreshed_rows) == len(old_rows)
+    assert all("cached_input_token_price_per_m" not in row for row in refreshed_rows)
+    assert all(row["input_token_price_per_m"] == 700_000 for row in refreshed_rows)
+
+    model_id = old_rows[0]["id"]
+    old_pricing = {
+        "prompt": "0.0000014", "completion": "0.0000044", "input_cache_read": "0.00000015",
+    }
+    snapshot = {"models": [{
+        "id": model_id,
+        "pricing": old_pricing,
+        "endpoints": [{"tr_provider_slug": "featherless", "pricing": old_pricing}],
+    }]}
+    merged = refresh._merge_snapshot(
+        snapshot, {model_id: {"featherless": result.prices[model_id]}}, set()
+    )["models"][0]
+    assert "input_cache_read" not in merged["pricing"]
+    assert "input_cache_read" not in merged["endpoints"][0]["pricing"]
+    # The existing billing fallback charges the full input rate.
+    assert cache_token_prices_microdollars("featherless", 700_000)[0] == 700_000
+
+
+@pytest.mark.parametrize("remaining_kind", ["model", "model class"])
+def test_table_free_page_does_not_mask_subsequent_partial_tables(remaining_kind):
+    from bs4 import BeautifulSoup
+
+    assert featherless._published_prices(NO_TABLE_PRICES) == ({}, {})
+    tables = BeautifulSoup(PRICES, "html.parser").find_all("table")
+    partial = str(tables[1 if remaining_kind == "model" else 0])
+    with pytest.raises(RuntimeError, match="missing class/model cache price tables"):
+        featherless._published_prices(partial)
