@@ -3,8 +3,8 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-06T10:46:46Z",
-  "model_count": 26,
+  "generated_at": "2026-10-10T22:59:42Z",
+  "model_count": 27,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -605,6 +605,25 @@
       "status": 1,
       "id": "google/gemini-omni-1.1-flash-preview",
       "upstream_id": "gemini-omni-1.1-flash-preview",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-nano-banana-2.1",
+      "title": "gemini-nano-banana-2.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-nano-banana-2.1",
+      "upstream_id": "gemini-nano-banana-2.1",
       "routable": false,
       "routable_reason": "unsupported-vertex-api"
     }

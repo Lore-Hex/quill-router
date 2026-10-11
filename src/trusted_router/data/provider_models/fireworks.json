@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T22:59:42Z",
   "model_count": 25,
   "models": [
     {
@@ -33,7 +33,10 @@
         "chat/completions"
       ],
       "status": 1,
-      "created": 1784483409
+      "created": 1784483409,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -189,7 +192,10 @@
         "chat/completions"
       ],
       "status": 1,
-      "created": 1754345600
+      "created": 1754345600,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "DeepSeek V4 Flash 0731 on Fireworks",
@@ -288,7 +294,10 @@
       "created": 1781214748,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 60000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "Kimi K2.6 Fast on Fireworks",
@@ -387,7 +396,10 @@
       "created": 1784483409,
       "input_token_price_per_m": 4500000,
       "output_token_price_per_m": 22500000,
-      "cached_input_token_price_per_m": 450000
+      "cached_input_token_price_per_m": 450000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "NVIDIA Nemotron 3.5 Lightning on Fireworks",
@@ -409,7 +421,10 @@
       "created": 1786139705,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 200000,
-      "cached_input_token_price_per_m": 10000
+      "cached_input_token_price_per_m": 10000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "OpenAI GPT OSS 20B on Fireworks",
@@ -480,7 +495,10 @@
       "created": 1785949040,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 6000000,
-      "cached_input_token_price_per_m": 250000
+      "cached_input_token_price_per_m": 250000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "Muse Glimmer 30B on Fireworks",
@@ -528,7 +546,10 @@
       "created": 1780415326,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2400000,
-      "cached_input_token_price_per_m": 120000
+      "cached_input_token_price_per_m": 120000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "GLM 5.3 Flash on Fireworks",
@@ -551,7 +572,10 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "GLM 5.3 on Fireworks",
@@ -573,7 +597,10 @@
       "created": 1787895551,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "Deepseek V4 Flash Vision Exp on Fireworks",
@@ -623,7 +650,10 @@
       "output_token_price_per_m": 6600000,
       "cached_input_token_price_per_m": 390000,
       "context_length": 1048576,
-      "created": 1787895551
+      "created": 1787895551,
+      "supported_features": [
+        "tools"
+      ]
     },
     {
       "display_name": "Deepseek V4P1 Flash on Fireworks",
@@ -645,7 +675,10 @@
       "created": 1789019014,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 6000
+      "cached_input_token_price_per_m": 6000,
+      "supported_features": [
+        "tools"
+      ]
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",

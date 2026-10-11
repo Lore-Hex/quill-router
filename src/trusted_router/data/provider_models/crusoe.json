@@ -2,9 +2,9 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-10-06T10:46:46Z",
+  "generated_at": "2026-10-10T22:59:42Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 20,
+  "model_count": 21,
   "models": [
     {
       "id": "deepseek/deepseek-v3-0324",
@@ -1085,7 +1085,6 @@
         "conversation",
         "ebnf",
         "frequency_penalty",
-        "ignore_eos",
         "include",
         "instructions",
         "logit_bias",
@@ -1096,7 +1095,6 @@
         "max_tool_calls",
         "metadata",
         "min_p",
-        "min_tokens",
         "n",
         "output_config",
         "parallel_tool_calls",
@@ -1192,6 +1190,73 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "context_length": 1048576,
+      "supported_parameters": [
+        "background",
+        "cache_salt",
+        "chat_template_kwargs",
+        "conversation",
+        "ebnf",
+        "frequency_penalty",
+        "include",
+        "instructions",
+        "logit_bias",
+        "logprobs",
+        "max_completion_tokens",
+        "max_output_tokens",
+        "max_tokens",
+        "max_tool_calls",
+        "metadata",
+        "min_p",
+        "n",
+        "output_config",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "previous_response_id",
+        "prompt_cache_key",
+        "reasoning",
+        "reasoning_effort",
+        "regex",
+        "repetition_penalty",
+        "response_format",
+        "safety_identifier",
+        "seed",
+        "service_tier",
+        "skip_special_tokens",
+        "stop",
+        "stop_sequences",
+        "store",
+        "structured_outputs",
+        "temperature",
+        "thinking",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p",
+        "truncation",
+        "user"
+      ],
+      "input_token_price_per_m": 290000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 7000
     }
   ]
 }

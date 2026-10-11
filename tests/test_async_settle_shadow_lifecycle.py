@@ -571,6 +571,7 @@ def test_retiring_day_contains_failure_streak_and_degradation():
     now[0] = 6.
     flush()
     old = next(v for k,v in stored.items() if k.startswith('2026-10-09/'))
+    flush()  # New-day registration has its own bounded maintenance pass.
     new = next(v for k,v in stored.items() if k.startswith('2026-10-10/'))
     assert old['closed']
     assert old['admission_observer']['max_consecutive_failures'] == 3
@@ -632,6 +633,7 @@ def test_midnight_carries_live_streak_and_splits_fractional_duration(retain_old,
     now[0] = 6.
     flush()
     flush()  # Retried persistence must not duplicate duration or events.
+    flush()  # Register the new day after a retained/retried old-day close.
     old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
     new = next(v for k, v in stored.items() if k.startswith('2026-10-10/'))
     assert old['closed'] and not new['closed']
@@ -714,6 +716,7 @@ def test_flush_crossing_midnight_does_not_retire_undrained_observer_day(monkeypa
     now[0] = 7.
     flush()
     old = next(v for k, v in stored.items() if k.startswith('2026-10-09/'))
+    flush()  # The old close and new registration cannot share a regional budget.
     new = next(v for k, v in stored.items() if k.startswith('2026-10-10/'))
     assert old['closed'] and not new['closed']
     assert old['admission_observer']['missed_ticks'] == (3 if failing else 0)

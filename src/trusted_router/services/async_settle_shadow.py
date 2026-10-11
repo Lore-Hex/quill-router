@@ -474,6 +474,13 @@ class Runtime:
             for identity, body in self.counters.snapshot(retiring_only=True, sealed_before=sealed_before):
                 self.store.flush(identity, body, deadline)
                 self.counters.acknowledge(identity, body)
+                if not closed:
+                    # A regional close can consume most of this pass's budget.
+                    # Keep the new day in memory; its next maintenance pass
+                    # gets a full bounded transaction instead of a doomed retry.
+                    with self.counters.lock:
+                        self.counters._day()
+                    return
             # Register even an idle serving instance. The external inventory,
             # not the set of successful writers, remains the roster authority.
             with self.counters.lock:
