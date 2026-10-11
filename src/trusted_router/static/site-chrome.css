@@ -633,3 +633,13 @@
 @media (max-width: 360px) {
   .trft .base .r { gap: 8px; font-size: 11px; }
 }
+
+/* Sign-in dialog: provider logos on white tiles, and the sign-up / sign-in
+   mode switch. The dialog box itself is styled by dashboard.css (public
+   pages) and homepage/application.css (homepage); these rules apply on both. */
+.signin-modal .signin-btn { width: 100%; font: inherit; font-size: 15px; text-align: left; text-decoration: none; cursor: pointer; }
+.signin-modal .signin-btn .signin-logo { display: inline-grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border: 0; border-radius: 6px; background: #fff; }
+.signin-modal .signin-btn .signin-logo img { display: block; width: 18px; height: 18px; object-fit: contain; }
+.signin-modal .signin-switch { margin: 18px 0 0; color: var(--tr-color-text-secondary); font-size: 14px; }
+.signin-modal .signin-switch-btn { padding: 0; border: 0; background: none; color: var(--tr-color-text-primary); font: inherit; font-weight: var(--tr-font-weight-semibold); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.signin-modal .signin-switch-btn:focus-visible { border-radius: 2px; outline: 2px solid var(--tr-color-focus); outline-offset: 3px; }

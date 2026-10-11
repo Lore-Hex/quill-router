@@ -20,7 +20,11 @@ from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from trusted_router.acquisition import record_signup_attribution, request_attribution
+from trusted_router.acquisition import (
+    record_signup_attribution,
+    request_attribution,
+    same_site_referer_path,
+)
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
     SettingsDep,
@@ -140,6 +144,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
                 signup_provider="metamask",
                 starter_credit_microdollars=0,
                 user_id=user.id,
+                signup_path=same_site_referer_path(request),
             )
 
         raw_token, _ = STORE.create_auth_session(

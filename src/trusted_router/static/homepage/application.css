@@ -312,11 +312,12 @@ footer{background:#070a08;border-top:1px solid #33403a}
 
 @media(max-width:360px){.trft .base .r{gap:8px;font-size:11px}}
 
-/* Phones: reveal the river while retaining local contrast behind the copy. */
+/* Phones: reveal the river while keeping the overlay dark through the band where
+   the note under the buttons sits, so it reads over the water. */
 @media(max-width:600px){
  .trh .hero{
-  --hero-scrim:linear-gradient(180deg,#05070666 0%,#05070666 42%,#05070624 58%,#05070600 74%,#05070645 88%,#050706b3 100%);
-  --hero-compact-scrim:linear-gradient(180deg,#05070673 0%,#05070666 43%,#0507061a 65%,#05070600 80%,#05070680 100%);
+  --hero-scrim:linear-gradient(180deg,#050706a8 0%,#050706b3 45%,#050706b3 66%,#05070680 76%,#050706a8 88%,#050706 100%);
+  --hero-compact-scrim:linear-gradient(180deg,#050706a8 0%,#050706b3 45%,#050706b3 72%,#05070680 82%,#050706c0 92%,#050706 100%);
  }
  .landscape-image{filter:brightness(1.3)}
  .closing-cta .closing-landscape{filter:brightness(1.4)}
