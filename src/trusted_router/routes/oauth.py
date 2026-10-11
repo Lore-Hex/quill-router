@@ -40,6 +40,7 @@ from trusted_router.domains import configured_control_domains, request_hostname
 from trusted_router.errors import api_error
 from trusted_router.oauth_provider import (
     OAUTH_PROVIDERS,
+    OAuthCodeRejected,
     OAuthProvider,
     OAuthUserInfo,
     exchange_code,
@@ -276,18 +277,21 @@ async def _handle_callback(
         raise api_error(400, "Invalid OAuth state", ErrorType.BAD_REQUEST)
     restore_oauth_attribution(request, settings, state, request.cookies.get(OAUTH_ATTRIBUTION_COOKIE))
 
-    access_token = await exchange_code(
-        provider=provider,
-        code=code,
-        client_id=_client_id(provider, settings, state_domain) or "",
-        client_secret=_client_secret(provider, settings, state_domain) or "",
-        redirect_uri=_provider_redirect_uri(
-            provider,
-            request,
-            settings,
-            state_domain,
-        ),
-    )
+    try:
+        access_token = await exchange_code(
+            provider=provider,
+            code=code,
+            client_id=_client_id(provider, settings, state_domain) or "",
+            client_secret=_client_secret(provider, settings, state_domain) or "",
+            redirect_uri=_provider_redirect_uri(
+                provider,
+                request,
+                settings,
+                state_domain,
+            ),
+        )
+    except OAuthCodeRejected:
+        raise api_error(400, "Invalid or expired sign-in code; please sign in again", ErrorType.BAD_REQUEST) from None
     info = await fetch_user(provider=provider, access_token=access_token)
     if not info.email_verified:
         raise api_error(
