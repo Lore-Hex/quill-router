@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-10-10T22:59:42Z",
+  "generated_at": "2026-10-11T15:21:30Z",
   "model_count": 168,
   "models": [
     {
@@ -234,7 +234,9 @@
       ],
       "status": 1,
       "upstream_id": "baidu/ernie-4.5-vl-424b-a47b",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-ocr",
@@ -712,7 +714,9 @@
       "status": 1,
       "upstream_id": "deepseek/deepseek-v4-flash",
       "cached_input_token_price_per_m": 280,
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -1287,7 +1291,9 @@
       "status": 1,
       "upstream_id": "minimax/minimax-m2",
       "cached_input_token_price_per_m": 300,
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "minimax/minimax-m2.1",
@@ -1317,7 +1323,9 @@
       "status": 1,
       "upstream_id": "minimax/minimax-m2.1",
       "cached_input_token_price_per_m": 300,
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "minimax/minimax-m2.5",
@@ -1378,7 +1386,9 @@
       "status": 1,
       "upstream_id": "minimax/minimax-m2.5-highspeed",
       "cached_input_token_price_per_m": 300,
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "minimax/minimax-m2.7",
@@ -1465,7 +1475,9 @@
       ],
       "status": 1,
       "upstream_id": "mistralai/mistral-nemo",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2-0905",
@@ -1735,8 +1747,9 @@
       ],
       "status": 1,
       "upstream_id": "openai/gpt-oss-20b",
-      "routable": true,
-      "missing_since": "2026-10-10"
+      "routable": false,
+      "missing_since": "2026-10-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "paddlepaddle/paddleocr-vl",
@@ -1788,7 +1801,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen-2.5-72b-instruct",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen-mt-plus",
@@ -1904,7 +1919,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-235b-a22b-fp8",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-235b-a22b-instruct-2507",
@@ -1933,7 +1950,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-235b-a22b-instruct-2507",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
@@ -1963,7 +1982,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-235b-a22b-thinking-2507",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-30b-a3b-fp8",
@@ -2109,7 +2130,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-coder-30b-a3b-instruct",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-coder-480b-a35b-instruct",
@@ -2139,7 +2162,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-coder-480b-a35b-instruct",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-coder-next",
@@ -2168,7 +2193,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-coder-next",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-max",
@@ -2197,7 +2224,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-max",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-next-80b-a3b-instruct",
@@ -2228,7 +2257,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-next-80b-a3b-instruct",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-next-80b-a3b-thinking",
@@ -2292,7 +2323,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-omni-30b-a3b-instruct",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-omni-30b-a3b-thinking",
@@ -2354,7 +2387,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-vl-235b-a22b-instruct",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-thinking",
@@ -2384,7 +2419,9 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-vl-235b-a22b-thinking",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3-vl-30b-a3b-instruct",
@@ -2711,7 +2748,9 @@
       ],
       "status": 1,
       "upstream_id": "sao10k/l3-8b-lunaris",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "sao10k/l31-70b-euryale-v2.2",
@@ -2740,7 +2779,9 @@
       ],
       "status": 1,
       "upstream_id": "sao10k/l31-70b-euryale-v2.2",
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "xiaomimimo/mimo-v2-flash",
@@ -3807,7 +3848,7 @@
       "context_length": 32000,
       "max_output_tokens": 32000,
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "missing_since": "2026-10-10"
     },
     {
@@ -3931,7 +3972,7 @@
       "context_length": 202800,
       "max_output_tokens": 131072,
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "missing_since": "2026-10-10"
     },
     {
@@ -3963,7 +4004,7 @@
       "context_length": 204800,
       "max_output_tokens": 131072,
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "missing_since": "2026-10-10"
     },
     {
@@ -4269,7 +4310,9 @@
       "input_token_price_per_m": 4400,
       "output_token_price_per_m": 13200,
       "cached_input_token_price_per_m": 280,
-      "missing_since": "2026-10-10"
+      "missing_since": "2026-10-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "inclusionai/ling-3.0-flash-fin",

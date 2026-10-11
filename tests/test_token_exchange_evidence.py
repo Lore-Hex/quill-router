@@ -2,15 +2,25 @@ from dataclasses import replace
 from decimal import Decimal
 
 import httpx
+import pytest
 
 from trusted_router import token_exchange as exchange
 from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog_data import ModelEndpoint
 
 
-def test_prices_are_exact_named_credit_route(monkeypatch):
-    model = exchange.MODELS[0][0]
-    source = next(e for e in endpoints_for_model(model)
-                  if e.provider == 'tinfoil' and e.usage_type == 'Credits')
+@pytest.fixture
+def confidential_endpoint():
+    # Unit-test the selection contract independently of provider retirements.
+    # The parity tests below still verify every actually published route.
+    return ModelEndpoint(
+        id='test/model@tinfoil/prepaid', model_id='test/model',
+        provider='tinfoil', usage_type='Credits',
+    )
+
+
+def test_prices_are_exact_named_credit_route(monkeypatch, confidential_endpoint):
+    source = confidential_endpoint
     named = replace(source, prompt_price_microdollars_per_million_tokens=73850,
                     completion_price_microdollars_per_million_tokens=253200)
     cheaper = replace(named, provider='openai', prompt_price_microdollars_per_million_tokens=1)
@@ -29,9 +39,8 @@ def test_catalog_parity():
         assert Decimal(row['output']) * 1_000_000 == endpoint.completion_price_microdollars_per_million_tokens
 
 
-def test_missing_ambiguous_or_nonconfidential_route_has_no_fallback(monkeypatch):
-    source = next(e for e in endpoints_for_model(exchange.MODELS[0][0])
-                  if e.provider == 'tinfoil' and e.usage_type == 'Credits')
+def test_missing_ambiguous_or_nonconfidential_route_has_no_fallback(monkeypatch, confidential_endpoint):
+    source = confidential_endpoint
     for routes in ([], [source, source]):
         monkeypatch.setattr(exchange, 'endpoints_for_model', lambda _, rows=routes: rows)
         assert exchange.confidential_prices() == []
