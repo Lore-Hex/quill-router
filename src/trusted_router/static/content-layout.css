@@ -43,7 +43,7 @@
   overflow-wrap: anywhere;
 }
 
-.content-section p {
+.content-section > p {
   max-width: 78ch;
   color: var(--tr-color-text-secondary);
   line-height: 1.7;
@@ -712,7 +712,7 @@ table.content-reference,
     gap: var(--content-gap);
   }
 
-  .content-reader > .content-document {
+  .content-document {
     grid-column: 1;
     grid-row: 1;
   }
@@ -853,96 +853,4 @@ table.content-reference,
   .content-toc-short {
     display: none;
   }
-}
-
-/* Shared document flow: readable prose with full-width examples and references. */
-.content-body {
-  min-width: 0;
-}
-
-.content-section :is(.content-body, .content-example) > :is(p, ul, ol),
-.content-section > :is(ul, ol) {
-  max-width: 78ch;
-  color: var(--tr-color-text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.content-section :is(ul, ol) {
-  padding-left: 1.25em;
-}
-
-.content-section li + li {
-  margin-top: var(--tr-space-stack-xs);
-}
-
-.content-section > .content-prose + .content-example,
-.content-section .content-code-frame + .content-code-frame {
-  margin-top: var(--content-gap);
-}
-
-.content-heading {
-  margin-bottom: var(--content-stack);
-}
-
-.content-heading > :last-child {
-  margin-bottom: 0;
-}
-
-.content-label > span + span::before {
-  content: " · ";
-}
-
-.content-section .content-body > :first-child {
-  margin-top: 0;
-}
-
-.content-section .content-body > :last-child {
-  margin-bottom: 0;
-}
-
-.content-section .mono {
-  font-size: 0.9em;
-  overflow-wrap: anywhere;
-}
-
-/* Linked guide summaries stay readable; their titles carry the link cue. */
-.content-section a.content-example {
-  display: block;
-  color: var(--tr-color-text-secondary);
-  text-decoration: none;
-}
-
-.content-section a.content-example :is(h3, code, .card-link) {
-  color: var(--tr-color-link-dot);
-  text-decoration: underline;
-  text-decoration-color: var(--tr-color-link-underline);
-  text-underline-offset: 0.2em;
-}
-
-.content-section a.content-example .repo-sub {
-  display: block;
-  margin-top: var(--tr-space-stack-xs);
-}
-
-.content-section a.content-example:hover :is(h3, code, .card-link) {
-  color: var(--tr-color-link-base);
-}
-
-.content-section a.content-example:focus-visible {
-  outline: 2px solid var(--tr-color-focus);
-  outline-offset: 4px;
-}
-
-/* Long executable examples need the full reading width on desktop too. */
-.content-examples.content-examples-stack {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* Comparison text receives room without inflating short numeric columns. */
-@media (min-width: 901px) {
-  .content-reference [data-reference-comparison] :is(th, td):nth-child(1) { width: 23%; }
-  .content-reference [data-reference-comparison] :is(th, td):nth-child(2) { width: 35%; }
-  .content-reference [data-reference-comparison] :is(th, td):nth-child(3) { width: 15%; }
-  .content-reference [data-reference-comparison] :is(th, td):nth-child(4) { width: 12%; }
-  .content-reference [data-reference-comparison] :is(th, td):nth-child(5) { width: 15%; }
 }

@@ -1,17 +1,15 @@
 {% extends "public/_base.html" %}
 {% block body %}
-<div class="content-reader" data-content-toc>
-<div class="content-document">
 
-<section class="content-section" aria-label="OpenRouter-compatible Batch API quickstart">
-  <div class="content-prose">
-    <span class="content-label">OpenRouter-compatible Batch API</span>
+<section class="marketing-split" aria-label="OpenRouter-compatible Batch API quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">OpenRouter-compatible Batch API</span>
     <h2>Submit many requests. Poll one batch.</h2>
     <p>TrustedRouter implements the OpenRouter inline Batch API shape at <code>/api/beta/batches</code>. Existing integrations can switch the hostname and API key without uploading a JSONL file.</p>
     <p>Batch items use the same attested authorization, routing, fallback, and integer billing as ordinary inference. When native execution is enabled for an eligible direct route, TrustedRouter uses that provider's Batch API and applies its published discount.</p>
   </div>
-  <div class="content-example">
-    <span class="content-label">Create and poll · Python</span>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Create and poll</span><span>Python</span></div>
     <pre><code>import os
 import time
 import requests
@@ -63,55 +61,55 @@ print(batch["results"])</code></pre>
   </div>
 </section>
 
-<section class="content-section">
-  <h2>Drop-in contract</h2>
-  <div class="content-examples">
-    <div class="content-example">
-      <span class="content-label">Create</span>
+<section style="margin-top:48px">
+  <h2 class="section-center">Drop-in contract</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Create</span>
       <h3><code>POST /api/beta/batches</code></h3>
       <p>Returns HTTP 202 with a <code>batch_*</code> ID, status, request counts, completion window, and aggregate usage fields.</p>
     </div>
-    <div class="content-example">
-      <span class="content-label">Poll</span>
+    <div class="marketing-card">
+      <span class="card-label">Poll</span>
       <h3><code>GET /api/beta/batches/{id}</code></h3>
       <p>Poll with the same API key. A completed batch returns results inline in original request order.</p>
     </div>
-    <div class="content-example">
-      <span class="content-label">Results</span>
+    <div class="marketing-card">
+      <span class="card-label">Results</span>
       <h3>Response or error per item</h3>
       <p>Every result preserves <code>custom_id</code> and has either a response with status, request ID, and body, or a stable error.</p>
     </div>
   </div>
 </section>
 
-<section class="content-section" aria-label="Batch-only model error">
-  <div class="content-heading"><h2>“This model is only available through the Batch API”</h2></div>
-  <div class="content-body">
+<section class="panel" style="margin-top:48px" aria-label="Batch-only model error">
+  <div class="panel-head"><h2>“This model is only available through the Batch API”</h2></div>
+  <div class="panel-body">
     <p>If an integration returns <code>This model is only available through the Batch API. Use the /api/beta/batches endpoint instead.</code>, the selected route requires asynchronous submission. Retrying the same model on the synchronous endpoint will not resolve that error.</p>
     <p>Use the create-and-poll example above: send <code>endpoint</code>, <code>model</code>, and the inline <code>requests</code> array to <code>POST /api/beta/batches</code>. Poll the returned batch ID with the same API key until it reaches a terminal status, then inspect each item's response or error. Use a model ID available in the destination gateway's catalog.</p>
     <p>If you need an immediate or streaming response, select a route that supports synchronous requests instead. Batch submission opts into the encrypted retention described below.</p>
   </div>
 </section>
 
-<section class="content-section">
-  <div class="content-prose">
-    <span class="content-label">Native discounts</span>
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Native discounts</span>
     <h2>Use the provider's real Batch API.</h2>
     <p>When native execution is enabled, eligible direct OpenAI and Parasail chat or embedding jobs are uploaded by the attested gateway to that provider's native asynchronous Batch API. Both currently publish a 50% discount, which TrustedRouter applies with integer microdollar accounting after the provider completes each item.</p>
     <p>If native submission is unsupported or a native item fails, TrustedRouter releases its native hold and runs that item through the ordinary attested fallback path at the selected fallback route's normal price.</p>
   </div>
-  <div class="content-example">
-    <span class="content-label">Guardrails</span>
+  <div class="marketing-card">
+    <span class="card-label">Guardrails</span>
     <h3>No silent privacy downgrade</h3>
     <p>Native provider Batch APIs retain prompt and output content. TrustedRouter therefore keeps ZDR, E2E, confidential, EU, BYOK, custom, orchestration, and Broadcast-enabled jobs on the ordinary enclave-managed path.</p>
   </div>
 </section>
 
-<section class="content-section">
-  <div class="content-prose">
-    <span class="content-label">Supported endpoints</span>
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Supported endpoints</span>
     <h2>One batch format across four APIs.</h2>
-    <ul class="plain-list">
+    <ul class="check-list">
       <li><code>/v1/chat/completions</code></li>
       <li><code>/v1/responses</code></li>
       <li><code>/v1/messages</code></li>
@@ -119,8 +117,8 @@ print(batch["results"])</code></pre>
     </ul>
     <p>Streaming is not available inside a batch. Embedding batches accept text, text arrays, token arrays, and arrays of token arrays. Provider preferences, <code>input_type</code>, and multimodal embedding inputs are rejected before the job is created.</p>
   </div>
-  <div class="content-example">
-    <span class="content-label">Wire shape · JSON</span>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Wire shape</span><span>JSON</span></div>
     <pre><code>{
   "endpoint": "/v1/responses",
   "model": "your/model",
@@ -137,47 +135,49 @@ print(batch["results"])</code></pre>
   </div>
 </section>
 
-<section class="content-section">
-  <h2>Execution guarantees</h2>
-  <div class="content-examples">
-    <div class="content-example">
+<section style="margin-top:48px">
+  <h2 class="section-center">Execution guarantees</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
       <h3>Exactly-once settlement</h3>
       <p>Each item has a deterministic idempotency key. Worker restarts recover encrypted checkpoints instead of rerunning completed requests.</p>
     </div>
-    <div class="content-example">
+    <div class="marketing-card">
       <h3>Regional lease safety</h3>
       <p>Workers claim jobs with generation-checked leases. Only one region executes an item while another region can recover an abandoned job.</p>
     </div>
-    <div class="content-example">
+    <div class="marketing-card">
       <h3>Partial results</h3>
       <p>A provider or validation failure is attached to that item. Successful items remain successful and are billed once.</p>
     </div>
   </div>
 </section>
 
-<section class="content-section">
-  <div class="content-prose">
-    <span class="content-label">Confidential retention</span>
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">Confidential retention</span>
     <h2>Encrypted job state. No plaintext storage.</h2>
+  </div>
+  <div>
     <p>Submitting to the Batch API opts into temporary encrypted storage so jobs survive restarts and results can be polled. Prompts and outputs are encrypted inside the attested gateway with a per-artifact key. The raw API key is validated and discarded during submission; it is never persisted, even inside an encrypted artifact.</p>
     <p>Under the deployed GCP IAM policy, only approved production enclave image digests are granted access to the ciphertext and its Cloud KMS envelope key. The control plane, object storage, logs, billing records, Sentry, and analytics do not receive plaintext batch content. Batch artifacts are automatically deleted after 30 days.</p>
     <p>When an eligible job uses a provider-native Batch API, that provider receives and temporarily retains plaintext input for up to 26 hours and provider results for up to 6 hours after availability. This is why native Batch execution is never used for privacy-constrained aliases or requests.</p>
     <p>This encrypted-retention boundary depends on GCP KMS, Cloud Storage, and the project's IAM administration. It is intentionally stronger than ordinary application-layer storage, but it is not the same zero-retention property as synchronous and streaming inference.</p>
     <p>Ordinary synchronous and streaming inference remains content-stateless. Strict EU data-residency batch execution is not included in this first beta.</p>
-    <p class="content-links"><a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a> <a class="btn ghost" href="/security">Read the security boundary</a></p>
+    <p><a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a> <a class="btn ghost" href="/security">Read the security boundary</a></p>
   </div>
 </section>
 
-<section class="content-section">
-  <h2>Billing and limits</h2>
-  <div class="content-examples">
-    <div class="content-example">
+<section style="margin-top:48px">
+  <h2 class="section-center">Billing and limits</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
       <h3>Native discount eligibility</h3>
       <p>Eligible OpenAI and Parasail native Batch items receive their published 50% discount when native execution is enabled. Managed fallback and providers without a verified native discount use normal route pricing. Read returned usage instead of assuming every item was discounted.</p>
     </div>
-    <div class="content-example">
+    <div class="marketing-card">
       <h3>Current beta limits</h3>
-      <ul class="plain-list">
+      <ul class="check-list">
         <li>24-hour completion window</li>
         <li>32 MiB create request limit</li>
         <li>50,000 requests per batch</li>
@@ -189,6 +189,4 @@ print(batch["results"])</code></pre>
   </div>
 </section>
 
-</div>
-</div>
 {% endblock %}

@@ -1,16 +1,14 @@
 {% extends "public/_base.html" %}
 {% block body %}
-<div class="content-reader" data-content-toc>
-<div class="content-document">
-<section class="content-section">
-  <div class="content-prose">
-    <span class="content-label">Base URL swap</span>
+<section class="marketing-split">
+  <div class="marketing-copy">
+    <span class="eyebrow">Base URL swap</span>
     <h2>Migrate in the time it takes to run one request.</h2>
-    <p>TrustedRouter keeps the OpenAI client shape. Start by changing <code>base_url</code>, then route a small workflow through <code>trustedrouter/zdr</code>, <code>trustedrouter/eu</code>, <code>trustedrouter/e2e</code>, <code>trustedrouter/auto</code>, or a model from the catalog.</p>
-    <p>Start sensitive workloads with <code>trustedrouter/zdr</code>. Use <code>trustedrouter/auto</code> when provider breadth matters more than the strictest privacy filter.</p>
+    <p>TrustedRouter keeps the OpenAI client shape. Start by changing <span class="mono">base_url</span>, then route a small workflow through <span class="mono">trustedrouter/zdr</span>, <span class="mono">trustedrouter/eu</span>, <span class="mono">trustedrouter/e2e</span>, <span class="mono">trustedrouter/auto</span>, or a model from the catalog.</p>
+    <p>Start sensitive workloads with <span class="mono">trustedrouter/zdr</span>. Use <span class="mono">trustedrouter/auto</span> when provider breadth matters more than the strictest privacy filter.</p>
   </div>
-  <div class="content-example">
-    <div class="content-label"><span>Before and after</span><span>base_url</span></div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Before and after</span><span>base_url</span></div>
     <pre><code>from openai import OpenAI
 
 client = OpenAI(
@@ -20,44 +18,40 @@ client = OpenAI(
   </div>
 </section>
 
-<section aria-label="Migration steps" class="content-section"><dl class="content-details">
-  <dt><span>1</span> <strong>Swap URL</strong></dt><dd>Point your existing client at TrustedRouter.</dd>
-  <dt><span>2</span> <strong>Verify trust</strong></dt><dd>Check the source commit and attestation instructions.</dd>
-  <dt><span>3</span> <strong>Measure</strong></dt><dd>Measure uptime, latency, and time to first token.</dd>
-  <dt><span>4</span> <strong>Route more</strong></dt><dd>Move sensitive routes once the path checks out.</dd>
-</dl></section>
+<section class="flow-steps" aria-label="Migration steps">
+  <div><span>1</span><strong>Swap URL</strong><p>Point your existing client at TrustedRouter.</p></div>
+  <div><span>2</span><strong>Verify trust</strong><p>Check the source commit and attestation instructions.</p></div>
+  <div><span>3</span><strong>Measure</strong><p>Measure uptime, latency, and time to first token.</p></div>
+  <div><span>4</span><strong>Route more</strong><p>Move sensitive routes once the path checks out.</p></div>
+</section>
 
-<section class="content-section">
-<div class="content-examples">
-  <div class="content-example">
-    <span class="content-label">Trust</span>
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Trust</span>
     <h3>Verify before production.</h3>
     <p>Check the source commit, image reference, and image digest before you move production traffic.</p>
     <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
   </div>
-  <div class="content-example">
-    <span class="content-label">Credit</span>
+  <div class="marketing-card">
+    <span class="card-label">Credit</span>
     <h3>$100 design partner credit.</h3>
     <p>Migration credits are available by approval for qualified design partners.</p>
     <p class="microcopy">No automatic grant. Credits are reviewed manually.</p>
   </div>
-  <div class="content-example">
-    <span class="content-label">Stack</span>
+  <div class="marketing-card">
+    <span class="card-label">Stack</span>
     <h3>Bring Python, JavaScript, agents, or BYOK.</h3>
     <p>Use Python, TypeScript, agents, direct HTTP, or BYOK. The API is OpenAI compatible.</p>
   </div>
-</div>
 </section>
 
-<section class="content-section">
+<section class="quote-feature">
   <div>
-    <span class="content-label">Design partners</span>
+    <span class="eyebrow">Design partners</span>
     <h2>For teams already spending on LLMs.</h2>
   </div>
   <div>
     <p>Bring one production workflow, one sensitive workflow, or one provider fallback problem. We will help you move it through the attested path, measure status, and tune routing.</p>
   </div>
 </section>
-</div>
-</div>
 {% endblock %}

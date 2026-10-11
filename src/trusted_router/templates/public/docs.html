@@ -1,29 +1,32 @@
 {% extends "public/_base.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/docs-hub.css?v={{ static_version|default('local') }}">
+{% endblock %}
 {% block body %}
-<div class="content-reader" data-content-toc>
+<div class="docs-main-reader" data-content-toc>
 <div class="content-document">
 
-<section aria-label="Quickstart" class="content-section">
-  <div class="content-prose">
+<section class="marketing-split" aria-label="Quickstart">
+  <div class="marketing-copy">
     <h2>Quickstart: one base_url change.</h2>
-    <ul>
-      <li>OpenAI-compatible — point any OpenAI/Anthropic SDK at TrustedRouter</li>
-      <li>Read your key from <code>TRUSTEDROUTER_API_KEY</code></li>
-      <li>Use <code>trustedrouter/auto</code> for provider failover</li>
-      <li>Use <code>trustedrouter/eu</code> with the EU regional API for Europe-focused routing</li>
-      <li>Use <code>trustedrouter/socrates</code> for the rolling advisor preset, or <code>trustedrouter/socrates-1.1</code> for the pinned current version</li>
-      <li>Use <code>trustedrouter/iris-2.0</code>, <code>trustedrouter/prometheus-2.0</code>, or <code>trustedrouter/zeus-1.0</code> for versioned Synth presets</li>
-      <li>Use <code>trustedrouter/openpatcher-s2</code> for Kimi K3 plus GLM 5.2 synthesis</li>
-      <li>Use <code>trustedrouter/openpatcher-g2</code> for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors</li>
-      <li>Use <code>trustedrouter/plato-pro-2.0</code> for GLM 5.2 advised by Prometheus 2.0</li>
-      <li>Use <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, or <code>trustedrouter/zeus-code-1.0</code> for code-tuned Synth presets</li>
-      <li>Add <code>provider.min_privacy = "zdr"</code> for a hard zero-retention floor</li>
-      <li>Add <code>provider.min_privacy = "confidential"</code> to require verified provider compute + E2EE + ZDR</li>
+    <ul class="check-list">
+      <li>✓ OpenAI-compatible — point any OpenAI/Anthropic SDK at TrustedRouter</li>
+      <li>✓ Read your key from <code>TRUSTEDROUTER_API_KEY</code></li>
+      <li>✓ Use <code>trustedrouter/auto</code> for provider failover</li>
+      <li>✓ Use <code>trustedrouter/eu</code> with the EU regional API for Europe-focused routing</li>
+      <li>✓ Use <code>trustedrouter/socrates</code> for the rolling advisor preset, or <code>trustedrouter/socrates-1.1</code> for the pinned current version</li>
+      <li>✓ Use <code>trustedrouter/iris-2.0</code>, <code>trustedrouter/prometheus-2.0</code>, or <code>trustedrouter/zeus-1.0</code> for versioned Synth presets</li>
+      <li>✓ Use <code>trustedrouter/openpatcher-s2</code> for Kimi K3 plus GLM 5.2 synthesis</li>
+      <li>✓ Use <code>trustedrouter/openpatcher-g2</code> for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors</li>
+      <li>✓ Use <code>trustedrouter/plato-pro-2.0</code> for GLM 5.2 advised by Prometheus 2.0</li>
+      <li>✓ Use <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, or <code>trustedrouter/zeus-code-1.0</code> for code-tuned Synth presets</li>
+      <li>✓ Add <code>provider.min_privacy = "zdr"</code> for a hard zero-retention floor</li>
+      <li>✓ Add <code>provider.min_privacy = "confidential"</code> to require verified provider compute + E2EE + ZDR</li>
     </ul>
     <a class="btn" href="/docs/migrate-from-openrouter">Migration guide →</a>
   </div>
-  <div class="content-example">
-    <div class="content-label"><span>Drop-in</span><span>TypeScript</span></div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Drop-in</span><span>TypeScript</span></div>
     <pre><code>const client = new OpenAI({
   apiKey: process.env.TRUSTEDROUTER_API_KEY,
   baseURL: "{{ api_base_url }}"
@@ -36,12 +39,12 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
-{% with docs_content_layout=true %}{% include "public/_api_hosts.html" %}{% endwith %}
+{% include "public/_api_hosts.html" %}
 
-<section id="privacy-filters" class="content-section">
-  <h2 >Fail-closed privacy filters</h2>
-  <div class="content-examples">
-    <div class="content-example">
+<section style="margin-top:48px" id="privacy-filters">
+  <h2 class="section-center">Fail-closed privacy filters</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
       <h3>Require zero retention</h3>
       <pre><code>{
   "model": "your/model",
@@ -49,7 +52,7 @@ const r = await client.chat.completions.create({
 }</code></pre>
       <p>This is a hard minimum. If no endpoint for the selected model and provider filters has a tracked ZDR guarantee, the request fails before inference.</p>
     </div>
-    <div class="content-example">
+    <div class="marketing-card">
       <h3>Require Confidential: verified compute + E2EE + ZDR</h3>
       <pre><code>{
   "model": "your/model",
@@ -59,58 +62,58 @@ const r = await client.chat.completions.create({
       <p>Catalog fields <code>provider_confidential_compute</code> and <code>provider_e2ee</code> report individual technical properties. The Confidential label and endpoint <code>privacy_tier: 3</code> additionally require <code>provider_zero_data_retention: true</code> for that exact route.</p>
     </div>
   </div>
-  <p class="muted"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same verified compute + E2EE + ZDR pool. A TR-funded ZDR agreement qualifies only the funded route, not BYOK. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
+  <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same verified compute + E2EE + ZDR pool. A TR-funded ZDR agreement qualifies only the funded route, not BYOK. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>
 </section>
 
-<section class="content-section">
-  <h2 >Guides</h2>
-  <div class="content-examples">
-    <a class="content-example" href="/for-developers"><h3>60-second quickstart</h3><p>Make one request, inspect the catalog, and verify the live prompt path.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/agent-setup"><h3>Agent setup</h3><p>Point Codex, Claude Code, Hermes, Cursor, or any OpenAI-compatible client at TrustedRouter.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/mcp"><h3>MCP server</h3><p>Let agents inspect live models, pricing, provider posture, credits, docs, and quick test messages.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/agent-setup#codex-skill"><h3>Agent skill</h3><p>Help Codex, Claude Code, Hermes, and other agents choose models using speed, cost, AI IQ, privacy, context length, and prompt-cache fit.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/tagging"><h3>Request tagging</h3><p>Allocate cost and usage with AWS style tags while keeping metadata out of model prompts.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/provider-routing"><h3>Provider routing &amp; pinning</h3><p>Pin, prefer, or exclude providers per request — filters that fail closed, never silently relax.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/performance-routing"><h3>Performance routing</h3><p>Set latency and throughput preferences while preserving hard provider and privacy requirements.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/spend-controls"><h3>Spend controls</h3><p>Choose key budgets and opt into strict estimated-cost admission for concurrent requests.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/model-precision"><h3>Model precision</h3><p>Read reviewed weight formats, model revisions, and serving-code evidence for each provider.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/receipts"><h3>Signed inference receipts</h3><p>Opt into an offline-verifiable proof of every response — exact bytes, routed model, and a hardware-attested signing key.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/telemetry"><h3>Client reliability telemetry</h3><p>See the content-free fields TrustedRouter SDKs report, the retention policy, and every opt-out.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/prompt-caching"><h3>Prompt caching</h3><p>Reuse stable prompt prefixes, inspect cache hits, and keep the router itself free of prompt storage.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/decide"><h3>Decision models</h3><p>Send state plus typed yes/no, choice, and score questions to <code>POST {{ decide_path }}</code>. Get verified answers with probabilities from trev-1.0, Jev, or any chat model.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/batch"><h3>Batch API</h3><p>Submit OpenRouter-compatible inline batches and poll encrypted results through the attested gateway.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/web-search"><h3>Responses web search</h3><p>Search the live web inside the attested gateway and return source citations through the OpenAI Responses API.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/video"><h3>Video generation</h3><p>Generate video with Seedance, Veo, Sora, Runway, Kling, Wan, Vidu, PixVerse, LTX, Gemini Omni, and Hailuo 3 through asynchronous jobs with exact quoted billing.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/evals"><h3>Evals</h3><p>Run eval suites across providers through one API.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/provider-conformance"><h3>Provider conformance</h3><p>Check an OpenAI-compatible provider endpoint against the production gateway contract before applying.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/synth"><h3>Synth</h3><p>Run Iris, Prometheus, Zeus, and code-tuned Synth presets inside the attested gateway.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/agent-setup#socrates"><h3>Socrates</h3><p>Run the advisor preset, or configure the generic advisor primitive directly.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/user-models"><h3>User-provided models</h3><p>List your own endpoint — a machine, an agent, or yourself typing — at a price you set, and keep 70% in credits.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/custom-models"><h3>Custom models</h3><p>Publish a base model with a hidden prompt and earn 70% of the markup you set.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/docs/x402"><h3>x402 stablecoin funding</h3><p>Let agents add prepaid credits automatically without changing the prompt path.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/eu"><h3>EU routing</h3><p>Use the Europe West attested gateway and the EU-focused model alias.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/sign-in-with-trustedrouter"><h3>Sign in with TrustedRouter</h3><p>Let your users bring their own account and credits.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/sign-in-as-ycombinator"><h3>Y Combinator company sign-in</h3><p>Add verified company-domain context, with a copyable agent prompt.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/sign-in-as-startx"><h3>StartX company sign-in</h3><p>Recognize StartX company email domains through TrustedRouter.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/sign-in-as-vc"><h3>VC-backed company sign-in</h3><p>Match company domains against ten venture firms, with reusable sign-in buttons.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/compare/openrouter"><h3>vs OpenRouter</h3><p>How TrustedRouter compares to closed routers.</p><span class="card-link">Open →</span></a>
-    <a class="content-example" href="/security"><h3>Security &amp; attestation</h3><p>How the attested gateway and trust record work.</p><span class="card-link">Open →</span></a>
+<section style="margin-top:48px">
+  <h2 class="section-center">Guides</h2>
+  <div class="marketing-grid three">
+    <a class="marketing-card card-as-link" href="/for-developers"><h3>60-second quickstart</h3><p>Make one request, inspect the catalog, and verify the live prompt path.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/agent-setup"><h3>Agent setup</h3><p>Point Codex, Claude Code, Hermes, Cursor, or any OpenAI-compatible client at TrustedRouter.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/mcp"><h3>MCP server</h3><p>Let agents inspect live models, pricing, provider posture, credits, docs, and quick test messages.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/agent-setup#codex-skill"><h3>Agent skill</h3><p>Help Codex, Claude Code, Hermes, and other agents choose models using speed, cost, AI IQ, privacy, context length, and prompt-cache fit.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/tagging"><h3>Request tagging</h3><p>Allocate cost and usage with AWS style tags while keeping metadata out of model prompts.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/provider-routing"><h3>Provider routing &amp; pinning</h3><p>Pin, prefer, or exclude providers per request — filters that fail closed, never silently relax.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/performance-routing"><h3>Performance routing</h3><p>Set latency and throughput preferences while preserving hard provider and privacy requirements.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/spend-controls"><h3>Spend controls</h3><p>Choose key budgets and opt into strict estimated-cost admission for concurrent requests.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/model-precision"><h3>Model precision</h3><p>Read reviewed weight formats, model revisions, and serving-code evidence for each provider.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/receipts"><h3>Signed inference receipts</h3><p>Opt into an offline-verifiable proof of every response — exact bytes, routed model, and a hardware-attested signing key.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/telemetry"><h3>Client reliability telemetry</h3><p>See the content-free fields TrustedRouter SDKs report, the retention policy, and every opt-out.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/prompt-caching"><h3>Prompt caching</h3><p>Reuse stable prompt prefixes, inspect cache hits, and keep the router itself free of prompt storage.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/decide"><h3>Decision models</h3><p>Send state plus typed yes/no, choice, and score questions to <code>POST {{ decide_path }}</code>. Get verified answers with probabilities from trev-1.0, Jev, or any chat model.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/batch"><h3>Batch API</h3><p>Submit OpenRouter-compatible inline batches and poll encrypted results through the attested gateway.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/web-search"><h3>Responses web search</h3><p>Search the live web inside the attested gateway and return source citations through the OpenAI Responses API.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/video"><h3>Video generation</h3><p>Generate video with Seedance, Veo, Sora, Runway, Kling, Wan, Vidu, PixVerse, LTX, Gemini Omni, and Hailuo 3 through asynchronous jobs with exact quoted billing.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/evals"><h3>Evals</h3><p>Run eval suites across providers through one API.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/provider-conformance"><h3>Provider conformance</h3><p>Check an OpenAI-compatible provider endpoint against the production gateway contract before applying.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/synth"><h3>Synth</h3><p>Run Iris, Prometheus, Zeus, and code-tuned Synth presets inside the attested gateway.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/agent-setup#socrates"><h3>Socrates</h3><p>Run the advisor preset, or configure the generic advisor primitive directly.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/user-models"><h3>User-provided models</h3><p>List your own endpoint — a machine, an agent, or yourself typing — at a price you set, and keep 70% in credits.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/custom-models"><h3>Custom models</h3><p>Publish a base model with a hidden prompt and earn 70% of the markup you set.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/x402"><h3>x402 stablecoin funding</h3><p>Let agents add prepaid credits automatically without changing the prompt path.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/eu"><h3>EU routing</h3><p>Use the Europe West attested gateway and the EU-focused model alias.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/sign-in-with-trustedrouter"><h3>Sign in with TrustedRouter</h3><p>Let your users bring their own account and credits.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/sign-in-as-ycombinator"><h3>Y Combinator company sign-in</h3><p>Add verified company-domain context, with a copyable agent prompt.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/sign-in-as-startx"><h3>StartX company sign-in</h3><p>Recognize StartX company email domains through TrustedRouter.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/sign-in-as-vc"><h3>VC-backed company sign-in</h3><p>Match company domains against ten venture firms, with reusable sign-in buttons.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/compare/openrouter"><h3>vs OpenRouter</h3><p>How TrustedRouter compares to closed routers.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/security"><h3>Security &amp; attestation</h3><p>How the attested gateway and trust record work.</p><span class="card-link">Open →</span></a>
   </div>
 </section>
 
-<section class="content-section">
-  <h2  id="sdks">SDKs</h2>
-  <div class="content-examples">
-    <a class="content-example" href="https://github.com/Lore-Hex/trusted-router-py"><code>trusted-router-py</code><span class="repo-sub">Python SDK</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trusted-router-js"><code>trusted-router-js</code><span class="repo-sub">TypeScript SDK</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trusted-router-go"><code>trusted-router-go</code><span class="repo-sub">Go SDK</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trusted-router-rust"><code>trusted-router-rust</code><span class="repo-sub">Rust SDK</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trusted-router-swift"><code>trusted-router-swift</code><span class="repo-sub">Swift SDK</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trusted-router-java"><code>trusted-router-java</code><span class="repo-sub">Java SDK</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trustedrouter-ai-sdk-provider"><code>trustedrouter-ai-sdk-provider</code><span class="repo-sub">Vercel AI SDK provider</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/trustedrouter-provider-check"><code>trustedrouter-provider-check</code><span class="repo-sub">Provider conformance suite</span></a>
-    <a class="content-example" href="https://github.com/Lore-Hex/quill-router"><code>quill-router</code><span class="repo-sub">Open-source router</span></a>
+<section style="margin-top:48px">
+  <h2 class="section-center" id="sdks">SDKs</h2>
+  <div class="repo-grid">
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-go"><span class="mono">trusted-router-go</span><span class="repo-sub">Go SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-rust"><span class="mono">trusted-router-rust</span><span class="repo-sub">Rust SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-java"><span class="mono">trusted-router-java</span><span class="repo-sub">Java SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-ai-sdk-provider"><span class="mono">trustedrouter-ai-sdk-provider</span><span class="repo-sub">Vercel AI SDK provider</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-provider-check"><span class="mono">trustedrouter-provider-check</span><span class="repo-sub">Provider conformance suite</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Open-source router</span></a>
   </div>
   <div class="public-proof-strip" style="margin-top:18px">
     <div><strong>PyPI</strong><span><a href="https://pypi.org/project/trusted-router-py/">trusted-router-py</a></span></div>
@@ -120,8 +123,8 @@ const r = await client.chat.completions.create({
   </div>
 </section>
 
-<section id="model-changes" class="content-section">
-  <h2 >Model route changes</h2>
+<section id="model-changes" style="margin-top:48px">
+  <h2 class="section-center">Model route changes</h2>
   <p>Poll <a href="https://trustedrouter.com/v1/models/changes"><code>GET https://trustedrouter.com/v1/models/changes</code></a> or subscribe to the <a href="https://trustedrouter.com/v1/models/changes.atom">Atom feed</a>. Both are public and need no API key. They report model and provider-route additions and removals, route metadata changes, confidential route gains and losses, best privacy tier changes, and upcoming provider retirements.</p>
   <pre><code>GET /v1/models/changes?model=deepseek/deepseek-v4-flash&amp;since=2026-09-01T00:00:00Z
 GET /v1/models/changes.atom?type=confidential_route_lost
@@ -131,8 +134,8 @@ GET /v1/models/changes?upcoming=true</code></pre>
   <p><code>trustedrouter.last_route_change_at</code> in <code>/v1/models</code> gives the latest recorded route change that is already effective, or <code>null</code> if none is known. The history starts with a September 1, 2026 baseline and replays committed catalog revisions using their contemporary privacy rules. Backfilled observations use commit dates, not deployment timestamps. Later entries describe catalog observations and announced cutovers; they do not establish release completion, live provider health, capacity, or credential availability. Conditional discovery-expiry deadlines are recorded when observed, rather than forecast as provider retirements.</p>
 </section>
 
-<section id="model-capabilities" class="content-section">
-  <h2 >Model request capabilities</h2>
+<section id="model-capabilities" style="margin-top:48px">
+  <h2 class="section-center">Model request capabilities</h2>
   <p><code>GET /v1/models</code> includes <code>trustedrouter.capabilities</code> on concrete model rows. For example, GPT-5.5 reports:</p>
   <pre><code>"capabilities": {
   "reasoning_effort": ["none", "low", "medium", "high", "xhigh"],
@@ -148,13 +151,13 @@ GET /v1/models/changes?upcoming=true</code></pre>
   <p>Routing aliases such as <code>trustedrouter/auto</code>, orchestration models, and hidden routes omit the object because their selected models and internal calls can vary. Absence is not a declaration of no support. The legacy <code>supported_parameters</code> union and <code>architecture.input_modalities</code> remain discovery fields; they need not describe every endpoint.</p>
 </section>
 
-<section class="content-section">
-  <h2 >API reference</h2>
-  <div class="content-examples">
-    <div class="content-example">
+<section style="margin-top:48px">
+  <h2 class="section-center">API reference</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
       <h3>OpenAI-compatible endpoints</h3>
       <p>Base URL <code>{{ api_base_url }}</code>. Authenticate inference calls with a <code>Bearer sk-tr-…</code> key.</p>
-      <ul>
+      <ul class="check-list">
         <li><code>POST /v1/chat/completions</code></li>
         <li><code>POST /v1/responses</code></li>
         <li><code>POST /v1/embeddings</code></li>
@@ -163,12 +166,12 @@ GET /v1/models/changes?upcoming=true</code></pre>
         <li><code>POST /v1/videos</code></li>
         <li><a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a> <span class="muted">public, no API key</span></li>
       </ul>
-      <p><a class="card-link" href="/api/reference">Interactive API reference →</a></p>
+      <p style="margin-top:14px"><a class="card-link" href="/api/reference">Interactive API reference →</a></p>
     </div>
-    <div class="content-example">
+    <div class="marketing-card">
       <h3>Agent-readable docs</h3>
       <p>Point your coding agent at the machine-readable docs for the full surface:</p>
-      <ul>
+      <ul class="check-list">
         <li><a href="/docs/llms.txt">/docs/llms.txt</a> — concise index</li>
         <li><a href="/docs/llms-full.txt">/docs/llms-full.txt</a> — full context</li>
         <li><a href="/docs/mcp">/docs/mcp</a> — MCP tools for live catalog, credits, docs, and test-chat lookups</li>
@@ -192,7 +195,7 @@ GET /v1/models/changes?upcoming=true</code></pre>
   </div>
 </section>
 
-<section id="key-management" class="content-section">
+<section style="margin-top:48px" id="key-management">
   <h2>Manage keys at scale</h2>
   <p>Key management runs on the control plane, <code>{{ control_plane_api_base_url }}</code>, with a management key. Every operation is limited to the caller's workspace. Keep management keys on your server.</p>
   <h3>List and page through keys</h3>
@@ -223,19 +226,19 @@ HTTP 200
   <p>Activity comes from a separate analytics pipeline. It can show a request before <code>GET /v1/key</code> does, or after it, and it trails further when the pipeline has a backlog. <code>data.analytics.drain_lag_seconds</code> in <a href="/status.json">status.json</a> reports that backlog. A key's <code>updated_at</code> changes with its settings, not with usage.</p>
 </section>
 
-<section id="billing-usage" class="content-section">
+<section style="margin-top:48px" id="billing-usage">
   <h2>Billing and usage</h2>
   <p>Token counts and token list prices are the starting point for billing. Review the rounding rules below, then inspect credits and activity at <code>{{ control_plane_api_base_url }}</code> to reconcile charges.</p>
+  {% include "public/_minimum_charges.html" %}
 </section>
-{% with docs_content_layout=true %}{% include "public/_minimum_charges.html" %}{% endwith %}
 
-<section id="rate-limit-headers" class="content-section">
-  <h2 >Spend-window rate limits</h2>
+<section style="margin-top:48px" id="rate-limit-headers">
+  <h2 class="section-center">Spend-window rate limits</h2>
   <p>A key with a hard daily, weekly, or monthly spend limit gets the governing window on every response. Values are integer microdollars, the same unit used by the key-limit API. Keys without a hard spend window do not get fabricated rate-limit headers.</p>
-  <div class="content-examples content-examples-stack">
-    <div class="content-example">
+  <div class="marketing-grid two">
+    <div class="marketing-card">
       <h3>Response headers</h3>
-      <ul>
+      <ul class="check-list">
         <li><code>RateLimit-Limit</code> — configured spend limit for the governing window</li>
         <li><code>RateLimit-Remaining</code> — settled spend headroom observed by this request</li>
         <li><code>RateLimit-Reset</code> — whole seconds until the fixed UTC window resets</li>
@@ -249,8 +252,8 @@ HTTP 200
       <p>Strict mode bounds admission using estimated cost, not final provider usage. Actual charges can exceed estimates. Outstanding holds continue to count across UTC window resets until settlement or refund. <code>budget_alert_only: true</code> still means notify without blocking; use its default <code>false</code> for enforced limits.</p>
       <p>Strict authorization has a five-second database-work budget and bounded concurrency without an in-memory waiting queue. Busy requests return a retryable <code>503</code>; use exponential backoff with jitter. Window exhaustion returns <code>429</code> with <code>Retry-After</code>. Successful authorizations release the admission slot before generation, so long model responses do not hold it.</p>
     </div>
-    <div class="content-example">
-      <div class="content-label"><span>Agent backoff loop</span><span>Python</span></div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>Agent backoff loop</span><span>Python</span></div>
       <pre><code>import math
 import time
 import httpx
@@ -280,7 +283,7 @@ with httpx.Client() as client:
   </div>
 </section>
 
-<section id="text-to-speech" class="content-section">
+<section class="marketing-section" id="text-to-speech">
   <h2>Text to speech</h2>
   <p><code>POST https://api.trustedrouter.com/v1/audio/speech</code> accepts the OpenRouter speech format and returns raw audio. Use your existing TrustedRouter key and credits. Discover models, voices, formats, billing units, and prices at <a href="/v1/models?output_modalities=speech"><code>/v1/models?output_modalities=speech</code></a>.</p>
   <pre><code>curl --fail-with-body https://api.trustedrouter.com/v1/audio/speech \
@@ -293,7 +296,7 @@ with httpx.Client() as client:
   <p><a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/text-to-speech.md">Speech models, parameters, SDK examples, privacy, and billing</a></p>
 </section>
 
-<section id="usage-cost" class="content-section">
+<section class="marketing-section" id="usage-cost">
   <h2>Cost in response usage</h2>
   <p>Single-endpoint Chat Completions, Responses, and Anthropic Messages requests return <code>usage.cost_microdollars</code> and <code>usage.total_cost_microdollars</code> when the request's charge is known. Both are integer microdollars: 1,000,000 equals $1. A known free request reports 0; an unknown cost is omitted.</p>
   <p>For streaming chat, request <code>stream_options.include_usage: true</code> to receive the terminal usage chunk. Responses includes cost in <code>response.completed.response.usage</code>; Messages includes it in <code>message_delta.usage</code>. Answer deltas continue streaming while the terminal event waits briefly for settlement.</p>

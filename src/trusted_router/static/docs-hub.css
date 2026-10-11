@@ -1,0 +1,23 @@
+/* Preserve main's docs composition; add only desktop section navigation. */
+.docs-main-reader > .content-document {
+  display: block;
+  min-width: 0;
+}
+
+.docs-main-reader h2 {
+  scroll-margin-top: 24px;
+}
+
+@media (min-width: 1400px) {
+  .docs-main-reader.has-content-toc {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 208px;
+    gap: var(--content-gap);
+    align-items: start;
+  }
+
+  .docs-main-reader > .content-document {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}

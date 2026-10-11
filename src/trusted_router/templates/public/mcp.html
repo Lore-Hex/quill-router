@@ -1,18 +1,17 @@
 {% extends "public/_base.html" %}
 
 {% block body %}
-<div class="content-reader" data-content-toc>
-<div class="content-document">
-  <section class="content-section" id="model-advisor">
+<section class="public-section docs-section">
+  <section id="model-advisor">
     <h2>Model Advisor for ChatGPT</h2>
     <p>Compare models and provider routes, estimate text-token costs, check linked privacy evidence, and plan a small evaluation. The public advisor endpoint is <code>https://trustedrouter.com/mcp/advisor</code>. It requires no account or API key.</p>
     <p>Available tools: <code>search_models</code>, <code>compare_models</code>, <code>estimate_cost</code>, <code>get_provider</code>, and <code>search_docs</code>. It reads public catalog and documentation metadata only. It cannot run inference, access balances or private request history, purchase credits, or change your account.</p>
     <p>Send model names, token counts, and abstract requirements rather than private content or credentials. Cost estimates cover uncached text tokens at current retail rates, not a guaranteed invoice. Catalog privacy evidence is distinct from a live attestation check. ChatGPT still processes your conversation under its own policies.</p>
     <p>The advisor is <a href="https://github.com/Lore-Hex/LLM-advisor/tree/main/submission/packages/trustedrouter-model-advisor">open source</a>. The authenticated MCP endpoint below remains available for coding agents.</p>
   </section>
-  <div class="content-section">
-    <div class="content-group"><h2>Connect your agent</h2><span class="content-label">Remote MCP</span></div>
-    <div>
+  <div class="panel">
+    <div class="panel-head"><h2>Connect your agent</h2><span class="pill good">Remote MCP</span></div>
+    <div class="panel-body">
       <p>The TrustedRouter MCP server gives coding agents live TrustedRouter context: models, prices, providers, credits, docs, generation metadata, and small test messages. Production apps should still call the API directly at <code>{{ api_base_url }}</code>.</p>
       <pre><code># Claude Code
 claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
@@ -32,26 +31,26 @@ claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
     </div>
   </div>
 
-  <div class="content-section">
-    <div class="content-group"><h2>Tools</h2><span class="content-label">agent-readable</span></div>
-    <div>
-      <dl class="content-details">
-        <dt>models-list</dt><dd>search model catalog</dd>
-        <dt>model-get</dt><dd>one model detail</dd>
-        <dt>model-endpoints</dt><dd>providers and prices</dd>
-        <dt>providers-list</dt><dd>privacy posture</dd>
-        <dt>credits-get</dt><dd>API-key balance</dd>
-        <dt>generation-get</dt><dd>usage metadata</dd>
-        <dt>docs-search</dt><dd>TrustedRouter docs</dd>
-        <dt>chat-send</dt><dd>short test inference</dd>
-      </dl>
+  <div class="panel">
+    <div class="panel-head"><h2>Tools</h2><span class="pill">agent-readable</span></div>
+    <div class="panel-body">
+      <div class="public-proof-strip">
+        <div><strong>models-list</strong><span>search model catalog</span></div>
+        <div><strong>model-get</strong><span>one model detail</span></div>
+        <div><strong>model-endpoints</strong><span>providers and prices</span></div>
+        <div><strong>providers-list</strong><span>privacy posture</span></div>
+        <div><strong>credits-get</strong><span>API-key balance</span></div>
+        <div><strong>generation-get</strong><span>usage metadata</span></div>
+        <div><strong>docs-search</strong><span>TrustedRouter docs</span></div>
+        <div><strong>chat-send</strong><span>short test inference</span></div>
+      </div>
     </div>
   </div>
 
-  <div class="content-document">
-    <div class="content-section">
-      <div class="content-group"><h2>Ask your agent</h2><span class="content-label">examples</span></div>
-      <div>
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>Ask your agent</h2><span class="pill">examples</span></div>
+      <div class="panel-body">
         <ul class="plain-list">
           <li>Which TrustedRouter model should I use for cheap code review with ZDR?</li>
           <li>Show providers for <code>anthropic/claude-sonnet-5</code> and their data policies.</li>
@@ -60,9 +59,9 @@ claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
         </ul>
       </div>
     </div>
-    <div class="content-section">
-      <div class="content-group"><h2>Privacy boundary</h2><span class="content-label">metadata first</span></div>
-      <div>
+    <div class="panel">
+      <div class="panel-head"><h2>Privacy boundary</h2><span class="pill">metadata first</span></div>
+      <div class="panel-body">
         <p>MCP calls go to the control plane. Catalog, docs, providers, credits, and generation metadata never need prompt content. The only MCP tool that sends a prompt is <code>chat-send</code>, which forwards the short test message to the attested API gateway.</p>
         <p>For application traffic, keep using the OpenAI-compatible API directly:</p>
         <pre><code>export OPENAI_BASE_URL="{{ api_base_url }}"
@@ -70,6 +69,5 @@ export OPENAI_API_KEY="$TRUSTEDROUTER_API_KEY"</code></pre>
       </div>
     </div>
   </div>
-</div>
-</div>
+</section>
 {% endblock %}
