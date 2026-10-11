@@ -248,10 +248,15 @@ def test_tinfoil_glm_53_uses_published_cached_input_rate(
 @pytest.mark.parametrize("provider_slug", ["tinfoil", "featherless"])
 def test_glm_53_routes_publish_the_manifest_cached_input_rate(provider_slug: str) -> None:
     # Each routable row of the committed manifest, with the standard customer
-    # markup; a delisted row publishes no route at all.
+    # markup; a delisted row publishes no route at all. A provider that stops
+    # publishing a cache rate (Featherless, 2026-10) publishes no cached price.
     raw = json.loads((_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8"))
     expected = {
-        row["id"]: _customer_price(row["cached_input_token_price_per_m"])
+        row["id"]: (
+            _customer_price(row["cached_input_token_price_per_m"])
+            if row.get("cached_input_token_price_per_m") is not None
+            else None
+        )
         for row in raw["models"]
         if row["id"] == "z-ai/glm-5.3" and row.get("routable") is not False
     }
