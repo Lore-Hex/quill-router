@@ -168,9 +168,11 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 }
 
 
-# Prefer operator-funded capacity only for default prepaid routing. BYOK,
-# caller-supplied order/sort, eligibility filters, and published prices stay unchanged.
-_PREPAID_PROVIDER_PREFERENCE = {"cloudflare-workers-ai": -2}
+# Cloudflare AI Gateway unified billing is not covered by startup credits.
+# Keep it behind healthy/unknown prepaid hosts (ranks < 1_500), but ahead of
+# degraded hosts (>= 2_000) when its own health permits. This is a floor, never
+# a promotion of a degraded route. BYOK and explicit order/sort stay unchanged.
+_PREPAID_PROVIDER_MIN_RANK = {"cloudflare-workers-ai": 1_500}
 
 # Narrow, evidence-backed exceptions to the global provider preference. These
 # affect only default routing; caller-supplied provider.order/sort still wins.
@@ -1160,7 +1162,9 @@ def _sort_endpoint_candidates(
             )
             default_rank = measured_provider_rank(endpoint.provider, None)
             if endpoint.usage_type == "Credits":
-                default_rank = _PREPAID_PROVIDER_PREFERENCE.get(endpoint.provider, default_rank)
+                default_rank = max(
+                    default_rank, _PREPAID_PROVIDER_MIN_RANK.get(endpoint.provider, default_rank)
+                )
             sort_rank = model_preference.get(endpoint.provider, default_rank)
         return model_rank, order_rank, sort_rank, original_index
 
