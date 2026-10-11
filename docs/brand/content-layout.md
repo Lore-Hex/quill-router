@@ -23,3 +23,15 @@ The code enhancement supplies arrow buttons only when needed, preserves keyboard
 Next: migrate docs hub, agent setup and telemetry as a small batch. Their known issues are narrow-screen overflow, fragmented URL columns and split field names. Then cover the remaining docs and other page families using the same foundations, with a route/state inventory.
 
 Agents own automated checks and parallel visual review; the user reviews design direction, not every page. Capture every changed view at appropriate widths, inspect hierarchy, grouping, readable code, spacing and expanded states, and distinguish baseline problems from regressions. Screenshot generation and zero overflow alone do not establish readability. Signed-out console captures do not establish authenticated-console coverage.
+
+## Long-page navigation
+
+Wrap long content in `[data-content-toc]` with a `.content-document` child. Navigation derives its labels and anchors from h2 headings, preserves existing section IDs and generates collision-safe missing IDs. At 1400px and wider it uses a sticky right rail with enough remaining width for examples; smaller screens omit section navigation to preserve reading space. The site header remains in normal flow. Current location is highlighted, navigation focuses the destination heading. Section history returns to section headings; JavaScript-disabled pages retain the readable document without generated navigation.
+
+Reader spacing is deliberately tighter within reference entries and notes. Navigation is not a substitute for reviewing content length and reading effort.
+
+## Compact mobile settings
+
+For Field / Effect / Values tables, `data-reference-accordion` plus a concise `data-purpose` on every row enables native mobile disclosures through 900px. The first entry starts open; readers may open multiple entries. The original desktop table and all technical content remain intact. Enhancement requires a valid three-column table and removes cloned IDs and redundant visual cell labels. Without JavaScript the original table remains available.
+
+Mobile and tablet layouts have no Contents bar or sticky navigation. The desktop sidebar remains visible from 1400px, with full heading labels, original anchors and active-location highlighting.

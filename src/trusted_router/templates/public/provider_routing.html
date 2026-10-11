@@ -1,10 +1,12 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<div class="content-reader" data-content-toc>
+<div class="content-document">
 
 <section class="content-section" aria-label="Provider routing and pinning">
   <div class="content-prose">
     <span class="content-label">OpenRouter-compatible routing controls</span>
-    <h2>Pin, prefer, or exclude providers per request.</h2>
+    <h2 data-toc-label="Overview">Pin, prefer, or exclude providers per request.</h2>
     <p>Every Chat Completions and Responses request accepts a <code>provider</code> object that narrows which providers may serve it and in what order. Hard filters fail with <code>400</code> before inference when nothing matches. Unknown options also return <code>400</code>. OpenRouter options recognized but not implemented by this release return <code>501 not_supported_in_alpha</code>. Accepted router options never disappear silently.</p>
     <p>Lists accept either a JSON array or one comma-separated string. Provider slugs are the ones on the <a href="/providers">providers page</a> and in <a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a>.</p>
   </div>
@@ -37,7 +39,7 @@
 
 <section class="content-section" id="recommended-models">
   <div class="content-prose"><div>
-    <h2>Recommended automatic routes</h2>
+    <h2 data-toc-label="Automatic routes">Recommended automatic routes</h2>
     <p><code>trustedrouter/auto</code> starts with <a href="/models/z-ai/glm-5.3-flash">GLM 5.3 Flash</a>, then <a href="/models/z-ai/glm-5.3">GLM 5.3</a>, followed by DeepSeek, Kimi, and the rest of the fallback pool. Your provider, privacy, and capability requirements still determine which routes qualify.</p>
     <p><code>trustedrouter/cheap</code> includes both GLM models alongside lower-cost alternatives. It orders the pool by published input plus output token prices, so GLM 5.3 remains a higher-cost fallback. Set <code>provider.max_price</code> to enforce your per-token price ceiling.</p>
   </div></div>
@@ -46,34 +48,34 @@
 <section class="content-section" id="fields">
   <div class="content-prose">
     <div>
-      <h2>Provider settings</h2>
+      <h2 data-toc-label="Provider settings">Provider settings</h2>
       <p>Add these optional settings inside the <code>provider</code> object in your API request. They control which providers can handle it. Filters compose: <code>only</code> and <code>ignore</code> narrow the candidate set, <code>order</code> and <code>sort</code> arrange it, and <code>allow_fallbacks</code> decides whether anything past the first candidate may serve.</p>
     </div>
   </div>
   <div class="content-reference">
-    <table data-reference-table data-reference-compact>
+    <table data-reference-table data-reference-compact data-reference-accordion>
       <thead><tr><th>Field</th><th>Effect</th><th>Values</th></tr></thead>
       <tbody>
-        <tr><td><code>only</code></td><td>Allowlist. Candidates outside it are removed; an empty result is a <code>400</code>.</td><td>Provider slugs (array or comma string)</td></tr>
-        <tr><td><code>ignore</code></td><td>Blocklist, applied after <code>only</code>.</td><td>Provider slugs</td></tr>
-        <tr><td><code>order</code></td><td>Soft preferred order while fallbacks are enabled; unlisted providers remain eligible afterward. Combine with <code>allow_fallbacks: false</code> or use <code>only</code> for a hard restriction.</td><td>Provider slugs</td></tr>
-        <tr><td><code>allow_fallbacks</code></td><td><code>false</code> serves only the single first candidate; a top-level <code>allow_fallbacks</code> is also accepted, and disagreeing values are a <code>400</code>.</td><td><code>true</code> (default) / <code>false</code></td></tr>
-        <tr><td><code>sort</code></td><td>Orders endpoints by tracked metrics. The default <code>model</code> partition preserves the primary and fallback model order; <code>none</code> sorts every endpoint together.</td><td><code>price</code>, <code>latency</code>, <code>throughput</code>, or <code class="content-value-code">{
+        <tr data-purpose="Allow specific providers"><td><code>only</code></td><td>Allowlist. Candidates outside it are removed; an empty result is a <code>400</code>.</td><td>Provider slugs (array or comma string)</td></tr>
+        <tr data-purpose="Exclude providers"><td><code>ignore</code></td><td>Blocklist, applied after <code>only</code>.</td><td>Provider slugs</td></tr>
+        <tr data-purpose="Set your preferred order"><td><code>order</code></td><td>Soft preferred order while fallbacks are enabled; unlisted providers remain eligible afterward. Combine with <code>allow_fallbacks: false</code> or use <code>only</code> for a hard restriction.</td><td>Provider slugs</td></tr>
+        <tr data-purpose="Control fallback routing"><td><code>allow_fallbacks</code></td><td><code>false</code> serves only the single first candidate; a top-level <code>allow_fallbacks</code> is also accepted, and disagreeing values are a <code>400</code>.</td><td><code>true</code> (default) / <code>false</code></td></tr>
+        <tr data-purpose="Choose how routes are ranked"><td><code>sort</code></td><td>Orders endpoints by tracked metrics. The default <code>model</code> partition preserves the primary and fallback model order; <code>none</code> sorts every endpoint together.</td><td><code>price</code>, <code>latency</code>, <code>throughput</code>, or <code class="content-value-code">{
   "by": "price",
   "partition": "model|none"
 }</code></td></tr>
-        <tr><td><code>require_parameters</code></td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td><td><code>true</code> / <code>false</code> (default)</td></tr>
-        <tr><td><code>max_price</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td><td><code class="content-value-code">{
+        <tr data-purpose="Require parameter support"><td><code>require_parameters</code></td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td><td><code>true</code> / <code>false</code> (default)</td></tr>
+        <tr data-purpose="Set a price ceiling"><td><code>max_price</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td><td><code class="content-value-code">{
   "prompt": "0.15",
   "completion": "0.40"
 }</code></td></tr>
-        <tr><td><code>preferred_max_latency</code></td><td>Prefers routes meeting the requested time to first token. A soft preference, not a timeout.</td><td>Seconds, or a percentile object</td></tr>
-        <tr><td><code>preferred_min_throughput</code></td><td>Prefers routes meeting the requested output speed. Other eligible routes remain available for fallback.</td><td>Tokens per second, or a percentile object</td></tr>
-        <tr><td><code>zdr</code></td><td><code>true</code> restricts routing to endpoints with a tracked zero-data-retention guarantee.</td><td><code>true</code> / <code>false</code></td></tr>
-        <tr><td><code>min_privacy</code></td><td>A hard privacy floor: no endpoint with the required tracked guarantee means a <code>400</code>, never a downgrade.</td><td><code>any</code>, <code>no_store</code>, <code>zdr</code>, <code>confidential</code> (aliases <code>e2e</code>, <code>e2ee</code>)</td></tr>
-        <tr><td><code>data_collection</code></td><td>OpenRouter-compatible preference against providers that retain data; use <code>min_privacy</code> when the floor must be unrelaxable.</td><td><code>allow</code>, <code>deny</code></td></tr>
-        <tr><td><code>usage</code></td><td>Restricts billing path — platform credits or your own upstream key.</td><td><code>credits</code>, <code>byok</code> (aliases <code>prepaid</code>, <code>bring-your-own-key</code>; also accepted as <code>usage_type</code> or <code>billing</code>)</td></tr>
-        <tr><td><code>jurisdiction</code></td><td>Restricts to providers headquartered in that jurisdiction.</td><td><code>us</code> (also accepted as <code>country</code>, <code>headquarters_country</code>, <code>provider_country</code>)</td></tr>
+        <tr data-purpose="Prefer a faster first token"><td><code>preferred_max_latency</code></td><td>Prefers routes meeting the requested time to first token. A soft preference, not a timeout.</td><td>Seconds, or a percentile object</td></tr>
+        <tr data-purpose="Prefer faster output"><td><code>preferred_min_throughput</code></td><td>Prefers routes meeting the requested output speed. Other eligible routes remain available for fallback.</td><td>Tokens per second, or a percentile object</td></tr>
+        <tr data-purpose="Require zero data retention"><td><code>zdr</code></td><td><code>true</code> restricts routing to endpoints with a tracked zero-data-retention guarantee.</td><td><code>true</code> / <code>false</code></td></tr>
+        <tr data-purpose="Set a minimum privacy level"><td><code>min_privacy</code></td><td>A hard privacy floor: no endpoint with the required tracked guarantee means a <code>400</code>, never a downgrade.</td><td><code>any</code>, <code>no_store</code>, <code>zdr</code>, <code>confidential</code> (aliases <code>e2e</code>, <code>e2ee</code>)</td></tr>
+        <tr data-purpose="Set a data-retention preference"><td><code>data_collection</code></td><td>OpenRouter-compatible preference against providers that retain data; use <code>min_privacy</code> when the floor must be unrelaxable.</td><td><code>allow</code>, <code>deny</code></td></tr>
+        <tr data-purpose="Choose the billing path"><td><code>usage</code></td><td>Restricts billing path — platform credits or your own upstream key.</td><td><code>credits</code>, <code>byok</code> (aliases <code>prepaid</code>, <code>bring-your-own-key</code>; also accepted as <code>usage_type</code> or <code>billing</code>)</td></tr>
+        <tr data-purpose="Choose provider jurisdiction"><td><code>jurisdiction</code></td><td>Restricts to providers headquartered in that jurisdiction.</td><td><code>us</code> (also accepted as <code>country</code>, <code>headquarters_country</code>, <code>provider_country</code>)</td></tr>
       </tbody>
     </table>
   </div>
@@ -91,7 +93,7 @@
 </section>
 
 <section class="content-section" id="precision-metadata">
-  <h2>Published weight formats</h2>
+  <h2 data-toc-label="Model formats">Published weight formats</h2>
   <p class="content-links"><a href="/docs/model-precision">Precision metadata API guide</a> <a href="/model-precision">Model precision overview</a></p>
   <p>Model pages and endpoint JSON include reviewed weight formats for Tinfoil, Privatemode, NEAR AI, and Chutes deployments. The same model can have different formats at different providers. Unreviewed endpoints return <code>null</code> and display Unknown.</p>
 
@@ -128,7 +130,7 @@ runtime_verified: false</code></pre>
 </section>
 
 <section class="content-section" id="performance-preferences">
-  <h2>Performance preferences</h2>
+  <h2 data-toc-label="Performance">Performance preferences</h2>
   <p class="content-links"><a href="/docs/performance-routing">Performance routing API guide</a> <a href="/performance-routing">Performance routing overview</a></p>
   <div class="content-group">
     <h3>Set your preferred speed</h3>
@@ -155,7 +157,7 @@ runtime_verified: false</code></pre>
 
 <section class="content-section" id="parameter-contract">
   <div class="content-prose"><div>
-    <h2>Parameter contract</h2>
+    <h2 data-toc-label="Request errors">Parameter contract</h2>
     <p>TrustedRouter validates the current OpenRouter request field, provider field, and plugin names at the attested boundary. This catches spelling mistakes and API drift before authorization or billing.</p>
   </div></div>
   <div class="content-examples">
@@ -175,7 +177,7 @@ runtime_verified: false</code></pre>
 <section class="content-section" id="suffixes">
   <div class="content-prose">
     <div>
-      <h2>Model-id suffixes</h2>
+      <h2 data-toc-label="Model shortcuts">Model-id suffixes</h2>
       <p>Two OpenRouter-style shortcuts set <code>provider.sort</code> from the model id itself.</p>
     </div>
   </div>
@@ -201,4 +203,6 @@ runtime_verified: false</code></pre>
   </div>
 </section>
 
+</div>
+</div>
 {% endblock %}
