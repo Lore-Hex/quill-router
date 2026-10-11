@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -9,6 +10,77 @@ from fastapi.testclient import TestClient
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.speech import SPEECH_MODELS
 from trusted_router.storage import STORE
+
+# Independent expectations: do not derive these from the catalog under test.
+ELEVENLABS_VOICES = {
+    "JBFqnCBsd6RMkjVDRZzb": "George",
+    "EXAVITQu4vr4xnSDxMaL": "Sarah",
+    "Xb7hH8MSUJpSbSDYk0k2": "Alice",
+    "XrExE9yKIg1WjnnlVkGX": "Matilda",
+    "hpp4J3VqNfWAUOO0d1Us": "Bella",
+    "cgSgspJ2msm6clMCkdW9": "Jessica",
+    "FGY2WhTYpPnrIDTdsKH5": "Laura",
+    "pFZP5JQG7iQjIQuC4Bku": "Lily",
+}
+ELEVENLABS_MODELS = (
+    "elevenlabs/eleven-v3",
+    "elevenlabs/eleven-multilingual-v2",
+    "elevenlabs/eleven-flash-v2.5",
+    "elevenlabs/eleven-turbo-v2.5",
+)
+EXPECTED_GEMINI_VOICES = (
+    "Zephyr Puck Charon Kore Fenrir Leda Orus Aoede Callirrhoe Autonoe Enceladus "
+    "Iapetus Umbriel Algieba Despina Erinome Algenib Rasalgethi Laomedeia Achernar "
+    "Alnilam Schedar Gacrux Pulcherrima Achird Zubenelgenubi Vindemiatrix Sadachbia "
+    "Sadaltager Sulafat"
+).split()
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/v1/models?output_modalities=speech"])
+def test_speech_catalog_voice_lists(client: TestClient, path: str) -> None:
+    expected = {
+        **{model: list(ELEVENLABS_VOICES) for model in ELEVENLABS_MODELS},
+        "x-ai/grok-voice-tts-1.0": ["eve", "ara", "rex", "sal", "leo"],
+        "mistralai/voxtral-mini-tts-2603": ["en_paul_neutral"],
+        "google/gemini-3.8-flash-tts": EXPECTED_GEMINI_VOICES,
+        "google/gemini-3.8-flash-lite-tts": EXPECTED_GEMINI_VOICES,
+        "microsoft/mai-voice-2.1": ["en-US-Harper", "en-US-Grant"],
+        "microsoft/mai-voice-2.1-flash": ["en-US-Harper", "en-US-Grant"],
+    }
+    response = client.get(path)
+    assert response.status_code == 200
+    rows = {
+        row["id"]: row for row in response.json()["data"] if "supported_voices" in row
+    }
+    assert {mid: row["supported_voices"] for mid, row in rows.items()} == expected
+    assert {
+        mid: row["trustedrouter"]["speech"]["supported_voices"] for mid, row in rows.items()
+    } == expected
+
+
+@pytest.mark.parametrize("model", ELEVENLABS_MODELS)
+def test_elevenlabs_public_voice_list(client: TestClient, model: str) -> None:
+    from bs4 import BeautifulSoup
+
+    response = client.get(f"/models/{model}")
+    assert response.status_code == 200
+    label = BeautifulSoup(response.text, "html.parser").find("th", string="Voices")
+    assert label is not None
+    cell = label.find_next_sibling("td")
+    assert cell is not None
+    assert cell.get_text(strip=True).split(", ") == list(ELEVENLABS_VOICES)
+
+
+def test_elevenlabs_documented_voice_list() -> None:
+    guide = (Path(__file__).resolve().parents[1] / "docs/text-to-speech.md").read_text()
+    for model in ELEVENLABS_MODELS:
+        row = next(line for line in guide.splitlines() if line.startswith(f"| `{model}` |"))
+        assert "[Eight shared voices](#elevenlabs-voices)" in row
+    section = guide.split("### ElevenLabs voices\n", 1)[1].split("\n## ", 1)[0]
+    rows = [line.split("|") for line in section.splitlines() if line.startswith("| `")]
+    assert [(row[1].strip().strip("`"), row[2].strip()) for row in rows] == list(
+        ELEVENLABS_VOICES.items()
+    )
 
 
 @pytest.fixture

@@ -1,0 +1,179 @@
+{
+  "provider": "zro",
+  "models": [
+    {
+      "display_name": "deepseek/deepseek-v4-flash-0731",
+      "title": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "routable": false,
+      "routable_reason": "provider-retired"
+    },
+    {
+      "display_name": "DeepSeek V4.1 Flash",
+      "title": "deepseek-v4.1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-v4.1-flash",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "Kimi K3",
+      "title": "kimi-k3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "kimi-k3",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 450000
+    },
+    {
+      "display_name": "GLM-5.3",
+      "title": "glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "glm-5.3",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "GLM-5.3 Flash",
+      "title": "glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "glm-5.3-flash",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Dolly 1 Security",
+      "title": "dolly1-security",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "zro/dolly1-security",
+      "upstream_id": "dolly1-security",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 90000
+    }
+  ],
+  "source": "https://zro.moonmath.ai/v1/models",
+  "pricing_source": "https://zro.moonmath.ai/docs/models",
+  "generated_at": "2026-10-11T00:27:59Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 6
+}

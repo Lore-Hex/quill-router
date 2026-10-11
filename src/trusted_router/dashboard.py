@@ -215,6 +215,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/green-tokens",
     "/trustedos",
     "/token-exchange",
+    "/new-york-token-exchange",
     "/token-exchange/savings",
     "/token-exchange/security",
     "/legal",
@@ -976,8 +977,11 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "best-llm-router": PublicPage(
         template="public/seo_best_llm_router.html",
-        title="Best LLM Router 2026: AI Gateways & Model Routers Compared",
-        description="Compare the best LLM routers and AI gateways of 2026. OpenRouter, LiteLLM, Portkey, Requesty, and the one gateway whose privacy you can verify live.",
+        title="Best AI Router & LLM Gateway 2026: Providers Compared",
+        description=(
+            "Compare AI routers and LLM gateways for model choice, failover, cost, and "
+            "verifiable privacy: TrustedRouter, OpenRouter, LiteLLM, Portkey, and Requesty."
+        ),
         faq_items=(
             (
                 "What is the best LLM router in 2026?",
@@ -2121,6 +2125,33 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="token-exchange.png",
         og_alt="TrustedRouter: the AI token exchange for enterprise",
     ),
+    "new-york-token-exchange": PublicPage(
+        template="public/new_york_token_exchange.html",
+        title="New York Token Exchange (NYTE) for Enterprise AI",
+        description=(
+            "Learn how the New York Token Exchange helps financial, legal, and enterprise "
+            "teams compare AI models, pricing, privacy, and inference providers."
+        ),
+        faq_items=(
+            (
+                "What is the New York Token Exchange?",
+                "The New York Token Exchange is a market-facing entry point for buying and "
+                "supplying AI inference through TrustedRouter. Buyers compare models, pricing, "
+                "privacy policies, and provider routes through one OpenAI-compatible API.",
+            ),
+            (
+                "Does NYTE trade cryptocurrency or securities?",
+                "No. AI tokens measure model inputs and outputs. NYTE offers access to model "
+                "inference; it is not a cryptocurrency, securities, or financial exchange.",
+            ),
+            (
+                "Who is NYTE built for?",
+                "It is designed for financial, legal, and enterprise teams evaluating AI "
+                "capacity, plus inference providers that want to present capacity, pricing, "
+                "privacy evidence, and operational details to prospective buyers.",
+            ),
+        ),
+    ),
     "token-exchange/savings": PublicPage(
         template="public/token_exchange_savings.html",
         title="Token Exchange Savings Calculator",
@@ -2286,14 +2317,16 @@ def _seo_comparison_title(left: Model, right: Model) -> str:
     left_name = _seo_model_name(left)
     right_name = _seo_model_name(right)
     base = f"{left_name} vs {right_name}"
-    if len(f"{base} | TrustedRouter") <= SEO_TITLE_MAX_LENGTH:
-        return f"{base} | TrustedRouter"
-    if len(base) <= SEO_TITLE_MAX_LENGTH:
-        return base
-    name_budget = (SEO_TITLE_MAX_LENGTH - len(" vs ")) // 2
+    detailed_suffix = ": Price, Speed & Context"
+    compact_suffix = ": Price & Speed"
+    if len(f"{base}{detailed_suffix}") <= SEO_TITLE_MAX_LENGTH:
+        return f"{base}{detailed_suffix}"
+    if len(f"{base}{compact_suffix}") <= SEO_TITLE_MAX_LENGTH:
+        return f"{base}{compact_suffix}"
+    name_budget = (SEO_TITLE_MAX_LENGTH - len(" vs ") - len(compact_suffix)) // 2
     return (
         f"{truncate_seo_text(left_name, name_budget)} vs "
-        f"{truncate_seo_text(right_name, name_budget)}"
+        f"{truncate_seo_text(right_name, name_budget)}{compact_suffix}"
     )
 
 
@@ -4239,8 +4272,6 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     if pair is None:
         return None
     left, right = pair
-    left_name = _seo_model_name(left)
-    right_name = _seo_model_name(right)
     test_mode = settings.environment == "test"
     site_path = canonical_model_comparison_path(left.id, right.id)
     assert site_path is not None
@@ -4255,8 +4286,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             title=_seo_comparison_title(left, right),
             heading=f"{left.name} vs {right.name}",
             description=(
-                f"{left_name} vs {right_name}: compare current API pricing, context, provider "
-                "routes, privacy, p50 latency, and OpenAI-compatible access."
+                f"{comparison['summary']} Compare price, speed, context, and privacy."
             ),
             left=_model_detail_view(
                 left,

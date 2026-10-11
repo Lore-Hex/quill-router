@@ -200,6 +200,11 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
                                           completion_price_microdollars_per_million_tokens=3_000_000)
     elif scenario == 'endpoint_removal':
         endpoints.clear()
+    elif scenario == 'provider_hold':
+        from trusted_router import catalog_registry
+
+        monkeypatch.setattr(catalog_registry, 'HELD_PREPAID_SETTLEMENT_ENDPOINTS', dict(endpoints))
+        endpoints.clear()
     elif scenario == 'debt':
         _typed_credit(db, 'ws-v1')['total_credits'] = 0
         _typed_credit(db, 'ws-v1')['total_usage'] = 7
@@ -344,9 +349,56 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
         assert outputs == [outputs[0]] * 4
 
 
-@pytest.mark.parametrize('scenario', ['catalog_change', 'endpoint_removal', 'debt', 'deleted_key', 'window_rollover'])
+@pytest.mark.parametrize('scenario', ['catalog_change', 'endpoint_removal', 'provider_hold', 'debt', 'deleted_key', 'window_rollover'])
 def test_four_path_scenario_axes(env, monkeypatch, scenario):
     run_four_paths(env, monkeypatch, SUPPORTED[0], scenario)
+
+
+@pytest.mark.parametrize('kind', ['settle', 'refund'])
+def test_provider_hold_preserves_legacy_settlement_state(env, monkeypatch, kind):
+    from trusted_router import catalog_registry
+
+    body, auth, _ = prepare(env, kind=kind)
+    retention_clock(monkeypatch)
+    endpoints = catalog(monkeypatch, body)
+    initial = save(env[1])
+    client = _client(env[3])
+    url = '/v1/internal/gateway/' + kind
+    baseline = client.post(url, json=legacy_body(body))
+    assert baseline.status_code == 200, baseline.text
+    settled = env[0].get_gateway_authorization(auth.id)
+    expected = (settled.finalized_cost_microdollars, settled.finalization_outcome)
+    expected_credit = copy.deepcopy(_typed_credit(env[1], 'ws-v1'))
+    restore(env[1], initial)
+    monkeypatch.setattr(catalog_registry, 'HELD_PREPAID_SETTLEMENT_ENDPOINTS', dict(endpoints))
+    endpoints.clear()
+    result = client.post(url, json=legacy_body(body))
+    assert result.status_code == 200, result.text
+    settled = env[0].get_gateway_authorization(auth.id)
+    assert (settled.finalized_cost_microdollars, settled.finalization_outcome) == expected
+    assert _typed_credit(env[1], 'ws-v1') == expected_credit
+    assert env[1].reservations[auth.credit_reservation_id]['settled']
+    before = save(env[1])
+    assert client.post(url, json=legacy_body(body)).status_code == 200
+    assert save(env[1]) == before
+
+
+def test_held_endpoint_still_requires_authorization(env, monkeypatch):
+    from trusted_router import catalog_registry
+
+    body, _, _ = prepare(env)
+    endpoints = catalog(monkeypatch, body)
+    selected = next(iter(endpoints.values()))
+    unauthorized = replace(selected, id='other@perplexity/prepaid')
+    monkeypatch.setattr(catalog_registry, 'HELD_PREPAID_SETTLEMENT_ENDPOINTS', {
+        unauthorized.id: unauthorized,
+    })
+    request = legacy_body(body)
+    request['selected_endpoint'] = unauthorized.id
+    before = save(env[1])
+    response = _client(env[3]).post('/v1/internal/gateway/settle', json=request)
+    assert response.status_code == 400
+    assert save(env[1]) == before
 
 
 @pytest.mark.parametrize('kind', ['settle', 'refund'])

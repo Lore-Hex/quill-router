@@ -32,6 +32,24 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "zro": InferenceLocations(
+        locations=("Europe (countries unspecified)", "United States"),
+        scope="Provider-declared inference locations, including third-party capacity. Authentication is routed through the EU.",
+        routing="Inference is dynamically placed within the API key's allowed regions.",
+        provider_pinning="Provider supports per-key Europe/US region restrictions and fails closed outside them.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        declaration="Europe or United States; no fixed-country or per-request residency commitment on this route.",
+        evidence="Public provider API and privacy documentation",
+        reviewed_on="2026-10-11",
+        sources=(("Inference placement and key restrictions", "https://zro.moonmath.ai/docs/privacy"),),
+    ),
+    "boundless": InferenceLocations(
+        scope="US corporate registration does not establish GPU residency; exhaustive inference countries are not documented.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        evidence="Public provider terms disclose third-party infrastructure without country guarantees",
+        reviewed_on="2026-10-11",
+        sources=(("Infrastructure and data terms", "https://inference.boundless.network/terms"),),
+    ),
     "greenference": InferenceLocations(
         locations=("European Union (countries unspecified)",),
         scope="All inference is on Greenference-operated serving software on rented EU GPU capacity.",

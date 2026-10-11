@@ -18,7 +18,12 @@ from trusted_router.async_settle_shadow_evidence import (
     dimensions,
     sample,
 )
-from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore, day_statement
+from trusted_router.storage_gcp_async_settle_shadow import (
+    RPC_BUDGET_SECONDS,
+    WRITE_BUDGET_SECONDS,
+    EvidenceStore,
+    day_statement,
+)
 
 
 class Database:
@@ -107,9 +112,11 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
         validate_counter(identity,broken)
 
 
-@pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32])
-@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2])
-@pytest.mark.parametrize('budget', [1., .1, .3, .4])
+@pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32, .45])
+# 2.9 and 3.2 with two .45 reads sit just under and just over the default
+# four-second budget, so the matrix keeps a default-budget expiry case.
+@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2, 2.9, 3.2])
+@pytest.mark.parametrize('budget', [WRITE_BUDGET_SECONDS, 1., .1, .3, .4])
 def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
     from types import SimpleNamespace
 
@@ -159,9 +166,9 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
         assert json.loads(db.rows[COUNTER, identity]) == row
         assert clock.monotonic()-started == pytest.approx(2*rpc_latency+commit_latency)
         assert len(calls) == 3
-    assert all(0 < call['timeout'] <= 1. for call in calls[:2])
+    assert all(0 < call['timeout'] <= RPC_BUDGET_SECONDS for call in calls[:2])
     if len(calls) == 3:
-        assert 0 < calls[-1]['timeout'] <= 1.
+        assert 0 < calls[-1]['timeout'] <= WRITE_BUDGET_SECONDS
         assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
 
 
@@ -181,11 +188,11 @@ def test_slow_shadow_read_still_fails_closed_without_retry(shadow_deadline_clock
     started = clock.monotonic()
     with pytest.raises(DeadlineExceeded):
         EvidenceStore(db).reserve('2026-10-06', started+budget)
-    assert clock.monotonic()-started == pytest.approx(min(1., budget))
+    assert clock.monotonic()-started == pytest.approx(min(RPC_BUDGET_SECONDS, budget))
     assert len(db.transaction_options) == len(db.query_options) == 1
     timeout, retry, options = db.query_options[0]
-    assert timeout == pytest.approx(min(1., budget))
-    assert retry is None and options == {'priority': 'PRIORITY_LOW'}
+    assert timeout == pytest.approx(min(RPC_BUDGET_SECONDS, budget))
+    assert retry is None and options == {'priority': 'PRIORITY_LOW', 'request_tag': 'tr_shadow_control_read'}
     assert not db.rows and not db.write_shapes
 
 
@@ -205,7 +212,7 @@ def test_operator_day_scan_keeps_short_deadline(shadow_deadline_clock):
     assert len(calls) == 1
     assert 0 < calls[0]['timeout'] <= .2
     assert calls[0]['retry'] is None
-    assert calls[0]['request_options'] == {'priority': 'PRIORITY_LOW'}
+    assert calls[0]['request_options'] == {'priority': 'PRIORITY_LOW', 'request_tag': 'tr_shadow_day_read'}
     assert calls[0]['params']['page_size'] == 200
 
 
@@ -251,7 +258,7 @@ def test_transaction_failure_diagnostics_are_bounded_and_redacted(
         store.transaction(callback, clock.monotonic()+1)
     assert len(caplog.records) == 2
     for record in caplog.records:
-        assert record.getMessage() == f'shadow evidence transaction failed stage={failure_stage} reason={reason} elapsed_ms=50'
+        assert record.getMessage() == f'shadow evidence transaction failed stage={failure_stage} reason={reason} elapsed_ms=50 operation=unknown'
         assert record.exc_info is None
         assert record.stack_info is None
     assert 'private' not in caplog.text
@@ -300,7 +307,7 @@ def synthetic_window():
 
     days = [(dt.date(2026,10,6)+dt.timedelta(days=n)).isoformat() for n in range(8)]
     proof = {gate:'a'*64 for gate in EXTERNAL_GATES}
-    proof.update(fixture_sha256=FIXTURE_SHA256,instance_boot_ids_by_day={})
+    proof.update(fixture_sha256=FIXTURE_SHA256,instance_boot_ids_by_day={},instance_regions_by_day={})
     rows = []
     for day in days:
         start = int(dt.datetime.fromisoformat(day).replace(tzinfo=dt.UTC).timestamp())
@@ -319,6 +326,7 @@ def synthetic_window():
         body['flushed_at_us'] = (start+86400)*1000000
         rows.append(dict(kind=COUNTER,id=identity,body=body))
         proof['instance_boot_ids_by_day'][day] = [counter.instance]
+        proof['instance_regions_by_day'][day] = {counter.instance: 'us-central1'}
         rows.append(dict(kind=CONTROL,id=day+'/manifest-v1',body=dict(v=1,day=day,
             instance_boot_ids=[counter.instance],router_revisions=['a'*40],go_revisions=[sample_row()['deployment']['go_revision']],
             configuration_sha256='c'*64,admission_disabled_from_us=start*1000000,
@@ -523,6 +531,7 @@ def test_report_reviewer_same_boot_uncovered_day():
     boot = rows[0]['body']['instance']
     for day in days:
         proof['instance_boot_ids_by_day'][day] = [boot]
+        proof['instance_regions_by_day'][day] = {boot: 'us-central1'}
     for row in rows:
         if row['kind'] == COUNTER:
             row['body']['instance'] = boot
@@ -575,6 +584,7 @@ def test_writer_union_counts_overlapping_and_adjacent_intervals_once(overlap_us)
             bucket[field] = 0
     rows.append(second)
     proof['instance_boot_ids_by_day'][days[0]].append(boot)
+    proof['instance_regions_by_day'][days[0]][boot] = 'us-central1'
     proof['instance_boot_ids_by_day'][days[0]].sort()
     rows[1]['body']['instance_boot_ids'] = proof['instance_boot_ids_by_day'][days[0]]
     for row in rows:
@@ -598,6 +608,7 @@ def test_writer_union_preserves_actual_midnight_flush_overlap():
     rows[2]['body']['instance'] = boot
     rows[2]['id'] = days[1]+'/'+boot
     proof['instance_boot_ids_by_day'][days[1]] = [boot]
+    proof['instance_regions_by_day'][days[1]] = {boot: 'us-central1'}
     rows[3]['body']['instance_boot_ids'] = [boot]
     for row in rows:
         if row['kind'] == CONTROL:
@@ -649,11 +660,13 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     db = Database()
     granted = EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     assert granted == 100
-    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'})]
+    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'},
+                                            transaction_tag='tr_shadow_evidence')]
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
-    for timeout, retry, options in db.query_options:
-        assert 0 < timeout <= 1. and retry is None and options == {'priority':'PRIORITY_LOW'}
+    for (timeout, retry, options), operation in zip(db.query_options, ('control_read', 'retention_fence_read'), strict=True):
+        assert 0 < timeout <= RPC_BUDGET_SECONDS and retry is None
+        assert options == {'priority':'PRIORITY_LOW', 'request_tag': 'tr_shadow_' + operation}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
 
 
@@ -783,3 +796,184 @@ def test_unknown_admission_keeps_independent_comparator_disagreement_gate():
     assert result['metrics']['comparator_classification'] == {'evaluator_disagreement': 1}
     assert sum(row['mismatch'] for row in result['denominators']) == 0
     assert sum(row['unevaluable'] for row in result['denominators']) == 1
+
+
+@pytest.mark.parametrize('damage', ['missing_roster', 'legacy_label', 'missing_writer', 'wrong_writer_region'])
+def test_shadow_report_requires_declared_regional_completeness(damage):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+
+    rows, days, proof = synthetic_window()
+    # Damage the final day so a later clean suffix cannot hide the transition.
+    day = days[-1]
+    row = next(row for row in rows if row['kind'] == COUNTER and row['id'].startswith(day))
+    boot = row['body']['instance']
+    if damage == 'missing_roster':
+        del proof['instance_regions_by_day']
+        reason = 'regional_roster_unknown'
+    elif damage == 'missing_writer':
+        other = '00000000-0000-0000-0000-000000000002'
+        proof['instance_regions_by_day'][day][other] = 'europe-west4'
+        proof['instance_boot_ids_by_day'][day] = sorted([boot, other])
+        next(r['body'] for r in rows if r['id'] == day+'/manifest-v1')['instance_boot_ids'] = sorted([boot, other])
+        reason = 'regional_coverage_gap'
+    else:
+        proof['instance_regions_by_day'][day][boot] = 'europe-west4'
+        if damage == 'wrong_writer_region':
+            # Central is a declared region, but for a different writer.
+            other = '00000000-0000-0000-0000-000000000002'
+            extra = copy.deepcopy(row)
+            extra.update(id=day+'/'+other)
+            extra['body']['instance'] = other
+            rows.append(extra)
+            proof['instance_regions_by_day'][day][other] = 'us-central1'
+            proof['instance_boot_ids_by_day'][day] = sorted([boot, other])
+            next(r['body'] for r in rows if r['id'] == day+'/manifest-v1')['instance_boot_ids'] = sorted([boot, other])
+        reason = 'legacy_region_label'
+    for manifest in rows:
+        if manifest['kind'] == CONTROL:
+            manifest['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'BLOCKED'
+    assert any(g.endswith(':'+reason) for g in result['gaps'])
+    if damage in {'legacy_label', 'wrong_writer_region'}:
+        assert day+':regional_coverage_gap' in result['gaps']
+
+
+def test_shadow_report_cross_region_retry_uses_logical_identity():
+    import hashlib
+
+    from tests.test_async_settle_shadow_r7_retry_original import add_retry
+    from trusted_router.detached_jws import canonical
+
+    rows, days, proof = synthetic_window()
+    counter = add_retry(rows, 'settle', day_index=1)
+    counter['body']['region'] = 'europe-west4'
+    proof['instance_regions_by_day'][days[1]][counter['body']['instance']] = 'europe-west4'
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == 'PASS'
+    assert result['gaps'] == [] and result['resets'] == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_shadow_report_mixed_fleet_labels_require_each_writers_region(legacy):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+
+    rows, days, proof = synthetic_window()
+    day = days[-1]
+    counter = next(row for row in rows if row['kind'] == COUNTER and row['id'].startswith(day))
+    manifest = next(row['body'] for row in rows if row['id'] == day+'/manifest-v1')
+    # Keep a truthful central writer and add two European writers. Even though
+    # both labels belong to the fleet, the pre-pin European row is not clean.
+    for index in (2, 3):
+        boot = f'00000000-0000-0000-0000-{index:012d}'
+        extra = copy.deepcopy(counter)
+        extra['id'] = day+'/'+boot
+        extra['body'].update(instance=boot,
+            region='us-central1' if legacy and index == 2 else 'europe-west4')
+        rows.append(extra)
+        proof['instance_boot_ids_by_day'][day].append(boot)
+        proof['instance_regions_by_day'][day][boot] = 'europe-west4'
+    proof['instance_boot_ids_by_day'][day].sort()
+    manifest['instance_boot_ids'] = proof['instance_boot_ids_by_day'][day]
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+    result = report(rows, days, proof)
+    assert result['status'] == ('BLOCKED' if legacy else 'PASS')
+    assert any(g.endswith(':legacy_region_label') for g in result['gaps']) is legacy
+    assert (day+':regional_coverage_gap' in result['gaps']) is legacy
+    assert result['resets'] == []
+
+
+def seal_regional_proof(rows, proof):
+    import hashlib
+
+    from trusted_router.detached_jws import canonical
+
+    for row in rows:
+        if row['kind'] == CONTROL:
+            row['body']['proof_manifest_sha256'] = hashlib.sha256(canonical(proof)).hexdigest()
+
+
+def test_legacy_sample_not_attributed_to_primary():
+    rows,days,proof=synthetic_window()
+    for row in rows:
+        if row['kind'] == COUNTER:
+            row['body']['region'] = 'europe-west4'
+    for roster in proof['instance_regions_by_day'].values():
+        for boot in roster:
+            roster[boot] = 'europe-west4'
+    seal_regional_proof(rows, proof)
+    # All truthful European counters; one retained legacy sample still labels primary.
+    original = copy.deepcopy(rows)
+    result=report(rows,days,proof)
+    assert result['status']=='BLOCKED', (result['status'],result['gaps'],list(result['regional_percentiles']))
+    assert rows == original
+    assert rows[-1]['id'] + ':legacy_sample_region' in result['gaps']
+    assert days[0] + ':legacy_sample_region' in result['gaps']
+    assert result['regional_percentiles'] == {}
+    assert result['distinct_samples'] == 1
+    assert result['clean_window_start_us'] is None
+
+
+def test_sample_region_cannot_borrow_another_writers_valid_label():
+    rows,days,proof=synthetic_window()
+    first = rows[0]['body']
+    boot = first['instance']
+    first['region'] = 'europe-west4'
+    proof['instance_regions_by_day'][days[0]][boot]='europe-west4'
+    extra=copy.deepcopy(next(r for r in rows if r['kind']==COUNTER and r['id'].startswith(days[1])))
+    central='00000000-0000-0000-0000-000000000002'
+    extra.update(id=days[0]+'/'+central)
+    extra['body'].update(instance=central,started_at_us=first['started_at_us'],flushed_at_us=first['flushed_at_us'])
+    rows.append(extra)
+    proof['instance_regions_by_day'][days[0]][central]='us-central1'
+    proof['instance_boot_ids_by_day'][days[0]]=sorted([boot,central])
+    next(r['body'] for r in rows if r['id']==days[0]+'/manifest-v1')['instance_boot_ids']=sorted([boot,central])
+    seal_regional_proof(rows, proof)
+    result=report(rows,days,proof)
+    assert result['status']=='BLOCKED', (result['status'],result['gaps'],list(result['regional_percentiles']))
+
+
+def test_restored_clean_suffix_excludes_legacy_sample_percentiles():
+    from dataclasses import replace
+
+    from tests.test_async_settle_shadow_r11_validity import signed_observation
+
+    rows,days,proof=synthetic_window()
+    old=rows[0]['body']
+    new_counter=rows[2]['body']
+    for row in rows:
+        if row['kind'] == COUNTER and row['body'] is not old:
+            row['body']['region'] = 'europe-west4'
+    for roster in proof['instance_regions_by_day'].values():
+        for boot in roster:
+            roster[boot] = 'europe-west4'
+    received=new_counter['started_at_us']
+    value,ctx,_=signed_observation(received,phase='settle',charge=2,authorization_id='auth-after-pin')
+    ctx=replace(ctx,region='europe-west4',journal_region='us-central1')
+    compared=compare(wire(value),ctx,[signer().trusted])
+    assert compared.classification=='exact'
+    body=sample(ctx,compared,observed_us=received,router_us=1,comparator_us=1,booking_us=1,
+                instance=new_counter['instance'],revision='a'*40,admission=copy.deepcopy(rows[-1]['body']['admission']))
+    rows.append(dict(kind=SAMPLE,id=body['authorization_day']+'/'+body['authorization_id'],body=body))
+    for field in ('counts','terminal_counts','comparison_attempts','samples_inserted','admission_observer'):
+        new_counter[field]=copy.deepcopy(old[field])
+    seal_regional_proof(rows, proof)
+    result=report(rows,days,proof)
+    assert result['status']=='PASS',result['gaps']
+    assert result['continuous_seconds']==604800
+    assert any(g.endswith(':legacy_region_label') for g in result['gaps'])
+    # The old counter and sample agree with each other: this is a normal legacy day,
+    # followed by seven complete clean days. Legacy latency must stay unattributed.
+    assert 'us-central1' not in result['regional_percentiles'],result['regional_percentiles']
+    assert days[0] + ':legacy_sample_region' in result['gaps']
+    assert result['regional_percentiles']['europe-west4']['router_settle_us']['count'] == 1
+    assert result['distinct_samples'] == 2

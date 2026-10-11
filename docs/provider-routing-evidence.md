@@ -16,9 +16,13 @@ Refresh with `PYTHONPATH=src python scripts/update_provider_throughput_rank.py -
 Review and deploy the generated JSON diff; the script refuses empty, malformed,
 future or >1-day-stale source snapshots. It does not change the public leaderboard.
 
-Cloudflare Workers AI has an explicit commercial preference while its credits
-are available. It is first only for default eligible credits endpoints, within
-the requested model. Explicit provider ordering, price/latency/throughput sort,
-privacy and provider filters, model fallback order and BYOK are not overridden.
-Remove `_PREPAID_PROVIDER_PREFERENCE` when the credit arrangement ends; this is
-not evidence that Cloudflare is the fastest or most reliable provider.
+Cloudflare Workers AI is a lower-priority fallback for default prepaid routing
+as of 2026-10-11. Cloudflare AI Gateway unified billing is excluded from the
+startup credits, so the earlier first-place commercial preference was incorrect.
+`_PREPAID_PROVIDER_MIN_RANK` puts it behind healthy and unknown hosts within the
+requested model. Healthy Cloudflare routes can still precede measured degraded
+hosts; the floor never improves Cloudflare's own degraded rank. Explicit provider
+ordering, price/latency/throughput sort, privacy and provider filters, model
+fallback order and BYOK are not overridden. Cloudflare stays usable when it is
+the only eligible route. Published prices and leaderboard measurements do not
+change.

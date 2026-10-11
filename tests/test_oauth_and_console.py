@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -165,6 +166,57 @@ def test_google_callback_rejects_state_mismatch(google_client: TestClient) -> No
         follow_redirects=False,
     )
     assert resp.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("slug", "status", "error"),
+    [("google", 400, "invalid_grant"), ("github", 200, "bad_verification_code"),
+     ("github", 400, "bad_verification_code")],
+)
+def test_oauth_invalid_code_is_client_error_without_session(
+    request: pytest.FixtureRequest, httpx_mock: Any, monkeypatch: pytest.MonkeyPatch,
+    slug: str, status: int, error: str,
+) -> None:
+    from trusted_router.oauth_provider import OAUTH_PROVIDERS
+
+    client = request.getfixturevalue(f"{slug}_client")
+    state = _begin_oauth(client, slug)
+    def no_signup(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Rejected OAuth code reached account creation")
+    monkeypatch.setattr(InMemoryStore, "signup", no_signup)
+    httpx_mock.add_response(method="POST", url=OAUTH_PROVIDERS[slug].token_url,
+        status_code=status, json={"error": error, "error_description": "sensitive-provider-detail"})
+
+    response = client.get(f"/{slug}_oauth_callback", params={"code": "bogus123", "state": state},
+                          follow_redirects=False)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "Invalid or expired sign-in code; please sign in again"
+    assert "tr_session=" not in response.headers.get("set-cookie", "")
+    assert "tr_pending_reveal=" not in response.headers.get("set-cookie", "")
+    assert "sensitive-provider-detail" not in response.text
+    assert "bogus123" not in response.text
+    assert len(httpx_mock.get_requests()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("slug", "status", "error"),
+    [("google", 400, "invalid_client"), ("google", 429, "invalid_grant"),
+     ("google", 500, "invalid_grant"), ("github", 503, "bad_verification_code"),
+     ("google", 401, "invalid_grant"), ("google", 400, {"invalid_grant": True})],
+)
+async def test_oauth_invalid_code_mapping_preserves_real_provider_failures(
+    httpx_mock: Any, slug: str, status: int, error: Any,
+) -> None:
+    from trusted_router.oauth_provider import OAUTH_PROVIDERS, exchange_code
+
+    httpx_mock.add_response(method="POST", url=OAUTH_PROVIDERS[slug].token_url,
+                            status_code=status, json={"error": error})
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        await exchange_code(provider=OAUTH_PROVIDERS[slug], code="code", client_id="id",
+                            client_secret="test-secret", redirect_uri="https://example.test/callback")  # noqa: S106
+    assert caught.value.response.status_code == status
 
 
 @pytest.mark.asyncio

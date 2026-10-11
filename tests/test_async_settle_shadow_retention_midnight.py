@@ -16,7 +16,7 @@ from trusted_router.async_settle_shadow_compare import Booking
 from trusted_router.async_settle_shadow_evidence import SAMPLE, day_at
 from trusted_router.services import async_settle_shadow as shadow_module
 from trusted_router.services.async_settle_shadow import Capture, Runtime
-from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
+from trusted_router.storage_gcp_async_settle_shadow import WRITE_BUDGET_SECONDS, EvidenceStore
 
 
 def test_no_retired_sample_insert_across_midnight(monkeypatch):
@@ -142,7 +142,7 @@ def test_retention_and_insert_share_one_timestamp(monkeypatch, shadow_deadline_c
     assert inserted_at == []
 
 
-@pytest.mark.parametrize('seconds_before_midnight', [.5, 1.])
+@pytest.mark.parametrize('seconds_before_midnight', [.5, 1., WRITE_BUDGET_SECONDS/2, WRITE_BUDGET_SECONDS])
 def test_retention_fence_reserves_the_entire_transaction_budget(seconds_before_midnight):
     from trusted_router.storage_gcp_async_settle_shadow import RetirementBoundary
 
@@ -151,3 +151,12 @@ def test_retention_fence_reserves_the_entire_transaction_budget(seconds_before_m
     observed = boundary - dt.timedelta(seconds=seconds_before_midnight)
     with pytest.raises(RetirementBoundary, match='proof_expired'):
         EvidenceStore(CleanupDatabase()).check_write_day(SAMPLE, row['authorization_day']+'/auth-v1', observed, None)
+
+
+def test_retention_fence_admits_a_write_outside_the_transaction_budget():
+    # A write whose whole transaction budget ends a microsecond before the
+    # retirement boundary is admitted: the fence is the budget, no more.
+    row = sample_row()
+    boundary = dt.datetime.fromtimestamp(row['authorize_at_us']/1e6 + 31*86400, dt.UTC)
+    observed = boundary - dt.timedelta(seconds=WRITE_BUDGET_SECONDS, microseconds=1)
+    EvidenceStore(CleanupDatabase()).check_write_day(SAMPLE, row['authorization_day']+'/auth-v1', observed, None)

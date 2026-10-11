@@ -9,7 +9,7 @@ application bugs, quota exhaustion, or hot-row retries.
 
 - Source project: `quill-cloud-proxy`
 - Source instance/database: `trusted-router-nam6` / `trusted-router`
-- Configuration: `nam6`, Enterprise Plus, 600 processing units (400 until 2026-09-25; see the High CPU section)
+- Configuration: `nam6`, Enterprise Plus, capacity autoscaled by Terraform between 1,000 and 10,000 processing units (`infra/spanner_trusted_router.tf`; 400 until 2026-09-25 and 600 after, see the High CPU section). `spanner_reliability.sh` does not set capacity.
 - Replica topology: two read-write locations (`us-central1`, `us-east1`), two
   read-only locations (`us-west1`, `us-west2`), and one witness
   (`us-central2`). This is five replica locations, not four application
@@ -174,6 +174,21 @@ otherwise repair the specific metadata or worker access pattern before raising
 capacity.
 
 ### Latency and API failures
+
+A one-minute commit-latency event (2026-10-11 09:13Z: every transaction shape
+about 7x slower, pure inserts included, throughput down) reaches the
+API-failure policy through the budgeted callers' deadlines. The request-latency
+policy's "Commit p99 exceeds 1 second in a minute" condition pages beside it
+and names the cause; the ten-minute conditions do not see a single slow
+minute. Check `SPANNER_SYS.TXN_STATS_TOP_MINUTE` per transaction shape, which
+groups by fingerprint and reports the columns touched, not row keys: when
+shapes that touch no contended row slowed by the same factor, treat the
+minute's lock waits as a likely consequence. `LOCK_STATS_TOP_MINUTE` names the
+row ranges and samples the transactions that conflicted there, holders and
+waiters alike without saying which was which, and can omit either side; it
+corroborates where contention was, not who caused it. Settle holder
+responsibility, or rule contention out, only with independent evidence (the
+per-shape latencies above, request logs, the tags' own code paths).
 
 Separate Spanner server latency from network and application latency. Inspect
 the `method`, `status`, and serving-region labels. `ABORTED` is tracked by the

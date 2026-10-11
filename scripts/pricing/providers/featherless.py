@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import json
 import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
+import httpx
 from bs4 import BeautifulSoup
 
-from scripts.pricing.base import ModelPrice, fetch_html, fetch_json
+from scripts.pricing.base import (
+    ModelPrice,
+    ProviderPricingResult,
+    emit_workflow_warning,
+    fetch_html,
+    fetch_json,
+    read_stale_provider_manifest,
+)
 from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m, openai_model_price
 from scripts.pricing.providers._direct_openai import (
     DirectOpenAIProvider,
@@ -38,7 +47,8 @@ CURATED_NATIVE_MODELS = (
 
 # Featherless serves tens of thousands of community fine-tunes. Scan a bounded
 # release window, but only admit first-party model publishers we route elsewhere.
-# Required models above remain fail-closed even after they leave this window.
+# Recheck committed routes independently of this window. Required models above
+# remain fail-closed; other committed routes use the normal delisting policy.
 DISCOVERY_NATIVE_OWNERS = frozenset(
     {
         "deepseek-ai",
@@ -50,6 +60,7 @@ DISCOVERY_NATIVE_OWNERS = frozenset(
     }
 )
 DISCOVERY_PAGE_SIZE = 1000
+_PRESERVED_NATIVE_IDS: set[str] = set()
 
 
 def _is_discovery_candidate(row: dict[str, Any]) -> bool:
@@ -61,7 +72,28 @@ def _is_discovery_candidate(row: dict[str, Any]) -> bool:
     )
 
 
+def _committed_native_models() -> list[str]:
+    if not CATALOG.manifest_path.exists():
+        return []
+    raw = json.loads(CATALOG.manifest_path.read_text(encoding="utf-8"))
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("featherless: committed manifest has no models list")
+    native_ids = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RuntimeError("featherless: invalid committed model row")
+        if row.get("routable") is False:
+            continue
+        native_id = row.get("upstream_id")
+        if not isinstance(native_id, str) or not native_id.strip():
+            raise RuntimeError("featherless: routable committed model has no upstream id")
+        native_ids.append(native_id)
+    return native_ids
+
+
 def _load_rows(api_key: str) -> list[dict[str, Any]]:
+    _PRESERVED_NATIVE_IDS.clear()
     query = urlencode(
         {
             "available_on_current_plan": "true",
@@ -83,15 +115,34 @@ def _load_rows(api_key: str) -> list[dict[str, Any]]:
         for row in listing["data"]
         if isinstance(row, dict) and _is_discovery_candidate(row)
     }
-    for native_id in CURATED_NATIVE_MODELS:
-        payload = fetch_json(
-            f"{URL}/{quote(native_id, safe='')}",
-            extra_headers={"Authorization": f"Bearer {api_key}"},
-        )
+    for native_id in dict.fromkeys((*CURATED_NATIVE_MODELS, *_committed_native_models())):
+        try:
+            payload = fetch_json(
+                f"{URL}/{quote(native_id, safe='')}",
+                extra_headers={"Authorization": f"Bearer {api_key}"},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404 or native_id in CURATED_NATIVE_MODELS:
+                raise
+            rows_by_id.pop(native_id, None)
+            continue
         if not isinstance(payload, dict):
             raise RuntimeError(f"featherless: invalid model detail for {native_id}")
-        if payload.get("available_on_current_plan") is not True:
-            raise RuntimeError(f"featherless: {native_id} is not available on current plan")
+        available = payload.get("available_on_current_plan")
+        if available is not True:
+            if native_id in CURATED_NATIVE_MODELS:
+                raise RuntimeError(f"featherless: {native_id} is not available on current plan")
+            if available is not False:
+                _PRESERVED_NATIVE_IDS.add(native_id)
+                emit_workflow_warning(
+                    f"featherless: malformed availability for {native_id}; "
+                    "keeping committed prices and routability for this run"
+                )
+            # A fresh detail supersedes a stale listing. The shared writer
+            # counts only explicit false/404 as a miss; fetch restores rows
+            # whose availability is unknown before the writer sees them.
+            rows_by_id.pop(native_id, None)
+            continue
         rows_by_id[native_id] = payload
     return list(rows_by_id.values())
 
@@ -109,9 +160,19 @@ def _published_prices(html: str) -> tuple[dict[str, ModelPrice], dict[str, Model
     """Read named columns; exact model overrides take precedence over class rates."""
     classes: dict[str, ModelPrice] = {}
     models: dict[str, ModelPrice] = {}
+    tables = BeautifulSoup(html, "html.parser").find_all("table")
+    if not tables:
+        # The docs now defer effective prices to model pages (2026-10-11).
+        # Without published cache rates, use only the authenticated API prices.
+        # Do not treat existing tables with missing/changed columns as absent.
+        emit_workflow_warning(
+            "featherless: no published cache prices (pricing page has no tables); "
+            "using authenticated API prices without an inferred cache discount"
+        )
+        return classes, models
     seen_tables: set[str] = set()
     required = {"model class", "input", "cached input / 1m tokens", "output / 1m tokens"}
-    for table in BeautifulSoup(html, "html.parser").find_all("table"):
+    for table in tables:
         headers = [
             " ".join(cell.get_text(" ", strip=True).casefold().split())
             for cell in table.find_all("th")
@@ -229,5 +290,22 @@ CATALOG = DirectOpenAIProvider(
     manifest_path=MANIFEST_PATH,
 )
 UPSTREAM_ID_MAP = CATALOG.upstream_id_map
-fetch = CATALOG.fetch
 write_provider_manifest = CATALOG.write_provider_manifest
+
+
+def fetch() -> ProviderPricingResult:
+    result = CATALOG.fetch()
+    if _PRESERVED_NATIVE_IDS:
+        committed, error = read_stale_provider_manifest(
+            slug=SLUG, manifest_path=CATALOG.manifest_path, include_in_price_index=True,
+        )
+        if committed is None:
+            raise RuntimeError(f"featherless: cannot preserve committed prices: {error}")
+        rows = json.loads(CATALOG.manifest_path.read_text(encoding="utf-8"))["models"]
+        for row in rows:
+            if row.get("upstream_id") in _PRESERVED_NATIVE_IDS:
+                model_id = row["id"]
+                result.prices[model_id] = committed.prices[model_id]
+                CATALOG.discovered_rows[model_id] = dict(row)
+                CATALOG.upstream_id_map[model_id] = row["upstream_id"]
+    return result

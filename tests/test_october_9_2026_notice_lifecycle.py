@@ -21,6 +21,10 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "ibm-granite/granite-4.2-3b", "ibm-granite/granite-4.2-3b",
+         datetime(2026, 10, 18, tzinfo=UTC), "ibm-granite/granite-4.2-8b"),
+    Case("deepinfra", "ibm-granite/granite-4.2-30b", "ibm-granite/granite-4.2-30b",
+         datetime(2026, 10, 18, tzinfo=UTC), "ibm-granite/granite-4.2-8b"),
     Case("deepinfra", "qwen/qwen3-max", "Qwen/Qwen3-Max",
          datetime(2026, 10, 10, tzinfo=UTC), "qwen/qwen3.8-max"),
     Case("deepinfra", "qwen/qwen3-max-thinking", "Qwen/Qwen3-Max-Thinking",

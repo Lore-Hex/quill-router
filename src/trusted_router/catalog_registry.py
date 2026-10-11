@@ -201,6 +201,7 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     customer_fixed_price_microdollars,
     select_price_tier,
 )
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.request_capabilities import normalize_request_capabilities
 from trusted_router.speech import SPEECH_MODELS
@@ -1668,6 +1669,12 @@ for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
 
 
 MODEL_ENDPOINTS = _apply_provider_manifest_expiry(MODEL_ENDPOINTS)
+# Operator holds block new admissions, not settlement of already-authorized
+# calls. Keep their last published tariffs outside every routable registry.
+HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
+    identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
+    if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
+}
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS),

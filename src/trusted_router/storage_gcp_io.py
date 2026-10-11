@@ -188,8 +188,8 @@ def configure_spanner_rpc_deadlines(
     The API wrappers cap each RPC and its generated retry policy to the
     remaining budget. A ContextVar isolates concurrent request threads and also
     stops Transaction.commit's private RST_STREAM retry loop from receiving a
-    fresh budget on every attempt. Shadow's per-RPC-capped contexts also fail
-    closed before the SDK's two-second reset backoff can exceed their deadline.
+    fresh budget on every attempt. Shadow's per-RPC-capped contexts fail
+    closed on a transport reset instead of taking the SDK's two-second backoff.
     """
     if max_seconds <= 0:
         raise ValueError("Spanner RPC deadline must be positive")
@@ -269,14 +269,19 @@ def configure_spanner_rpc_deadlines(
             except InternalServerError as error:
                 deadline = _SPANNER_RPC_DEADLINE.get()
                 # Only shadow sets the per-RPC cap. Billing keeps the SDK's
-                # reset retries, including its private, unbounded sleep. Match
-                # _helpers._retry's exact class and _check_rst_stream_error's
-                # two markers; never carry the transport's text into diagnostics.
+                # reset retries, including its private, unbounded sleep. The
+                # shadow never takes that sleep, whatever its horizon has room
+                # for: it is a background observer with one worker, and a
+                # dropped, counted observation costs less than a two-second
+                # stall (its transaction budget is four seconds since
+                # docs/incidents/2026-10-11-spanner-commit-latency-minute.md,
+                # so room is the common case). Match _helpers._retry's exact
+                # class and _check_rst_stream_error's two markers; never carry
+                # the transport's text into diagnostics.
                 transport_reset = (
                     _method_name in ("commit", "begin_transaction", "rollback")
                     and rpc_max is not None
                     and deadline is not None
-                    and deadline - time.monotonic() <= 2.0
                     and type(error) is InternalServerError
                     and any(marker in (getattr(error, "message", None) or "") for marker in (
                         "RST_STREAM", "Received unexpected EOS on DATA frame from server",

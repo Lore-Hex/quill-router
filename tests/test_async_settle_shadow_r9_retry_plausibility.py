@@ -8,27 +8,32 @@ import pytest
 from scripts.async_settle.shadow_report import report, validate_counter
 from tests.test_async_settle_shadow_accounting import synthetic_window
 from tests.test_async_settle_shadow_r7_retry_original import add_retry
+from tests.test_async_settle_shadow_r8_retry_class import observation
 from trusted_router.async_settle_shadow_evidence import COUNTER, SAMPLE
 
 
 @pytest.mark.parametrize('damage', ['excess_duplicates', 'retired_region'])
 def test_required_impossible_retry_counts(damage):
     rows, days, proof = synthetic_window()
-    counter = add_retry(rows, 'settle')
+    counter = add_retry(rows, 'settle' if damage == 'excess_duplicates' else 'refund')
     if damage == 'excess_duplicates':
         counter['body']['duplicate_samples'] += 1
         counter['body']['terminal_counts'][0]['duplicate_samples'] += 1
     else:
-        original = copy.deepcopy(next(r for r in rows if r['kind'] == SAMPLE))
+        # Serving region no longer isolates a retry bucket. Use the opposite
+        # phase so the live settle sample cannot back this retired refund.
+        original = dict(kind=SAMPLE, body=observation('refund'))
         original['id'] = '2026-09-01/retired-original'
         original['body'].update(authorization_id='retired-original', authorization_day='2026-09-01',
             authorize_at_us=int(dt.datetime(2026,9,1,tzinfo=dt.UTC).timestamp()*1e6),
             observed_at_us=int(dt.datetime(2026,10,5,tzinfo=dt.UTC).timestamp()*1e6))
         original['body']['deployment']['region'] = 'other-region'
-        counter['body']['region'] = 'other-region'
         rows.append(original)
     result = report(rows, days, proof)
     assert result['status'] == 'BLOCKED'
+    if damage == 'retired_region':
+        assert any(g.endswith(':refund:retry_original_gap') for g in result['gaps'])
+        assert not any(g.endswith(':legacy_region_label') for g in result['gaps'])
 
 def test_duplicate_cannot_change_signed_stream_dimension(shadow_deadline_clock):
     rows, days, proof = synthetic_window()
@@ -142,6 +147,6 @@ def test_report_binding_validity_lower_boundary(phase, offset, expected):
 def test_shared_original_window_boundaries(offset, expected):
     from trusted_router.async_settle_shadow_evidence import RetryIdentity, original_can_back_retry
 
-    identity = RetryIdentity('settle', 'us-central1', '2026-10-06', 'openai', 'chat.completions', False)
+    identity = RetryIdentity('settle', '2026-10-06', 'openai', 'chat.completions', False)
     start = 200000_000000
     assert original_can_back_retry(identity, start + offset, identity, start, start + 1) is expected

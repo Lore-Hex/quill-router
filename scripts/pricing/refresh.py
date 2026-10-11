@@ -168,6 +168,8 @@ PROVIDER_SLUGS = [
     "regolo",
     "lyceum",
     "greenference",
+    "boundless",
+    "zro",
     "byteplus",
     "privatemode",
     "featherless",

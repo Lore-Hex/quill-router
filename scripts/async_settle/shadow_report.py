@@ -69,6 +69,33 @@ def _uint(value: Any) -> bool:
 
 
 def validate_counter(identity: str, body: dict[str, Any], *, partitions: bool = True) -> None:
+    _validate_counter(identity, body, partitions=partitions, revision_pattern=r"[0-9a-f]{40}")
+
+
+def validate_counter_for_report(identity: str, body: dict[str, Any], *, partitions: bool = True) -> bool:
+    """Validate diagnostics without admitting short release labels as clean SHAs.
+
+    Return whether this is a legacy seven-hex counter. Validate every other
+    field unchanged; never expand the short label or modify the evidence.
+    """
+    revision = body.get("router_revision")
+    legacy = isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{7}", revision) is not None
+    if legacy:
+        _validate_counter(identity, body, partitions=partitions, revision_pattern=r"[0-9a-f]{7}")
+    else:
+        validate_counter(identity, body, partitions=partitions)
+    return legacy
+
+
+def legacy_counter_accounting(identity: str, body: dict[str, Any], reason: str) -> dict[str, Any]:
+    return dict(id=identity, day=identity.split('/')[0], instance=body['instance'],
+        region=body['region'], reason=reason, router_revision=body['router_revision'],
+        started_at_us=body['started_at_us'], flushed_at_us=body['flushed_at_us'],
+        workspace_reads=body['admission_observer']['workspace_reads'],
+        health_reads=body['admission_observer']['health_reads'])
+
+
+def _validate_counter(identity: str, body: dict[str, Any], *, partitions: bool, revision_pattern: str) -> None:
     import uuid
     if set(body) != COUNTER_FIELDS or len(canonical(body)) > 65536:
         raise ValueError("counter schema")
@@ -87,7 +114,7 @@ def validate_counter(identity: str, body: dict[str, Any], *, partitions: bool = 
     for key in ("first_evidence_at_us", "last_mismatch_at_us", "first_gap_at_us"):
         if body[key] is not None and not _uint(body[key]):
             raise ValueError("counter timestamp")
-    if not isinstance(body["router_revision"], str) or not re.fullmatch(r"[0-9a-f]{40}", body["router_revision"]):
+    if not isinstance(body["router_revision"], str) or not re.fullmatch(revision_pattern, body["router_revision"]):
         raise ValueError("counter revision")
     if not isinstance(body["region"], str) or not 1 <= len(body["region"]) <= 128:
         raise ValueError("counter region")
@@ -276,6 +303,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         if dt.date.fromisoformat(day).isoformat() != day:
             raise ValueError("day")
     samples, counters, manifests = [], {}, {}
+    legacy_revisions: dict[str, dict[str, Any]] = {}
     gaps: list[str] = []
     gap_ends: list[int | None] = []
     def gap(reason: str, day: str | None = None) -> None:
@@ -312,7 +340,10 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
             if body["classification"] in {"hash", "identity", "normalization", "evaluator_disagreement"}:
                 resets.append(dict(at_us=body["observed_at_us"], revision=body["deployment"]["router_revision"], reason=body["classification"]))
         elif kind == COUNTER:
-            validate_counter(identity, body, partitions=False)
+            if validate_counter_for_report(identity, body, partitions=False):
+                legacy_revisions[identity] = legacy_counter_accounting(identity, body, "legacy_revision_label")
+                if identity.split('/')[0] in requested:
+                    gap(identity+":legacy_revision_label", identity.split('/')[0])
             counters[identity] = body
             serving.append((body["started_at_us"], body["flushed_at_us"], body["router_revision"]))
             if body["last_mismatch_at_us"] is not None or body["conflicting_samples"]:
@@ -369,6 +400,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
     if proof.get("fixture_sha256") != FIXTURE_SHA256 or not all(gates.values()):
         gap("external_proofs_missing")
     inventory = proof.get("instance_boot_ids_by_day", {})
+    regional_inventory = proof.get("instance_regions_by_day", {})
+    sample_regions_by_day: dict[str, dict[str, str]] = {}
     intervals: list[tuple[int, int]] = []
     for day in requested:
         manifest = manifests.get(day)
@@ -379,6 +412,22 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         if (actual != manifest["instance_boot_ids"] or actual != inventory.get(day) or not actual
                 or manifest["proof_manifest_sha256"] != proof_hash):
             gap(day+":roster_unknown", day)
+        regions = regional_inventory.get(day) if isinstance(regional_inventory, dict) else None
+        if (not isinstance(regions, dict) or not regions
+                or set(regions) != set(manifest["instance_boot_ids"])
+                or any(not isinstance(region, str) or not 1 <= len(region) <= 128
+                       for region in regions.values())):
+            gap(day+":regional_roster_unknown", day)
+            regions = {}
+        if (actual == manifest["instance_boot_ids"] == inventory.get(day)
+                and manifest["proof_manifest_sha256"] == proof_hash):
+            sample_regions_by_day[day] = regions
+        regional_writers = {counter["instance"] for identity, counter in counters.items()
+                            if identity.startswith(day+"/")
+                            and identity not in legacy_revisions
+                            and regions.get(counter["instance"]) == counter["region"]}
+        if regional_writers != set(regions):
+            gap(day+":regional_coverage_gap", day)
         if manifest["completeness"] != "complete" or manifest["gap_intervals"]:
             gap(day+":manifest_gap", day)
         start, end = manifest["admission_disabled_from_us"], manifest["admission_disabled_until_us"]
@@ -391,8 +440,12 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         # A midnight flush can close yesterday's row after today's row starts.
         # Retain that real overlap for rostered writers, never infer continuity
         # merely from the recurrence of the same boot ID on another day.
-        for counter in counters.values():
+        for identity, counter in counters.items():
+            if identity in legacy_revisions:
+                continue
             if counter["instance"] not in actual or counter["router_revision"] not in manifest["router_revisions"]:
+                continue
+            if regions.get(counter["instance"]) != counter["region"]:
                 continue
             left = max(day_start, start, counter["started_at_us"])
             right = min(day_end, end, counter["flushed_at_us"])
@@ -401,6 +454,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         for identity, counter in counters.items():
             if not identity.startswith(day+"/"):
                 continue
+            if regions.get(counter["instance"]) != counter["region"]:
+                gap(identity+":legacy_region_label", day)
             persistence = sum(counter[k] for k in (
                 "samples_inserted", "duplicate_samples", "conflicting_samples", "comparison_dropped"))
             if persistence != counter["comparison_attempts"]:
@@ -520,6 +575,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
     inserted: Counter[tuple[str, str]] = Counter()
     sample_counts: Counter[tuple[str, str, str, bool | None, str]] = Counter()
     phase_samples: Counter[tuple[Any, ...]] = Counter()
+    regional_samples = []
     for row in samples:
         observation_day = dt.datetime.fromtimestamp(row["observed_at_us"]/1e6, dt.UTC).date().isoformat()
         manifest = manifests.get(observation_day)
@@ -527,6 +583,11 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         inserted[observation_day, deployment["instance"]] += 1
         writer_id = observation_day + "/" + deployment["instance"]
         writer = counters.get(writer_id)
+        if sample_regions_by_day.get(observation_day, {}).get(deployment["instance"]) != deployment["region"]:
+            gap(row["authorization_day"]+"/"+row["authorization_id"]+":legacy_sample_region", observation_day)
+            gap(observation_day+":legacy_sample_region", observation_day)
+        elif writer_id not in legacy_revisions:
+            regional_samples.append(row)
         category = {"explained-by-catalog-change": "explained", "hash": "mismatch", "identity": "mismatch",
                     "normalization": "mismatch", "evaluator_disagreement": "mismatch"}.get(row["classification"], row["classification"])
         if row["admission"]["prediction"] == "unknown":
@@ -576,7 +637,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                         if not oldest <= original.authorization_day <= day:
                             continue
                         position = bisect_right(times, counter["flushed_at_us"])
-                        retry = RetryIdentity(phase, counter["region"], original.authorization_day,
+                        retry = RetryIdentity(phase, original.authorization_day,
                             terminal["adapter"], terminal["route_type"], terminal["streamed"])
                         if position and original_can_back_retry(original, times[position - 1], retry,
                                 counter["started_at_us"], counter["flushed_at_us"]):
@@ -615,7 +676,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         reset["resolved_at_us"] = resolved["serving_since_us"]
         reset["fixed_revision"] = resolved["fixed_revision"]
         restored_after = max(restored_after, resolved["serving_since_us"])
-    candidates = [row for row in samples if positive_sample(row) and row["observed_at_us"] >= max(restored_after, not_before_us)]
+    candidates = [row for row in regional_samples if positive_sample(row) and row["observed_at_us"] >= max(restored_after, not_before_us)]
     start = candidates[0]["observed_at_us"] if candidates and not unresolved else None
     # Measure the connected covered interval containing the positive seed.
     # Overlap counts once; an uncovered interval can never accrue clean time.
@@ -665,8 +726,8 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
     metrics["prediction_attempts"] = predictions
     metrics["prediction_known_fraction"] = (predictions["yes"]+predictions["no"])/prediction_total if prediction_total else None
     region_timing = {}
-    for region in sorted({row["deployment"]["region"] for row in samples}):
-        subset = [row for row in samples if row["deployment"]["region"] == region]
+    for region in sorted({row["deployment"]["region"] for row in regional_samples}):
+        subset = [row for row in regional_samples if row["deployment"]["region"] == region]
         region_timing[region] = {name: percentiles([row[section][name] for row in subset])
             for section, names in (("timing", ("authorize_shadow_us", "handoff_prepare_us", "router_settle_us", "booking_confirm_us", "comparator_us", "evidence_write_us")),
                                    ("admission", ("workspace_age_us", "health_age_us"))) for name in names}
@@ -687,6 +748,7 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         clean_window_start_us=start, continuous_seconds=continuous, distinct_samples=len(samples),
         scope="successful opted-in authorizations; opted-in settle/refund attempts",
         counters=list(counters.values()), denominators=denominators,
+        legacy_revision_labels=list(legacy_revisions.values()),
         histogram_upper_bounds_us=[100, 500, 1000, 2000, 5000, 10000, 50000, 200000, None],
         metrics=metrics, regional_percentiles=region_timing, usage=usage, source_revisions=revisions,
         fixture_sha256=FIXTURE_SHA256, proof_sha256=proof_hash,

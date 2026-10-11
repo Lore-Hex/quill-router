@@ -133,6 +133,16 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "zro": (
+        "Checked zro.moonmath.ai/docs/privacy and its API documentation. These "
+        "declare EU/US inference placement but do not establish the API operator's "
+        "headquarters country. Excluded from corporate jurisdiction filters."
+    ),
+    "hyperbolic": (
+        "Checked hyperbolic.ai/docs and the current OpenAPI specification. The "
+        "inference account and contracting operator jurisdiction are not yet "
+        "verified; the supplied credential is rejected. Excluded from jurisdiction filters."
+    ),
     "abliterate": (
         "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
         "a legal operating entity or headquarters country, and the terms refer "
@@ -1933,6 +1943,40 @@ PROVIDERS: dict[str, Provider] = {
         # Operator jurisdiction is not US-only inference; Canada is also declared.
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "boundless": Provider(
+        slug="boundless", name="Boundless", supports_prepaid=True, supports_byok=False,
+        provider_headquarters_country="US",
+        provider_policy=(
+            "Boundless advertises no prompt/output retention or training. Its legal terms "
+            "permit retention needed to provide, secure, improve or maintain the service "
+            "and do not warrant third-party infrastructure retention practices. These "
+            "routes remain Standard, not ZDR, confidential compute or E2EE."
+        ),
+        provider_policy_url="https://inference.boundless.network/terms",
+    ),
+    "zro": Provider(
+        slug="zro", name="Zro (MoonMath)", supports_prepaid=True, supports_byok=False,
+        stores_content=False, provider_zero_data_retention=True,
+        provider_policy=(
+            "Zro declares no retention of prompts, outputs or request bodies and no "
+            "training or secondary use without separate consent, including by its "
+            "infrastructure providers. Short-lived, account-scoped prompt caches and "
+            "content-free operational metadata remain. This is provider-declared ZDR, "
+            "not independently verified confidential compute or E2EE."
+        ),
+        provider_policy_url="https://zro.moonmath.ai/docs/privacy",
+    ),
+    "hyperbolic": Provider(
+        slug="hyperbolic", name="Hyperbolic", supports_chat=False,
+        supports_prepaid=False, supports_byok=False,
+        provider_policy=(
+            "The configured key was rejected by the documented current and legacy "
+            "inference catalog hosts with HTTP 401. Inference routes remain disabled "
+            "pending valid credentials, current per-token prices and successful canaries. "
+            "No ZDR or confidential-compute guarantee is enabled."
+        ),
+        provider_policy_url="https://hyperbolic.ai/docs/overview/overview",
+    ),
     "greenference": Provider(
         slug="greenference",
         name="Greenference",
@@ -2264,6 +2308,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "system1models-eu",
         "lyceum",
         "greenference",
+        "boundless",
+        "zro",
         "privatemode",
         "telluvian",
         "vercel-ai-gateway",

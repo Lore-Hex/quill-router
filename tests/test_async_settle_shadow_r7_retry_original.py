@@ -126,5 +126,5 @@ def test_retry_original_scope(monkeypatch, placement):
         rows.append(original)
     result = report(rows, days, proof)
     assert result["status"] == (
-        "BLOCKED" if placement in {"future", "retired", "other_region"} else "PASS"
+        "BLOCKED" if placement in {"future", "retired"} else "PASS"
     )

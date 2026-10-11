@@ -1,6 +1,7 @@
 """Shadow-only complete-key transactions and indexed day reads; no money writes."""
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import logging
@@ -45,11 +46,25 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # active throughout stream iteration and any SDK restart.
 # The horizon bounds scheduled RPC time, not Python scheduling/GC or late
 # server-side commits.
-WRITE_BUDGET_SECONDS = 1.0
-RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
+# A transaction from a secondary region makes two leader reads and a
+# cross-region commit, each measured at up to ~500 ms from southamerica-east1
+# and europe-west4 (docs/incidents/2026-10-10-shadow-regional-read-deadline.md),
+# so a read gets up to one second and the commit the remainder. The
+# transaction gets four: on 2026-10-11 at 09:13Z every commit on nam6 took
+# about seven times its usual time for one minute, and 26 instances each
+# failed one evidence transaction at a two-second budget, which paged the
+# API-failure policy beside the real signal (the one-commit settles that fell
+# through to the durable path); the shadow is a background worker whose
+# observations are deferred or dropped when it runs long, so it is sized to
+# ride out such a minute rather than fail into it
+# (docs/incidents/2026-10-11-spanner-commit-latency-minute.md).
+WRITE_BUDGET_SECONDS = 4.0
+RPC_BUDGET_SECONDS = 1.0
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
 logger = logging.getLogger(__name__)
+_ACTIVE_READ: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "shadow_active_read", default=None)
 
 
 class RetirementBoundary(ValueError):
@@ -83,6 +98,23 @@ def day_statement(kind: str, day: str, after_id: str = "", page_size: int = 200)
             dict(kind=pt.STRING, day_start=pt.STRING, next_day_start=pt.STRING, after_id=pt.STRING, page_size=pt.INT64))
 
 
+def read_operation(statement: Statement) -> str:
+    """Fixed labels only: SQL parameters and entity IDs never become telemetry."""
+    sql, params, _ = statement
+    if sql == FINALIZATION_SQL:
+        return "booking_read"
+    if sql == DAY_SQL:
+        return "day_read"
+    if sql == POINT_SQL:
+        if params.get("kind") == COUNTER:
+            return "counter_read"
+        if params.get("kind") == SAMPLE:
+            return "sample_read"
+        if params.get("kind") == CONTROL:
+            return "retention_fence_read" if params.get("id") == RETENTION_FENCE else "control_read"
+    return "unknown"
+
+
 class EvidenceStore:
     def __init__(self, database: Any) -> None:
         self.database = database
@@ -108,8 +140,10 @@ class EvidenceStore:
             if isinstance(error, cls):
                 reason = label
                 break
-        logger.warning("shadow evidence transaction failed stage=%s reason=%s elapsed_ms=%d",
-                       stage, reason, max(0, round((now-started)*1000)))
+        active = _ACTIVE_READ.get()
+        operation = active[0] if stage == "callback" and active else "unknown"
+        logger.warning("shadow evidence transaction failed stage=%s reason=%s elapsed_ms=%d operation=%s",
+                       stage, reason, max(0, round((now-started)*1000)), operation)
 
     @staticmethod
     def query(reader: Any, statement: Statement, deadline: float) -> list[Any]:
@@ -119,13 +153,22 @@ class EvidenceStore:
         sql, params, types = statement
         if sql not in (FINALIZATION_SQL, POINT_SQL, DAY_SQL):
             raise ValueError("unknown shadow statement")
+        operation = read_operation(statement)
+        active = _ACTIVE_READ.get()
+        if active is not None:
+            active[0] = operation
         # Snapshot streaming restarts occur even with retry=None. Keep the
         # deadline active through iteration so each restart consumes its remainder.
         with spanner_rpc_deadline(deadline, max_rpc_seconds=RPC_BUDGET_SECONDS):
-            return list(reader.execute_sql(
+            rows = list(reader.execute_sql(
                 FINALIZATION_SQL if sql == FINALIZATION_SQL else POINT_SQL if sql == POINT_SQL else DAY_SQL,
                 params=params, param_types=types, timeout=remaining,
-                retry=None, request_options={"priority": "PRIORITY_LOW"}))
+                retry=None, request_options={"priority": "PRIORITY_LOW", "request_tag": "tr_shadow_" + operation}))
+        # Preserve the active read on failure, but never blame a completed read
+        # for a later callback/commit failure. The transaction owns this context.
+        if active is not None:
+            active[0] = "unknown"
+        return rows
 
     def transaction(self, callback: Callable[[Any], Any], deadline: float) -> Any:
         started = time.monotonic()
@@ -134,6 +177,7 @@ class EvidenceStore:
         rpc_deadline = min(deadline, time.monotonic() + WRITE_BUDGET_SECONDS)
         attempted = False
         stage = "begin"
+        token = _ACTIVE_READ.set(["unknown"])
         def once(tx: Any) -> Any:
             nonlocal attempted, stage
             if attempted:
@@ -147,14 +191,29 @@ class EvidenceStore:
             return result
         try:
             with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
+                # Tagged so lock statistics attribute the shadow's transactions
+                # (the 2026-10-11 lock samples showed them with no tag).
                 result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
-                    commit_request_options={"priority": "PRIORITY_LOW"})
+                    commit_request_options={"priority": "PRIORITY_LOW"},
+                    transaction_tag="tr_shadow_evidence")
                 if time.monotonic() >= rpc_deadline:
                     raise TimeoutError("shadow commit budget")
                 return result
         except Exception as error:
             self._report_failure(stage, error, started)
+            if isinstance(error, SpannerTransportReset):
+                # Session rolls back inside its callback exception handler, so
+                # the reset can retain private evidence through __context__.
+                # This fire-and-forget path only counts failures: discard the
+                # SDK/callback traceback too, whose frames retain private locals.
+                # A bare re-raise preserves these cleared links (Python 3.11+);
+                # callers can still add their own frames during propagation.
+                error.__context__ = None
+                error.__cause__ = None
+                error.__traceback__ = None
             raise
+        finally:
+            _ACTIVE_READ.reset(token)
 
     def write(self, tx: Any, kind: str, identity: str, body: dict[str, Any], deadline: float) -> None:
         # Every insert site, including operator control writes, uses this path.

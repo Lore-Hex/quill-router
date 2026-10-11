@@ -161,8 +161,17 @@ for a in "$@"; do
     recorded="${recorded//$'\t'/\\t}"
     printf -v record '%s\t%s' "$record" "$recorded"
 done
-# Parallel region deploys share this log: append the complete record at once.
-printf '%s\n' "$record" >> "$HARNESS_ARGV_LOG"
+# A Cloud Run argv exceeds stdio's buffer. Even one printf can interleave
+# several writes with another region, so serialize complete log records.
+python3 - "$HARNESS_ARGV_LOG" "$record" <<'PY' || exit 1
+import fcntl
+import sys
+
+with open(sys.argv[1], "a", encoding="utf-8") as log:
+    fcntl.flock(log, fcntl.LOCK_EX)
+    log.write(sys.argv[2] + "\n")
+    log.flush()
+PY
 # Drain stdin before answering. A stub that exits without reading closes the
 # pipe under its upstream, and `aws ecr get-login-password | docker login
 # --password-stdin` then dies of SIGPIPE -- 141 through `set -o pipefail`, in

@@ -37,6 +37,8 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "regolo",
         "lyceum",
         "greenference",
+        "boundless",
+        "zro",
         "byteplus",
         "privatemode",
         "featherless",

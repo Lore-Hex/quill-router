@@ -1728,6 +1728,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def token_exchange() -> str:
         return public_page_html(settings, "token-exchange")
 
+    @public_html_route("/new-york-token-exchange")
+    async def new_york_token_exchange() -> str:
+        return public_page_html(settings, "new-york-token-exchange")
+
     @public_html_route("/token-exchange/savings")
     async def token_exchange_savings() -> str:
         return public_page_html(settings, "token-exchange/savings")

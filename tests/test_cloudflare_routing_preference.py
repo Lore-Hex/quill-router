@@ -1,4 +1,4 @@
-"""Operator-funded capacity affects default prepaid ranking, not eligibility."""
+"""Cloudflare's commercial fallback preference changes ranking, not eligibility."""
 
 from dataclasses import replace
 from typing import Any
@@ -48,11 +48,11 @@ def _providers(body: dict[str, Any]) -> list[str]:
     ]
 
 
-def test_default_prepaid_prefers_cloudflare_without_changing_prices_or_fallbacks(
+def test_default_prepaid_lowers_cloudflare_without_changing_prices_or_fallbacks(
     routes: list[ModelEndpoint],
 ) -> None:
     candidates = chat_route_endpoint_candidates({"model": MODEL}, Settings(environment="test"))
-    assert [endpoint.provider for _, endpoint in candidates] == [CLOUDFLARE, "deepinfra", "parasail"]
+    assert [endpoint.provider for _, endpoint in candidates] == ["deepinfra", "parasail", CLOUDFLARE]
     assert {endpoint.id for _, endpoint in candidates} == {endpoint.id for endpoint in routes}
     for _, endpoint in candidates:
         assert endpoint is next(route for route in routes if route.id == endpoint.id)
@@ -66,11 +66,14 @@ def test_explicit_sort_overrides_cloudflare_preference(routes: list[ModelEndpoin
 @pytest.mark.parametrize(
     ("preferences", "expected"),
     [
-        ({"order": ["parasail"]}, ["parasail", CLOUDFLARE, "deepinfra"]),
+        ({"order": ["parasail"]}, ["parasail", "deepinfra", CLOUDFLARE]),
         ({"order": ["deepinfra", "parasail"]}, ["deepinfra", "parasail", CLOUDFLARE]),
+        ({"order": [CLOUDFLARE]}, [CLOUDFLARE, "deepinfra", "parasail"]),
         ({"only": ["deepinfra"]}, ["deepinfra"]),
+        ({"only": [CLOUDFLARE]}, [CLOUDFLARE]),
         ({"ignore": [CLOUDFLARE]}, ["deepinfra", "parasail"]),
-        ({"allow_fallbacks": False}, [CLOUDFLARE]),
+        ({"allow_fallbacks": False}, ["deepinfra"]),
+        ({"order": [CLOUDFLARE], "allow_fallbacks": False}, [CLOUDFLARE]),
     ],
 )
 def test_caller_provider_controls_preserved(
@@ -79,19 +82,19 @@ def test_caller_provider_controls_preserved(
     assert _providers({"provider": preferences}) == expected
 
 
-def test_byok_cloudflare_is_not_promoted(routes: list[ModelEndpoint]) -> None:
+def test_byok_cloudflare_uses_measured_rank(routes: list[ModelEndpoint]) -> None:
     model = MODELS[MODEL]
     candidates = [(model, replace(route, usage_type="BYOK")) for route in routes]
     ordered = _sort_endpoint_candidates(candidates, provider_route_preferences({}))
     assert [endpoint.provider for _, endpoint in ordered] == ["deepinfra", CLOUDFLARE, "parasail"]
 
 
-def test_mixed_routes_promote_only_prepaid_cloudflare(routes: list[ModelEndpoint]) -> None:
+def test_mixed_routes_demote_only_prepaid_cloudflare(routes: list[ModelEndpoint]) -> None:
     model = MODELS[MODEL]
     byok = replace(routes[-1], id=f"{MODEL}@{CLOUDFLARE}/byok", usage_type="BYOK")
     candidates = [(model, route) for route in (routes[0], byok, routes[-1])]
     ordered = _sort_endpoint_candidates(candidates, provider_route_preferences({}))
-    assert [endpoint.id for _, endpoint in ordered] == [routes[-1].id, routes[0].id, byok.id]
+    assert [endpoint.id for _, endpoint in ordered] == [routes[0].id, byok.id, routes[-1].id]
 
 
 def test_cloudflare_does_not_replace_requested_primary_model(
@@ -103,7 +106,7 @@ def test_cloudflare_does_not_replace_requested_primary_model(
         {"model": primary, "models": [MODEL]}, Settings(environment="test"),
     )
     assert [(model.id, endpoint.provider) for model, endpoint in candidates] == [
-        (primary, "parasail"), (MODEL, CLOUDFLARE), (MODEL, "deepinfra"), (MODEL, "parasail"),
+        (primary, "parasail"), (MODEL, "deepinfra"), (MODEL, "parasail"), (MODEL, CLOUDFLARE),
     ]
 
 
@@ -140,23 +143,23 @@ def test_expired_cloudflare_route_is_not_preferred(
     assert _providers({}) == ["deepinfra", "parasail"]
 
 
-def test_model_incident_demotion_overrides_funded_preference(
+def test_model_incident_demotion_remains_available(
     routes: list[ModelEndpoint], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setitem(_MODEL_PROVIDER_PREFERENCE, MODEL, {CLOUDFLARE: 10})
+    monkeypatch.setitem(_MODEL_PROVIDER_PREFERENCE, MODEL, {CLOUDFLARE: 3_000})
     assert _providers({}) == ["deepinfra", "parasail", CLOUDFLARE]
 
 
-def test_cloudflare_precedes_glm_52_normal_provider_bonus(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cloudflare_follows_glm_52_normal_provider_bonus(monkeypatch: pytest.MonkeyPatch) -> None:
     model_id = "z-ai/glm-5.2"
     drop_routes(monkeypatch, model_id)
     for provider in ("parasail", CLOUDFLARE):
         serve_on_fixture_route(monkeypatch, model_id, provider, author="zai")
-    assert _providers({"model": model_id}) == [CLOUDFLARE, "parasail"]
+    assert _providers({"model": model_id}) == ["parasail", CLOUDFLARE]
 
 
 @pytest.mark.parametrize("route_type", ["chat.completions", "responses"])
-def test_gateway_authorization_prefers_cloudflare_and_retains_fallbacks(
+def test_gateway_authorization_prefers_direct_providers_and_retains_cloudflare_fallback(
     routes: list[ModelEndpoint], route_type: str,
 ) -> None:
     client, key = _client_and_key()
@@ -171,6 +174,6 @@ def test_gateway_authorization_prefers_cloudflare_and_retains_fallbacks(
         )
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert data["provider"] == CLOUDFLARE
+    assert data["provider"] == "deepinfra"
     assert data["usage_type"] == "Credits"
-    assert [row["provider"] for row in data["route_candidates"]] == [CLOUDFLARE, "deepinfra", "parasail"]
+    assert [row["provider"] for row in data["route_candidates"]] == ["deepinfra", "parasail", CLOUDFLARE]

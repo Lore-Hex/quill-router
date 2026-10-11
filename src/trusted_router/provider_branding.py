@@ -85,6 +85,23 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
     "greenference": ProviderBrand("https://greenference.com/"),
+    "boundless": ProviderBrand(
+        "https://boundless.network/",
+        description="OpenAI-compatible inference with model-specific input, output and cache-read pricing.",
+        resources=(("Models and pricing", "https://inference.boundless.network/models"),
+                   ("Service terms", "https://inference.boundless.network/terms")),
+    ),
+    "zro": ProviderBrand(
+        "https://zro.moonmath.ai/",
+        description="MoonMath's OpenAI-compatible inference service for open models.",
+        resources=(("Models and pricing", "https://zro.moonmath.ai/docs/models"),
+                   ("Data handling", "https://zro.moonmath.ai/docs/privacy")),
+    ),
+    "hyperbolic": ProviderBrand(
+        "https://hyperbolic.ai/",
+        description="Inference integration pending valid credentials and verified current pricing.",
+        resources=(("Documentation", "https://hyperbolic.ai/docs/overview/overview"),),
+    ),
     # Keep public IDs and regional credentials stable across the provider rebrand.
     "system1models": ProviderBrand(
         "https://decisionmodels.io/",

@@ -17,6 +17,10 @@ from urllib.parse import urlencode
 import httpx
 
 
+class OAuthCodeRejected(ValueError):
+    """The provider rejected an invalid, expired, or already-used sign-in code."""
+
+
 @dataclass(frozen=True)
 class OAuthUserInfo:
     """Provider-agnostic shape returned to the route after sign-in."""
@@ -89,8 +93,18 @@ async def exchange_code(
             data=payload,
             headers={"accept": "application/json"},
         )
+        try:
+            data = response.json()
+        except ValueError:
+            response.raise_for_status()
+            raise
+        # GitHub can return code rejection with HTTP 200. Match only the
+        # provider's expected code error, never configuration or outage errors.
+        rejected_code = {"google": "invalid_grant", "github": "bad_verification_code"}.get(provider.slug)
+        if (response.status_code in {200, 400} and rejected_code is not None
+                and isinstance(data, dict) and data.get("error") == rejected_code):
+            raise OAuthCodeRejected("Invalid OAuth code")
         response.raise_for_status()
-        data = response.json()
     finally:
         if owns_client:
             await client.aclose()

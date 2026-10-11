@@ -152,16 +152,48 @@ def gate_roster_coverage(gate: list[dict[str, Any]], serving_rows: list[dict[str
                         for r in reviewed) for m in measured))
 
 
-def counter_coverage(bundle: dict[str, Any]) -> bool:
+def counter_coverage_report(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Require truthful labels for every writer/day; never relabel historical reads."""
     expected = {item for item in roster_coverage(bundle['serving']) if item[1] == 'router'}
     actual = []
+    legacy = []
+    legacy_revisions = []
+    labelled = set()
     for row in bundle['rows']:
         if row['kind'] == COUNTER:
             body = row['body']
-            shadow_report.validate_counter(row['id'], body)
+            legacy_revision = shadow_report.validate_counter_for_report(row['id'], body)
+            if legacy_revision:
+                legacy_revisions.append(shadow_report.legacy_counter_accounting(
+                    row['id'], body, 'legacy_revision_label'))
+            day = row['id'].split('/')[0]
+            regions = {item[3] for item in expected if item[0] == body['instance'] and item[4] == day}
+            if body['region'] not in regions:
+                legacy.append(dict(shadow_report.legacy_counter_accounting(row['id'], body, 'legacy_region_label'),
+                                   expected_regions=sorted(regions)))
+                continue
+            labelled.add((day, body['instance']))
+            if legacy_revision:
+                continue
             actual.append((body['instance'], 'router', body['router_revision'], body['region'],
-                           row['id'].split('/')[0], body['started_at_us'], body['flushed_at_us']))
-    return bool(expected) and len(actual) == len(set(actual)) and set(actual) == expected
+                           day, body['started_at_us'], body['flushed_at_us']))
+    reasons = []
+    if legacy_revisions:
+        reasons.append('legacy_revision_label')
+    if legacy:
+        reasons.append('legacy_region_label')
+        if any((row['day'], row['instance']) in labelled for row in legacy):
+            reasons.append('mixed_region_labels')
+        if expected - set(actual):
+            reasons.append('legacy_region_coverage')
+    if not expected or len(actual) != len(set(actual)) or set(actual) != expected:
+        reasons.append('counter_roster_gap')
+    return dict(status='BLOCKED' if reasons else 'PASS', reasons=reasons,
+                legacy_region_labels=legacy, legacy_revision_labels=legacy_revisions)
+
+
+def counter_coverage(bundle: dict[str, Any]) -> bool:
+    return counter_coverage_report(bundle)['status'] == 'PASS'
 
 
 def control_coverage(bundle: dict[str, Any]) -> bool:
@@ -174,6 +206,8 @@ def control_coverage(bundle: dict[str, Any]) -> bool:
         routers = [item for item in coverage if item[4] == day and item[1] == 'router']
         enclaves = [item for item in coverage if item[4] == day and item[1] == 'enclave']
         if (set(manifest['instance_boot_ids']) != {item[0] for item in routers}
+                or bundle['proof'].get('instance_regions_by_day', {}).get(day)
+                    != {item[0]: item[3] for item in routers}
                 or set(manifest['router_revisions']) != {item[2] for item in routers}
                 or set(manifest['go_revisions']) != {item[2] for item in enclaves}
                 or not enclaves):
@@ -280,11 +314,15 @@ def shadow_serving(bundle: dict[str, Any]) -> dict[str, Any]:
     checks['same_pre_enable_gate'] = gate_outputs['fleet'].get('pre_enable') == bundle['observer']['pre_enable']
     return checklist(checks, first_durable_evaluable_sample_us=report['clean_window_start_us'],
         clock_start_us=report['clean_window_start_us'] if all(checks.values()) else None,
-        continuous_seconds=report['continuous_seconds'], shadow_report=report)
+        continuous_seconds=report['continuous_seconds'], shadow_report=report,
+        counter_coverage=counter_coverage_report(bundle))
 
 
 def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     counters = [row for row in bundle['rows'] if row['kind'] == COUNTER]
+    coverage = counter_coverage_report(bundle)
+    legacy_keys = {(row['id'], row['region'], row['router_revision'])
+                   for row in coverage['legacy_region_labels'] + coverage['legacy_revision_labels']}
     pre = json.loads(Path(bundle['pre_enable']['path']).read_text())
     checks = {'counters_present': bool(counters),
         'pre_enable_gate': artifact(bundle['pre_enable']) and pre.get('status') == 'PASS'
@@ -300,7 +338,6 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     instance_rates: dict[tuple[str, str], dict[str, float]] = {}
     observer_budgets = {}
     for row in counters:
-        shadow_report.validate_counter(row['id'], row['body'])
         body = row['body']
         duration = (body['flushed_at_us'] - body['started_at_us']) / 1e6
         obs = body['admission_observer']
@@ -311,7 +348,7 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
               and max(1, n * (math.floor(duration / 4) - 1) - obs['missed_ticks']) <= obs['workspace_reads'] <= n * (math.ceil(duration / 4) + 1)
               and max(1, math.floor(duration) - 1 - obs['missed_ticks']) <= obs['health_reads'] <= math.ceil(duration) + 1)
         checks[row['id']] = ok
-        if duration > 0:
+        if duration > 0 and (row['id'], body['region'], body['router_revision']) not in legacy_keys:
             region = instance_rates.setdefault((body['region'], body['instance']), {'reads_per_second': 0., 'pending_rows_per_second': 0.})
             # Peak interval rate per instance; never average away an overloaded interval.
             region['reads_per_second'] = max(region['reads_per_second'], (obs['workspace_reads'] + obs['health_reads']) / duration)
@@ -320,7 +357,7 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
         region = totals.setdefault(region_name, {'reads_per_second': 0., 'pending_rows_per_second': 0.})
         for key, rate in rates.items():
             region[key] += rate
-    checks['complete_instance_roster'] = (counter_coverage(bundle)
+    checks['complete_instance_roster'] = (coverage['status'] == 'PASS'
         and {r['instance'] for r in bundle['serving'] if r['role'] == 'router'} == set(bundle['router_instance_ids'])
         and len(bundle['router_instance_ids']) == len(set(bundle['router_instance_ids'])))
     checks['regional_coverage'] = set(totals) == set(bundle['regional_budgets']) == set(bundle['maximum_router_instances_by_region'])
@@ -342,7 +379,9 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     for region, rates in totals.items():
         budget = bundle['regional_budgets'][region]
         maximum = bundle['maximum_router_instances_by_region'][region]
-        observed = len({row['body']['instance'] for row in counters if row['body']['region'] == region})
+        observed = len({row['body']['instance'] for row in counters
+                        if row['body']['region'] == region
+                        and (row['id'], row['body']['region'], row['body']['router_revision']) not in legacy_keys})
         checks[region + '_headroom'] = (type(maximum) is int and maximum >= observed
             and all(rates[k] <= budget[k] for k in rates)
             and maximum * (bundle['workspace_count'] / 4 + 1) <= budget['reads_per_second']
@@ -350,7 +389,9 @@ def fleet_budgets(bundle: dict[str, Any]) -> dict[str, Any]:
     checks['regional_roster_caps'] = sum(bundle['maximum_router_instances_by_region'].values()) == maximum_instances
     checks['measured_headroom_artifact'] = artifact(bundle['headroom'])
     return checklist(checks, mode='post-opt-in', serving=bundle['serving'], regions=totals, fleet_reads_per_second=total_reads,
-                     freshness_maxima_seconds=maxima, pre_enable=bundle['pre_enable'], observer_budgets=observer_budgets)
+                     freshness_maxima_seconds=maxima, pre_enable=bundle['pre_enable'], observer_budgets=observer_budgets,
+                     counter_coverage=coverage, legacy_region_labels=coverage['legacy_region_labels'],
+                     legacy_revision_labels=coverage['legacy_revision_labels'])
 
 
 def pre_flip(bundle: dict[str, Any]) -> dict[str, Any]:

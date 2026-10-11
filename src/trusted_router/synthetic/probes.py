@@ -2314,15 +2314,20 @@ def _rotation_error_type(
     # A 503 "service unavailable" is downtime, not a missing catalog model.
     # Only explicit model error types or client-side validation responses
     # justify removing an attempt from provider availability.
-    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or (
+    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES:
+        return "unsupported_route"
+    # Parameter rejection does not mean the model is missing. Providers often
+    # say "not supported" in both cases; classify the specific field first.
+    if status in {400, 422} and any(
+        marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS
+    ):
+        return "probe_config_error"
+    if (
         status in {400, 404, 422}
         and any(marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS)
     ):
         return "unsupported_route"
-    if raw_type in _PROBE_CONFIG_ERROR_TYPES or (
-        status in {400, 422}
-        and any(marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS)
-    ):
+    if raw_type in _PROBE_CONFIG_ERROR_TYPES:
         return "probe_config_error"
     if raw_source == "router":
         return "router_error"
@@ -2709,12 +2714,20 @@ def _rotation_omits_temperature(provider: str, model: str) -> bool:
     )
 
 
-def _rotation_sampling_parameters(provider: str, model: str) -> dict[str, int]:
+def _rotation_sampling_parameters(provider: str, model: str) -> dict[str, int | str]:
     if _rotation_omits_temperature(provider, model):
         return {}
     # Mistral's default top_p is incompatible with greedy sampling. These
     # are probe-owned settings, not overrides of customer sampling choices.
-    return {"temperature": 0, **({"top_p": 1} if provider.lower() == "mistral" else {})}
+    parameters: dict[str, int | str] = {
+        "temperature": 0, **({"top_p": 1} if provider.lower() == "mistral" else {})
+    }
+    if provider.lower() == "meta" and "muse-spark" in model.lower():
+        # Muse's private reasoning consumes the same bounded output budget.
+        # Keep health/throughput probes focused on visible token flow; never
+        # override customer requests or assume other hosts accept this level.
+        parameters["reasoning_effort"] = "minimal"
+    return parameters
 
 
 def _rotation_error_sample(

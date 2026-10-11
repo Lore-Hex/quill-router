@@ -40,6 +40,8 @@ class Context:
     rebuild: Callable[[], b.BillingSnapshot] | None = None
     rebuild_matches_booking_view: bool = False
     price_source: str = "unknown"
+    # Serving-region evidence must not change the signed journal authority.
+    journal_region: str | None = None
 
 
 @dataclass
@@ -155,7 +157,9 @@ def _compare(envelope: Envelope, ctx: Context, keys: Sequence[TrustedKey], out: 
     expected = dict(authorization_id=auth.id, generation_id=generation_id_for_authorization(auth.id),
                     workspace_id=auth.workspace_id, key_id=auth.key_hash,
                     invocation_nonce=auth.invocation_nonce, reservation_id=auth.credit_reservation_id,
-                    billing_authority=auth.settlement, journal_region=ctx.region, epoch=ctx.epoch,
+                    billing_authority=auth.settlement,
+                    journal_region=ctx.region if ctx.journal_region is None else ctx.journal_region,
+                    epoch=ctx.epoch,
                     route_type=body.route_type, streamed=body.streamed)
     # The pinned legacy refund sender hardcodes streamed=true, including for
     # non-streaming authorizations. Only the signed authorize fact is authoritative

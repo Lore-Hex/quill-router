@@ -43,6 +43,7 @@ def bundle(tmp_path):
         elif row['id'].endswith('/manifest-v1'):
             body['instance_boot_ids'] = [boot]
             proof['instance_boot_ids_by_day'][body['day']] = [boot]
+            proof['instance_regions_by_day'][body['day']] = {boot: 'us-central1'}
     serving = [dict(instance=boot, revision='a'*40, region='us-central1', role='router', intervals=copy.deepcopy(intervals), pins={
         'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_SHADOW_WORKSPACES': pilot.PILOT,
         'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false'}),
@@ -572,3 +573,139 @@ def test_fleet_bounded_observer_failures(tmp_path, damage):
     ratios = result['observer_budgets'][data['rows'][0]['id']]
     assert ratios['failure_ratio'] >= .01 and ratios['unknown_ratio'] >= .02
     assert ratios['degraded_ratio'] >= .01
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+def test_legacy_region_label_coverage_and_separate_totals(tmp_path, mixed):
+    data = fleet_bundle(tmp_path)
+    original = data['rows'][0]
+    boot = original['body']['instance']
+    # A European writer before the pin reported the primary region. Other
+    # truthful central writers/intervals must not legitimize its old label.
+    day = original['id'].split('/')[0]
+    for row in data['serving']:
+        if row['instance'] == boot:
+            row['region'] = 'europe-west4'
+    for row in data['rows']:
+        if row['kind'] == COUNTER and row is not original:
+            row['body']['region'] = 'europe-west4'
+    if mixed:
+        new = copy.deepcopy(original)
+        split = original['body']['started_at_us'] + 3600_000000
+        original['body']['flushed_at_us'] = split
+        new['body'].update(region='europe-west4', started_at_us=split)
+        data['rows'].append(new)
+        intervals = data['serving'][0]['intervals']
+        intervals[0]['flushed_at_us'] = split
+        intervals.append(dict(day=day, started_at_us=split, flushed_at_us=new['body']['flushed_at_us']))
+    assert pilot.counter_coverage(data) is False
+    coverage = pilot.counter_coverage_report(data)
+    assert coverage['status'] == 'BLOCKED'
+    assert 'legacy_region_label' in coverage['reasons']
+    assert 'legacy_region_coverage' in coverage['reasons']
+    assert ('mixed_region_labels' in coverage['reasons']) is mixed
+    legacy = coverage['legacy_region_labels']
+    assert len(legacy) == 1
+    assert legacy[0]['id'] == original['id']
+    assert legacy[0]['reason'] == 'legacy_region_label'
+    assert legacy[0]['expected_regions'] == ['europe-west4']
+    # Keep budgets declared for both regions: exclusion must be driven by the
+    # writer roster, not by the mere absence of a budget for the old label.
+    data['regional_budgets']['europe-west4'] = data['regional_budgets']['us-central1'].copy()
+    data['maximum_router_instances_by_region']['europe-west4'] = 1
+    result = pilot.fleet_budgets(data)
+    assert result['status'] == 'BLOCKED'
+    assert set(result['regions']) == {'europe-west4'}
+    # Keep the serving-labelled slice even when its ID also has a legacy row.
+    assert result['regions']['europe-west4']['reads_per_second'] == (
+        108000 / (23 * 3600) if mixed else 1.25)
+    assert result['legacy_region_labels'] == legacy
+    assert legacy[0]['workspace_reads'] == 21600
+    assert legacy[0]['health_reads'] == 86400
+    assert legacy[0]['router_revision'] == original['body']['router_revision']
+    assert legacy[0]['started_at_us'] == original['body']['started_at_us']
+    assert legacy[0]['flushed_at_us'] == original['body']['flushed_at_us']
+    # A subsequent all-serving-labelled export can cover the same roster.
+    original['body']['region'] = 'europe-west4'
+    assert pilot.counter_coverage_report(data) == dict(status='PASS', reasons=[], legacy_region_labels=[], legacy_revision_labels=[])
+
+
+@pytest.mark.parametrize('revision', ['b'*40, 'b'*7])
+@pytest.mark.parametrize('wrong_region', [False, True])
+def test_transition_revision_diagnostics(tmp_path, revision, wrong_region):
+    # Round-2 witness, extended to every reporting entry point and truthful
+    # region labels: a short revision alone must never become clean evidence.
+    from scripts.async_settle.shadow_report import report, validate_counter
+
+    data = fleet_bundle(tmp_path)
+    old = data['rows'][0]
+    old['body']['router_revision'] = revision
+    if wrong_region:
+        data['serving'][0]['region'] = 'europe-west4'
+        for row in data['rows']:
+            if row['kind'] == COUNTER and row is not old:
+                row['body']['region'] = 'europe-west4'
+        data['regional_budgets']['europe-west4'] = data['regional_budgets']['us-central1'].copy()
+        data['maximum_router_instances_by_region']['europe-west4'] = 1
+    original = copy.deepcopy(data)
+    assert pilot.counter_coverage(data) is False
+    coverage = pilot.counter_coverage_report(data)
+    assert coverage['status'] == 'BLOCKED'
+    assert ('legacy_region_label' in coverage['reasons']) is wrong_region
+    if wrong_region:
+        assert coverage['legacy_region_labels'][0]['router_revision'] == revision
+    fleet = pilot.fleet_budgets(data)
+    assert fleet['status'] == 'BLOCKED'
+    result = report(data['rows'], data['days'], data['proof'])
+    assert result['status'] == 'BLOCKED'
+    if len(revision) == 7:
+        assert 'legacy_revision_label' in coverage['reasons']
+        legacy = coverage['legacy_revision_labels']
+        assert legacy == fleet['legacy_revision_labels'] == result['legacy_revision_labels']
+        assert legacy == [dict(id=old['id'], day=data['days'][0], instance=old['body']['instance'],
+            region=old['body']['region'], reason='legacy_revision_label', router_revision=revision,
+            started_at_us=old['body']['started_at_us'], flushed_at_us=old['body']['flushed_at_us'],
+            workspace_reads=21600, health_reads=86400)]
+        assert old['id'] + ':legacy_revision_label' in result['gaps']
+        assert result['regional_percentiles'] == {}
+        assert result['clean_window_start_us'] is None
+        with pytest.raises(ValueError, match='counter revision'):
+            validate_counter(old['id'], old['body'])
+    else:
+        assert coverage['legacy_revision_labels'] == []
+        validate_counter(old['id'], old['body'])
+    assert data == original
+
+
+def test_legacy_revision_only_fleet_has_no_trusted_regional_rates(tmp_path):
+    from scripts.async_settle.shadow_report import report
+
+    data = fleet_bundle(tmp_path)
+    for row in data['rows']:
+        if row['kind'] == COUNTER:
+            row['body']['router_revision'] = 'b'*7
+    fleet = pilot.fleet_budgets(data)
+    assert fleet['status'] == 'BLOCKED'
+    assert fleet['regions'] == {} and fleet['fleet_reads_per_second'] == 0
+    assert len(fleet['legacy_revision_labels']) == 8
+    result = report(data['rows'], data['days'], data['proof'])
+    assert result['status'] == 'BLOCKED'
+    assert result['continuous_seconds'] == 0
+    assert result['regional_percentiles'] == {}
+
+
+@pytest.mark.parametrize('damage', ['revision', 'reads', 'partition'])
+def test_legacy_revision_diagnostics_preserve_schema_validation(tmp_path, damage):
+    from scripts.async_settle.shadow_report import validate_counter_for_report
+
+    data = fleet_bundle(tmp_path)
+    row = data['rows'][0]
+    row['body']['router_revision'] = 'b'*7
+    if damage == 'revision':
+        row['body']['router_revision'] = 'not-a-sha'
+    elif damage == 'reads':
+        row['body']['admission_observer']['health_reads'] = -1
+    else:
+        row['body']['counts'][0]['observed_attempts'] += 1
+    with pytest.raises(ValueError):
+        validate_counter_for_report(row['id'], row['body'])
