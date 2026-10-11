@@ -658,7 +658,8 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     db = Database()
     granted = EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     assert granted == 100
-    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'})]
+    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'},
+                                            transaction_tag='tr_shadow_evidence')]
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for (timeout, retry, options), operation in zip(db.query_options, ('control_read', 'retention_fence_read'), strict=True):
