@@ -9,7 +9,7 @@ application bugs, quota exhaustion, or hot-row retries.
 
 - Source project: `quill-cloud-proxy`
 - Source instance/database: `trusted-router-nam6` / `trusted-router`
-- Configuration: `nam6`, Enterprise Plus, 600 processing units (400 until 2026-09-25; see the High CPU section)
+- Configuration: `nam6`, Enterprise Plus, capacity autoscaled by Terraform between 1,000 and 10,000 processing units (`infra/spanner_trusted_router.tf`; 400 until 2026-09-25 and 600 after, see the High CPU section). `spanner_reliability.sh` does not set capacity.
 - Replica topology: two read-write locations (`us-central1`, `us-east1`), two
   read-only locations (`us-west1`, `us-west2`), and one witness
   (`us-central2`). This is five replica locations, not four application
