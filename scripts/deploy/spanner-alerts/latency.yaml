@@ -25,8 +25,12 @@ conditions:
     # transaction shape slowed about 7x, pure inserts included) pages the
     # API-failure policy through the budgeted callers' deadlines without
     # naming its cause. This condition names it: 60 s alignment and no
-    # duration, so one slow minute pages on its own aligned point, at a
-    # threshold an ordinary minute's cross-region p99 stays under.
+    # duration, so one slow minute pages on its own aligned point. The
+    # threshold is from a replay of this exact aggregation over the seven
+    # days to 2026-10-11 15:00Z (10,069 minutes): median p99 32 ms, p90
+    # 158 ms, 7 minutes above 1 s in five separate events (the 09:14Z
+    # minute: 2.2 s), 2 above 1.5 s. About five pages a week, each a
+    # thirty-fold tail; raise to 1.5 s if that proves too many.
     conditionThreshold:
       filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/request_latencies" AND metric.labels.method = "Commit"'
       aggregations:

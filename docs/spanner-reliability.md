@@ -183,9 +183,12 @@ and names the cause; the ten-minute conditions do not see a single slow
 minute. Check `SPANNER_SYS.TXN_STATS_TOP_MINUTE` per transaction shape, which
 groups by fingerprint and reports the columns touched, not row keys: when
 shapes that touch no contended row slowed by the same factor, treat the
-minute's lock waits as a likely consequence, and corroborate with the sample
-lock requests in `LOCK_STATS_TOP_MINUTE` (which tags held which rows) before
-concluding either way.
+minute's lock waits as a likely consequence. `LOCK_STATS_TOP_MINUTE` names the
+row ranges and samples the transactions that conflicted there, holders and
+waiters alike without saying which was which, and can omit either side; it
+corroborates where contention was, not who caused it. Settle holder
+responsibility, or rule contention out, only with independent evidence (the
+per-shape latencies above, request logs, the tags' own code paths).
 
 Separate Spanner server latency from network and application latency. Inspect
 the `method`, `status`, and serving-region labels. `ABORTED` is tracked by the
