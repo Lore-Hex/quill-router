@@ -145,7 +145,9 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 	// store that kept a hold's first snapshot fails the check after the
 	// second commit, or the reap. The second commits two wrong checkpoints'
 	// audit faults, one after the other, so a store that took the later
-	// fails the check after the second.
+	// fails the check after the second. The third stores two holds and
+	// commits the first's winner alone, so a store whose winner takes every
+	// hold of the lease with it fails the check after that commit.
 	scripts := []func(m string) []string{
 		func(m string) []string {
 			return []string{"Load(" + m + ")", "IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")",
@@ -156,6 +158,11 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		func(m string) []string {
 			return []string{"Load(" + m + ")", "IssueWrongCheckpoint", "Store", "ApplyRecord(" + m + ")",
 				"Commit(" + m + ")", "IssueWrongCheckpoint", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")"}
+		},
+		func(m string) []string {
+			return []string{"Load(" + m + ")", "IssueHeartbeat(a1)", "Store", "ApplyRecord(" + m + ")",
+				"IssueHeartbeat(a2)", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")",
+				"IssueTerminal(a1,\"settle\")", "Store", "ApplyRecord(" + m + ")", "Commit(" + m + ")"}
 		},
 	}
 	for i, script := range scripts {
@@ -181,7 +188,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on",
 		"a commit of a tick's number", "S committed again with another time", "a later audit fault",
 		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
-		"an empty drain read"}
+		"an empty drain read", "a winner beside an open hold"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -739,6 +746,11 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		}
 	}
 	req := w.request(m, from)
+	// A winner takes its own hold with it and leaves the others: the
+	// scripted walk makes such a commit, which the random ones seldom do.
+	if len(req.Winners) > 0 && len(req.PutHolds) > 0 {
+		w.seen["a winner beside an open hold"]++
+	}
 	// The store gets a copy (walkCommit): the ledger below reads req, which
 	// no store call can reach. A refused commit books nothing, so it faults
 	// nothing.

@@ -252,7 +252,14 @@ func (l *debtLease) orderMatters(money, other []MoneyOp) bool {
 type shards struct {
 	credit, usage, reserved []int64
 	marked                  bool
+	// touched is each row the store wrote since the last check, which
+	// stamps updated_at; updatedAt is each row's stamp as last read.
+	touched   []bool
+	updatedAt []spanner.NullTime
 }
+
+// touch notes a row the store writes.
+func (c *shards) touch(i int) { c.touched[i] = true }
 
 // headroom is each shard's credit less its usage and reservation (Room).
 func (c *shards) headroom() []int64 {
@@ -273,8 +280,15 @@ func (c *shards) squared() {
 	for _, v := range h {
 		sum += v
 	}
-	if sum < 0 {
-		c.marked = true
+	marked := sum < 0
+	if marked != c.marked {
+		// The mark is written on every row when it changes.
+		for i := range c.touched {
+			c.touch(i)
+		}
+	}
+	c.marked = marked
+	if marked {
 		return
 	}
 	for {
@@ -288,14 +302,16 @@ func (c *shards) squared() {
 		h[pos] -= x
 		c.credit[neg] += x
 		c.credit[pos] -= x
+		c.touch(neg)
+		c.touch(pos)
 	}
-	c.marked = false
 }
 
 // reserve is a grant's reservation on each donor's shard.
 func (c *shards) reserve(donors []donor) {
 	for _, dn := range donors {
 		c.reserved[dn.shard] += dn.allocation
+		c.touch(int(dn.shard))
 	}
 }
 
@@ -303,6 +319,7 @@ func (c *shards) reserve(donors []donor) {
 // its shard, squared if that leaves the shard negative (adjust).
 func (c *shards) raiseFirst(shard, rise int64) {
 	c.reserved[shard] += rise
+	c.touch(int(shard))
 	if c.headroom()[shard] < 0 {
 		c.squared()
 	}
@@ -318,6 +335,7 @@ func (c *shards) settle(changes map[int64]shardChange, releases []freed) (excess
 	for _, shard := range slices.Sorted(maps.Keys(changes)) {
 		c.reserved[shard] += changes[shard].reserved
 		c.usage[shard] += changes[shard].usage
+		c.touch(int(shard))
 		negative = negative || c.headroom()[shard] < 0
 	}
 	if negative {
@@ -339,6 +357,7 @@ func (c *shards) settle(changes map[int64]shardChange, releases []freed) (excess
 // the first.
 func (c *shards) release(shard, amount int64) bool {
 	c.reserved[shard] -= amount
+	c.touch(int(shard))
 	h := c.headroom()
 	if !c.marked && !slices.ContainsFunc(h, func(v int64) bool { return v < 0 }) {
 		return false
@@ -359,6 +378,9 @@ func (c *shards) release(shard, amount int64) bool {
 	w[shard] += left
 	for i := range w {
 		c.credit[i] += w[i] - h[i]
+		if w[i] != h[i] {
+			c.touch(i)
+		}
 	}
 	c.squared()
 	return left > 0 && left < amount && shard != 0
@@ -466,7 +488,8 @@ func newDebtWalkWith(t *testing.T, s *Store, seed int64, credits []int64, rngs .
 	for _, c := range credits {
 		d.credits += c
 	}
-	d.shards = shards{credit: slices.Clone(credits), usage: make([]int64, len(credits)), reserved: make([]int64, len(credits))}
+	d.shards = shards{credit: slices.Clone(credits), usage: make([]int64, len(credits)), reserved: make([]int64, len(credits)),
+		touched: make([]bool, len(credits)), updatedAt: make([]spanner.NullTime, len(credits))}
 	return d
 }
 
@@ -739,7 +762,10 @@ func (d *debtWalk) grantAmount(ctx context.Context, amount int64) bool {
 	}
 	if got.Refused != "" {
 		// Nothing of the workspace's moves, and no row of the lease is
-		// written.
+		// written; the answer carries no grant either.
+		if len(got.Donors) != 0 || !got.Expiry.IsZero() || !got.CommitTS.IsZero() {
+			d.fatalf("a refused grant answered a grant: %+v", got)
+		}
 		d.seen["refused grant"]++
 		d.seen["refused grant: "+string(got.Refused)]++
 		if after := d.rows(whole); after != before {
@@ -1382,6 +1408,65 @@ func samePacks(got, want []Pack) string {
 	return ""
 }
 
+// checkCreditColumns holds every other column of each credit row to what
+// the walk's writes leave: the seeded tier and nothing else set, and the
+// stamp updated_at, which every write of a row sets from Spanner's clock
+// during its statement: a row the replica says the store wrote carries a
+// stamp at or after its last and at or before the walk's last commit, and a
+// row it did not write keeps its stamp.
+func (d *debtWalk) checkCreditColumns() {
+	d.t.Helper()
+	type meta struct {
+		tier     spanner.NullInt64
+		computed spanner.NullTime
+		latched  spanner.NullTime
+		override spanner.NullInt64
+		causes   []spanner.NullString
+		epoch    spanner.NullInt64
+		through  spanner.NullTime
+		source   spanner.NullTime
+		updated  spanner.NullTime
+	}
+	var got []meta
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL: `SELECT trust_tier, trust_computed_at, trust_latched_at, trust_override_tier, billing_pause_causes,
+		             pause_epoch, trust_reconciled_through, source_updated_at, updated_at
+		        FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": d.ws},
+	}).Do(func(r *spanner.Row) error {
+		var m meta
+		if err := r.Columns(&m.tier, &m.computed, &m.latched, &m.override, &m.causes, &m.epoch, &m.through, &m.source,
+			&m.updated); err != nil {
+			return err
+		}
+		got = append(got, m)
+		return nil
+	})
+	if err != nil {
+		d.fatalf("reading the credit rows' columns: %v", err)
+	}
+	for i, m := range got {
+		// pause_epoch defaults to 0 and reads as one; a null array reads as
+		// no causes.
+		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || m.computed.Valid || m.latched.Valid || m.override.Valid ||
+			len(m.causes) != 0 || m.epoch != (spanner.NullInt64{Int64: 0, Valid: true}) || m.through.Valid || m.source.Valid {
+			d.fatalf("shard %d's other columns are %+v, and the walk set none of them", i, m)
+		}
+		prev := d.shards.updatedAt[i]
+		switch {
+		case d.shards.touched[i]:
+			if !m.updated.Valid || (prev.Valid && m.updated.Time.Before(prev.Time)) || m.updated.Time.After(d.stamps.last) {
+				d.fatalf("shard %d was written, and its updated_at is %v, after %v and at or before the walk's last commit %v",
+					i, m.updated, prev, d.stamps.last)
+			}
+		case m.updated != prev:
+			d.fatalf("shard %d was not written, and its updated_at moved from %v to %v", i, prev, m.updated)
+		}
+		d.shards.updatedAt[i] = m.updated
+		d.shards.touched[i] = false
+	}
+}
+
 // check holds the workspace's rows to CreditDebt's claims, after an
 // operation that moved the headroom from before to after.
 func (d *debtWalk) check(before, after []int64) {
@@ -1414,6 +1499,7 @@ func (d *debtWalk) check(before, after []int64) {
 				d.shards.credit[i], d.shards.usage[i], d.shards.reserved[i], d.shards.marked)
 		}
 	}
+	d.checkCreditColumns()
 	// Each shard's usage and reservation are the walk's ledger's, and every
 	// lease's donor rows, a closed lease's too, are its donors.
 	booked, held := make([]int64, len(rows)), make([]int64, len(rows))
