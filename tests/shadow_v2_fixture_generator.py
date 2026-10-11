@@ -86,7 +86,7 @@ def build() -> dict[str, Any]:
             first_seq=ev["receipt_locator"]["first_seq"], last_seq=ev["seq"], previous_page_sha256=None, events=[ev])
         return {**signing, "claims": claims, "certificate": token, "event": ev, "page": page, "record": row,
             "page_key": [e.KINDS[2], DAY + "/" + ev["receipt_locator"]["boot"] + "/" + ev["receipt_locator"]["first_seq"]],
-            "expected_identity": identity, "now": NOW, "expected_partition": "B"}
+            "expected_identity": identity, "now": NOW, "expected_partition": "B", "key": key.__dict__}
 
     proof = signed(event)
     candidate_event = copy.deepcopy(event)
@@ -243,12 +243,14 @@ def build() -> dict[str, Any]:
         assert len(canonical(max_claims)) == target and len(token) == 2048
         files["exclusion_certificate.json"].append({"name": f"maximum-claims-kid-{width}", "claims": max_claims,
             **independent_signature(private, max_key.kid, max_claims), "key": max_key.__dict__, "claim_bytes": target, "certificate_bytes": 2048,
-            "expected_signature": "accept", "expected_receipt": "C", "expected_identity": {k: max_claims[k] for k in e.IDENTITY_FIELDS}, "now": NOW})
+            "expected_signature": "accept", "target": "verify_signature", "expected_gap": None, "expected_identity": {k: max_claims[k] for k in e.IDENTITY_FIELDS}, "now": NOW})
         larger = {**max_claims, "invocation_nonce": max_claims["invocation_nonce"] + "x"}
         larger_material = b64encode(canonical(max_header)) + "." + b64encode(canonical(larger))
         files["exclusion_certificate.json"].append({"name": f"one-byte-over-claims-kid-{width}", "claims": larger,
             "certificate": larger_material + "." + b64encode(private.sign(larger_material.encode())),
             "key": max_key.__dict__, "expected_signature": "reject", "now": NOW,
+            "target": "verify_signature", "expected_gap": "receipt_locator_size",
+            **independent_signature(private, max_key.kid, larger),
             "expected_identity": {k: larger[k] for k in e.IDENTITY_FIELDS}})
     for label, obj, schema_name, limit in (("verified-row", proof["record"], "CERTIFICATE_RECORD", 4096),
                                          ("receipt-page", proof["page"], "PAGE", 65536)):
@@ -257,7 +259,8 @@ def build() -> dict[str, Any]:
             raw = canonical(obj)
             raw += b" " * (limit + extra - len(raw))
             files[filename].append({"name": label + ("-at-limit" if extra == 0 else "-one-byte-over"), "raw": raw.decode(),
-                "schema": schema_name, "expected": "accept" if extra == 0 else "reject", "bytes": limit + extra})
+                "schema": schema_name, "target": schema_name, "expected": "accept" if extra == 0 else "reject", "bytes": limit + extra,
+                "expected_gap": None if extra == 0 else "evidence_size"})
     # Commit transport rejects rather than relying only on Python-generated cases.
     excluded = terminal("settle")
     for label, obj in (("extra-field", {**excluded, "extra": None}),
@@ -416,6 +419,48 @@ def build() -> dict[str, Any]:
     row_case("sample.json", "excluded-admission-yes", obj, "SAMPLE", False)
     obj["admission"]["prediction"] = "no"
     row_case("sample.json", "excluded-admission-diagnostic-only", obj, "SAMPLE", True)
+
+    matrix = files["purpose_rejections.json"][0]
+    matrix.update(target="purpose_matrix", expected="reject", expected_gap="per-case", cases=[])
+    for target in ("ticket", "lookup", "binding", "certificate"):
+        for source in ("ticket", "binding", "certificate"):
+            if source == ("ticket" if target == "lookup" else target):
+                continue
+            token = matrix[source]
+            kid = json.loads(base64.urlsafe_b64decode(token.split(".")[0] + "==="))["kid"]
+            own_key = {**key.__dict__, "kid": kid}
+            if target in ("ticket", "lookup"):
+                own_key.update(purpose="async-settle-ticket", aud="router-settlement")
+            elif target == "binding":
+                own_key.update(purpose="async-settle-shadow", aud="router-shadow")
+            matrix["cases"].append(dict(name=target + "-rejects-" + source, target="foreign_" + target,
+                certificate=token, signing_input=token.rsplit(".", 1)[0], key=own_key,
+                expected_identity=old["claims"] if target == "ticket" else ids,
+                now=old["claims"]["iat"] if target == "ticket" else NOW + 172801 if target == "lookup" else NOW,
+                expected_gap="proof_signature" if target == "binding" else "type"))
+
+    for item in files["exclusion_certificate.json"]:
+        if item.get("expected") == "candidate_receipt_size":
+            item.update(target="issue", seed_hex=old["seed_hex"], fresh=True,
+                        complete_candidates=True, expected_gap="candidate_receipt_size")
+    for field in ("python_usage", "go_usage", "legacy_usage"):
+        for damage in ("prompt-sum", "reasoning"):
+            obj = copy.deepcopy(sample)
+            obj.update(classification="normalization", reason_codes=["malformed_usage"])
+            obj[field]["total_prompt_tokens" if damage == "prompt-sum" else "reasoning_tokens"] += 3
+            row_case("sample.json", field + "-" + damage, obj, "SAMPLE", True)
+    for value in ("us west", "us=west", "us(west)", "é"):
+        row_case("counter.json", "region-" + value, {**counter, "region": value}, "COUNTER", True)
+    for field in ("region", "instance"):
+        for index, value in enumerate(('quoted"', 'back\\slash', 'tab\t', '\x00')):
+            obj = copy.deepcopy(sample)
+            obj["deployment"][field] = value
+            row_case("sample.json", field + "-escaped-" + str(index), obj, "SAMPLE", True)
+    for field in ("authority", "usage_type", "route_type", "service_tier", "billing_shadow_binding"):
+        for index, value in enumerate(('quoted"', 'back\\slash', 'tab\t', 'é') if field != "billing_shadow_binding" else ('quoted"', 'back\\slash', 'tab\t')):
+            obj = copy.deepcopy(compared)
+            (obj if field == "billing_shadow_binding" else obj["observed"])[field] = value
+            files["terminal_compared_full.json"].append({"name": field + "-retained-" + str(index), **wire(obj, "accept")})
 
     return {filename: wrapped(variants=variants) for filename, variants in files.items()}
 

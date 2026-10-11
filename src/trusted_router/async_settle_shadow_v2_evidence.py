@@ -9,7 +9,6 @@ from trusted_router.async_settle_shadow_v2_contract import (
     AUTHORITY,
     CANDIDATE_SET,
     COHORT_EXCLUSIONS,
-    NORMAL_USAGE,
     ORIGIN,
     RAW_USAGE,
     REQUESTED_FACTS,
@@ -23,6 +22,7 @@ from trusted_router.async_settle_shadow_v2_schema import (
     array,
     ascii_text,
     boolean,
+    bounded_string,
     day,
     day_at,
     decode,
@@ -320,7 +320,7 @@ def _fixed_counts(value: Any) -> None:
     require([(v["adapter"], v["route_type"], v["streamed"]) for v in value] == list(FIXED_DIMENSIONS))
 
 
-COUNTER = versioned({"day": day, "boot": identity, "router_revision": revision, "region": name,
+COUNTER = versioned({"day": day, "boot": identity, "router_revision": revision, "region": bounded_string(128),
     **{k: integer for k in COUNTS + CHECKPOINT_FIELDS}, "eligible_demand": nullable(integer),
     "event_seq": integer, "durable_event_hwm": integer, "checkpoint_seq": integer,
     "receipt_count": integer, "receipt_chain_sha256": nullable(digest), "loss_count": integer,
@@ -332,7 +332,7 @@ COUNTER = versioned({"day": day, "boot": identity, "router_revision": revision, 
     **{k: integer for k in "comparison_attempts comparison_dropped samples_inserted duplicate_samples conflicting_samples booking_pending booking_unknown".split()},
     "first_evidence_at_us": nullable(integer), "last_mismatch_at_us": nullable(integer), "first_gap_at_us": nullable(integer),
     "authorize_shadow_hist": array(integer, 9, 9), "evidence_write_hist": array(integer, 9, 9), "admission_observer": OBSERVER,
-    "buckets": array(BUCKET, 144), "publisher": PUBLISHER_OPERATIONS}, 65536, _counter)
+    "buckets": array(BUCKET, 144), "publisher": PUBLISHER_OPERATIONS}, 65536, _counter, retained_strings=True)
 CLOSURE = versioned({"day": day, "boot": identity, "router_revision": revision, "region": name,
     "reason": literal("utc_boundary", "shutdown", "opt_out"), "interval_end_us": integer,
     "final_event_seq": integer, "final_checkpoint_seq": integer, "durable_event_hwm": integer,
@@ -343,6 +343,9 @@ CLOSURE = versioned({"day": day, "boot": identity, "router_revision": revision, 
                       and v["observer_fold_through_us"] >= v["interval_end_us"]))
 SEALED_CLOSURE = versioned({"closure_sha256": digest, "physical_commit_ack_at_us": integer}, 4096)
 
+# Stored diagnostic usage deliberately does not require successful normalization.
+STORED_USAGE = Schema({k: integer for k in "uncached_input_tokens total_prompt_tokens output_tokens cache_read_tokens cache_creation_tokens reasoning_tokens".split()}, 1024)
+
 # Preserve every v1 sample field, including arithmetic and nullable diagnostics.
 SAMPLE_FIELDS: dict[str, Any] = {"authorization_id": identity, "authorization_day": day,
     "observed_at_us": integer, "authorize_at_us": integer, "booking_observed_at_us": nullable(integer),
@@ -350,7 +353,7 @@ SAMPLE_FIELDS: dict[str, Any] = {"authorization_id": identity, "authorization_da
     "route_type": literal("chat.completions", "responses", "other", "unknown"), "streamed": nullable(boolean),
     "model_id": nullable(name), "endpoint_id": nullable(name),
     **{k: nullable(digest) for k in ("snapshot_hash", "payload_hash", "rebuilt_snapshot_hash")},
-    "raw_usage": nullable(RAW_USAGE), **{k: nullable(NORMAL_USAGE) for k in ("python_usage", "go_usage", "legacy_usage")},
+    "raw_usage": nullable(RAW_USAGE), **{k: nullable(STORED_USAGE) for k in ("python_usage", "go_usage", "legacy_usage")},
     **{k: nullable(integer) for k in "frozen_micro python_micro go_micro booked_micro rebuilt_micro legacy_frozen_micro".split()},
     **{k: nullable(signed_integer) for k in "python_minus_go booked_minus_frozen rebuilt_minus_frozen booked_minus_rebuilt".split()},
     "classification": literal("hash", "identity", "normalization", "evaluator_disagreement", "requires_review", "unevaluable", "exact", "explained-by-catalog-change"),
@@ -362,7 +365,7 @@ SAMPLE_FIELDS: dict[str, Any] = {"authorization_id": identity, "authorization_da
         **{k: nullable(integer) for k in "tier pending_micro cap_micro workspace_age_us health_age_us health_p95_us".split()}}, 1024),
     "timing": Schema({**{k: nullable(integer) for k in "authorize_shadow_us handoff_prepare_us router_settle_us booking_confirm_us comparator_us".split()}, "evidence_write_us": literal(None)}, 512),
     "deployment": Schema({"region": ascii_text(128, 1), "instance": ascii_text(128, 1), "router_revision": revision,
-        "go_revision": nullable(revision), "python_evaluator": literal("billing-v1"), "go_evaluator": literal("billing-v1")}, 512),
+        "go_revision": nullable(revision), "python_evaluator": literal("billing-v1"), "go_evaluator": literal("billing-v1")}, 8192, retained_strings=True),
     "provenance": Schema({"binding_verified": boolean, "raw_matches_body": boolean,
         "rebuild_matches_booking_view": boolean, "snapshot_transport": literal("full", "hash_only", "unknown"),
         "s0_reconstruction": literal("not_needed", "verified", "failed", "not_attempted"),
@@ -406,7 +409,7 @@ def _sample(v: Any) -> None:
                     and v["provenance"]["rebuild_matches_booking_view"] and v["booking"]["attempted_kind"] == "settle")
 
 
-SAMPLE = versioned(SAMPLE_FIELDS, 8192, _sample)
+SAMPLE = versioned(SAMPLE_FIELDS, 8192, _sample, retained_strings=True)
 INTERVAL = Schema({"start_us": integer, "end_us": integer}, 128,
     lambda v: require(v["start_us"] <= v["end_us"]))
 FLAG_INTERVAL = Schema({"interval": INTERVAL, "admission": literal(False), "protection": literal(False),

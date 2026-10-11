@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_shadow_v2_schema import (
     POLICY,
     Schema,
@@ -12,23 +13,23 @@ from trusted_router.async_settle_shadow_v2_schema import (
     ascii_text,
     boolean,
     decode,
-    digest,
     identity,
     integer,
     literal,
     name,
-    native_identity,
     nullable,
     require,
     revision,
     sha256,
-    string,
     text,
     versioned,
 )
-from trusted_router.detached_jws import b64decode, canonical
+from trusted_router.async_settle_shadow_wire import KEYS as RETAINED_WIRE_FIELDS
+from trusted_router.async_settle_shadow_wire import parse_header as retained_header
+from trusted_router.async_settle_shadow_wire import snapshot_from_object
+from trusted_router.detached_jws import b64decode, b64encode, canonical
 
-FIXTURE_MANIFEST_SHA256 = "da2681179fd6608f1d481ea7977fdbc7a37fa9cf98562ccf3e95153e33e12988"
+FIXTURE_MANIFEST_SHA256 = "438d18b01f141fa84efb166426fc55fd569ffd2616991ee0c9d3df378cc27990"
 RECEIPT_BYTES = 2048
 CANDIDATE_BYTES = 65536
 CANDIDATES = 128
@@ -182,80 +183,65 @@ SERVER_OBSERVATION = Schema({"authorization_id": identity, "terminal_kind": lite
 EXCLUDED = versioned({"variant": literal("excluded"), "certificate": text(2048, r"[A-Za-z0-9_.-]+"),
                       "attempt": ATTEMPT, "go_revision": revision}, EXCLUDED_BYTES)
 RAW_USAGE = Schema({k: integer for k in "input_tokens output_tokens cache_read_tokens cache_creation_tokens reasoning_tokens".split()}, 1024)
-NORMAL_USAGE = Schema({k: integer for k in "uncached_input_tokens total_prompt_tokens output_tokens cache_read_tokens cache_creation_tokens reasoning_tokens".split()}, 1024,
-                      lambda v: require(v["total_prompt_tokens"] == v["uncached_input_tokens"] + v["cache_read_tokens"] + v["cache_creation_tokens"]
-                                        and v["reasoning_tokens"] <= v["output_tokens"]))
-TERMINAL = Schema({"v": literal(1), **{k: native_identity for k in ("authorization_id", "workspace_id", "key_id")}, "invocation_nonce": identity,
-                   "generation_id": name, "billing_authority": literal("local"), "journal_region": name,
-                   "epoch": integer, "selected_endpoint": name, "snapshot_version": literal(1),
-                   "snapshot_hash": digest, "usage": NORMAL_USAGE, "charge_micro": integer,
-                   "terminal_kind": literal("settle", "refund"),
-                   "route_type": literal("chat.completions", "responses"), "streamed": boolean}, 4096)
-RATES = Schema({k: integer for k in "input_micro_per_million cached_input_micro_per_million cache_creation_micro_per_million output_micro_per_million".split()}, 1024)
-TIER = Schema({"max_prompt_tokens": nullable(integer), "rates": RATES}, 1200)
-
-
-def _priced_candidate(v: Any) -> None:
-    require(v["model_id"].startswith(v["provider"] + "/"))
-    require(v["prompt_convention"] == ("excludes_cache" if v["provider"] == "anthropic" else "includes_cache"))
-    previous = -1
-    for i, tier in enumerate(v["tiers"]):
-        maximum = tier["max_prompt_tokens"]
-        if maximum is None:
-            require(i == len(v["tiers"]) - 1)
+def _retained_schema(model: type[billing.Frozen], limit: int, validator: Any = None) -> Schema:
+    # Exact keys come from the retained DTO; its validator owns the value domain.
+    def validate(value: Any) -> None:
+        if validator is None:
+            model.model_validate(value)
         else:
-            require(maximum > previous)
-            previous = maximum
+            validator(value)
+    return Schema(dict.fromkeys(model.model_fields, lambda value: None), limit, validate)
 
 
-PRICED_CANDIDATE = Schema({"endpoint_id": name, "provider": literal("openai", "anthropic"),
-    "model_id": name, "usage_type": literal("Credits"), "price_history_version": literal(1),
-    "rates": RATES, "tiers": array(TIER, 64), "request_fee_micro": literal(0),
-    "rounding": literal("half_up_per_million"), "prompt_convention": literal("includes_cache", "excludes_cache"),
-    "output_convention": literal("includes_reasoning")}, LOCAL_BYTES, _priced_candidate)
-SNAPSHOT = Schema({"v": literal(1), "kind": literal("credits_endpoint"),
-    "candidates": array(PRICED_CANDIDATE, 64, 1), "minimum_charge": literal("one_micro_if_positive"),
-    "charge_cap": literal(None), "tier_basis": literal("total_prompt"),
-    "tier_boundary": literal("inclusive"), "tier_fallback": literal("last_tier")}, INLINE_BYTES,
-    lambda v: require([c["endpoint_id"] for c in v["candidates"]] == sorted({c["endpoint_id"] for c in v["candidates"]})))
-# V1 observed eligibility permits omissions. Preserve its frozen defaults and keys.
-OBSERVED_FIELDS = {"typed": boolean, "usage_type": string, "authority": string, "route_type": string,
-    "streamed": boolean, "service_tier": nullable(string),
-    **{k: integer for k in ("app_markup", "custom_markup", "receipt_fee", "request_fee")},
-    **{k: boolean for k in FEATURES + tuple(k for k in DEPENDENT if k != "request_fee") + ("partner",)}}
+def _retained_terminal(value: Any) -> None:
+    # Use the wire validator's nonzero-refund diagnostic path as well as its
+    # native ID bounds. A billing DTO alone would reject that retained evidence.
+    retained_header((b64encode(canonical({"v": 1, "billing_shadow_binding": "",
+        "raw_usage": {"input_tokens": 0, "output_tokens": 0}, "observed": {},
+        "terminal": value, "payload_hash": "0" * 64, "go_error": None,
+        "go_evaluator": "billing-v1", "go_revision": "0" * 40, "handoff_prepare_us": 0})),))
+
+
+def _retained_candidate(value: Any) -> None:
+    require(type(value.get("tiers")) is list)
+    billing.Candidate.model_validate({**value, "tiers": tuple(value["tiers"])})
+    require(len(value["endpoint_id"]) <= 128 and len(value["model_id"]) <= 128)
+
+
+NORMAL_USAGE = _retained_schema(billing.NormalizedUsage, 1024)
+TERMINAL = _retained_schema(billing.TerminalEnvelope, 4096, _retained_terminal)
+RATES = _retained_schema(billing.Rates, 1024)
+TIER = _retained_schema(billing.Tier, 1200)
+PRICED_CANDIDATE = _retained_schema(billing.Candidate, LOCAL_BYTES, _retained_candidate)
+SNAPSHOT = _retained_schema(billing.BillingSnapshot, INLINE_BYTES, snapshot_from_object)
 
 
 def observed(value: Any) -> None:
-    require(type(value) is dict and set(value) <= set(OBSERVED_FIELDS))
-    for k, v in value.items():
-        OBSERVED_FIELDS[k](v)
+    billing.Eligibility.model_validate(value)
 
 
 def wire_raw_usage(value: Any) -> None:
-    # The v1 DTO permits omitted cache/reasoning counters. Validate supplied
-    # fields without inventing defaults in this dormant transport wrapper.
-    require(type(value) is dict and {"input_tokens", "output_tokens"} <= set(value) <= set(RAW_USAGE.fields))
-    for count in value.values():
-        integer(count)
+    billing.RawUsage.model_validate(value)
 
 
 def _compared(v: Any) -> None:
-    if v["go_error"] is not None:
-        require(v["terminal"] is None and v["payload_hash"] is None)
-    else:
-        require(v["terminal"] is not None and v["raw_usage"] is not None and v["payload_hash"] is not None)
+    # This module is pure transitively. Keep the retained DTO/refund special
+    # case in its original validator instead of maintaining a second parser.
+    retained = {k: value for k, value in v.items() if k not in ("variant", "policy_version")}
+    retained["v"] = 1
+    retained_header((b64encode(canonical(retained)),))
 
 
-COMPARED_FIELDS = {"variant": literal("compared"), "billing_shadow_binding": ascii_text(2048),
-    "raw_usage": nullable(wire_raw_usage), "observed": observed, "terminal": nullable(TERMINAL),
-    "payload_hash": nullable(digest), "go_error": nullable(literal("usage_missing", "usage_estimated", "unsupported_observed", "malformed_usage", "arithmetic_overflow", "evaluator_failed")),
-    "go_evaluator": literal("billing-v1"), "go_revision": revision, "handoff_prepare_us": integer}
-COMPARED_FULL = versioned({**COMPARED_FIELDS, "billing_snapshot": SNAPSHOT}, WIRE_BYTES, _compared)
-COMPARED_HASH_ONLY = versioned(COMPARED_FIELDS, WIRE_BYTES, _compared)
+# Only the new discriminator is typed here. The pure retained parser owns all
+# retained fields and cross-field rules, including optional snapshot semantics.
+COMPARED_FIELDS = {"variant": literal("compared"),
+                   **dict.fromkeys(RETAINED_WIRE_FIELDS - {"v", "billing_snapshot"}, lambda value: None)}
+COMPARED_FULL = versioned({**COMPARED_FIELDS, "billing_snapshot": SNAPSHOT}, WIRE_BYTES, _compared, retained_strings=True)
+COMPARED_HASH_ONLY = versioned(COMPARED_FIELDS, WIRE_BYTES, _compared, retained_strings=True)
 
 
 def parse_terminal(raw: bytes) -> dict[str, Any]:
-    value = decode(raw, WIRE_BYTES)
+    value = decode(raw, WIRE_BYTES, retained_strings=True)
     require(type(value) is dict)
     if value.get("variant") == "excluded":
         return EXCLUDED.parse(raw)
@@ -279,4 +265,4 @@ AUTHORIZE_EXCLUDED = Schema({"billing_shadow_policy": literal(POLICY),
     "billing_shadow_exclusion": text(2048, r"[A-Za-z0-9_.-]+")}, 4096)
 AUTHORIZE_COMPARED = Schema({"billing_shadow_policy": literal(POLICY),
     "billing_shadow_binding": ascii_text(2048),
-    "billing_snapshot": Schema(SNAPSHOT.fields, LOCAL_BYTES, SNAPSHOT.invariant)}, LOCAL_BYTES)
+    "billing_snapshot": Schema(SNAPSHOT.fields, LOCAL_BYTES, SNAPSHOT.invariant)}, LOCAL_BYTES, retained_strings=True)

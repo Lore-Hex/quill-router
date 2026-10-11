@@ -493,7 +493,7 @@ def test_committed_maximum_claims_and_one_byte_over(variant: dict[str, Any]) -> 
         with pytest.raises(ValueError, match="receipt_locator_size"):
             cert.verify_signature(variant["certificate"] + "A", keys, variant["expected_identity"], variant["now"])
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="^" + variant["expected_gap"] + "$"):
             cert.verify_signature(variant["certificate"], keys, variant["expected_identity"], variant["now"])
 
 
@@ -678,3 +678,68 @@ def test_required_shared_regression_vectors_are_present() -> None:
         if v["target"] == "verify_certificate":
             assert {"now", "key", "expected_identity", "certificate", "page_key", "page", "attempt", "server_attempt", "booking"} <= set(v)
             assert set(v["expected_identity"]) == set(e.IDENTITY_FIELDS)
+
+
+def run_isolated_vector(v: dict[str, Any]) -> None:
+    """Only the supplied JSON object is available: no fixture/sibling lookup."""
+    assert {"target", "expected_gap"} <= set(v)
+    target = v["target"]
+    gap = v["expected_gap"]
+    if target == "purpose_matrix":
+        assert gap == "per-case" and len(v["cases"]) == 8
+        for case in v["cases"]:
+            run_isolated_vector(case)
+        return
+    if target == "issue":
+        local = cert.ExclusionSigner(Ed25519PrivateKey.from_private_bytes(bytes.fromhex(v["seed_hex"])), TrustedKey(**v["key"]))
+        assert v["signing_input"] + "." + v["signature"] == v["certificate"]
+        result = local.issue(v["claims"], v["event"], v["now"], fresh=v["fresh"], complete_candidates=v["complete_candidates"])
+        assert result.certificate is None and result.reason == gap
+        return
+    if target == "verify_certificate":
+        check_verification_vector(v)
+        return
+    def run() -> Any:
+        if target.startswith("foreign_"):
+            keys = [TrustedKey(**v["key"])]
+            token = v["certificate"]
+            assert token.rsplit(".", 1)[0] == v["signing_input"]
+            if target == "foreign_ticket":
+                return ticket.verify_ticket(token, keys, v["expected_identity"], v["now"])
+            if target == "foreign_lookup":
+                return ticket.verify_lookup_ticket(token, keys, v["now"])
+            if target == "foreign_binding":
+                return binding.verify_binding(token, keys, v["now"])
+            return cert.verify_signature(token, keys, v["expected_identity"], v["now"])
+        if target == "verify_signature":
+            assert v["certificate"].rsplit(".", 1)[0] == v["signing_input"]
+            return cert.verify_signature(v["certificate"], [TrustedKey(**v["key"])], v["expected_identity"], v["now"])
+        if target == "parse_terminal":
+            return c.parse_terminal(v["raw"].encode())
+        if target == "parse_header":
+            return c.parse_header(tuple(v["headers"]))
+        if target == "validate_row":
+            return e.validate_row(v["kind"], v["row_key"], canonical(v["object"]))
+        schema = getattr(e, target)
+        return schema.parse(v["raw"].encode() if "raw" in v else canonical(v["object"]))
+    with pytest.raises(ValueError) as caught:
+        run()
+    assert str(caught.value) == gap
+
+
+ISOLATED_NEGATIVES = [v for path in sorted(FIXTURES.glob("*.json")) if path.name != "manifest.json"
+                      for v in json.loads(path.read_bytes())["variants"]
+                      if v.get("expected") in ("reject", "candidate_receipt_size") or v.get("expected_signature") == "reject"
+                      or v.get("expected_gap") is not None]
+
+
+@pytest.mark.parametrize("vector", ISOLATED_NEGATIVES, ids=lambda v: v["name"])
+def test_isolated_negative_vector(vector: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "one-vector.json"
+    path.write_bytes(canonical(vector))
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("isolated runner consulted sibling fixtures")
+    monkeypatch.setattr(__import__(__name__, fromlist=["fixture"]), "fixture", forbidden)
+    monkeypatch.setattr(__import__(__name__, fromlist=["proof"]), "proof", forbidden)
+    monkeypatch.setattr(__import__(__name__, fromlist=["signer"]), "signer", forbidden)
+    run_isolated_vector(json.loads(path.read_bytes()))

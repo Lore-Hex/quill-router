@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from trusted_router.async_settle_shadow_wire import bounded_json
 from trusted_router.detached_jws import canonical
 
 POLICY = "shadow-v2"
@@ -56,6 +57,12 @@ identity = text(64, r"[A-Za-z0-9_-]+")
 def ascii_text(limit: int, minimum: int = 0) -> Check:
     def check(value: Any) -> None:
         require(type(value) is str and value.isascii() and minimum <= len(value) <= limit)
+    return check
+
+
+def bounded_string(limit: int, minimum: int = 1) -> Check:
+    def check(value: Any) -> None:
+        require(type(value) is str and minimum <= len(value) <= limit)
     return check
 
 
@@ -130,14 +137,26 @@ def _bad_number(lexeme: str) -> Any:
     raise ValueError("integer")
 
 
-def decode(raw: bytes, limit: int) -> Any:
-    """ASCII, no escaped aliases, bounded depth, duplicate-free canonical lexemes.
+def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
+    """Strict ASCII by default; retained mode admits canonical scalar strings.
 
     Whitespace is allowed for transport; byte limits charge those actual bytes.
     Signed objects separately require canonical bytes. Fixture final LF is outside
     the object and must be removed explicitly by fixture readers.
     """
     require(type(raw) is bytes and len(raw) <= limit, "evidence_size")
+    if retained_strings:
+        # V1's pure decoder preserves scalar Unicode/escaped ASCII values,
+        # bounds depth and integers, and rejects duplicate keys and surrogates.
+        try:
+            value = bounded_json(raw, limit, signed=True)
+            # Only canonical string spellings: retained escapes are representable,
+            # but escaped identity/key aliases remain forbidden, even nested.
+            for token in re.finditer(rb'"(?:[^"\\]|\\.)*"', raw):
+                require(token.group() == canonical(json.loads(token.group())), "json_encoding")
+            return value
+        except ValueError as exc:
+            raise ValueError("duplicate_key" if str(exc) == "json_duplicate" else str(exc)) from exc
     require(all(32 <= c <= 126 and c != 92 for c in raw), "json_encoding")
     depth = 0
     quoted = False
@@ -162,6 +181,7 @@ class Schema:
     fields: Mapping[str, Check]
     limit: int
     invariant: Check | None = None
+    retained_strings: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
@@ -169,14 +189,14 @@ class Schema:
     def __call__(self, value: Any) -> None:
         require(type(value) is dict and set(value) == set(self.fields))
         raw = canonical(value)
-        decode(raw, self.limit)
+        decode(raw, self.limit, retained_strings=self.retained_strings)
         for field, check in self.fields.items():
             check(value[field])
         if self.invariant is not None:
             self.invariant(value)
 
     def parse(self, raw: bytes) -> dict[str, Any]:
-        value = decode(raw, self.limit)
+        value = decode(raw, self.limit, retained_strings=self.retained_strings)
         self(value)
         assert isinstance(value, dict)
         return value
@@ -186,8 +206,8 @@ class Schema:
         return canonical(value)
 
 
-def versioned(fields: Mapping[str, Check], limit: int, invariant: Check | None = None) -> Schema:
-    return Schema({"v": literal(2), "policy_version": literal(POLICY), **fields}, limit, invariant)
+def versioned(fields: Mapping[str, Check], limit: int, invariant: Check | None = None, *, retained_strings: bool = False) -> Schema:
+    return Schema({"v": literal(2), "policy_version": literal(POLICY), **fields}, limit, invariant, retained_strings)
 
 
 def sha256(value: Any) -> str:
