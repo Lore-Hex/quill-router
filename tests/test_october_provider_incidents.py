@@ -8,6 +8,55 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
+
+def test_perplexity_billing_hold_survives_fresh_catalog_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert PREPAID_PROVIDER_HOLD_REASONS["perplexity"] == "billing-contract-unverified"
+    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
+    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
+    endpoints = {
+        provider: ModelEndpoint(
+            id=provider, model_id="perplexity/sonar", provider=provider,
+            usage_type="Credits", upstream_id="sonar",
+        )
+        for provider in ("perplexity", "other-provider")
+    }
+    assert catalog_ingest._filter_unserved_provider_endpoints(endpoints) == {
+        "other-provider": endpoints["other-provider"],
+    }
+
+
+def test_perplexity_stays_visible_without_managed_billing_routes() -> None:
+    from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS, provider_to_openrouter_shape
+
+    assert "perplexity" in PROVIDERS
+    assert not any(
+        endpoint.provider == "perplexity" and endpoint.usage_type == "Credits"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
+    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "blocked"
+
+
+def test_held_perplexity_tariff_is_available_only_for_settlement() -> None:
+    from trusted_router.catalog import endpoint_for_id, endpoints_for_model
+    from trusted_router.catalog_registry import HELD_PREPAID_SETTLEMENT_ENDPOINTS
+    from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+
+    identity = "perplexity/sonar@perplexity/prepaid"
+    held = HELD_PREPAID_SETTLEMENT_ENDPOINTS[identity]
+    assert held.request_price_microdollars > 0
+    assert _endpoint_for_id_compat(identity) == held
+    assert endpoint_for_id(identity) is None
+    assert held not in endpoints_for_model(held.model_id)
+    assert all(
+        endpoint.usage_type == "Credits"
+        and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
+        for endpoint in HELD_PREPAID_SETTLEMENT_ENDPOINTS.values()
+    )
 
 
 @pytest.mark.parametrize("provider", ["crusoe", "sambanova"])

@@ -348,6 +348,16 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
         # used by the hourly adapter. The dashboard documentation confirms
         # that model-specific prices are published in the Models UI/API:
         # https://io.net/docs/guides/intelligence/exploring-ai-models
+        # Re-read 2026-10-11 from the authenticated /api/v1/models catalog:
+        # Pro 0813 cache reads are $0.462/M, up from $0.14/M. This approval
+        # is confined to that exact transition; other price jumps still fail.
+        (
+            "deepseek/deepseek-v4-pro-0813 "
+            "[io-net:io-net:deepseek-ai/DeepSeek-V4-Pro-0813] cached-input",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.000000462"),
+        ),
         (
             "mistralai/mistral-nemo-instruct-2407 "
             "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]",

@@ -1163,6 +1163,20 @@ def test_verified_io_net_v41_cached_price_does_not_approve_other_routes() -> Non
     )[0]
 
 
+def test_verified_io_net_pro_0813_cache_transition_is_exact() -> None:
+    route = "deepseek/deepseek-v4-pro-0813 [io-net:io-net:deepseek-ai/DeepSeek-V4-Pro-0813] cached-input"
+    before = {route: {"prompt": "0.00000014", "completion": "0"}}
+    after = {route: {"prompt": "0.000000462", "completion": "0"}}
+    assert check(before, after)[0] == []
+    after[route]["prompt"] = "0.000000463"
+    assert check(before, after)[0]
+    other = route.replace("io-net:io-net", "other:other")
+    assert check(
+        {other: {"prompt": "0.00000014", "completion": "0"}},
+        {other: {"prompt": "0.000000462", "completion": "0"}},
+    )[0]
+
+
 @pytest.mark.parametrize("mutate", [False, True])
 def test_verified_nextbit_transition_does_not_allow_further_increases(mutate: bool) -> None:
     route = "deepseek/deepseek-v4-flash-0731 [nextbit:nextbit:deepseek:v4-flash-0731]"

@@ -22,7 +22,13 @@ _NATIVE_HOSTED_MODEL_EXCEPTIONS = frozenset({
 # paid-path canary with the replacement key. Holds never affect a customer's
 # own BYOK credentials. Crusoe (held October 3) was cleared on October 5 after
 # its replacement key passed paid-path canaries.
-PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {}
+PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
+    # Sonar is now reformulated as Agent API calls. Its reported input/search
+    # costs no longer reconcile with the old fixed-fee catalog contract.
+    # Keep managed billing dark until a reviewed adapter accounts for them.
+    # https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview
+    "perplexity": "billing-contract-unverified",
+}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
