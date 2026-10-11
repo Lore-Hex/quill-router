@@ -36,8 +36,14 @@ class FakeResponse:
     ("Qwen3.8-27B", 42, 255, 9, 8_500_000, 85_000),
     ("DeepSeek-V4-Flash-0423", 14, 28, 3, 2_800_000, 28_000),
     ("DeepSeek-V4.1-Flash", 30, 120, 1, 0, 0),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, None, 10_000),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, "not-a-number", 10_000),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, False, 10_000),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, {}, 10_000),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, "NaN", 10_000),
+    ("DeepSeek-V4.1-Flash", 30, 120, 1, "Infinity", 10_000),
 ])
-def test_wafer_cache_microcents_override_rounded_cents(
+def test_wafer_cache_microcents_use_precision_or_cents_fallback(
     monkeypatch, httpx_mock, native, input_cents, output_cents, rounded, microcents, cached,
 ):
     monkeypatch.setattr(wafer, "EXPECTED_MODELS", [])

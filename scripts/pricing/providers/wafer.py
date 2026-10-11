@@ -78,7 +78,7 @@ def _cents_to_micro_per_m(value: object, *, microcents: bool = False) -> int | N
         parsed = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
-    if parsed < 0:
+    if not parsed.is_finite() or parsed < 0:
         return None
     # One cent is 10,000 microdollars or 1,000,000 microcents. Round only
     # after converting the provider's most precise published unit.
@@ -221,11 +221,10 @@ def fetch() -> ProviderPricingResult:
         completion = _cents_to_micro_per_m(pricing.get("output_cents_per_million"))
         if prompt is None or completion is None:
             continue
-        if "cache_read_microcents_per_million" in pricing:
-            cache_read = _cents_to_micro_per_m(
-                pricing["cache_read_microcents_per_million"], microcents=True
-            )
-        else:
+        cache_read = _cents_to_micro_per_m(
+            pricing.get("cache_read_microcents_per_million"), microcents=True
+        )
+        if cache_read is None:
             cache_read = _cents_to_micro_per_m(pricing.get("cache_read_cents_per_million"))
         price = ModelPrice(
             prompt_micro_per_m=prompt,

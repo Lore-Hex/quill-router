@@ -12,7 +12,14 @@ from urllib.parse import quote, urlencode
 import httpx
 from bs4 import BeautifulSoup
 
-from scripts.pricing.base import ModelPrice, emit_workflow_warning, fetch_html, fetch_json
+from scripts.pricing.base import (
+    ModelPrice,
+    ProviderPricingResult,
+    emit_workflow_warning,
+    fetch_html,
+    fetch_json,
+    read_stale_provider_manifest,
+)
 from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m, openai_model_price
 from scripts.pricing.providers._direct_openai import (
     DirectOpenAIProvider,
@@ -53,6 +60,7 @@ DISCOVERY_NATIVE_OWNERS = frozenset(
     }
 )
 DISCOVERY_PAGE_SIZE = 1000
+_PRESERVED_NATIVE_IDS: set[str] = set()
 
 
 def _is_discovery_candidate(row: dict[str, Any]) -> bool:
@@ -85,6 +93,7 @@ def _committed_native_models() -> list[str]:
 
 
 def _load_rows(api_key: str) -> list[dict[str, Any]]:
+    _PRESERVED_NATIVE_IDS.clear()
     query = urlencode(
         {
             "available_on_current_plan": "true",
@@ -119,11 +128,19 @@ def _load_rows(api_key: str) -> list[dict[str, Any]]:
             continue
         if not isinstance(payload, dict):
             raise RuntimeError(f"featherless: invalid model detail for {native_id}")
-        if payload.get("available_on_current_plan") is not True:
+        available = payload.get("available_on_current_plan")
+        if available is not True:
             if native_id in CURATED_NATIVE_MODELS:
                 raise RuntimeError(f"featherless: {native_id} is not available on current plan")
+            if available is not False:
+                _PRESERVED_NATIVE_IDS.add(native_id)
+                emit_workflow_warning(
+                    f"featherless: malformed availability for {native_id}; "
+                    "keeping committed prices and routability for this run"
+                )
             # A fresh detail supersedes a stale listing. The shared writer
-            # records a first miss and tombstones only on a repeated miss.
+            # counts only explicit false/404 as a miss; fetch restores rows
+            # whose availability is unknown before the writer sees them.
             rows_by_id.pop(native_id, None)
             continue
         rows_by_id[native_id] = payload
@@ -273,5 +290,22 @@ CATALOG = DirectOpenAIProvider(
     manifest_path=MANIFEST_PATH,
 )
 UPSTREAM_ID_MAP = CATALOG.upstream_id_map
-fetch = CATALOG.fetch
 write_provider_manifest = CATALOG.write_provider_manifest
+
+
+def fetch() -> ProviderPricingResult:
+    result = CATALOG.fetch()
+    if _PRESERVED_NATIVE_IDS:
+        committed, error = read_stale_provider_manifest(
+            slug=SLUG, manifest_path=CATALOG.manifest_path, include_in_price_index=True,
+        )
+        if committed is None:
+            raise RuntimeError(f"featherless: cannot preserve committed prices: {error}")
+        rows = json.loads(CATALOG.manifest_path.read_text(encoding="utf-8"))["models"]
+        for row in rows:
+            if row.get("upstream_id") in _PRESERVED_NATIVE_IDS:
+                model_id = row["id"]
+                result.prices[model_id] = committed.prices[model_id]
+                CATALOG.discovered_rows[model_id] = dict(row)
+                CATALOG.upstream_id_map[model_id] = row["upstream_id"]
+    return result

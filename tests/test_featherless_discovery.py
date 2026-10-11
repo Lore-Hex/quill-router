@@ -137,3 +137,54 @@ def test_malformed_committed_detail_holds_provider(catalog):
     details[AGED_OUT_NATIVE] = []
     with pytest.raises(RuntimeError, match="invalid model detail"):
         featherless.fetch()
+
+
+@pytest.mark.parametrize("availability", [{}, *[
+    {"available_on_current_plan": value} for value in (None, 0, 1, "false", "true", [])
+]], ids=["missing", "null", "zero", "one", "false-string", "true-string", "list"])
+@pytest.mark.parametrize("already_missing", [False, True])
+def test_malformed_availability_preserves_committed_row(
+    catalog, capsys, availability, already_missing,
+):
+    details, listing, _, manifest = catalog
+    committed = json.loads(manifest.read_text())
+    old = next(row for row in committed["models"] if row["id"] == AGED_OUT_MODEL)
+    if not already_missing:
+        old.pop("missing_since", None)
+    old["cached_input_token_price_per_m"] = 17_000
+    manifest.write_text(json.dumps(committed))
+    expected = {key: value for key, value in old.items() if key != "missing_since"}
+
+    detail = details[AGED_OUT_NATIVE]
+    detail["pricing"] = {"prompt": "0.0000009", "completion": "0.000003"}
+    detail["context_length"] = 65_536
+    listing.append(deepcopy(detail))
+    detail.pop("available_on_current_plan")
+    detail.update(availability)
+
+    result = featherless.fetch()
+    price = result.prices[AGED_OUT_MODEL]
+    assert price.prompt_micro_per_m == old["input_token_price_per_m"]
+    assert price.completion_micro_per_m == old["output_token_price_per_m"]
+    assert price.tiers[0].prompt_cached_micro_per_m == 17_000
+    featherless.write_provider_manifest(result)
+    refreshed = next(
+        row for row in json.loads(manifest.read_text())["models"] if row["id"] == AGED_OUT_MODEL
+    )
+    assert refreshed == expected
+    assert "missing_since" not in refreshed
+    assert capsys.readouterr().err.count("malformed availability") == 1
+
+    # The fallback applies only to this run; a later valid detail takes effect.
+    detail["available_on_current_plan"] = True
+    recovered = featherless.fetch()
+    assert recovered.prices[AGED_OUT_MODEL].prompt_micro_per_m == 900_000
+    assert recovered.prices[AGED_OUT_MODEL].completion_micro_per_m == 3_000_000
+    assert recovered.prices[AGED_OUT_MODEL].tiers[0].prompt_cached_micro_per_m is None
+
+    # The same malformed availability still fails closed for required models.
+    curated = details[featherless.CURATED_NATIVE_MODELS[0]]
+    curated.pop("available_on_current_plan")
+    curated.update(availability)
+    with pytest.raises(RuntimeError, match="not available on current plan"):
+        featherless.fetch()
