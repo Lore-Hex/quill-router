@@ -344,12 +344,12 @@ def test_real_session_transport_reset_discards_private_content(sdk_database, cap
         assert record.stack_info is None
 
 
-def test_shadow_read_deadline_exceeded_does_not_rollback(sdk_database, caplog):
+def test_shadow_read_deadline_exceeded_releases_earlier_read_locks(sdk_database, caplog):
     db, clock, sleeps = sdk_database
     error = DeadlineExceeded('private read failure')
     def callback(tx):
         read_once(tx)
-        # Establish an id first: an incorrect rollback would now issue an RPC.
+        # The earlier successful read established a transaction and read locks.
         db.read_errors = [error]
         read_once(tx)
 
@@ -359,10 +359,73 @@ def test_shadow_read_deadline_exceeded_does_not_rollback(sdk_database, caplog):
     assert db.calls == [
         ('read', min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS)),
         ('read', pytest.approx(min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-.01))),
+        ('rollback', pytest.approx(WRITE_BUDGET_SECONDS-.02)),
     ]
     assert sleeps == []
     assert 'stage=callback reason=deadline_exceeded' in caplog.text
     assert 'private' not in caplog.text
+
+
+@pytest.mark.parametrize('error_type', [DeadlineExceeded, InternalServerError])
+@pytest.mark.parametrize('rollback_failure', [False, True])
+def test_shadow_callback_api_error_releases_locks_without_masking_original(
+        sdk_database, error_type, rollback_failure):
+    db, clock, sleeps = sdk_database
+    error = error_type('private original callback error')
+    if rollback_failure:
+        db.rollback_errors = [InternalServerError('RST_STREAM private rollback error')]
+
+    def callback(tx):
+        read_once(tx)
+        raise error
+
+    with pytest.raises(error_type) as caught:
+        EvidenceStore(db).transaction(callback, clock.monotonic()+WRITE_BUDGET_SECONDS)
+    assert caught.value is error
+    assert [name for name, _ in db.calls] == ['read', 'rollback']
+    assert sleeps == []
+    assert io._SPANNER_RPC_DEADLINE.get() is None
+
+
+def test_shadow_callback_exhausted_budget_gets_only_bounded_cleanup(sdk_database):
+    db, clock, sleeps = sdk_database
+    started = clock.monotonic()
+    error = DeadlineExceeded('private callback deadline')
+
+    def callback(tx):
+        read_once(tx)
+        clock.now = started + WRITE_BUDGET_SECONDS
+        raise error
+
+    with pytest.raises(DeadlineExceeded) as caught:
+        EvidenceStore(db).transaction(callback, started+WRITE_BUDGET_SECONDS)
+    assert caught.value is error
+    assert [name for name, _ in db.calls] == ['read', 'rollback']
+    assert db.calls[-1][1] == pytest.approx(.05)
+    assert clock.monotonic()-started == pytest.approx(WRITE_BUDGET_SECONDS+.05)
+    assert sleeps == []
+
+
+def test_shadow_uncertain_commit_is_never_rolled_back(sdk_database):
+    db, clock, sleeps = sdk_database
+    error = DeadlineExceeded('private uncertain commit')
+    db.errors = [error]
+    with pytest.raises(DeadlineExceeded) as caught:
+        EvidenceStore(db).transaction(read_once, clock.monotonic()+WRITE_BUDGET_SECONDS)
+    assert caught.value is error
+    assert [name for name, _ in db.calls] == ['read', 'commit']
+    assert sleeps == []
+
+
+def test_shadow_failed_first_read_does_not_invent_a_transaction_to_rollback(sdk_database):
+    db, clock, sleeps = sdk_database
+    error = DeadlineExceeded('private first read')
+    db.read_errors = [error]
+    with pytest.raises(DeadlineExceeded) as caught:
+        EvidenceStore(db).transaction(read_once, clock.monotonic()+WRITE_BUDGET_SECONDS)
+    assert caught.value is error
+    assert [name for name, _ in db.calls] == ['read']
+    assert sleeps == []
 
 
 def test_shadow_aborted_reentry_never_repeats_callback_or_commit(sdk_database, caplog):

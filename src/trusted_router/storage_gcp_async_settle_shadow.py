@@ -26,7 +26,11 @@ from trusted_router.async_settle_shadow_evidence import (
     validate_sample,
 )
 from trusted_router.detached_jws import canonical
-from trusted_router.storage_gcp_io import SpannerTransportReset, spanner_rpc_deadline
+from trusted_router.storage_gcp_io import (
+    SpannerTransportReset,
+    _rollback_on_api_error,
+    spanner_rpc_deadline,
+)
 
 FINALIZATION_SQL = ("SELECT settled, finalization_outcome, finalized_cost_microdollars "
                     "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id")
@@ -193,7 +197,12 @@ class EvidenceStore:
             with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
                 # Tagged so lock statistics attribute the shadow's transactions
                 # (the 2026-10-11 lock samples showed them with no tag).
-                result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
+                # Session skips rollback for callback GoogleAPICallError. A
+                # failed read must release earlier read locks, not leave them
+                # blocking the next flush until server-side idle expiration.
+                # Only wrap the callback: an uncertain commit is not rolled back.
+                result = self.database.run_in_transaction(_rollback_on_api_error(once),
+                    timeout_secs=rpc_deadline-time.monotonic(),
                     commit_request_options={"priority": "PRIORITY_LOW"},
                     transaction_tag="tr_shadow_evidence")
                 if time.monotonic() >= rpc_deadline:
