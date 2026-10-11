@@ -45,10 +45,10 @@ them and includes supported formats, voices, and limits.
 | `google/gemini-3.8-flash-lite-tts` | 30 voices, including `Kore` | PCM, WAV | 1 | 8,192 characters and tokens |
 | `microsoft/mai-voice-2.1` | `en-US-Harper`, `en-US-Grant` | PCM, MP3 | 1 | 5,000 characters |
 | `microsoft/mai-voice-2.1-flash` | `en-US-Harper`, `en-US-Grant` | PCM, MP3 | 1 | 5,000 characters |
-| `elevenlabs/eleven-v3` | `JBFqnCBsd6RMkjVDRZzb` (George) | PCM, MP3 | 1 | 5,000 characters |
-| `elevenlabs/eleven-multilingual-v2` | `JBFqnCBsd6RMkjVDRZzb` (George) | PCM, MP3 | 1 | 10,000 characters |
-| `elevenlabs/eleven-flash-v2.5` | `JBFqnCBsd6RMkjVDRZzb` (George) | PCM, MP3 | 1 | 40,000 characters |
-| `elevenlabs/eleven-turbo-v2.5` | `JBFqnCBsd6RMkjVDRZzb` (George) | PCM, MP3 | 1 | 40,000 characters |
+| `elevenlabs/eleven-v3` | [Eight shared voices](#elevenlabs-voices) | PCM, MP3 | 1 | 5,000 characters |
+| `elevenlabs/eleven-multilingual-v2` | [Eight shared voices](#elevenlabs-voices) | PCM, MP3 | 1 | 10,000 characters |
+| `elevenlabs/eleven-flash-v2.5` | [Eight shared voices](#elevenlabs-voices) | PCM, MP3 | 1 | 40,000 characters |
+| `elevenlabs/eleven-turbo-v2.5` | [Eight shared voices](#elevenlabs-voices) | PCM, MP3 | 1 | 40,000 characters |
 
 Required: `model`, `input` (a nonempty string), `voice`.
 Optional: `response_format` (defaults to `pcm`), `speed` (defaults to 1),
@@ -62,6 +62,22 @@ Voice cloning, input arrays, instructions, provider-specific options, and BYOK a
 not supported; unsupported fields fail explicitly. Normal provider restrictions,
 privacy floors and API-key budgets remain enforced. None of these routes is confidential
 inference. The attested gateway does not make an upstream provider confidential.
+
+### ElevenLabs voices
+
+All four ElevenLabs models support these eight voices in the order shown.
+Pass the voice ID as `voice`; pricing is the same for every voice on a given model.
+
+| Voice ID | Name |
+| --- | --- |
+| `JBFqnCBsd6RMkjVDRZzb` | George |
+| `EXAVITQu4vr4xnSDxMaL` | Sarah |
+| `Xb7hH8MSUJpSbSDYk0k2` | Alice |
+| `XrExE9yKIg1WjnnlVkGX` | Matilda |
+| `hpp4J3VqNfWAUOO0d1Us` | Bella |
+| `cgSgspJ2msm6clMCkdW9` | Jessica |
+| `FGY2WhTYpPnrIDTdsKH5` | Laura |
+| `pFZP5JQG7iQjIQuC4Bku` | Lily |
 
 ## Billing and Retries
 
