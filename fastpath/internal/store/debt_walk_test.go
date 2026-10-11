@@ -124,8 +124,9 @@ type debtLease struct {
 	boundary int64
 	closedAt within
 	// holds is the lease's open holds, which S's commit listed, by
-	// authorization: each its estimate, until a release winner ends it.
-	holds map[string]int64
+	// authorization: each its row as the commit put it, until a release
+	// winner ends it.
+	holds map[string]HoldRow
 }
 
 // donor is one of a lease's donors as the walk books it: its credit shard,
@@ -389,8 +390,8 @@ func (d *debtWalk) grantRefusal(rows []row, amount int64) Refusal {
 		case l.state == "open" || l.state == "draining" && !l.stored:
 			exposure += max(l.room(), 0)
 		case l.state == "draining":
-			for _, estimate := range l.holds {
-				listed += estimate
+			for _, h := range l.holds {
+				listed += h.Estimate
 			}
 		}
 	}
@@ -541,12 +542,12 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 		// hold with an estimate and no snapshot yet, drawn from the probes'
 		// source so the walk's own draws are as they were.
 		if d.probes.Intn(3) > 0 {
-			l.holds = map[string]int64{}
+			l.holds = map[string]HoldRow{}
 			for i := range 1 + d.probes.Intn(2) {
 				auth := fmt.Sprintf("%s-h%d", l.ref.LeaseID, i)
-				l.holds[auth] = int64(1 + d.probes.Intn(20))
-				req.PutHolds = append(req.PutHolds, HoldRow{AuthorizationID: auth, Estimate: l.holds[auth],
-					Deadline: walkTick, Listed: true})
+				l.holds[auth] = HoldRow{AuthorizationID: auth, Estimate: int64(1 + d.probes.Intn(20)), Deadline: walkTick,
+					Listed: true}
+				req.PutHolds = append(req.PutHolds, l.holds[auth])
 				d.seen["a listed hold"]++
 			}
 		}
@@ -578,37 +579,63 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	return got[0]
 }
 
-// checkHolds holds the lease's hold rows to the walk's open holds: one row
-// per hold, listed, its estimate, and none once they are released.
+// checkHolds holds the lease's hold rows, every column, and the holds Load
+// decodes, to the walk's open holds in authorization order: one row per
+// hold, none once they are released, no row more or less.
 func (d *debtWalk) checkHolds(l *debtLease) {
 	d.t.Helper()
-	got := map[string]int64{}
-	err := shared.Single().Query(context.Background(), spanner.Statement{
-		SQL:    `SELECT authorization_id, estimate, listed FROM tr_lease_hold WHERE workspace_id = @w AND lease_id = @l`,
+	ctx := context.Background()
+	var rows []HoldRow
+	err := shared.Single().Query(ctx, spanner.Statement{
+		SQL: `SELECT ` + strings.Join(holdColumns[2:], ", ") + ` FROM tr_lease_hold
+		       WHERE workspace_id = @w AND lease_id = @l ORDER BY authorization_id`,
 		Params: map[string]any{"w": l.ref.Workspace, "l": l.ref.LeaseID},
 	}).Do(func(r *spanner.Row) error {
-		var auth string
-		var estimate int64
-		var listed bool
-		if err := r.Columns(&auth, &estimate, &listed); err != nil {
+		var h HoldRow
+		if err := r.Columns(&h.AuthorizationID, &h.Estimate, &h.Deadline, &h.Listed, &h.SnapshotSeq, &h.SnapshotHash,
+			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis); err != nil {
 			return err
 		}
-		if !listed {
-			return fmt.Errorf("hold %s is not listed", auth)
-		}
-		got[auth] = estimate
+		rows = append(rows, h)
 		return nil
 	})
 	if err != nil {
 		d.fatalf("reading lease %s's holds: %v", l.ref.LeaseID, err)
 	}
-	want := l.holds
-	if want == nil {
-		want = map[string]int64{}
+	want := make([]HoldRow, 0, len(l.holds))
+	for _, auth := range slices.Sorted(maps.Keys(l.holds)) {
+		want = append(want, l.holds[auth])
 	}
-	if !reflect.DeepEqual(got, want) {
-		d.fatalf("lease %s's holds are %v, and the walk's are %v", l.ref.LeaseID, got, want)
+	if why := sameHolds(rows, want); why != "" {
+		d.fatalf("lease %s's hold rows: %s", l.ref.LeaseID, why)
 	}
+	loaded, err := d.s.Load(ctx, l.ref)
+	if err != nil {
+		d.fatalf("lease %s's load: %v", l.ref.LeaseID, err)
+	}
+	if why := sameHolds(loaded.Holds, want); why != "" {
+		d.fatalf("lease %s's holds as Load decodes them: %s", l.ref.LeaseID, why)
+	}
+}
+
+// sameHolds says how the holds read differ from the walk's, if they do:
+// their number and order, and each row field by field, its deadline as an
+// instant.
+func sameHolds(got, want []HoldRow) string {
+	if len(got) != len(want) {
+		return fmt.Sprintf("%d holds read, and the walk has %d open", len(got), len(want))
+	}
+	for i, g := range got {
+		w := want[i]
+		if !g.Deadline.Equal(w.Deadline) {
+			return fmt.Sprintf("hold %s's deadline is %v, and the walk's is %v", g.AuthorizationID, g.Deadline, w.Deadline)
+		}
+		g.Deadline, w.Deadline = time.Time{}, time.Time{}
+		if !reflect.DeepEqual(g, w) {
+			return fmt.Sprintf("hold %d is %+v, and the walk's is %+v", i, g, w)
+		}
+	}
+	return ""
 }
 
 // book books a charge, carrying a shortfall total that sometimes raises the
@@ -776,9 +803,17 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		d.seen["a grant beside a listed lease"]++
 		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
+	lo := spannerNow(d.t)
 	rows, read, err := d.s.ReadDrainSince(ctx, l.ref, time.Time{})
+	hi := spannerNow(d.t)
 	if err != nil {
 		d.fatalf("reading the drain log: %v", err)
+	}
+	// The read's timestamp is Spanner's time during the call: the close takes
+	// it as the member's cursor, and one ahead could pass over rows appended
+	// after the read.
+	if read.Before(lo) || read.After(hi) {
+		d.fatalf("lease %s's drain read at %v, between reads at %v and %v", l.ref.LeaseID, read, lo, hi)
 	}
 	// The log reads in the order appended, whatever the IDs' order.
 	if len(rows) != len(l.order) {
@@ -835,6 +870,7 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		for _, auth := range slices.Sorted(maps.Keys(l.holds)) {
 			releases = append(releases, Winner{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release"})
 		}
+		before = headrooms(readRows(d.t, d.ws))
 		result, ts, err := walkCommit(d.s, CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.seq,
 			Winners: releases}, "")
 		if err != nil {
@@ -850,6 +886,9 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		l.holds = nil
 		d.checkHolds(l)
 		d.checkLeaseRow(l, "the releases' commit")
+		// The whole workspace, before the close could cover what the
+		// releases' commit did to a credit row.
+		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
 	if len(winners) > 0 {
 		// Still, a row whose winner is not stored holds the close back,
