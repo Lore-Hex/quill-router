@@ -49,9 +49,16 @@ DAY_SQL = ("SELECT id, body FROM tr_entities WHERE kind=@kind AND id>=@day_start
 # A transaction from a secondary region makes two leader reads and a
 # cross-region commit, each measured at up to ~500 ms from southamerica-east1
 # and europe-west4 (docs/incidents/2026-10-10-shadow-regional-read-deadline.md),
-# so a transaction gets two seconds, a read up to one of them, and the commit
-# the remainder; the shadow is a background worker, sized for its slowest region.
-WRITE_BUDGET_SECONDS = 2.0
+# so a read gets up to one second and the commit the remainder. The
+# transaction gets four: on 2026-10-11 at 09:13Z every commit on nam6 took
+# about seven times its usual time for one minute, and 26 instances each
+# failed one evidence transaction at a two-second budget, which paged the
+# API-failure policy beside the real signal (the one-commit settles that fell
+# through to the durable path); the shadow is a background worker whose
+# observations are deferred or dropped when it runs long, so it is sized to
+# ride out such a minute rather than fail into it
+# (docs/incidents/2026-10-11-spanner-commit-latency-minute.md).
+WRITE_BUDGET_SECONDS = 4.0
 RPC_BUDGET_SECONDS = 1.0
 TRANSACTION_RPC_BUDGET_SECONDS = WRITE_BUDGET_SECONDS
 RETENTION_FENCE = "retention-v1"
@@ -184,8 +191,11 @@ class EvidenceStore:
             return result
         try:
             with spanner_rpc_deadline(rpc_deadline, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
+                # Tagged so lock statistics attribute the shadow's transactions
+                # (the 2026-10-11 lock samples showed them with no tag).
                 result = self.database.run_in_transaction(once, timeout_secs=rpc_deadline-time.monotonic(),
-                    commit_request_options={"priority": "PRIORITY_LOW"})
+                    commit_request_options={"priority": "PRIORITY_LOW"},
+                    transaction_tag="tr_shadow_evidence")
                 if time.monotonic() >= rpc_deadline:
                     raise TimeoutError("shadow commit budget")
                 return result

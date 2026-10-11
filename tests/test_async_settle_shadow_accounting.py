@@ -113,7 +113,9 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
 
 
 @pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32, .45])
-@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2])
+# 2.9 and 3.2 with two .45 reads sit just under and just over the default
+# four-second budget, so the matrix keeps a default-budget expiry case.
+@pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2, 2.9, 3.2])
 @pytest.mark.parametrize('budget', [WRITE_BUDGET_SECONDS, 1., .1, .3, .4])
 def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
     from types import SimpleNamespace
@@ -658,7 +660,8 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     db = Database()
     granted = EvidenceStore(db).reserve('2026-10-06', shadow_deadline_clock.monotonic()+1)
     assert granted == 100
-    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'})]
+    assert db.transaction_options == [dict(timeout_secs=1, commit_request_options={'priority':'PRIORITY_LOW'},
+                                            transaction_tag='tr_shadow_evidence')]
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for (timeout, retry, options), operation in zip(db.query_options, ('control_read', 'retention_fence_read'), strict=True):

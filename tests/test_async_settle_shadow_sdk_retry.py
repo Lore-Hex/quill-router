@@ -190,17 +190,22 @@ def test_other_commit_errors_propagate_unchanged(sdk_database, error_type, shado
     assert clock.monotonic()-started == pytest.approx(.46)
 
 
-def test_capped_context_with_room_for_first_backoff_keeps_sdk_retry(sdk_database):
+def test_capped_context_with_room_for_first_backoff_still_fails_closed(sdk_database):
+    # The shadow's horizon has room for the SDK's two-second reset sleep (its
+    # transaction budget is four seconds), and it must still not take it: one
+    # commit, no sleep, the reset converted.
     db, clock, sleeps = sdk_database
     db.errors = [InternalServerError('RST_STREAM')]
-    with io.spanner_rpc_deadline(clock.monotonic()+3, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
-        db.run_in_transaction(read_once)
-    assert sleeps == [2]
+    started = clock.monotonic()
+    with io.spanner_rpc_deadline(started+WRITE_BUDGET_SECONDS, max_rpc_seconds=TRANSACTION_RPC_BUDGET_SECONDS):
+        with pytest.raises(io.SpannerTransportReset):
+            db.run_in_transaction(read_once)
+    assert sleeps == []
     assert db.calls == [
-        ('read', min(RPC_BUDGET_SECONDS, 3)),
-        ('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, 3-.01))),
-        ('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, 3-.01-.45-2))),
+        ('read', min(RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS)),
+        ('commit', pytest.approx(min(TRANSACTION_RPC_BUDGET_SECONDS, WRITE_BUDGET_SECONDS-.01))),
     ]
+    assert clock.monotonic()-started == pytest.approx(.46)
 
 
 def test_shutdown_flush_records_reset_as_store_failure(sdk_database, caplog):
