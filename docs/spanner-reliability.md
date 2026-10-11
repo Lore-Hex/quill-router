@@ -99,6 +99,25 @@ untagged failed admission reads, but its full RPC breakdown was unavailable;
 the stream-budget defect is independently reproduced with the real SDK and is
 not established as the cause of every error in that incident.
 
+### Shadow transaction cleanup
+
+The SDK skips rollback when a transaction callback raises a Google API error.
+Shadow evidence callbacks can fail after acquiring read locks, for example
+when the counter read succeeds but the retention-fence read times out. Without
+cleanup, those locks remain until server-side expiration and can block later
+flushes to the same counter. The Oct 11 evening samples showed shadow counter
+read deadlines alongside `tr_shadow_evidence` read/write lock contention.
+
+The shadow writer now uses the existing bounded callback cleanup wrapper.
+It attempts rollback on non-ABORTED callback API failures, preserving the
+original error even if cleanup fails. Cleanup shares the transaction budget,
+with only the existing 50 ms strict-deadline allowance after exhaustion. It
+does not retry a callback, touch customer balances, or roll back an uncertain
+commit. A failed first read without a known transaction ID cannot be rolled
+back; the wrapper does not invent an ID or claim successful cleanup in that
+case. The stream-reset and read-lock defects are separate: fixing one does
+not establish that every Spanner API failure has been eliminated.
+
 New workspaces and their new API keys start with 16 exact billing shards.
 Existing workspaces retain their current shard count until the pause, drain,
 verify, reshard workflow completes; changing the default never rewrites a live
