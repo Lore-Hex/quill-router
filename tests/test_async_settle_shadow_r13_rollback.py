@@ -205,6 +205,7 @@ def test_rollback_confined_to_one_region_with_complete_roster():
         manifest['router_revisions'] = sorted({B, revision})
         manifest['instance_boot_ids'] = sorted([*manifest['instance_boot_ids'], boot])
         proof['instance_boot_ids_by_day'][day] = manifest['instance_boot_ids']
+        proof['instance_regions_by_day'][day][boot] = 'europe-west1'
     seal(rows, proof)
     result = report(rows, days, proof)
     assert result['gaps'] == []

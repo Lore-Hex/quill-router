@@ -1900,6 +1900,77 @@ Truncation blocks; do not substitute a partial export and call it complete.
 For a larger history, prepare a separately reviewed bounded export with its
 explicit window and coverage before running the offline checklist.
 
+### Serving-region label transition and the clean window
+
+The seven-day window starts no earlier than the first complete UTC day on
+which every serving router instance carries `TR_SERVING_REGION` set to its
+true serving region. **2026-10-10 is a transition day by construction** and
+cannot certify a clean day; 2026-10-11 is the earliest possible start, subject
+to complete deployment and the other gates. Include retired and overlapping
+revisions in the reviewed roster. Do not reconcile old labels by guessing
+from the primary/journal region or rewrite historical evidence.
+
+The reviewed `proof` must include `instance_regions_by_day`, mapping each UTC
+day to `{instance_boot_id: true_serving_region}` for every router in
+`instance_boot_ids_by_day`. This map is covered by the existing proof-manifest
+hash. It must agree with the pilot bundle's serving lifetimes. Missing maps,
+uncovered writers, and counter labels that disagree with their writer's
+declared region block certification (`regional_roster_unknown`,
+`regional_coverage_gap`, or `legacy_region_label`). A label present elsewhere
+in the fleet does not establish this writer's region.
+
+Requested-day samples are checked against this same per-writer map using
+their **observation day**, not their authorization day. A contradictory or
+unprovable sample region produces `<sample-id>:legacy_sample_region` and a
+day-level `legacy_sample_region` gap. Such samples remain in the original
+evidence and reconciliation counts, but cannot seed the clean clock or enter
+regional percentiles, even after a later seven-day clean suffix restores PASS.
+
+Pilot coverage reports list legacy-labelled rows as `legacy_region_label`,
+name mixed labels for one instance/day (`mixed_region_labels`), and identify
+coverage that would depend on old labels (`legacy_region_coverage`). Any such
+day is uncertifiable. Fleet reports exclude those rows from regional rates
+and report their workspace/health read counts separately in
+`legacy_region_labels`; they are never attributed to `us-central1` by default.
+Roster membership alone cannot detect an old revision whose primary label
+happens to equal its true region, so deployment evidence that every serving
+instance carries the pin remains a prerequisite to choosing the clean days.
+
+The #1663 transition from seven-character `TR_RELEASE` to full 40-hex
+`TR_SOURCE_REVISION` also affects retained counter exports from before and
+during that rollout. `counter_coverage_report`, `fleet-budgets`, and
+`shadow_report` recognize otherwise valid seven-hex counter revisions only
+for diagnostics: `legacy_revision_label` blocks that writer/day, and
+`counter_coverage` returns false. These rows cannot cover clean intervals or
+contribute trusted regional rates/percentiles. Their original IDs, revision
+labels, intervals, and workspace/health reads are retained separately in
+`legacy_revision_labels`. A row with both a legacy revision and a wrong region
+appears in both diagnostic lists; deduplicate by row identity when accounting
+for total legacy reads. Full-SHA validation for clean counters is unchanged;
+other malformed evidence (including short revisions in samples or manifests)
+still fails schema validation and cannot certify a day.
+
+Keep those original exports and the reviewed deployment lifetimes as evidence
+that affected UTC days are non-certifiable; do not expand a short SHA, relabel,
+or drop rows to manufacture coverage. Select complete subsequent UTC days only
+after deployment evidence proves both the full source revision and serving
+region pins on every router. A counter-only legacy day can remain in a report
+with a later complete clean suffix; a schema-invalid export must be archived
+separately from the later clean-day export, with its affected days explicitly
+excluded from certification. These format diagnostics do not establish the
+deployment-pin prerequisite or move the earliest possible start above.
+
+Retry identity is independent of serving region and router revision. The
+persisted sample has no separate journal-region field: its verified terminal
+`payload_hash` covers `journal_region`, and comparison checks terminal
+identity against the signed binding and `Context.journal_region`. At the
+same authorization/day durable key, matching attempted kind, signed
+dimensions, verified payload hashes and compatible binding lifetimes suffice
+for a duplicate. This also handles old/new revision retries without changing
+the sample schema. Report retry backing uses the same logical bucket and
+lifetime check; because counter rows discard retry hashes, it remains an
+existence check, not re-verification of the discarded signed terminal.
+
 ### Exact enablement order and gates
 
 1. Land enclave F2c with `TR_ASYNC_SETTLE_SHADOW=off` and

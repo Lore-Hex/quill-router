@@ -122,6 +122,25 @@ def test_strict_parse(bad):
     assert exc.value.status_code == 400
 
 
+@pytest.mark.parametrize('wrong_journal', [False, True])
+def test_secondary_serving_region_keeps_primary_journal_authority(env, wrong_journal):
+    rt = env[2]
+    rt.region, rt.journal_region = 'europe-west4', 'us-central1'
+    body, _, _ = prepare(env)
+    claims = verify_lookup_ticket(body['settlement_ticket'], [rt.signer.trusted], NOW).model_dump()
+    assert claims['journal_region'] == 'us-central1'
+    if wrong_journal:
+        claims['journal_region'] = rt.region
+        body['settlement_ticket'] = rt.signer.sign(claims, NOW)
+        body['terminal']['journal_region'] = rt.region
+        with pytest.raises(HTTPException) as exc:
+            call(env, body)
+        assert exc.value.status_code == 401
+        assert not env[1].settle_outbox
+    else:
+        assert call(env, body).status_code == 202
+
+
 def test_enqueue_batch_no_money(env, monkeypatch):
     body, auth, _ = prepare(env)
     db = env[1]
