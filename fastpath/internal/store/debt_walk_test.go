@@ -76,6 +76,16 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 			seen[k] += n
 		}
 	}
+	// One walk more, scripted where the random ones seldom go: a workspace
+	// marked in debt by a fault, then a return whose last donor's room is
+	// more than the debt, so the money repays it and the excess must stay
+	// on that donor's shard, the second, and a store that puts it on the
+	// first fails the check after the return.
+	d := newDebtWalkWith(t, spikeStore(t, func(c *Config) { c.Allowance, c.Floor = 30, 0 }), seed-1, []int64{10, 12, 0})
+	d.script()
+	for k, n := range d.seen {
+		seen[k] += n
+	}
 	t.Logf("operations: %v", seen)
 	for _, k := range []string{"grant", "refused grant", "shortfall-write", "booking", "fault", "faults in one commit",
 		"return", "drain",
@@ -85,7 +95,9 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
 		"refused grant: " + string(RefusedAllowance), "refused grant: " + string(RefusedFloor),
 		"refused grant: the floor alone", "a grant beside a listed lease", "a listed hold",
-		"refused grant: the listed holds alone", "refused close: holds open"} {
+		"refused grant: the listed holds alone", "refused close: holds open", "shortfall write: the stored total again",
+		"shortfall write: below the stored total", "shortfall write below a total a booking raised",
+		"a release's excess kept on its shard"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -232,6 +244,191 @@ func (l *debtLease) orderMatters(money, other []MoneyOp) bool {
 	return inOrder.consumed != otherwise.consumed || inOrder.fault != otherwise.fault
 }
 
+// shards is the walk's own replica of the workspace's credit rows: each
+// shard's credit, usage and reservation, and the mark, moved by every write
+// that lands, in the store's order, under section 4.7's rules as
+// proofs/CreditDebt.tla states them (Cover, Squared, Distribute, Inflow),
+// written here from the spec. After every operation the rows must be it.
+type shards struct {
+	credit, usage, reserved []int64
+	marked                  bool
+}
+
+// headroom is each shard's credit less its usage and reservation (Room).
+func (c *shards) headroom() []int64 {
+	out := make([]int64, len(c.credit))
+	for i := range c.credit {
+		out[i] = c.credit[i] - c.usage[i] - c.reserved[i]
+	}
+	return out
+}
+
+// squared ends a write (Squared): with the signed sum negative every shard
+// is marked and nothing moves; otherwise the lowest negative shard takes
+// from the lowest positive one until none is negative (Cover), credit
+// moving, and the mark is cleared.
+func (c *shards) squared() {
+	h := c.headroom()
+	var sum int64
+	for _, v := range h {
+		sum += v
+	}
+	if sum < 0 {
+		c.marked = true
+		return
+	}
+	for {
+		neg := slices.IndexFunc(h, func(v int64) bool { return v < 0 })
+		if neg < 0 {
+			break
+		}
+		pos := slices.IndexFunc(h, func(v int64) bool { return v > 0 })
+		x := min(-h[neg], h[pos])
+		h[neg] += x
+		h[pos] -= x
+		c.credit[neg] += x
+		c.credit[pos] -= x
+	}
+	c.marked = false
+}
+
+// reserve is a grant's reservation on each donor's shard.
+func (c *shards) reserve(donors []donor) {
+	for _, dn := range donors {
+		c.reserved[dn.shard] += dn.allocation
+	}
+}
+
+// raiseFirst is a rise of a lease's first donor's allocation, reserved on
+// its shard, squared if that leaves the shard negative (adjust).
+func (c *shards) raiseFirst(shard, rise int64) {
+	c.reserved[shard] += rise
+	if c.headroom()[shard] < 0 {
+		c.squared()
+	}
+}
+
+// settle is a commit's money: each shard's change of reservation and usage,
+// shard by shard in shard order, squared once if any shard went negative,
+// then each return's release in order (settleCreditRows). It counts the
+// releases whose excess past the debt stayed on a shard other than the
+// first, which tells where the excess goes.
+func (c *shards) settle(changes map[int64]shardChange, releases []freed) (excessKept int) {
+	negative := false
+	for _, shard := range slices.Sorted(maps.Keys(changes)) {
+		c.reserved[shard] += changes[shard].reserved
+		c.usage[shard] += changes[shard].usage
+		negative = negative || c.headroom()[shard] < 0
+	}
+	if negative {
+		c.squared()
+	}
+	for _, r := range releases {
+		if c.release(r.shard, r.amount) {
+			excessKept++
+		}
+	}
+	return excessKept
+}
+
+// release frees amount of a shard's reservation. Marked, or with a shard
+// negative, the money repays the negative shards lowest first, each to
+// zero, what is left staying on the shard that freed it (Distribute), and
+// the rows are squared (Inflow); otherwise nothing more moves. It reports
+// whether the money repaid debt and left an excess on a shard other than
+// the first.
+func (c *shards) release(shard, amount int64) bool {
+	c.reserved[shard] -= amount
+	h := c.headroom()
+	if !c.marked && !slices.ContainsFunc(h, func(v int64) bool { return v < 0 }) {
+		return false
+	}
+	w := slices.Clone(h)
+	w[shard] -= amount
+	left := amount
+	for i, v := range w {
+		if left == 0 {
+			break
+		}
+		if v < 0 {
+			paid := min(left, -v)
+			w[i] += paid
+			left -= paid
+		}
+	}
+	w[shard] += left
+	for i := range w {
+		c.credit[i] += w[i] - h[i]
+	}
+	c.squared()
+	return left > 0 && left < amount && shard != 0
+}
+
+// debt is what the negative shards are short, together.
+func (c *shards) debt() int64 {
+	var out int64
+	for _, v := range c.headroom() {
+		out += min(v, 0)
+	}
+	return -out
+}
+
+// shardChange is a commit's change to one credit shard, and freed is a
+// return's money freed on a donor's shard, as the store applies them.
+type shardChange struct{ reserved, usage int64 }
+type freed struct{ shard, amount int64 }
+
+// moneyEffect is what a commit of money does to the credit rows, computed
+// on a copy as applyMoney computes it: a booking's rise reserved on the
+// first donor's shard, each matched part moving reservation to usage on its
+// donor's shard, the fault as usage on the first donor's, summed per shard;
+// and each return freed on the donors' shards, last donor first, in order.
+func (l *debtLease) moneyEffect(money []MoneyOp) (map[int64]shardChange, []freed) {
+	c := l.copied()
+	changes := map[int64]shardChange{}
+	var releases []freed
+	add := func(shard, reserved, usage int64) {
+		x := changes[shard]
+		x.reserved += reserved
+		x.usage += usage
+		changes[shard] = x
+	}
+	for _, op := range money {
+		if !op.Book {
+			left := op.Amount
+			for i := len(c.donors) - 1; i >= 0 && left > 0; i-- {
+				z := min(c.donors[i].allocation-c.donors[i].consumed, left)
+				if z <= 0 {
+					continue
+				}
+				c.donors[i].allocation -= z
+				left -= z
+				releases = append(releases, freed{c.donors[i].shard, z})
+			}
+			continue
+		}
+		if rise := op.ShortfallTotal - c.shortfall; rise > 0 {
+			c.shortfall = op.ShortfallTotal
+			c.donors[0].allocation += rise
+			add(c.donors[0].shard, rise, 0)
+		}
+		left := op.Charge
+		for i := range c.donors {
+			x := min(c.donors[i].allocation-c.donors[i].consumed, left)
+			if x <= 0 {
+				continue
+			}
+			c.donors[i].consumed += x
+			left -= x
+			add(c.donors[i].shard, -x, x)
+		}
+		if left > 0 {
+			add(c.donors[0].shard, 0, left)
+		}
+	}
+	return changes, releases
+}
+
 type debtWalk struct {
 	t       *testing.T
 	s       *Store
@@ -242,6 +439,7 @@ type debtWalk struct {
 	ids     *rand.Rand // the drain rows' record IDs, apart for the same reason
 	seed    int64
 	credits int64
+	shards  shards // the credit rows as the walk's writes left them
 	leases  []*debtLease
 	history []string
 	seen    map[string]int
@@ -251,13 +449,24 @@ type debtWalk struct {
 func newDebtWalk(t *testing.T, s *Store, seed int64) *debtWalk {
 	t.Helper()
 	rng := rand.New(rand.NewSource(seed))
-	credits := []int64{int64(rng.Intn(30)), int64(rng.Intn(30)), int64(rng.Intn(30))}
+	return newDebtWalkWith(t, s, seed, []int64{int64(rng.Intn(30)), int64(rng.Intn(30)), int64(rng.Intn(30))}, rng)
+}
+
+// newDebtWalkWith is a walk on a workspace seeded with the credits given,
+// its own draws from rng, or from the seed when none is given.
+func newDebtWalkWith(t *testing.T, s *Store, seed int64, credits []int64, rngs ...*rand.Rand) *debtWalk {
+	t.Helper()
+	rng := rand.New(rand.NewSource(seed))
+	if len(rngs) > 0 {
+		rng = rngs[0]
+	}
 	d := &debtWalk{t: t, s: s, ws: seedWorkspace(t, credits...), rng: rng, probes: rand.New(rand.NewSource(^seed)),
 		batches: rand.New(rand.NewSource(seed ^ 0x5eed)), ids: rand.New(rand.NewSource(seed ^ 0x1d5)), seed: seed,
 		seen: map[string]int{}}
 	for _, c := range credits {
 		d.credits += c
 	}
+	d.shards = shards{credit: slices.Clone(credits), usage: make([]int64, len(credits)), reserved: make([]int64, len(credits))}
 	return d
 }
 
@@ -274,6 +483,57 @@ func (d *debtWalk) live() []*debtLease {
 		}
 	}
 	return out
+}
+
+// script is the scripted walk: with credits 10, 12 and 0, a lease of 6 on
+// the first shard and one of 12 on the first and second (4 and 8), a booking
+// of 13 on the first lease, 6 matched and a fault of 7 booked as usage on
+// the first shard, which leaves it at -7 against 4 on the second, the sum
+// -3, so every row is marked; then the second lease returns its whole room,
+// 12, the last donor's 8 first: 7 repays the first shard and the 1 left
+// stays on the second, where it was freed, and the mark is cleared.
+func (d *debtWalk) script() {
+	d.t.Helper()
+	ctx := context.Background()
+	before := headrooms(readRows(d.t, d.ws))
+	step := func(what string) {
+		d.t.Helper()
+		after := headrooms(readRows(d.t, d.ws))
+		d.check(before, after)
+		d.note("after %s: %v", what, after)
+		before = after
+	}
+	if !d.grantAmount(ctx, 6) || !d.grantAmount(ctx, 12) {
+		d.fatalf("the script's grants were refused")
+	}
+	step("the grants")
+	first, second := d.leases[0], d.leases[1]
+	if !slices.Equal(headrooms(readRows(d.t, d.ws)), []int64{0, 4, 0}) || len(second.donors) != 2 ||
+		second.donors[1].shard != 1 || second.donors[1].allocation != 8 {
+		d.fatalf("the script's grants did not leave 0, 4, 0 with 8 of the second lease on the second shard: %+v",
+			second.donors)
+	}
+	money := []MoneyOp{Book(13, first.shortfall)}
+	d.note("book %s %v", first.ref.LeaseID, money)
+	got := d.commit(ctx, first, money, false)
+	_, faults := first.bookedEach(money)
+	if !slices.Equal(got.Faults, faults) || !slices.Equal(faults, []int64{7}) {
+		d.fatalf("the script's booking faulted %v, and the walk's ledger %v", got.Faults, faults)
+	}
+	d.seen["booking"]++
+	d.seen["fault"]++
+	step("the booking")
+	if !d.shards.marked || d.shards.debt() != 7 {
+		d.fatalf("the script's booking left the workspace unmarked, or a debt other than 7: %+v", d.shards)
+	}
+	excess := d.seen["a release's excess kept on its shard"]
+	d.giveBack(ctx, second)
+	step("the return")
+	if d.seen["a release's excess kept on its shard"] != excess+1 || d.shards.marked ||
+		!slices.Equal(d.shards.credit, []int64{17, 5, 0}) {
+		d.fatalf("the script's return did not leave 1 of excess on the second shard: %+v", d.shards)
+	}
+	d.checkAllPacks()
 }
 
 func (d *debtWalk) run() {
@@ -294,6 +554,11 @@ func (d *debtWalk) run() {
 				d.checkAllPacks()
 				return
 			}
+		case d.shards.marked && d.pastDebt(live) != nil:
+			// In debt, a lease whose room is more than the debt returns it
+			// all: the money repays the debt and the excess must stay on the
+			// shard that freed it (giveBack), which the walks must see.
+			d.giveBack(ctx, d.pastDebt(live))
 		case op == 0 && len(live) < 4:
 			d.grant(ctx)
 		case op <= 2:
@@ -447,12 +712,21 @@ func (d *debtWalk) grant(ctx context.Context) bool {
 // draws are as they were.
 func (d *debtWalk) grantFrom(ctx context.Context, rng *rand.Rand) bool {
 	d.t.Helper()
-	req := grantOf(d.ws, int64(1+rng.Intn(20)))
+	return d.grantAmount(ctx, int64(1+rng.Intn(20)))
+}
+
+// grantAmount is a grant of amount, checked as every grant is.
+func (d *debtWalk) grantAmount(ctx context.Context, amount int64) bool {
+	d.t.Helper()
+	req := grantOf(d.ws, amount)
 	req.WorkspaceShard, req.KeyStatusVersion = int64(1+d.probes.Intn(9)), int64(10+d.probes.Intn(90))
 	d.note("grant %d", req.Amount)
 	rows := readRows(d.t, d.ws)
 	ref := LeaseRef{d.ws, req.LeaseID}
-	before := d.rows(ref)
+	// Refused, the grant leaves every row of the workspace as it was, the
+	// other leases' rows and holds included (everyRow with no lease).
+	whole := LeaseRef{Workspace: d.ws}
+	before := d.rows(whole)
 	want := d.grantRefusal(rows, req.Amount)
 	start := spannerNow(d.t)
 	got, err := d.s.Grant(ctx, detached(req))
@@ -468,7 +742,7 @@ func (d *debtWalk) grantFrom(ctx context.Context, rng *rand.Rand) bool {
 		// written.
 		d.seen["refused grant"]++
 		d.seen["refused grant: "+string(got.Refused)]++
-		if after := d.rows(ref); after != before {
+		if after := d.rows(whole); after != before {
 			d.fatalf("a refused grant changed the rows from %s to %s", before, after)
 		}
 		return false
@@ -505,6 +779,7 @@ func (d *debtWalk) grantFrom(ctx context.Context, rng *rand.Rand) bool {
 		d.fatalf("the grant's expiry %v, and its row's %v", got.Expiry, row.Expiry)
 	}
 	d.landed("grant", got.CommitTS)
+	d.shards.reserve(l.donors)
 	if len(l.donors) > 1 {
 		d.seen["a lease of two donors or more"]++
 	}
@@ -523,8 +798,33 @@ func (d *debtWalk) raise(ctx context.Context, l *debtLease) {
 	}
 	d.seen["shortfall-write"]++
 	d.landed("shortfall write", got.CommitTS)
+	d.shards.raiseFirst(l.donors[0].shard, total-l.shortfall)
 	l.raised(total - l.shortfall)
 	l.shortfall = total
+	d.probeShortfall(ctx, l)
+}
+
+// probeShortfall writes the lease's shortfall total again, and one below
+// it, which the store must leave as they are: the total only rises, so
+// neither rises anything, carries a commit, or moves a row.
+func (d *debtWalk) probeShortfall(ctx context.Context, l *debtLease) {
+	d.t.Helper()
+	totals := []int64{l.shortfall}
+	if l.shortfall > 0 {
+		totals = append(totals, d.probes.Int63n(l.shortfall))
+	}
+	d.unchanged(l.ref, "shortfall write", func() {
+		for _, total := range totals {
+			got, err := d.s.ShortfallWrite(ctx, owner, l.ref, total)
+			if err != nil || got != (ShortfallResult{}) {
+				d.fatalf("a shortfall write of %d with %d stored: %+v %v", total, l.shortfall, got, err)
+			}
+		}
+	})
+	d.seen["shortfall write: the stored total again"]++
+	if len(totals) > 1 {
+		d.seen["shortfall write: below the stored total"]++
+	}
 }
 
 // commit commits one lease's money at the next sequence number, or at S
@@ -555,11 +855,13 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 	// The store gets a copy (walkCommit), so what the walk expects, from
 	// money and req, is what it generated, whatever the call does with its
 	// request.
+	changes, releases := l.moneyEffect(money)
 	result, ts, err := walkCommit(d.s, req, "")
 	if err != nil {
 		d.fatalf("the commit %+v: %v", req, err)
 	}
 	d.landed("commit", ts)
+	d.seen["a release's excess kept on its shard"] += d.shards.settle(changes, releases)
 	if result.State != l.state {
 		d.fatalf("the commit left lease %s %q, and the walk has it %q", l.ref.LeaseID, result.State, l.state)
 	}
@@ -705,12 +1007,19 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	if l.orderMatters(money, returnsFirst(money)) {
 		d.seen["a return its place changes"]++
 	}
+	stored := l.shortfall
 	got := d.commit(ctx, l, money, false)
 	pastFirst, faults := l.bookedEach(money)
 	if pastFirst {
 		d.seen["a booking past the first donor"]++
 	}
 	d.seen["booking"]++
+	if l.shortfall > stored {
+		// A total a booking raised is the stored one too: the owner's write
+		// of its own, lower one must not take it back down.
+		d.probeShortfall(ctx, l)
+		d.seen["shortfall write below a total a booking raised"]++
+	}
 	if !slices.Equal(got.Faults, faults) {
 		d.fatalf("the commit's faults %v, and the walk's %v", got.Faults, faults)
 	}
@@ -722,6 +1031,26 @@ func (d *debtWalk) book(ctx context.Context, l *debtLease) {
 	}
 }
 
+// pastDebt is a live lease whose room is more than the workspace's debt,
+// if there is one: its last donor's shard first, so the excess a return
+// leaves lands on a shard other than the first where it can.
+func (d *debtWalk) pastDebt(live []*debtLease) *debtLease {
+	debt := d.shards.debt()
+	var found *debtLease
+	for _, l := range live {
+		if l.room() <= debt {
+			continue
+		}
+		if l.donors[len(l.donors)-1].shard != 0 {
+			return l
+		}
+		if found == nil {
+			found = l
+		}
+	}
+	return found
+}
+
 // giveBack returns part of what the lease has not booked.
 func (d *debtWalk) giveBack(ctx context.Context, l *debtLease) {
 	d.t.Helper()
@@ -731,6 +1060,12 @@ func (d *debtWalk) giveBack(ctx context.Context, l *debtLease) {
 		return
 	}
 	amount := 1 + d.rng.Int63n(room)
+	if debt := d.shards.debt(); d.shards.marked && room > debt {
+		// In debt, the whole room, more than the debt: the money repays it
+		// and the excess must stay on the shard that freed it, the last
+		// donor's, which the walks must see.
+		amount = room
+	}
 	d.note("return %s %d", l.ref.LeaseID, amount)
 	d.commit(ctx, l, []MoneyOp{Return(amount)}, false)
 	if l.gaveBack(amount) {
@@ -771,6 +1106,7 @@ func (d *debtWalk) doorRaise(ctx context.Context, l *debtLease) {
 		d.fatalf("the append: %+v %v", got, err)
 	}
 	d.landed("append", got.CommitTS)
+	d.shards.raiseFirst(l.donors[0].shard, raise)
 	l.doorRaised += raise
 	l.raised(raise)
 	l.rows[record], l.raises[record], l.stamped[record] = t, raise, got.CommitTS
@@ -902,12 +1238,14 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		})
 		d.seen["refused close: undecided"]++
 		before := headrooms(readRows(d.t, d.ws))
+		changes, releases := l.moneyEffect(money)
 		result, ts, err := walkCommit(d.s, CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: l.seq,
 			Money: money, Winners: winners}, "")
 		if err != nil {
 			d.fatalf("committing the drain log's winners: %v", err)
 		}
 		d.landed("commit", ts)
+		d.seen["a release's excess kept on its shard"] += d.shards.settle(changes, releases)
 		if result.State != l.state {
 			d.fatalf("the winners' commit left lease %s %q, and the walk has it %q", l.ref.LeaseID, result.State,
 				l.state)
@@ -935,12 +1273,14 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		d.check(before, headrooms(readRows(d.t, d.ws)))
 	}
 	room := l.room()
+	_, releases := l.moneyEffect([]MoneyOp{Return(room)})
 	got, err := d.s.CloseLease(ctx, l.ref, l.version, read, now)
 	if err != nil || got.Refused != "" || got.Released != room {
 		d.fatalf("the close of lease %s, room %d: %+v %v", l.ref.LeaseID, room, got, err)
 	}
 	l.closedAt = within{d.stamps.last, got.CommitTS}
 	d.landed("close", got.CommitTS)
+	d.seen["a release's excess kept on its shard"] += d.shards.settle(nil, releases)
 	l.state = "closed"
 	l.advance(d, "the close", got.NewVersion)
 	if l.gaveBack(got.Released) {
@@ -1057,6 +1397,16 @@ func (d *debtWalk) check(before, after []int64) {
 	}
 	if credits != d.credits {
 		d.fatalf("credit %d, and %d was seeded", credits, d.credits)
+	}
+	// Each credit row, every column, is the walk's replica of it: credit
+	// moved only as section 4.7 moves it, repaying and covering, and left
+	// where a release freed it otherwise.
+	for i, r := range rows {
+		if r.credits != d.shards.credit[i] || r.usage != d.shards.usage[i] || r.reserved != d.shards.reserved[i] ||
+			r.marked != d.shards.marked {
+			d.fatalf("shard %d is %+v, and the walk's replica has credit %d, usage %d, reserved %d, marked %v", i, r,
+				d.shards.credit[i], d.shards.usage[i], d.shards.reserved[i], d.shards.marked)
+		}
 	}
 	// Each shard's usage and reservation are the walk's ledger's, and every
 	// lease's donor rows, a closed lease's too, are its donors.

@@ -664,8 +664,8 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 	got, committed, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, detached(ReapRow{
 		AuthorizationID: w.c.Auths[a], RecordID: record, Charge: charge, Estimate: walkEstimate,
 		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)}))
-	if err != nil || got != want {
-		w.fatalf("member %s's reap of %s: %q, want %q, %v", w.c.Members[m], w.c.Auths[a], got, want, err)
+	if err != nil || got != want || (want != "" && !committed.IsZero()) {
+		w.fatalf("member %s's reap of %s: %q at %v, want %q, %v", w.c.Members[m], w.c.Auths[a], got, committed, want, err)
 	}
 	if want == "" {
 		w.landed("reap", committed)
@@ -980,7 +980,8 @@ func everyRow(ref LeaseRef) (string, error) {
 		}
 		stmt := spanner.Statement{SQL: "SELECT * FROM " + t.name + " WHERE workspace_id = @w",
 			Params: map[string]any{"w": ref.Workspace}}
-		if slices.Contains(t.columns, "lease_id") {
+		// A ref with no lease reads the whole workspace's rows.
+		if ref.LeaseID != "" && slices.Contains(t.columns, "lease_id") {
 			stmt.SQL += " AND lease_id = @l"
 			stmt.Params["l"] = ref.LeaseID
 		}
