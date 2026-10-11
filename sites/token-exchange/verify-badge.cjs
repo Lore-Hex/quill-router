@@ -17,9 +17,10 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       await page.evaluate(() => document.fonts.ready);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `badge overflow at ${width}`);
       await page.screenshot({path: `${output}/nyte-badge-${width}.png`, fullPage: true});
-      for (const role of ['provider', 'enterprise']) {
+      assert.equal(await page.locator('input[name="role"]').count(), 0);
+      assert.equal(await page.locator('[src*="nyte-provider"], a[href*="nyte-provider"]').count(), 0);
+      for (const role of ['enterprise']) {
         for (const theme of ['dark', 'light']) {
-          await page.locator(`input[value="${role}"]`).check();
           await page.locator(`input[value="${theme}"]`).check();
           const name = `nyte-${role}-${theme}.svg`;
           assert.ok((await page.locator('#badge-preview').getAttribute('src')).endsWith(name));
@@ -41,14 +42,14 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       await page.screenshot({path: `${output}/nyte-providers-${width}.png`, fullPage: true});
       assert.deepEqual(errors, []);
       await context.close();
-      console.log(`PASS ${width}px: layout, four variants, copy, fallback, private deck`);
+      console.log(`PASS ${width}px: layout, enterprise-only styles, copy, fallback, private deck`);
     }
     const context = await browser.newContext({javaScriptEnabled: false});
     const page = await context.newPage();
     await page.goto(`${base}/badge.html`);
-    assert.ok((await page.locator('#embed-code').textContent()).includes('nyte-provider-dark.svg'));
+    assert.ok((await page.locator('#embed-code').textContent()).includes('nyte-enterprise-dark.svg'));
     await page.getByText('All badge downloads', {exact: true}).click();
-    assert.equal(await page.locator('.all-assets a[download]').count(), 4);
+    assert.equal(await page.locator('.all-assets a[download]').count(), 2);
     await context.close();
   } finally {
     await browser.close();

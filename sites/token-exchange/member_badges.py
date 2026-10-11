@@ -3,17 +3,16 @@
 from pathlib import Path
 
 
-def badge_svg(role: str, theme: str) -> str:
-    assert role in {"provider", "enterprise"}
+def badge_svg(theme: str) -> str:
     assert theme in {"light", "dark"}
     bg, ink, secondary, line, gold = (
         ("#f7f5ee", "#10291e", "#335444", "#bac7bd", "#7b601f")
         if theme == "light"
         else ("#0b1711", "#f1eddf", "#b8d6c3", "#3b5042", "#d6bd7d")
     )
-    label = f"{role.upper()} MEMBER"
+    label = "ENTERPRISE BUYER"
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="88" viewBox="0 0 320 88" role="img" aria-labelledby="title desc">
-  <title id="title">NYTE {role} member</title>
+  <title id="title">NYTE enterprise buyer</title>
   <desc id="desc">New York Token Exchange membership mark. Membership is not a security certification.</desc>
   <rect x=".5" y=".5" width="319" height="87" rx="6" fill="{bg}" stroke="{line}"/>
   <g fill="none" stroke="{gold}">
@@ -33,6 +32,5 @@ def badge_svg(role: str, theme: str) -> str:
 
 def build_badges(output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    for role in ("provider", "enterprise"):
-        for theme in ("light", "dark"):
-            (output / f"nyte-{role}-{theme}.svg").write_text(badge_svg(role, theme))
+    for theme in ("light", "dark"):
+        (output / f"nyte-enterprise-{theme}.svg").write_text(badge_svg(theme))

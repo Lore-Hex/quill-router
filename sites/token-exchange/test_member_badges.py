@@ -25,14 +25,19 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertIn('href="https://trustedrouter.com/badge"', self.page)
         self.assertFalse(list(self.root.rglob("*.pdf")))
 
-    def test_four_accessible_static_badges_and_download_links(self):
-        for role in ("provider", "enterprise"):
+    def test_two_accessible_enterprise_badges_and_download_links(self):
+        self.assertEqual(len(list((self.root / "assets" / "badges").glob("*.svg"))), 2)
+        self.assertNotIn('name="role"', self.page)
+        self.assertNotIn('nyte-provider-', self.page)
+        self.assertIn('exclusively for active enterprise buyers', self.page)
+        for role in ("enterprise",):
             for theme in ("dark", "light"):
                 name = f"nyte-{role}-{theme}.svg"
                 svg = (self.root / "assets" / "badges" / name).read_text()
                 parsed = ET.fromstring(svg)  # noqa: S314 - generated locally, never untrusted XML
                 self.assertEqual(parsed.attrib["viewBox"], "0 0 320 88")
-                self.assertIn(f"NYTE {role} member", svg)
+                self.assertIn(f"NYTE {role} buyer", svg)
+                self.assertIn("ENTERPRISE BUYER", svg)
                 self.assertIn("not a security certification", svg)
                 self.assertNotIn("<script", svg)
                 self.assertNotIn("href=", svg)
@@ -43,12 +48,16 @@ class MemberBadgeTests(unittest.TestCase):
             home = (self.root / market["slug"] / "index.html").read_text()
             self.assertIn('href="/providers"', home)
             self.assertIn('href="/badge"', home)
+            buyers = home.split('id="buyers"')[1].split('</section>')[0]
+            sellers = home.split('id="sellers"')[1].split('</section>')[0]
+            self.assertIn('href="/badge"', buyers)
+            self.assertNotIn('href="/badge"', sellers)
             sitemap = (self.root / market["slug"] / "sitemap.xml").read_text()
             self.assertEqual("https://nytokenexchange.com/badge" in sitemap, market["slug"] == "new-york")
 
     def test_default_embed_works_without_javascript(self):
         self.assertIn('id="embed-code"', self.page)
-        self.assertIn('src="/assets/badges/nyte-provider-dark.svg"', self.page)
+        self.assertIn('src="/assets/badges/nyte-enterprise-dark.svg"', self.page)
         self.assertIn('aria-live="polite"', self.page)
         js = (self.root / "assets" / "badge.js").read_text()
         self.assertIn("navigator.clipboard.writeText", js)
