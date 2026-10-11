@@ -40,10 +40,14 @@ import (
 const debtSteps = 120
 
 // TestTheStoreKeepsCreditDebtsClaims runs FASTPATH_DEBT_WALKS walks (default
-// 6) from FASTPATH_WALK_SEED (default a fixed seed).
+// 8) from FASTPATH_WALK_SEED (default a fixed seed).
 func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
-	s := spikeStore(t, func(c *Config) { c.Allowance = 30 })
-	walks, seed := 6, int64(20261008)
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	// Eight walks: the grant probed beside each listed lease steers the
+	// walks after it, and every kind of row order must still be seen.
+	walks, seed := 8, int64(20261008)
 	if v := os.Getenv("FASTPATH_DEBT_WALKS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
@@ -61,7 +65,11 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 	t.Logf("FASTPATH_WALK_SEED=%d", seed)
 	seen := map[string]int{}
 	for i := range walks {
-		d := newDebtWalk(t, s, seed+int64(i))
+		// Every other walk's store has a floor, so a grant the headroom alone
+		// would take is refused for the floor alone, which the walks must
+		// see; the rest walk as before, their floor zero.
+		floor := int64(10 * (i % 2))
+		d := newDebtWalk(t, spikeStore(t, func(c *Config) { c.Allowance, c.Floor = 30, floor }), seed+int64(i))
 		d.run()
 		for k, n := range d.seen {
 			seen[k] += n
@@ -74,7 +82,8 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"a booking past the first donor", "a return before the last donor", "a batch its order changes",
 		"a return its place changes", "a pack of several winners", "refused grant: " + string(RefusedInDebt),
 		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
-		"refused grant: " + string(RefusedAllowance), "refused grant: " + string(RefusedFloor)} {
+		"refused grant: " + string(RefusedAllowance), "refused grant: " + string(RefusedFloor),
+		"refused grant: the floor alone", "a grant beside a listed lease"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -289,7 +298,9 @@ func (d *debtWalk) run() {
 			d.giveBack(ctx, l)
 		case op == 7 && l.state == "open":
 			d.drain(ctx, l)
-		case op == 7:
+		case op <= 8 && l.state != "open":
+			// Two ops in ten, so a draining lease takes a second append
+			// before its close often enough for both orders of drain IDs.
 			d.doorRaise(ctx, l)
 		case l.state == "draining":
 			d.close(ctx, l)
@@ -381,6 +392,9 @@ func (d *debtWalk) grantRefusal(rows []row, amount int64) Refusal {
 	case exposure > d.s.cfg.Allowance-amount:
 		return RefusedAllowance
 	case headroom < d.s.cfg.Floor+amount:
+		if headroom >= amount {
+			d.seen["refused grant: the floor alone"]++
+		}
 		return RefusedFloor
 	}
 	return ""
@@ -410,7 +424,15 @@ func (d *debtWalk) unchanged(ref LeaseRef, kind string, f func()) {
 // grant reports whether the workspace granted a lease.
 func (d *debtWalk) grant(ctx context.Context) bool {
 	d.t.Helper()
-	req := grantOf(d.ws, int64(1+d.rng.Intn(20)))
+	return d.grantFrom(ctx, d.rng)
+}
+
+// grantFrom is a grant whose amount comes from rng: the walk's own, or the
+// probes' source for a grant made beside the walk's steps, so the walk's
+// draws are as they were.
+func (d *debtWalk) grantFrom(ctx context.Context, rng *rand.Rand) bool {
+	d.t.Helper()
+	req := grantOf(d.ws, int64(1+rng.Intn(20)))
 	req.WorkspaceShard, req.KeyStatusVersion = int64(1+d.probes.Intn(9)), int64(10+d.probes.Intn(90))
 	d.note("grant %d", req.Amount)
 	rows := readRows(d.t, d.ws)
@@ -682,6 +704,12 @@ func (d *debtWalk) close(ctx context.Context, l *debtLease) {
 		d.commit(ctx, l, nil, true)
 		d.checkLeaseRow(l, "S's commit")
 		d.check(before, headrooms(readRows(d.t, d.ws)))
+	}
+	// With the holds listed, the lease's exposure is its listed holds',
+	// none here, not its remaining allocation: a grant beside it is
+	// answered so, and the close goes on with the lease.
+	if d.grantFrom(ctx, d.probes) {
+		d.seen["a grant beside a listed lease"]++
 	}
 	rows, read, err := d.s.ReadDrainSince(ctx, l.ref, time.Time{})
 	if err != nil {

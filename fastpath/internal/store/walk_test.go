@@ -1702,11 +1702,15 @@ func (w *walker) holdsOf(rows []HoldRow) [ac.MaxAuths]int8 {
 	for a := range w.c.Auths {
 		out[a] = ac.NoHold
 	}
+	// Each authorization's row at most once, and a charge that is not
+	// negative, so no row hides behind NoHold.
+	seen := map[int8]bool{}
 	for _, h := range rows {
 		a := index(w.c.Auths, h.AuthorizationID)
-		if a < 0 || !h.RunningCharge.Valid || out[a] != ac.NoHold {
-			w.fatalf("a hold row %+v, none of the walk's or read twice", h)
+		if a < 0 || !h.RunningCharge.Valid || h.RunningCharge.Int64 < 0 || seen[a] {
+			w.fatalf("a hold row %+v, none of the walk's, charged below zero or read twice", h)
 		}
+		seen[a] = true
 		out[a] = small(w, h.RunningCharge.Int64)
 	}
 	return out
