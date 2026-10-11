@@ -18,7 +18,12 @@ from trusted_router.async_settle_shadow_evidence import (
     dimensions,
     sample,
 )
-from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore, day_statement
+from trusted_router.storage_gcp_async_settle_shadow import (
+    RPC_BUDGET_SECONDS,
+    WRITE_BUDGET_SECONDS,
+    EvidenceStore,
+    day_statement,
+)
 
 
 class Database:
@@ -107,9 +112,9 @@ def test_cumulative_flush_monotonic_and_partition(shadow_deadline_clock):
         validate_counter(identity,broken)
 
 
-@pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32])
+@pytest.mark.parametrize('rpc_latency', [.141, .163, .25, .32, .45])
 @pytest.mark.parametrize('commit_latency', [.163, .3, .6, 1.2])
-@pytest.mark.parametrize('budget', [1., .1, .3, .4])
+@pytest.mark.parametrize('budget', [WRITE_BUDGET_SECONDS, 1., .1, .3, .4])
 def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clock, rpc_latency, commit_latency, budget):
     from types import SimpleNamespace
 
@@ -159,9 +164,9 @@ def test_counter_flush_allows_multiple_bounded_regional_rpcs(shadow_deadline_clo
         assert json.loads(db.rows[COUNTER, identity]) == row
         assert clock.monotonic()-started == pytest.approx(2*rpc_latency+commit_latency)
         assert len(calls) == 3
-    assert all(0 < call['timeout'] <= 1. for call in calls[:2])
+    assert all(0 < call['timeout'] <= RPC_BUDGET_SECONDS for call in calls[:2])
     if len(calls) == 3:
-        assert 0 < calls[-1]['timeout'] <= 1.
+        assert 0 < calls[-1]['timeout'] <= WRITE_BUDGET_SECONDS
         assert calls[-1]['request_options'] == {'priority': 'PRIORITY_LOW'}
 
 
@@ -181,10 +186,10 @@ def test_slow_shadow_read_still_fails_closed_without_retry(shadow_deadline_clock
     started = clock.monotonic()
     with pytest.raises(DeadlineExceeded):
         EvidenceStore(db).reserve('2026-10-06', started+budget)
-    assert clock.monotonic()-started == pytest.approx(min(1., budget))
+    assert clock.monotonic()-started == pytest.approx(min(RPC_BUDGET_SECONDS, budget))
     assert len(db.transaction_options) == len(db.query_options) == 1
     timeout, retry, options = db.query_options[0]
-    assert timeout == pytest.approx(min(1., budget))
+    assert timeout == pytest.approx(min(RPC_BUDGET_SECONDS, budget))
     assert retry is None and options == {'priority': 'PRIORITY_LOW'}
     assert not db.rows and not db.write_shapes
 
@@ -653,7 +658,7 @@ def test_evidence_storage_call_contract(shadow_deadline_clock):
     assert len(db.query_options) == 2
     assert [params['id'] for _, params, _ in db.trace] == ['2026-10-06/cap-v1', 'retention-v1']
     for timeout, retry, options in db.query_options:
-        assert 0 < timeout <= 1. and retry is None and options == {'priority':'PRIORITY_LOW'}
+        assert 0 < timeout <= RPC_BUDGET_SECONDS and retry is None and options == {'priority':'PRIORITY_LOW'}
     assert db.write_shapes == [('tr_entities', ('kind', 'id', 'body', 'updated_at'))]
 
 
