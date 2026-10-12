@@ -97,7 +97,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"refused grant: the floor alone", "a grant beside a listed lease", "a listed hold",
 		"refused grant: the listed holds alone", "refused close: holds open", "shortfall write: the stored total again",
 		"shortfall write: below the stored total", "shortfall write below a total a booking raised",
-		"a release's excess kept on its shard", "a commit of two leases"} {
+		"a release's excess kept on its shard", "a commit of two leases", "a commit of two leases' returns"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -569,7 +569,34 @@ func (d *debtWalk) script() {
 		!slices.Equal(d.shards.credit, []int64{17, 5, 0}) {
 		d.fatalf("the script's return did not leave 1 of excess on the second shard: %+v", d.shards)
 	}
-	// Then both leases book in one commit, each past its room so each
+	// Then two leases more, 4 on the first shard and 5 on the second, the
+	// room left; the fourth books once on its own, so the two enter a batch
+	// at different versions and progress, which the store must keep apart;
+	// and both return part of their room in one commit, whose releases the
+	// store applies one after the other, and the replica too.
+	d.opStart = spannerNow(d.t)
+	if !d.grantAmount(ctx, 4) || !d.grantAmount(ctx, 5) {
+		d.fatalf("the script's later grants were refused")
+	}
+	step("two grants more")
+	third, fourth := d.leases[2], d.leases[3]
+	d.opStart = spannerNow(d.t)
+	money = []MoneyOp{Book(1, fourth.shortfall)}
+	d.note("book %s %v", fourth.ref.LeaseID, money)
+	got = d.commit(ctx, fourth, money, false)
+	if _, faults := fourth.bookedEach(money); !slices.Equal(got.Faults, faults) || len(faults) != 0 {
+		d.fatalf("the fourth lease's booking faulted %v, and the walk's ledger %v", got.Faults, faults)
+	}
+	d.seen["booking"]++
+	step("the fourth lease's booking")
+	if third.version == fourth.version || third.seq == fourth.seq {
+		d.fatalf("the third and fourth leases enter the batch alike: versions %d and %d, progress %d and %d",
+			third.version, fourth.version, third.seq, fourth.seq)
+	}
+	d.opStart = spannerNow(d.t)
+	d.commitTwo(ctx, third, []MoneyOp{Return(1)}, fourth, []MoneyOp{Return(2)})
+	step("the two leases' returns")
+	// Then the first two book in one commit, each past its room so each
 	// faults, on the one shard both have as first donor: the store sums the
 	// two leases' changes to that shard before it writes it once, and a
 	// store that kept one lease's change only fails the replica's check.
@@ -631,6 +658,12 @@ func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp
 		d.checkLeaseRow(l, "the two leases' commit")
 	}
 	d.seen["a commit of two leases"]++
+	returns := func(money []MoneyOp) bool {
+		return slices.ContainsFunc(money, func(op MoneyOp) bool { return !op.Book })
+	}
+	if returns(moneyA) && returns(moneyB) {
+		d.seen["a commit of two leases' returns"]++
+	}
 }
 
 func (d *debtWalk) run() {

@@ -128,8 +128,12 @@ func creditShards(workspace string, n int) error {
 // of a walk's workspace so a write that reset a column to its default, or
 // copied one into another, is seen: the tier it reads, a computed time, an
 // epoch, and a reconciled-through time an hour on. By DML: an update
-// mutation on the emulator resets the row's other defaulted columns.
+// mutation on the emulator resets the row's other defaulted columns. The
+// instant is this file's own: the walks' files are left out of the race
+// build, and these helpers are in it.
 const seededEpoch = 17
+
+var seededAt = time.Date(2026, 10, 8, 1, 0, 0, 0, time.UTC)
 
 func seedCreditMetadata(t testing.TB, workspace string) {
 	t.Helper()
@@ -137,7 +141,7 @@ func seedCreditMetadata(t testing.TB, workspace string) {
 		_, err := txn.Update(ctx, spanner.Statement{
 			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = @e, trust_reconciled_through = @u
 			       WHERE workspace_id = @w`,
-			Params: map[string]any{"t": walkTick, "u": walkTick.Add(time.Hour), "e": int64(seededEpoch), "w": workspace},
+			Params: map[string]any{"t": seededAt, "u": seededAt.Add(time.Hour), "e": int64(seededEpoch), "w": workspace},
 		})
 		return err
 	})
@@ -173,12 +177,12 @@ func creditMetadata(workspace string) error {
 			&m.source); err != nil {
 			return err
 		}
-		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(walkTick) ||
+		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(seededAt) ||
 			m.latched.Valid || m.override.Valid || len(m.causes) != 0 ||
 			m.epoch != (spanner.NullInt64{Int64: seededEpoch, Valid: true}) ||
-			!m.through.Valid || !m.through.Time.Equal(walkTick.Add(time.Hour)) || m.source.Valid {
+			!m.through.Valid || !m.through.Time.Equal(seededAt.Add(time.Hour)) || m.source.Valid {
 			problem = fmt.Errorf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch %d, computed at %v and reconciled an hour on",
-				m.shard, m, seededEpoch, walkTick)
+				m.shard, m, seededEpoch, seededAt)
 		}
 		return nil
 	})
