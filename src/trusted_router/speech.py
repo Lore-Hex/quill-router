@@ -163,7 +163,7 @@ for _slug, _native in (
         5000,
         1,
         1,
-        "https://microsoft.ai/models/mai-voice-2-1/",
+        "https://microsoft.ai/news/our-first-streaming-transcription-model/",
     )
 
 

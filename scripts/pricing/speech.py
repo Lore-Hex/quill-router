@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from trusted_router.pricing_approvals import approved_dated_price_transition
 
@@ -20,7 +20,7 @@ SOURCES = {
 SNAPSHOT = Path(__file__).resolve().parents[2] / "src/trusted_router/data/speech_pricing.json"
 GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 ELEVENLABS_URL = "https://elevenlabs.io/pricing/api"
-MICROSOFT_URL = "https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/build-expressive-voice-experiences-with-new-mai-models-in-microsoft-foundry/4524637"
+MICROSOFT_URL = "https://microsoft.ai/news/our-first-streaming-transcription-model/"
 
 
 def parse_elevenlabs_prices(html: str) -> dict[str, int]:
@@ -55,18 +55,26 @@ def parse_elevenlabs_prices(html: str) -> dict[str, int]:
 
 
 def parse_microsoft_prices(html: str) -> dict[str, int]:
-    # The official announcement embeds its article in structured page state.
-    # Match the explicit model + billing unit, not unrelated dollar figures.
+    # Bind each rate to its own article section, not a neighboring model.
+    soup = BeautifulSoup(html, "html.parser")
     prices = {}
     for label, model in (
         ("MAI-Voice-2.1", "mai-voice-2.1"),
-        ("MAI-Voice-2.1 Flash", "mai-voice-2.1-flash"),
+        ("MAI-Voice-2.1-Flash", "mai-voice-2.1-flash"),
     ):
-        amounts = set(
-            re.findall(
-                re.escape(label) + r" is available at \$(\d+(?:\.\d+)?) per 1M characters", html
-            )
-        )
+        amounts = []
+        for heading in soup.select("p.text-lead"):
+            if heading.get_text(" ", strip=True).split(":", 1)[0] != label:
+                continue
+            for element in heading.next_siblings:
+                if not isinstance(element, Tag):
+                    continue
+                if element.name in {"h2", "h3", "h4"} or "text-lead" in element.get("class", []):
+                    break
+                amounts.extend(re.findall(
+                    r"\$(\d+(?:\.\d+)?) per 1M characters\b",
+                    element.get_text(" ", strip=True),
+                ))
         if len(amounts) != 1:
             raise ValueError(f"Missing or conflicting Microsoft speech tariff: {model}")
         rate = Decimal(amounts.pop()) * 1_000_000
@@ -182,7 +190,8 @@ def refresh() -> None:
         (ELEVENLABS_URL, parse_elevenlabs_prices),
         (MICROSOFT_URL, parse_microsoft_prices),
     ):
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        headers = {"User-Agent": "Mozilla/5.0"} if url == ELEVENLABS_URL else {}
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         for model, price in parser(response.text).items():
             previous = before["prices"][model]
