@@ -36,6 +36,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.pricing.providers.azure import (  # noqa: E402, I001
+    DECISION_MODEL_ID,
     DISCOVERY_URL,
     MANIFEST_PATH,
     URL as PRICING_URL,
@@ -54,6 +55,7 @@ DEFAULT_LOCATION = "eastus2"
 MANAGEMENT_API_VERSION = "2025-10-01-preview"
 OPENAI_BASE_URL = "https://trustedrouter-foundry-eastus2.openai.azure.com/openai/v1"
 ANTHROPIC_BASE_URL = "https://trustedrouter-foundry-eastus2.services.ai.azure.com/anthropic/v1"
+DECISION_BASE_URL = "https://trustedrouter-foundry-eastus2.services.ai.azure.com/providers/microsoft/v1"
 CANARY_TIMEOUT = httpx.Timeout(connect=10, read=30, write=10, pool=10)
 DEPLOYMENT_VERSION_UPGRADE_OPTION = "NoAutoUpgrade"
 MINIMUM_LAUNCH_CAPACITY = 10
@@ -305,7 +307,13 @@ def select_deployment_candidates(
         capabilities = model.get("capabilities")
         if (
             not isinstance(capabilities, dict)
-            or str(capabilities.get("chatCompletion", "")).lower() != "true"
+            or not (
+                str(capabilities.get("chatCompletion", "")).lower() == "true"
+                or (
+                    canonical_model_id(str(model.get("name", ""))) == DECISION_MODEL_ID
+                    and str(capabilities.get("decision", "")).lower() == "true"
+                )
+            )
         ):
             continue
         native_name = model.get("name")
@@ -821,7 +829,63 @@ def _text_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
         raise RuntimeError(f"Azure canary returned no PONG for {candidate.deployment_name}")
 
 
+def _decision_canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    payload = _post_json(
+        f"{DECISION_BASE_URL}/systemone",
+        headers={"api-key": account_key},
+        request={
+            "model": candidate.deployment_name,
+            "state": "I was charged twice and need a refund.",
+            "questions": {
+                "refund": {"type": "noul", "instructions": "Is a refund requested?"},
+                "team": {
+                    "type": "choice",
+                    "instructions": "Which team should handle this ticket?",
+                    "criteria": {"billing": "Charges and refunds", "engineering": "Software bugs"},
+                },
+                "urgency": {
+                    "type": "score", "instructions": "How urgent is the ticket?",
+                    "criteria": ["low", "medium", "high"],
+                },
+            },
+        },
+    )
+    _validate_decision_canary(payload)
+
+
+def _validate_decision_canary(payload: dict[str, Any]) -> None:
+    def number(value: Any, low: float, high: float) -> bool:
+        return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
+
+    def require(condition: bool) -> None:
+        if not condition:
+            raise ValueError("invalid decision response")
+
+    try:
+        answers, usage = payload["answers"], payload["usage"]
+        require(payload["model"] == "microsoft-decision-1")
+        require(set(answers) == {"refund", "team", "urgency"})
+        require(answers["refund"]["type"] == "noul")
+        require(number(answers["refund"]["noul"], 0.5, 1))
+        require(answers["team"]["type"] == "choice")
+        require(answers["team"]["choice"] == "billing")
+        require(answers["urgency"]["type"] == "score")
+        require(number(answers["urgency"]["score"], 0, 2))
+        for name, keys in (("team", {"billing", "engineering"}), ("urgency", {"0", "1", "2"})):
+            probabilities = answers[name]["probabilities"]
+            require(set(probabilities) == keys)
+            require(all(number(value, 0, 1) for value in probabilities.values()))
+            require(math.isclose(sum(probabilities.values()), 1, abs_tol=1e-5))
+        require(type(usage["input_tokens"]) is int and usage["input_tokens"] > 0)
+        require(type(usage["output_tokens"]) is int and usage["output_tokens"] >= 0)
+    except (KeyError, TypeError, ValueError):
+        raise RuntimeError("Azure decision canary failed schema, usage or answer validation") from None
+
+
 def canary(candidate: DeploymentCandidate, *, account_key: str) -> None:
+    if candidate.canonical_id == DECISION_MODEL_ID:
+        _decision_canary(candidate, account_key=account_key)
+        return
     _text_canary(candidate, account_key=account_key)
     _tool_canary(candidate, account_key=account_key)
     if candidate.canonical_id in _IMAGE_CANARY_MODEL_IDS:
@@ -883,6 +947,11 @@ def canary_with_retries(
 ) -> None:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
+    if candidate.canonical_id == DECISION_MODEL_ID:
+        _canary_phase_with_retries(
+            _decision_canary, candidate, account_key=account_key, max_attempts=max_attempts,
+        )
+        return
     _canary_phase_with_retries(
         _text_canary,
         candidate,
@@ -929,6 +998,11 @@ def manifest_row(candidate: DeploymentCandidate, price: Any) -> dict[str, Any]:
         "azure_model_format": candidate.model_format,
         "azure_deployment_sku": candidate.sku,
     }
+    if candidate.canonical_id == DECISION_MODEL_ID:
+        row.update(
+            model_type="decision", endpoints=["decide"], output_modalities=["decision"],
+            context_length=32768,
+        )
     if tier.prompt_cached_micro_per_m is not None:
         row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
     if len(price.tiers) > 1:
@@ -960,9 +1034,9 @@ def write_manifest(rows: list[dict[str, Any]]) -> bool:
     stable_payload = {
         "_about": (
             "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
-            "The account sync publishes only synchronous chat deployments with "
-            "remaining quota, exact pricing, and successful direct text, tool-call, "
-            "and required image capability canaries."
+            "The account sync publishes only deployments with remaining quota, exact "
+            "pricing, and successful direct capability canaries: text, tools and required "
+            "images for chat; boolean, choice and score for decision models."
         ),
         "provider": "azure",
         "source": DISCOVERY_URL,

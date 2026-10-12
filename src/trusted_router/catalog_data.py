@@ -3377,6 +3377,15 @@ class _DecisionSpec(TypedDict):
 # the gateway translates every one of them to the public /v1/decide shape.
 _DECISION_SPECS: tuple[_DecisionSpec, ...] = (
     {
+        "id": "microsoft/microsoft-decision-1",
+        "name": "Microsoft Decision-1",
+        "provider": "azure",
+        "upstream_id": "tr-decision-1",
+        "context_length": 32768,
+        "cost_dollars_per_million": "0.042",
+        "fallback_routes": (),
+    },
+    {
         "id": "typesafe-ai/jev",
         "name": "TypeSafe AI Jev",
         "provider": "typesafe",

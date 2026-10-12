@@ -26,8 +26,9 @@ from scripts.providers.sync_azure_foundry import (
 from scripts.smoke_all_providers import PROBES
 from tests import catalog_vehicles
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
+from trusted_router.provider_lifecycle import provider_model_retired
 
-_EXPECTED_AZURE_LAUNCH_IDS = frozenset(
+_EXPECTED_AZURE_CHAT_IDS = frozenset(
     {
         "cohere/command-a",
         "moonshotai/kimi-k2.5",
@@ -40,6 +41,7 @@ _EXPECTED_AZURE_LAUNCH_IDS = frozenset(
         "x-ai/grok-4.20-reasoning",
     }
 )
+_EXPECTED_AZURE_LAUNCH_IDS = _EXPECTED_AZURE_CHAT_IDS | {azure.DECISION_MODEL_ID}
 _EXPECTED_AZURE_HOLD_IDS = frozenset(
     {
         "cohere/command-a-plus-05-2026",
@@ -176,6 +178,11 @@ def _usage(name: str, *, limit: float = 20, current: float = 0) -> dict[str, obj
 
 def _minimum_retail_rows(model_id: str) -> list[dict[str, object]]:
     rule = azure._RETAIL_RULES[model_id]  # noqa: SLF001
+    if rule.input_only_meter:
+        return [{
+            "productName": rule.product, "skuName": rule.stems[0],
+            "meterName": rule.input_only_meter, "retailPrice": "0.042", "unitOfMeasure": "1M",
+        }]
     tier_rules = rule.price_tiers or (azure.RetailTierRule(None),)
     rows: list[dict[str, object]] = []
     for index, tier_rule in enumerate(tier_rules):
@@ -629,7 +636,7 @@ def test_azure_every_retail_rule_requires_its_exact_model_version(
     absent = azure.parse_retail_prices(rows, model_versions={})
 
     rule = azure._RETAIL_RULES[model_id]  # noqa: SLF001
-    if rule.production_hold_reason is None:
+    if rule.production_hold_reason is None and not provider_model_retired("azure", model_id):
         assert set(known) == {model_id}
     else:
         assert known == {}
@@ -978,11 +985,11 @@ def test_azure_canary_requires_tools_for_every_launch_route_and_images_for_exact
         lambda candidate, *, account_key: image_calls.append(candidate.canonical_id),
     )
 
-    for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS):
+    for model_id in sorted(_EXPECTED_AZURE_CHAT_IDS):
         canary(_canary_candidate(model_id), account_key="test")
 
-    assert text_calls == sorted(_EXPECTED_AZURE_LAUNCH_IDS)
-    assert tool_calls == sorted(_EXPECTED_AZURE_LAUNCH_IDS)
+    assert text_calls == sorted(_EXPECTED_AZURE_CHAT_IDS)
+    assert tool_calls == sorted(_EXPECTED_AZURE_CHAT_IDS)
     assert frozenset(image_calls) == sync._IMAGE_CANARY_MODEL_IDS  # noqa: SLF001
     assert sync._IMAGE_CANARY_MODEL_IDS == frozenset(  # noqa: SLF001
         {
@@ -1014,12 +1021,12 @@ def test_azure_openai_tool_canary_forces_structured_zero_argument_pong_for_all_r
 
     monkeypatch.setattr(sync.httpx, "post", fake_post)
 
-    for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS):
+    for model_id in sorted(_EXPECTED_AZURE_CHAT_IDS):
         sync._tool_canary(_canary_candidate(model_id), account_key="test")  # noqa: SLF001
 
-    assert len(requests) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 9
+    assert len(requests) == len(_EXPECTED_AZURE_CHAT_IDS) == 9
     for model_id, (url, request, timeout) in zip(
-        sorted(_EXPECTED_AZURE_LAUNCH_IDS), requests, strict=True
+        sorted(_EXPECTED_AZURE_CHAT_IDS), requests, strict=True
     ):
         assert url == f"{sync.OPENAI_BASE_URL}/chat/completions"
         assert timeout is sync.CANARY_TIMEOUT
@@ -1623,10 +1630,13 @@ def test_azure_admission_isolates_failed_capability_canary(
     assert "Azure image canary failed" in failures[0]
 
 
-def test_azure_publish_admission_writes_only_exact_nine_success(
+def test_azure_publish_admission_writes_only_exact_active_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidates = [_canary_candidate(model_id) for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS)]
+    candidates = [
+        _canary_candidate(model_id) for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS)
+        if not provider_model_retired("azure", model_id)
+    ]
     rows = [{"id": candidate.canonical_id} for candidate in candidates]
     writes: list[list[dict[str, object]]] = []
 
@@ -1816,10 +1826,10 @@ def test_azure_openai_text_canary_requires_terminal_usage_for_all_launch_routes(
 
     monkeypatch.setattr(sync.httpx, "stream", fake_stream)
 
-    for model_id in sorted(_EXPECTED_AZURE_LAUNCH_IDS):
+    for model_id in sorted(_EXPECTED_AZURE_CHAT_IDS):
         sync._text_canary(_canary_candidate(model_id), account_key="test")  # noqa: SLF001
 
-    assert len(requests) == len(seen_timeouts) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 9
+    assert len(requests) == len(seen_timeouts) == len(_EXPECTED_AZURE_CHAT_IDS) == 9
     assert all(timeout is sync.CANARY_TIMEOUT for timeout in seen_timeouts)
     assert all(request["stream_options"] == {"include_usage": True} for request in requests)
 
@@ -1830,9 +1840,12 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
 
     assert PROVIDERS["azure"].supports_prepaid is True
     assert PROVIDERS["azure"].supports_byok is False
-    assert raw["model_count"] == len(rows) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 9
+    assert raw["model_count"] == len(rows) == len(_EXPECTED_AZURE_LAUNCH_IDS) == 10
     assert {row["id"] for row in rows} == _EXPECTED_AZURE_LAUNCH_IDS
-    assert azure.retail_model_ids() == _EXPECTED_AZURE_LAUNCH_IDS
+    assert azure.retail_model_ids() == {
+        model_id for model_id in _EXPECTED_AZURE_LAUNCH_IDS
+        if not provider_model_retired("azure", model_id)
+    }
     assert {
         row["id"]
         for row in rows
@@ -1850,7 +1863,7 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
     assert "x-ai/grok-4.3@azure/prepaid" not in built
     for row in rows:
         model_id = row["id"]
-        if row.get("routable") is False:
+        if row.get("routable") is False or provider_model_retired("azure", model_id):
             # A row the refresh tombstoned is dark, not routed.
             assert f"{model_id}@azure/prepaid" not in built
             assert f"{model_id}@azure/byok" not in built
@@ -1860,7 +1873,10 @@ def test_azure_manifest_registers_prepaid_only_gateway_routes() -> None:
         assert endpoint.usage_type == "Credits"
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
-        assert endpoint.completion_price_microdollars_per_million_tokens > 0
+        if model_id == azure.DECISION_MODEL_ID:
+            assert endpoint.completion_price_microdollars_per_million_tokens == 0
+        else:
+            assert endpoint.completion_price_microdollars_per_million_tokens > 0
         assert f"{model_id}@azure/byok" not in built
 
 
@@ -1898,9 +1914,9 @@ def test_azure_sync_leaves_unchanged_manifest_byte_identical(
     existing = {
         "_about": (
             "Azure AI Foundry deployments verified for this TrustedRouter subscription. "
-            "The account sync publishes only synchronous chat deployments with "
-            "remaining quota, exact pricing, and successful direct text, tool-call, "
-            "and required image capability canaries."
+            "The account sync publishes only deployments with remaining quota, exact "
+            "pricing, and successful direct capability canaries: text, tools and required "
+            "images for chat; boolean, choice and score for decision models."
         ),
         "provider": "azure",
         "source": (

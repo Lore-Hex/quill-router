@@ -328,10 +328,10 @@ def _authoritative_provider_model_ids(
     for row in raw_models:
         if not isinstance(row, dict) or row.get("routable") is False:
             continue
-        if row.get("model_type") not in (None, "chat", "image", "video", "embedding"):
+        if row.get("model_type") not in (None, "chat", "image", "video", "embedding", "decision"):
             continue
         endpoint_types = {str(item) for item in (row.get("endpoints") or [])}
-        if not endpoint_types.intersection({"chat/completions", "images", "videos", "embeddings"}):
+        if not endpoint_types.intersection({"chat/completions", "images", "videos", "embeddings", "decide"}):
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:

@@ -362,6 +362,14 @@ _RETIREMENTS = (
         }),
         effective_at=AZURE_COMMAND_A_PLUS_RETIREMENT_AT,
     ),
+    # Account-scoped ARM model catalog, Microsoft-Decision-1 version 1,
+    # deprecation.inference, verified 2026-10-12. Do not silently upgrade.
+    _Retirement(
+        provider="azure",
+        model_ids=frozenset({"microsoft/microsoft-decision-1"}),
+        upstream_ids=frozenset({"Microsoft-Decision-1", "tr-decision-1"}),
+        effective_at=datetime(2027, 2, 4, tzinfo=UTC),
+    ),
     # Notices give dates without an exact time; stop at 00:00 UTC conservatively.
     # OpenAI: https://developers.openai.com/api/docs/deprecations
     # Together canceled its September 29 V4 Flash 0731 retirement; its October

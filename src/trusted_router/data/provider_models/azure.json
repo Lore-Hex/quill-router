@@ -1,11 +1,30 @@
 {
-  "_about": "Azure AI Foundry deployments verified for this TrustedRouter subscription. The account sync publishes only synchronous chat deployments with remaining quota, exact pricing, and successful direct text, tool-call, and required image capability canaries.",
+  "_about": "Azure AI Foundry deployments verified for this TrustedRouter subscription. The account sync publishes only deployments with remaining quota, exact pricing, and successful direct capability canaries: text, tools and required images for chat; boolean, choice and score for decision models.",
   "provider": "azure",
   "source": "https://management.azure.com/providers/Microsoft.CognitiveServices/locations/eastus2/models",
   "pricing_source": "https://prices.azure.com/api/retail/prices?$filter=serviceName%20eq%20%27Foundry%20Models%27%20and%20armRegionName%20eq%20%27eastus2%27",
   "price_scale": "microdollars_per_million",
-  "model_count": 9,
+  "model_count": 10,
   "models": [
+    {
+      "id": "microsoft/microsoft-decision-1",
+      "upstream_id": "tr-decision-1",
+      "display_name": "Microsoft-Decision-1",
+      "title": "Microsoft-Decision-1",
+      "model_type": "decision",
+      "endpoints": ["decide"],
+      "input_modalities": ["text"],
+      "output_modalities": ["decision"],
+      "context_length": 32768,
+      "input_token_price_per_m": 42000,
+      "output_token_price_per_m": 0,
+      "status": 1,
+      "routable": true,
+      "azure_model_name": "Microsoft-Decision-1",
+      "azure_model_version": "1",
+      "azure_model_format": "Microsoft",
+      "azure_deployment_sku": "GlobalStandard"
+    },
     {
       "id": "cohere/command-a",
       "upstream_id": "cohere-command-a",
