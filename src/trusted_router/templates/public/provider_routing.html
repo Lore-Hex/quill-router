@@ -100,7 +100,7 @@
   <div class="content-group">
     <h3>Look up a model's endpoints</h3>
     <pre class="content-code-wrap"><code>GET /v1/<wbr>models/<wbr>{author}/<wbr>{slug}/<wbr>endpoints</code></pre>
-    <p>The response includes <code>quantization</code> and <code>trustedrouter.precision</code>. In the full catalog, find these at:</p>
+    <p>The response includes <code>quantization</code> and <code>trustedrouter.precision</code>. In the catalog fetched with <code>GET /v1/models?include=endpoints</code>, find these at:</p>
     <pre class="content-code-wrap"><code>trustedrouter.<wbr>endpoints[].<wbr>quantization
 trustedrouter.<wbr>endpoints[].<wbr>precision</code></pre>
   </div>

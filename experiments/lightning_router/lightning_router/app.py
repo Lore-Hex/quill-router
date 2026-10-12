@@ -57,7 +57,9 @@ class Catalog:
         with self.lock:
             if time.monotonic() - self.loaded < 300 and self.models:
                 return self.models
-            response = self.client.get("https://trustedrouter.com/v1/models")
+            # privacy() reads trustedrouter.endpoints, which the default list omits.
+            response = self.client.get("https://trustedrouter.com/v1/models",
+                                       params={"include": "endpoints"})
             response.raise_for_status()
             models = []
             for item in response.json()["data"]:

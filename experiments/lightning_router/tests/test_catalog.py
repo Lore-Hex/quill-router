@@ -17,6 +17,7 @@ def test_catalog_only_lists_public_prepaid_chat_tool_candidates():
     def handle(request):
         calls.append(request)
         assert not request.headers.get("authorization")
+        assert request.url.params.get_list("include") == ["endpoints"]
         return httpx.Response(200, json={"data": rows})
     catalog = Catalog(httpx.Client(transport=httpx.MockTransport(handle)))
     assert [row["id"] for row in catalog.current()] == ["a/good"]

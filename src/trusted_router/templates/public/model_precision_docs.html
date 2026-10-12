@@ -4,7 +4,7 @@
 <section class="routing-feature-section">
   <p><a href="/model-precision">Model precision overview</a></p>
   <h2>Read the selected provider's metadata</h2>
-  <p>Precision belongs to an endpoint, not a model name. <code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code> for each endpoint. The catalog also exposes these at <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
+  <p>Precision belongs to an endpoint, not a model name. <code>GET /v1/models/{author}/{slug}/endpoints</code> returns <code>quantization</code> and <code>trustedrouter.precision</code> for each endpoint. <code>GET /v1/models?include=endpoints</code> also exposes these at <code>trustedrouter.endpoints[].quantization</code> and <code>trustedrouter.endpoints[].precision</code>.</p>
   <pre><code>import httpx
 
 model = "openai/gpt-oss-120b"
