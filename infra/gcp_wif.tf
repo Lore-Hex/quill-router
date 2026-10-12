@@ -17,6 +17,8 @@ locals {
     # record for azure.trustedrouter.com.
     "${local.github_owner}/quill-router/.github/workflows/deploy-azure-control-plane.yml@refs/heads/main",
     "${local.github_owner}/quill-router/.github/workflows/infra-apply.yml@refs/heads/main",
+    # Uploads the fast path node's binaries for a CI-passed main commit (infra/fastpath.tf).
+    "${local.github_owner}/quill-router/.github/workflows/fastpath-release.yml@refs/heads/main",
   ]
 
   quill_cloud_proxy_workflow_refs = [
