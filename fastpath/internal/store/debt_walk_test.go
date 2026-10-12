@@ -499,24 +499,7 @@ func newDebtWalkWith(t *testing.T, s *Store, seed int64, credits []int64, rngs .
 	}
 	d.shards = shards{credit: slices.Clone(credits), usage: make([]int64, len(credits)), reserved: make([]int64, len(credits)),
 		touched: make([]bool, len(credits)), updatedAt: make([]spanner.NullTime, len(credits))}
-	// Benign metadata the store neither reads nor writes, set on every row
-	// so a write that reset a column to its default is seen (seeded rows
-	// carry defaults, which such a write would leave as they are). By DML:
-	// an update mutation on the emulator resets the row's other defaulted
-	// columns, the tier among them.
-	_, err := shared.ReadWriteTransaction(context.Background(), func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		// Two instants an hour apart, so a write that copies one column into
-		// the other shows.
-		_, err := txn.Update(ctx, spanner.Statement{
-			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = 17, trust_reconciled_through = @u
-			       WHERE workspace_id = @w`,
-			Params: map[string]any{"t": walkTick, "u": walkTick.Add(time.Hour), "w": d.ws},
-		})
-		return err
-	})
-	if err != nil {
-		t.Fatalf("seeding the credit rows' metadata: %v", err)
-	}
+	seedCreditMetadata(t, d.ws)
 	return d
 }
 
@@ -603,12 +586,17 @@ func (d *debtWalk) script() {
 func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp, b *debtLease, moneyB []MoneyOp) {
 	d.t.Helper()
 	d.note("commit %s %v and %s %v together", a.ref.LeaseID, moneyA, b.ref.LeaseID, moneyB)
+	// Each lease's request carries a winner of its own, a release from the
+	// owner's records with its own pending work, so a store that stored one
+	// lease's winners in the other's pack fails the packs' check.
 	request := func(l *debtLease, money []MoneyOp) CommitRequest {
 		seq := l.seq
 		if !l.stored {
 			seq++
 		}
-		return CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money}
+		auth := l.ref.LeaseID + "-two"
+		return CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money,
+			Winners: []Winner{{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release", Work: workOf(auth, "two")}}}
 	}
 	reqs := []CommitRequest{request(a, moneyA), request(b, moneyB)}
 	changesA, releasesA := a.moneyEffect(moneyA)
@@ -632,7 +620,7 @@ func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp
 		}
 		l.advance(d, "the two leases' commit", got[i].NewVersion)
 		l.seq = reqs[i].AppliedSeq
-		l.packs = append(l.packs, Pack{CommitVersion: l.version})
+		l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: reqs[i].Winners})
 		_, faults := l.bookedEach(money)
 		if !slices.Equal(got[i].Faults, faults) {
 			d.fatalf("the two leases' commit faulted %v for lease %s, and the walk's ledger %v", got[i].Faults, l.ref.LeaseID,
@@ -1503,27 +1491,14 @@ func samePacks(got, want []Pack) string {
 // row it did not write keeps its stamp.
 func (d *debtWalk) checkCreditColumns() {
 	d.t.Helper()
-	type meta struct {
-		tier     spanner.NullInt64
-		computed spanner.NullTime
-		latched  spanner.NullTime
-		override spanner.NullInt64
-		causes   []spanner.NullString
-		epoch    spanner.NullInt64
-		through  spanner.NullTime
-		source   spanner.NullTime
-		updated  spanner.NullTime
-	}
+	type meta struct{ updated spanner.NullTime }
 	var got []meta
 	err := shared.Single().Query(context.Background(), spanner.Statement{
-		SQL: `SELECT trust_tier, trust_computed_at, trust_latched_at, trust_override_tier, billing_pause_causes,
-		             pause_epoch, trust_reconciled_through, source_updated_at, updated_at
-		        FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		SQL:    `SELECT updated_at FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": d.ws},
 	}).Do(func(r *spanner.Row) error {
 		var m meta
-		if err := r.Columns(&m.tier, &m.computed, &m.latched, &m.override, &m.causes, &m.epoch, &m.through, &m.source,
-			&m.updated); err != nil {
+		if err := r.Column(0, &m.updated); err != nil {
 			return err
 		}
 		got = append(got, m)
@@ -1532,15 +1507,11 @@ func (d *debtWalk) checkCreditColumns() {
 	if err != nil {
 		d.fatalf("reading the credit rows' columns: %v", err)
 	}
+	// The seeded tier and metadata (seedCreditMetadata), and nothing else.
+	if err := creditMetadata(d.ws); err != nil {
+		d.fatalf("%v", err)
+	}
 	for i, m := range got {
-		// The seeded tier and metadata (newDebtWalkWith), and nothing else; a
-		// null array reads as no causes.
-		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(walkTick) ||
-			m.latched.Valid || m.override.Valid || len(m.causes) != 0 || m.epoch != (spanner.NullInt64{Int64: 17, Valid: true}) ||
-			!m.through.Valid || !m.through.Time.Equal(walkTick.Add(time.Hour)) || m.source.Valid {
-			d.fatalf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch 17, computed at %v and reconciled an hour on",
-				i, m, walkTick)
-		}
 		prev := d.shards.updatedAt[i]
 		switch {
 		case d.shards.touched[i]:

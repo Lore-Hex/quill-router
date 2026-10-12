@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -121,6 +122,91 @@ func creditShards(workspace string, n int) error {
 		return fmt.Errorf("the credit rows are shards %v, and %v were seeded", got, want)
 	}
 	return nil
+}
+
+// Metadata the store neither reads nor writes, seeded on every credit row
+// of a walk's workspace so a write that reset a column to its default, or
+// copied one into another, is seen: the tier it reads, a computed time, an
+// epoch, and a reconciled-through time an hour on. By DML: an update
+// mutation on the emulator resets the row's other defaulted columns.
+const seededEpoch = 17
+
+func seedCreditMetadata(t testing.TB, workspace string) {
+	t.Helper()
+	_, err := shared.ReadWriteTransaction(context.Background(), func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = @e, trust_reconciled_through = @u
+			       WHERE workspace_id = @w`,
+			Params: map[string]any{"t": walkTick, "u": walkTick.Add(time.Hour), "e": int64(seededEpoch), "w": workspace},
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seeding the credit rows' metadata: %v", err)
+	}
+}
+
+// creditMetadata says how a credit row's columns other than its money and
+// mark differ from what seedWorkspace and seedCreditMetadata left, if they
+// do: the tier, the seeded times and epoch, and nothing else set.
+func creditMetadata(workspace string) error {
+	type meta struct {
+		shard    int64
+		tier     spanner.NullInt64
+		computed spanner.NullTime
+		latched  spanner.NullTime
+		override spanner.NullInt64
+		causes   []spanner.NullString
+		epoch    spanner.NullInt64
+		through  spanner.NullTime
+		source   spanner.NullTime
+	}
+	var problem error
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL: `SELECT shard, trust_tier, trust_computed_at, trust_latched_at, trust_override_tier, billing_pause_causes,
+		             pause_epoch, trust_reconciled_through, source_updated_at
+		        FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": workspace},
+	}).Do(func(r *spanner.Row) error {
+		var m meta
+		if err := r.Columns(&m.shard, &m.tier, &m.computed, &m.latched, &m.override, &m.causes, &m.epoch, &m.through,
+			&m.source); err != nil {
+			return err
+		}
+		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(walkTick) ||
+			m.latched.Valid || m.override.Valid || len(m.causes) != 0 ||
+			m.epoch != (spanner.NullInt64{Int64: seededEpoch, Valid: true}) ||
+			!m.through.Valid || !m.through.Time.Equal(walkTick.Add(time.Hour)) || m.source.Valid {
+			problem = fmt.Errorf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch %d, computed at %v and reconciled an hour on",
+				m.shard, m, seededEpoch, walkTick)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return problem
+}
+
+// creditRowsText is every column of the workspace's credit rows, in shard
+// order, as text: held equal across a write that must leave them alone.
+func creditRowsText(workspace string) (string, error) {
+	var b strings.Builder
+	err := shared.Single().Query(context.Background(), spanner.Statement{
+		SQL:    `SELECT * FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": workspace},
+	}).Do(func(r *spanner.Row) error {
+		for i, name := range r.ColumnNames() {
+			var v spanner.GenericColumnValue
+			if err := r.Column(i, &v); err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, "%s=%v ", name, v.Value.AsInterface())
+		}
+		b.WriteString("; ")
+		return nil
+	})
+	return b.String(), err
 }
 
 func headrooms(rows []row) []int64 {

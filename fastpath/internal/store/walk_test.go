@@ -309,6 +309,7 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	first := int64(rng.Intn(c.Grant + 1))
 	credits := []int64{first, int64(c.Grant) - first + int64(rng.Intn(2)), int64(rng.Intn(3))}
 	req := grantOf(seedWorkspace(t, credits...), int64(c.Grant))
+	seedCreditMetadata(t, req.Workspace)
 	// Distinct values the row must keep, so a column dropped from the
 	// store's reads is seen, not matched by a zero; from a source of their
 	// own, so the walk's own draws are as they were.
@@ -680,11 +681,21 @@ func (w *walker) reap(m, a int8, from ac.State, tick time.Time, record string, w
 	w.seen["reap"]++
 	mem := from.Mem[m]
 	charge := int64(max(mem.Holds[a], 0))
+	// A reap appends a drain row and touches no credit row: its winner's
+	// commit books it. The rows are held equal across it, every column.
+	rowsBefore, err := creditRowsText(w.ref.Workspace)
+	if err != nil {
+		w.fatalf("reading the credit rows: %v", err)
+	}
 	got, committed, err := w.s.Reap(context.Background(), w.ref, int64(mem.Ver), tick, detached(ReapRow{
 		AuthorizationID: w.c.Auths[a], RecordID: record, Charge: charge, Estimate: walkEstimate,
 		SnapshotOwnerSeq: w.members[m].holdSeq[a], Digest: []byte(record), Money: []byte(`{}`)}))
 	if err != nil || got != want || (want != "" && !committed.IsZero()) {
 		w.fatalf("member %s's reap of %s: %q at %v, want %q, %v", w.c.Members[m], w.c.Auths[a], got, committed, want, err)
+	}
+	if rowsAfter, err := creditRowsText(w.ref.Workspace); err != nil || rowsAfter != rowsBefore {
+		w.fatalf("member %s's reap of %s changed the credit rows from %s to %s (%v)", w.c.Members[m], w.c.Auths[a],
+			rowsBefore, rowsAfter, err)
 	}
 	if want == "" {
 		w.landed("reap", committed)
@@ -1601,6 +1612,11 @@ func (w *walker) check() {
 	// not know what was seeded.
 	if credits != w.credits {
 		w.fatalf("the credit rows hold %d, and %d was seeded", credits, w.credits)
+	}
+	// And every other column of each row is as seeded: a write that reset
+	// the tier would refuse the next grant.
+	if err := creditMetadata(w.ref.Workspace); err != nil {
+		w.fatalf("%v", err)
 	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
