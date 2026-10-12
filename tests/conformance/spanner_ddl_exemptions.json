@@ -48,6 +48,16 @@
         "reason": "A test double for gcloud in the tests of scripts/deploy/migrate_fastpath.sh (fastpath/schema/migration_test.go): it records the statements the migration gives it in a temporary directory and answers its schema queries from there; it reaches no database and dispatches no DDL."
       }
     },
+    "infra/fastpath_deploy_roles.tf": {
+      "# What the deploy identity needs to create the fast path's install": {
+        "count": 1,
+        "reason": "Human-readable comment describing IAM permissions, not a Spanner DDL statement; the Terraform file only imports and declares project IAM members."
+      },
+      "# can grant are a short script Joseph runs), and imported here so they are": {
+        "count": 1,
+        "reason": "Human-readable comment about project IAM grants performed by an owner, not a Spanner GRANT statement or DDL dispatch."
+      }
+    },
     "scripts/cleanup_smoke_signups.py": {
       "Run as a project Owner (needs Spanner DDL/DML perms):": {
         "count": 1,
