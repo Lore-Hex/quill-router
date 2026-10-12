@@ -49,10 +49,16 @@ def native_json_domain(value: Any, depth: int = 0, *, binary64_paths: tuple[tupl
     """
     kind = type(value)
     if kind is dict:
-        return depth >= 16 or any(type(k) is not str or native_json_domain(v, depth + 1, binary64_paths=tuple(p[1:] for p in binary64_paths if p and p[0] == k) if binary64_paths else ())
+        if not binary64_paths:
+            # Preserve P1's positional recursion when no path is active.
+            return depth >= 16 or any(type(k) is not str or native_json_domain(v, depth + 1)
+                                      for k, v in value.items())
+        return depth >= 16 or any(type(k) is not str or native_json_domain(v, depth + 1, binary64_paths=tuple(p[1:] for p in binary64_paths if p and p[0] == k))
                                   for k, v in value.items())
     if kind is list:
-        return depth >= 16 or any(native_json_domain(v, depth + 1, binary64_paths=tuple(p[1:] for p in binary64_paths if p and p[0] == "*") if binary64_paths else ()) for v in value)
+        if not binary64_paths:
+            return depth >= 16 or any(native_json_domain(v, depth + 1) for v in value)
+        return depth >= 16 or any(native_json_domain(v, depth + 1, binary64_paths=tuple(p[1:] for p in binary64_paths if p and p[0] == "*")) for v in value)
     if kind is float and () in binary64_paths:
         return not math.isfinite(value)
     return not (kind is str or kind is int or kind is bool or value is None)

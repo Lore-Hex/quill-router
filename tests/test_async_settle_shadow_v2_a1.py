@@ -52,6 +52,9 @@ def run_vector(v: dict[str, Any]) -> Any:
     if target in SCHEMAS:
         schema = SCHEMAS[target]
         raw = canonical(value)
+        if "number_lexeme" in v:
+            raw = raw.replace(b'"backlog_age_at_seconds":' + canonical(value["backlog_age_at_seconds"]),
+                              b'"backlog_age_at_seconds":' + v["number_lexeme"].encode("ascii"))
         if "transport_bytes" in v:
             raw += b" " * (v["transport_bytes"] - len(raw))
         return schema.parse(raw)
@@ -59,6 +62,10 @@ def run_vector(v: dict[str, Any]) -> Any:
         return r.validate_completion(**value)
     if target == "health_usable":
         return h.health_usable(**value)
+    if target == "coverage_root":
+        return a.coverage_root(value)
+    if target == "validate_publisher_traces":
+        return h.validate_publisher_traces(**value)
     if target == "validate_publisher_final":
         return h.validate_publisher_final(value)
     if target == "validate_close_result":
@@ -267,9 +274,15 @@ def test_trace_counter_independent_coverage_and_outcomes() -> None:
     start = traces[0]["slot"]
     for i, trace in enumerate(traces):
         trace["slot"] = start + i
+        for field in ("claim_at_ns", "observed_at_ns", "publisher_heartbeat_ns"):
+            if trace[field] is not None:
+                trace[field] += i * 2000000000
     counter = {**obj("counter", "publisher-idle"), "scheduled_slots": 4, "claim_attempts": 3,
         "claims": 2, "scans": 2, "publications": 1, "failures": 1, "missed_slots": 1,
         "lost_claims": 1, "unknown_outcomes": 1, "late_cycles": 1}
+    counter["cycle_us"]["counts"][-1] = 3
+    counter["rpc_us"]["counts"][0] = 15
+    counter["rpc_us"]["counts"][-1] = 3
     args = dict(day=generator.DAY, boot="issuer", first_slot=start, last_slot=start + 3)
     h.validate_publisher_traces(counter, traces, **args)
     with pytest.raises(ValueError):

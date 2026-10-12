@@ -1,13 +1,26 @@
-"""Opt-in binary64 transport; baseline codecs keep their integer-only domain."""
+"""Opt-in binary64 numbers; transport policy belongs to the shared decoder.
+
+Canonical float lexemes are exactly detached_jws.canonical / CPython JSON's
+shortest round-trip binary64 spelling. Both 1 (native int) and 1.0 (native float)
+are legal and remain distinct; -0.0 preserves the floating zero sign, while -0
+is not a canonical integer. Nonnegative finite binary64 values include the
+smallest subnormal 5e-324 and largest finite 1.7976931348623157e+308.
+Fixed notation includes 0.0001 through values below 1e16; 1e-05 and 1e+16 use
+lowercase e, an explicit exponent sign, and at least two exponent digits (e-07,
+e+20). Redundant zeros (1.00), uppercase E, missing plus signs (1e20), and
+alternate exponent padding (1e-7, 1e-007) are not canonical. Integer lexemes
+use decimal digits without exponents, leading zeros or a plus sign. Exact
+binary64-representable integers beyond int64 remain legal on declared paths.
+"""
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from trusted_router.async_settle_shadow_v2_a1_deltas import broadening
-from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
-from trusted_router.async_settle_shadow_v2_schema import _bad_number, _number, _pairs, require
+from trusted_router.async_settle_shadow_v2_schema import require
 from trusted_router.detached_jws import canonical
 
 
@@ -27,38 +40,57 @@ def _int(lexeme: str) -> int:
     return int(lexeme)
 
 
-def decode_numbers(raw: bytes, limit: int, paths: tuple[tuple[str, ...], ...]) -> Any:
-    require(type(raw) is bytes and len(raw) <= limit, "evidence_size")
-    require(not raw.startswith((b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff")), "json_encoding")
-    require(all(c < 128 for c in raw), "json_encoding")
+def number_decoder(raw: bytes, paths: tuple[tuple[str, ...], ...]) -> Callable[[str, Callable[[str], Any]], Any] | None:
+    """Plan path selection only; the shared decoder owns all transport policy.
+
+    A permissive structural pass labels number tokens in source order. The real
+    decoder then invokes either the declared binary64 parser or its original
+    number parser on the ORIGINAL bytes. Thus even diagnostic precedence for
+    undeclared numbers, duplicate keys and malformed transport stays retained.
+    Failed structural planning falls back to that original decoder's diagnostic.
+    """
+    class Members(list[tuple[str, Any]]):
+        pass
+
+    tokens: list[object] = []
+
+    def token(lexeme: str) -> object:
+        marker = object()
+        tokens.append(marker)
+        return marker
+
     try:
-        apply_deltas("retained-transport", raw)
-        value = json.loads(raw, object_pairs_hook=_pairs, parse_int=_int,
-                           parse_float=_float, parse_constant=_bad_number)
-        apply_deltas("every v2 object", value, binary64_paths=paths)
-        apply_deltas("retained-object", value)
-    except (UnicodeError, RecursionError, json.JSONDecodeError) as exc:
-        raise ValueError("json_encoding") from exc
-    except ValueError as exc:
-        if str(exc) == "transport-spelling":
-            raise ValueError("json_encoding") from exc
-        raise
+        value = json.loads(raw, object_pairs_hook=Members, parse_int=token, parse_float=token)
+    except (ValueError, RecursionError, UnicodeError):
+        return None
+    selected: set[int] = set()
 
     def numbers(child: Any, allowed: tuple[tuple[str, ...], ...]) -> None:
-        if type(child) is dict:
-            for key, member in child.items():
+        if not allowed:
+            return
+        if type(child) is Members:
+            for key, member in child:
                 numbers(member, tuple(p[1:] for p in allowed if p and p[0] == key))
         elif type(child) is list:
             for member in child:
                 numbers(member, tuple(p[1:] for p in allowed if p and p[0] == "*"))
-        elif type(child) in (int, float):
-            if () in allowed:
-                binary64(child)
-            else:
-                require(type(child) is int, "integer")
-                _number(str(child))
+        elif () in allowed:
+            selected.add(id(child))
     numbers(value, paths)
-    return value
+    if not selected:
+        return None
+    index = 0
+
+    def parse(lexeme: str, retained: Callable[[str], Any]) -> Any:
+        nonlocal index
+        allowed = id(tokens[index]) in selected
+        index += 1
+        if not allowed:
+            return retained(lexeme)
+        result = _float(lexeme) if any(c in lexeme for c in ".eE") else _int(lexeme)
+        binary64(result)
+        return result
+    return parse
 
 
 def age_microseconds(age_seconds: Any) -> int:

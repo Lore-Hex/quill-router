@@ -39,7 +39,11 @@ def health_usable(body: Any, metadata: Any, read_elapsed_ns: Any, since_reply_ns
     boundary = body["slot"] * 2000000000
     observed = body["observed_at_ns"]
     committed, read = metadata["committed_at_ns"], metadata["read_at_ns"]
-    return bool(body["complete"] and body["sample_count"] <= 10000
+    # HEALTH has already enforced heartbeat equality. The lossless projection
+    # at O neutralizes only P1's superseded age envelope; retained policy is
+    # still decided by P1, independently of the exact A1 O/C/R/q/e envelope.
+    retained = d.health_projection(body)
+    return bool(p1.health_usable(retained, retained["observed_at_us"])
         and boundary <= observed <= boundary + 250000000
         and observed <= committed <= boundary + 750000000
         and committed <= read
@@ -111,13 +115,15 @@ def _trace(v: Any) -> None:
         require(v["observed_at_ns"] is not None)
     if v["ack_at_us"] is not None:
         require(v["body_sha256"] is not None and not v["unknown_outcome"])
-    if v["outcome"] == "lost_claim":
+    if v["outcome"] in ("lost_claim", "published"):
         require(v["claim_at_ns"] is not None)
+        d.apply_deltas("claim", v)
+    if v["outcome"] == "lost_claim":
         require(all(v[k] is None for k in ("observed_at_ns", "publisher_heartbeat_ns", "body_sha256", "ack_at_us")))
     if v["outcome"] == "published":
         require(all(v[k] is not None for k in ("claim_at_ns", "observed_at_ns", "body_sha256", "ack_at_us", "cycle_us")))
         require(v["cycle_us"] <= 500000)
-        require(v["slot"] * 2000000000 <= v["claim_at_ns"] <= v["observed_at_ns"] <= v["slot"] * 2000000000 + 250000000)
+        require(v["observed_at_ns"] <= v["slot"] * 2000000000 + 250000000)
     if v["cycle_us"] is not None and v["cycle_us"] > 500000:
         require(v["late_cycle"])
     if v["late_cycle"]:
@@ -149,6 +155,8 @@ def validate_publisher_traces(counter: Any, entries: Any, *, day: Any, boot: Any
     Claims/scans cannot be reconstructed from the stage timestamps after a lost
     reply; their exact reconciliation requires P3's operation evidence. Their
     inequalities are enforced here, without inventing those missing facts.
+    Cycle durations determine their exact histogram (inclusive upper bounds).
+    RPC counts determine sample count only: individual RPC durations are absent.
     """
     validate_publisher_final(counter)
     p1.day(day)
@@ -158,10 +166,9 @@ def validate_publisher_traces(counter: Any, entries: Any, *, day: Any, boot: Any
     array(PUBLISHER_SLOT_TRACE, 43200)(entries)
     if first_slot is None or last_slot is None:
         require(first_slot is last_slot is None and entries == [] and counter["scheduled_slots"] == 0, "publisher_trace_gap")
-        require(counter["claims"] == counter["scans"] == 0, "publisher_accounting_gap")
-        return
-    require(last_slot >= first_slot and len(entries) == last_slot - first_slot + 1, "publisher_trace_gap")
-    require(all(row["day"] == day and row["boot"] == boot and row["slot"] == first_slot + i for i, row in enumerate(entries)), "publisher_trace_gap")
+    else:
+        require(last_slot >= first_slot and len(entries) == last_slot - first_slot + 1, "publisher_trace_gap")
+        require(all(row["day"] == day and row["boot"] == boot and row["slot"] == first_slot + i for i, row in enumerate(entries)), "publisher_trace_gap")
     totals = {"scheduled_slots": len(entries), "missed_slots": 0, "claim_attempts": 0,
               "lost_claims": 0, "publications": 0, "failures": 0, "unknown_outcomes": 0, "late_cycles": 0}
     outcomes = {"missed": "missed_slots", "lost_claim": "lost_claims", "published": "publications", "failed": "failures"}
@@ -171,6 +178,12 @@ def validate_publisher_traces(counter: Any, entries: Any, *, day: Any, boot: Any
         totals["unknown_outcomes"] += row["unknown_outcome"]
         totals["late_cycles"] += row["late_cycle"]
     require(all(counter[k] == value for k, value in totals.items()), "publisher_accounting_gap")
+    cycle_counts = [0] * len(counter["cycle_us"]["counts"])
+    for row in entries:
+        if row["cycle_us"] is not None:
+            cycle_counts[sum(row["cycle_us"] > edge for edge in counter["cycle_us"]["bounds_us"])] += 1
+    require(counter["cycle_us"]["counts"] == cycle_counts, "publisher_accounting_gap")
+    require(sum(counter["rpc_us"]["counts"]) == sum(row["rpc_count"] for row in entries), "publisher_accounting_gap")
     observed = sum(row["observed_at_ns"] is not None for row in entries)
     require(observed <= counter["scans"] <= counter["claims"] <= counter["claim_attempts"] - counter["lost_claims"], "publisher_accounting_gap")
 

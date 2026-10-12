@@ -28,7 +28,7 @@ KINDS = (*p1.KINDS, d.CLOSE_KIND)
 RETENTION_KINDS = KINDS
 EXPORT_KINDS = KINDS
 COVERAGE_STREAMS = ("close_result", "publisher_trace", "handoff_accounting", "health_basis", "authorization_obligation")
-FIXTURE_MANIFEST_SHA256 = "a3abceec334163663a5b387b5e6b6dbdecb58abe83d9e5b000a8657ccb0ef510"
+FIXTURE_MANIFEST_SHA256 = "df704c8d597c2118c487edb6cdb84f6600f20356054e9c6c59edbd196b2aa6db"
 
 
 def _counter(v: Any) -> None:
@@ -139,12 +139,14 @@ COVERAGE_PAGE = versioned({"contract_revision": literal("a1"), "day": day,
 def coverage_root(pages: Any) -> str:
     array(COVERAGE_PAGE, 10000)(pages)
     previous = None
+    last_key = None
     for i, page in enumerate(pages):
         require(int(page["page_seq"]) == i + 1 and page["previous_sha256"] == previous)
         if i:
             require(all(page[k] == pages[0][k] for k in ("day", "stream")))
-            if pages[i - 1]["entries"] and page["entries"]:
-                require(pages[i - 1]["entries"][-1]["key"] < page["entries"][0]["key"])
+        if page["entries"]:
+            require(last_key is None or last_key < page["entries"][0]["key"])
+            last_key = page["entries"][-1]["key"]
         previous = sha256(page)
     return sha256([sha256(page) for page in pages])
 

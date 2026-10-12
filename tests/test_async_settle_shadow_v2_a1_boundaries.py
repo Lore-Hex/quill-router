@@ -312,14 +312,13 @@ def test_replay_after_terminal_uses_original_lifetime() -> None:
         r.validate_terminal_join(obligation, inputs["page"], context["original_page"], context["original_locator"])
 
 
-def test_new_numeric_schemas_scalar_gate_precedes_serialization(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden(value: Any) -> bytes:
-        pytest.fail("serialization preceded scalar-string rejection")
-    value = obj("health", "empty")
-    value["publisher_region"] = "\ud800\udc00"
-    monkeypatch.setattr(s, "canonical", forbidden)
-    with pytest.raises(ValueError, match="scalar-string"):
-        h.HEALTH(value)
+def test_numeric_scalar_policy_follows_retained_strings() -> None:
+    for retained in (False, True):
+        for paths in ((), (("n",),)):
+            schema = s.Schema({"n": lambda v: None, "s": lambda v: None}, 100,
+                              retained_strings=retained, binary64_paths=paths)
+            with pytest.raises(ValueError, match="scalar-string" if retained else "json_encoding"):
+                schema({"n": 1, "s": "\ud800\udc00"})
 
 
 def test_completion_cannot_precede_original_receipt() -> None:
@@ -344,3 +343,194 @@ def test_zero_scheduled_slots_and_trace_stage_lower_bounds() -> None:
     counter.update(scheduled_slots=1, claim_attempts=1, publications=1)
     with pytest.raises(ValueError, match="publisher_accounting_gap"):
         h.validate_publisher_traces(counter, [trace], day=trace["day"], boot=trace["boot"], first_slot=trace["slot"], last_slot=trace["slot"])
+
+
+@pytest.mark.parametrize("empty_count", [1, 3])
+@pytest.mark.parametrize("last", ["a", "z"])
+def test_coverage_order_survives_empty_pages(empty_count: int, last: str) -> None:
+    page = obj("controls", "coverage-close_result")
+    entry = page["entries"][0]
+    pages = []
+    for rows in ([{**entry, "key": "z"}], *([[]] * empty_count), [{**entry, "key": last}]):
+        pages.append({**page, "page_seq": f"{len(pages) + 1:020}",
+                      "previous_sha256": s.sha256(pages[-1]) if pages else None, "entries": rows})
+    with pytest.raises(ValueError):
+        a.coverage_root(pages)
+
+
+@pytest.mark.parametrize("text", ["é", "\n", "\\"])
+def test_binary64_optin_preserves_strict_string_policy(text: str) -> None:
+    for paths in ((), (("n",),)):
+        schema = s.Schema({"n": lambda v: None, "s": lambda v: None}, 100, binary64_paths=paths)
+        with pytest.raises(ValueError, match="^json_encoding$"):
+            schema({"n": 1, "s": text})
+        if paths:
+            with pytest.raises(ValueError, match="^json_encoding$"):
+                schema({"n": 1.0, "s": text})
+
+
+@pytest.mark.parametrize("padding", [b"\n", b"\r", b"\t"])
+def test_a1_health_does_not_broaden_strict_transport_whitespace(padding: bytes) -> None:
+    body = obj("health", "empty")
+    for schema, value in ((p1.HEALTH, d.health_projection(body)), (h.HEALTH, body)):
+        with pytest.raises(ValueError, match="^json_encoding$"):
+            schema.parse(canonical(value) + padding)
+
+
+def trace_counter(trace: dict[str, Any]) -> dict[str, Any]:
+    counter = obj("counter", "publisher-idle")
+    outcome = trace["outcome"]
+    counter.update(scheduled_slots=1, claim_attempts=int(outcome != "missed"),
+                   missed_slots=int(outcome == "missed"), lost_claims=int(outcome == "lost_claim"),
+                   claims=int(outcome == "published"), scans=int(outcome == "published"),
+                   publications=int(outcome == "published"), failures=int(outcome == "failed"))
+    if trace["cycle_us"] is not None:
+        # Independent explicit retained interval oracle (upper endpoint inclusive).
+        bounds = [100, 500, 1000, 2000, 5000, 10000, 50000, 200000]
+        index = next((i for i, bound in enumerate(bounds) if trace["cycle_us"] <= bound), 8)
+        counter["cycle_us"]["counts"][index] = 1
+        counter["rpc_us"]["counts"][0] = trace["rpc_count"] - 1
+        counter["rpc_us"]["counts"][-1] = 1
+    return counter
+
+
+def reconcile(counter: dict[str, Any], trace: dict[str, Any]) -> None:
+    h.validate_publisher_traces(counter, [trace], day=trace["day"], boot=trace["boot"],
+                               first_slot=trace["slot"], last_slot=trace["slot"])
+
+
+@pytest.mark.parametrize("field", ["cycle_us", "rpc_us"])
+def test_trace_rejects_missing_histogram_samples(field: str) -> None:
+    trace = obj("publisher_slot_trace", "published")
+    counter = trace_counter(trace)
+    reconcile(counter, trace)
+    counter[field]["counts"] = [0] * 9
+    with pytest.raises(ValueError, match="publisher_accounting_gap"):
+        reconcile(counter, trace)
+
+
+@pytest.mark.parametrize("coverage", ["empty", "missed"])
+@pytest.mark.parametrize("field", ["cycle_us", "rpc_us", "claims", "scans"])
+def test_zero_coverage_rejects_ghost_totals(coverage: str, field: str) -> None:
+    trace = obj("publisher_slot_trace", "missed")
+    counter = obj("counter", "publisher-idle") if coverage == "empty" else trace_counter(trace)
+    if field.endswith("_us"):
+        counter[field]["counts"][0] = 1
+    else:
+        counter[field] = 1
+    with pytest.raises(ValueError):
+        h.validate_publisher_traces(counter, [] if coverage == "empty" else [trace],
+            day=trace["day"], boot=trace["boot"], first_slot=None if coverage == "empty" else trace["slot"],
+            last_slot=None if coverage == "empty" else trace["slot"])
+
+
+@pytest.mark.parametrize("duration,index", [(0, 0), (100, 0), (101, 1), (500, 1), (501, 2),
+    (1000, 2), (1001, 3), (2000, 3), (2001, 4), (5000, 4), (5001, 5),
+    (10000, 5), (10001, 6), (50000, 6), (50001, 7), (200000, 7), (200001, 8)])
+def test_cycle_histogram_endpoints_and_distribution(duration: int, index: int) -> None:
+    trace = {**obj("publisher_slot_trace", "published"), "cycle_us": duration}
+    counter = trace_counter(trace)
+    assert counter["cycle_us"]["counts"][index] == 1
+    reconcile(counter, trace)
+    counter["cycle_us"]["counts"][index] = 0
+    counter["cycle_us"]["counts"][(index + 1) % 9] = 1
+    with pytest.raises(ValueError, match="publisher_accounting_gap"):
+        reconcile(counter, trace)
+
+
+@pytest.mark.parametrize("offset", [-1, 250000001, 2000000000])
+@pytest.mark.parametrize("route", ["schema", "aggregate"])
+def test_out_of_slot_server_claim_cannot_be_a_healthy_loss(offset: int, route: str) -> None:
+    trace = obj("publisher_slot_trace", "lost-claim")
+    trace["claim_at_ns"] = trace["slot"] * 2000000000 + offset
+    with pytest.raises(ValueError, match="a1-server-slot"):
+        if route == "schema":
+            h.PUBLISHER_SLOT_TRACE(trace)
+        else:
+            reconcile(trace_counter(trace), trace)
+    # An out-of-slot attempted claim is representable as a failure diagnostic.
+    failed = {**trace, "outcome": "failed"}
+    h.PUBLISHER_SLOT_TRACE(failed)
+    reconcile(trace_counter(failed), failed)
+
+
+@pytest.mark.parametrize("offset", [0, 250000000])
+def test_lost_claim_endpoints(offset: int) -> None:
+    trace = obj("publisher_slot_trace", "lost-claim")
+    trace["claim_at_ns"] = trace["slot"] * 2000000000 + offset
+    h.PUBLISHER_SLOT_TRACE(trace)
+    reconcile(trace_counter(trace), trace)
+
+
+def test_reader_delegates_retained_usability_predicate(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = obj("health", "empty")
+    metadata = {"committed_at_ns": body["observed_at_ns"], "read_at_ns": body["observed_at_ns"]}
+    assert h.health_usable(body, metadata, 0, 0) is True
+    seen = []
+
+    def veto(value: Any, now: int) -> bool:
+        seen.append((copy.deepcopy(value), now))
+        return False
+
+    monkeypatch.setattr(p1, "health_usable", veto)
+    assert h.health_usable(body, metadata, 0, 0) is False
+    assert seen == [(d.health_projection(body), body["observed_at_ns"])]
+
+
+def decode_result(raw: bytes, retained: bool, paths: tuple[tuple[str, ...], ...], limit: int = 65536) -> Any:
+    try:
+        value = s.decode(raw, limit, retained_strings=retained, binary64_paths=paths)
+        return ("ok", canonical(value), type(value))
+    except ValueError as exc:
+        return (type(exc), str(exc))
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_numeric_transport_policy_and_diagnostics(retained: bool) -> None:
+    # Traced branch witnesses; declarations never change unrelated transport.
+    raws = [b'{"s":"ok"}', b'{"s":"\\u00e9"}', b'{"s":"\\n"}', b'{"s":"\\\\"}',
+            b'{"s":"\\ud800"}', b'{"s":"\\u0061"}', b'{"s":1,"s":2}', b'NaN',
+            b'1.0', b'-0', b'9223372036854775808', b'{"s":1.0,"s":2}',
+            b'{"s":1.0,}', b'\xef\xbb\xbf{}', b'[' * 17 + b'0' + b']' * 17]
+    for raw in raws:
+        for suffix in (b'', b' ', b'\n', b'\r', b'\t'):
+            assert decode_result(raw + suffix, retained, ()) == decode_result(raw + suffix, retained, (("n",),))
+    assert decode_result(b'{"n":1.0,"n":2.0}', retained, (("n",),)) == (ValueError, "duplicate_key")
+    for limit in (0, 10, 100):
+        assert decode_result(b'{"s":"ok"}', retained, (), limit) == decode_result(b'{"s":"ok"}', retained, (("n",),), limit)
+    for paths, n in (((), 1), ((("n",),), 1.0)):
+        for text in ("ok", "é", "\n", "\\"):
+            schema = s.Schema({"n": lambda v: None, "s": lambda v: None}, 100,
+                              retained_strings=retained, binary64_paths=paths)
+            if retained or text == "ok":
+                assert_round_trip(schema, {"n": n, "s": text})
+            else:
+                with pytest.raises(ValueError, match="^json_encoding$"):
+                    schema({"n": n, "s": text})
+
+
+# Drive the complete existing raw-token transport corpus through both numeric
+# selections, in both policies. No declared path is touched in this corpus.
+from tests.test_async_settle_shadow_v2_evidence import (  # noqa: E402
+    CONSTRUCTION,
+    OBJECT_TOKEN_CASES,
+    RAW_TOKEN_CASES,
+    parity_get,
+    raw_token_variant,
+)
+
+TOKEN_CASES = RAW_TOKEN_CASES + OBJECT_TOKEN_CASES
+
+
+@exhaustive
+@pytest.mark.parametrize("start", range(0, len(TOKEN_CASES), 32))
+def test_numeric_optin_baseline_transport_corpus(start: int) -> None:
+    for name, path, key in TOKEN_CASES[start:start + 32]:
+        for scalar in (None,) if key else (None, "é", "😀", "\n", "\x00"):
+            value = copy.deepcopy(CONSTRUCTION[name][1])
+            if scalar is not None:
+                parity_get(value, path[:-1])[path[-1]] = scalar
+            for mode in ("canonical", "utf8", "alias", "control"):
+                raw = raw_token_variant(value, path, key, mode)
+                for retained in (False, True):
+                    assert decode_result(raw, retained, ()) == decode_result(raw, retained, (("absent-number",),))

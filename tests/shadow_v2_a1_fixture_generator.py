@@ -68,6 +68,18 @@ def build() -> dict[str, bytes]:
         (9007199254740992, "exact-large-int", "accept"), (9007199254740993, "lossy-large-int", "reject"),
         (True, "bool", "reject"), ("1.0", "string", "reject"), (-1.0, "negative", "reject")):
         add("health", "wall-" + label, "HEALTH", {**health, "backlog_age_at_seconds": value}, expected)
+    for lexeme, value, expected in (
+        ("1", 1, "accept"), ("1.0", 1.0, "accept"), ("-0.0", -0.0, "accept"),
+        ("0.0001", 0.0001, "accept"), ("1e-05", 1e-5, "accept"),
+        ("1000000000000000.0", 1e15, "accept"), ("1e+16", 1e16, "accept"),
+        ("1e-07", 1e-7, "accept"), ("1e+20", 1e20, "accept"),
+        ("5e-324", 5e-324, "accept"), ("1.7976931348623157e+308", 1.7976931348623157e308, "accept"),
+        ("1267650600228229401496703205376", 2**100, "accept"),
+        ("1.00", 1.0, "reject"), ("1E-07", 1e-7, "reject"), ("1e20", 1e20, "reject"),
+        ("1e-7", 1e-7, "reject"), ("1e-007", 1e-7, "reject"), ("-0", 0, "reject"),
+        ("01", 1, "reject"), ("+1", 1, "reject"), ("1e0", 1.0, "reject")):
+        add("health", "spelling-" + lexeme, "HEALTH", {**health, "backlog_age_at_seconds": value},
+            expected, number_lexeme=lexeme)
     for offset, expected in ((0, "accept"), (250000000, "accept"), (250000001, "reject"), (-1, "reject"), (2000000000, "reject")):
         add("health_claim", "slot-offset-" + str(offset), "HEALTH_CLAIM", {**claim, "claim_at_ns": NS + offset}, expected)
     readings = [
@@ -144,6 +156,22 @@ def build() -> dict[str, bytes]:
         ("failed-claim", {**dict.fromkeys("claim_at_ns observed_at_ns publisher_heartbeat_ns body_sha256 ack_at_us".split()), "outcome": "failed", "unknown_outcome": True}),
     ):
         add("publisher_slot_trace", name, "PUBLISHER_SLOT_TRACE", {**trace, **changes})
+    lost = next(v["object"] for v in files["publisher_slot_trace"] if v["name"] == "lost-claim")
+    for offset, expected in ((-1, "reject"), (0, "accept"), (250000000, "accept"), (250000001, "reject")):
+        add("publisher_slot_trace", "lost-slot-" + str(offset), "PUBLISHER_SLOT_TRACE",
+            {**lost, "claim_at_ns": NS + offset}, expected)
+    reconciled = copy.deepcopy(publisher)
+    reconciled.update(scheduled_slots=1, claim_attempts=1, claims=1, scans=1, publications=1)
+    reconciled["cycle_us"]["counts"][-1] = 1
+    reconciled["rpc_us"]["counts"][0] = 5
+    reconciled["rpc_us"]["counts"][-1] = 1
+    evidence = dict(counter=reconciled, entries=[trace], day=DAY, boot="issuer",
+                    first_slot=trace["slot"], last_slot=trace["slot"])
+    add("publisher_slot_trace", "reconciled-histograms", "validate_publisher_traces", evidence)
+    for field in ("cycle_us", "rpc_us"):
+        bad = copy.deepcopy(evidence)
+        bad["counter"][field]["counts"] = [0] * 9
+        add("publisher_slot_trace", "missing-" + field, "validate_publisher_traces", bad, "reject")
     add("publisher_slot_trace", "late-is-not-published", "PUBLISHER_SLOT_TRACE", {**trace, "cycle_us": 500001}, "reject")
     add("publisher_slot_trace", "published-at-deadline", "PUBLISHER_SLOT_TRACE", {**trace, "cycle_us": 500000})
     add("publisher_slot_trace", "unknown-cannot-invent-ack", "PUBLISHER_SLOT_TRACE", {**trace, "outcome": "failed", "unknown_outcome": True}, "reject")
@@ -207,6 +235,19 @@ def build() -> dict[str, bytes]:
                         {"key": "c/conflict", "sha256": "1" * 64, "bytes": 2, "state": "conflict"}]}
         add("controls", "coverage-" + stream, "COVERAGE_PAGE", coverage)
         add("controls", "coverage-unsorted-" + stream, "COVERAGE_PAGE", {**coverage, "entries": list(reversed(coverage["entries"]))}, "reject")
+    for label, keys, expected in (
+        ("empty-middle", ["a", None, "z"], "accept"),
+        ("several-empty", ["a", None, None, None, "z"], "accept"),
+        ("duplicate-across-empty", ["z", None, "z"], "reject"),
+        ("reversed-across-empty", ["z", None, "a"], "reject"),
+        ("first-empty", [None, "a"], "accept"), ("last-empty", ["a", None], "accept"),
+        ("all-empty", [None, None], "accept"), ("empty-set", [], "accept")):
+        pages = []
+        for key in keys:
+            pages.append({**coverage, "page_seq": f"{len(pages) + 1:020}",
+                "previous_sha256": digest(pages[-1]) if pages else None,
+                "entries": [] if key is None else [{"key": key, "sha256": None, "bytes": 0, "state": "missing"}]})
+        add("controls", "coverage-" + label, "coverage_root", pages, expected)
     for gap in "authorization_obligation_gap authorization_terminal_conflict authorization_horizon_gap health_timestamp_gap health_elapsed_gap health_slot_gap publisher_accounting_gap publisher_trace_gap freshness_budget_gap evidence_export_budget_gap close_handoff_budget_gap retry_original_gap close_result_identity_gap close_result_conflict handoff_coverage_gap".split():
         gate = {**baseline("gate_outputs"), "contract_revision": "a1", "gaps": [gap]}
         add("gate_outputs", gap, "GATE_OUTPUT", gate)
