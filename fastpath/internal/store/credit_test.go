@@ -77,7 +77,7 @@ func (r row) headroom() int64 { return r.credits - r.usage - r.reserved }
 func readRows(t *testing.T, workspace string) []row {
 	t.Helper()
 	var rows []row
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL: `SELECT total_credits, total_usage, reserved, COALESCE(in_debt, FALSE) FROM tr_credit_balance
 		       WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": workspace},
@@ -100,7 +100,7 @@ func readRows(t *testing.T, workspace string) []row {
 // before any value is compared, since readRows returns only what is there.
 func creditShards(workspace string, n int) error {
 	var got []int64
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL:    `SELECT shard FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": workspace},
 	}).Do(func(r *spanner.Row) error {
@@ -166,7 +166,7 @@ func creditMetadata(workspace string) error {
 		source   spanner.NullTime
 	}
 	var problem error
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL: `SELECT shard, trust_tier, trust_computed_at, trust_latched_at, trust_override_tier, billing_pause_causes,
 		             pause_epoch, trust_reconciled_through, source_updated_at
 		        FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
@@ -196,7 +196,7 @@ func creditMetadata(workspace string) error {
 // order, as text: held equal across a write that must leave them alone.
 func creditRowsText(workspace string) (string, error) {
 	var b strings.Builder
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL:    `SELECT * FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": workspace},
 	}).Do(func(r *spanner.Row) error {
@@ -211,6 +211,25 @@ func creditRowsText(workspace string) (string, error) {
 		return nil
 	})
 	return b.String(), err
+}
+
+// lastLanded is the commit timestamp of the last write a running walk made,
+// zero outside a walk. A walk's writes are serialized, each stamped through
+// stamps.next, so a read at or after the last commit sees every write the
+// walk made; and on the emulator a strong read costs about 110 ms where a
+// read bounded below by that timestamp costs about 12 (measured 2026-10-12),
+// the difference between a two-hour debt walk and a short one. A bound that
+// missed a write would fail a check against the ledger, never pass one.
+var lastLanded time.Time
+
+// single is a single-use read-only transaction for the test helpers'
+// reads: at or after the running walk's last commit, or strong.
+func single() *spanner.ReadOnlyTransaction {
+	ro := shared.Single()
+	if !lastLanded.IsZero() {
+		ro = ro.WithTimestampBound(spanner.MinReadTimestamp(lastLanded))
+	}
+	return ro
 }
 
 func headrooms(rows []row) []int64 {

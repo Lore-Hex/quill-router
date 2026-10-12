@@ -64,6 +64,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		seed = n
 	}
 	t.Logf("FASTPATH_WALK_SEED=%d", seed)
+	defer func() { lastLanded = time.Time{} }()
 	seen := map[string]int{}
 	for i := range walks {
 		// Every other walk's store has a floor, so a grant the headroom alone
@@ -97,7 +98,8 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"refused grant: the floor alone", "a grant beside a listed lease", "a listed hold",
 		"refused grant: the listed holds alone", "refused close: holds open", "shortfall write: the stored total again",
 		"shortfall write: below the stored total", "shortfall write below a total a booking raised",
-		"a release's excess kept on its shard", "a commit of two leases", "a commit of two leases' returns"} {
+		"a release's excess kept on its shard", "a commit of two leases", "a commit of two leases' returns",
+		"a commit of two leases' holds"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -469,6 +471,10 @@ type debtWalk struct {
 	ids     *rand.Rand // the drain rows' record IDs, apart for the same reason
 	seed    int64
 	opStart time.Time // Spanner's time read before the step's first write
+	// touched is each lease a step's writes reached, deep-read by the check
+	// after it; steps counts the steps, every tenth deep-reading every lease.
+	touched map[*debtLease]bool
+	steps   int
 	credits int64
 	shards  shards // the credit rows as the walk's writes left them
 	leases  []*debtLease
@@ -493,7 +499,7 @@ func newDebtWalkWith(t *testing.T, s *Store, seed int64, credits []int64, rngs .
 	}
 	d := &debtWalk{t: t, s: s, ws: seedWorkspace(t, credits...), rng: rng, probes: rand.New(rand.NewSource(^seed)),
 		batches: rand.New(rand.NewSource(seed ^ 0x5eed)), ids: rand.New(rand.NewSource(seed ^ 0x1d5)), seed: seed,
-		seen: map[string]int{}}
+		seen: map[string]int{}, touched: map[*debtLease]bool{}}
 	for _, c := range credits {
 		d.credits += c
 	}
@@ -550,6 +556,7 @@ func (d *debtWalk) script() {
 	}
 	money := []MoneyOp{Book(13, first.shortfall)}
 	d.note("book %s %v", first.ref.LeaseID, money)
+	d.touch(first)
 	got := d.commit(ctx, first, money, false)
 	_, faults := first.bookedEach(money)
 	if !slices.Equal(got.Faults, faults) || !slices.Equal(faults, []int64{7}) {
@@ -563,6 +570,7 @@ func (d *debtWalk) script() {
 	}
 	excess := d.seen["a release's excess kept on its shard"]
 	d.opStart = spannerNow(d.t)
+	d.touch(second)
 	d.giveBack(ctx, second)
 	step("the return")
 	if d.seen["a release's excess kept on its shard"] != excess+1 || d.shards.marked ||
@@ -583,6 +591,7 @@ func (d *debtWalk) script() {
 	d.opStart = spannerNow(d.t)
 	money = []MoneyOp{Book(1, fourth.shortfall)}
 	d.note("book %s %v", fourth.ref.LeaseID, money)
+	d.touch(fourth)
 	got = d.commit(ctx, fourth, money, false)
 	if _, faults := fourth.bookedEach(money); !slices.Equal(got.Faults, faults) || len(faults) != 0 {
 		d.fatalf("the fourth lease's booking faulted %v, and the walk's ledger %v", got.Faults, faults)
@@ -603,6 +612,7 @@ func (d *debtWalk) script() {
 	d.opStart = spannerNow(d.t)
 	d.commitTwo(ctx, first, []MoneyOp{Book(2, first.shortfall)}, second, []MoneyOp{Book(3, second.shortfall)})
 	step("the two leases' commit")
+	d.deep()
 	d.checkAllPacks()
 }
 
@@ -615,17 +625,23 @@ func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp
 	d.note("commit %s %v and %s %v together", a.ref.LeaseID, moneyA, b.ref.LeaseID, moneyB)
 	// Each lease's request carries a winner of its own, a release from the
 	// owner's records with its own pending work, so a store that stored one
-	// lease's winners in the other's pack fails the packs' check.
+	// lease's winners in the other's pack fails the packs' check; and a hold
+	// of its own, open and unlisted, so a store that stored one lease's
+	// holds under the other fails the holds' check.
 	request := func(l *debtLease, money []MoneyOp) CommitRequest {
 		seq := l.seq
 		if !l.stored {
 			seq++
 		}
 		auth := l.ref.LeaseID + "-two"
+		hold := l.ref.LeaseID + "-hold"
 		return CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money,
-			Winners: []Winner{{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release", Work: workOf(auth, "two")}}}
+			Winners:  []Winner{{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release", Work: workOf(auth, "two")}},
+			PutHolds: []HoldRow{{AuthorizationID: hold, Estimate: 1, Deadline: seededAt}}}
 	}
 	reqs := []CommitRequest{request(a, moneyA), request(b, moneyB)}
+	d.touch(a)
+	d.touch(b)
 	changesA, releasesA := a.moneyEffect(moneyA)
 	changesB, releasesB := b.moneyEffect(moneyB)
 	for shard, c := range changesB {
@@ -648,6 +664,12 @@ func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp
 		l.advance(d, "the two leases' commit", got[i].NewVersion)
 		l.seq = reqs[i].AppliedSeq
 		l.packs = append(l.packs, Pack{CommitVersion: l.version, Winners: reqs[i].Winners})
+		if l.holds == nil {
+			l.holds = map[string]HoldRow{}
+		}
+		for _, h := range reqs[i].PutHolds {
+			l.holds[h.AuthorizationID] = h
+		}
 		_, faults := l.bookedEach(money)
 		if !slices.Equal(got[i].Faults, faults) {
 			d.fatalf("the two leases' commit faulted %v for lease %s, and the walk's ledger %v", got[i].Faults, l.ref.LeaseID,
@@ -664,6 +686,7 @@ func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp
 	if returns(moneyA) && returns(moneyB) {
 		d.seen["a commit of two leases' returns"]++
 	}
+	d.seen["a commit of two leases' holds"]++
 }
 
 func (d *debtWalk) run() {
@@ -709,10 +732,14 @@ func (d *debtWalk) run() {
 		default:
 			d.drain(ctx, l)
 		}
+		if l != nil {
+			d.touch(l)
+		}
 		after := headrooms(readRows(d.t, d.ws))
 		d.check(before, after)
 		before = after
 	}
+	d.deep()
 	d.checkAllPacks()
 }
 
@@ -919,6 +946,7 @@ func (d *debtWalk) grantAmount(ctx context.Context, amount int64) bool {
 	}
 	d.seen["grant"]++
 	d.leases = append(d.leases, l)
+	d.touch(l)
 	return true
 }
 
@@ -1022,14 +1050,14 @@ func (d *debtWalk) checkHolds(l *debtLease) {
 	d.t.Helper()
 	ctx := context.Background()
 	var rows []HoldRow
-	err := shared.Single().Query(ctx, spanner.Statement{
+	err := single().Query(ctx, spanner.Statement{
 		SQL: `SELECT ` + strings.Join(holdColumns[2:], ", ") + ` FROM tr_lease_hold
 		       WHERE workspace_id = @w AND lease_id = @l ORDER BY authorization_id`,
 		Params: map[string]any{"w": l.ref.Workspace, "l": l.ref.LeaseID},
 	}).Do(func(r *spanner.Row) error {
 		var h HoldRow
 		if err := r.Columns(&h.AuthorizationID, &h.Estimate, &h.Deadline, &h.Listed, &h.SnapshotSeq, &h.SnapshotHash,
-			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis); err != nil {
+			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot); err != nil {
 			return err
 		}
 		rows = append(rows, h)
@@ -1526,7 +1554,7 @@ func (d *debtWalk) checkCreditColumns() {
 	d.t.Helper()
 	type meta struct{ updated spanner.NullTime }
 	var got []meta
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL:    `SELECT updated_at FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": d.ws},
 	}).Do(func(r *spanner.Row) error {
@@ -1559,6 +1587,28 @@ func (d *debtWalk) checkCreditColumns() {
 		}
 		d.shards.updatedAt[i] = m.updated
 		d.shards.touched[i] = false
+	}
+}
+
+// touch notes a lease a step's write reached.
+func (d *debtWalk) touch(l *debtLease) { d.touched[l] = true }
+
+// deepLease holds a lease's row and the store's reads of it, and its holds,
+// to the walk's account.
+func (d *debtWalk) deepLease(l *debtLease) {
+	d.t.Helper()
+	if err := checkReads(d.s, l.ref, d.leaseWant(l)); err != nil {
+		d.fatalf("lease %s: %v", l.ref.LeaseID, err)
+	}
+	d.checkHolds(l)
+}
+
+// deep holds every lease, a closed one's too, the way the step's check holds
+// the leases a step reached.
+func (d *debtWalk) deep() {
+	d.t.Helper()
+	for _, l := range d.leases {
+		d.deepLease(l)
 	}
 }
 
@@ -1619,7 +1669,7 @@ func (d *debtWalk) check(before, after []int64) {
 		}
 	}
 	donors := 0
-	err := shared.Single().Query(ctx, spanner.Statement{
+	err := single().Query(ctx, spanner.Statement{
 		SQL:    `SELECT lease_id, credit_shard, allocation, consumed FROM tr_lease_donor WHERE workspace_id = @w`,
 		Params: map[string]any{"w": d.ws},
 	}).Do(func(r *spanner.Row) error {
@@ -1640,12 +1690,20 @@ func (d *debtWalk) check(before, after []int64) {
 	if donors != len(want) {
 		d.fatalf("%d donor rows, and the walk's leases have %d donors", donors, len(want))
 	}
+	// The deep reads of a lease, its row and both of the store's reads of
+	// it, their timestamps bounded, its holds as stored and as Load decodes
+	// them, cost the most of a step: they run for the leases the step's
+	// writes reached, at once, before a later write could cover what it
+	// did, and for every lease every tenth step and at the walk's end (deep).
+	// A write reaches no other lease's rows, and what it does to the
+	// workspace's rows is held above after every step.
+	d.steps++
 	for _, l := range d.leases {
-		if err := checkReads(d.s, l.ref, d.leaseWant(l)); err != nil {
-			d.fatalf("lease %s: %v", l.ref.LeaseID, err)
+		if d.steps%10 == 0 || d.touched[l] {
+			d.deepLease(l)
 		}
-		d.checkHolds(l)
 	}
+	clear(d.touched)
 	// Each lease's money is what the walk did to it, column by column, and
 	// its front doors' raises are its drain rows', in two reads of the whole
 	// workspace.
@@ -1655,7 +1713,7 @@ func (d *debtWalk) check(before, after []int64) {
 		raises                                                                                 map[string]int64
 	}
 	got := map[string]*money{}
-	err = shared.Single().Query(ctx, spanner.Statement{
+	err = single().Query(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, granted, shortfall_total, door_raised, returned, consumed, fault_usage, allocation, state
 		        FROM tr_lease WHERE workspace_id = @w`,
 		Params: map[string]any{"w": d.ws},
@@ -1674,7 +1732,7 @@ func (d *debtWalk) check(before, after []int64) {
 		for _, l := range d.leases {
 			leases[l.ref.LeaseID] = l
 		}
-		err = shared.Single().Query(ctx, spanner.Statement{
+		err = single().Query(ctx, spanner.Statement{
 			SQL:    `SELECT lease_id, ` + drainColumns + ` FROM tr_lease_drain WHERE workspace_id = @w`,
 			Params: map[string]any{"w": d.ws},
 		}).Do(func(r *spanner.Row) error {

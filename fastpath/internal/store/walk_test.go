@@ -131,6 +131,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		seed = n
 	}
 	t.Logf("FASTPATH_WALK_SEED=%d", seed)
+	defer func() { lastLanded = time.Time{} }()
 	seen := map[string]int{}
 	for i := range walks {
 		w := newWalker(t, s, seed+int64(i))
@@ -1054,7 +1055,7 @@ func everyRow(ref LeaseRef) (string, error) {
 			stmt.Params["l"] = ref.LeaseID
 		}
 		var rows []string
-		err := shared.Single().Query(ctx, stmt).Do(func(r *spanner.Row) error {
+		err := single().Query(ctx, stmt).Do(func(r *spanner.Row) error {
 			fields := make([]string, r.Size())
 			for i, name := range r.ColumnNames() {
 				var v spanner.GenericColumnValue
@@ -1114,7 +1115,7 @@ func checkLease(ref LeaseRef, want leaseWant) error {
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
-	row, err := shared.Single().ReadRow(ctx, "tr_lease", ref.key(), columns)
+	row, err := single().ReadRow(ctx, "tr_lease", ref.key(), columns)
 	if err != nil {
 		return err
 	}
@@ -1259,7 +1260,7 @@ func spannerNow(t testing.TB) time.Time {
 }
 
 func spannerTime(ctx context.Context) (time.Time, error) {
-	ro := shared.Single()
+	ro := shared.Single() // strong: Spanner's clock, not a bound
 	defer ro.Close()
 	if err := ro.Query(ctx, spanner.Statement{SQL: "SELECT 1"}).Do(func(*spanner.Row) error {
 		return nil
@@ -1332,7 +1333,7 @@ var (
 // schemaTables is the database's tables, each with its columns, read once.
 func schemaTables(ctx context.Context) ([]schemaTable, error) {
 	schemaOnce.Do(func() {
-		schemaReadErr = shared.Single().Query(ctx, spanner.Statement{
+		schemaReadErr = single().Query(ctx, spanner.Statement{
 			SQL: `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = ''
 			       ORDER BY table_name, ordinal_position`,
 		}).Do(func(r *spanner.Row) error {
@@ -1381,6 +1382,7 @@ func (c *stamps) next(ts time.Time) error {
 		return fmt.Errorf("its commit timestamp %v is not after the last write's, %v", ts, c.last)
 	}
 	c.last = ts
+	lastLanded = ts
 	return nil
 }
 
@@ -1693,7 +1695,7 @@ func (w *walker) checkUnprojected(l Lease, holds []HoldRow, packs []Pack) {
 	// The row may go only once closed with no pack's work pending; the walk
 	// marks none done, and every commit stores a pack.
 	var retire spanner.NullTime
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL:    `SELECT retire_at FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`,
 		Params: w.ref.params(),
 	}).Do(func(r *spanner.Row) error { return r.Column(0, &retire) })
@@ -1758,7 +1760,7 @@ func (w *walker) checkPacks(packs []Pack, read string) {
 // commit order; no read of the packs returns it.
 func winnerCounts(ref LeaseRef) ([]int64, error) {
 	var counts []int64
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL: `SELECT winner_count FROM tr_lease_winners WHERE workspace_id = @w AND lease_id = @l
 		       ORDER BY commit_version`,
 		Params: ref.params(),
