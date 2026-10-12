@@ -5,6 +5,36 @@ Joseph selected revised A: amend the evidence gate, preserve correctness, and
 measure a new window. PR names below are work packages, not existing PR numbers.
 No code, deployment, money changes or Git writes belong to this authoring pass.
 
+
+> **Amendment A1 — round 2, 2026-10-12, DESIGN TEXT ONLY; proposed, not activated.**
+> This amendment answers G-A/R2 (health eligibility), G-B/R5 (authorization
+> obligations), and G-C/R6 (original-writer close acknowledgement). Round 2 adopts
+> S1–S3: Spanner observation/read timestamps, terminal-only report discharge,
+> and the same service-identity provenance as other router evidence. It was
+> written against two adversarial design reviews of 2026-10-12 (the review that
+> rejected the first proposed rules, and the review of amendment round 1); their
+> reported executions are not executions by this author. A third review approved
+> round 2 and supplied two bounded corrections, applied verbatim: the literal
+> serialization of report obligations and close-result fields (§§7.3, 7.4) and the
+> claim query's result-row accounting (§3.2).
+>
+> **Change log:** §2 states the evidence threat boundary; §3 separates freshness
+> from the 500 ms availability bound, replaces host-clock qualification with
+> exact Spanner snapshot metadata and bounded monotonic elapsed time, and fairly
+> costs immediate confirmation. §§6/7 distinguish writer closure from report
+> discharge, commit report obligations through the receipt chain, retain strict
+> terminal completion context, and keep an insert-only post-ack close-result row.
+> §7.1 defines the P1-A1 fixture release and enclave pin-only follow-up; §7.2
+> removes ownership/origin export infrastructure and completes remaining health
+> attachment operation/churn budgets. §§8–12 propagate gates, dependencies,
+> adversarial proofs and costs; §13 gives real operator choices; §14 records
+> source verification. CLOCK_QUALIFICATION, owner fields/acceptances/pages,
+> ownership lanes, per-boot signing, P0-A1 and behavioral P2-A1 are removed.
+> Money AdmissionCache/fleet-v1, DDL, indexes and request money behavior are unchanged.
+> P1 remains the frozen baseline; the proposed A1 contract is separately pinned.
+> BEFORE/AFTER labels describe changes to the pre-amendment design; round-1
+> protocols survive only where explicitly labelled as alternatives.
+
 ## 1. Evidence, authority and amendment scope
 
 **D-V2-1 — adopt revised A.** The normative policy ID is `shadow-v2`.
@@ -132,6 +162,19 @@ integration. An enclave spool alone cannot recover undelivered router authorizes
 That would change latency/isolation assumptions, must remain outside money
 transactions, and is out of scope.
 
+**A1 threat boundary (S3):** router evidence is produced by correctly executing
+reviewed code under the router service identity, with actual boot/day in keys and
+bodies and independent G2 inventory/coverage. Faults, restarts, missing/late replies,
+conflicts and evidence loss are in scope. A malicious router deliberately forging
+another boot's pages, counters, closure or acknowledgement is not covered by this
+design. The inventory detects missing/mismatched boots; it is not cryptographic
+proof of which process issued a service-account write. A1 gives CLOSE_RESULT the
+same provenance as its closure. Signing that row alone would not authenticate
+all its underlying evidence. Existing certificate/binding signatures still authenticate their
+original purposes; they do not identify the router process that observed a close
+reply. They remain mandatory and unchanged. Signed per-boot origin is a stronger alternative
+requiring its own reviewed protocol and consistent scope (Q-A2), not an A1 gate.
+
 Rejected alternatives: unchanged gate plus fast drain before shadow violates
 Joseph's order; fixed instance counts do not fix boot churn; traffic sent just
 to fill every idle denominator fabricates no missing prerequisite and consumes
@@ -165,34 +208,52 @@ New health kind `async_settle_shadow_health_v2`, key `local/fleet`; cadence kind
 `settle_drain_control`. Exact health body, ≤4,096 UTF-8 bytes:
 
 `v=2, policy_version="shadow-v2", authority="local", source="shadow_observation",
-publisher_boot_id, publisher_region, router_revision, slot, observed_at_us,
-publisher_heartbeat_us, complete, sample_count, backlog_count, frozen_micro,
+publisher_boot_id, publisher_region, router_revision, slot, observed_at_ns,
+publisher_heartbeat_ns, backlog_age_at_seconds, complete, sample_count, backlog_count, frozen_micro,
 p50_age_us, p95_age_us, oldest_unresolved_age_us, dead_count`.
 
-All counts/times/slot are nonnegative int64, revisions full 40-hex, IDs bounded
-as §7. Heartbeat means **publisher finished its observation**, never worker
-progress; observed time is read start, not cache receipt/commit. Require observed
-≤ heartbeat, ordered ages, dead ≤ backlog = sample_count, empty implies zero
-amount/ages. Missing, future, malformed, incomplete or >10,000 observed backlog
-is unknown. Never omit leased, dead or unknown-created-at rows.
+All counts/slot and nanosecond/microsecond fields are nonnegative int64;
+backlog_age_at_seconds is a finite nonnegative IEEE-754 binary64 JSON number
+(exact round-trip representation, bool/string reject). Revisions full 40-hex, IDs bounded
+as §7. A1 replaces the two P1 health `_us` freshness timestamps with exact `_ns`
+Spanner timestamps. `observed_at_ns` is the read timestamp of the winning cycle's
+strong unresolved snapshot, returned in result metadata even for an empty result.
+`publisher_heartbeat_ns` equals that same timestamp: it labels the successfully
+completed observation, not a later wall-clock completion or worker progress.
+The trace separately records actual cycle duration. `backlog_age_at_seconds`
+is the publisher's local wall sample used only to reproduce money's backlog-age
+calculation (§3.2); it never enters freshness, slot or commit checks. Keep ordered
+ages, dead ≤ backlog = sample_count, empty implies zero amount/ages. Missing,
+malformed, incomplete or >10,000 observed backlog is unknown. Never omit leased,
+dead or unknown-created-at rows.
 
-Contenders attempt once per aligned two-second UTC slot, beginning within
-0.25 seconds of its boundary; no retry of a failed/lost claim in that slot.
-Clock skew is bounded/recorded at ≤0.25 seconds. Strong transaction on the one
-claim key permits one winner per increasing slot; body ≤1,024 bytes, exact
-`v,policy_version,authority,slot,claim_at_us,owner_boot_id`. A winner starts one
-observation. Skipped slots and failed claims are visible availability events.
-Publication transaction checks both the same-slot owner fence and that existing
-observation is older; delayed winners cannot overwrite newer observations.
-Claiming is evidence control only, never outbox leasing.
+**A1 AFTER (S1):** contenders attempt once per two-second slot with Spanner boundary
+B=`slot*2,000,000,000` ns. A host timer proposes the slot; it is not time authority.
+The successful observation timestamp must lie in `[B,B+250,000,000]`. Thus the
+250 ms start allowance now includes claim acquisition through snapshot selection;
+this is a tighter availability gate than round 1. Early/late or skewed host wakes
+can miss a slot, never make an old snapshot current. Recheck before submission
+and after waits, no catch-up or retry; account every scheduled opportunity. The
+claim remains ≤1,024 bytes, with A1 fields
+`v,policy_version,authority,slot,claim_at_ns,owner_boot_id`. The existing complete-key
+claim read also returns server `CURRENT_TIMESTAMP()` S; **before mutating or
+winning**, require the proposed slot=floor(S/2,000,000,000) and
+B≤S≤B+250,000,000. Store exact S as claim_at_ns. A skewed host cannot reserve a
+far-future slot, multiply winning slots or trigger extra unresolved scans. A
+mismatched proposal is a failed attempted opportunity; do not retry with a new
+slot in that invocation. One attempt/2 s monotonic/contender still applies.
+Only genuine server-slot winners scan. Increasing slot and same-slot owner
+transactions remain mandatory. Publish only after a won claim and one
+strong unresolved read; increasing observation and slot fences prevent a delayed
+winner overwriting new data. Claiming never leases money outbox work.
 
 | Statement name (proposed except reused unresolved query) | Exact access / index / maximum rows |
 |---|---|
-| `shadow_health_claim_read` | `SELECT body FROM tr_entities WHERE kind=@kind AND id=@id`; complete PK `(kind,id)`, control key above, ≤1 row; same transaction inserts/updates only that key on winning slot |
+| `shadow_health_claim_read` | `SELECT (SELECT body FROM tr_entities WHERE kind=@kind AND id=@id) AS body, CURRENT_TIMESTAMP() AS claim_at`; scalar subquery uses complete PK `(kind,id)`, ≤1 table row/one result row even when absent; same transaction checks server slot then inserts/updates only that key on winning slot |
 | `unresolved_statement` (reused) | `SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL ORDER BY unresolved_at LIMIT @limit`; `@limit=10001`; covering sparse index, ≤10,001 entries including sentinel; no base-body lookup |
-| `shadow_health_publish_fence` | Same complete-PK SELECT for claim key, ≤1 row |
-| `shadow_health_previous` | Same complete-PK SELECT for health key, ≤1 row; fenced `insert_or_update` only this health key |
-| `read_shadow_health` | Same complete-PK SELECT for health key, ≤1 row, observer once/second/router |
+| `shadow_health_publish_fence` | `SELECT body FROM tr_entities WHERE kind=@kind AND id=@id`; claim complete PK, ≤1 row |
+| `shadow_health_previous` | `SELECT body FROM tr_entities WHERE kind=@kind AND id=@id`; health complete PK, ≤1 row; fenced `insert_or_update` only this health key |
+| **A1 BEFORE → AFTER:** `read_shadow_health` | Previously body only; now `SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id`, plus that same single-use strong result’s `metadata.transaction.read_timestamp`; same complete PK, ≤1 row, once/second/router, no extra statement/RPC. Return `{body, committed_at_ns, read_at_ns}`. No `CURRENT_TIMESTAMP()` is needed (§3.1.1). |
 | `read_admission` (retained observer) | C1's `admission_statement`: workspace equality/status pending or dead on forced `tr_settle_outbox_workspace_status`, inner LIMIT 1001 before SUM/COUNT, and complete `(workspace_id,shard=0)` trust read, ≤1,001 pending entries +1 trust row; N workspaces/4 seconds/router |
 
 C1 and C14 verify the existing statement/index definitions; existence in production
@@ -202,9 +263,218 @@ health operations are LOW priority, no retries, each RPC ≤500 ms; **whole winn
 cycle from claim start through publication ≤500 ms**. It is a measured gate,
 not a guarantee implied by RPC deadlines. Control transactions use the shared
 remaining deadline, including SDK streaming restarts/commit; no SDK retry sleep.
-A missed bound invalidates that publication for predictions and consumes the
-availability budget. This primary-region design avoids requiring far-region
-replicated writes inside that publication budget; it still needs measurement.
+**A1 BEFORE:** “A missed bound invalidates that publication for predictions and
+consumes the availability budget.” **A1 AFTER (D-A1-A):** prediction validity is
+§3.1.1 observation freshness, not proof of publisher acknowledgement. A missed
+500 ms cycle bound consumes the publisher availability budget even when a landed
+row remains fresh enough for prediction. This is an explicit weakening of that
+sentence, requiring Joseph's Q-A1 approval before activation. It does not relax
+observation completeness, money isolation, no-retry, load or certification
+requirements beyond the explicitly stated timestamp/availability changes below.
+The cycle ends at the original publisher's observed successful commit reply,
+not at server commit time. Acquisition, session creation/pool wait, iteration,
+cleanup, locks and serialization all consume one monotonic deadline. No shared
+money-client wrapper may be changed to implement this dormant feature.
+This primary-region design still requires measurement.
+
+### 3.1.1 A1 ADD — G-A, freshness and availability are different predicates
+
+**Gap:** two histories with identical HEALTH body and commit timestamp can have
+an on-time reply, a reply at .8 s, or no reply. Neither a timestamp envelope nor
+counters consulted elsewhere can tell this reader which happened (A1-C1–C3).
+A1 deliberately selects option (2), not a purported proof of option (1).
+
+The complete P1-A1 predicate accepts validated HEALTH plus the exact metadata
+pair `{committed_at_ns=C, read_at_ns=R}`, and monotonic `read_elapsed_ns=q` and
+`since_reply_ns=e`. All are exact nonnegative int64, rejecting bool, float,
+overflow, missing values and lossy conversion. Obtain timestamps from protobuf
+seconds/nanos or lossless SDK nanosecond values; never `datetime.timestamp()`
+floats or microsecond truncation. P1's old `health_usable` alone is insufficient.
+Only the shadow HEALTH writer uses native `COMMIT_TIMESTAMP` for `updated_at`;
+all fence reads precede mutation. DDL already permits this (A1-C11/A2-C1).
+
+**Timestamp meanings and feasibility.** O=`observed_at_ns` names the exact strong
+snapshot of the unresolved index, not query start, receipt or publication commit.
+C is the HEALTH write's serialization timestamp, not its acknowledgement. R is
+the reader's fresh, single-use strong snapshot timestamp, paired with that row
+version. The installed client requests returned read timestamps by default and
+exposes result metadata (A2-C2); retain the stream object through full consumption,
+including zero rows, then read its metadata. No private SDK attribute is required.
+`CURRENT_TIMESTAMP()` is stable within a statement, but documents statement time,
+not equality to that statement's snapshot timestamp. In a reused/stale snapshot
+it can accompany old data. Even in a strong statement it is not a reply timestamp.
+A1 chooses returned read metadata for O/R rather than assuming those values
+coincide. The claim uses statement-current S solely to fence a proposed slot
+before winning/scanning, never as the unresolved snapshot timestamp.
+[Timestamp functions](https://docs.cloud.google.com/spanner/docs/reference/standard-sql/timestamp_functions),
+[read timestamps](https://docs.cloud.google.com/spanner/docs/reference/rest/v1/Transaction),
+and [strong reads](https://docs.cloud.google.com/spanner/docs/reads) establish these
+separate contracts. No statement-start/current-time scalar is substituted for O.
+
+Capture m0 before snapshot/session acquisition, m1 after complete iteration,
+conversion and cleanup; q=m1−m0. At every prediction take m2 under the cache lock,
+e=m2−m1. Charge **the whole read interval**, not merely time since reply: the
+server selected R before delivery completed. Require q≤250,000,000 ns and
+q+e≤1,500,000,000 ns; discard delayed results, negative intervals, timer regression,
+process resume with an unaccounted pause, or expired cache. Every RPC and stage
+uses the same remaining deadline; no fresh budget after checkout/restart. The
+shadow-health read/install deadline is tightened from 500 to **250 ms**; the money
+reader, workspace observer and publisher cycle remain unchanged. Poll every
+1 s on monotonic time, with at most 250 ms scheduling delay; a delayed poll does
+not extend cache lifetime. Use an elapsed clock that includes descheduling and
+platform pauses (Linux CLOCK_BOOTTIME for suspend-aware elapsed timing); no
+wall-time subtraction or cross-boot monotonic values. This relies on functioning
+platform elapsed timers, as existing deadline enforcement does, not a measured
+absolute UTC offset or a new clock-qualification service. Short timer/rate and
+pause behavior belong in G6/G7's actual adapter measurements; unexplained timer
+behavior is a failure, never free time.
+
+Require P1 shape/completeness/count/order conditions, plus
+`B <= O = publisher_heartbeat_ns <= B+250,000,000`,
+`O <= C <= B+750,000,000`, `C <= R`, and
+**`A = (R−O) + q + e < 5,000,000,000`**.
+The publisher also requires claim_at_ns≤O from its won claim. The snapshot O
+must be from this won cycle; reuse/relabel is forbidden and the
+trace binds its digest. This is freshness in Spanner's timestamp domain with a
+conservative elapsed delivery/cache charge. Spanner handles TrueTime uncertainty
+when serving strong reads and committing; A1 invents no fixed TrueTime epsilon,
+no zero-uncertainty assertion, and no Cloud Run UTC accuracy certificate.
+Its external-consistency/strong-current-read contract, not synchronized host
+clocks, is the time authority. Backend uncertainty/wait consumes the RPC/cycle
+budget. This is not a new physical-age theorem about timestamps originally
+written by money hosts or about instantaneous backlog (§3.2).
+[Spanner time semantics](https://docs.cloud.google.com/spanner/docs/true-time-external-consistency)
+and [read/write execution](https://docs.cloud.google.com/spanner/docs/whitepapers/life-of-reads-and-writes)
+explain that boundary. The commit envelope is only a sanity check, never Dp proof.
+
+Reader state is EMPTY → INSTALLED(body,C,R,m0,m1) or UNUSABLE. Each successful
+poll atomically replaces the complete tuple, including a malformed/incomplete
+new row; invalid newer data invalidates old cache, with no fallback. A failed
+read makes the source unavailable under retained observer rules. Re-reading the
+same row cannot rejuvenate O: a later R increases its age. Same-slot no-overwrite,
+same-slot claim owner, increasing slot AND observation, and body/version pairing
+are independent mandatory fences. Future/inverted metadata yields unknown.
+
+This explicitly weakens §3.1's old cycle-validity wording: start 0/observation .10/
+commit .501 can be fresh while failing the 500 ms cycle; commit .40/reply .80 or
+lost has the same validity but failed/unknown publisher accounting. Start .25/
+commit .90 fails the .75 envelope (and usually observation jitter). A current-slot
+commit with a four-second-old O rejects. A host clock +250 ms cannot turn actual
+Spanner age 5.10 into 4.85 because neither freshness timestamp comes from that
+host. Delayed read delivery is covered by q. Availability failures remain visible
+and can block G6/G7 even when the observation supports a yes/no prediction.
+
+**Alternative, not adopted: completion-evidence protocol (R3).** DD1's envelope
+cannot distinguish lost replies; a prefrozen success field asserts a future fact.
+Next-slot confirmation adds up to 2 s to the new conservative 4.50 s chain.
+Immediate post-ack confirmation is not shown infeasible. With the adopted
+component maxima its additional visibility delay H must satisfy **4.50 s + H <
+5 s**; alternatively the original publish and confirmation phases must share a
+tightened .5 s allowance. A separate eligibility-row design would add up to .5
+confirmation transactions and mutations/s fleet-wide, up to I returned point
+rows/s at I readers, associated read/write bytes and native RPC overhead, and a
+new missing-proof availability failure surface. A same-snapshot two-key read
+could avoid a second poll RPC, but requires a reviewed reader/fencing protocol:
+boot/slot/body binding, no eligibility before observed success, immutable same-slot
+proof, cache invalidation and missing-proof rejection. Q-A1 chooses whether
+preserving cycle-validity is worth that complexity and measurement burden. A1
+recommends freshness-only validity for its narrower claim, not because immediate
+completion evidence has been proved impossible.
+
+**Durable prediction inputs retained:** `basis_sha256` resolves to exact canonical
+HEALTH_BASIS ≤6,144 bytes in the existing bounded proof attachments:
+`{v,policy_version,contract_revision,reader_boot,source_state,body,
+committed_at_ns,read_at_ns,read_elapsed_ns,since_reply_ns}`.
+source_state=`installed|unusable|empty|read_failed`; body/C/R are nullable only
+for absent/failed source, elapsed values are u. Installed requires all metadata
+and the composed predicate. No wall timestamp, uncertainty assertion or clock
+digest is an input. P5 replays it and checks the trace/body digest. One object per
+eligible prediction remains bounded by capture limits, carries only a digest in
+the ≤2,048-byte receipt, and may never be lost silently. Batch ≤10 bases plus
+≤4,096 wrapper bytes in ≤65,536 bytes, schema
+`{v,policy_version,contract_revision,boot,day,sequence,previous_sha256,bases}`,
+ordered by digest; complete key `health-basis-batches/<day>/<boot>/<sequence>`.
+Retention 30 days; health_basis_root covers all receipt references. P3/P5 own the
+ordinary export path and its full operation/churn budget (§7.2); no independent
+origin service or per-prediction RPC is introduced. Queue ≤4 batches/256 KiB,
+including the open batch; 2/s sustained plus burst ten fits nominal batching,
+not arbitrary export stalls. Overflow blocks. CPU/serialized/native copies count.
+
+**Emulator boundary:** the same native API, existing commit-enabled DDL and
+strong snapshots are available in the tree's emulator harness (A2-C3). Its shim
+drops staleness options, so a stale-read test must not claim to exercise them
+through that shim. No exact-image A1 execution is claimed: P3 must verify empty
+and nonempty returned read metadata, nanosecond conversion, sentinel roundtrip,
+version pairing and the changed complete-key scalar claim query (including
+absent row and far-future host proposal) against the CI-pinned image.
+Emulator timing is not TrueTime or regional latency evidence. Upstream explicitly
+lists commit timestamps and timestamped reads as supported, but ignores gRPC
+deadlines/cancellation; use controlled transport faults and production-compatible
+elapsed enforcement to prove deadlines, never an emulator timeout claim.
+[Emulator support and limits](https://docs.cloud.google.com/spanner/docs/emulator),
+[upstream feature matrix](https://raw.githubusercontent.com/GoogleCloudPlatform/cloud-spanner-emulator/master/README.md).
+
+### 3.1.2 A1 ADD — publisher conservation and durable traces
+
+For each contender/day, all nonnegative int64, extend the ≤2,048-byte publisher
+counter object with `scheduled_slots, lost_claims, unknown_outcomes, late_cycles`.
+Retain `claim_attempts, claims, scans, publications, failures, missed_slots` and
+histograms. Final counters obey:
+
+`scheduled_slots = missed_slots + claim_attempts`
+
+`claim_attempts = lost_claims + publications + failures`
+
+`unknown_outcomes <= failures; late_cycles <= failures; scans <= claims <= claim_attempts`.
+
+Unknown and late are overlapping diagnostic subsets, never additional outcomes.
+`publications` means original successful reply within 500 ms; a landed late row
+is not counted here. `failures` includes every attempted claim's error/unknown,
+won-cycle failure, deadline miss and publication fence rejection. `lost_claims`
+is only a definitive healthy contention loss, not a failed/unknown claim.
+`missed_slots` means no claim attempted (busy, unscheduled, late start, disabled
+before attempt). Register the owning day before executor submission and hold it
+through final accounting; midnight cannot close ahead of queued jobs. Recheck
+local scheduling after lock waits; validate server observation-slot alignment after the read. Intermediate
+counters may have outstanding slots; closure requires none. The scheduled set
+comes from independently rostered contender lifetimes/slots, not successful jobs.
+
+Define `publisher_slot_trace` entries (≤1,024 canonical bytes each): exact
+`v=2, policy_version="shadow-v2", contract_revision="a1", day, boot, slot,
+claim_start_us, claim_at_ns, observed_at_ns, publisher_heartbeat_ns, body_sha256,
+ack_at_us, cycle_us, outcome, unknown_outcome, late_cycle, rpc_count,
+rpc_elapsed_us`. Times/duration/count are int64;
+claim_at_ns/observed_at_ns/publisher_heartbeat_ns/body_sha256/ack_at_us/claim_start_us/cycle_us
+are nullable only when that stage was never reached; unknown_outcome/late_cycle
+are exact booleans; digests are 64-hex, boot/day as §7; outcome is
+`missed|lost_claim|published|failed`. `ack_at_us` records an observed reply only;
+unknown/late do not get invented success times. Each missed slot has an entry.
+Wall claim_start_us/ack_at_us are diagnostics only; cycle_us is monotonic.
+Trace totals SHALL equal the counters, including failures and unknowns; a missing
+trace blocks G6/G7, never reconstruct it from histograms. Export hash-addressed
+pages ≤64 KiB/≤60 entries with exact
+`{v,policy_version,contract_revision,day,boot,first_slot,last_slot,
+previous_sha256,entries}`; slot bounds=u, previous=null only for the first page,
+entries ordered/contiguous and matching boot/day/bounds, with independent lifetime
+coverage; reserve ≤4 KiB for wrapper. Maximum at K
+contenders is K/2 entries/s and 512K entry-payload bytes/s. Export full or partial
+immutable pages with one PUT-or-reconciliation-GET token/5 s/boot: ≤K/5 operations/s, ≤65,536K/5 peak transport
+bytes/s, with actual wrapper overhead ≤4,096K/5 bytes/s in addition to entry
+payload. This steady-state rate includes day/shutdown partial pages; §7.2 adds finite-interval
+startup/in-flight terms, all offline operations and cleanup. No extra final burst.
+Use §7.2 ordinary export accounting, no extra health/database query or mutation.
+Queue ≤4 pages/256 KiB per exporter, no catch-up burst, overflow blocks coverage.
+Trace hash/copy/serialization CPU is measured in publisher/export budgets.
+
+P5 reconstructs outcome partitions and exact snapshot/slot coverage. G6 applies the
+retained failure/streak/degraded limits to publisher opportunities as well as
+observers: failed+missed ≤max(3,1% of scheduled slots), consecutive affected slots
+≤2, degraded time ≤1%; healthy lost claims are not failures. Additionally evaluate
+fleet winning-slot absence so contenders' losing claims cannot hide no publisher.
+G7 requires each configured component bound and includes every failed/unknown
+attempt in measured load; it cannot call an over-budget execution compliant.
+A failed opportunity may remain within G6's allowance; missing evidence never does.
+**End A1 additions to §3.1.**
 
 ### 3.2 Load and meaning
 
@@ -230,12 +500,58 @@ blocks. No guessed CPU slope or assumption that the old 7,208-row allowance can
 absorb an extra 5,000.5 visits/s. Record separate pending/unresolved/control/trust
 row budgets and total RPC/write budgets in pre/post artifacts (§8 G7).
 
-Retain health P=2, Jp≤0.25, Dp≤0.5, reader T=1, Jr≤0.25, Dr≤0.5, skew≤0.25:
-sum ≤4.75 seconds, all accepted ages in [0,5). Dp includes claim and publication;
-measure it end-to-end, and continuously test all poll/publication phases.
-Workspace chain stays 4+0.25+0.5≤4.75. Missing progress stays unknown; a fresh
-complete backlog above p95=5 seconds gives known `no`. Empty backlog is a real
-observation with zero ages, not fabricated worker health.
+**A1 round-2 freshness derivation:** use B/O/C/R in one Spanner domain.
+For compliant successive slots, old O≥B; the next observation is at most
+B+P+Jp=B+2+.25. Its complete cycle/reply takes at most Dp=.5 s, charged
+conservatively from that observation although the cycle started earlier. The
+next reader poll starts within T+Jr=1+.25 s and returns/installs within Dr=.25 s.
+Thus at replacement the old sample's domain age is bounded by
+`P+Jp+Dp+T+Jr+Dr=2+.25+.5+1+.25+.25=4.25 s`.
+To avoid assuming R was selected at reply, the predicate additionally charges the
+whole read interval q≤Dr. Its conservative acceptance quantity is therefore
+**`4.25+.25=4.50 <5 s`**. This double charging is intentional. With the former
+Dr=.5 ceiling the same conservative chain would be 5.00, insufficient for strict
+<5; hence the explicit 250 ms shadow-only read deadline, not a hidden assumption
+of instantaneous replies. Pauses, late polls, TrueTime wait and slot misses spend
+availability; the actual predicate still rejects A≥5 independently of continuity.
+No unused jitter can turn an over-budget publisher cycle into a successful one.
+Workspace chain stays 4+.25+.5≤4.75. Regional measurement must establish every
+component and the conservative turnover bound; the arithmetic is not a latency
+measurement or continuous-availability guarantee.
+
+The health SELECT adds one 8-byte logical commit timestamp per poll (8I bytes/s)
+and consumes already-returned read metadata (another 8I logical bytes/s handled,
+not newly added wire bytes). The claim SELECT adds a server-current timestamp,
+≤K/2 scalars/s or 4K logical bytes/s. Native encoding is measured. There is no additional SQL statement, RPC,
+table-row visit, stored row, mutation or index. The claim statement returns
+exactly one result row even when its key is absent, versus zero in that case
+previously; its worst-case result-row rate remains K/2 per second. Account for
+the NULL body, added timestamp column and result metadata in native bytes. The
+health query still returns at most one row and adds only the commit-timestamp
+column; its read timestamp was already requested by the SDK. The publisher
+consumes its existing unresolved result's metadata, including empty results. Body maxima stay 4 KiB/claim 1 KiB. Conversion/predicate/copy work must
+fit existing capture/authorize CPU budgets, with trace/basis costs in §7.2.
+
+**Money backlog ages are a different input.** The installed money publisher takes
+`observed=time.time()` before reading, subtracts stored `unresolved_at` timestamps,
+sorts ages and computes ceiling-rank p50/p95; it records a later local heartbeat
+(`src/trusted_router/storage_gcp_async_admission.py:189–221`). Admission tests
+cached freshness and p95≤5 (`services/async_settle.py:98–105,166–175`). A1 keeps
+that sampled wall-time backlog-age calculation and completeness rules in its
+shadow summarizer; `backlog_age_at_seconds` records that separate wall input. Use the
+same binary64 wall sample and age subtraction as the baseline calculation,
+recorded without precision loss in backlog_age_at_seconds; round derived
+nonnegative age seconds up to integer microseconds using exact rational
+conversion of the binary64 result (not a float multiply that could round down); never round a value >5 s down to pass the threshold.
+Tests must compare exact yes/no threshold results to the unchanged money
+summarizer, including future/epoch/invalid creation timestamps. O/R freshness
+never substitutes Spanner time into money's age subtraction. A host offset can
+still change nominal backlog ages near the p95 threshold; this predicts what
+admission would compute on those samples, not exact physical-age parity across
+hosts. Requiring that stronger claim would need a separately reviewed money-age
+policy and uncertainty handling; no such change is authorized here. Missing
+progress is unknown; a fresh complete backlog above p95=5 s gives known no;
+empty backlog is an actual observation, never fabricated worker health.
 
 Prediction means “the tier/cap/backlog-age predicate would say yes/no on these
 fresh observations **if** a proven fast-drain service were installed.” Label
@@ -425,6 +741,12 @@ Enclave implementation seams, verified in this checkout:
 - `E/enclave-go/internal/trustedrouter/async_settlement.go:79`/`:83` async
   provenance/binding guards (C17): exclusion must never bind `Authorization.async`.
 
+**A1 round-2 wire boundary:** no owner header, A1 capability header, response
+locator, acceptance, ownership export or new enclave behavior is introduced.
+Baseline P2 read/echo remains required; its follow-up copies/pins every file in
+the new A1 manifest, including router-only schemas (§7.1). Authorize/certificate/
+terminal wire bytes and original receipt hashes are unchanged from baseline P1.
+
 P2 must extend authorize retention **before snapshot parsing**, and header echo
 for settle and refund, including supported transport for out-of-cohort routes
 whose authorizes currently do not request shadow (C16/C17). Preserve opaque token
@@ -505,8 +827,8 @@ legacy continues but its terminal is C. A header_absent authorize is counted and
 cannot certify itself as an exclusion: a terminal must supply its original valid
 proof, or independently have the new fresh-authorize certificate (issuance requires
 v2 capability); otherwise C. Authorize-only writers may have zero predictions,
-but their authorizations must be reconciled to durable decisions and either later
-terminal linkage or a known open/not-yet-terminal state. Unknown lost invocation
+but every authorization must have durable decision evidence and an explicit
+report obligation, discharged only by an independently reconciled terminal. Unknown lost invocation
 is not a harmless authorize-only interval. The window cannot hide a missing terminal
 by ending while its status is unknown (§6).
 
@@ -589,7 +911,10 @@ All eight still appear in completeness, region maps and closure.
 
 F5's observer formulas and exact workspace-count/cap/allowance matching stay.
 Replace only the historical summation; add publisher and v2 evidence costs. A
-second workspace needs fresh approval and pre/post measurements for N=2. Lowering
+second workspace needs fresh approval and pre/post measurements for N=2.
+**A1 ADD:** §7.2–§7.4 retained health attachment transport/verification and
+post-close rows are included in actual and configured-cap/surge projections.
+They are not free because they use an export sink rather than the money database. Lowering
 router caps needs a separate serving-capacity decision. No unexplained CPU
 extrapolation, 45% alarm change, or quota increase to manufacture PASS.
 
@@ -633,7 +958,9 @@ these events, references and results (§7); cumulative counters retain totals.
 `durable_event_hwm` is the largest contiguous sequence proven durable with
 reconciled references, not the largest sequence observed in memory. A final
 same-transaction counter/closure update commits `hwm=final_event_seq` only after
-all relevant pages, samples, certificates and outcomes are acknowledged. Earlier
+all relevant pages, samples, certificates and locally owned outcomes are
+acknowledged; pending report terminal obligations are represented as §7.3, never
+mislabelled reconciled terminal outcomes. Earlier
 pages are immutable and hash-linked; exact-key reads resolve unknown commits.
 An equal-sequence different-body write is a conflict, never an acknowledged retry;
 older snapshots cannot lower any count/HWM or erase a loss/reset.
@@ -650,14 +977,27 @@ No unbounded retry queue or request wait. Failed work retains its existing
 32-task/256-KiB allocation; a scheduled later checkpoint may retry exact retained
 batches within the normal cadence and budget. Overflow immediately blocks.
 
-Open authorizations need a durable disposition: original decision and known
-in-flight owner/link, eventual terminal, or a separately verified nonterminal
-closure. No fabricated terminal from a reaper. At report sealing, unresolved
-cross-day authorizations are explicitly listed; the report remains provisional
-until their ≤48-hour proof horizon/terminal reconciliation is known. A genuinely
-still-running call can be identified as open without inventing a comparison;
-lost ownership or proof expiry without reconstructable terminal evidence blocks.
-No backdating a later positive comparison to fill an earlier hole.
+**A1 AFTER (D-A1-B / S2): terminal-only REPORT discharge.** A writer may close
+when its own complete decision/terminal/evidence work is durably acknowledged
+and all ordinary closure conditions hold. Its HWM means local durable evidence,
+not that every issued authorization has finished. Every authorize receipt lacking
+a reconciled terminal remains an explicit obligation of the REPORT, committed
+by the closure's complete receipt chain and §7.3 interpretation marker. Closing
+the writer never discharges that obligation. This replaces the former owner-link
+permission; it does not assert that a durable receipt proves response delivery,
+retention, an owner or completion. `complete()` with empty backing cannot discharge
+it, and no authorize-original completion is permitted.
+
+Only independently reconciled durable terminal evidence for that authorization,
+from any router boot and any enclave, within its original ≤48-hour horizon may
+discharge it. All attempts still need §2's T=A+B+C partition with C=0; no terminal,
+a terminal failing reconciliation or a conflict blocks the **authorization's
+issue day**, plus any affected terminal day. Before complete horizon/forward
+coverage and reconciliation, the report is PROVISIONAL, never PASS; at the horizon
+an absent terminal blocks, and incomplete export cannot prove absence or success.
+No nonterminal disposition, expiry-as-discharge, reaper terminal, or backdated
+positive sample exists in A1. Unknown lost invocation is not a harmless
+authorize-only interval: a lost response with no terminal remains open then blocks.
 
 Daily closure body (§7) fixes interval end, final event/checkpoint sequences,
 durable HWM, receipt-chain digest, cumulative counter digest, retained-work=0,
@@ -675,12 +1015,82 @@ close, hard kill, or any comparator unknown/disagreement. V1-policy
 `store_unavailable` rows lack these recovery facts; they are **never retroactively
 forgiven**, relabelled or used to certify v2.
 
+### 6.0.1 A1 ADD — disposition and final-close state machines
+
+Writer evidence states are RESERVED → DECISION_DURABLE → COMMITTED_REPORT_OBLIGATION;
+report states separately are OPEN → TERMINAL_RECONCILED or BLOCKED. No state
+OWNER_PROVEN_OPEN exists. P3 can release local retained authorize work after its
+exact immutable decision page and references are durable, while P5 must still
+enumerate the obligation even after the boot exits. The closure/acknowledged
+result certifies only that writer's durable evidence boundary, not the report.
+Issuer-owned requests, comparisons, observer folds and evidence queues still
+must drain; lost pages, hard kills and failed final close remain blocking.
+A fresh router's first terminal is legitimate and distinct from same-writer
+checkpoint recovery. H1/E1 and H2/E2 from review R2 both discharge only if the
+same authorization's terminal independently reconciles; A1 makes no stronger
+inference from their indistinguishable evidence.
+
+**Explicit policy limitation:** independently reconciled terminal evidence may
+discharge the authorization regardless of which enclave sent it. A1 makes no
+claim that an accepted owner continuously retained the invocation or sent its
+terminal. Reports must state that limitation and must not describe terminal
+reconciliation as proof of same-enclave continuity. There is no accepted-owner
+route or “no live transfer” rule in A1. Compared with round 1, A1 gives up marking
+a still-running call benign before the horizon; a report sealed after that horizon
+already needed the terminal, so this loses little for final certification.
+
+**Completion correction (R4 context, no new authorize completion):** every route
+through finalize/reconcile/HWM SHALL resolve an exact durable original page and
+terminal event with explicit `(day,boot,page,event)` context. Original phase must
+be settle/refund, original and completion actual writer boots must match, original
+receipt time/event time cannot be after completion, and identities/proof/result
+preservation follow P1. On the same day require original seq < completion seq;
+across days require original day < completion day (equal/reset sequence numbers
+are legal only there). `completion_of` matches the original seq; `retry_original`
+is mandatory `{day,boot,event_seq}` for cross-day completion. Its page is resolved
+from the verified bounded receipt-page chain/export, never by arbitrary body
+search or a guessed current page. If not already indexed in the writer's bounded
+retained metadata, defer to bounded export reconciliation; no unbounded journal
+scan/RPC burst. An absent in-memory original is not success. Unknown reference
+keeps HWM blocked. Completions never erase original mismatch or prediction time.
+
+**G-C / D-A1-C:** a final counter/closure transaction cannot describe its own later
+reply; read-back proves only landing, and P1 SEALED_CLOSURE has no producer-to-export
+transport (A1-C6, A1-C10). Writer/day states SHALL be OPEN → DRAINING → FROZEN →
+FINAL_ATTEMPTED exactly once → ACK_OBSERVED or FINAL_FAILED. Only an original
+success reply within both its 2 s transaction deadline and remaining flush/shutdown
+deadline enters ACK_OBSERVED. Timeout, unknown outcome, error or late success enters
+FINAL_FAILED permanently, even if exact bytes later land. No final-close retry
+or new boot may rehabilitate that writer/day. Freeze the outcome after accounting;
+a late reply following a timeout cannot revise it.
+
+Only ACK_OBSERVED may emit the single immutable close-result row (§7.4). It
+then becomes HANDOFF_LANDED (including exact-read recovery of a landed handoff)
+or HANDOFF_MISSING. Only HANDOFF_LANDED with a valid acknowledged result permits
+P5 to construct SEALED_CLOSURE. FINAL_FAILED emits no certifying result. Missing
+result yields a durable report `writer_closure_gap` after complete inventory/export
+coverage; it is not evidence of a particular count of failed original commits.
+The row and its producer provenance, not logs/in-memory last-ack, carry the fact.
+The original final transaction and later handoff have deliberately different
+semantics: failed final close is irreparable; unknown delivery of an already true
+acknowledgement fact is a recoverable export/checkpoint outcome. §7.4 defines a
+bounded, conservative accounting rule without an acknowledgement-of-acknowledgement.
+
 ### 6.1 Shutdown is a measured boundary
 
-Current shutdown waits for maintenance, closes observer, then queues a final
-flush; current budgets are 2 seconds per evidence transaction, 1 second per read,
-4 seconds per flush and 9 seconds per observation (C18/C5). Old v1 prose saying
-one second does not describe this checkout. Those ceilings are not hard scheduler
+**A1 BEFORE:** this paragraph called 2/1/4/9 seconds “current” (C18/C5).
+**A1 AFTER:** the supplied P1 tree has v1 write/read/flush/observation ceilings
+4/1/8/17 seconds; P3's distinct proposed v2 adapter uses 2/1/4 seconds
+(A1-C12). A1 retains the **v2 design** ceilings 2 s/transaction, 1 s/point read,
+4 s/flush; it does not change v1 or claim those ceilings prove shutdown feasibility.
+Reserve up to 2 s for the final transaction and up to 2 s for the separate
+close-result transaction inside the same final 4 s flush pass. Pending required slot/basis
+exports must also land before closing. Their cadence wait is part of shutdown,
+not a free final burst or an extension to the 9 s local cap. All earlier draining,
+page passes, hashing, allocation and cleanup must fit the measured remaining
+termination grace (proposed local cap 9 s inside the platform interval). If not,
+leave the writer blocked; never extend grace or cancel money work. Those ceilings are not
+hard scheduler
 bounds and do not guarantee that queued work plus close fits termination.
 
 Cloud Run services send SIGTERM before a 10-second termination interval, then
@@ -700,7 +1110,18 @@ not proof of losslessness under arbitrary kills.
 
 **D-V2-7 — separate policy namespaces and literal contracts.** Every new record,
 wire outer object, report, prerequisite and gate artifact has exact
-`v=2,policy_version="shadow-v2"`. Unknown/mixed versions reject; no coercion or
+`v=2,policy_version="shadow-v2"`.
+**A1 ADD:** A1 is a separately pinned contract revision `a1`, selected by the
+new fixture-manifest hash and boot prerequisites, not a default for baseline P1.
+All new A1 objects below also require `contract_revision="a1"`; changed manifests,
+closure/counter/proof/gate schemas carry that field. HEALTH time fields change
+as §3 specifies, and HEALTH_CLAIM replaces claim_at_us with server claim_at_ns;
+authorize/terminal receipt/certificate/wire
+fields and bytes remain baseline P1. No owner field changes an event hash or
+embedded certificate signature. Selection uses exact A1 manifest/boot prerequisites. Baseline P1 fixtures
+and hashes remain historical/frozen; never recertify baseline observations under
+A1 by attaching a new manifest. No reason membership or money policy changes.
+Unknown/mixed versions reject; no coercion or
 missing-field defaults. V1 billing snapshot/terminal DTO and price binding retain
 their own v1 versions; their **v2 outer receipt/policy** is mandatory. Old rows
 stay queryable as historical diagnostics/reset provenance but contribute zero
@@ -712,19 +1133,33 @@ a new policy ID/fixtures, not a silent report upgrade.
 |---|---|
 | `async_settle_shadow_sample_v2`, `<authorize-day>/<authorization-id>` | Existing sample fields/math plus policy, proof kind, original terminal receipt identity, health source/slot and prediction basis; ≤8,192 bytes. First insertion immutable; conflicts sticky. No JWS. |
 | `async_settle_shadow_certificate_v2`, `<authorize-day>/<authorization-id>` | Verified claims projection with raw workspace/key/nonce/reservation replaced by content-free commitments; reason, facts/candidate digests, certificate SHA, validity, issuer/keyring artifact digest, authorizing revision, verification result/time, `original_receipt` as the exact signed authorize receipt reference (no duplicate copy); ≤4,096 bytes. No signed token. |
-| `async_settle_shadow_receipts_v2`, `<observation-day>/<boot>/<first-seq-padded-20>` | Immutable pages: policy, boot/day, first/last seq, previous-page SHA, ≤128 ordered events. Event: seq, event/receipt time, phase, authorization day/id, decision/proof reference, actual finite dimensions, compact content-free requested facts and full ordered candidate projection when required for authorize plus `receipt_locator` coordinates (§4.1; entire event ≤2 KiB), terminal payload/certificate digest and full signed `original_receipt` for excluded terminals, A/B/C and eligibility status, comparison/booking outcome/reference, prediction for eligible terminal, retry-original reference. Completion events link original seq; no overwrites. ≤64 KiB/page and ≤2 KiB/event. |
+| `async_settle_shadow_receipts_v2`, `<observation-day>/<boot>/<first-seq-padded-20>` | Immutable pages: policy, boot/day, first/last seq, previous-page SHA, ≤128 ordered events. Event: seq, event/receipt time, phase, authorization day/id, decision/proof reference, actual finite dimensions, compact content-free requested facts and full ordered candidate projection when required for authorize plus `receipt_locator` coordinates (§4.1; entire event ≤2 KiB) and terminal payload/certificate digest and full signed `original_receipt` for excluded terminals, A/B/C and eligibility status, comparison/booking outcome/reference, prediction for eligible terminal, retry-original reference. Completion events link original seq; no overwrites. ≤64 KiB/page and ≤2 KiB/event. |
 | `async_settle_shadow_counter_v2`, `<day>/<boot>` | Existing fixed dimensions/phase arrays and diagnostics; new A/B/C, eligible_demand (nullable when unknown), proof-present by variant, requested decisions, checkpoint diagnostics, event/HWM/checkpoint sequence, receipt count/hash, loss/reset fields, publisher operations/budget histograms. ≤64 KiB; no per-authorization maps. |
 | `async_settle_shadow_closure_v2`, `<day>/<boot>` | §6 exact closure fields plus policy, boot/day/revision/region, closure reason `utc_boundary|shutdown|opt_out`, physical commit acknowledgement time stored in subsequent sealed export, previous-day closure hash; ≤4 KiB. Own commit duration not known inside its row. |
 | `async_settle_shadow_control_v2`, `<day>/manifest-v2` | v1 manifest scope plus policy/config/fixture hashes, counter and closure roots, receipts root, prerequisite-ledger root, independent inventory hash, all four disabled-flag intervals, completeness/gaps. ≤256 KiB, ≤4,096 writers/day, ≤64 revisions/role, ≤128 gap intervals. |
 | Same control kind, `<day>/cap-v2`, `retention-v2` | Daily terminal reservations limit 100,000 in blocks of 100, no crash reclamation; receipt event reservations limit 400,000/day in blocks of 100 (authorizes, terminals, completions and retries all consume them), at most one allocation attempt/5 seconds/boot. Overflow/daily-cap is blocking. Retention fence mirrors v1 with exact new kind list. ≤4 KiB each. |
 | Health and health control kinds/keys | §3 exact schemas, ≤4 KiB/≤1 KiB; source is non-authorizing; latest record only. Export slot/timing evidence each day, since latest record alone cannot prove a week's progress. |
+| **A1 ADD:** `async_settle_shadow_close_result_v2`, `<day>/<boot>` | §7.4 immutable original-boot observed-success fact, ≤4,096 bytes, separate post-close transaction; explicitly added to kind/retention/export allowlists. |
 | External proof/gates | ≤256 KiB manifest plus hash-addressed bounded attachments; policy, source SHAs, evaluator/binding/v2 wire fixture hashes, per-day router/enclave rosters, **instance_regions_by_day**, ledger root, shutdown/inventory evidence, cohort/seed policy, pre/post budgets, publisher slot trace, independent external proofs and resolution DAG. No secret material. |
+
+**A1 ADD:** closure adds exact `authorization_obligations="receipt_chain"`.
+Its existing receipt_chain_sha256, final_event_seq and durable_event_hwm commit
+all authorize receipts and thus every open obligation (§7.3); no duplicate
+unbounded authorization list is added. Day manifest adds `close_result_root`,
+`publisher_trace_root`, `health_basis_root`; proof manifest adds the same plus
+`handoff_accounting_root` and `authorization_obligation_root` (P5's bounded
+reconciliation export). Each root is a 64-hex digest with §7.2 coverage. No owner,
+boot-key or clock-qualification root remains. All complete-object limits remain
+conjunctive, including the 25-byte contract_revision member where specified.
 
 These are new kind names under existing `(kind,id)` `tr_entities` (C14), no new
 money DDL. A page counter/closure transaction touches at most 4 new pages plus
 counter and closure: **≤6 row bodies, ≤324 KiB (331,776 bytes)**, derived as
 `4×65,536 + 65,536 + 4,096`. Keys and RPC/transaction encoding are additional,
-not included in that body bound. P3/P6 must measure and record their separate
+not included in that body bound. **A1 ADD:** the later close-result is **not**
+a seventh row in that transaction. Two sequential transactions may carry
+`331,776+4,096=335,872` body bytes total in the final pass, plus separate key/native
+encoding overhead; their deadlines share that pass's 4 seconds. P3/P6 must measure and record their separate
 maximum byte overhead using maximum supported keys and native serialization,
 and measure RPC count, peak resident memory (including retained pages, counter,
 closure and encoded copies), flush and shutdown budgets at the full 324 KiB body
@@ -737,7 +1172,7 @@ measured memory and worker budgets. A full page queue causes sticky loss,
 not request blocking.
 Terminal sample/certificate persistence uses the existing bounded worker budget;
 all page/counter transactions obey the same 2-second ceiling, 1-second point-read
-ceiling and 4-second flush pass ceiling identified in C18. Extra pages may take
+ceiling and 4-second flush pass ceiling proposed in §6.1/A1-C12. Extra pages may take
 later passes; closure cannot get ahead of them. Cap allocations and receipt
 writes are additional load in §3/§5, never hidden under “zero observer writes.”
 
@@ -793,10 +1228,11 @@ An in-memory reservation or signed certificate does not advance durable HWM;
 a hole/unfinished slot/unknown commit prevents it passing that sequence. Only
 acknowledged contiguous pages and reconciled references advance HWM. Authorize
 receipts have no forward reference to a not-yet-created verified certificate, so
-an issuer can close gracefully with durable facts and a known open authorization
-owned by the enclave under §6; it need not wait for a first terminal on another
-boot. Issuer-owned work must still drain, and report sealing still reconciles that
-open authorization. Keep exact frozen bytes/keys through unknown commit and use
+**A1 clarification:** an issuer may close with complete durable local facts
+and the §7.3 receipt-chain commitment to report obligations under §6, without
+waiting for a first terminal on another boot. This does not prove delivery or
+ownership. Issuer-owned work must drain; report sealing still requires actual
+terminal reconciliation of every authorization. Keep exact frozen bytes/keys through unknown commit and use
 §6's exact-key reconciliation, never relocate on retry. If the boot dies before
 its page is durable, the echoed locator still names that missing page: terminal
 C/`original_receipt_missing`, unclosed writer/BLOCKED, no alternate lookup. A later
@@ -841,7 +1277,15 @@ retained-copy, flush and shutdown measurements still gate P3/P6, not an assumed
 new load allowance.
 
 Keep 30-day retention; read report days plus two prior authorization days for
-48-hour proof lifetime, plus explicit same-key references. Retain v1 ≤200 rows/page,
+48-hour proof lifetime, plus explicit same-key references. **A1 ADD:** sealing
+open authorizations also consumes complete exports for up to two following UTC
+terminal days through each original expiry, and any explicitly referenced later
+durable reconciliation. A terminal's actual receipt must meet the original proof
+lifetime; later export/commit cannot renew it. Join by full identity across these
+bounded exports, never search production entity bodies to find a terminal.
+Until forward coverage and terminal reconciliation are known, the original
+day is provisional; expiry or end of the requested report window is not absence
+proof. Retain v1 ≤200 rows/page,
 LOW-priority 200 ms operator read, no retries, complete day/boot indexed ranges,
 cleanup ≤200 complete keys/transaction, ≤5 transactions/s, ≤30-second pass. New
 kinds require explicit allowlisting; health reads use complete keys. Live pilot
@@ -887,6 +1331,331 @@ Fixture manifest enumerates **every** variant and policy hash. Freeze independen
 expected amounts (including ±1 negative controls); do not generate expected output
 with the evaluator being tested. No invented final hashes before fixture PRs land.
 
+**A1 ADD — fixture revision, proposed files only:** keep baseline P1 bytes and
+manifest frozen. P1-A1 releases separate `shadow_v2_a1/` copies in both repos with
+a new independently pinned manifest (no invented hash). Changes: `health.json`
+(new timestamp meanings/types and backlog wall input), `health_claim.json`
+(server claim_at_ns replaces host claim_at_us), `counter.json` (conservation),
+`closure.json` (obligation marker and sealed projection), `controls.json`
+(close-result kind/roots), `proof_manifest.json`, `prerequisite_ledger.json` and
+`gate_outputs.json` (A1 interpretation). Add `health_read_metadata.json`,
+`health_basis.json`, `publisher_slot_trace.json`, `close_result.json`,
+`handoff_accounting.json`, `authorization_obligations.json`, `completion_context.json`
+and all positive/negative boundary variants. Completion references retain P1
+terminal-only wire shape; contextual rules become explicit and shared.
+
+Receipt pages, authorize projections, capability headers, certificate
+claims/signatures/verified records, excluded and compared terminal variants,
+legacy billing/ticket/binding/money-oracle bytes stay baseline byte-identical.
+No owner, clock, boot-provenance fixture or A1 wire negotiation is needed.
+The enclave follow-up is **pin-only**: copy and check every fixture, manifest and
+variant inventory, including router-only additions, as its existing test does
+(A1-C9). No P2-A1 behavior package remains. If implementation discovers a wire
+change, that is a new reviewed amendment, not implied permission here.
+
+### 7.2 A1 ADD — existing evidence provenance and complete export accounting
+
+Normative types: `u`=exact nonnegative int64; `boot`=1–64 ASCII `[A-Za-z0-9_-]`;
+`day`=valid YYYY-MM-DD; `sha`=lowercase 64-hex; `rev`=full 40-hex;
+`seq`=canonical zero-padded 20-digit positive uint64. New A1 objects have literal
+v=2/policy_version=shadow-v2/contract_revision=a1. Strict canonical JSON, unknown-
+key and duplicate-key rejection remain. No credentials, prompt, raw token or key.
+
+S3 uses router service identity and ordinary immutable evidence/export controls,
+actual boot/day in keys and bodies, and independent G2 inventory. It introduces
+no per-boot key registry, attestation binding, signed-fact wrapper, independent
+origin collector or P0-A1. Exports copy original rows/bytes; P5 never originates a
+writer's acknowledgement. Inventory/key/body/revision/lifecycle agreement is
+mandatory but does not resist deliberate cross-boot forgery by a malicious
+router with shared write authority (§2). That limit also applies to pages and
+closures; stronger origin must be reviewed consistently across evidence.
+
+Round-1 enclave ingress, OWNER_PAGE generations, owner polling, ownership-root
+pages and provenance/qualification resolution lanes and their budgets disappear.
+Health bases and publisher traces still require durable export; removing those
+would weaken an unchallenged evidence requirement. They use P3/P5's ordinary
+bounded attachment exporter, under the same service identity, not a new trust
+domain. Their explicit transport budget follows; byte limits alone are insufficient.
+
+Per router boot and each of the two streams (basis; trace if contender), permit
+one **PUT or exact-key reconciliation GET per 5 seconds**, not one of each. Keys
+are `health-basis-batches/<day>/<boot>/<sequence>` and
+`publisher-traces/<day>/<boot>/<first-slot>`. Create immutable objects with a
+create-if-absent condition; no mutable cumulative generations or collector.
+An identical existing body is landing evidence, a different body is conflict.
+On unknown PUT retain exact bytes/key; next token may GET, without an immediate
+retry loop. Missing objects cannot be called durable. Queue ≤4 objects/256 KiB
+per stream including open/in-flight bodies, ≤512 KiB combined per contender;
+parser/native/encoded copies are measured separately. Restart does not adopt a
+dead boot's unfinished queue: its missing export/closure blocks. The surviving
+boot needs no prior-generation fetch/cache to construct immutable next pages.
+At close all required objects must be durably established, including cadence
+wait, inside remaining shutdown grace; there is no extra final token/burst.
+
+For any interval, lane operations ≤ sum over participating boot-lanes of
+`1+floor(active_seconds/5)`, plus operations already in flight at interval start
+(at most one per lane). Include newly started AND retired boot-lanes, not just
+simultaneous R/K. Each operation moves ≤65,536 body bytes. Steady simultaneous
+ceilings are (R+K)/5 operations/s and 65,536(R+K)/5 bytes/s, with writes and GETs
+reported separately. These are lane ceilings, not the total export budget.
+Basis input is at most 2/s steady with burst ten under existing capture guard;
+ten bases/5 s drains steady input with bounded burst space. Reconciliation GETs
+spend service capacity; sustained errors eventually overflow and block. Trace
+input is K/2 entries/s, ≤512K payload bytes/s; wrappers/partial pages still count.
+No independent enclave/export-verifier signature operations remain.
+
+P5 processes only manifest/inventory/reference-derived complete keys and ranges,
+never LIST/body search as absence proof. Each export pass has an approved finite
+key list ≤10,000; larger windows require separately paginated reviewed bundles.
+Fetch each source object/result at most once per pass; cache exact bytes only
+within the pass, ≤one 256 KiB decode buffer plus bounded page/manifest state.
+A restarted pass is another fully charged pass, not free recovery. Write each
+coverage/report/root page once with create-if-absent; unknown writes remain
+provisional and require a separately charged exact-key read in the next pass.
+No recursive immediate retries. Let L=source object/result GETs, W=coverage,
+root-list and report-page PUTs in a pass: count L+W storage operations, actual
+bytes (≤262,144(L+W) coarse body bound), every native RPC and all decoding/hashing.
+Original Spanner exports additionally retain ≤200 rows/page, 200 ms LOW/no-retry
+operator reads and actual row/key bytes. Result point reads are counted once,
+not again as source attachment reads. P6 must approve pass frequency and full
+finite-interval totals including re-runs before activation. No unlimited offline
+export work is hidden in a producer per-second rate.
+
+Retention cleanup includes every retained generation/object and root: enumerate
+from the coverage manifests, charge ≤one deletion/key, batch only where supported;
+Spanner retains ≤200 keys/transaction, ≤5 transactions/s, ≤30 s/pass. Object-sink
+cleanup follows the same ≤1,000 keys/s and ≤30 s/pass ceilings, with actual
+batch/native request counts measured. Missing cleanup coverage blocks retention
+claims. No provenance-resolution, collector-consumption or cumulative-page-fetch
+operation exists in this branch; all remaining producer, reconciliation, export,
+root and cleanup work above counts in G7 and §5's churn/burst sweep.
+
+`COVERAGE_PAGE` ≤262,144 bytes/≤1,000 entries is exactly
+`{v,policy_version,contract_revision,day,stream,page_seq,previous_sha256,entries}`;
+stream=`close_result|publisher_trace|handoff_accounting|health_basis|authorization_obligation`,
+page_seq=seq, previous nullable sha; entries sorted by complete logical key,
+each `{key,sha256,bytes,state}` with ASCII key≤512, nullable sha, bytes=u,
+state=`present|missing|conflict`. Missing has null hash/0 bytes. Conflicts retain
+all conflicting digests in bounded attachments, never latest-write-wins. Root
+hashes the canonical ordered page-digest list, itself paginated if needed.
+Expected coverage comes from inventory, receipt HWM/references and scheduled
+slots, not uploads found. All objects/roots retained ≥30 days. Limits never permit
+truncation. A trace/basis/root transport failure is a visible evidence gap.
+
+### 7.3 A1 ADD — G-B report obligations without an owner claim
+
+The smallest commitment is the closure's **existing complete receipt chain**:
+all immutable ordered pages through final_event_seq, hash-linked to
+receipt_chain_sha256 with durable_event_hwm=final_event_seq. Add the literal
+`authorization_obligations="receipt_chain"` so no baseline closure is interpreted
+under this new rule. No owner field, count-only summary, new page kind or
+per-authorization row is needed. P5 must actually read/verify the whole bounded
+chain and derive the exact set of authorize receipts; it cannot treat the hash
+alone as enumeration. This is already required closure evidence, not a new scan.
+
+Every authorize receipt enters that report set. Fresh/replay counters must equal
+the enumerated receipt counts; replay references resolve the same original
+identity/decision without creating a renewed horizon. P5 groups by the full
+committed authorization identity, preserving each issuance/replay receipt and
+its issue day. It joins independently reconciled terminal receipts from the
+report days, two prior authorization days, up to two following terminal days
+through each original expiry and explicit later durable-reconciliation references.
+All terminal attempts retain their independent partition obligations. A terminal
+can discharge the original/replays of the same authorization only with exact
+identity/proof/result matching, immutable factual backing and original lifetime.
+It cannot discharge a different nonce/reservation/generation or cure a conflict.
+
+At any report cutoff, explicitly enumerate the authorize receipts without such
+a linked terminal as OPEN, with `original_receipt`, original horizon and status
+`open|terminal_reconciled|blocked`, plus terminal references or gap reason.
+Define exact `AUTHORIZATION_OBLIGATION` ≤2,048 bytes:
+`{v,policy_version,contract_revision,original_receipt,identity_sha256,
+horizon_at_us,status,terminal_reference,gap}`. original_receipt is the existing
+full LOCATOR; identity_sha256 hashes the canonical committed identity;
+horizon_at_us=u is original issuance plus the existing maximum horizon, capped
+by the original proof expiry where applicable (never renewed by replay).
+terminal_reference is nullable `{day,boot,first_seq,event_seq,event_sha256}`;
+gap is nullable enum `authorization_link_gap|authorization_horizon_gap|authorization_terminal_conflict`.
+`open` requires null terminal/gap; terminal_reconciled requires resolved reference
+and null gap; blocked requires a named gap, retaining a reference if one exists.
+Multiple terminal attempts are enumerated in the already-required receipt export,
+not truncated into this summary; the chosen reference does not excuse any C.
+Use exact page `{v,policy_version,contract_revision,day,boot,page_seq,
+previous_sha256,entries}` with ≤256 KiB and ≤1,000 entries, ordered by original
+(day,boot,event_seq); all whole-object limits are conjunctive. A report's exact
+writer/day obligation projection is `{v,policy_version,contract_revision,day,boot,
+closure_sha256,open_obligation_count,open_obligations_root,reconciliation_root}`
+(≤1,024 bytes). Its count is u and roots sha. Coverage entries under
+`authorization_obligation_root` name these exact pages/projections. P5 derives and emits
+`open_obligation_count` and `open_obligations_root` over the sorted canonical
+unresolved entries for every writer/day, including canonical empty-list digest.
+These are report fields, **not an unbounded local map or a claim by the closing
+writer**. At writer close every authorization not yet linked remains committed
+by the receipt chain regardless of the writer's knowledge of another boot's
+terminal; later evidence can only discharge via the independently verified join.
+Missing chain/receipt/counter coverage makes enumeration impossible and blocks.
+
+In each AUTHORIZATION_OBLIGATION, original_receipt locates the individual
+fresh-authorize or replay receipt being projected: derive day, boot, first_seq
+and event_seq from its verified immutable page and event_sha256 from that
+event's canonical bytes. For a replay, this is the replay receipt's own locator,
+not the fresh authorization's locator. Resolve the original decision and
+original horizon through the replay's existing verified reference; do not
+change any receipt or certificate field. There is exactly one obligation entry
+per fresh-authorize or replay receipt, uniquely keyed by these receipt
+coordinates. For each writer/day, reconciliation_root is SHA-256 of the
+canonical JSON array of all its AUTHORIZATION_OBLIGATION entries, sorted by
+(original_receipt.day, original_receipt.boot, original_receipt.event_seq).
+open_obligations_root uses the same construction restricted to entries whose
+status is open or blocked; open_obligation_count is that restricted array's
+length. Both roots use SHA-256 of the canonical empty array when their input is
+empty. Page partitioning does not change either root. Existing bounded pages
+carry the entries, and P5 recomputes both roots from the verified entries
+rather than accepting producer summaries.
+
+The old DD5 witness may now obtain a closed *writer evidence boundary* with its
+explicit obligation commitment, but can never obtain a certified report from
+its empty `complete()`. Retained versus lost-response histories stay provisional;
+only the former's eventual reconciled terminal can discharge. No terminal at
+horizon blocks the original day even if every local counter/close result is clean.
+Response lost but a later legitimate proof/retry produces a reconciled terminal
+is allowed; A1 proves terminal reconciliation, not uninterrupted retention.
+The R2 E1/E2 witness is deliberately indistinguishable and both acceptable under
+that narrower claim. No same-enclave continuity or no-transfer assertion survives.
+
+**Stricter alternative, not adopted:** identifying a still-running call as benign
+before the horizon needs enclave-attested post-response retention **and** a
+reviewed terminal binding to the exact enclave boot/invocation, loss/release and
+transfer coverage, replay rules, bounded transport/operation/churn costs and
+fixtures. A signature on historical acceptance alone fails R2. Nonterminal
+dispositions also require a separate reviewed protocol; none exist in A1.
+
+The new closure marker consumes 44 compact JSON bytes in a nonempty object,
+inside 4,096 (plus contract_revision where added); no authorize/wire/hash delta.
+P5 terminal joins and reconciliation pages remain bounded by existing event and
+export caps, with actual CPU/bytes/GET/PUT/retention in §7.2. They add no live
+router/enclave ownership work, new synchronous RPC, DDL or index.
+
+### 7.4 A1 ADD — G-C original-writer close-result row
+
+`CLOSE_RESULT` is one exact canonical object ≤4,096 bytes:
+`{v,policy_version,contract_revision,day,boot,router_revision,closure_sha256,
+final_checkpoint_seq,attempt_started_at_us,observed_at_us,elapsed_us,
+physical_commit_ack_at_us,outcome,flush_remaining_us,shutdown_remaining_us,
+handoff_attempt_limit}`.
+Types as §7.2; outcome is literal `acknowledged`, handoff_attempt_limit=1;
+ack equals observed_at_us and is nonnull. Wall timestamps record the original
+process's observed reply for diagnosis; they are not UTC-accuracy evidence or
+freshness inputs. The success/timeliness proof within §2's trusted-code boundary
+is the recorded monotonic elapsed time and original shared remaining deadlines,
+not wall subtraction. A wall step cannot turn a late operation timely. Preserve
+wall anomalies as diagnostics; never invent an acknowledgement from server time.
+Day is the closed logical day even when the reply is after midnight.
+
+Original elapsed≤2,000,000 us and ≤flush_remaining_us and, during termination,
+≤shutdown_remaining_us; remainders are captured at original attempt start from
+the existing deadlines. P5 checks exact closure/checkpoint/day/boot/revision
+binding and G2 lifecycle coverage; fault proofs establish correct producer state
+transitions and deadline capture. Inventory is not an independent observer of a
+reply, and no per-boot signature claims otherwise. Key is exactly
+`(async_settle_shadow_close_result_v2, <day>/<boot>)`, id≤75 ASCII bytes.
+
+final_checkpoint_seq, attempt_started_at_us, observed_at_us, elapsed_us and
+flush_remaining_us are u. shutdown_remaining_us is nullable u: null exactly when
+no termination deadline applies at original-attempt start, otherwise the
+captured remaining termination budget. P5 applies the shutdown comparison
+whenever the field is nonnull and requires nonnull for a shutdown closure. A
+null value never disables an independently applicable termination deadline.
+physical_commit_ack_at_us is u and equals observed_at_us; handoff_attempt_limit
+is the exact integer literal 1. Add positive and negative fixtures for ordinary
+UTC-boundary/opt-out closure, termination, and missing or falsely omitted
+termination budgets.
+
+Only the original closing boot, **after directly observing timely success** of
+its final transaction, may freeze and insert this row under the router service
+identity. Boot identity is bound to the live journal/lifecycle object, never a
+caller-supplied boot or one reconstructed by revision equality. No exporter,
+P5, replacement process or read-back path may originate it. Failed, timeout,
+unknown or late original outcome permanently vetoes the writer/day, emits no
+CLOSE_RESULT, and cannot retry into a clean state. No failed/unknown result enum
+is needed; retained diagnostics and coverage-derived absence remain blocking.
+
+One separate insert-only transaction reads the retention fence and exact result
+key (≤2 point rows), inserts ≤1 row/4,096 bytes, with total ≤2 s and each point
+read≤1 s under the remaining shared flush/shutdown deadline. Same key/different
+body is conflict. Identical pre-existing bytes establish landing only; never
+mint a new acknowledgement or retry final close. No automatic or scheduled
+handoff-write retry. P5 may read the exact key once per bounded export pass to
+find late landing; while outcome can still land absence is provisional, thereafter
+complete coverage records writer_closure_gap. Frozen closure/counter digests are
+never edited to include their own later result. Ordinary service identity and
+insert-only code do not cryptographically prevent a malicious authorized writer
+from bypassing these rules; that is the explicit §2 limit, Q-A2's alternative.
+
+**No acknowledgement-of-acknowledgement:** row landing preserves a fact created
+*after* the original successful reply. Its validity does not depend on whether the
+producer received the result-row write's reply. Lost handoff reply + landed row is
+recoverable export/checkpoint delivery, not a failed original close. A second
+marker saying the first marker was acknowledged is neither required nor permitted.
+The producer's exact response diagnostics, when observed, may be included in its
+bounded exporter trace, but A1 cannot guarantee survival of the last local reply
+fact under a kill. It therefore SHALL NOT claim exact zero handoff failures from
+row presence or absence.
+
+Define coverage-derived `HANDOFF_ACCOUNTING` ≤1,024 bytes per writer/day, emitted
+by P5 in bounded attachments, exact `{v,policy_version,contract_revision,day,boot,
+expected_handoffs,attempts_lower,attempts_upper,landed,reply_status,
+failures_lower,failures_upper,unknown_reply_upper,result_sha256}`.
+expected_handoffs=1 for each expected closing writer/day; result_sha256 nullable
+sha; reply_status literal `not_proven`; landed bool; all other counts u.
+If valid result exists: attempts_lower=attempts_upper=1, landed=true,
+failures_lower=0, failures_upper=unknown_reply_upper=1. If missing: attempts_lower=0,
+attempts_upper=1, landed=false, failures_lower=0, failures_upper=unknown_reply_upper=1.
+Key/body/inventory mismatch or conflict also blocks and is explicitly reported, not counted
+as a successful landing. These are **bounds**, not invented observations of error.
+Charge the upper bounds to availability/load diagnostics even on successful
+handoffs; any actually observed failed attempt is thus preserved in the conservative
+charge, never erased by a later read. Result-row write is a separate export budget,
+not folded into frozen checkpoint counters or publisher counters. There is only
+one possible attempt, so no failure can escape this bound. P5 outputs exact
+original-close success when a valid result exists, otherwise unknown; missing
+result is not a proved count of failed final closes. Requiring exact last-write
+reply counts instead is impossible under these crash constraints without an
+additional witness; Q-A3 records that tradeoff explicitly.
+
+P5 creates A1 SEALED_CLOSURE ≤4,096 bytes with exact
+`{v,policy_version,contract_revision,day,boot,closure_sha256,
+physical_commit_ack_at_us,close_result_sha256}` solely from
+verified acknowledged result, matching closure/counter digest, checkpoint seq,
+logical day, boot and covered lifecycle. Export every expected result key, including
+absence/conflict, under close_result_root and handoff_accounting_root; expected
+set derives from independent inventory and day boundaries, not rows found.
+The exact original row, inventory binding and diagnostic bounds are retained
+≥30 days with the closure and daily roots; next-day export includes references to
+the original day, not a renamed result. Add this kind to validate_row, cleanup,
+retention fence and operator allowlists. Use existing complete-PK/day range access
+and pagination; no new DDL/index. SEALED_CLOSURE remains an export projection.
+
+Cost for C closing writer-days/s: ≤2C additional exact-key row reads/s,
+≤C transactions/s and ≤C mutations/s, ≤4,096C body bytes/s plus native overhead;
+P5 adds one point row per expected writer/day per complete export sweep and
+one bounded schema/digest/inventory verification/result; no signature operation. At ≤4,096 writer-days/day: ≤4,096 result rows,
+≤8,192 write-path point-row reads and ≤16 MiB body/day, plus keys/encoding,
+≤4 MiB handoff-accounting bodies/day before wrappers. Burst is simultaneous closes,
+not the daily average. The final six-row transaction is still ≤331,776 body bytes;
+its separate handoff makes ≤335,872 per final pass, each transaction≤2 s, shared
+pass≤4 s. Hashing/export preparation/cleanup count in that deadline; no ownership reads exist. CPU/memory/native RPC overhead and
+actual final-pass latency are proposed measurement gates, not existing results.
+
+Rejected: DD6 “SEALED_CLOSURE exists, therefore transport exists” (P1 has none);
+readback/commit timestamp/P5 time as acknowledgement (lost original reply);
+new boot/same revision as original writer (wrong observer); result inside the
+six-row transaction (future fact); retrying final close clean (erases failure);
+permanently vetoing every unknown marker reply (recursive last-write problem).
+A1 instead bounds one handoff attempt, permits recovery of its durable landing,
+and conservatively charges its unprovable reply. It never recovers a failed
+original final close.
+
 ## 8. Gate v2 — executable predicate specification
 
 **D-V2-8 — one shared predicate implementation.** `shadow_report` and pilot
@@ -899,12 +1668,12 @@ and retain all failures; schema damage yields BLOCKED, never skipped rows.
 |---|---|---|---|
 | G1 Policy/schema | All certification rows, proof, wire provenance and gate artifacts exactly shadow-v2, bounded and hash-verified; key/body identity agrees; no coercions; referenced objects present | shadow §§4/6 exact v1 schema (C7) replaced, strictness retained | `policy_version_gap`, `evidence_schema_gap`, `artifact_gap` |
 | G2 Deployment | Complete independent boot/lifetime inventory equals all day manifests/counters/closures; full revisions and #1667 per-boot regions; all four flags off throughout; every traffic boot has §5.3 readiness before its first opted attempt; ledger hash chain complete | shadow §6 / outbox step 5 global gate timestamp and identity coverage (C8/C12) | `writer_roster_gap`, `regional_roster_unknown`, `legacy_region_label`, `legacy_sample_region`, `flag_interval_gap`, `boot_prerequisite_gap` |
-| G3 Authorize closure | Fresh+replay=successful authorize attempts in every bucket; each has exactly one durable original decision/link or unresolved record; immutable facts backed; no unresolved authorize loss; explicit cross-day/open dispositions | shadow §3/§4.2 authorize aggregate equation, C7 | `authorize_coverage_gap`, `authorization_link_gap` |
+| **A1 AFTER G3** Authorize obligations | Fresh+replay equation equals the complete durable decision receipts/facts. Closure commits all report obligations through §7.3; writer closure/HWM is not discharge. P5 enumerates open count/root and reconciles every authorization only to actual durable terminal evidence within its original horizon, regardless of router boot/enclave. No nonterminal disposition or same-enclave claim. Provisional through forward coverage; missing/invalid/conflicting terminal blocks issue day | Replaces unspecified owner/link permission with terminal-only report discharge; all original factual backing rules retained | `authorize_coverage_gap`, `authorization_link_gap`, `authorization_obligation_gap`, `authorization_terminal_conflict`, `authorization_horizon_gap` |
 | G4 Terminal partition | T=settle+refund=A+B+C per writer/day/phase/dimension; C=0; A has compared proof, B has valid certificate or retained observed-exclusion proof; each receipt exactly once; phase sums equal aggregate; no envelope-present=T assumption | shadow §§3/4/6 and C7 envelope/observed/outcome equations | `observed_partition_gap`, `terminal_coverage_gap`, `phase_coverage_gap`, `exclusion_proof_gap` |
 | G5 Eligible comparisons/predictions | Every eligible attempt represented in E independently of predictions; every A exact/explained with unchanged arithmetic/provenance and booking; Y+N+U=E, E>0⇒Y+N>0 and 100U≤2E; E=0⇒Y=N=U=0 with known closed partition; no unknown seed | shadow §5 per-counter known>0 and C7 known_exclusion admission requirement | `eligible_coverage_gap`, `prediction_demand_gap`, `prediction_unknown_gap`; correctness classes and `exclusion_conflict` cause resets |
-| G6 Timer/health | Every writer meets retained cadence lower/upper bounds, event/streak/degraded limits, §3 source/freshness/slot fences, observed timestamps unchanged; unknown predicted values reconcile even on failing writer; no money cache using shadow row | shadow §5 / C3/C7/C8, health-source clause replaced | `observer_cadence_gap`, `observer_budget_gap`, `shadow_health_gap`, `health_source_gap` |
-| G7 Fleet load | Sweep actual lifetimes/rate segments and startup peaks; all simultaneous counts/rates and configured-cap projections fit exact pre-approved N/caps/regions/row/RPC/write budgets; measured CPU+allowance<45%; publisher/evidence included; component and combined 4.75 s limits pass | outbox step 5 historical sum / C8, F5 bounds retained | `simultaneous_capacity_gap`, `pre_enable_budget`, `publisher_budget_gap`, `fleet_headroom_gap`, `freshness_budget_gap` |
-| G8 Durability | Contiguous event pages and references reconcile with cumulative counters; no sequence regression/conflict; final HWM=final seq; durable closure and zero pending/lost/unreconciled commits; recovered checkpoint failures visible and exactly reconciled | shadow §§4.2/7 and C9 unconditional checkpoint veto | `checkpoint_reconciliation_gap`, `evidence_loss_gap`, `writer_closure_gap`, `retry_original_gap` |
+| **A1 AFTER G6** Timer/health | Observer cadence/failure/streak/degraded gates and source isolation; exact Spanner O/C/R plus q/e predicate, slot/version fences and 250 ms health-read deadline (§3.1.1). Independently reconcile scheduled/attempted/published/failed/unknown/missed counters and traces, including queued old-day work. Usable late-landed rows never count as timely publications | Removes only missed-cycle⇒invalid-publication implication; strengthens shadow read deadline and server observation-slot bound; no host qualification | `observer_cadence_gap`, `observer_budget_gap`, `shadow_health_gap`, `health_source_gap`, `health_timestamp_gap`, `health_elapsed_gap`, `health_slot_gap`, `publisher_accounting_gap`, `publisher_trace_gap` |
+| **A1 AFTER G7** Fleet load | Simultaneous/cap/startup/churn sweep, exact approvals, strict CPU<45%; include metadata, health attachments with full §7.2 operations/re-runs/cleanup, report joins and separate close-result transactions/bursts. Conservative 4.25+.25=4.50 chain and measured component deadlines; over-budget cycles remain failures | No load allowance increases; removes ownership/signature/clock-service budgets because those mechanisms are absent | `simultaneous_capacity_gap`, `pre_enable_budget`, `publisher_budget_gap`, `fleet_headroom_gap`, `freshness_budget_gap`, `evidence_export_budget_gap`, `close_handoff_budget_gap` |
+| **A1 AFTER G8** Durability | Page/HWM/counter/no-loss rules and same-writer terminal-original completion context/order. Require original boot’s insert-only acknowledged CLOSE_RESULT, exact closure/day/boot/digest/checkpoint binding and independent inventory/coverage under §2 provenance. Failed original close never recovers. Unknown handoff reply can recover only landed fact; charge conservative bounds. Writer sealing never bypasses G3 | Defines durable later acknowledgement without a separate signing trust domain; ordinary checkpoint recovery unchanged | `checkpoint_reconciliation_gap`, `evidence_loss_gap`, `writer_closure_gap`, `retry_original_gap`, `close_result_identity_gap`, `close_result_conflict`, `handoff_coverage_gap` |
 | G9 Resets | Zero unexplained mismatch including counters/unsampled/conflicting retry; preserve all earlier mismatch/fix/rollback history, exact supporting evidence and reviewed revision partial order; no admission-unknown hiding a mismatch | shadow §3.1/§6 reset and revision-rollback rules verbatim | Existing correctness resets, `revision_rollback`, `missing_support`; new `exclusion_conflict` |
 | G10 Clock | First real durable eligible positive sample strictly after the `transport` PASS, post-opt-in `fleet-budgets` PASS (linked to `fleet-budgets-pre`) and its §5.3 boot prerequisites starts; exclude `shadow-serving` completion from that maximum; continuously covered ≥604,800 s; no gap/correctness reset within interval; regional seeds per proof policy | shadow §6 positive predicate/time, retained with policy and per-boot amendments | `positive_seed_gap`, `regional_seed_gap`, `continuous_window_gap` |
 | G11 External proof | Exact-revision cross-repo CI/fixtures, frozen money oracle, all v1/v2 mutations, real-adapter faults, D2/D3/real drain/load/rollback and accepted exposure/side-effect policy supplied at the stage requiring them | outbox §8 and runbook steps 6–9 retained; shadow never proves async drain capacity | `external_proofs_missing`, `pilot_prerequisite_gap` |
@@ -912,8 +1681,11 @@ and retain all failures; schema damage yields BLOCKED, never skipped rows.
 For G6 cadence in an interval d seconds, retain pilot bounds:
 `max(1,N*(floor(d/4)-1)-missed_ticks) ≤ workspace_reads ≤ N*(ceil(d/4)+1)` and
 `max(1,floor(d)-1-missed_ticks) ≤ health_reads ≤ ceil(d)+1` (C8).
-Publisher counters additionally reconcile every claimed slot/scan/publication;
-late/failed slots feed health unknown/failure evidence, never false yes. Zero
+**A1 BEFORE:** “late/failed slots feed health unknown/failure evidence, never
+false yes.” **A1 AFTER:** every scheduled slot and attempted claim reconciles
+under §3.1.2; late/unknown replies are availability failures even when a landed
+observation passes the independent prediction predicate. Invalid/stale observation
+still yields unknown. `publisher.failures` is never erased by reader success. Zero
 traffic does not excuse absent timers. G8 recovery never excuses G6 failures.
 
 Gap intervals retain conservative whole affected UTC-day blocking; an incomplete
@@ -960,7 +1732,8 @@ transfer to v2.
 
 1. **Replace old steps 1–2:** retain/export current blocked v1 evidence; review a
    rollout removing shadow opt-in for migration. Close what can close; do not
-   erase losses. Land P1, P2, P3, P4, P5 dormant in §10 order. Deploy enclave
+   erase losses. **A1 BEFORE → AFTER:** land baseline P1/P2, then P1-A1 and the enclave fixture-pin follow-up,
+   revised P3/P4/P5 dormant in §10 dependency order. Deploy enclave
    `shadow-v2-read-echo` everywhere first, shadow and negotiation off; deploy
    router v2 readers/code with policy empty and shadow workspace list empty.
    Admission/protection/fast drain remain false. Record every serving build,
@@ -968,7 +1741,10 @@ transfer to v2.
 2. Provision/verify signer, positive authority epoch and public keyrings on all
    revisions as retained key-placement procedure requires; no new production
    key values in this document. Prove ticket/binding/exclusion separation and
-   dormant money oracles. P2 capability is present before P4 emission is enabled.
+   dormant money oracles. **A1 ADD:** baseline P2 capability and the A1 fixture-pin follow-up must be
+   present before P4 emission; no new enclave protocol or origin registry. Prove
+   terminal-only report reconciliation and original-boot close-result production.
+   Obtain Joseph’s Q-A1–Q-A4 choices before P6.
 3. **Replace old step 3:** choose one shadow workspace (§13) and record its full
    operator-supplied ID/key separately; do not expand prefix d385c399… by guess.
    Collect immutable-fact/candidate/size distributions and actual-hop maximum
@@ -977,7 +1753,9 @@ transfer to v2.
    configured caps including surge, publisher contender K and all §3/§7 load.
    Measure bounded read/claim/publish cycles against the real adapter in an
    isolated controlled trial, reviewed before production opt-in; include this
-   source in sizing. No daemon is implicitly authorized by an old pre-enable PASS.
+   source in sizing. **A1 ADD:** measure server snapshot-slot alignment, 250 ms shadow health
+   reads, full elapsed-age charge and ordinary attachment export operations/churn;
+   size close-result transactions under simultaneous shutdown. No daemon is implicitly authorized by an old pre-enable PASS.
 4. **Replace old step 4:** reviewed config-as-code activation P6 sets router
    policy shadow-v2, health region, and single shadow workspace; then enclave
    shadow on with negotiation off. Bootstrap/old-authorization traffic is recorded
@@ -999,7 +1777,10 @@ transfer to v2.
    then evaluates that seed and reports its original timestamp per §8; its own
    completion time is explicitly **not** a prerequisite for the seed. No seed means
    `positive_seed_gap`, not a requirement to complete `shadow-serving` first.
-   New boots extend ledger, not global start time.
+   New boots extend ledger, not global start time. **A1 ADD:** warm-up PASS also
+   requires original-writer close results/inventory binding, complete slot traces
+   and terminal reconciliation of committed report obligations. Missing results are blocked even if closure rows exist; lost
+   handoff replies may recover only already-created valid facts.
 6. **Retain old step 6 with v2 evidence:** require ≥604,800 continuous seconds,
    zero unexplained disagreement and G1–G11 at their specified stages. Keep
    admission/protection/negotiation/fast drain off for the entire interval.
@@ -1021,6 +1802,12 @@ transfer to v2.
    then protection off. Re-enable solely through the gated sequence, export
    actual regional handoff/booking/repair percentiles and rollback evidence.
 
+**A1 ADD:** daily export includes exact report obligations/terminal horizon joins,
+close-result rows or explicit gaps, conservative handoff-accounting bounds,
+complete publisher trace/counter conservation and replayable health inputs.
+Failed original close stays blocked after read-back; a report cannot synthesize
+a reply. No clock qualification, owner-page or per-boot signing export remains.
+
 Every day export exact original rows plus pagination/key coverage, independent
 inventory including killed/retired boots, manifest/closure/receipt roots,
 instance_regions_by_day, prerequisite ledger append/hash, pins/attestations,
@@ -1032,7 +1819,8 @@ closure; logs and absence of a row are not a substitute.
 
 ## 10. Smallest reviewable ordered PR sequence
 
-**D-V2-10 — six implementation/activation packages after this design.** Each
+**A1 round 2 — D-V2-10:** retain P1–P6, add only contract package P1-A1
+and an enclave fixture-pin follow-up. P0-A1 and behavioral P2-A1 are removed. Each
 package carries its own tests; P1/P2 cross-repo fixture copies are an ordered
 contract pair. Dormancy means no new task/RPC/parsing/serialization/counter on
 empty v2 policy or nonmember paths, except the existing constant guard; no hidden
@@ -1042,10 +1830,11 @@ change to existing v1 behavior. Do not update a frozen oracle to absorb a surpri
 |---|---|---|
 | P1 `shadow-v2-contract` | Router schemas, pure decision/certificate validators, wire fixtures and evidence schema; no live imports/effects. Establish §7 fixture manifest. | Pure dormant contract. **WIRE**: exact schema/limits/three-purpose rejection/fallback matrix; existing billing literals unchanged. Deploy has no effect. |
 | P2 `shadow-v2-enclave-echo` | Enclave copy P1 bytes; retention/variant/header and capability support at all §4 seams; async binder rejects certificate. Depends P1 contract. | Existing shadow switch plus v2 router marker gate new work. **ECHO/OFF**: real stream/refund/route and byte oracles, retry frozen bytes, no async bind. Land and attest/deploy everywhere **before P4 emits**. Can revert while emission dormant; active rollback first disables router emission/ends certification. |
-| P3 `shadow-v2-durable-observation` | Router independent health source/publisher plus evidence receipt pages, HWM/closure/recovery and lifecycle. Depends P1. No certificate issuance yet. | New policy pin empty; no new lifecycle work. **HEALTH/DURABILITY**: bounded SQL/CPU/read accounting, native faults, SIGTERM/SIGKILL, source rejection, monotonic closure. Shared health summarizer refactor must preserve money publisher exact behavior under oracle; preferably leave money publisher untouched. Revert after opt-out and closure/export, never delete rows. |
-| P4 `shadow-v2-cohort-integration` | Router authorize decision/certificate issue, terminal variant dispatch before snapshot retention, receipt links, demand capture. Depends P1/P3 and deployed P2 marker. | V2 opt-in+capability gated; flag-off/nonmember pure. **PARTITION/MONEY**: mixed traffic, fallback, all negative certificate cases, exact response/state/SQL differentials, eligible ±1 resets. Deployment gate rejects missing enclave capability before activation; failure only blocks shadow, never HTTP money. |
-| P5 `shadow-v2-gates` | Router report/pilot predicates G1–G11, simultaneous sweep, per-boot ledger/inventory and readiness integration, exports/runbook tooling. Depends P3/P4 schemas; can land before activation only. | Offline tools explicit policy; readiness gate active only for v2 rollout, with no request-path shadow storage. **WINDOW/BUDGET**: ≥604,800 s churn simulation/negative controls, cross-version rejection, shared predicates, cap/headroom boundaries, boot evidence isolation. Revert tool cannot recertify v2 under v1. |
-| P6 `shadow-v2-measured-opt-in` | Reviewed router and enclave config/attestation releases, exact single cohort chosen, staged §9 measurement/activation. Depends P1–P5 successful exact-revision CI. Later money pilot activation remains a separate reviewed release after window PASS. | This is intentionally active, not a flag-off PR. **LIVE**: dormant pre-gate, actual N=1 post-gate, pins/markers/keys, publisher/closure/headroom, regional seed and daily export. Rollback shadow opt-in/off, drain owned evidence within bounds; missing closure blocks, preserve money pins off. |
+| **A1 ADD P1-A1** `shadow-v2-contract-a1` | Depends baseline P1. Pure exact O/C/R+q/e reader predicate, changed HEALTH timestamp/age-input fields and HEALTH_CLAIM server-slot timestamp, publisher conservation/basis/trace, terminal-only contextual completion, closure obligation marker/report join schema, CLOSE_RESULT kind/sealed projection, coverage/retention allowlists and new fixture release (§§3/7) | No live imports/RPC/lifecycle. Baseline bytes frozen; explicit new manifest/negative fixtures. Enclave follow-up copies/pins **all** files/variants with no behavior change. |
+| P3 `shadow-v2-durable-observation` | Depends P1-A1; independent health publisher/reader, exact SDK metadata/sentinel, bounded receipt HWM/checkpoint/closure, committed report obligations, ordinary health attachment export and original-boot one-attempt CLOSE_RESULT. No certificate issuance yet | Policy empty means dormant. Native timing/races/faults/SIGTERM/SIGKILL and same-writer recovery proofs; preserve money/shared adapters unchanged. Terminal obligations survive local retirement via durable receipt chain. Measure export/close costs. |
+| P4 `shadow-v2-cohort-integration` | Depends P1-A1/revised P3 and deployed baseline P2 plus A1 fixture pins. Authorize decisions/certificate issuance, terminal dispatch/links/demand, no ownership data or new wire | Opt-in/capability gated, off/nonmember pure. Existing PARTITION/MONEY/stream/byte and actual terminal reconciliation proofs; no shadow HTTP error or synchronous evidence lookup. |
+| P5 `shadow-v2-gates` | Depends P1-A1/revised P3/P4 and P2 wire/fixture evidence. Shared G1–G11, inventory/readiness, bounded exports, exact obligation enumeration and forward terminal joins, CLOSE_RESULT identity/coverage and handoff bounds, health replay/trace conservation | Offline tools explicit policy; no request storage. Full window/churn, missing-terminal/receipt/result and changed-version negatives. No clock qualification, owner collector or new boot-signature verifier; existing certificate/binding verifiers remain mandatory. |
+| P6 `shadow-v2-measured-opt-in` | Depends P1–P5, P1-A1 and enclave pin follow-up, Joseph’s choices and exact-revision CI/resource gates. Reviewed single-cohort router/enclave config/attestation releases; later money pilot is separate | Active release after dormant gates; actual N=1 measurements include 250 ms reads, server slots, export churn and close bursts. Preserve money off pins; opt-out/closure/export on rollback. |
 
 P3 combines health and persistence because publisher lifecycle/operation evidence
 must itself use the new counters/closure; splitting either into an active partial
@@ -1063,9 +1852,15 @@ but each proof obligation below must appear in CI artifact inventory.
 
 | Change / obligation | Positive and fault tests | Scratch mutants that must fail |
 |---|---|---|
-| HEALTH (§3) | Real Observer with money flags off reaches yes/no via new health; missing/stale/future/incomplete/10,001/unknown-age rows unknown; dead/leased/legacy membership; 2s multi-contender slot race/delayed winner; all phase offsets and 500ms/4.75s/5s boundaries; empty opt-in stops work; spies on money claim/apply/finalize/reap remain zero | Read/write fleet-v1 for shadow; accept shadow in AdmissionCache; rejuvenate timestamp; omit dead rows/sentinel/fence; every contender scans; skip publisher load; allow stale yes |
+| **A1 G-A single time domain** (§3) | DD1 .501 commit, .25 start/.90 commit, .40 commit/.80 or lost reply: separately assert prediction and availability. Native O/C/R exact metadata, empty unresolved result, nanosecond endpoints, q=.25 and A=5, delayed reply/cache, host ±250 ms/steps and far-future proposal rejected before claim mutation/scan, process pause, 4.25+.25 chain, server-slot misses. Invalid newer row destroys old cache. Compare wall-based p95 threshold to unchanged money calculation | Treat commit/read timestamp as acknowledgement; set O from host or receipt; omit q; refresh O on poll; accept host-labelled future winning slots or stale snapshot metadata, lossy conversion or four-second-old O; use CURRENT_TIMESTAMP as exact snapshot time; count late/lost reply as successful cycle |
+| **A1 G-A accounting/dormancy** (§3) | Exhaustive scheduled→missed/attempted→lost/published/failed product, unknown/late overlaps; unknown claim is failure; lock contention before actual claim; executor pause before start across midnight; counter/trace equality, fleet missing winner, trace overflow. Native checkout/session/pool/restart/cleanup obey same deadline. Empty-policy startup and shared adapter cost/behavior differential | Unknown claim counted missed; skip pre-start day registration; late-start after lock; close before queued accounting; erase failure after reader yes; derive traces from totals; renew deadline at checkout; install wrappers/tasks/signing/export with empty policy |
+| **A1 G-B report obligations** (§§6/7) | Retained/lost-response histories both close local evidence with explicit chain commitment and remain provisional without terminal; lost response/no terminal blocks issue day at horizon. Issuer exits, fresh router/enclave terminal independently reconciles; H1/E1 and H2/E2 intentionally same result, with no continuity claim. Missing receipt/root/count/forward day, bad/conflicting terminal, expiry/replay and end-of-window attempts remain blocked | Equate receipt/HWM with discharge; hide obligation after issuer exit; mark live call benign without terminal; expire to success; use arbitrary nonce or empty complete; require same-enclave identity the wire cannot prove; omit issue-day gap |
+| **A1 completion context** (§6) | Every ordinary finalize/complete and specialized route, durable original missing from memory, absent page, wrong boot, same-day original seq 2/completion seq 1, equal seq across correctly ordered days, reversed days/times and original authorize. Same writer's cross-day terminal completion succeeds; fresh router's first terminal after another issuer remains a distinct path | Authorize-original completion; waive ordering whenever retry_original exists; cross-boot recovery; skip missing original validation; advance HWM on empty complete; overwrite original mismatch/prediction |
+| **A1 G-C close handoff** (§§6/7) | Native final commit lands/reply lost stays vetoed after read-back. Timely original reply→insert-only result→lost result reply recovers landing with conservative bound. Kills before/after reply/result, late original, wrong live boot/day/digest/checkpoint, duplicate/conflict and missing inventory/export. One result attempt; original six rows plus separate one, shared 2+2≤4 s and remaining grace. Wall steps never replace monotonic timing | Mint result on read-back or in final transaction; supply another boot via caller/revision; retry failed final close clean; recursive marker; landed result implies zero failures; hide absent key or extend budget |
+| **A1 provenance/export/load** (§§7/8) | Ordinary service-identity row/key/body/inventory agreement with explicit malicious-router limit; full basis/trace queue/input, token PUT-or-GET, unknown upload/restart, root/pass/cleanup operations and churn initial-token/in-flight bounds. Enclave new manifest pins with no wire change. Shared G3/G6/G7/G8 outputs | Assume inventory cryptographically proves process origin; allow P5 to originate reply facts; truncate roots; omit re-run/root/delete/churn work; use per-second producer bytes as total budget; pin A1 with old manifest; enlarge queues |
+| HEALTH (§3), **A1 clarified**: 500 ms tests separate validity from availability as above | Real Observer with money flags off reaches yes/no via new health; missing/stale/future/incomplete/10,001/unknown-age rows unknown; dead/leased/legacy membership; 2s multi-contender slot race/delayed winner; all phase offsets and 250ms-read/500ms-cycle/4.50s/5s boundaries; empty opt-in stops work; spies on money claim/apply/finalize/reap remain zero | Read/write fleet-v1 for shadow; accept shadow in AdmissionCache; rejuvenate timestamp; omit dead rows/sentinel/fence; every contender scans; skip publisher load; allow stale yes |
 | PARTITION/WIRE (§4) | Mixed partner/eligible settle and refund; requested versus actual fallback; excluded huge irrelevant pricing snapshot; eligible oversized snapshot blocks; missing signer/context/envelope; all allowed reasons with immutable witnesses; replay/header_absent; auth/terminal day/region changes; observed-tier proof; byte-identical fixtures all variants | Add snapshot_unavailable/missing_envelope/snapshot_size as exclusions; initial-other→eligible fallback excluded; variant bypasses signature/actual dimensions; issue exclusion on replay; wrong purpose accepted; no terminal backing; snapshot cap applied before certificate dispatch |
-| CANDIDATE BACKING (§§4/7) | Cross-boot terminal after live catalog changes: original complete projection >2 KiB (including a 32-candidate/4,993-byte fixture) cannot fit; issuance records `candidate_receipt_size`, no certificate, terminal C/BLOCKED. Inject even a correctly signed candidate digest without the original full projection: still C/BLOCKED. Companion drives real authorize on A → reserved locator/signature → immutable page flush → graceful issuer exit with known enclave-owned open authorization → first terminal on fresh B after catalog changes. No verified certificate row, injected locator/cache or A-local state; use only echoed signed claims to locate/verify original facts in one complete-PK read (≤1 row/64 KiB/1s), then B. Exactly-2,048-byte complete event including locator coordinates fits, 2,049 does not; include metadata, no trimming | Accept digest-only backing; rebuild from live catalog; check projection size alone; truncate candidates; accept oversize certificate-backed B |
+| CANDIDATE BACKING (§§4/7) | Cross-boot terminal after live catalog changes: original complete projection >2 KiB (including a 32-candidate/4,993-byte fixture) cannot fit; issuance records `candidate_receipt_size`, no certificate, terminal C/BLOCKED. Inject even a correctly signed candidate digest without the original full projection: still C/BLOCKED. Companion drives real authorize on A → reserved locator/signature → immutable page flush → graceful issuer exit with **A1 committed report obligation** → first terminal on fresh B after catalog changes. No verified certificate row, injected locator/cache or A-local state; use only echoed signed claims to locate/verify original facts in one complete-PK read (≤1 row/64 KiB/1s), then B. Exactly-2,048-byte complete event including locator coordinates fits, 2,049 does not; include metadata, no trimming | Accept digest-only backing; rebuild from live catalog; check projection size alone; truncate candidates; accept oversize certificate-backed B |
 | ORIGINAL RECEIPT LOCATOR (§§4/7) | Correctly signed wrong boot, wrong page, wrong event, key/body/identity/sequence mismatch and event-digest mismatch; missing page; locator/certificate/row/receipt/wire overflow: named gaps and C, never B. Kill issuer after echo before page durability: terminal C and unclosed/BLOCKED. Append concurrent events, roll pages, checkpoint, cross midnight, lose commit reply then reconcile late commit without moving keys/HWM prematurely; four reserved/unacknowledged pages span all days. Ordinary signature-tampering rejects remain required | Accept a locator whose event digest mismatches; fall back to live catalog or scan pages when page is missing; derive boot from revision/current writer; require preseeded certificate row/cache; relocate/renumber a signed event; omit locator from fit checks; advance HWM on reservation; flush unfinished slot; allocate fifth reserved page; let later persistence forgive issuer kill |
 | MONEY/ECHO (§4) | Frozen main authorizes, actual settle/refund and chat/Responses streams; off/nonmember/on malformed diagnostics; exact bytes/state/SQL/calls; swaps/expiry/forgery; true retry vs conflict; no double booking; old/new combinations and deployment marker | Attach certificate to async; edit settle body; shadow exception escapes; consume money executor/transaction; retry overwrites mismatch; echoed foreign auth accepted; old enclave treated capable |
 | DEMAND (§5) | Closed idle/authorize-only/excluded-only writers with zero predictions; eligible E>0 with zero predictions fails; unknown eligibility fails; E from receipt partition; 1 unknown/49 fails, 1/50 fraction passes but cannot seed; all idle timer limits; real regional seed | E=prediction_count; known>0 unconditionally; drop idle roster; accept all-zero seed; count exclusions as positive; hide unknown or mismatch behind no demand |
@@ -1138,6 +1933,69 @@ millions of checkpoint attempts is fragile; its extrapolation from 339 reported
 drops is **not** an estimate of v2's d. No invented hard-kill rate, eligible failure
 rate or seven-day success percentage is authorized here.
 
+### 12.1 A1 round 2 — incremental costs and feasibility
+
+No measurements or implementation test passes are supplied. G-A adds **zero**
+health statements/RPCs/rows/mutations/indexes. Added commit timestamp column
+costs ≤8I logical bytes/s and claim-current scalar ≤4K bytes/s; already-returned
+read metadata adds another 8I bytes/s of local handling, not incremental wire.
+Native encoding, exact conversion/predicate CPU, and the modest HEALTH field
+changes inside 4 KiB. Clock-qualification production/distribution/verification
+and all enclave/boot-origin capability costs are zero because removed. The real
+availability cost is server claim/observation-slot alignment within .25 s and reducing
+shadow-health read/install allowance to .25 s. Normal conservative age≤4.50 s,
+actual accepted A<5; failure to meet those component gates blocks, not a new
+CPU/latency allowance. Money read deadlines and ages remain unchanged.
+
+Health evidence still costs ≤6,144Q basis payload bytes/s at Q eligible predictions/s
+and ≤512K trace payload bytes/s plus wrappers. For steady R readers/K contenders,
+§7.2 permits ≤(R+K)/5 producer PUT-or-GET operations/s and
+≤13,107.2(R+K) transport body bytes/s. These are not totals: add L+W operations
+per bounded export pass, every pass/restart, root/page/report bytes, row export
+and cleanup. Finite intervals use one initial token per new boot-lane plus its
+active cadence allowance and already-in-flight work; simultaneous counts alone
+cannot bound churn. Queues ≤256 KiB/stream, ≤512 KiB for both, before native copies.
+No ownership ingress, collector reads/generation writes, P3 owner polling,
+provenance resolution or signing budget survives. Removing those round-1 lanes
+resolves their R4 omissions by eliminating the operations; remaining health
+transport has the full separate accounting in §7.2.
+
+G-B adds the 44-byte closure interpretation member inside 4 KiB, plus the
+25-byte contract_revision member where applicable. Receipt chain/count/HWM
+already commit the enumerable obligations: **zero** authorize-event/response/
+header/certificate bytes, per-auth rows, owner facts, enclave work or live RPCs.
+P5 joins bounded receipt/terminal exports and writes obligation coverage pages;
+charge its actual reads/CPU/bytes under §7.2. Report certification waits through
+original horizons/complete forward coverage; same-enclave continuity is not
+purchased. Event body cap stays 400,000×2,048=819,200,000 bytes/day before wrappers;
+page/candidate/terminal/manifest limits are unchanged.
+
+G-C adds at most one result/writer-day: ≤2 point-row reads, one transaction,
+one mutation and ≤4,096 body bytes per attempt; one expected-result read per P5
+sweep. At 4,096 writer-days/day: ≤8,192 write-path point reads, ≤4,096 rows,
+≤16 MiB result bodies/day and ≤480 MiB over exactly 30 such days (before longer
+retention, replicas/metadata/export). Handoff accounting ≤4 MiB/day before wrappers.
+No per-boot signature/verification cost. Original final transaction remains six
+rows/331,776 bytes; later result adds 4,096 for **335,872 bytes (328 KiB)** over two
+transactions sharing ≤4 s. Preparation/encoding/cleanup and prior page/export
+passes consume real shutdown grace; 2+2 is a ceiling sum, not a feasibility test.
+Bursts use simultaneous closes; no daily-average concealment. One-shot result
+nonlanding remains a new blocked-day surface, even on an otherwise healthy boot.
+
+Keep h/d/q/N/r model without double-counting: h covers unclosed/hard-killed router
+boots; d includes unrecoverable receipts/health exports and result nonlanding;
+q includes required terminal failures. Add a separately measured authorization
+no-terminal/horizon-loss rate a for all authorizations, including excluded ones,
+only after removing overlap from h/d/q. Then the illustrative independent model
+is `exp(-7*(h+d+a))*(1-q)^(7*N)*(1-r)^7`; r includes elapsed/slot/read-budget and
+export/gate failures. No owner-loss or clock-qualification rate exists in A1.
+Measure correlations among Spanner failures, shutdown and transport; independent
+products can be optimistic. Losing a response with no terminal still blocks an
+earlier issue day; ending the report window or waiting expiry never helps.
+The practical difference from round 1 is no early benign-running classification;
+final reports already waited for terminals, so no final correctness evidence is
+lost by removing ownership. Q-A1–Q-A4 retain the real cost/policy choices.
+
 ## 13. Open questions for Joseph
 
 **D-V2-13 — explicit operator choices, no guessed production identities.** These
@@ -1153,6 +2011,15 @@ approvals.
 | Q4 Acceptable residual blocked-day rate? | Choose an explicit target before P6 using §12 confidence bounds; do not choose a numeric target without measured h/d/q/N. Retain BLOCKED on every actual loss. | A target incompatible with observed hard kills calls for lifecycle reliability work or separate durable-handoff design; never loosen loss accounting. Requiring arbitrary-crash certification is outside v2. |
 | Q5 Publisher cadence/budget on the single nam6 node? | Approve **measurement** of primary-region contenders, two-second cadence, ≤500ms whole publish cycle and explicit extra 5,000.5 worst-case indexed row visits/s; enable only after newly approved N=1 CPU/RPC/write/row headroom passes <45%. | If rejected or unmeetable, reduce contender/observation cost through a separately reviewed bounded ownership/index design or add capacity; slower freshness or raising the alarm requires a new policy decision, not an implementation shortcut. |
 | Q6 Inventory/readiness/closure ownership? | Release tooling owns independent per-boot inventory and ledger, P5 enforces readiness; operators seal only proven closures. | If only revision inventory is available, missing boots remain unknowable and clock cannot start; procure boot-level evidence or separate durable registration/handoff design. |
+
+**A1 round-2 choices (recommendations, not asserted approval):**
+
+| Question | Adopted minimal branch / consequence | Stronger or different branch / consequence |
+|---|---|---|
+| Q-A1 Freshness-only or publisher-cycle validity? | Freshness-only in Spanner’s domain, separate 500 ms availability accounting; accept the explicit old-wording weakening and measure .25 s server observation alignment/.25 s health reads. No host qualification or confirmation row. If measurements fail, activation stays blocked pending redesign/capacity. | Retain cycle-validity through a separately reviewed completion-evidence protocol. Immediate confirmation is not disproved: 4.50+H<5 or shared tightened .5 s publish allowance, ≤.5 extra transactions/mutations/s and I point rows/s plus native overhead. Requires reader fencing/missing-proof/cache and original-success semantics. |
+| Q-A2 Ordinary evidence provenance or independent boot origin? | Use router service identity plus actual boot/day/digest and G2 inventory, as for pages/counters/closures. No P0-A1 or per-boot keys. Explicitly does not defend against a malicious router forging other boots’ evidence. | Fund a separately reviewed signed per-boot origin/authenticated-witness protocol with registration, key lifecycle, independent capture, replay/coverage and operation/churn costs. Apply the stronger threat boundary consistently to underlying evidence, not just one row; activation of that branch waits for its protocol. |
+| Q-A3 One handoff attempt with bounds or exact last-reply diagnostics? | Keep accepted D-A1-C: original success required, one result attempt, landed result may survive lost reply; charge [0,1] handoff failure/unknown bound and measure nonlanding blocked-day rate. Failed original close never recovers. | Exact last-write reply survival requires a separately reviewed independent durable outcome witness and costs, or such days remain uncertifiable. Another recursive marker or a retry that clears original failure is not a solution. |
+| Q-A4 Terminal-only discharge or early owner classification/continuity? | Close complete writer evidence with committed report obligations, keep report provisional and discharge only from any independently reconciled durable terminal in horizon. No same-enclave continuity or nonterminal disposition; missing terminal blocks issue day. Give up calling a still-running invocation benign before the horizon, with little effect on final reports already waiting for terminals. | If early classification or same-enclave continuity is required, separately review enclave-attested retention plus terminal-to-boot/invocation binding, loss/release/transfer coverage and all wire/fixture/export/operation costs. Round-1 acceptance alone fails H1/H2. Any nonterminal disposition needs its own reviewed evidence rule; expiry alone cannot qualify. |
 
 ## 14. Verified current-code claim ledger
 
@@ -1181,6 +2048,64 @@ in §§2–13 is normative future work.
 | C16 | Enclave authorize metadata/retention, settle/refund header and send seams: `E/enclave-go/internal/trustedrouter/client.go:482–483`, `:850–871`, `:1047–1081`, `:1215–1227`, `:1369–1380`. |
 | C17 | Enclave route cohort and async local-binding suppression while shadow is active: `E/enclave-go/internal/trustedrouter/async_settlement.go:63–85`. |
 | C18 | Evidence 2s write/1s read constants (older nearby comments still say one second): `R/src/trusted_router/storage_gcp_async_settle_shadow.py:37–56`; confirmed booking point read: `:252–261`; cap reservations, first sample/dedup, sequence-only flush, manifest and bounded pages: `:263–325`. |
+
+### 14.1 A1 ADD — claims verified in the supplied P1/P2/P3 trees
+
+A1 source roots (read-only, inspected 2026-10-12; no Git SHA verification or test
+execution claimed): `P1/` = `/Users/jperla/josh/repos/tr/wt/v2-p1/`, `P2/` =
+`/Users/jperla/josh/repos/tr/wt/v2-p2/`, `P3/` =
+`/Users/jperla/josh/repos/tr/wt/v2-p3/`. The original C1–C18 block above is preserved
+as the original design's historical ledger, not re-certified against these trees.
+This block governs all A1 statements about supplied code; every A1 protocol,
+capability, limit and test beyond these observations is **proposed work**.
+
+| ID | Verified current-code claim and file:line |
+|---|---|
+| A1-C1 | P1 HEALTH checks observation/heartbeat order, shape, completeness/count and nominal <5 s age, without slot-time or reply proof: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:217–237`. HEALTH_CLAIM is only slot/claim wall time/publisher owner. P1 publisher totals are six counters and histograms, with no A1 outcome partition: `:263–264`. |
+| A1-C2 | P3 same-slot owner plus strictly increasing slot/observation fences: `P3/src/trusted_router/async_settle_shadow_health_state.py:38–44`; prediction uses P1 `health_usable` only: `:83–105`. Its store reads both fences before mutation: `P3/src/trusted_router/storage_gcp_shadow_observation.py:154–163`. |
+| A1-C3 | P3 health read builder returns the existing entity point statement and read returns only body; write supplies client wall datetime: `P3/src/trusted_router/storage_gcp_shadow_observation.py:76–77,96–110,135–141,173–177` and `P3/src/trusted_router/storage_gcp_io.py:82–86`. Snapshot acquisition in observation/read precedes query's scoped budget: `:88–94,165–176`. A1 requires a shadow-only metadata/sentinel/acquisition change, not a claim this exists. |
+| A1-C4 | Money AdmissionCache uses cached observation age/p95: `P1/src/trusted_router/services/async_settle.py:98–105`; exact fleet schema and decode use complete/observed/heartbeat age and p95, no publisher elapsed/ack field: `:111–175`; installation uses the admission health reader only with admission enabled: `:217–226`. Money key/read is `settle_drain_control/fleet-v1`, body-only: `P1/src/trusted_router/storage_gcp_async_admission.py:101–112,132–145`. No A1 modification to these is authorized. |
+| A1-C5 | P1 identity commits workspace/key/nonce/reservation; authorize contains facts/decision/router locator but no enclave boot/acceptance: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:66–82,121–144`. P3 marks an authorize reconciled after its page/backing loop without owner validation: `P3/src/trusted_router/async_settle_shadow_journal.py:291–306,351–356`. This is source reasoning, not a rerun of the R5 witness. |
+| A1-C6 | P1 eight KINDS: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:59–60`; CLOSURE omits own ack and SEALED_CLOSURE has only version/policy plus closure digest/ack time: `:312–320`; row dispatch permits no close-result kind/key: `:380–399`; proof attachments have only hash/byte descriptors: `:366–372`. Therefore P1 has no schema-defined durable original-writer handoff; A1 supplies that row without an owner protocol. |
+| A1-C7 | P1 authorize projections have policy+exclusion or policy+binding+snapshot, no separate receipt response: `P1/src/trusted_router/async_settle_shadow_v2_contract.py:263–268`; original receipt coordinate/hash is in certificate projection: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:205–214`. P2 exclusion claims explicitly parse that locator: `P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2.go:28–60,104–107`. Binding inherits only ticket identity/snapshot claims, no receipt locator: `P1/src/trusted_router/async_settle_shadow_binding.py:22–27` and `P1/src/trusted_router/async_settle_ticket.py:27–46`. Round 2 adds no common response locator; only the baseline excluded certificate carries it. |
+| A1-C8 | P2 explicitly treats local claims parsing as non-verification: `P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2.go:63–66`; exclusion retention stores opaque certificate/authorization/request dimensions: `:150–193`; terminal emits certificate/attempt/revision: `:217–238`. Compared retention validates binding identity and snapshot then stores request-local shadow state: `P2/enclave-go/internal/trustedrouter/async_settle_shadow.go:187–255`. These inspected retention/emission paths do not produce durable owner acceptance; round 2 deliberately adds no such behavior. |
+| A1-C9 | Router pins the P1 fixture manifest: `P1/src/trusted_router/async_settle_shadow_v2_contract.py:38`; P2 checks 23 files, 22 manifest members, byte SHA and variant lists: `P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2_test.go:89–132`. This is verification of test source, not a test-pass claim. |
+| A1-C10 | P3 constructs SEALED_CLOSURE in memory/log then retires day/counters: `P3/src/trusted_router/services/async_settle_shadow_health.py:292–305`; unknown transaction readback calls the same acknowledged function: `:397–405`; final failure/unknown accounting is after flush: `:427–445`. This supports the missing handoff/readback distinction without claiming an executed failure reproduction. |
+| A1-C11 | Existing native entity DDL has `(kind,id)` primary key and `updated_at` allow_commit_timestamp: `P1/scripts/deploy/infra.sh:33`. This is source DDL, not production schema or emulator execution. The money control helper supplies a wall datetime, not an automatic commit timestamp: `P1/src/trusted_router/storage_gcp_async_admission.py:139–145`. |
+| A1-C12 | P1 v1 constants WRITE=4/RPC=1: `P1/src/trusted_router/storage_gcp_async_settle_shadow.py:64–66`; computed flush=8 and observation=17: `P1/src/trusted_router/services/async_settle_shadow.py:33–41`. P3 separate v2 constants WRITE=2/READ=1/FLUSH=4: `P3/src/trusted_router/storage_gcp_shadow_observation.py:38–40`. Historical §6.1 “current” 2/1/4/9 wording is explicitly corrected. |
+| A1-C13 | P1 completion original terminal-only, same-writer obligation in docstring, strict seq and event-time ordering: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:180–200`. P3 adds authorize originals and drops same-day seq comparison whenever reference supplied: `P3/src/trusted_router/async_settle_shadow_v2_evidence.py:180–212`. Journal only validates a completion original if found in memory and specialized path permits another boot: `P3/src/trusted_router/async_settle_shadow_journal.py:337–368`. A1 supplies context rules, not approval of these relaxations. |
+| A1-C14 | P1 event/page/counter/closure transaction limits: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:44–58,203–204,402–414`; exact integer/identity/digest/revision primitives: `P1/src/trusted_router/async_settle_shadow_v2_schema.py:34–46,70–72,90–97`. Arithmetic in A1 is a design derivation, not native serialization/RSS measurement. |
+| A1-C15 | P3 checks slot time before state-lock acquisition and counts attempted claim error as missed unless won: `P3/src/trusted_router/services/async_settle_shadow_health.py:211–245`. Closure's in-flight publisher check consults publishing set: `:421–422`. A1 requires pre-submission day ownership and conservation rather than assuming this draft meets R8/R9. |
+
+### 14.2 Round-2 source/platform verification
+
+`W/` is this worktree (`/Users/jperla/josh/repos/tr/wt/v2-design-a1/`);
+`SDK/` is the inspected installed
+`/Users/jperla/josh/repos/tr/wt/v2-p3/.venv/lib/python3.12/site-packages/`.
+This is read-only source/API inspection, not a new implementation, emulator run,
+Git identity check or production measurement. §14.1 retains round-1 source facts;
+only its obsolete proposed owner-package conclusions have been removed.
+
+| ID | Verified claim / exact file:line |
+|---|---|
+| A2-C1 | Existing entity DDL permits commit timestamp in updated_at: `W/scripts/deploy/infra.sh:33`, `W/tests/conformance/spanner_ddl.py:26`. General entity mutation helpers supply COMMIT_TIMESTAMP: `W/src/trusted_router/storage_gcp.py:7010–7022`. P3's dedicated writer instead supplies host datetime and returns only body: `P3/src/trusted_router/storage_gcp_shadow_observation.py:135–141,173–177`. Thus a shadow-only writer/reader amendment is necessary, no DDL. |
+| A2-C2 | Lockfile and installed distribution are google-cloud-spanner 3.69.1: `W/uv.lock:1502–1503`, `SDK/google_cloud_spanner-3.69.1.dist-info/METADATA:3`. `SDK/google/cloud/spanner_v1/snapshot.py:970–990` requests return_read_timestamp=True, defaults to strong and consumes returned timestamp. Public streamed metadata access: `SDK/google/cloud/spanner_v1/streamed.py:66–74`; metadata retained on first response including empty values: `:150–167`. Commit timestamp is also available on Transaction.committed, `SDK/google/cloud/spanner_v1/transaction.py:325–328`, but the selected design uses the observation read timestamp, not a claim-commit timestamp. No extra RPC is inherent. |
+| A2-C3 | Native CI emulator is pinned by digest and conformance invoked: `W/.github/workflows/ci.yml:34–76`. Emulator adapter validates snapshot options then removes only exact/max staleness: `W/tests/conformance/spanner_emulator.py:98–109`; native SQL acceptance seeds CURRENT_TIMESTAMP: `W/tests/conformance/test_spanner_sql_acceptance.py:49–57`. Combined with official supported-feature docs this establishes mechanism feasibility, not an exact-image A1 pass. |
+| A2-C4 | Money age clock and percentile: `W/src/trusted_router/storage_gcp_async_admission.py:189–221` samples time.time, subtracts stored timestamp and uses ceiling-rank percentiles. `W/src/trusted_router/services/async_settle.py:98–105,166–175` checks cached age/p95≤5. P3 currently uses integer wall-microsecond age subtraction: `P3/src/trusted_router/async_settle_shadow_health_state.py:47–79`, with host observations supplied at `P3/src/trusted_router/storage_gcp_shadow_observation.py:165–171`. A1 must preserve money-threshold parity in shadow code only; nanosecond freshness is a different input. |
+| A2-C5 | P1 terminal-only completion and original prediction/result preservation: `P1/src/trusted_router/async_settle_shadow_v2_evidence.py:180–200`; HEALTH and CLAIM current shapes/predicate: `:217–237`. The supplied P3 page reconciliation has no terminal obligation export commitment: `P3/src/trusted_router/async_settle_shadow_journal.py:291–306`; existing local sealed acknowledgement is memory/log then retirement: `P3/src/trusted_router/services/async_settle_shadow_health.py:292–305`. Round 2's explicit local/report boundary and result row remain proposed changes. |
+| A2-C6 | Enclave fixture test checks directory inventory, every file hash, manifest and variant list: `P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2_test.go:89–132`. Its terminal carries certificate/attempt/revision, no authenticated sending-boot binding: `P2/enclave-go/internal/trustedrouter/async_settle_shadow_v2.go:217–238`. Hence new manifest requires every-file pin follow-up, while terminal-only discharge requires no new enclave behavior. |
+
+Official sources in §3.1.1 were consulted for timestamp/current-time/TrueTime and
+emulator semantics. Exact-image A1 statements, empty-result metadata behavior,
+wire/schema fixture bytes, all resource limits and deployment feasibility still
+require the proposed implementation proofs. No new SQL was executed here.
+
+A1 did not run code tests, measure CPU/latency/storage overhead, query production,
+verify serving identity, write fixtures, mutate code or perform Git writes. The
+review reports' tests/measurements remain attributed review results, not A1
+validation. Round 2 requires no independent per-boot-origin/ownership export
+capability. Ordinary health attachments still need P3/P5 implementation and
+measured transport coverage; no existing execution or activation is inferred.
 
 Unverified: raw production export and all input production counts, missing live
 health, serving release/queued rollout, CPU extrapolation/sizing artifacts,
