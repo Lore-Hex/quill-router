@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -62,6 +63,12 @@ EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
 _CANARY_QUARANTINE_REASONS = frozenset({
     "provider-canary-failed", "upstream-usage-unavailable", "upstream-output-limit-unenforced",
 })
+DECISION_CONTRACT_HOLDS = frozenset({
+    "decision-fixed-questions-unsupported",
+    "decision-model-namespace-unsupported",
+    "decision-image-pricing-unsupported",
+    "decision-image-contract-unsupported",
+})
 
 
 def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
@@ -69,9 +76,16 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
     model_id = row.get("id")
     prompt = row.get("input_token_price_per_m")
     completion = row.get("output_token_price_per_m")
+    hold = row.get("decision_contract_hold")
+    image_price = row.get("decision_image_input_price_per_m")
     return (
         isinstance(model_id, str)
-        and model_id.startswith(("system1models/s1-", "system1models-eu/s1-"))
+        and re.fullmatch(r"system1models(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
+        and (
+            hold is None
+            or (isinstance(hold, str) and hold in DECISION_CONTRACT_HOLDS and row.get("routable") is False)
+        )
+        and (image_price is None or (type(image_price) is int and image_price > 0 and row.get("routable") is False))
         and row.get("model_type") == "decision"
         and row.get("endpoints") == ["decide"]
         and type(prompt) is int
@@ -196,7 +210,10 @@ def provider_manifest_canary_quarantine_valid_until(
             return EXPIRED_PROVIDER_MANIFEST
         if row.get("routable") is not False:
             return EXPIRED_PROVIDER_MANIFEST
-        if row.get("routable_reason") not in _CANARY_QUARANTINE_REASONS:
+        allowed_reasons = _CANARY_QUARANTINE_REASONS
+        if provider_slug in {"system1models", "system1models-eu"}:
+            allowed_reasons |= DECISION_CONTRACT_HOLDS
+        if row.get("routable_reason") not in allowed_reasons:
             return EXPIRED_PROVIDER_MANIFEST
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:

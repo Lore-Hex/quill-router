@@ -16,6 +16,19 @@ _GEMINI_TTS_TRANSITIONS = {
     ),
 }
 
+# https://decisionmodels.io/pricing, verified 2026-10-12: existing accounts
+# retain the old Pro rate until November 12. Scope approval to the full pair,
+# both regional identities, and the native alias/version actually tested.
+_DECISION_PRO_EFFECTIVE_ON = date(2026, 11, 12)
+_DECISION_PRO_TRANSITIONS = {
+    f"{slug}/{model} [{slug}:{slug}:{model}]": ((before, 0), (after, 0))
+    for slug, before, after in (
+        ("system1models", 38_000, 80_000),
+        ("system1models-eu", 40_000, 84_000),
+    )
+    for model in ("s1-pro", "s1-pro-2")
+}
+
 
 def approved_dated_price_transition(
     route: str,
@@ -33,4 +46,7 @@ def approved_dated_price_transition(
     return (
         today >= _GEMINI_TTS_EFFECTIVE_ON
         and (before, after) == _GEMINI_TTS_TRANSITIONS.get(route)
+    ) or (
+        today >= _DECISION_PRO_EFFECTIVE_ON
+        and (before, after) == _DECISION_PRO_TRANSITIONS.get(route)
     )
