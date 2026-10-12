@@ -132,3 +132,30 @@ def test_repair_zero_holds_zeroes_reserved() -> None:
     result = repair_typed_reserved(store, ws, apply=True)
     assert result.ready and result.applied
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 0
+
+
+def test_repair_refuses_a_workspace_with_a_live_fast_path_lease() -> None:
+    """A lease's remaining allocation is part of `reserved` (§4.7), and the
+    repair counts request holds alone: it refuses while a lease is open or
+    draining, and takes the workspace again once its leases are closed."""
+    store, db = make_fake_store()
+    ws = "ws_leased"
+    _paused_ws(store, ws)
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws, "shard": 0, "total_credits": 10_000_000,
+        "total_usage": 0, "reserved": 5_000_000,
+    }
+    db.fastpath_leases["l-draining"] = {"workspace_id": ws, "state": "draining", "consumed": 0}
+    db.fastpath_lease_donors.append({
+        "workspace_id": ws, "lease_id": "l-draining", "credit_shard": 0, "allocation": 70_000, "consumed": 0,
+    })
+
+    assessment = repair_typed_reserved(store, ws, apply=False)
+    assert not assessment.ready
+    assert any("1 fast-path leases open or draining" in reason for reason in assessment.reasons), assessment.reasons
+    result = repair_typed_reserved(store, ws, apply=True)
+    assert not result.ready and not result.applied
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 5_000_000
+
+    db.fastpath_leases["l-draining"]["state"] = "closed"
+    assert repair_typed_reserved(store, ws, apply=False).ready
