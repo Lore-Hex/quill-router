@@ -41,7 +41,9 @@ jobs:
           mkdir -p ../release
           go build -trimpath -ldflags="-s -w" -o ../release/fastpath ./cmd/fastpath
           go build -trimpath -ldflags="-s -w" -o ../release/fastpathctl ./cmd/fastpathctl
-          (cd ../release && sha256sum fastpath fastpathctl > SHA256SUMS)
+          go build -trimpath -ldflags="-s -w" -o ../release/loadgen ./cmd/loadgen
+          cp testdata/load-mix.json ../release/load-mix.json
+          (cd ../release && sha256sum fastpath fastpathctl loadgen load-mix.json > SHA256SUMS)
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -50,5 +52,5 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
       - name: Upload the release
         run: |
-          gcloud storage cp release/fastpath release/fastpathctl release/SHA256SUMS "gs://$BUCKET/fastpath/$COMMIT/"
+          gcloud storage cp release/fastpath release/fastpathctl release/loadgen release/load-mix.json release/SHA256SUMS "gs://$BUCKET/fastpath/$COMMIT/"
           echo "uploaded fastpath/$COMMIT" >> "$GITHUB_STEP_SUMMARY"

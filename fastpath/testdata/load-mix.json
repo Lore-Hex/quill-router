@@ -1,0 +1,154 @@
+{
+  "stream_share": 0.5,
+  "heartbeats": [
+    {
+      "value": 1,
+      "weight": 0.6
+    },
+    {
+      "value": 2,
+      "weight": 0.3
+    },
+    {
+      "value": 4,
+      "weight": 0.1
+    }
+  ],
+  "refund_share": 0.0153,
+  "estimates": [
+    {
+      "value": 2,
+      "weight": 0.001493
+    },
+    {
+      "value": 7,
+      "weight": 0.009455
+    },
+    {
+      "value": 19,
+      "weight": 0.005059
+    },
+    {
+      "value": 54,
+      "weight": 0.875057
+    },
+    {
+      "value": 200,
+      "weight": 0.010201
+    },
+    {
+      "value": 658,
+      "weight": 0.053494
+    },
+    {
+      "value": 1915,
+      "weight": 0.009579
+    },
+    {
+      "value": 6169,
+      "weight": 0.004603
+    },
+    {
+      "value": 21297,
+      "weight": 0.00282
+    },
+    {
+      "value": 54299,
+      "weight": 0.011238
+    },
+    {
+      "value": 154712,
+      "weight": 0.006096
+    },
+    {
+      "value": 411738,
+      "weight": 0.000249
+    },
+    {
+      "value": 2862710,
+      "weight": 0.010657
+    }
+  ],
+  "bill_permill": [
+    {
+      "value": 50,
+      "weight": 0.080894
+    },
+    {
+      "value": 150,
+      "weight": 0.879943
+    },
+    {
+      "value": 250,
+      "weight": 0.02594
+    },
+    {
+      "value": 350,
+      "weight": 0.002737
+    },
+    {
+      "value": 450,
+      "weight": 0.001221
+    },
+    {
+      "value": 550,
+      "weight": 0.001179
+    },
+    {
+      "value": 650,
+      "weight": 0.00059
+    },
+    {
+      "value": 750,
+      "weight": 0.000421
+    },
+    {
+      "value": 850,
+      "weight": 0.000211
+    },
+    {
+      "value": 950,
+      "weight": 0.000674
+    },
+    {
+      "value": 1050,
+      "weight": 0.002274
+    },
+    {
+      "value": 1150,
+      "weight": 0.0008
+    },
+    {
+      "value": 1250,
+      "weight": 0.000211
+    },
+    {
+      "value": 1350,
+      "weight": 0.000421
+    },
+    {
+      "value": 1550,
+      "weight": 0.000295
+    },
+    {
+      "value": 1650,
+      "weight": 0.000168
+    },
+    {
+      "value": 1750,
+      "weight": 0.000295
+    },
+    {
+      "value": 1850,
+      "weight": 0.000211
+    },
+    {
+      "value": 1950,
+      "weight": 4.2e-05
+    },
+    {
+      "value": 2500,
+      "weight": 0.001474
+    }
+  ]
+}

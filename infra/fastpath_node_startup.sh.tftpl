@@ -16,6 +16,16 @@ for binary in fastpath fastpathctl; do
   chmod 0755 "/opt/fastpath/$binary.new"
   mv "/opt/fastpath/$binary.new" "/opt/fastpath/$binary"
 done
+# The load generator and its mix (rollout P1) ride with releases from P1 on;
+# a release without them still runs the node.
+for tool in loadgen load-mix.json; do
+  if gcloud storage cp "gs://${release_bucket}/fastpath/$release/$tool" "/opt/fastpath/$tool.new"; then
+    chmod 0755 "/opt/fastpath/$tool.new"
+    mv "/opt/fastpath/$tool.new" "/opt/fastpath/$tool"
+  else
+    echo "fastpath: release $release carries no $tool; the load generator is not installed" | systemd-cat -t fastpath -p warning
+  fi
+done
 echo "$release" > /opt/fastpath/release
 cat > /etc/systemd/system/fastpath.service <<UNIT
 [Unit]
