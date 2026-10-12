@@ -80,7 +80,7 @@ def test_send_groups_models_and_retirements_per_workspace_and_retries_once(setup
     message = case.email.messages[0]
     assert message.to == "owner@example.com"
     assert message.mail_class == "retirement_notice"
-    assert message.sender_profile == "alerts"
+    assert message.sender_profile == "notices"
     assert message.text_body.count("retires at") == 3
     assert second_model in message.text_body
     assert "Tinfoil (tinfoil)" in message.text_body

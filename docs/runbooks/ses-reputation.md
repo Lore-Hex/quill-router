@@ -22,6 +22,13 @@ domain that rejects on MX failure, DMARC quarantine, required TLS, and separate
 reputation metrics. Account-level SES reputation is still shared across sender
 identities in the AWS account.
 
+The `notices` profile sends customer product notices (route retirements) as
+`notices@notices.trustedrouter.com` through the `trustedrouter-notices`
+configuration set. Its identity, DKIM, custom MAIL FROM
+(`mail.notices.trustedrouter.com`), strict DMARC and configuration set are
+managed in Terraform (`infra/ses_notices.tf`). Like `alerts`, a notice never
+falls back to another sender.
+
 Every send carries privacy-safe SES message tags for `mail_class`,
 `sender_profile`, `acquisition_source`, `acquisition_medium`, and
 `acquisition_campaign`. Missing attribution is `unknown`. Raw recipient
