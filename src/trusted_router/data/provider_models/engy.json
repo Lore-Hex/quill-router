@@ -79,7 +79,7 @@
       "status": 1,
       "id": "z-ai/glm-5.3-flash",
       "upstream_id": "glm-5.3-flash",
-      "context_length": 262144,
+      "context_length": 327680,
       "routable": true,
       "supported_features": [
         "chat",
@@ -238,6 +238,6 @@
       "cached_input_token_price_per_m": 8000
     }
   ],
-  "generated_at": "2026-10-12T06:29:35Z",
+  "generated_at": "2026-10-12T21:06:59Z",
   "model_count": 8
 }

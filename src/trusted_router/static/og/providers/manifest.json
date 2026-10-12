@@ -199,10 +199,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 92,
+    "model_count": 90,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 176,
+    "route_count": 172,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -775,28 +775,28 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 27,
+    "model_count": 26,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 27,
+    "route_count": 26,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
   "system1models": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 0,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 3,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "system1models"
   },
   "system1models-eu": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 4,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 3,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "system1models-eu"
   },
@@ -820,10 +820,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 18,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 30,
+    "route_count": 32,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
@@ -928,10 +928,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 18,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 19,
+    "route_count": 18,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },
@@ -964,10 +964,10 @@
   },
   "zro": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 4,
     "name": "Zro (MoonMath)",
     "privacy": "Zero retention",
-    "route_count": 5,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "zro"
   }

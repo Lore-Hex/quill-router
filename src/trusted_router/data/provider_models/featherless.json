@@ -799,7 +799,8 @@
       "title": "Qwen/Qwen-AgentWorld-35B-A3B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -822,7 +823,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-10-12T06:29:35Z",
+  "generated_at": "2026-10-12T21:06:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 33
 }

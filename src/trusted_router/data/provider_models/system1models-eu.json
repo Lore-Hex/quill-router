@@ -270,7 +270,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-10-12T13:39:51Z",
+  "generated_at": "2026-10-12T21:07:00Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8,
   "pricing_valid_until": "2026-11-12T00:00:00Z"

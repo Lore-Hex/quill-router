@@ -164,7 +164,7 @@
       "routable": true,
       "input_token_price_per_m": 89500,
       "output_token_price_per_m": 317000,
-      "cached_input_token_price_per_m": 44750
+      "cached_input_token_price_per_m": 39000
     },
     {
       "display_name": "Intel: Qwen3 Coder 480B A35B Instruct INT4 Mixed AR",
@@ -1072,7 +1072,7 @@
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-10-12T06:29:35Z",
+  "generated_at": "2026-10-12T21:06:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 39
 }

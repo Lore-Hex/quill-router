@@ -18,10 +18,11 @@
       "id": "deepseek/deepseek-v3.1",
       "upstream_id": "deepseek-ai/DeepSeek-V3.1",
       "context_length": 163840,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 550000,
       "output_token_price_per_m": 1650000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4-Flash",
@@ -41,11 +42,12 @@
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 70000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4-Flash-0731",
@@ -87,11 +89,12 @@
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1150000,
       "output_token_price_per_m": 2550000,
       "cached_input_token_price_per_m": 200000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Google Gemma 4 31B",
@@ -133,10 +136,11 @@
       "upstream_id": "ibm-granite/granite-4.1-8b",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 100000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "JetBrains Mellum2 12B A2.5B",
@@ -156,10 +160,11 @@
       "upstream_id": "JetBrains/Mellum2-12B-A2.5B-Instruct",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 100000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Meta Llama 3.1 70B",
@@ -179,10 +184,11 @@
       "upstream_id": "meta-llama/Llama-3.1-70B-Instruct",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 800000,
       "output_token_price_per_m": 800000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Meta Llama 3.1 8B",
@@ -445,10 +451,11 @@
       "upstream_id": "OpenPipe/Qwen3-14B-Instruct",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 32768,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 220000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3 30B A3B",
@@ -468,10 +475,11 @@
       "upstream_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 300000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3 Coder 480B A35B",
@@ -515,10 +523,11 @@
       "upstream_id": "Qwen/Qwen3.5-35B-A3B",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 1250000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3.6 27B",
@@ -539,11 +548,12 @@
       "upstream_id": "Qwen/Qwen3.6-27B",
       "retirement_at": "2026-10-05T00:00:00Z",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3600000,
       "cached_input_token_price_per_m": 120000,
-      "missing_since": "2026-10-12"
+      "missing_since": "2026-10-12",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3.6 35B A3B",
@@ -752,7 +762,7 @@
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-10-12T15:53:02Z",
+  "generated_at": "2026-10-12T21:07:00Z",
   "price_scale": "microdollars_per_million",
   "model_count": 33
 }

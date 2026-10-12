@@ -2,7 +2,7 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-10-12T06:29:35Z",
+  "generated_at": "2026-10-12T21:06:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17,
   "models": [
@@ -180,9 +180,9 @@
         "tools",
         "reasoning"
       ],
-      "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 2850000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 1950000,
+      "cached_input_token_price_per_m": 45000
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
@@ -300,9 +300,9 @@
         "structured_outputs",
         "reasoning"
       ],
-      "input_token_price_per_m": 300000,
+      "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 25000
     },
     {
       "display_name": "zai-org/GLM-5",
@@ -450,9 +450,9 @@
         "tools",
         "reasoning"
       ],
-      "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000
+      "input_token_price_per_m": 1850000,
+      "output_token_price_per_m": 9500000,
+      "cached_input_token_price_per_m": 185000
     },
     {
       "display_name": "Nemotron-3-Nano-Omni-30B",
@@ -502,9 +502,9 @@
         "structured_outputs",
         "reasoning"
       ],
-      "input_token_price_per_m": 240000,
-      "output_token_price_per_m": 2200000,
-      "cached_input_token_price_per_m": 24000
+      "input_token_price_per_m": 39000,
+      "output_token_price_per_m": 1250000,
+      "cached_input_token_price_per_m": 3900
     }
   ]
 }
