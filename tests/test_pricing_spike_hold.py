@@ -24,18 +24,21 @@ from scripts.pricing.providers import tencent
 
 
 @pytest.mark.parametrize("feed_change", ["unchanged", "synthetic", "tag", "missing-model"])
-def test_committed_tencent_spike_keeps_published_endpoints(
+def test_pinned_tencent_spike_keeps_published_endpoints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     feed_change: str,
 ) -> None:
-    # Reproduce against committed artifacts, never rewrite the real data.
+    # The historical bug needs this exact native ID and tariff. Live refreshes
+    # may legitimately remove the route; they must not invalidate this proof.
+    fixture = json.loads((Path(__file__).parent / "fixtures/pricing/tencent_hold_baseline.json").read_text())
     snapshot = tmp_path / refresh.SNAPSHOT_PATH.name
     manifests = tmp_path / refresh.PROVIDER_MANIFEST_DIR.name
     parsers = tmp_path / refresh.PARSERS_DIR.name
-    shutil.copyfile(refresh.SNAPSHOT_PATH, snapshot)
-    shutil.copytree(refresh.PROVIDER_MANIFEST_DIR, manifests)
+    snapshot.write_text(json.dumps(fixture["snapshot"]))
+    manifests.mkdir()
+    (manifests / "tencent.json").write_text(json.dumps(fixture["manifest"]))
     shutil.copytree(refresh.PARSERS_DIR, parsers)
     monkeypatch.setattr(refresh, "SNAPSHOT_PATH", snapshot)
     monkeypatch.setattr(refresh, "PROVIDER_MANIFEST_DIR", manifests)

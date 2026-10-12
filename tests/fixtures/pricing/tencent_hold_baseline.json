@@ -1,0 +1,41 @@
+{
+  "snapshot": {
+    "models": [{
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "name": "DeepSeek: DeepSeek V4 Flash 0731",
+      "context_length": 1048576,
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "pricing": {"prompt": "0.00000022", "completion": "0.00000066", "input_cache_read": "0.000000007"},
+      "endpoints": [{
+        "name": "tencent | deepseek/deepseek-v4-flash-0731",
+        "model_id": "deepseek-v4-flash-0731",
+        "model_name": "DeepSeek: DeepSeek V4 Flash 0731",
+        "provider_name": "tencent",
+        "tag": "tencent",
+        "tr_provider_slug": "tencent",
+        "context_length": 1048576,
+        "pricing": {"prompt": "0.00000022", "completion": "0.00000066", "input_cache_read": "0.000000007"},
+        "pricing_source": "provider_direct",
+        "supported_parameters": [],
+        "quantization": "unknown"
+      }]
+    }]
+  },
+  "manifest": {
+    "provider": "tencent",
+    "price_scale": "microdollars_per_million",
+    "generated_at": "2026-10-12T15:53:09Z",
+    "models": [{
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "endpoints": ["chat/completions"],
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "routable": true,
+      "input_token_price_per_m": 220000,
+      "output_token_price_per_m": 660000,
+      "cached_input_token_price_per_m": 7000
+    }]
+  }
+}
