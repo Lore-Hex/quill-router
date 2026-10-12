@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -390,13 +391,12 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 		&bytes.Buffer{}, d); code != 1 || err == nil || !strings.Contains(err.Error(), "exit status 7") {
 		t.Fatalf("a load that failed: exit %d, %v", code, err)
 	}
-	// A ceiling passed: the load is told to stop, exits, and the workspace
-	// is turned off after it.
+	// A ceiling passed once the load runs: the load is told to stop, exits,
+	// and the workspace is turned off after it.
 	hot := d
 	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
-		src, s, closeAll, _ := d.open(context.Background(), target{})
-		_ = src
-		return sources{cpu: 0.5}, s, closeAll, nil
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return &warming{cool: 1}, s, closeAll, nil
 	}
 	var out bytes.Buffer
 	code, err = run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c",
@@ -411,6 +411,85 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 	}
 	if enabled(t, ws) {
 		t.Fatal("the workspace is still enabled after the stop")
+	}
+	// A ceiling past before any load: the stage stops, exit 3, and the
+	// load never starts.
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	already := d
+	already.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return sources{cpu: 0.5}, s, closeAll, nil
+	}
+	none := filepath.Join(t.TempDir(), "none")
+	out.Reset()
+	code, err = run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "touch "+none), &out, already)
+	if code != stopped || err != nil || strings.Contains(out.String(), `"load"`) {
+		t.Fatalf("a ceiling past before the load: exit %d, %v %s", code, err, out.String())
+	}
+	if _, err := os.Stat(none); err == nil {
+		t.Fatal("the load started under a ceiling already past")
+	}
+	if enabled(t, ws) {
+		t.Fatal("the workspace is still enabled after a stop before the load")
+	}
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	// A watch whose first look cannot read everything, though its spend
+	// baseline read, never starts the load: exit 1, naming the read.
+	partial := d
+	partial.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return noCPU{sources{cpu: 0.1}}, s, closeAll, nil
+	}
+	unseen := filepath.Join(t.TempDir(), "unseen")
+	if code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "touch "+unseen),
+		&bytes.Buffer{}, partial); code != 1 || err == nil || !strings.Contains(err.Error(), "could not read") {
+		t.Fatalf("a watch whose first look cannot read the CPU: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(unseen); err == nil {
+		t.Fatal("the load started under a watch that could not read the CPU")
+	}
+	// A load that ignores the stop is killed, before the workspace is
+	// turned off; and so is one the watch's own stop leaves running. The
+	// load says when it ignores the stop, and the CPU runs hot only then:
+	// a stop sent before the shell set its trap would end it.
+	armed := filepath.Join(t.TempDir(), "armed")
+	stubborn := "trap '' TERM; touch " + armed + "; while :; do sleep 0.1; done"
+	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		_, s, closeAll, _ := d.open(context.Background(), target{})
+		return &warming{cool: 1, armed: armed}, s, closeAll, nil
+	}
+	out.Reset()
+	code, err = run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-stop-wait", "300ms", "-run",
+		"sh", "-c", stubborn), &out, hot)
+	if code != stopped || err != nil || !strings.Contains(out.String(), "killed") {
+		t.Fatalf("a load that will not stop: exit %d, %v %s", code, err, out.String())
+	}
+	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(armed)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			if _, err := os.Stat(armed); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		cancel()
+	}()
+	out.Reset()
+	code, err = run(ctx, append(slices.Clone(flags), "-workspace", ws, "-stop-wait", "300ms", "-run", "sh", "-c",
+		stubborn), &out, d)
+	if code != 0 || err != nil || !strings.Contains(out.String(), "killed") {
+		t.Fatalf("a watch stopped first over a load that will not stop: exit %d, %v %s", code, err, out.String())
+	}
+	if !enabled(t, ws) {
+		t.Fatal("the workspace was turned off by a watch stopped first")
 	}
 	// A watch that cannot open never starts the load.
 	blind := d
@@ -432,4 +511,35 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 			t.Fatalf("%q: exit %d", args, code)
 		}
 	}
+}
+
+// noCPU is a source whose CPU read fails, the rest reading as src does.
+type noCPU struct{ sources }
+
+func (noCPU) SpannerCPU(context.Context) (float64, error) { return 0, errors.New("no Monitoring") }
+
+// warming is a source whose CPU reads under the ceiling for its first cool
+// looks, and past it after, once the file armed exists if one is named:
+// the stage is fine as its load starts, and not once it runs.
+type warming struct {
+	sources
+	mu    sync.Mutex
+	cool  int
+	armed string
+	looks int
+}
+
+func (w *warming) SpannerCPU(context.Context) (float64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.looks++
+	if w.looks <= w.cool {
+		return 0.1, nil
+	}
+	if w.armed != "" {
+		if _, err := os.Stat(w.armed); err != nil {
+			return 0.1, nil
+		}
+	}
+	return 0.5, nil
 }

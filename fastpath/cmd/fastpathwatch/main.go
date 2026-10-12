@@ -13,10 +13,13 @@
 // cannot turn the workspace off; 2 for its usage.
 //
 // With -run, the load generator's command follows the flags and the watch
-// runs it: started only once the watch sees, so no load runs unwatched;
-// stopped past a ceiling as -stop-pid is; and when it exits on its own the
-// watch ends with it, exiting 0, or 1 if the load did not, having stopped
-// nothing (rollout P1):
+// runs it: started only after a first look that read everything (one that
+// could not is exit 1, no load started; one past a ceiling already is a
+// stop before any load), so no load runs unwatched; stopped past a ceiling
+// as -stop-pid is, and killed if it will not stop within -stop-wait, before
+// the workspace is turned off; and when it exits on its own the watch ends
+// with it, exiting 0, or 1 if the load did not, having stopped nothing
+// (rollout P1):
 //
 //	fastpathwatch -database D -project P -instance I -subscriptions ... -workspace WS \
 //	    -max-cpu 0.35 ... -run /opt/fastpath/loadgen -front ... -workspace WS -database D ...
@@ -195,7 +198,21 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	loadDone := make(chan error, 1)
 	wctx, cancelWatch := context.WithCancel(ctx)
 	defer cancelWatch()
+	var why []string
 	if *supervise {
+		// The load starts only under a watch that reads everything: a
+		// first look that could not is no watch (exit 1), and one past a
+		// ceiling already is a stop before any load.
+		past, err := w.Sees(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return 0, nil
+			}
+			return 1, err
+		}
+		why = past
+	}
+	if why == nil && *supervise {
 		load = exec.CommandContext(context.Background(), fs.Arg(0), fs.Args()[1:]...)
 		load.Stdout, load.Stderr = os.Stdout, os.Stderr
 		if err := load.Start(); err != nil {
@@ -207,7 +224,21 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 			cancelWatch()
 		}()
 	}
-	why := w.Watch(wctx, func([]string) {})
+	// stopChild tells the load started here to stop, and kills one that
+	// will not: its process is this command's, and it must be gone before
+	// the stage is turned off.
+	stopChild := func() string {
+		how := stopLoad(d, *pid, *grace)
+		if d.alive(*pid) {
+			_ = load.Process.Kill()
+			how += "; killed"
+		}
+		<-loadDone
+		return how
+	}
+	if why == nil {
+		why = w.Watch(wctx, func([]string) {})
+	}
 	if why == nil {
 		if load == nil {
 			return 0, nil
@@ -222,7 +253,7 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		default:
 			// The watch was stopped first: the load goes with it, and the
 			// stage is left as it is.
-			answer := map[string]any{"load": stopLoad(d, *pid, *grace)}
+			answer := map[string]any{"load": stopChild()}
 			_ = json.NewEncoder(out).Encode(answer)
 			return 0, nil
 		}
@@ -231,11 +262,11 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	// workspace, whose leases are revoked with it. The watch's own context
 	// may be ending, so the workspace has a deadline of its own.
 	answer := map[string]any{"why": why, "workspace": t.workspace}
-	if *pid > 0 {
+	switch {
+	case load != nil:
+		answer["load"] = stopChild()
+	case *pid > 0:
 		answer["load"] = stopLoad(d, *pid, *grace)
-		if load != nil {
-			<-loadDone
-		}
 	}
 	octx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

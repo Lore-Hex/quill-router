@@ -43,12 +43,15 @@ def test_load_mix_is_a_histogram_the_generator_takes() -> None:
 
 
 def _commands(runbook: str) -> list[str]:
-    """Every command line of the runbook: the lines of its fenced blocks and
-    the inline commands in backticks that start with a path or a tool."""
-    fenced = re.findall(r"```bash\n(.*?)```", runbook, re.S)
-    lines = [line.strip() for block in fenced for line in block.splitlines() if line.strip()]
-    inline = re.findall(r"`((?:/opt/fastpath/|fastpathctl |loadgen |fastpathwatch |gcloud |uv run )[^`]*)`", runbook)
-    return lines + inline
+    """Every command line of the runbook, in the document's order: the lines
+    of its fenced blocks and the inline commands in backticks that start
+    with a path or a tool."""
+    commands: list[tuple[int, str]] = []
+    for block in re.finditer(r"```bash\n(.*?)```", runbook, re.S):
+        commands.extend((block.start(), line.strip()) for line in block.group(1).splitlines() if line.strip())
+    for inline in re.finditer(r"`((?:/opt/fastpath/|fastpathctl |loadgen |fastpathwatch |gcloud |uv run )[^`]*)`", runbook):
+        commands.append((inline.start(), inline.group(1)))
+    return [command for _, command in sorted(commands)]
 
 
 def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_path() -> None:
@@ -74,10 +77,13 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     load = watch.split("-run ", 1)[1]
     for flag in ("-workspace $WS", "-database $DB", "-mix /opt/fastpath/load-mix.json", "-rate 1"):
         assert flag in load, flag
-    # Before the first run: the override that puts the workspace at the
-    # tier, and the role the watch's Monitoring reads need; before the rate
-    # rises, each stop exercised.
-    assert any("scripts/set_trust_override.py" in c and "--tier 1" in c and "--apply" in c for c in commands)
-    assert any("roles/monitoring.viewer" in c and "tr-fastpath-node@" in c for c in commands)
+    # Before the first run, in this order: the override that puts the
+    # workspace at the tier, and the role the watch's Monitoring reads
+    # need, both before the watch's command; before the rate rises, each
+    # stop exercised.
+    override = next(i for i, c in enumerate(commands)
+                    if "scripts/set_trust_override.py" in c and "--tier 1" in c and "--apply" in c)
+    role = next(i for i, c in enumerate(commands) if "roles/monitoring.viewer" in c and "tr-fastpath-node@" in c)
+    assert max(override, role) < commands.index(watch)
     exercised = runbook.index("each of the watch's stops is exercised once")
     assert runbook.index("raises `-rate` by a step") > exercised
