@@ -66,3 +66,13 @@ Sources:
 Deploy the enclave Azure decision adapter before publishing the catalog route.
 Then verify the public model entry and a small authenticated `/api/alpha/decide` request.
 Provider failures remain provider-health failures, separate from router availability.
+
+Initial availability is the main GCP-backed API. The native Azure decision
+adapter is QCP release `bfac8577`; AWS and Azure gateway fleets must receive
+and verify that adapter before their standalone control planes offer this model.
+`catalog_deployment.py` removes it from discovery and routing on those planes
+(and unidentified production regions), even when automatic control-plane
+reconciliation advances them. Other models and cloud release gates are unchanged.
+Lift this scoped hold only after each remaining gateway fleet passes an
+authenticated decision smoke. GCP control-plane regions, including the billing
+failover region, share the upgraded GCP gateway fleet.
