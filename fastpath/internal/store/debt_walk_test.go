@@ -505,10 +505,12 @@ func newDebtWalkWith(t *testing.T, s *Store, seed int64, credits []int64, rngs .
 	// an update mutation on the emulator resets the row's other defaulted
 	// columns, the tier among them.
 	_, err := shared.ReadWriteTransaction(context.Background(), func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		// Two instants an hour apart, so a write that copies one column into
+		// the other shows.
 		_, err := txn.Update(ctx, spanner.Statement{
-			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = 17, trust_reconciled_through = @t
+			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = 17, trust_reconciled_through = @u
 			       WHERE workspace_id = @w`,
-			Params: map[string]any{"t": walkTick, "w": d.ws},
+			Params: map[string]any{"t": walkTick, "u": walkTick.Add(time.Hour), "w": d.ws},
 		})
 		return err
 	})
@@ -1479,8 +1481,9 @@ func (d *debtWalk) checkCreditColumns() {
 		// null array reads as no causes.
 		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(walkTick) ||
 			m.latched.Valid || m.override.Valid || len(m.causes) != 0 || m.epoch != (spanner.NullInt64{Int64: 17, Valid: true}) ||
-			!m.through.Valid || !m.through.Time.Equal(walkTick) || m.source.Valid {
-			d.fatalf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch 17 and two times of %v", i, m, walkTick)
+			!m.through.Valid || !m.through.Time.Equal(walkTick.Add(time.Hour)) || m.source.Valid {
+			d.fatalf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch 17, computed at %v and reconciled an hour on",
+				i, m, walkTick)
 		}
 		prev := d.shards.updatedAt[i]
 		switch {

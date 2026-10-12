@@ -1574,6 +1574,22 @@ func (w *walker) check() {
 	if err := creditShards(w.ref.Workspace, walkShards); err != nil {
 		w.fatalf("%v", err)
 	}
+	// The credit rows' usage and reservation, summed, are the walk's own
+	// ledger: what the commits booked, matched and as faults, and the
+	// allocation's unbooked room, none once closed. The identity check
+	// reconciles the rows with the lease's columns, not with the commits,
+	// so a write that books usage outside a commit, a reap charging the
+	// rows for what its winner's commit books again, shows only here.
+	var usage, reserved int64
+	for _, r := range readRows(w.t, w.ref.Workspace) {
+		usage += r.usage
+		reserved += r.reserved
+	}
+	if allocation := int64(w.c.Grant) + w.shortfall - w.released; usage != w.consumed+w.faulted ||
+		reserved != allocation-w.consumed {
+		w.fatalf("the credit rows book %d and reserve %d, and the walk's commits booked %d and left %d unbooked",
+			usage, reserved, w.consumed+w.faulted, allocation-w.consumed)
+	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)
 	}
