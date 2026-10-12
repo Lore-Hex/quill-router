@@ -4,14 +4,13 @@
   const code = document.getElementById('embed-code');
   const status = document.getElementById('copy-status');
   function update() {
-    const role = document.querySelector('input[name="role"]:checked').value;
     const theme = document.querySelector('input[name="theme"]:checked').value;
-    const path = `/assets/badges/nyte-${role}-${theme}.svg`;
+    const path = `/assets/badges/nyte-enterprise-${theme}.svg`;
     preview.src = path;
-    preview.alt = `NYTE ${role} member`;
+    preview.alt = 'NYTE Privacy Secured — Confidential AI';
     document.getElementById('preview').className = `preview ${theme}`;
     document.getElementById('download').href = path;
-    code.textContent = `<a href="https://nytokenexchange.com/badge" aria-label="About NYTE exchange membership">\n  <img src="https://nytokenexchange.com${path}"\n       alt="NYTE ${role} member — New York Token Exchange"\n       width="320" height="88" loading="lazy" style="max-width:100%;height:auto">\n</a>`;
+    code.textContent = `<a href="https://nytokenexchange.com/badge" aria-label="NYTE Privacy Secured: requirements and evidence">\n  <img src="https://nytokenexchange.com${path}"\n       alt="NYTE Privacy Secured — Confidential AI"\n       width="320" height="88" loading="lazy" style="max-width:100%;height:auto">\n</a>`;
     status.textContent = '';
   }
   document.querySelectorAll('input[type="radio"]').forEach(input => input.addEventListener('change', update));

@@ -154,6 +154,8 @@ def build(output: Path) -> None:
     for name in ("badge.css", "badge.js"):
         shutil.copyfile(HERE / name, assets / name)
     build_badges(assets / "badges")
+    for name in ("nyte-routing-demo.mp4", "nyte-routing-demo-poster.jpg"):
+        shutil.copyfile(HERE / "media" / name, assets / name)
     for art in sorted((HERE / "art").glob("*.webp")):
         shutil.copyfile(art, assets / art.name)
     static = ROOT / "src/trusted_router/static"

@@ -48,7 +48,7 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn("not guarantees", self.page)
         self.assertIn("Updated seven-page PDF", self.page)
         self.assertNotIn("13-page", self.page)
-        self.assertIn('href="/badge"', self.page)
+        self.assertNotIn('href="/badge"', self.page)
         self.assertFalse(self.parser.forms)
 
     def test_mailto_request_contains_correct_recipient_and_context(self):

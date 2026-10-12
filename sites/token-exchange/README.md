@@ -58,30 +58,47 @@ For a narrow update, publish only the built `providers` and `providers.html` obj
 `new-york/sitemap.xml` after the repository and site checks. Do not sync a stale
 full build over other markets. Both objects use a five-minute public cache.
 
-### NYTE member badge
+### NYTE Privacy Secured seal
 
 `https://nytokenexchange.com/badge` is the canonical badge builder and usage page.
 The shared `/providers` and `/badge` pages also work on the regional domains via
-their existing default static routes. Every market links them in its supplier
-section; only New York lists them in its sitemap, avoiding duplicate canonicals.
+their existing default static routes. Every market links the badge in its buyer
+section and the private deck in its supplier section; only New York lists these
+pages in its sitemap, avoiding duplicate canonicals.
 Keep `.html` aliases for older links. Extensionless objects require `text/html`.
 
-`member_badges.py` generates four script-free SVGs in `assets/badges`: provider
-and enterprise roles, each in light and dark. The builder previews, downloads,
-and copies accessible HTML linking to the badge explanation. Membership must be
-confirmed before display. The mark is not live verification, a security audit,
-or blanket certification; confidential routing uses TrustedRouter's distinct
-evidence-backed badge. No customer or provider is newly certified by this page.
+`member_badges.py` generates two script-free SVGs in `assets/badges`: light and
+dark lock-based “Privacy Secured · Confidential AI” seals. There is no provider
+badge or role selector. NYTE requires confidential AI routes (owner-confirmed
+product requirement); this is not an optional buyer tier. Enterprise buyers display
+the seal to customers on NYTE-powered AI features or clearly scoped trust centers.
+The linked page documents the required attested gateway, confidential routing floor,
+verified confidential compute, provider-side E2EE, explicit ZDR and fail-closed behavior.
+It distinguishes provider-side E2EE from client TLS termination inside the attested
+gateway. The static image is not live verification or whole-product certification.
+This website change documents the requirement; it does not change routing enforcement.
+The builder previews, downloads, and copies accessible HTML linking to that scope.
 
 For this content release, publish only the two shared pages and their aliases,
-`assets/badge.css`, `assets/badge.js`, the four generated badge SVGs, the 13 market
-`index.html` files (new supplier links), and `new-york/sitemap.xml`. No DNS,
+`assets/badge.js`, the two enterprise badge SVGs, and the 13 market
+`index.html` files (buyer badge link and video). Retire the two old provider SVG
+objects only after backing them up and recording their generations. No DNS,
 certificates, URL maps, backend routes, PDF, slide images, or unrelated assets change.
 Compare generated homepages with live objects first. If main includes unrelated
-unpublished changes, add only the two supplier links to freshly downloaded live
+unpublished changes, apply only the buyer badge placement and demo to freshly downloaded live
 HTML, preserving existing CSS/JS versions and all other content. Back up each
 target, verify that removing the inserted line restores its original bytes,
 and publish with the observed generation precondition to reject concurrent edits.
+
+### Homepage routing demo
+
+`media/nyte-routing-demo.mp4` is the user-supplied October 11 video, unchanged
+(89.27 seconds, H.264/AAC, 1920×1080). `media/nyte-routing-demo-poster.jpg` is a
+1280px still from that video. The build copies both into `assets/`. All market
+homepages show native controls with `playsinline` and `preload="none"`, with no
+autoplay. Captions are already burned into the supplied video. Publish the MP4
+as `video/mp4` and the poster as `image/jpeg` before publishing homepage links.
+Verify byte-range playback and mobile layout; the original video is not edited.
 
 ### Commands
 
