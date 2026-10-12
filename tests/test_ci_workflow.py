@@ -121,7 +121,7 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     assert ci.count('-m "not provider_health and not proof_oracle"') == 2
     # The price refresh validates its catalog like CI does: a provider delisting
     # one model must not stop every other provider's prices from publishing.
-    assert refresh.count('-m "not provider_health"') == 1
+    assert refresh.count('-m "not provider_health and not proof_oracle"') == 1
     assert "schedule:" in monitor
     assert "workflow_dispatch:" in monitor
     assert "-m provider_health" in monitor

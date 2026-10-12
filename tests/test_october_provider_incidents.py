@@ -132,3 +132,41 @@ def test_retired_streamlake_endpoint_is_removed_without_model_substitution(
         endpoints, at=datetime(2026, 10, 4, tzinfo=UTC),
     )
     assert filtered == {"novita": endpoints["novita"]}
+
+
+def test_streamlake_qwen_retirement_is_observation_dated_and_provider_scoped() -> None:
+    cutoff = provider_lifecycle.STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT
+    retired = provider_lifecycle.provider_model_retired
+    model, native = "qwen/qwen3-coder-next", "qwen3-coder-next"
+    assert not retired("streamlake", model, native, at=cutoff - timedelta(microseconds=1))
+    assert retired("streamlake", model, at=cutoff)
+    assert retired("streamlake", "other-canonical-alias", native, at=cutoff)
+    assert not retired("novita", model, native, at=cutoff)
+    assert not retired("streamlake", "qwen/qwen3.8-flash", "qwen3.8-flash", at=cutoff)
+
+
+@pytest.mark.parametrize("usage", ["Credits", "BYOK"])
+def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
+    monkeypatch: pytest.MonkeyPatch, usage: str,
+) -> None:
+    cutoff = provider_lifecycle.STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
+    monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
+    monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
+    model = "qwen/qwen3-coder-next"
+    result = ProviderPricingResult(
+        slug="streamlake", source="stale_snapshot", fetched_url="https://www.streamlake.ai",
+        prices={model: ModelPrice(200_000, 1_000_000)},
+    )
+    assert refresh._index_provider_prices({"streamlake": result}) == {}
+    endpoints = {
+        provider: ModelEndpoint(
+            id=provider, provider=provider, model_id=model,
+            usage_type=usage, upstream_id="qwen3-coder-next",
+        )
+        for provider in ("streamlake", "novita")
+    }
+    assert catalog_ingest._filter_unserved_provider_endpoints(endpoints, at=cutoff) == {
+        "novita": endpoints["novita"],
+    }

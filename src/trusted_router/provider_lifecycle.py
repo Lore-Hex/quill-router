@@ -80,6 +80,9 @@ UPSTAGE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 29, 15, 0, tzinfo=UTC)
 # Enforcement starts at the confirmed observation, not an invented upstream
 # deprecation date: all three IDs returned UnavailableModel on October 3.
 STREAMLAKE_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 3, 20, 0, tzinfo=UTC)
+# The live API returned UnavailableModel at this observation even though its
+# public catalog still listed the model. This is not an upstream cutover claim.
+STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT = datetime(2026, 10, 12, 16, 4, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -309,6 +312,12 @@ _RETIREMENTS = (
             "kat-coder-pro-v2", "kat-coder-air-v2.5", "kat-coder-pro-v2.5",
         }),
         effective_at=STREAMLAKE_OCTOBER_2026_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({"qwen/qwen3-coder-next"}),
+        upstream_ids=frozenset({"qwen3-coder-next"}),
+        effective_at=STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT,
     ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.
