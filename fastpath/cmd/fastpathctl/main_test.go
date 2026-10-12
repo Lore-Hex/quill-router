@@ -432,7 +432,7 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	version = commit(version, 3, nil, store.Winner{AuthorizationID: "auth-2", Kind: "release", Charge: 0, RecordID: "rec-2"})
 	commit(version, 4, []store.MoneyOp{store.Book(10, 0)},
 		store.Winner{AuthorizationID: "auth-2", Kind: "settle", Charge: 10, RecordID: "rec-3"})
-	twice := store.Winner{AuthorizationID: "auth-3", Kind: "settle", Charge: 5, RecordID: "rec-5"}
+	twice := store.Winner{AuthorizationID: "auth-3", Kind: "release", Charge: 0, RecordID: "rec-5"}
 	packBody, err := json.Marshal(map[string]any{"v": 1, "winners": []store.Winner{twice, twice}})
 	if err != nil {
 		t.Fatal(err)
@@ -446,7 +446,18 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	if code != 3 || err != nil || len(problems) != 3 ||
 		!strings.Contains(problems[0].(string), "auth-1 twice: settle in pack 1 and settle in pack 2") ||
 		!strings.Contains(problems[1].(string), "auth-2 twice: release in pack 3 and settle in pack 4") ||
-		!strings.Contains(problems[2].(string), "auth-3 twice: settle in pack 99 and settle in pack 99") {
+		!strings.Contains(problems[2].(string), "auth-3 twice: release in pack 99 and release in pack 99") {
 		t.Fatalf("the winners stored twice: exit %d, %v %v", code, got, err)
+	}
+	// A booking apart from its winner's charge: the lease books 20 more,
+	// past its donors' allocation, and its new winner charges 10, so the
+	// retained packs charge 40 and the rows book 50.
+	commit(version+1, 5, []store.MoneyOp{store.Book(20, 0)},
+		store.Winner{AuthorizationID: "auth-4", Kind: "settle", Charge: 10, RecordID: "rec-6"})
+	code, got, err = audit("-funded", "100")
+	problems, _ = got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 4 ||
+		!strings.Contains(problems[3].(string), "retained packs charge 40, and its rows book 50 (30 on the donors and 20 past them)") {
+		t.Fatalf("a booking apart from its winner's charge: exit %d, %v %v", code, got, err)
 	}
 }

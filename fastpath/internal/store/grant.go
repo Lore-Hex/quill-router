@@ -444,11 +444,16 @@ func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 	return out, nil
 }
 
-// CheckWinners reads every retained pack of the workspace's leases and
-// returns each authorization a lease decided twice: a terminal's winner is
-// stored once per authorization, in one pack, and a second is a booking
-// made again. The packs are retained with their lease (seven days past its
-// close), so the check covers the leases still there.
+// CheckWinners reads every retained pack of the workspace's leases, in one
+// snapshot with the leases' rows, and returns each way they disagree: an
+// authorization a lease decided twice (a terminal's winner is stored once
+// per authorization, in one pack, and a second is a booking made again), and
+// a lease whose winners' charges do not sum to what it booked, on its donors
+// and past them. The auditor books a won record's charge with its winner
+// (internal/auditor/member.go), a drain row's and a reap's alike, and a
+// commit writes the booking and its pack together, so the sums agree for
+// every lease still there: the packs are retained with their lease, seven
+// days past its close.
 func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, error) {
 	ro := s.client.ReadOnlyTransaction()
 	defer ro.Close()
@@ -457,6 +462,7 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 		kind    string
 	}
 	decided := map[string]map[string]first{}
+	charged := map[string]int64{}
 	var problems []string
 	err := ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, commit_version, pack FROM tr_lease_winners WHERE workspace_id = @w
@@ -476,12 +482,31 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 			decided[lease] = map[string]first{}
 		}
 		for _, w := range decoded.Winners {
+			charged[lease] += w.Charge
 			if prev, ok := decided[lease][w.AuthorizationID]; ok {
 				problems = append(problems, fmt.Sprintf("lease %s decides authorization %s twice: %s in pack %d and %s in pack %d",
 					lease, w.AuthorizationID, prev.kind, prev.version, w.Kind, version))
 				continue
 			}
 			decided[lease][w.AuthorizationID] = first{version, w.Kind}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL:    `SELECT lease_id, consumed, fault_usage FROM tr_lease WHERE workspace_id = @w ORDER BY lease_id`,
+		Params: map[string]any{"w": workspace}},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		var lease string
+		var consumed, fault int64
+		if err := row.Columns(&lease, &consumed, &fault); err != nil {
+			return err
+		}
+		if charged[lease] != consumed+fault {
+			problems = append(problems, fmt.Sprintf("lease %s's retained packs charge %d, and its rows book %d "+
+				"(%d on the donors and %d past them)", lease, charged[lease], consumed+fault, consumed, fault))
 		}
 		return nil
 	})

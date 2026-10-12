@@ -22,8 +22,9 @@
 // credit shard's reservation is its live leases' donors' remaining
 // allocation, each lease's allocation and consumption its donors' sums, and
 // the debt marks as the headroom has them), to usage not below what the
-// retained leases booked, and to one winner per authorization across each
-// lease's retained packs, read only, with the
+// retained leases booked, and to each lease's retained packs: one winner
+// per authorization, their charges summing to what the lease booked; read
+// only, with the
 // workspace's status and sums (credits, usage, reservations, leases by state,
 // what the leases booked) beside: exit 0 when the rows keep them, 3 with each
 // way they do not, after every run of the load (rollout P1). One thing no
