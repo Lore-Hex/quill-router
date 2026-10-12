@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from trusted_router.config import Settings
+if TYPE_CHECKING:
+    from trusted_router.config import Settings
 
 
 @dataclass(frozen=True)
