@@ -57,8 +57,16 @@ func (r creditRows) marked() bool {
 	return false
 }
 
+// rowReader is what a read of the store's rows asks of a transaction. A
+// read-write transaction has it, and a read-only one, for a check that reads
+// as a grant does and writes nothing (GrantReadiness).
+type rowReader interface {
+	QueryWithOptions(context.Context, spanner.Statement, spanner.QueryOptions) *spanner.RowIterator
+	ReadRowWithOptions(context.Context, string, spanner.Key, []string, *spanner.ReadOptions) (*spanner.Row, error)
+}
+
 // readCreditRows reads every credit row of the workspace in shard order.
-func readCreditRows(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace, operation string) (creditRows, error) {
+func readCreditRows(ctx context.Context, txn rowReader, workspace, operation string) (creditRows, error) {
 	iter := txn.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT shard, total_credits - total_usage - reserved, COALESCE(in_debt, FALSE),
 		             COALESCE(trust_tier, 0), trust_latched_at IS NOT NULL, billing_pause_causes

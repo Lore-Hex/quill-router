@@ -72,7 +72,8 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "status", ""}, {"-database", "d"}, {"-database", "d", "disable-all", "ws"},
 		{"-database", "d", "enable", "ws", "more"}, {"-database", "d", "node"}, {"-database", "d", "node", ""},
 		{"-database", "d", "node", "a", "b"}, {"-database", "d", "closed"}, {"-database", "d", "closed", "a", "b"},
-		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}} {
+		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}, {"-database", "d", "audit"},
+		{"-database", "d", "audit", "a", "b"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -302,5 +303,54 @@ func TestClosedSaysWhenNothingOfANodeIsLeft(t *testing.T) {
 	}
 	if code, got := closed(); code != 0 || got["done"] != true {
 		t.Fatalf("a node fenced, its every lease closed: exit %d, %v", code, got)
+	}
+}
+
+// TestAuditHoldsTheRowsToTheIdentity: a workspace with no credit rows cannot
+// be audited, exit 1; one whose rows keep the identity answers no problem,
+// exit 0; and a reservation no lease holds is a problem named, exit 3, with
+// the rows left as they were.
+func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	audit := func() (int, map[string]any, error) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, []string{"-database", "d", "audit", ws}, &out, open)
+		var got map[string]any
+		if out.Len() > 0 {
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("audit wrote %q: %v", out.String(), err)
+			}
+		}
+		return code, got, err
+	}
+	if code, _, err := audit(); code != 1 || !errors.Is(err, store.ErrCreditRowsIncomplete) {
+		t.Fatalf("a workspace with no credit rows: exit %d, %v", code, err)
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws),
+		spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": int64(0),
+			"total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	code, got, err := audit()
+	if problems, _ := got["problems"].([]any); code != 0 || err != nil || len(problems) != 0 ||
+		got["status"].(map[string]any)["Enabled"] != true {
+		t.Fatalf("a workspace whose rows keep the identity: exit %d, %v %v", code, got, err)
+	}
+	// A reservation held by no lease, written as the emulator takes a change
+	// to one column (DML).
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: "UPDATE tr_credit_balance SET reserved = 5 WHERE workspace_id = @w", Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, got, err = audit()
+	problems, _ := got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 1 || !strings.Contains(problems[0].(string), "shard 0 reserves 5") {
+		t.Fatalf("a reservation no lease holds: exit %d, %v %v", code, got, err)
 	}
 }

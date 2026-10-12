@@ -112,25 +112,9 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 		if err != nil {
 			return err
 		}
-		signed := new(big.Int)
-		tier := int64(3)
-		for i, h := range rows.headroom {
-			signed.Add(signed, big.NewInt(h))
-			t := rows.tiers[i]
-			if rows.latched[i] {
-				t = 0
-			}
-			tier = min(tier, t)
-		}
-		switch {
-		case rows.marked():
-			out.Refused = RefusedInDebt
-		case anyTrue(rows.paused):
-			out.Refused = RefusedPaused
-		case tier < s.cfg.RequiredTier:
-			out.Refused = RefusedTier
-		}
-		if out.Refused != "" {
+		signed, refused := s.rowsRefuse(rows)
+		if refused != "" {
+			out.Refused = refused
 			return nil
 		}
 		exposure, err := readExposure(ctx, txn, req.Workspace)
@@ -351,4 +335,61 @@ func anyTrue(values []bool) bool {
 		}
 	}
 	return false
+}
+
+// rowsRefuse is the refusal the credit rows alone give a grant, before its
+// amount is weighed, and the rows' signed headroom: the debt mark, a pause,
+// or the workspace's tier, the least of its rows' with a latched row at
+// zero, below the tier a lease needs.
+func (s *Store) rowsRefuse(rows creditRows) (*big.Int, Refusal) {
+	signed := new(big.Int)
+	tier := int64(3)
+	for i, h := range rows.headroom {
+		signed.Add(signed, big.NewInt(h))
+		t := rows.tiers[i]
+		if rows.latched[i] {
+			t = 0
+		}
+		tier = min(tier, t)
+	}
+	switch {
+	case rows.marked():
+		return signed, RefusedInDebt
+	case anyTrue(rows.paused):
+		return signed, RefusedPaused
+	case tier < s.cfg.RequiredTier:
+		return signed, RefusedTier
+	}
+	return signed, ""
+}
+
+// GrantReadiness says why a grant to the workspace would be refused before
+// any amount is weighed, read only: the switch, then the rows' refusals
+// (rowsRefuse), then the floor, which the rows' headroom together must be
+// above for a lease of anything. It is "" for a workspace a grant could
+// reach: the load generator asks before it starts (rollout P1), so a run
+// against a workspace not enabled, not funded or below the tier never
+// starts.
+func (s *Store) GrantReadiness(ctx context.Context, workspace string) (Refusal, error) {
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	enabled, err := workspaceEnabled(ctx, ro, workspace)
+	if err != nil {
+		return "", err
+	}
+	if !enabled {
+		return RefusedNotEnabled, nil
+	}
+	rows, err := readCreditRows(ctx, ro, workspace, "readiness")
+	if err != nil {
+		return "", err
+	}
+	signed, refused := s.rowsRefuse(rows)
+	if refused != "" {
+		return refused, nil
+	}
+	if signed.Cmp(big.NewInt(s.cfg.Floor)) <= 0 {
+		return RefusedFloor, nil
+	}
+	return "", nil
 }
