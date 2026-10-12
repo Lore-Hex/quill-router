@@ -12,10 +12,11 @@
 # restarted, per docs/runbooks/fastpath-deploy.md.
 locals {
   fastpath_region = "us-central1"
-  # Empty until fastpath-release.yml has uploaded a commit's binaries; a
-  # node with no release pinned stays stopped. Set to that commit, apply,
-  # and reset the nodes (docs/runbooks/fastpath-p0.md).
-  fastpath_release        = ""
+  # A main commit whose CI passed and whose binaries fastpath-release.yml
+  # uploaded; a node picks a new one up when reset or replaced
+  # (docs/runbooks/fastpath-p0.md). 7cdbea308: the merge of #1708, P0's
+  # install itself, uploaded 2026-10-12 17:25Z.
+  fastpath_release        = "7cdbea308c56d7598242d3339cfcd83d7709b015"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
