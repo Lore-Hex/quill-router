@@ -752,10 +752,53 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         histogram_upper_bounds_us=[100, 500, 1000, 2000, 5000, 10000, 50000, 200000, None],
         metrics=metrics, regional_percentiles=region_timing, usage=usage, source_revisions=revisions,
         fixture_sha256=FIXTURE_SHA256, proof_sha256=proof_hash,
-        report_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+        # Pin the base v1 implementation digest: adding explicit v2 dispatch
+        # must not change the legacy report's byte-for-byte output.
+        report_sha256="719a3acfc87edf226b7b51a06b3b5d74192944dce248442ddc7e865fa2d4c2f0")
+
+
+def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
+    """Explicit, offline v2 entry point; publication remains blocked until A2."""
+    from trusted_router.async_settle_shadow_binding import verify_binding
+    from trusted_router.async_settle_shadow_v2_certificate import (
+        verify_certificate,
+        verify_original_receipt,
+    )
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Ports
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+
+    if __package__:
+        from . import pilot_enablement
+    else:
+        import pilot_enablement
+    parser = argparse.ArgumentParser(description="Offline shadow-v2 gate (A2 rendering pending)")
+    parser.add_argument('--policy', choices=['shadow-v2'], required=True)
+    parser.add_argument('--bundle', type=Path, required=True)
+    parser.add_argument('--gate', choices=['fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'], default=gate or 'pre-flip')
+    args = parser.parse_args(argv)
+    ports = Ports(verify_certificate, verify_original_receipt, verify_binding,
+                  comparator_positive, positive_sample, known_exclusion,
+                  pilot_enablement.fleet_budgets_pre, collect_rollbacks, report,
+                  pilot_enablement.post_flip)
+    result = evaluate(load(args.bundle.read_bytes()), ports, gate=args.gate)
+    try:
+        output, _attachments = render(result)
+    except ValueError:
+        # A diagnostic, explicitly NOT a GATE_OUTPUT and never a v2 PASS.
+        print(json.dumps(dict(policy_version='shadow-v2', status='BLOCKED',
+            error='undefined preimage: coverage_sha256; failure pages', gaps=result.gaps), indent=2))
+        raise SystemExit(1) from None
+    print(output.decode('ascii'))
+    raise SystemExit(0 if result.verdict == 'PASS' else 1)
 
 
 def main() -> None:
+    import sys
+    if '--policy' in sys.argv[1:] or any(a.startswith('--policy=') for a in sys.argv[1:]):
+        shadow_v2_main(sys.argv[1:])
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--day", action="append", required=True)
     parser.add_argument("--proof-manifest", type=Path, required=True)
