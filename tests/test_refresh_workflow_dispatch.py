@@ -32,7 +32,7 @@ git() {
       if [ "$SCENARIO" = relevant ] || { [ "$SCENARIO" = later_relevant ] && [ "$fetches" -gt 1 ]; }; then
         printf 'tests/unrelated.py\0scripts/pricing/refresh.py\0'
       else
-        printf 'src/trusted_router/routes/x.py\0'
+        printf 'scripts/security/check_repo_security_coverage.py\0'
       fi
       ;;
     "checkout --detach "*) : ;;

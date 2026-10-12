@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.pricing.publish_decision import main, publish_decision
+from scripts.pricing.publish_decision import analyze_repository, main, publish_decision
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,24 +46,28 @@ def test_refresh_inputs_and_outputs_require_recomputation(path: str) -> None:
     "paths",
     [
         [],
-        ["src/trusted_router/routes/x.py"],
-        ["tests/test_pricing.py", "docs/pricing.md"],
-        ["scripts/pricing_extra/refresh.py"],
-        ["src/trusted_router/data/provider_models_backup/provider.json"],
-        ["src/trusted_router/static/og/providers_backup/provider.png"],
-        ["src/trusted_router/data/openrouter_snapshot.json.bak"],
-        [".github/workflows/ci.yml"],
+        ["scripts/security/check_repo_security_coverage.py"],
+        ["docs/pricing.md"],
+        ["scripts/security/check_repo_security_coverage.py", "docs/pricing.md"],
     ],
 )
 def test_unrelated_changes_allow_rebase(paths: list[str]) -> None:
     assert publish_decision(paths) == "rebase"
 
 
+def test_unrelated_module_is_provably_outside_generation_closure() -> None:
+    path = "scripts/security/check_repo_security_coverage.py"
+    assert (ROOT / path).is_file()
+    dependencies = analyze_repository(ROOT)
+    assert not dependencies.contains(path)
+    assert publish_decision([path]) == "rebase"
+
+
 @pytest.mark.parametrize(
     ("stdin", "expected"),
     [
         ("", "rebase"),
-        ("tests/a b.py\0docs/multiline\nname.md\0", "rebase"),
+        ("docs/a b.md\0docs/multiline\nname.md\0", "rebase"),
         ("tests/x.py\0scripts/pricing/providers/new\nprovider.py\0", "recompute"),
     ],
 )
