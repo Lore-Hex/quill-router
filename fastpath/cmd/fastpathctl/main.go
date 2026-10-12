@@ -21,8 +21,9 @@
 // rows in one snapshot and holds them to the design's identity (§4.7: each
 // credit shard's reservation is its live leases' donors' remaining
 // allocation, each lease's allocation and consumption its donors' sums, and
-// the debt marks as the headroom has them) and to one winner per
-// authorization across each lease's retained packs, read only, with the
+// the debt marks as the headroom has them), to usage not below what the
+// retained leases booked, and to one winner per authorization across each
+// lease's retained packs, read only, with the
 // workspace's status and sums (credits, usage, reservations, leases by state,
 // what the leases booked) beside: exit 0 when the rows keep them, 3 with each
 // way they do not, after every run of the load (rollout P1). One thing no
@@ -171,6 +172,12 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 1, err
 		}
 		problems = append(problems, twice...)
+		// The leases' rows retire, so usage is not held equal to what they
+		// booked; it is never below what the retained ones booked.
+		if booked := sums.Consumed + sums.FaultUsage; sums.Usage < booked {
+			problems = append(problems, fmt.Sprintf("the credit rows book %d of usage, below the %d the retained leases "+
+				"booked (%d on their donors and %d past them)", sums.Usage, booked, sums.Consumed, sums.FaultUsage))
+		}
 		if *funded >= 0 && sums.Credits != *funded {
 			problems = append(problems, fmt.Sprintf("the credit rows hold %d credits, and the workspace was funded %d",
 				sums.Credits, *funded))

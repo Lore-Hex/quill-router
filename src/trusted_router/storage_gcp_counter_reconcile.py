@@ -990,13 +990,20 @@ def propose_usage_baselines(store: Any) -> list[UsageBaselineProposal]:
             for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
             if r[0] is not None
         }
+        # The leases' bookings are ledger, as the auditor counts them: a
+        # proposal that left them out would record lease spend as history.
+        leases = {
+            str(r[0]): int(r[1] or 0) for r in snap.execute_sql(_LEASE_BOOKINGS_BY_WS)
+        }
         recorded = {
             str(r[0]): int(r[1])
             for r in snap.execute_sql(_RECORDED_USAGE_BASELINES)
             if r[0] is not None and r[1] is not None
         }
     for workspace_id, usage in sorted(typed.items()):
-        booked = settled.get(workspace_id, 0) + federated.get(workspace_id, 0)
+        booked = (
+            settled.get(workspace_id, 0) + federated.get(workspace_id, 0) + leases.get(workspace_id, 0)
+        )
         if usage <= booked:
             continue
         report_rows.append(

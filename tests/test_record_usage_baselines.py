@@ -147,3 +147,19 @@ def test_a_baseline_recorded_between_propose_and_write_is_not_clobbered(
     assert wrote is False
     body = json.loads(db.rows[(USAGE_BASELINE_KIND, "ws_race")].body)
     assert body["baseline_microdollars"] == 777, "the other writer's value stands"
+
+
+def test_lease_bookings_are_ledger_not_history() -> None:
+    """A workspace whose counter is explained by its leases' bookings has no
+    baseline to propose; one whose counter exceeds them proposes the excess
+    over the leases too, never the lease spend as history."""
+    store, db = make_fake_store()
+    _seed(store, db, "ws_leased", usage=10, settled=0)
+    db.fastpath_leases["l-closed"] = {"workspace_id": "ws_leased", "state": "closed", "consumed": 7, "fault_usage": 3}
+    assert propose_usage_baselines(store) == []
+    assert audit_typed_invariants(store).fully_audited
+
+    db.typed[CREDIT_BALANCE_TABLE][("ws_leased", 0)]["total_usage"] = 15
+    proposals = {p.workspace_id: p for p in propose_usage_baselines(store)}
+    assert proposals["ws_leased"].ledger_booked == 10
+    assert proposals["ws_leased"].baseline_microdollars == 5

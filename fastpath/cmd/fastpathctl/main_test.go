@@ -392,11 +392,61 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 		got["sums"].(map[string]any)["Consumed"] != float64(10) {
 		t.Fatalf("one booking with its winner: exit %d, %v %v", code, got, err)
 	}
-	book(version, 2)
+	// Usage below what the retained leases booked.
+	setUsage := func(usage int64) {
+		t.Helper()
+		if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{SQL: "UPDATE tr_credit_balance SET total_usage = @u WHERE workspace_id = @w",
+				Params: map[string]any{"w": ws, "u": usage}})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setUsage(0)
+	if code, got, err := audit("-funded", "100"); code != 3 || err != nil ||
+		!strings.Contains(fmt.Sprint(got["problems"]), "book 0 of usage, below the 10 the retained leases booked") {
+		t.Fatalf("usage below the leases' bookings: exit %d, %v %v", code, got, err)
+	}
+	setUsage(10)
+	// The same winner stored again by a later commit.
+	version = book(version, 2)
 	code, got, err = audit("-funded", "100")
 	problems, _ = got["problems"].([]any)
 	if code != 3 || err != nil || len(problems) != 1 ||
 		!strings.Contains(problems[0].(string), "decides authorization auth-1 twice: settle in pack 1 and settle in pack 2") {
 		t.Fatalf("the winner stored twice: exit %d, %v %v", code, got, err)
+	}
+	// One authorization decided as a release and then, under another
+	// record, as a settle; and one pack naming a winner twice, written as
+	// no commit would (the request refuses it), straight to the table.
+	commit := func(readVersion, seq int64, money []store.MoneyOp, winners ...store.Winner) int64 {
+		t.Helper()
+		results, _, err := s.Commit(ctx, []store.CommitRequest{{Ref: ref, ReadVersion: readVersion, AppliedSeq: seq,
+			Money: money, Winners: winners}})
+		if err != nil || len(results) != 1 || results[0].Refused != "" {
+			t.Fatalf("the commit at version %d: %+v %v", readVersion, results, err)
+		}
+		return results[0].NewVersion
+	}
+	version = commit(version, 3, nil, store.Winner{AuthorizationID: "auth-2", Kind: "release", Charge: 0, RecordID: "rec-2"})
+	commit(version, 4, []store.MoneyOp{store.Book(10, 0)},
+		store.Winner{AuthorizationID: "auth-2", Kind: "settle", Charge: 10, RecordID: "rec-3"})
+	twice := store.Winner{AuthorizationID: "auth-3", Kind: "settle", Charge: 5, RecordID: "rec-5"}
+	packBody, err := json.Marshal(map[string]any{"v": 1, "winners": []store.Winner{twice, twice}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_lease_winners", map[string]any{
+		"workspace_id": ws, "lease_id": ref.LeaseID, "commit_version": int64(99), "pack": packBody, "winner_count": int64(2)})}); err != nil {
+		t.Fatal(err)
+	}
+	code, got, err = audit("-funded", "100")
+	problems, _ = got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 3 ||
+		!strings.Contains(problems[0].(string), "auth-1 twice: settle in pack 1 and settle in pack 2") ||
+		!strings.Contains(problems[1].(string), "auth-2 twice: release in pack 3 and settle in pack 4") ||
+		!strings.Contains(problems[2].(string), "auth-3 twice: settle in pack 99 and settle in pack 99") {
+		t.Fatalf("the winners stored twice: exit %d, %v %v", code, got, err)
 	}
 }
