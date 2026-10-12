@@ -24,6 +24,19 @@ AZURE_OPENROUTER_ABSENT_IDS = frozenset(
 AZURE_SPIKE_TARGET = "x-ai/grok-4.20-reasoning"
 
 
+def test_tencent_step5_verified_output_correction_is_exact():
+    route = "stepfun/step-5-preview [tencent:tencent:step-5-preview]"
+    before = {route: {"prompt": "0.000001", "completion": "0.00000027"}}
+    after = {route: {"prompt": "0.000001", "completion": "0.0000027"}}
+    assert check(before, after)[0] == []
+    for bad in ("0.00000271", "0.000027"):
+        assert check(before, {route: {**after[route], "completion": bad}})[0]
+    for other in (route.replace("tencent:tencent:", "other:other:"), route + " cached-input"):
+        assert check({other: before[route]}, {other: after[route]})[0]
+    assert check({route: {"prompt": "0.00000027", "completion": "1"}},
+                 {route: {"prompt": "0.0000027", "completion": "1"}})[0]
+
+
 @pytest.mark.parametrize(("route", "dimension", "old", "new"), [
     (
         "deepseek/deepseek-v4.1-flash [wafer:wafer:DeepSeek-V4.1-Flash]",

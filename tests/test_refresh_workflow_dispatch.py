@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -73,6 +75,23 @@ def test_price_refresh_validates_generated_catalog_before_committing() -> None:
     assert "uv run ruff check ." in validation
     assert "uv run mypy" in validation
     assert "uv run pytest -q -n 4 --dist loadgroup" in validation
+    assert '-m "not provider_health and not proof_oracle"' in validation
+
+
+def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
+    # Excluding the redundant local oracle pass is safe only while the
+    # required exact-SHA CI includes every default/post-cutover proof shard.
+    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = ci["jobs"]["proof-oracle"]
+    assert "if" not in job
+    assert "continue-on-error" not in job
+    assert job["strategy"]["matrix"] == {
+        "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4],
+    }
+    proof_steps = [step for step in job["steps"] if "-m proof_oracle" in step.get("run", "")]
+    assert len(proof_steps) == 1
+    assert "if" not in proof_steps[0]
+    assert "continue-on-error" not in proof_steps[0]
 
 
 def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> None:
