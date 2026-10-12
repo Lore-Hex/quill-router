@@ -1050,7 +1050,14 @@ func (w *walker) snapshot() string {
 // lease's workspace's and, where the table has a lease_id column, the
 // lease's. The tables are read from the schema, so one added later is read
 // too, and a column no reader of the store returns is compared all the same.
-func everyRow(ref LeaseRef) (string, error) {
+func everyRow(ref LeaseRef) (string, error) { return rowsOf(ref, false) }
+
+// leaseRows is every row of the lease's own, as everyRow reads them: the
+// tables with a lease_id column only, so the workspace's rows another
+// lease's write in the same transaction moves are left out.
+func leaseRows(ref LeaseRef) (string, error) { return rowsOf(ref, true) }
+
+func rowsOf(ref LeaseRef, leaseOnly bool) (string, error) {
 	ctx := context.Background()
 	tables, err := schemaTables(ctx)
 	if err != nil {
@@ -1058,7 +1065,7 @@ func everyRow(ref LeaseRef) (string, error) {
 	}
 	var b strings.Builder
 	for _, t := range tables {
-		if !slices.Contains(t.columns, "workspace_id") {
+		if !slices.Contains(t.columns, "workspace_id") || (leaseOnly && !slices.Contains(t.columns, "lease_id")) {
 			continue
 		}
 		stmt := spanner.Statement{SQL: "SELECT * FROM " + t.name + " WHERE workspace_id = @w",

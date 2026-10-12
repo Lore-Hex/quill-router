@@ -644,7 +644,12 @@ func (d *debtWalk) commitBeside(ctx context.Context, l *debtLease, money []Money
 	d.touch(l)
 	d.touch(stale)
 	changes, releases := l.moneyEffect(money)
-	before := d.rows(stale.ref)
+	// The stale lease's own rows stay; the workspace's credit rows move
+	// with the booking that lands beside it.
+	before, err := leaseRows(stale.ref)
+	if err != nil {
+		d.fatalf("reading lease %s's rows: %v", stale.ref.LeaseID, err)
+	}
 	got, ts, err := d.s.Commit(ctx, detached(reqs))
 	if err != nil || len(got) != 2 {
 		d.fatalf("the commit beside a refused one: %+v %v", got, err)
@@ -654,8 +659,8 @@ func (d *debtWalk) commitBeside(ctx context.Context, l *debtLease, money []Money
 		len(got[1].Faults) != 0 || got[1].AuditFault != nil {
 		d.fatalf("the stale lease's part of the batch: %+v", got[1])
 	}
-	if after := d.rows(stale.ref); after != before {
-		d.fatalf("a refused part of a batch changed lease %s's rows from %s to %s", stale.ref.LeaseID, before, after)
+	if after, err := leaseRows(stale.ref); err != nil || after != before {
+		d.fatalf("a refused part of a batch changed lease %s's rows from %s to %s (%v)", stale.ref.LeaseID, before, after, err)
 	}
 	if got[0].Ref != l.ref || got[0].Refused != "" || got[0].State != l.state || got[0].AuditFault != nil {
 		d.fatalf("the batch answered %+v for lease %s, which the walk has %q", got[0], l.ref.LeaseID, l.state)
