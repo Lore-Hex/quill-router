@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -405,7 +406,7 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	}
 	setUsage(0)
 	if code, got, err := audit("-funded", "100"); code != 3 || err != nil ||
-		!strings.Contains(fmt.Sprint(got["problems"]), "book 0 of usage, below the 10 the retained leases booked") {
+		!strings.Contains(fmt.Sprint(got["problems"]), "shard 0 books 0 of usage, below the 10 its retained leases booked on it") {
 		t.Fatalf("usage below the leases' bookings: exit %d, %v %v", code, got, err)
 	}
 	setUsage(10)
@@ -459,5 +460,93 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	if code != 3 || err != nil || len(problems) != 4 ||
 		!strings.Contains(problems[3].(string), "retained packs charge 40, and its rows book 50 (30 on the donors and 20 past them)") {
 		t.Fatalf("a booking apart from its winner's charge: exit %d, %v %v", code, got, err)
+	}
+}
+
+// TestAuditHoldsEachShardAndSumsExactly: usage booked to the wrong shard
+// is below the bound on the shard it left, though the workspace's total is
+// right; and winner charges whose exact sum is past int64 do not wrap to
+// the lease's bookings.
+func TestAuditHoldsEachShardAndSumsExactly(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	audit := func(flags ...string) (int, []any, error) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, append(append([]string{"-database", "d"}, flags...), "audit", ws), &out, open)
+		var got map[string]any
+		if out.Len() > 0 {
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("audit wrote %q: %v", out.String(), err)
+			}
+		}
+		problems, _ := got["problems"].([]any)
+		return code, problems, err
+	}
+	rows := []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1)}
+	for shard := range int64(2) {
+		rows = append(rows, spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": shard,
+			"total_credits": int64(100), "trust_tier": int64(3)}))
+	}
+	if _, err := shared.Apply(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := open(ctx, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: storetest.UniqueID("l")}
+	if got, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: ref.LeaseID, Region: "us-central1",
+		Owner: store.Owner{Node: "node-a", Epoch: 1}, Amount: 30}); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	commit := func(readVersion, seq int64, money []store.MoneyOp, winners ...store.Winner) int64 {
+		t.Helper()
+		results, _, err := s.Commit(ctx, []store.CommitRequest{{Ref: ref, ReadVersion: readVersion, AppliedSeq: seq,
+			Money: money, Winners: winners}})
+		if err != nil || len(results) != 1 || results[0].Refused != "" {
+			t.Fatalf("the commit at version %d: %+v %v", readVersion, results, err)
+		}
+		return results[0].NewVersion
+	}
+	version := commit(0, 1, []store.MoneyOp{store.Book(10, 0)},
+		store.Winner{AuthorizationID: "auth-1", Kind: "settle", Charge: 10, RecordID: "rec-1"})
+	if code, problems, err := audit("-funded", "200"); code != 0 || err != nil || len(problems) != 0 {
+		t.Fatalf("a booking on its donor's shard: exit %d, %v %v", code, problems, err)
+	}
+	// The same total usage, on the other shard.
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL:    "UPDATE tr_credit_balance SET total_usage = CASE shard WHEN 0 THEN 0 ELSE 10 END WHERE workspace_id = @w",
+			Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, problems, err := audit("-funded", "200")
+	if code != 3 || err != nil || len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "shard 0 books 0 of usage, below the 10 its retained leases booked on it") {
+		t.Fatalf("usage on the wrong shard: exit %d, %v %v", code, problems, err)
+	}
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL:    "UPDATE tr_credit_balance SET total_usage = CASE shard WHEN 0 THEN 10 ELSE 0 END WHERE workspace_id = @w",
+			Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Winners whose charges, with the first's 10, sum past int64 by exactly
+	// what wraps them back to the lease's bookings: not taken as equal.
+	huge := int64(math.MaxInt64)
+	commit(version, 2, nil,
+		store.Winner{AuthorizationID: "auth-2", Kind: "settle", Charge: huge, RecordID: "rec-2"},
+		store.Winner{AuthorizationID: "auth-3", Kind: "settle", Charge: huge, RecordID: "rec-3"},
+		store.Winner{AuthorizationID: "auth-4", Kind: "settle", Charge: 12, RecordID: "rec-4"})
+	code, problems, err = audit("-funded", "200")
+	if code != 3 || err != nil || len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "retained packs charge 18446744073709551636, and its rows book 10") {
+		t.Fatalf("charges past int64: exit %d, %v %v", code, problems, err)
 	}
 }

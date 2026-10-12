@@ -409,7 +409,13 @@ type Sums struct {
 	Consumed, FaultUsage int64
 }
 
-// AuditSums reads a workspace's sums.
+// ErrSumsPastInt64 is an audit whose sums do not fit int64: the rows are
+// read, and the answer is not a number the audit can give.
+var ErrSumsPastInt64 = errors.New("store: the audit's sums are past int64")
+
+// AuditSums reads a workspace's sums, exactly: Spanner sums each query's
+// rows in int64 and errors past it, and the sums over the queries are
+// taken in big integers, so no wrapped total is answered.
 func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 	ro := s.client.ReadOnlyTransaction()
 	defer ro.Close()
@@ -424,24 +430,118 @@ func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 	if err != nil {
 		return Sums{}, err
 	}
+	consumed, fault := new(big.Int), new(big.Int)
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT state, COUNT(*), COALESCE(SUM(consumed), 0), COALESCE(SUM(fault_usage), 0)
 		        FROM tr_lease WHERE workspace_id = @w GROUP BY state`, Params: params},
 		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
 		var state string
-		var n, consumed, fault int64
-		if err := row.Columns(&state, &n, &consumed, &fault); err != nil {
+		var n, c, f int64
+		if err := row.Columns(&state, &n, &c, &f); err != nil {
 			return err
 		}
 		out.Leases[state] = n
-		out.Consumed += consumed
-		out.FaultUsage += fault
+		consumed.Add(consumed, big.NewInt(c))
+		fault.Add(fault, big.NewInt(f))
 		return nil
 	})
 	if err != nil {
 		return Sums{}, err
 	}
+	if !consumed.IsInt64() || !fault.IsInt64() || !new(big.Int).Add(consumed, fault).IsInt64() {
+		return Sums{}, ErrSumsPastInt64
+	}
+	out.Consumed, out.FaultUsage = consumed.Int64(), fault.Int64()
 	return out, nil
+}
+
+// CheckBookedUsage reads a workspace's credit rows, its leases' donors and
+// its leases in one snapshot, and returns each credit shard whose usage is
+// below what the leases still there booked on it: each donor's consumption
+// on its shard, and each lease's fault usage on its first donor's, the
+// lowest shard of its donors, where the store books a charge past the
+// allocation (§4.7; money.go). A booking raises usage on the shard whose
+// reservation it reduces, and the fast path only raises usage, so a shard
+// below that bound has usage booked elsewhere or lost. Retirement of a
+// lease's rows only lowers the bound.
+func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]string, error) {
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	params := map[string]any{"w": workspace}
+	var usage []int64
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT shard, total_usage FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`, Params: params},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		var shard, u int64
+		if err := row.Columns(&shard, &u); err != nil {
+			return err
+		}
+		if shard != int64(len(usage)) {
+			return ErrCreditRowsIncomplete
+		}
+		usage = append(usage, u)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(usage) == 0 {
+		return nil, ErrCreditRowsIncomplete
+	}
+	booked := make([]*big.Int, len(usage))
+	for i := range booked {
+		booked[i] = new(big.Int)
+	}
+	var problems []string
+	first := map[string]int64{}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT lease_id, credit_shard, consumed FROM tr_lease_donor WHERE workspace_id = @w
+		       ORDER BY lease_id, credit_shard`, Params: params},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		var lease string
+		var shard, consumed int64
+		if err := row.Columns(&lease, &shard, &consumed); err != nil {
+			return err
+		}
+		if shard < 0 || shard >= int64(len(booked)) {
+			problems = append(problems, fmt.Sprintf("lease %s has a donor on shard %d, which has no row", lease, shard))
+			return nil
+		}
+		if _, ok := first[lease]; !ok {
+			first[lease] = shard
+		}
+		booked[shard].Add(booked[shard], big.NewInt(consumed))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT lease_id, fault_usage FROM tr_lease WHERE workspace_id = @w AND fault_usage > 0`, Params: params},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		var lease string
+		var fault int64
+		if err := row.Columns(&lease, &fault); err != nil {
+			return err
+		}
+		shard, ok := first[lease]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("lease %s booked %d past its donors, and has none", lease, fault))
+			return nil
+		}
+		booked[shard].Add(booked[shard], big.NewInt(fault))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for shard, u := range usage {
+		if big.NewInt(u).Cmp(booked[shard]) < 0 {
+			problems = append(problems, fmt.Sprintf("shard %d books %d of usage, below the %s its retained leases booked on it",
+				shard, u, booked[shard]))
+		}
+	}
+	return problems, nil
 }
 
 // CheckWinners reads every retained pack of the workspace's leases, in one
@@ -462,7 +562,7 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 		kind    string
 	}
 	decided := map[string]map[string]first{}
-	charged := map[string]int64{}
+	charged := map[string]*big.Int{}
 	var problems []string
 	err := ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, commit_version, pack FROM tr_lease_winners WHERE workspace_id = @w
@@ -481,8 +581,11 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 		if decided[lease] == nil {
 			decided[lease] = map[string]first{}
 		}
+		if charged[lease] == nil {
+			charged[lease] = new(big.Int)
+		}
 		for _, w := range decoded.Winners {
-			charged[lease] += w.Charge
+			charged[lease].Add(charged[lease], big.NewInt(w.Charge))
 			if prev, ok := decided[lease][w.AuthorizationID]; ok {
 				problems = append(problems, fmt.Sprintf("lease %s decides authorization %s twice: %s in pack %d and %s in pack %d",
 					lease, w.AuthorizationID, prev.kind, prev.version, w.Kind, version))
@@ -504,9 +607,13 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 		if err := row.Columns(&lease, &consumed, &fault); err != nil {
 			return err
 		}
-		if charged[lease] != consumed+fault {
-			problems = append(problems, fmt.Sprintf("lease %s's retained packs charge %d, and its rows book %d "+
-				"(%d on the donors and %d past them)", lease, charged[lease], consumed+fault, consumed, fault))
+		sum := charged[lease]
+		if sum == nil {
+			sum = new(big.Int)
+		}
+		if booked := new(big.Int).Add(big.NewInt(consumed), big.NewInt(fault)); sum.Cmp(booked) != 0 {
+			problems = append(problems, fmt.Sprintf("lease %s's retained packs charge %s, and its rows book %s "+
+				"(%d on the donors and %d past them)", lease, sum, booked, consumed, fault))
 		}
 		return nil
 	})
