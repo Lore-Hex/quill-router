@@ -2,10 +2,10 @@
 
 Stage P1 of `docs/design/fast-admission-production-rollout.md`: load inside
 production's network, from a fast path node against the nodes' front doors,
-on one workspace of our own that no request of a customer's touches, with
-the load's own audit after each run. It enters on the counter reconciler
-counting leases (`storage_gcp_counter_reconcile.py`), `fastpathctl audit`,
-and `loadgen -workspace … -database …`, all on `main`.
+on one workspace of our own that no request of a customer's touches, under
+W3's watch, with the load's own audit after each run. It enters on the
+counter reconciler counting leases (`storage_gcp_counter_reconcile.py`),
+`fastpathctl audit`, and `loadgen -workspace … -database …`, all on `main`.
 
 ## What is done by hand, once
 
@@ -22,9 +22,28 @@ and `loadgen -workspace … -database …`, all on `main`.
 
    The amount in micro-credits (`100` USD is `100000000`) is `-funded` for
    every audit below. Nothing of the fast path moves `total_credits`.
-3. **A release from P1 on** pinned in `infra/fastpath.tf`
-   (`fastpath_release`), so the nodes carry `loadgen` and `load-mix.json` in
-   `/opt/fastpath`; then the nodes reset (P0's runbook).
+3. **Its tier.** A grant is not a payment, so the workspace's credit rows
+   stay at trust tier 0 and the fleet, which needs tier 1, would refuse its
+   first grant. The override the internal admin route sets, through the
+   store, raises every shard's effective tier (dry run first, then
+   `--apply`):
+
+   ```bash
+   uv run python scripts/set_trust_override.py --workspace-id WORKSPACE --tier 1 --operator josephjavierperla@tt.live --reason "fastpath P1 synthetic workspace" --apply
+   ```
+
+4. **The watch's reads.** `fastpathwatch` reads Spanner's CPU and the
+   subscriptions' backlogs from Cloud Monitoring as the node, so the nodes'
+   service account gets `roles/monitoring.viewer` beside the writer roles
+   P0 gave it:
+
+   ```bash
+   gcloud projects add-iam-policy-binding quill-cloud-proxy --member=serviceAccount:tr-fastpath-node@quill-cloud-proxy.iam.gserviceaccount.com --role=roles/monitoring.viewer --condition=None --quiet
+   ```
+
+5. **A release from P1 on** pinned in `infra/fastpath.tf`
+   (`fastpath_release`), so the nodes carry `loadgen`, `fastpathwatch` and
+   `load-mix.json` in `/opt/fastpath`; then the nodes reset (P0's runbook).
 
 ## Each run
 
@@ -34,40 +53,59 @@ From a node, over IAP:
 gcloud compute ssh tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-proxy --tunnel-through-iap
 ```
 
-with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`
-and `WS` the workspace's ID:
+with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
+`WS` the workspace's ID and `FUNDED` its funding in micro-credits:
 
 1. **On.** `/opt/fastpath/fastpathctl -database $DB enable $WS`.
-2. **Ready, then the load.** The generator asks the store, as a grant
-   would, whether the workspace is enabled, funded and at the tier, with
-   the fleet's `-required-tier` and `-floor` (the node's unit passes
+2. **The load, in the background.** The generator asks the store, as a
+   grant would, whether the workspace is enabled, funded and at the tier,
+   with the fleet's `-required-tier` and `-floor` (the node's unit passes
    neither, so the service's defaults in
    `fastpath/internal/service/service.go` apply), and refuses to start
    otherwise:
 
    ```bash
-   /opt/fastpath/loadgen -front http://10.128.0.51:8080,http://10.128.0.110:8080 -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl > /tmp/p1-report.json
+   /opt/fastpath/loadgen -front http://10.128.0.51:8080,http://10.128.0.110:8080 -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl > /tmp/p1-report.json &
+   LOADGEN=$!
    ```
 
-   The first run is one generation a second. Each later run raises `-rate`
-   by a step toward the design's benchmark rate (§6), within W3's ceilings
-   on the subscriptions and the pending work, and no run starts while an
-   alert of W7's is open.
-3. **The audit, after every run:**
+3. **The watch, before the first generation settles.** W3's ceilings for
+   P1, with the generator's PID: past any of them, or once it cannot see,
+   the watch stops the generator and turns the workspace off, exiting 3
+   and printing why (`docs/runbooks/fastpath-watch.md`):
 
    ```bash
-   /opt/fastpath/fastpathctl -database $DB -funded FUNDED_MICRO audit $WS
+   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager,settle-log-archive,records-archive -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -stop-pid $LOADGEN
+   ```
+
+   It runs until the generator exits (`wait $LOADGEN`, then stop the watch
+   with Ctrl-C: exit 0, nothing stopped) or until it stops the stage. A
+   stop is a finding: the run's note says which ceiling and why before the
+   next run.
+4. **The audit, after every run:**
+
+   ```bash
+   /opt/fastpath/fastpathctl -database $DB -funded $FUNDED audit $WS
    ```
 
    exits 0 with `"problems": []`, or 3 naming each way the rows break the
    identity (§4.7), book usage below what the retained leases booked, or
    decide an authorization twice. A problem stops the runs until it is
    explained.
-4. **The numbers**, into `docs/design/fast-admission-p1-results.md`: from
+5. **The numbers**, into `docs/design/fast-admission-p1-results.md`: from
    the report, `latencies["authorize admitted"]` against the 10 ms budget,
    the outcomes, and `not_started`; from Cloud Monitoring, Spanner commits
    and CPU over the run; from the nodes' logs, renewals, auditor commits,
    Pub/Sub latency and redeliveries.
+
+The first run is one generation a second. Before the rate is raised past
+it, each of the watch's stops is exercised once at that rate, as
+`fastpath-watch.md` lists them (`-max-cpu 0.01`; a backlog; `-overdue 1s
+-max-overdue 0` with the pending worker stopped; `-max-spend 1`; a
+subscription that does not exist), each ending with the generator gone and
+`/opt/fastpath/fastpathctl -database $DB status $WS` at exit 0, then the
+workspace enabled again. Each later run raises `-rate` by a step toward the
+design's benchmark rate (§6), within the same ceilings.
 
 ## The mix
 
@@ -75,13 +113,13 @@ and `WS` the workspace's ID:
 a share of the hold from two hours of production's settled reservations
 (2026-10-12), read through `tr_reservation_by_terminal` as the rollup
 reads them, and the refund share. The stream share and the heartbeats per
-stream are assumptions, stated in the file, until a run measures them from
+stream are assumptions, stated here, until a run measures them from
 ClickHouse's `activity_generations` on a node; a change to the mix is a
 change to the fixture, reviewed.
 
 ## Way back
 
-`fastpathctl -database $DB disable $WS` revokes the workspace's open leases
-with the switch, and `fastpathctl -database $DB status $WS` exits 0 once
-nothing of the fast path is left of it (W2). The workspace's credit stays
-its own.
+`/opt/fastpath/fastpathctl -database $DB disable $WS` revokes the
+workspace's open leases with the switch, and
+`/opt/fastpath/fastpathctl -database $DB status $WS` exits 0 once nothing
+of the fast path is left of it (W2). The workspace's credit stays its own.

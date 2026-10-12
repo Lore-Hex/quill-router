@@ -4,6 +4,7 @@ startup script, the load mix)."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,16 +13,17 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_release_ships_the_load_generator_and_its_mix() -> None:
     workflow = (ROOT / ".github" / "workflows" / "fastpath-release.yml").read_text(encoding="utf-8")
     assert "-o ../release/loadgen ./cmd/loadgen" in workflow
+    assert "-o ../release/fastpathwatch ./cmd/fastpathwatch" in workflow
     assert "cp testdata/load-mix.json ../release/load-mix.json" in workflow
-    assert "sha256sum fastpath fastpathctl loadgen load-mix.json > SHA256SUMS" in workflow
-    assert "release/loadgen release/load-mix.json release/SHA256SUMS" in workflow
+    assert "sha256sum fastpath fastpathctl loadgen fastpathwatch load-mix.json > SHA256SUMS" in workflow
+    assert "release/loadgen release/fastpathwatch release/load-mix.json release/SHA256SUMS" in workflow
 
 
 def test_node_installs_the_load_generator_when_the_release_carries_it() -> None:
     script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
-    assert "for tool in loadgen load-mix.json; do" in script
-    # A release from before P1 has neither; the node still runs.
-    assert "carries no $tool; the load generator is not installed" in script
+    assert "for tool in loadgen fastpathwatch load-mix.json; do" in script
+    # A release from before P1 has none of them; the node still runs.
+    assert "carries no $tool; P1's tools are not installed" in script
     assert script.index("for tool in loadgen") < script.index('echo "$release" > /opt/fastpath/release')
 
 
@@ -38,3 +40,18 @@ def test_load_mix_is_a_histogram_the_generator_takes() -> None:
     assert set(mix) == {"stream_share", "heartbeats", "refund_share", "estimates", "bill_permill"}
     runbook = (ROOT / "docs" / "runbooks" / "fastpath-p1.md").read_text(encoding="utf-8")
     assert "tr_reservation_by_terminal" in runbook and "assumptions" in runbook
+
+
+def test_runbook_runs_the_watch_and_names_every_binary_by_its_path() -> None:
+    runbook = (ROOT / "docs" / "runbooks" / "fastpath-p1.md").read_text(encoding="utf-8")
+    # No command starts with a bare binary: a fresh IAP login has no
+    # /opt/fastpath on its PATH.
+    for binary in ("fastpathctl", "loadgen", "fastpathwatch"):
+        assert f"/opt/fastpath/{binary}" in runbook, binary
+    assert re.search(r"^\s*(fastpathctl|loadgen|fastpathwatch) ", runbook, re.M) is None
+    # The watch runs with the generator's PID and every ceiling of P1's.
+    for flag in ("-stop-pid $LOADGEN", "-max-cpu", "-max-undelivered", "-max-oldest", "-overdue", "-max-overdue",
+                 "-max-spend", "-subscriptions auditor,stager,settle-log-archive,records-archive"):
+        assert flag in runbook, flag
+    # The workspace reaches the tier leases need, by an override, before the first run.
+    assert "scripts/set_trust_override.py" in runbook and "--tier 1" in runbook
