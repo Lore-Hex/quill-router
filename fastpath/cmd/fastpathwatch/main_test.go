@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -361,5 +362,74 @@ func TestAWatchStoppedAsItOpensExitsZero(t *testing.T) {
 	}
 	if code, err := run(context.Background(), args, &bytes.Buffer{}, d); code != 1 || err == nil {
 		t.Fatalf("opening that fails: exit %d, %v", code, err)
+	}
+}
+
+// TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt: with -run, the load
+// starts only after the watch's first look, is stopped past a ceiling with
+// the workspace turned off after it, and when it ends on its own the watch
+// ends too, exiting as the load did; a watch that cannot see never starts
+// it.
+func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
+	ws, _, d := stage(t, sources{cpu: 0.1})
+	marker := filepath.Join(t.TempDir(), "started")
+	// The load ends on its own: exit 0, the workspace left on.
+	code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c",
+		"touch "+marker+"; sleep 0.3; exit 0"), &bytes.Buffer{}, d)
+	if code != 0 || err != nil {
+		t.Fatalf("a load that ended: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the load never started")
+	}
+	if !enabled(t, ws) {
+		t.Fatal("the workspace was turned off by a load that ended")
+	}
+	// The load fails: exit 1, naming it.
+	if code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "exit 7"),
+		&bytes.Buffer{}, d); code != 1 || err == nil || !strings.Contains(err.Error(), "exit status 7") {
+		t.Fatalf("a load that failed: exit %d, %v", code, err)
+	}
+	// A ceiling passed: the load is told to stop, exits, and the workspace
+	// is turned off after it.
+	hot := d
+	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		src, s, closeAll, _ := d.open(context.Background(), target{})
+		_ = src
+		return sources{cpu: 0.5}, s, closeAll, nil
+	}
+	var out bytes.Buffer
+	code, err = run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c",
+		"trap 'sleep 0.2; exit 0' TERM; while :; do sleep 0.1; done"), &out, hot)
+	if code != stopped || err != nil {
+		t.Fatalf("a load stopped past a ceiling: exit %d, %v %s", code, err, out.String())
+	}
+	var answer map[string]any
+	if err := json.Unmarshal(out.Bytes(), &answer); err != nil || answer["load"] != "exited" ||
+		answer["revoked_leases"] != float64(1) {
+		t.Fatalf("the answer: %v %v", answer, err)
+	}
+	if enabled(t, ws) {
+		t.Fatal("the workspace is still enabled after the stop")
+	}
+	// A watch that cannot open never starts the load.
+	blind := d
+	blind.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		return nil, nil, nil, errors.New("no Monitoring")
+	}
+	never := filepath.Join(t.TempDir(), "never")
+	if code, err := run(context.Background(), append(flags, "-workspace", ws, "-run", "sh", "-c", "touch "+never),
+		&bytes.Buffer{}, blind); code != 1 || err == nil {
+		t.Fatalf("a watch that cannot open: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(never); err == nil {
+		t.Fatal("the load started under a watch that cannot see")
+	}
+	// -run with no command, or beside -stop-pid, is usage.
+	for _, args := range [][]string{append(slices.Clone(flags), "-workspace", ws, "-run"),
+		append(slices.Clone(flags), "-workspace", ws, "-run", "-stop-pid", "4242", "sh")} {
+		if code, _ := run(context.Background(), args, &bytes.Buffer{}, d); code != 2 {
+			t.Fatalf("%q: exit %d", args, code)
+		}
 	}
 }

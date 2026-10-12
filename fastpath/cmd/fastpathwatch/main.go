@@ -11,6 +11,15 @@
 // It exits 3 once it has stopped the stage, and prints why as JSON; 0 if it
 // is itself stopped first, having stopped nothing; 1 if it cannot watch, or
 // cannot turn the workspace off; 2 for its usage.
+//
+// With -run, the load generator's command follows the flags and the watch
+// runs it: started only once the watch sees, so no load runs unwatched;
+// stopped past a ceiling as -stop-pid is; and when it exits on its own the
+// watch ends with it, exiting 0, or 1 if the load did not, having stopped
+// nothing (rollout P1):
+//
+//	fastpathwatch -database D -project P -instance I -subscriptions ... -workspace WS \
+//	    -max-cpu 0.35 ... -run /opt/fastpath/loadgen -front ... -workspace WS -database D ...
 package main
 
 import (
@@ -21,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -120,6 +130,8 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	misses := fs.Int("misses", 3, "how many looks in a row may fail before the watch stops the stage")
 	pid := fs.Int("stop-pid", 0, "the load generator's process, stopped first; 0 for none")
 	grace := fs.Duration("stop-wait", time.Minute, "how long the load generator has to exit once told to")
+	supervise := fs.Bool("run", false, "the load generator's command follows the flags: started once the watch sees, "+
+		"stopped past a ceiling as -stop-pid is, and the watch ends with it, exiting as it did")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -132,7 +144,11 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		}
 	}
 	switch {
-	case fs.NArg() != 0:
+	case *supervise && fs.NArg() == 0:
+		return 2, errors.New("-run: the load generator's command follows the flags")
+	case *supervise && *pid != 0:
+		return 2, errors.New("-run starts the load generator, so -stop-pid names none")
+	case !*supervise && fs.NArg() != 0:
 		return 2, fmt.Errorf("arguments past the flags: %q", fs.Args())
 	case t.database == "" || t.project == "" || t.instance == "" || t.workspace == "" || len(t.subscriptions) == 0:
 		return 2, errors.New("-database, -project, -instance, -workspace and -subscriptions")
@@ -172,9 +188,44 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		}
 		return 1, err
 	}
-	why := w.Watch(ctx, func([]string) {})
+	// With -run, the load starts only now, once the watch sees, and the
+	// watch ends when the load does: a load that exits is not a stop, and
+	// the command exits as the load did.
+	var load *exec.Cmd
+	loadDone := make(chan error, 1)
+	wctx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+	if *supervise {
+		load = exec.CommandContext(context.Background(), fs.Arg(0), fs.Args()[1:]...)
+		load.Stdout, load.Stderr = os.Stdout, os.Stderr
+		if err := load.Start(); err != nil {
+			return 1, fmt.Errorf("starting the load generator: %w", err)
+		}
+		*pid = load.Process.Pid
+		go func() {
+			loadDone <- load.Wait()
+			cancelWatch()
+		}()
+	}
+	why := w.Watch(wctx, func([]string) {})
 	if why == nil {
-		return 0, nil
+		if load == nil {
+			return 0, nil
+		}
+		select {
+		case err := <-loadDone:
+			// The load ran to its end, watched throughout.
+			if err != nil {
+				return 1, fmt.Errorf("the load generator: %w", err)
+			}
+			return 0, nil
+		default:
+			// The watch was stopped first: the load goes with it, and the
+			// stage is left as it is.
+			answer := map[string]any{"load": stopLoad(d, *pid, *grace)}
+			_ = json.NewEncoder(out).Encode(answer)
+			return 0, nil
+		}
 	}
 	// The stage stops: the load first, so nothing more is sent, then the
 	// workspace, whose leases are revoked with it. The watch's own context
@@ -182,6 +233,9 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	answer := map[string]any{"why": why, "workspace": t.workspace}
 	if *pid > 0 {
 		answer["load"] = stopLoad(d, *pid, *grace)
+		if load != nil {
+			<-loadDone
+		}
 	}
 	octx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

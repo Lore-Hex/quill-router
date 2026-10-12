@@ -57,32 +57,27 @@ with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trus
 `WS` the workspace's ID and `FUNDED` its funding in micro-credits:
 
 1. **On.** `/opt/fastpath/fastpathctl -database $DB enable $WS`.
-2. **The load, in the background.** The generator asks the store, as a
-   grant would, whether the workspace is enabled, funded and at the tier,
-   with the fleet's `-required-tier` and `-floor` (the node's unit passes
-   neither, so the service's defaults in
-   `fastpath/internal/service/service.go` apply), and refuses to start
-   otherwise:
+2. **The load, under the watch.** One command: the watch opens its reads
+   and takes its first look, and only then starts the generator it is
+   given after `-run`, so no load runs unwatched and `-max-spend` counts
+   the whole run. The generator asks the store, as a grant would, whether
+   the workspace is enabled, funded and at the tier, with the fleet's
+   `-required-tier` and `-floor` (the node's unit passes neither, so the
+   service's defaults in `fastpath/internal/service/service.go` apply),
+   and refuses to start otherwise. Past any of W3's ceilings for P1, or
+   once the watch cannot see, it stops the generator and turns the
+   workspace off, exiting 3 and printing why
+   (`docs/runbooks/fastpath-watch.md`); when the generator ends on its
+   own, the watch ends with it, exiting 0 with the workspace left on:
 
    ```bash
-   /opt/fastpath/loadgen -front http://10.128.0.51:8080,http://10.128.0.110:8080 -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl > /tmp/p1-report.json &
-   LOADGEN=$!
+   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager,settle-log-archive,records-archive -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -run /opt/fastpath/loadgen -front http://10.128.0.51:8080,http://10.128.0.110:8080 -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl
    ```
 
-3. **The watch, before the first generation settles.** W3's ceilings for
-   P1, with the generator's PID: past any of them, or once it cannot see,
-   the watch stops the generator and turns the workspace off, exiting 3
-   and printing why (`docs/runbooks/fastpath-watch.md`):
-
-   ```bash
-   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager,settle-log-archive,records-archive -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -stop-pid $LOADGEN
-   ```
-
-   It runs until the generator exits (`wait $LOADGEN`, then stop the watch
-   with Ctrl-C: exit 0, nothing stopped) or until it stops the stage. A
-   stop is a finding: the run's note says which ceiling and why before the
-   next run.
-4. **The audit, after every run:**
+   The generator's report is its standard output, the watch's answer the
+   command's last line. A stop is a finding: the run's note says which
+   ceiling and why before the next run.
+3. **The audit, after every run:**
 
    ```bash
    /opt/fastpath/fastpathctl -database $DB -funded $FUNDED audit $WS
@@ -92,7 +87,7 @@ with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trus
    identity (§4.7), book usage below what the retained leases booked, or
    decide an authorization twice. A problem stops the runs until it is
    explained.
-5. **The numbers**, into `docs/design/fast-admission-p1-results.md`: from
+4. **The numbers**, into `docs/design/fast-admission-p1-results.md`: from
    the report, `latencies["authorize admitted"]` against the 10 ms budget,
    the outcomes, and `not_started`; from Cloud Monitoring, Spanner commits
    and CPU over the run; from the nodes' logs, renewals, auditor commits,

@@ -42,16 +42,42 @@ def test_load_mix_is_a_histogram_the_generator_takes() -> None:
     assert "tr_reservation_by_terminal" in runbook and "assumptions" in runbook
 
 
-def test_runbook_runs_the_watch_and_names_every_binary_by_its_path() -> None:
+def _commands(runbook: str) -> list[str]:
+    """Every command line of the runbook: the lines of its fenced blocks and
+    the inline commands in backticks that start with a path or a tool."""
+    fenced = re.findall(r"```bash\n(.*?)```", runbook, re.S)
+    lines = [line.strip() for block in fenced for line in block.splitlines() if line.strip()]
+    inline = re.findall(r"`((?:/opt/fastpath/|fastpathctl |loadgen |fastpathwatch |gcloud |uv run )[^`]*)`", runbook)
+    return lines + inline
+
+
+def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_path() -> None:
     runbook = (ROOT / "docs" / "runbooks" / "fastpath-p1.md").read_text(encoding="utf-8")
+    commands = _commands(runbook)
+    assert len(commands) >= 8, commands
     # No command starts with a bare binary: a fresh IAP login has no
     # /opt/fastpath on its PATH.
-    for binary in ("fastpathctl", "loadgen", "fastpathwatch"):
-        assert f"/opt/fastpath/{binary}" in runbook, binary
-    assert re.search(r"^\s*(fastpathctl|loadgen|fastpathwatch) ", runbook, re.M) is None
-    # The watch runs with the generator's PID and every ceiling of P1's.
-    for flag in ("-stop-pid $LOADGEN", "-max-cpu", "-max-undelivered", "-max-oldest", "-overdue", "-max-overdue",
-                 "-max-spend", "-subscriptions auditor,stager,settle-log-archive,records-archive"):
-        assert flag in runbook, flag
-    # The workspace reaches the tier leases need, by an override, before the first run.
-    assert "scripts/set_trust_override.py" in runbook and "--tier 1" in runbook
+    for command in commands:
+        assert not re.match(r"(fastpathctl|loadgen|fastpathwatch)\b", command), command
+        assert re.match(r"(/opt/fastpath/|gcloud |uv run |LOADGEN=)", command), command
+    # The load runs only under the watch: one command, the watch's, with
+    # every ceiling of P1's, and the generator after -run; no generator
+    # runs on its own, in the background or by PID.
+    watches = [c for c in commands if c.startswith("/opt/fastpath/fastpathwatch ")]
+    loads = [c for c in commands if c.startswith("/opt/fastpath/loadgen ")]
+    assert len(watches) == 1 and not loads and "-stop-pid" not in runbook and "$!" not in runbook
+    watch = watches[0]
+    for flag in ("-max-cpu 0.35", "-max-undelivered 1000", "-max-oldest 2m", "-overdue 5m", "-max-overdue 0",
+                 "-max-spend $((FUNDED / 10))", "-subscriptions auditor,stager,settle-log-archive,records-archive",
+                 "-workspace $WS", "-run /opt/fastpath/loadgen "):
+        assert flag in watch, flag
+    load = watch.split("-run ", 1)[1]
+    for flag in ("-workspace $WS", "-database $DB", "-mix /opt/fastpath/load-mix.json", "-rate 1"):
+        assert flag in load, flag
+    # Before the first run: the override that puts the workspace at the
+    # tier, and the role the watch's Monitoring reads need; before the rate
+    # rises, each stop exercised.
+    assert any("scripts/set_trust_override.py" in c and "--tier 1" in c and "--apply" in c for c in commands)
+    assert any("roles/monitoring.viewer" in c and "tr-fastpath-node@" in c for c in commands)
+    exercised = runbook.index("each of the watch's stops is exercised once")
+    assert runbook.index("raises `-rate` by a step") > exercised
