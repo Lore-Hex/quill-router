@@ -93,9 +93,17 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     exercised = runbook.index("each of the watch's stops is exercised once")
     raised = re.search(r"raises\s+`-rate` by a step", runbook)
     assert raised is not None and raised.start() > exercised
-    # The fifth exercise is -run's: a watch that cannot see at its start
-    # starts no load, exit 1, and no stop to confirm by status.
-    assert "cannot see at its start starts no load" in runbook and "exits 1 before any" in runbook
+    # The exercises breach once the generator runs, each confirmed by the
+    # generations sent and the watch naming the load; a lost view at the
+    # start starts no load, exit 1, and no stop to confirm by status; the
+    # CPU ceiling is not exercised in production.
+    exercises = runbook[exercised:raised.start()]
+    for phrase in ("`-max-spend 1`", "`-max-oldest 1s`", "`-overdue 1s -max-overdue 0`", "once the report shows generations",
+                   "A lost view: the one `-run` gives, at the start", "exits 1 before any",
+                   "The CPU ceiling is left to the watch's tests",
+                   '`"load":\n"exited"`', "status $WS` at exit 0"):
+        assert phrase in exercises, phrase
+    assert "-max-cpu 0.01" not in runbook
 
 
 def test_commands_keep_their_order_within_a_block() -> None:

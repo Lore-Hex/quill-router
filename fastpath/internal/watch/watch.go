@@ -256,19 +256,20 @@ func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
 		}
 		a.apply(&r)
 	}
+	// What this look could not read is recorded whatever it makes of the
+	// rest: Sees reads it first.
+	w.lastFailed = failed
 	if past := w.cfg.Ceilings.Past(r); len(past) > 0 {
 		return r, past
 	}
 	if len(failed) > 0 {
 		w.misses++
-		w.lastFailed = failed
 		if w.misses >= w.cfg.Misses {
 			return r, []string{fmt.Sprintf("%d looks in a row could not read: %s", w.misses, strings.Join(failed, "; "))}
 		}
 		return r, nil
 	}
 	w.misses = 0
-	w.lastFailed = nil
 	return r, nil
 }
 

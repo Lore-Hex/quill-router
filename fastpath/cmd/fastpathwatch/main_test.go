@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -461,7 +462,11 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 	// the load's PID, and the workspace still on as it is told to stop.
 	armed := filepath.Join(t.TempDir(), "armed")
 	stubborn := "trap '' TERM; touch " + armed + "; while :; do sleep 0.1; done"
+	// The term hook learns the load's PID; from then a goroutine watches
+	// that the workspace stays enabled for as long as the process exists,
+	// so a turn-off before the load is gone is seen whenever it happens.
 	var told int
+	var offEarly atomic.Bool
 	observing := func(base deps) deps {
 		o := base
 		o.term = func(pid int) error {
@@ -469,6 +474,15 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 			if !enabled(t, ws) {
 				t.Error("the workspace was turned off before the load was told to stop")
 			}
+			go func() {
+				for syscall.Kill(pid, 0) == nil {
+					if on, err := isEnabled(ws); err == nil && !on {
+						offEarly.Store(true)
+						return
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+			}()
 			return base.term(pid)
 		}
 		return o
@@ -480,6 +494,9 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 		}
 		if err := syscall.Kill(told, 0); !errors.Is(err, syscall.ESRCH) {
 			t.Fatalf("%s: the load %d is still there once the command returned: %v", what, told, err)
+		}
+		if offEarly.Load() {
+			t.Fatalf("%s: the workspace was turned off while the load's process was still there", what)
 		}
 	}
 	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
@@ -519,17 +536,31 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 		t.Fatal("the workspace was turned off by a watch stopped first")
 	}
 	// With one miss allowed, a first look that cannot read is still exit 1
-	// and no load, not a stop.
-	unseenOnce := filepath.Join(t.TempDir(), "unseen-once")
-	if code, err := run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-misses", "1", "-run",
-		"sh", "-c", "touch "+unseenOnce), &out, partial); code != 1 || err == nil || !strings.Contains(err.Error(), "could not read") {
-		t.Fatalf("one miss allowed, the first look cannot read the CPU: exit %d, %v", code, err)
-	}
-	if _, err := os.Stat(unseenOnce); err == nil {
-		t.Fatal("the load started under a watch that could not read the CPU, one miss allowed")
-	}
-	if !enabled(t, ws) {
-		t.Fatal("the workspace was turned off by a watch that could not see at its start")
+	// and no load, not a stop; and so is one that cannot read a backlog
+	// while the CPU it did read is past the ceiling.
+	for _, c := range []struct {
+		what string
+		src  watch.Sources
+	}{
+		{"the first look cannot read the CPU", noCPU{sources{cpu: 0.1}}},
+		{"the first look cannot read a backlog, and the CPU is past the ceiling", noBacklog{sources{cpu: 0.5}}},
+	} {
+		blindish := d
+		blindish.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+			_, s, closeAll, _ := d.open(context.Background(), target{})
+			return c.src, s, closeAll, nil
+		}
+		unseenOnce := filepath.Join(t.TempDir(), "unseen-once")
+		if code, err := run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-misses", "1", "-run",
+			"sh", "-c", "touch "+unseenOnce), &out, blindish); code != 1 || err == nil || !strings.Contains(err.Error(), "could not read") {
+			t.Fatalf("one miss allowed, %s: exit %d, %v", c.what, code, err)
+		}
+		if _, err := os.Stat(unseenOnce); err == nil {
+			t.Fatalf("one miss allowed, %s: the load started", c.what)
+		}
+		if !enabled(t, ws) {
+			t.Fatalf("one miss allowed, %s: the workspace was turned off", c.what)
+		}
 	}
 	// A watch that cannot open never starts the load.
 	blind := d
@@ -582,4 +613,23 @@ func (w *warming) SpannerCPU(context.Context) (float64, error) {
 		}
 	}
 	return 0.5, nil
+}
+
+// noBacklog is a source whose backlog reads fail, the rest reading as src
+// does.
+type noBacklog struct{ sources }
+
+func (noBacklog) Undelivered(context.Context, string) (int64, error) {
+	return 0, errors.New("no Monitoring")
+}
+
+// isEnabled says whether the switch enables the workspace, for a goroutine.
+func isEnabled(ws string) (bool, error) {
+	row, err := shared.Single().ReadRow(context.Background(), "tr_fastpath_workspace", spanner.Key{ws}, []string{"enabled"})
+	if err != nil {
+		return false, err
+	}
+	var on bool
+	err = row.Column(0, &on)
+	return on, err
 }
