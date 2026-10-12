@@ -173,3 +173,18 @@ def test_proof_oracle_ci_split(request, tmp_path):
     # Negative control: moving/adding a marked file cannot silently drop it.
     with pytest.raises(AssertionError, match='missing from dedicated CI job'):
         check_proof_oracle_paths({tmp_path / 'test_unrouted_oracle.py'})
+
+
+def test_ci_and_production_use_the_same_python() -> None:
+    # CI previously took whatever Python the runner image shipped; a 3.11 image
+    # would silently skip PEP 695 cases that production (3.12) exercises.
+    pinned = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
+    assert pinned == "3.12"
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert f"uv:python{pinned}-" in dockerfile
+    refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
+    assert f'python-version: "{pinned}"' in refresh
+    # Every CI job installs through uv, which honors .python-version.
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "actions/setup-python" not in ci
+    assert "astral-sh/setup-uv" in ci

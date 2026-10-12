@@ -1,8 +1,293 @@
+import json
+import os
+import shlex
+import shutil
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def publication_script() -> str:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    steps = [
+        step for job in workflow["jobs"].values() for step in job.get("steps", [])
+        if step.get("name") == "Commit, verify, and push if changed"
+    ]
+    assert len(steps) == 1, "Expected exactly one price-refresh publication step"
+    script = steps[0].get("run")
+    assert isinstance(script, str) and script.strip(), "Publication step has no run script"
+    return script
+
+
+def remove_publication_guard(script: str, guard: str) -> str:
+    """Negative controls change only the in-memory script, never the workflow."""
+    if guard == "conclusion":
+        before, after = 'if [ "${conclusion}" = "success" ]; then', "if true; then"
+    elif guard == "head_sha":
+        before, after = r'map(select(.headSha == \"${SNAPSHOT_SHA}\"))', "."
+    elif guard == "main_moved":
+        # Only disable the pre-push guard; retain the push-race recovery guard.
+        before = 'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then'
+        after = "if false; then"
+        assert script.count(before) == 2
+        return script.replace(before, after, 1)
+    else:
+        raise AssertionError(f"Unknown mutation: {guard}")
+    assert script.count(before) == 1, f"Mutation target missing or ambiguous: {guard}"
+    return script.replace(before, after, 1)
+
+
+@dataclass
+class PublicationRepo:
+    root: Path
+    env: dict[str, str]
+    script: str
+    base: str = ""
+    previous: str = ""
+    moved: str = ""
+
+    @property
+    def clone(self) -> Path:
+        return self.root / "clone"
+
+    def git(self, *args: str, cwd: Path | None = None) -> str:
+        result = subprocess.run(  # noqa: S603 -- isolated local repositories; file protocol only
+            [str(self.root / "bin/git"), *args], cwd=cwd or self.clone,
+            env=self.env, text=True, capture_output=True, timeout=30,
+        )
+        assert result.returncode == 0, f"git {args}: {result.stdout}{result.stderr}"
+        return result.stdout.strip()
+
+    @property
+    def main(self) -> str:
+        return self.git("rev-parse", "refs/heads/main", cwd=self.root / "origin.git")
+
+    @property
+    def generated(self) -> str:
+        return self.git("rev-parse", "HEAD")
+
+    @property
+    def calls(self) -> list[list[str]]:
+        log = self.root / "gh-calls.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    @property
+    def dispatches(self) -> list[list[str]]:
+        return [call for call in self.calls if call[:2] == ["workflow", "run"]]
+
+    def dispatch(self, workflow: str, ref: str) -> list[str]:
+        return ["workflow", "run", workflow, "--ref", ref, "--repo", self.env["GITHUB_REPOSITORY"]]
+
+    def run(
+        self, *, conclusion: str = "success", wrong_sha: bool = False,
+        move_main: str | None = None, changed: bool = True, mutation: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        if changed:
+            snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
+            snapshot.write_text('{"generated": true}\n')
+            self.git("add", str(snapshot))
+        scenario: dict[str, object] = {"runs": [{
+            "databaseId": 1234, "headSha": self.base if wrong_sha else "$GENERATED_SHA",
+            "status": "completed", "conclusion": conclusion,
+        }]}
+        if move_main:
+            peer = self.root / "peer"
+            self.git("clone", "-q", str(self.root / "origin.git"), str(peer))
+            if move_main == "forward":
+                self.git("commit", "-qm", "Concurrent main update", "--allow-empty", cwd=peer)
+                self.moved = self.git("rev-parse", "HEAD", cwd=peer)
+            else:
+                assert move_main == "backward"
+                self.moved = self.previous
+            scenario["move_main"] = {"clone": str(peer), "sha": self.moved}
+        (self.root / "scenario.json").write_text(json.dumps(scenario))
+        script = remove_publication_guard(self.script, mutation) if mutation else self.script
+        # Relocate only the workflow's fixed scratch paths. Gate logic and all
+        # 180 polling iterations run verbatim; fake sleep removes the delay.
+        for name in ("spike-summary.txt", "refresh-summary.txt", "commit-msg.txt"):
+            script = script.replace(
+                f"/tmp/{name}", shlex.quote(str(self.root / name)),  # noqa: S108 -- relocate workflow paths
+            )
+        script_path = self.root / "publish.sh"
+        script_path.write_text(script)
+        result = subprocess.run(  # noqa: S603 -- real workflow, local git and fake gh only
+            [str(self.root / "bin/bash"), "--noprofile", "--norc", str(script_path)],
+            cwd=self.clone, env=self.env, capture_output=True, text=True, timeout=60,
+        )
+        # Every exit path must leave only main on the remote, including the
+        # no-change path (which must not create a temporary branch at all).
+        assert self.git(
+            "for-each-ref", "--format=%(refname)", "refs/heads", cwd=self.root / "origin.git",
+        ) == "refs/heads/main", result.stdout + result.stderr
+        return result
+
+
+@pytest.fixture
+def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git_exec_path = ""
+    for name in ("bash", "git", "jq", "cat", "date", "seq", "mktemp"):
+        executable = shutil.which(name)
+        if executable is None:
+            pytest.skip(f"Price-refresh publication tests require {name} on PATH")
+        if name == "git":
+            # macOS /usr/bin/git is an Xcode launcher; resolve the real binary
+            # before stripping the environment to avoid repeated tool discovery.
+            git_exec_path = subprocess.run(  # noqa: S603 -- discover installed git locally
+                [executable, "--exec-path"], text=True, capture_output=True, check=True, timeout=30,
+            ).stdout.strip()
+            real_git = Path(git_exec_path) / "git"
+            if real_git.is_file():
+                executable = str(real_git.resolve())
+        (bin_dir / name).symlink_to(executable)
+    # An allowlisted PATH prevents accidentally calling a real gh or another
+    # network client if the workflow changes. Git only permits local transports.
+    gh = bin_dir / "gh"
+    fake_gh = (ROOT / "tests/fixtures/refresh_publish_gh.sh").read_text()
+    gh.write_text(
+        f"#!{(bin_dir / 'bash').resolve()}\n" + fake_gh.split("\n", 1)[1]
+    )
+    gh.chmod(0o700)
+    sleep = bin_dir / "sleep"
+    sleep.write_text(f"#!{(bin_dir / 'bash').resolve()}\nexit 0\n")
+    sleep.chmod(0o700)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    env = {
+        "PATH": str(bin_dir), "TMPDIR": str(tmp_path), "LC_ALL": "C",
+        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TEMPLATE_DIR": str(empty), "GIT_ALLOW_PROTOCOL": "file",
+        "GIT_EXEC_PATH": git_exec_path,
+        "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.hooksPath",
+        "GIT_CONFIG_VALUE_0": str(empty), "GIT_CONFIG_KEY_1": "commit.gpgsign",
+        "GIT_CONFIG_VALUE_1": "false", "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid", "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+        "GITHUB_RUN_ID": "42", "GITHUB_REPOSITORY": "fixture/quill-router",
+        "GITHUB_SERVER_URL": "https://github.invalid", "GITHUB_API_URL": "https://api.github.invalid",
+        "GH_TOKEN": "offline-fixture",  # noqa: S105 -- deliberately fake credential
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    repo = PublicationRepo(tmp_path, env, publication_script)
+    repo.git("init", "-q", "--bare", "--initial-branch=main", "origin.git", cwd=tmp_path)
+    repo.git("clone", "-q", str(tmp_path / "origin.git"), "clone", cwd=tmp_path)
+    # Track one file in every git-add path so the real command cannot fail on
+    # missing pathspecs before reaching the gate being tested.
+    for name in (
+        "src/trusted_router/data/openrouter_snapshot.json",
+        "src/trusted_router/data/speech_pricing.json",
+        "src/trusted_router/data/provider_models/fixture.json",
+        "src/trusted_router/data/model_changes.jsonl",
+        "src/trusted_router/data/model_changes_state.json",
+        "src/trusted_router/static/og/providers/fixture.png",
+        "scripts/pricing/parsers/fixture.py",
+    ):
+        path = repo.clone / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+    repo.git("add", ".")
+    repo.git("commit", "-qm", "Previous main")
+    repo.previous = repo.generated
+    repo.git("commit", "-qm", "Base main", "--allow-empty")
+    repo.base = repo.generated
+    repo.git("push", "-q", "origin", "main")
+    env["GITHUB_SHA"] = repo.base
+    for name in ("spike-summary.txt", "refresh-summary.txt"):
+        (tmp_path / name).write_text("Fixture generated price changes\n")
+    return repo
+
+
+def assert_snapshot_published(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert repo.generated != repo.base
+    assert repo.main == repo.generated
+    assert repo.dispatches == [
+        repo.dispatch("ci.yml", "automation/price-refresh-42"), repo.dispatch("deploy.yml", "main"),
+    ]
+    status_calls = [call for call in repo.calls if call[0] == "api"]
+    posts = [call for call in status_calls if "POST" in call]
+    gets = [call for call in status_calls if "--method" not in call]
+    endpoint = f'repos/{repo.env["GITHUB_REPOSITORY"]}/statuses/{repo.generated}'
+    assert len(posts) == len(gets) == 4
+    assert all(endpoint in call for call in status_calls)
+    assert [next(arg for arg in call if arg.startswith("context=")) for call in posts] == [
+        "context=lint", "context=test (1)", "context=test (2)", "context=test (3)",
+    ]
+    assert all("state=success" in call for call in posts)
+    assert all(
+        f'target_url={repo.env["GITHUB_SERVER_URL"]}/{repo.env["GITHUB_REPOSITORY"]}/actions/runs/1234'
+        in call for call in posts
+    )
+
+
+def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
+    assert repo.generated != repo.base
+    assert repo.main == (repo.moved or repo.base), result.stdout + result.stderr
+    assert not any(call[0] == "api" for call in repo.calls)
+    expected = [repo.dispatch("ci.yml", "automation/price-refresh-42")]
+    if repo.moved:
+        assert result.returncode == 0, result.stdout + result.stderr
+        expected.append(repo.dispatch("refresh-prices.yml", "main"))
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+    assert repo.dispatches == expected
+
+
+def test_publication_promotes_only_the_successful_generated_sha(publication_repo: PublicationRepo) -> None:
+    assert_snapshot_published(publication_repo, publication_repo.run())
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled"])
+def test_publication_rejects_unsuccessful_ci(publication_repo: PublicationRepo, conclusion: str) -> None:
+    result = publication_repo.run(conclusion=conclusion)
+    assert_snapshot_withheld(publication_repo, result)
+    assert f"CI concluded '{conclusion}'" in result.stdout
+
+
+def test_publication_times_out_when_only_another_sha_passed(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(wrong_sha=True)
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI did not pass within" in result.stdout
+    assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 180
+
+
+@pytest.mark.parametrize("direction", ["forward", "backward"])
+def test_publication_recomputes_when_main_moved(publication_repo: PublicationRepo, direction: str) -> None:
+    result = publication_repo.run(move_main=direction)
+    assert (publication_repo.root / "main-moved").read_text() == publication_repo.moved
+    assert publication_repo.moved != publication_repo.base
+    assert_snapshot_withheld(publication_repo, result)
+
+
+def test_publication_does_nothing_without_staged_changes(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(changed=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.generated == publication_repo.base
+    assert publication_repo.calls == []
+
+
+@pytest.mark.parametrize("guard", ["conclusion", "head_sha", "main_moved"])
+def test_publication_guards_have_effect(publication_repo: PublicationRepo, guard: str) -> None:
+    # A rewind isolates the main-moved guard: a divergent forward move would
+    # also be rejected by Git's non-fast-forward rule, masking a missing guard.
+    result = publication_repo.run(
+        conclusion="failure" if guard == "conclusion" else "success",
+        wrong_sha=guard == "head_sha",
+        move_main="backward" if guard == "main_moved" else None,
+        mutation=guard,
+    )
+    # The SAME safety assertion used above must reject every mutant, and the
+    # remote ref must show an actual unsafe publication (not an unrelated error).
+    with pytest.raises(AssertionError):
+        assert_snapshot_withheld(publication_repo, result)
+    assert_snapshot_published(publication_repo, result)
 
 
 def test_ci_accepts_explicit_dispatch_for_bot_commits() -> None:
