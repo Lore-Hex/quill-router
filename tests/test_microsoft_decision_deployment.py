@@ -70,7 +70,9 @@ def test_fresh_cloud_catalog_discovery_and_authorization(region: str) -> None:
                     response = await client.get("/v1/models")
                 assert response.status_code == 200, response.text
                 ids = {row["id"] for row in response.json()["data"]}
-                assert (model in ids) is available
+                # Retirement disables routes but preserves the seed's public
+                # metadata. A gateway hold removes the entire model instead.
+                assert (model in ids) is allowed
             asyncio.run(verify())
         ''')],
         env={**os.environ, "TR_PRIMARY_REGION": region, "TR_SERVING_REGION": "", "TR_ENVIRONMENT": "test"},
