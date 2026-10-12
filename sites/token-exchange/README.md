@@ -92,8 +92,10 @@ and publish with the observed generation precondition to reject concurrent edits
 
 ### Homepage routing demo
 
-`media/nyte-routing-demo.mp4` is the user-supplied October 11 video, unchanged
-(89.27 seconds, H.264/AAC, 1920×1080). `media/nyte-routing-demo-poster.jpg` is a
+`media/nyte-routing-demo.mp4` is the user-supplied October 12 video, unchanged
+(85.95 seconds, H.264/AAC, 1920×1080; SHA-256
+`869f48547224c9524d556aed0cca77d09bd241866a7efaaf0410d24f317907de`).
+`media/nyte-routing-demo-poster.jpg` is a
 1280px still from that video. The build copies both into `assets/`. All market
 homepages show native controls with `playsinline` and `preload="none"`, with no
 autoplay. Captions are already burned into the supplied video. Publish the MP4
