@@ -497,10 +497,6 @@
         "count": 1,
         "reason": "Comment describing endpoint removal from a price snapshot."
       },
-      "# Never rebase generated output after checking it: that would create": {
-        "count": 1,
-        "reason": "Comment explaining generated-output rebase policy."
-      },
       "# The create-status response currently omits `creator` and `sha`.": {
         "count": 1,
         "reason": "Comment describing the GitHub commit-status response."

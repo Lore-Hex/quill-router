@@ -29,8 +29,8 @@ on:
     - cron: "37 * * * *"
   workflow_dispatch: {}
 
-# One run at a time: a successful run takes about 30-45 minutes, and a run
-# re-dispatches this workflow when main advances. GitHub keeps one pending
+# One run at a time: a run can repeat exact-SHA CI after rebasing, or
+# re-dispatch this workflow when recomputation is needed. GitHub keeps one pending
 # run per group; a newer run replaces an older pending one, never the one
 # in progress.
 concurrency:
@@ -380,58 +380,92 @@ jobs:
           # The organization intentionally forbids Actions-created PRs.
           BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"
           SNAPSHOT_SHA=$(git rev-parse HEAD)
+          GENERATED_SHA=${SNAPSHOT_SHA}
+          BASE_SHA=${GITHUB_SHA}
+          rebase_attempts=0
           cleanup_branch() {
             git push origin --delete "${BRANCH}" >/dev/null 2>&1 || true
           }
           trap cleanup_branch EXIT
           git push origin "HEAD:refs/heads/${BRANCH}"
-          gh workflow run ci.yml \
-            --ref "${BRANCH}" \
-            --repo "${GITHUB_REPOSITORY}"
-          echo "  dispatched ci.yml for generated snapshot branch"
 
-          ci_passed=""
-          ci_run_id=""
-          for _ in $(seq 1 180); do
-            run_json=$(gh run list \
-              --repo "${GITHUB_REPOSITORY}" \
-              --workflow ci.yml \
-              --branch "${BRANCH}" \
-              --event workflow_dispatch \
-              --json databaseId,headSha,status,conclusion \
-              --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
-            if [ -n "${run_json}" ]; then
-              status=$(jq -r .status <<<"${run_json}")
-              conclusion=$(jq -r .conclusion <<<"${run_json}")
-              echo "  ci run $(jq -r .databaseId <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
-              if [ "${status}" = "completed" ]; then
-                if [ "${conclusion}" = "success" ]; then
-                  ci_passed=1
-                  ci_run_id=$(jq -r .databaseId <<<"${run_json}")
-                  break
-                fi
-                echo "generated snapshot CI concluded '${conclusion}'"
-                exit 1
-              fi
-            fi
-            sleep 15
-          done
-          if [ -z "${ci_passed}" ]; then
-            echo "generated snapshot CI did not pass within 45 minutes"
-            exit 1
-          fi
-
-          # Never rebase generated output after checking it: that would create
-          # an untested SHA. If main moved during refresh/CI, queue a fresh run
-          # from the new head and discard this temporary branch.
-          git fetch -q origin main
-          if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
-            echo "::warning::main advanced during price refresh; queueing a fresh recomputation"
+          queue_recomputation() {
+            echo "::warning::$1; queueing a fresh recomputation"
             gh workflow run refresh-prices.yml \
               --ref main \
               --repo "${GITHUB_REPOSITORY}"
             exit 0
-          fi
+          }
+
+          # Never publish an untested SHA: every cherry-pick produces a new
+          # candidate that must pass full exact-SHA CI before status bridging
+          # and a fast-forward push to main. Reuse data only if no refresh
+          # input or output changed since the original generation base.
+          while true; do
+            gh workflow run ci.yml \
+              --ref "${BRANCH}" \
+              --repo "${GITHUB_REPOSITORY}"
+            echo "  dispatched ci.yml for generated snapshot branch"
+
+            ci_passed=""
+            ci_run_id=""
+            for _ in $(seq 1 180); do
+              run_json=$(gh run list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --workflow ci.yml \
+                --branch "${BRANCH}" \
+                --event workflow_dispatch \
+                --json databaseId,headSha,status,conclusion \
+                --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+              if [ -n "${run_json}" ]; then
+                status=$(jq -r .status <<<"${run_json}")
+                conclusion=$(jq -r .conclusion <<<"${run_json}")
+                echo "  ci run $(jq -r .databaseId <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
+                if [ "${status}" = "completed" ]; then
+                  if [ "${conclusion}" = "success" ]; then
+                    ci_passed=1
+                    ci_run_id=$(jq -r .databaseId <<<"${run_json}")
+                    break
+                  fi
+                  echo "generated snapshot CI concluded '${conclusion}'"
+                  exit 1
+                fi
+              fi
+              sleep 15
+            done
+            if [ -z "${ci_passed}" ]; then
+              echo "generated snapshot CI did not pass within 45 minutes"
+              exit 1
+            fi
+
+            git fetch -q origin main
+            MAIN_SHA=$(git rev-parse origin/main)
+            if [ "${MAIN_SHA}" = "${BASE_SHA}" ]; then
+              break
+            fi
+            if [ "${rebase_attempts}" -ge 3 ]; then
+              queue_recomputation "main kept advancing after three rebase attempts"
+            fi
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" "${MAIN_SHA}"; then
+              queue_recomputation "main no longer descends from the generation base"
+            fi
+            decision=$(git diff --name-only --no-renames -z "${GITHUB_SHA}..${MAIN_SHA}" |
+              python scripts/pricing/publish_decision.py)
+            if [ "${decision}" != "rebase" ]; then
+              queue_recomputation "main changed a refresh input or output"
+            fi
+
+            rebase_attempts=$((rebase_attempts + 1))
+            BASE_SHA=${MAIN_SHA}
+            git checkout --detach "${BASE_SHA}"
+            if ! git cherry-pick "${GENERATED_SHA}"; then
+              git cherry-pick --abort || true
+              queue_recomputation "generated snapshot could not be cherry-picked onto main"
+            fi
+            SNAPSHOT_SHA=$(git rev-parse HEAD)
+            git push --force origin "HEAD:refs/heads/${BRANCH}"
+            echo "  rebased snapshot ${SNAPSHOT_SHA} (attempt ${rebase_attempts}/3); rerunning full CI"
+          done
 
           # GitHub's protected-branch hook does not accept check runs from a
           # workflow_dispatch branch for a direct GITHUB_TOKEN push, even
@@ -479,12 +513,8 @@ jobs:
           if ! git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
             cat "${push_log}" >&2
             git fetch -q origin main
-            if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
-              echo "::warning::main raced the checked snapshot push; queueing a fresh recomputation"
-              gh workflow run refresh-prices.yml \
-                --ref main \
-                --repo "${GITHUB_REPOSITORY}"
-              exit 0
+            if [ "$(git rev-parse origin/main)" != "${BASE_SHA}" ]; then
+              queue_recomputation "main raced the checked snapshot push"
             fi
             echo "branch protection rejected an exact SHA with successful required checks"
             exit 1

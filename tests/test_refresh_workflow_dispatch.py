@@ -1,6 +1,158 @@
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
+
+# Run the actual publication shell with git/gh replaced by in-process fakes:
+# no commits, remotes, API calls, or sleeps. The decision helper and jq are real.
+PUBLISH_STUBS = r'''
+set -euo pipefail
+mock_head=snapshot0
+main_version=0
+fetches=0
+git() {
+  echo "git $*" >> "$CALL_LOG"
+  case "$*" in
+    "rev-parse HEAD") echo "$mock_head" ;;
+    "rev-parse origin/main") echo "base${main_version}" ;;
+    "fetch -q origin main")
+      fetches=$((fetches + 1))
+      if [ "$fetches" -le "$MAIN_MOVES" ]; then main_version=$fetches; fi
+      if [ "$SCENARIO" = push_race ] && [ "$fetches" -gt 2 ]; then main_version=2; fi
+      ;;
+    "merge-base "*) [ "$SCENARIO" != diverged ] ;;
+    "diff "*)
+      if [ "$SCENARIO" = diff_failure ]; then return 1; fi
+      if [ "$SCENARIO" = relevant ] || { [ "$SCENARIO" = later_relevant ] && [ "$fetches" -gt 1 ]; }; then
+        printf 'tests/unrelated.py\0scripts/pricing/refresh.py\0'
+      else
+        printf 'src/trusted_router/routes/x.py\0'
+      fi
+      ;;
+    "checkout --detach "*) : ;;
+    "cherry-pick --abort") [ "$SCENARIO" != cherry_pick_error ] ;;
+    "cherry-pick snapshot0")
+      if [ "$SCENARIO" = conflict ] || [ "$SCENARIO" = cherry_pick_error ]; then return 1; fi
+      mock_head="snapshot${main_version}"
+      ;;
+    "push origin HEAD:refs/heads/main")
+      echo "publish $mock_head" >> "$CALL_LOG"
+      [ "$SCENARIO" != push_race ] && [ "$SCENARIO" != push_rejected ]
+      ;;
+    "push "*) : ;;
+    *) echo "unexpected git: $*" >&2; return 1 ;;
+  esac
+}
+gh() {
+  echo "gh $*" >> "$CALL_LOG"
+  case "$*" in
+    "workflow run ci.yml "*) echo "dispatch $mock_head" >> "$CALL_LOG" ;;
+    "workflow run refresh-prices.yml "*|"workflow run deploy.yml "*) : ;;
+    "run list "*)
+      local result=success head="$mock_head"
+      if [ "$SCENARIO" = ci_failure ] && [ "$main_version" -gt 0 ]; then result=failure; fi
+      if [ "$SCENARIO" = wrong_sha ] && [ "$main_version" -gt 0 ]; then head=other; fi
+      jq -n --arg head "$head" --arg result "$result" --argjson id "$((100 + main_version))" '
+        [{databaseId: $id, headSha: $head, status: "completed", conclusion: $result},
+         {databaseId: 100, headSha: "snapshot0", status: "completed", conclusion: "success"}]' |
+        jq -c "${!#}"
+      ;;
+    "api --method POST "*)
+      [[ "$*" == *"repos/${GITHUB_REPOSITORY}/statuses/${mock_head} "* ]] || return 1
+      [[ "$*" == *"target_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$((100 + main_version))" ]] || return 1
+      local arg context="" state=success
+      for arg in "$@"; do
+        case "$arg" in context=*) context=${arg#context=} ;; esac
+      done
+      if [ "$SCENARIO" = bad_status ]; then state=failure; fi
+      jq -n --arg url "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${mock_head}" \
+        --arg context "$context" --arg state "$state" --arg target "${ci_url}" \
+        '{id: 42, url: $url, context: $context, state: $state, target_url: $target}'
+      ;;
+    "api repos/"*)
+      [[ "$*" == *"repos/${GITHUB_REPOSITORY}/statuses/${mock_head} "* ]] || return 1
+      local creator='github-actions[bot]'
+      if [ "$SCENARIO" = bad_creator ]; then creator=other; fi
+      jq --arg creator "$creator" '. + {creator: {login: $creator}}' <<< "$status_json"
+      ;;
+    *) echo "unexpected gh: $*" >&2; return 1 ;;
+  esac
+}
+python() { "$TEST_PYTHON" "$@"; }
+sleep() { :; }
+'''
+
+
+@pytest.mark.parametrize(
+    ("scenario", "moves", "ci_count", "published", "recompute", "exit_code"),
+    [
+        ("success", 0, 1, True, False, 0),
+        ("success", 1, 2, True, False, 0),
+        ("success", 3, 4, True, False, 0),
+        ("success", 4, 4, False, True, 0),
+        ("relevant", 1, 1, False, True, 0),
+        ("later_relevant", 2, 2, False, True, 0),
+        ("conflict", 1, 1, False, True, 0),
+        ("cherry_pick_error", 1, 1, False, True, 0),
+        ("diverged", 1, 1, False, True, 0),
+        ("diff_failure", 1, 1, False, False, 1),
+        ("ci_failure", 1, 2, False, False, 1),
+        ("wrong_sha", 1, 2, False, False, 1),
+        ("bad_status", 1, 2, False, False, 1),
+        ("bad_creator", 1, 2, False, False, 1),
+        ("push_race", 1, 2, False, True, 0),
+        ("push_rejected", 1, 2, False, False, 1),
+    ],
+)
+def test_publication_flow(
+    tmp_path: Path, scenario: str, moves: int, ci_count: int,
+    published: bool, recompute: bool, exit_code: int,
+) -> None:
+    if not shutil.which("bash") or not shutil.which("jq"):
+        pytest.skip("publication shell requires bash and jq")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    step = next(
+        step for step in workflow["jobs"]["refresh"]["steps"]
+        if step.get("name") == "Commit, verify, and push if changed"
+    )
+    # Earlier validation/commit steps are covered by the structural tests below.
+    publication = step["run"][step["run"].index('BRANCH="automation/price-refresh-'):]
+    log = tmp_path / "calls.log"
+    result = subprocess.run(  # noqa: S603 - local workflow with git/gh mocked
+        ["bash", "-c", PUBLISH_STUBS + publication],  # noqa: S607
+        cwd=ROOT,
+        env={
+            **os.environ, "SCENARIO": scenario, "MAIN_MOVES": str(moves),
+            "CALL_LOG": str(log), "TMPDIR": str(tmp_path), "TEST_PYTHON": sys.executable,
+            "GITHUB_SHA": "base0", "GITHUB_RUN_ID": "123",
+            "GITHUB_REPOSITORY": "example/repo", "GITHUB_SERVER_URL": "https://github.example",
+            "GITHUB_API_URL": "https://api.github.example",
+        },
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    calls = log.read_text().splitlines()
+    assert [line for line in calls if line.startswith("dispatch ")] == [
+        f"dispatch snapshot{i}" for i in range(ci_count)
+    ]
+    assert sum(line.startswith("gh workflow run refresh-prices.yml ") for line in calls) == int(recompute)
+    assert any(line.startswith("gh workflow run deploy.yml ") for line in calls) == published
+    assert calls[-1] == "git push origin --delete automation/price-refresh-123"
+    assert all("base0..base" in line for line in calls if line.startswith("git diff "))
+    if published:
+        assert f"publish snapshot{moves}" in calls
+        assert sum(line.startswith("gh api --method POST ") for line in calls) == 4
+        assert sum(line.startswith("gh api repos/") for line in calls) == 4
+    elif scenario not in {"push_race", "push_rejected"}:
+        assert not any(line.startswith("publish ") for line in calls)
+    if scenario in {"conflict", "cherry_pick_error"}:
+        assert "git cherry-pick --abort" in calls
 
 
 def test_ci_accepts_explicit_dispatch_for_bot_commits() -> None:
@@ -28,8 +180,25 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     assert 'if [ "${conclusion}" = "success" ]' in workflow
     assert "statuses: write" in workflow
     assert 'ci_run_id=$(jq -r .databaseId <<<"${run_json}")' in workflow
-    assert 'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]' in workflow
+    assert 'if [ "${MAIN_SHA}" = "${BASE_SHA}" ]' in workflow
     assert "git rebase" not in workflow
+    assert 'BASE_SHA=${GITHUB_SHA}' in workflow
+    assert 'GENERATED_SHA=${SNAPSHOT_SHA}' in workflow
+    assert 'git diff --name-only --no-renames -z "${GITHUB_SHA}..${MAIN_SHA}"' in workflow
+    assert 'python scripts/pricing/publish_decision.py' in workflow
+    assert 'if [ "${rebase_attempts}" -ge 3 ]' in workflow
+    assert 'git checkout --detach "${BASE_SHA}"' in workflow
+    assert 'git cherry-pick "${GENERATED_SHA}"' in workflow
+    assert 'git cherry-pick --abort' in workflow
+    assert 'git push --force origin "HEAD:refs/heads/${BRANCH}"' in workflow
+    assert 'trap cleanup_branch EXIT' in workflow
+    assert 'git push origin --delete "${BRANCH}"' in workflow
+    assert 'if [ "$(git rev-parse origin/main)" != "${BASE_SHA}" ]' in workflow
+    loop = workflow[workflow.index("          while true; do"):workflow.index("          # GitHub's protected-branch hook")]
+    assert branch_ci_dispatch in loop
+    assert 'ci_passed=""' in loop and 'ci_run_id=""' in loop
+    assert 'SNAPSHOT_SHA=$(git rev-parse HEAD)' in loop
+    assert loop.index(branch_ci_dispatch) < loop.index('git cherry-pick "${GENERATED_SHA}"')
     status_bridge = '"repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"'
     assert status_bridge in workflow
     assert 'for context in "lint" "test (1)" "test (2)" "test (3)"' in workflow
@@ -50,7 +219,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
         status_bridge
     )
     assert workflow.index(
-        'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]'
+        'if [ "${MAIN_SHA}" = "${BASE_SHA}" ]'
     ) < workflow.index(status_bridge)
     assert workflow.index(status_bridge) < workflow.index(main_push)
     assert workflow.index(main_push) < workflow.index(deploy_dispatch)
