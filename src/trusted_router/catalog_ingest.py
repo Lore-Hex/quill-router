@@ -1036,7 +1036,7 @@ def _ingested_models_and_endpoints(
 
 
 def _supplemental_provider_models_and_endpoints(
-    *, at: datetime | None = None,
+    *, at: datetime | None = None, held_decisions_only: bool = False,
 ) -> tuple[
     dict[str, Model], dict[str, ModelEndpoint]
 ]:
@@ -1144,6 +1144,8 @@ def _supplemental_provider_models_and_endpoints(
         "meta",
         "openrouter",
     ):
+        if held_decisions_only and provider_slug not in {"system1models", "system1models-eu"}:
+            continue
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
             continue
@@ -1157,6 +1159,21 @@ def _supplemental_provider_models_and_endpoints(
         for raw_model in raw_models:
             if not isinstance(raw_model, dict):
                 continue
+            if held_decisions_only:
+                # Separate settlement-only inventory. A failed canary or new
+                # billing contract must not strand already-authorized calls.
+                old_prices = raw_model.get("settlement_prices")
+                if (
+                    raw_model.get("routable") is not False
+                    or raw_model.get("model_type") != "decision"
+                    or not isinstance(old_prices, dict)
+                    or set(old_prices) != {"input_token_price_per_m", "output_token_price_per_m"}
+                ):
+                    continue
+                raw_model = {
+                    **raw_model, **old_prices, "routable": True,
+                    "decision_contract_hold": None, "decision_image_input_price_per_m": None,
+                }
             # Discovery-only metadata rows must never produce catalog routes.
             if raw_model.get("routable") is False:
                 continue

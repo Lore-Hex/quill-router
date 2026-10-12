@@ -33,7 +33,11 @@
       "routable_reason": "provider-canary-failed",
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": null
+      "pricing_valid_until": null,
+      "settlement_prices": {
+        "input_token_price_per_m": 32000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models s1-pro (GLOBAL)",
@@ -67,7 +71,11 @@
       "routable_reason": "provider-canary-failed",
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": "2026-11-12T00:00:00Z"
+      "pricing_valid_until": "2026-11-12T00:00:00Z",
+      "settlement_prices": {
+        "input_token_price_per_m": 38000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models s1-vision (GLOBAL)",
@@ -100,7 +108,11 @@
       "routable_reason": "decision-image-pricing-unsupported",
       "decision_contract_hold": "decision-image-pricing-unsupported",
       "decision_image_input_price_per_m": 217000,
-      "pricing_valid_until": null
+      "pricing_valid_until": null,
+      "settlement_prices": {
+        "input_token_price_per_m": 38000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models s1-llm-auto-router (GLOBAL)",
@@ -270,7 +282,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-10-12T13:30:41Z",
+  "generated_at": "2026-10-12T13:39:54Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8,
   "pricing_valid_until": "2026-11-12T00:00:00Z"

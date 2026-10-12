@@ -243,6 +243,15 @@ class System1Catalog:
     def write_provider_manifest(self, result: ProviderPricingResult) -> list[str]:
         if not self.rows:
             raise RuntimeError(f"{self.slug}: fetch must succeed before writing manifest")
+        if self.manifest_path.exists():
+            previous = json.loads(self.manifest_path.read_text())
+            for old in previous.get("models", []):
+                row = self.rows.get(old.get("id"))
+                if row is None or row.get("routable") is not False or old.get("routable") is False:
+                    continue
+                prompt, output = old.get("input_token_price_per_m"), old.get("output_token_price_per_m")
+                if type(prompt) is int and prompt > 0 and type(output) is int and output == 0:
+                    row["settlement_prices"] = {"input_token_price_per_m": prompt, "output_token_price_per_m": output}
         holds = {model: row["decision_contract_hold"] for model, row in self.rows.items() if row["decision_contract_hold"]}
         # An all-failed live canary is evidence of unavailability, not a
         # discovery disappearance. The mass-prune guard must not keep serving

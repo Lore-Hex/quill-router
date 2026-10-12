@@ -236,6 +236,55 @@ def test_current_models_rechecked_and_recover_without_clearing_contract_holds(mo
     assert rows["quyet-1-large"]["routable_reason"] == "decision-model-namespace-unsupported"
 
 
+def test_quarantine_keeps_only_previously_published_settlement_tariffs(monkeypatch, tmp_path):
+    from scripts.pricing.providers import _system1models
+    from trusted_router import catalog_ingest, catalog_registry
+    from trusted_router.pricing import _customer_price
+    from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+
+    adapter = System1Catalog("eu")
+    adapter.manifest_path = tmp_path / "system1models-eu.json"
+    payload = catalog("s1-old")
+    monkeypatch.setenv(adapter.key_env, "test")
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: payload)
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    adapter.write_provider_manifest(adapter.fetch())
+    payload["data"][0]["prices"]["USD"]["eu"] = "0.1"
+    payload["data"].extend(catalog("s1-new")["data"])
+    monkeypatch.setattr(adapter, "probe", lambda *_a: False)
+    adapter.write_provider_manifest(adapter.fetch())
+    # Repeated failures must not replace the pre-hold tariff with new prices.
+    adapter.write_provider_manifest(adapter.fetch())
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, active = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert not models and not active
+    held_models, held = catalog_ingest._supplemental_provider_models_and_endpoints(held_decisions_only=True)
+    identity = "system1models-eu/s1-old@system1models-eu/prepaid"
+    assert set(held) == {identity}
+    assert set(held_models) == {"system1models-eu/s1-old"}
+    endpoint = held[identity]
+    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(34_000)
+    assert endpoint.completion_price_microdollars_per_million_tokens == 0
+    assert endpoint.usage_type == "Credits"
+    monkeypatch.setattr(catalog_registry, "HELD_PREPAID_SETTLEMENT_ENDPOINTS", held)
+    assert _endpoint_for_id_compat(identity) == endpoint
+    assert _endpoint_for_id_compat("system1models-eu/s1-new@system1models-eu/prepaid") is None
+
+
+@pytest.mark.parametrize("price", [None, True, -1, "34000"])
+def test_malformed_settlement_history_cannot_create_endpoint(monkeypatch, tmp_path, price):
+    from trusted_router import catalog_ingest
+
+    adapter = System1Catalog("eu")
+    _, rows = adapter.discover(catalog("s1-old"))
+    row = rows["system1models-eu/s1-old"]
+    row.update(routable=False, input_token_price_per_m=34_000, output_token_price_per_m=0,
+               settlement_prices={"input_token_price_per_m": price, "output_token_price_per_m": 0})
+    (tmp_path / "system1models-eu.json").write_text(json.dumps({"provider": adapter.slug, "models": [row]}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    assert catalog_ingest._supplemental_provider_models_and_endpoints(held_decisions_only=True) == ({}, {})
+
+
 def test_unsupported_vision_remains_visible_but_not_routable():
     payload = catalog("s1-future-vision")
     payload["data"][0]["modalities"] = ["text", "image"]

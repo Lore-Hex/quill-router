@@ -951,11 +951,16 @@ _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints(
 _SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_and_endpoints(
     at=CATALOG_RESOLVED_AT,
 )
+_HELD_DECISION_MODELS, _HELD_DECISION_ENDPOINTS = _supplemental_provider_models_and_endpoints(
+    at=CATALOG_RESOLVED_AT, held_decisions_only=True,
+)
 # The OpenRouter ingest snapshot is the primary catalog. Provider-native
 # supplements add exact routes from providers whose live model API is
 # ahead of OpenRouter's endpoint feed. Pricing across both paths goes
 # through the same `cost × 1.055, $0.01/M floor` formula.
 MODELS.update(_INGESTED_MODELS)
+for _model_id, _model in _HELD_DECISION_MODELS.items():
+    MODELS.setdefault(_model_id, _model)
 for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
     _existing_model = MODELS.get(_model_id)
     if _existing_model is None:
@@ -1675,6 +1680,7 @@ HELD_PREPAID_SETTLEMENT_ENDPOINTS = {
     identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
     if endpoint.usage_type == "Credits" and endpoint.provider in PREPAID_PROVIDER_HOLD_REASONS
 }
+HELD_PREPAID_SETTLEMENT_ENDPOINTS.update(_HELD_DECISION_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS) | frozenset(SPEECH_MODELS),

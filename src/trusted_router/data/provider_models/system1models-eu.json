@@ -98,7 +98,11 @@
       "decision_contract_hold": "decision-image-pricing-unsupported",
       "decision_image_input_price_per_m": 228000,
       "pricing_valid_until": null,
-      "routable_reason": "decision-image-pricing-unsupported"
+      "routable_reason": "decision-image-pricing-unsupported",
+      "settlement_prices": {
+        "input_token_price_per_m": 40000,
+        "output_token_price_per_m": 0
+      }
     },
     {
       "display_name": "Decision Models s1-llm-auto-router (EU)",
@@ -266,7 +270,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-10-12T13:30:38Z",
+  "generated_at": "2026-10-12T13:39:51Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8,
   "pricing_valid_until": "2026-11-12T00:00:00Z"
