@@ -324,11 +324,11 @@ def _to_prices(snapshot: dict) -> dict[str, dict[str, str]]:
     return {m["id"]: m["pricing"] for m in snapshot["models"]}
 
 
-def test_provider_manifest_loader_covers_all_azure_exact9() -> None:
+def test_provider_manifest_loader_covers_azure_chat_and_decision() -> None:
     manifest = json.loads(AZURE_MANIFEST.read_text(encoding="utf-8"))
     manifest_ids = {row["id"] for row in manifest["models"]}
 
-    assert len(manifest_ids) == 9
+    assert len(manifest_ids) == 10
     assert AZURE_OPENROUTER_ABSENT_IDS <= manifest_ids
 
     loaded = _load_provider_manifests(AZURE_MANIFEST.parent)
@@ -336,8 +336,11 @@ def test_provider_manifest_loader_covers_all_azure_exact9() -> None:
         f"{row['id']} [azure:azure:{row['upstream_id']}]"
         for row in manifest["models"]
     }
-    assert len(expected_base_routes) == len(manifest_ids) == 9
+    assert len(expected_base_routes) == len(manifest_ids) == 10
     assert expected_base_routes <= loaded.keys()
+    decision = loaded["microsoft/microsoft-decision-1 [azure:azure:tr-decision-1]"]
+    assert Decimal(decision["prompt"]) == Decimal("0.000000042")
+    assert Decimal(decision["completion"]) == 0
     expected_cached_routes = {
         f"{row['id']} [azure:azure:{row['upstream_id']}] cached-input"
         for row in manifest["models"]

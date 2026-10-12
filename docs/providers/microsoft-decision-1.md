@@ -5,7 +5,8 @@ Verified 2026-10-12. Preview, version 1. Canonical model ID:
 
 ## Contract
 
-- API: `POST https://api.trustedrouter.com/v1/decide`.
+- API: `POST https://api.trustedrouter.com/api/alpha/decide`.
+  The compatibility alias `/v1/decide` accepts the same contract.
 - Input: text or JSON `state`, and keyed `questions`.
 - Question types: `boolean` (also `noul`), `choice`, `score`.
 - Context: 32,768 tokens, per Microsoft's model card.
@@ -63,5 +64,5 @@ Sources:
 ## Release Order
 
 Deploy the enclave Azure decision adapter before publishing the catalog route.
-Then verify the public model entry and a small authenticated `/v1/decide` request.
+Then verify the public model entry and a small authenticated `/api/alpha/decide` request.
 Provider failures remain provider-health failures, separate from router availability.
