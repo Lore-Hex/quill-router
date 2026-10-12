@@ -537,16 +537,69 @@ func TestAuditHoldsEachShardAndSumsExactly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Winners whose charges, with the first's 10, sum past int64 by exactly
-	// what wraps them back to the lease's bookings: not taken as equal.
+	// Winners whose charges, with the first's 10, sum to 2^64 + 10, which
+	// wraps in int64 to exactly the lease's bookings: not taken as equal.
 	huge := int64(math.MaxInt64)
-	commit(version, 2, nil,
+	version = commit(version, 2, nil,
 		store.Winner{AuthorizationID: "auth-2", Kind: "settle", Charge: huge, RecordID: "rec-2"},
 		store.Winner{AuthorizationID: "auth-3", Kind: "settle", Charge: huge, RecordID: "rec-3"},
-		store.Winner{AuthorizationID: "auth-4", Kind: "settle", Charge: 12, RecordID: "rec-4"})
+		store.Winner{AuthorizationID: "auth-4", Kind: "settle", Charge: 2, RecordID: "rec-4"})
 	code, problems, err = audit("-funded", "200")
 	if code != 3 || err != nil || len(problems) != 1 ||
-		!strings.Contains(problems[0].(string), "retained packs charge 18446744073709551636, and its rows book 10") {
+		!strings.Contains(problems[0].(string), "retained packs charge 18446744073709551626, and its rows book 10") {
 		t.Fatalf("charges past int64: exit %d, %v %v", code, problems, err)
 	}
+	// A closed lease still there whose donor's consumption is gone, with
+	// the usage it booked: the shard's bound no longer holds it, so the
+	// lease's row does.
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		for _, sql := range []string{
+			"UPDATE tr_lease SET state = 'closed', closed_at = CURRENT_TIMESTAMP(), close_kind = 'auditor', " +
+				"fence_time = expiry, drained_by = 'auditor', returned = 20, allocation = 10 " +
+				"WHERE workspace_id = @w AND lease_id = @l",
+			"UPDATE tr_lease_donor SET allocation = 10, consumed = 0 WHERE workspace_id = @w AND lease_id = @l",
+			"UPDATE tr_credit_balance SET reserved = 0, total_usage = 0 WHERE workspace_id = @w",
+		} {
+			if _, err := txn.Update(ctx, spanner.Statement{SQL: sql, Params: map[string]any{"w": ws, "l": ref.LeaseID}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The winners' charges still differ from the bookings; the donor's
+	// loss is the problem named first.
+	code, problems, err = audit("-funded", "200")
+	if code != 3 || err != nil || len(problems) < 1 ||
+		!strings.Contains(fmt.Sprint(problems), "'s donors consumed 0, and its row books 10 on them") {
+		t.Fatalf("a closed lease's donor consumption lost: exit %d, %v %v", code, problems, err)
+	}
+	// Sums over the leases' states that do not fit int64 are no answer:
+	// a second lease, draining, with fault usage past what the first's
+	// leaves room for.
+	second := store.LeaseRef{Workspace: ws, LeaseID: storetest.UniqueID("l")}
+	if got, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: second.LeaseID, Region: "us-central1",
+		Owner: store.Owner{Node: "node-a", Epoch: 1}, Amount: 5}); err != nil || got.Refused != "" {
+		t.Fatalf("the second grant: %+v %v", got, err)
+	}
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		for _, stmt := range []spanner.Statement{
+			{SQL: "UPDATE tr_lease SET fault_usage = @f WHERE workspace_id = @w AND lease_id = @l",
+				Params: map[string]any{"w": ws, "l": ref.LeaseID, "f": huge}},
+			{SQL: "UPDATE tr_lease SET state = 'draining', fence_time = expiry, drained_by = 'auditor', " +
+				"fault_usage = 1 WHERE workspace_id = @w AND lease_id = @l", Params: map[string]any{"w": ws, "l": second.LeaseID}},
+		} {
+			if _, err := txn.Update(ctx, stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := audit("-funded", "200"); code != 1 || !errors.Is(err, store.ErrSumsPastInt64) {
+		t.Fatalf("sums past int64: exit %d, %v", code, err)
+	}
+	_ = version
 }

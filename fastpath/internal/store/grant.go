@@ -463,7 +463,10 @@ func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 // allocation (§4.7; money.go). A booking raises usage on the shard whose
 // reservation it reduces, and the fast path only raises usage, so a shard
 // below that bound has usage booked elsewhere or lost. Retirement of a
-// lease's rows only lowers the bound.
+// lease's rows only lowers the bound. The bound is the donors', so each
+// lease still there, closed ones too, has its donors' consumption held to
+// its row's first: a donor's consumption lost would lower the bound with
+// it (CheckIdentity holds the live leases alone).
 func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]string, error) {
 	ro := s.client.ReadOnlyTransaction()
 	defer ro.Close()
@@ -494,6 +497,7 @@ func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]strin
 	}
 	var problems []string
 	first := map[string]int64{}
+	donors := map[string]*big.Int{}
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, credit_shard, consumed FROM tr_lease_donor WHERE workspace_id = @w
 		       ORDER BY lease_id, credit_shard`, Params: params},
@@ -503,6 +507,10 @@ func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]strin
 		if err := row.Columns(&lease, &shard, &consumed); err != nil {
 			return err
 		}
+		if donors[lease] == nil {
+			donors[lease] = new(big.Int)
+		}
+		donors[lease].Add(donors[lease], big.NewInt(consumed))
 		if shard < 0 || shard >= int64(len(booked)) {
 			problems = append(problems, fmt.Sprintf("lease %s has a donor on shard %d, which has no row", lease, shard))
 			return nil
@@ -517,12 +525,23 @@ func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]strin
 		return nil, err
 	}
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
-		SQL: `SELECT lease_id, fault_usage FROM tr_lease WHERE workspace_id = @w AND fault_usage > 0`, Params: params},
+		SQL: `SELECT lease_id, consumed, fault_usage FROM tr_lease WHERE workspace_id = @w ORDER BY lease_id`, Params: params},
 		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
 		var lease string
-		var fault int64
-		if err := row.Columns(&lease, &fault); err != nil {
+		var consumed, fault int64
+		if err := row.Columns(&lease, &consumed, &fault); err != nil {
 			return err
+		}
+		d := donors[lease]
+		if d == nil {
+			d = new(big.Int)
+		}
+		if d.Cmp(big.NewInt(consumed)) != 0 {
+			problems = append(problems, fmt.Sprintf("lease %s's donors consumed %s, and its row books %d on them", lease, d,
+				consumed))
+		}
+		if fault == 0 {
+			return nil
 		}
 		shard, ok := first[lease]
 		if !ok {
