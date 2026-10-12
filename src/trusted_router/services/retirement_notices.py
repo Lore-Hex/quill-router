@@ -307,7 +307,7 @@ def build_retirement_notice_email(
         ),
         reply_to=settings.support_email,
         mail_class="retirement_notice",
-        sender_profile="alerts",
+        sender_profile="notices",
     )
 
 
@@ -472,7 +472,7 @@ def _preview(
             + f'<ul style="font-size:13px">{workspace_rows}</ul></details></div>'
         ),
         mail_class="retirement_notice_preview",
-        sender_profile="alerts",
+        sender_profile="notices",
     ))
     return RetirementNoticePassResult(
         workspaces=len(by_workspace), preview_sent=int(accepted), failed=int(not accepted),

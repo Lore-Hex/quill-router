@@ -765,6 +765,13 @@ class Settings(BaseSettings):
     ses_alert_from_email: str | None = "alerts@alerts.trustedrouter.com"
     ses_alert_from_name: str = "TrustedRouter Alerts"
     ses_alert_configuration_set: str | None = "trustedrouter-alerts"
+    # Customer product notices (route retirements) send from their own
+    # authenticated subdomain and configuration set, separate from sign-in
+    # mail and operator alerts. Like alerts, a notice never falls back to the
+    # default sender.
+    ses_notices_from_email: str | None = "notices@notices.trustedrouter.com"
+    ses_notices_from_name: str = "TrustedRouter"
+    ses_notices_configuration_set: str | None = "trustedrouter-notices"
     # Destination for TrustedOS partner-inquiry form submissions (/trustedos).
     # Falls back to ses_from_email when unset so the lead never silently drops.
     partner_inquiry_email: str | None = None
@@ -2193,6 +2200,9 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "ses_alert_from_email",
     "ses_alert_from_name",
     "ses_alert_configuration_set",
+    "ses_notices_from_email",
+    "ses_notices_from_name",
+    "ses_notices_configuration_set",
     "attribution_cookie_key",
     "attribution_cookie_secret",
     "internal_gateway_token",

@@ -499,6 +499,9 @@ ENV_VARS=(
   "TR_SES_ALERT_FROM_EMAIL=alerts@alerts.trustedrouter.com"
   "TR_SES_ALERT_FROM_NAME=TrustedRouter Alerts"
   "TR_SES_ALERT_CONFIGURATION_SET=trustedrouter-alerts"
+  "TR_SES_NOTICES_FROM_EMAIL=notices@notices.trustedrouter.com"
+  "TR_SES_NOTICES_FROM_NAME=TrustedRouter"
+  "TR_SES_NOTICES_CONFIGURATION_SET=trustedrouter-notices"
   # Reputation brake: keep optional activation nudges off until SES class-level
   # telemetry has a clean observation window. Login and verification email are
   # unaffected because they are sent synchronously by their auth routes.

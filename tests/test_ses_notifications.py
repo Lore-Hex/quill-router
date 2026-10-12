@@ -525,6 +525,77 @@ def test_alert_sender_never_falls_back_to_default_identity(monkeypatch) -> None:
     assert calls == []
 
 
+def test_notices_sender_uses_its_own_domain_and_configuration_set(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeSESClient:
+        def send_email(self, **kwargs: Any) -> dict[str, str]:
+            calls.append(kwargs)
+            return {"MessageId": "ses-notice-1"}
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSESClient())
+    service = EmailService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+            ses_alert_from_email="alerts@alerts.example.com",
+            ses_notices_from_email="notices@notices.example.com",
+            ses_notices_from_name="Example",
+            ses_notices_configuration_set="example-notices",
+        )
+    )
+
+    assert service.send(
+        EmailMessage(
+            to="owner@example.com",
+            subject="Upcoming model changes",
+            text_body="A route retires.",
+            mail_class="retirement_notice",
+            sender_profile="notices",
+        )
+    )
+
+    [call] = calls
+    assert call["Source"] == "Example <notices@notices.example.com>"
+    assert call["ConfigurationSetName"] == "example-notices"
+    assert {tag["Name"]: tag["Value"] for tag in call["Tags"]}["sender_profile"] == "notices"
+
+
+def test_notices_sender_never_falls_back_to_another_identity(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeSESClient:
+        def send_email(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr("boto3.client", lambda *_args, **_kwargs: FakeSESClient())
+    service = EmailService(
+        Settings(
+            environment="test",
+            aws_access_key_id="AKIA_TEST",
+            aws_secret_access_key="secret",  # noqa: S106 - test fixture secret.
+            ses_from_email="noreply@example.com",
+            ses_alert_from_email="alerts@alerts.example.com",
+            ses_notices_from_email=None,
+        )
+    )
+
+    sent = service.send(
+        EmailMessage(
+            to="owner@example.com",
+            subject="Upcoming model changes",
+            text_body="A route retires.",
+            mail_class="retirement_notice",
+            sender_profile="notices",
+        )
+    )
+
+    assert sent is False
+    assert calls == []
+
+
 def test_email_service_sets_reply_to_for_support_mail(monkeypatch) -> None:
     calls: list[dict[str, Any]] = []
 

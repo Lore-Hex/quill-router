@@ -23,7 +23,7 @@ from trusted_router.storage import STORE
 
 log = logging.getLogger(__name__)
 
-SenderProfile = Literal["default", "alerts"]
+SenderProfile = Literal["default", "alerts", "notices"]
 _SES_TAG_VALUE_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
@@ -154,6 +154,14 @@ def _sender_for_message(
             settings.ses_alert_from_name,
             settings.ses_alert_from_email,
             settings.ses_alert_configuration_set,
+        )
+    if message.sender_profile == "notices":
+        if not settings.ses_notices_from_email or not settings.ses_notices_configuration_set:
+            return None
+        return (
+            settings.ses_notices_from_name,
+            settings.ses_notices_from_email,
+            settings.ses_notices_configuration_set,
         )
     if message.sender_profile != "default" or not settings.ses_from_email:
         return None
