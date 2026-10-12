@@ -5,7 +5,8 @@ production's network, from a fast path node against the nodes' front doors,
 on one workspace of our own that no request of a customer's touches, under
 W3's watch, with the load's own audit after each run. It enters on the
 counter reconciler counting leases (`storage_gcp_counter_reconcile.py`),
-`fastpathctl audit`, and `loadgen -workspace … -database …`, all on `main`.
+`fastpathctl`'s audit, and the generator's `-workspace` and `-database`, all
+on `main`.
 
 ## What is done by hand, once
 
