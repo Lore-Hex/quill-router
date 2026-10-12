@@ -270,6 +270,9 @@ type walker struct {
 	// consumed and faulted are what the commits booked, matched against the
 	// allocation and beyond it, as the store books (§4.2).
 	consumed, faulted int64
+	// credits is the workspace's credit as seeded: the rows move it between
+	// them, covering and repaying, and never make or lose any.
+	credits int64
 	// What the projection onto the shadow leaves out, the walk keeps from
 	// what it wrote: the gap's sequence number, who marked the lease
 	// draining, each stored hold's snapshot sequence number, each drain
@@ -304,7 +307,8 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 	// One donor or two, and room left on a third shard or none, so raises
 	// and faults reach debt in some walks: walkShards rows.
 	first := int64(rng.Intn(c.Grant + 1))
-	req := grantOf(seedWorkspace(t, first, int64(c.Grant)-first+int64(rng.Intn(2)), int64(rng.Intn(3))), int64(c.Grant))
+	credits := []int64{first, int64(c.Grant) - first + int64(rng.Intn(2)), int64(rng.Intn(3))}
+	req := grantOf(seedWorkspace(t, credits...), int64(c.Grant))
 	// Distinct values the row must keep, so a column dropped from the
 	// store's reads is seen, not matched by a zero; from a source of their
 	// own, so the walk's own draws are as they were.
@@ -322,7 +326,8 @@ func newWalker(t *testing.T, s *Store, seed int64) *walker {
 			s.cfg.Window, start, end)
 	}
 	return &walker{t: t, s: s, c: c, ref: LeaseRef{req.Workspace, req.LeaseID}, rng: rng, aux: aux, seed: seed,
-		state: c.Init(), seen: map[string]int{}, tries: map[string]int{}, rows: map[string]DrainRow{}, grant: req,
+		credits: credits[0] + credits[1] + credits[2],
+		state:   c.Init(), seen: map[string]int{}, tries: map[string]int{}, rows: map[string]DrainRow{}, grant: req,
 		expiry: got.Expiry, ids: rand.New(rand.NewSource(seed ^ 0x1d5)), drainIDs: map[int8]string{},
 		drainIdx: map[string]int8{}}
 }
@@ -1580,8 +1585,9 @@ func (w *walker) check() {
 	// reconciles the rows with the lease's columns, not with the commits,
 	// so a write that books usage outside a commit, a reap charging the
 	// rows for what its winner's commit books again, shows only here.
-	var usage, reserved int64
+	var credits, usage, reserved int64
 	for _, r := range readRows(w.t, w.ref.Workspace) {
+		credits += r.credits
 		usage += r.usage
 		reserved += r.reserved
 	}
@@ -1589,6 +1595,12 @@ func (w *walker) check() {
 		reserved != allocation-w.consumed {
 		w.fatalf("the credit rows book %d and reserve %d, and the walk's commits booked %d and left %d unbooked",
 			usage, reserved, w.consumed+w.faulted, allocation-w.consumed)
+	}
+	// Covering and repaying move credit between the rows and never make or
+	// lose any: a write that did would pass the identity check, which does
+	// not know what was seeded.
+	if credits != w.credits {
+		w.fatalf("the credit rows hold %d, and %d was seeded", credits, w.credits)
 	}
 	if problems, err := w.s.CheckIdentity(ctx, w.ref.Workspace); err != nil || len(problems) > 0 {
 		w.fatalf("the identity: %v %v", problems, err)

@@ -97,7 +97,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"refused grant: the floor alone", "a grant beside a listed lease", "a listed hold",
 		"refused grant: the listed holds alone", "refused close: holds open", "shortfall write: the stored total again",
 		"shortfall write: below the stored total", "shortfall write below a total a booking raised",
-		"a release's excess kept on its shard"} {
+		"a release's excess kept on its shard", "a commit of two leases"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -586,7 +586,63 @@ func (d *debtWalk) script() {
 		!slices.Equal(d.shards.credit, []int64{17, 5, 0}) {
 		d.fatalf("the script's return did not leave 1 of excess on the second shard: %+v", d.shards)
 	}
+	// Then both leases book in one commit, each past its room so each
+	// faults, on the one shard both have as first donor: the store sums the
+	// two leases' changes to that shard before it writes it once, and a
+	// store that kept one lease's change only fails the replica's check.
+	d.opStart = spannerNow(d.t)
+	d.commitTwo(ctx, first, []MoneyOp{Book(2, first.shortfall)}, second, []MoneyOp{Book(3, second.shortfall)})
+	step("the two leases' commit")
 	d.checkAllPacks()
+}
+
+// commitTwo commits two leases' money in one transaction, as the store
+// commits many leases at once, and books each as commit does; the replica
+// settles both leases' changes together, summed per shard as the store sums
+// them, then their releases in order.
+func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp, b *debtLease, moneyB []MoneyOp) {
+	d.t.Helper()
+	d.note("commit %s %v and %s %v together", a.ref.LeaseID, moneyA, b.ref.LeaseID, moneyB)
+	request := func(l *debtLease, money []MoneyOp) CommitRequest {
+		seq := l.seq
+		if !l.stored {
+			seq++
+		}
+		return CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money}
+	}
+	reqs := []CommitRequest{request(a, moneyA), request(b, moneyB)}
+	changesA, releasesA := a.moneyEffect(moneyA)
+	changesB, releasesB := b.moneyEffect(moneyB)
+	for shard, c := range changesB {
+		x := changesA[shard]
+		x.reserved += c.reserved
+		x.usage += c.usage
+		changesA[shard] = x
+	}
+	got, ts, err := d.s.Commit(ctx, detached(reqs))
+	if err != nil || len(got) != 2 {
+		d.fatalf("the two leases' commit: %+v %v", got, err)
+	}
+	d.landed("commit", ts)
+	d.shards.settle(changesA, append(releasesA, releasesB...))
+	for i, l := range []*debtLease{a, b} {
+		money := [][]MoneyOp{moneyA, moneyB}[i]
+		if got[i].Ref != l.ref || got[i].Refused != "" || got[i].State != l.state {
+			d.fatalf("the two leases' commit answered %+v for lease %s, which the walk has %q", got[i], l.ref.LeaseID, l.state)
+		}
+		l.advance(d, "the two leases' commit", got[i].NewVersion)
+		l.seq = reqs[i].AppliedSeq
+		l.packs = append(l.packs, Pack{CommitVersion: l.version})
+		_, faults := l.bookedEach(money)
+		if !slices.Equal(got[i].Faults, faults) {
+			d.fatalf("the two leases' commit faulted %v for lease %s, and the walk's ledger %v", got[i].Faults, l.ref.LeaseID,
+				faults)
+		}
+		d.checkPacks(l)
+		d.checkHolds(l)
+		d.checkLeaseRow(l, "the two leases' commit")
+	}
+	d.seen["a commit of two leases"]++
 }
 
 func (d *debtWalk) run() {
