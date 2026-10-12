@@ -192,13 +192,10 @@ resource "google_spanner_database_iam_member" "fastpath_node_database" {
   member   = google_service_account.fastpath_node.member
 }
 
-resource "google_project_iam_member" "fastpath_node_observability" {
-  for_each = toset(["roles/logging.logWriter", "roles/monitoring.metricWriter"])
-
-  project = local.gcp_project_id
-  role    = each.key
-  member  = google_service_account.fastpath_node.member
-}
+# The nodes' project-level roles, roles/logging.logWriter and
+# roles/monitoring.metricWriter, are granted by hand (docs/runbooks/
+# fastpath-p0.md): the deploy identity that applies this does not edit the
+# project's IAM policy, by design.
 
 # The releases: fastpath-release.yml uploads each CI-passed main commit's
 # binaries under fastpath/<commit>/; the nodes read the one named above.
