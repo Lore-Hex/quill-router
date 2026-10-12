@@ -188,7 +188,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on",
 		"a commit of a tick's number", "S committed again with another time", "a later audit fault",
 		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
-		"an empty drain read", "a winner beside an open hold"}
+		"an empty drain read", "a winner beside an open hold", "a stored hold left unsent"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -222,6 +222,7 @@ type memberSide struct {
 	faultSeq int64
 	lastTick int64 // the number of the last tick the member applied, or loaded
 	holdSeq  [ac.MaxAuths]int64
+	sentSeq  [ac.MaxAuths]int64 // each hold's snapshot as the member last committed or loaded it, 0 for none
 	buffer   []DrainRow
 	cursor   time.Time
 	through  time.Time
@@ -570,6 +571,9 @@ func (w *walker) load(m int8, to ac.State) {
 			w.fatalf("member %s loads a hold row %+v, and the walk wrote another payload for its snapshot", w.c.Members[m], h)
 		}
 		side.holdSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotOwnerSeq.Int64
+		// A loaded hold is stored as loaded: the member need not send it
+		// again until its snapshot moves.
+		side.sentSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotOwnerSeq.Int64
 	}
 	w.members[m] = side
 }
@@ -701,8 +705,12 @@ func (w *walker) request(m int8, from ac.State) CommitRequest {
 			req.Money = append(req.Money, Book(int64(win.C), 0))
 		}
 	}
+	// A commit sends the holds it stores or moves, not the ones stored as
+	// they are: the store keeps a hold it is not sent, and a store that
+	// dropped every hold and kept only what the commit sent fails the check
+	// after a commit that sent none.
 	for a := range w.c.Auths {
-		if mem.Holds[a] != ac.NoHold {
+		if mem.Holds[a] != ac.NoHold && side.holdSeq[a] != side.sentSeq[a] {
 			hash, usage, basis := holdPayload(w.c.Auths[a], side.holdSeq[a])
 			req.PutHolds = append(req.PutHolds, HoldRow{AuthorizationID: w.c.Auths[a], Estimate: walkEstimate,
 				Deadline: walkDeadline, SnapshotSeq: spanner.NullInt64{Int64: gatewaySeq(side.holdSeq[a]), Valid: true},
@@ -747,9 +755,32 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 	}
 	req := w.request(m, from)
 	// A winner takes its own hold with it and leaves the others: the
-	// scripted walk makes such a commit, which the random ones seldom do.
-	if len(req.Winners) > 0 && len(req.PutHolds) > 0 {
-		w.seen["a winner beside an open hold"]++
+	// scripted walk makes such a commit, which the random ones seldom do,
+	// and one that leaves a stored hold unsent, which the store must keep.
+	if want == "" {
+		won := map[string]bool{}
+		for _, win := range req.Winners {
+			won[win.AuthorizationID] = true
+		}
+		sent := map[string]bool{}
+		for _, h := range req.PutHolds {
+			sent[h.AuthorizationID] = true
+		}
+		open, unsent := 0, 0
+		for a := range w.c.Auths {
+			if mem.Holds[a] != ac.NoHold && !won[w.c.Auths[a]] {
+				open++
+				if !sent[w.c.Auths[a]] {
+					unsent++
+				}
+			}
+		}
+		if len(req.Winners) > 0 && open > 0 {
+			w.seen["a winner beside an open hold"]++
+		}
+		if unsent > 0 {
+			w.seen["a stored hold left unsent"]++
+		}
 	}
 	// The store gets a copy (walkCommit): the ledger below reads req, which
 	// no store call can reach. A refused commit books nothing, so it faults
@@ -783,6 +814,12 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 		w.seen["faults in one commit"]++
 	}
 	w.members[m].decided, w.members[m].faultSeq = nil, 0
+	for _, h := range req.PutHolds {
+		w.members[m].sentSeq[index(w.c.Auths, h.AuthorizationID)] = h.SnapshotOwnerSeq.Int64
+	}
+	for _, win := range req.Winners {
+		w.members[m].sentSeq[index(w.c.Auths, win.AuthorizationID)] = 0
+	}
 	w.lastTick = req.LastTick
 	if req.LastTick != 0 {
 		w.seen["a commit of a tick's number"]++

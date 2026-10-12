@@ -316,8 +316,13 @@ func (c *shards) reserve(donors []donor) {
 }
 
 // raiseFirst is a rise of a lease's first donor's allocation, reserved on
-// its shard, squared if that leaves the shard negative (adjust).
+// its shard, squared if that leaves the shard negative (adjust). A rise of
+// nothing writes nothing: a door raise of 0 leaves the row, and its stamp,
+// as they are.
 func (c *shards) raiseFirst(shard, rise int64) {
+	if rise == 0 {
+		return
+	}
 	c.reserved[shard] += rise
 	c.touch(int(shard))
 	if c.headroom()[shard] < 0 {
@@ -333,6 +338,9 @@ func (c *shards) raiseFirst(shard, rise int64) {
 func (c *shards) settle(changes map[int64]shardChange, releases []freed) (excessKept int) {
 	negative := false
 	for _, shard := range slices.Sorted(maps.Keys(changes)) {
+		if changes[shard] == (shardChange{}) {
+			continue // as settleCreditRows skips a shard with no change
+		}
 		c.reserved[shard] += changes[shard].reserved
 		c.usage[shard] += changes[shard].usage
 		c.touch(int(shard))
@@ -460,6 +468,7 @@ type debtWalk struct {
 	batches *rand.Rand // the bookings after a commit's first, apart for the same reason
 	ids     *rand.Rand // the drain rows' record IDs, apart for the same reason
 	seed    int64
+	opStart time.Time // Spanner's time read before the step's first write
 	credits int64
 	shards  shards // the credit rows as the walk's writes left them
 	leases  []*debtLease
@@ -490,6 +499,22 @@ func newDebtWalkWith(t *testing.T, s *Store, seed int64, credits []int64, rngs .
 	}
 	d.shards = shards{credit: slices.Clone(credits), usage: make([]int64, len(credits)), reserved: make([]int64, len(credits)),
 		touched: make([]bool, len(credits)), updatedAt: make([]spanner.NullTime, len(credits))}
+	// Benign metadata the store neither reads nor writes, set on every row
+	// so a write that reset a column to its default is seen (seeded rows
+	// carry defaults, which such a write would leave as they are). By DML:
+	// an update mutation on the emulator resets the row's other defaulted
+	// columns, the tier among them.
+	_, err := shared.ReadWriteTransaction(context.Background(), func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = 17, trust_reconciled_through = @t
+			       WHERE workspace_id = @w`,
+			Params: map[string]any{"t": walkTick, "w": d.ws},
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seeding the credit rows' metadata: %v", err)
+	}
 	return d
 }
 
@@ -526,10 +551,12 @@ func (d *debtWalk) script() {
 		d.note("after %s: %v", what, after)
 		before = after
 	}
+	d.opStart = spannerNow(d.t)
 	if !d.grantAmount(ctx, 6) || !d.grantAmount(ctx, 12) {
 		d.fatalf("the script's grants were refused")
 	}
 	step("the grants")
+	d.opStart = spannerNow(d.t)
 	first, second := d.leases[0], d.leases[1]
 	if !slices.Equal(headrooms(readRows(d.t, d.ws)), []int64{0, 4, 0}) || len(second.donors) != 2 ||
 		second.donors[1].shard != 1 || second.donors[1].allocation != 8 {
@@ -550,6 +577,7 @@ func (d *debtWalk) script() {
 		d.fatalf("the script's booking left the workspace unmarked, or a debt other than 7: %+v", d.shards)
 	}
 	excess := d.seen["a release's excess kept on its shard"]
+	d.opStart = spannerNow(d.t)
 	d.giveBack(ctx, second)
 	step("the return")
 	if d.seen["a release's excess kept on its shard"] != excess+1 || d.shards.marked ||
@@ -564,6 +592,7 @@ func (d *debtWalk) run() {
 	ctx := context.Background()
 	before := headrooms(readRows(d.t, d.ws))
 	for range debtSteps {
+		d.opStart = spannerNow(d.t)
 		live := d.live()
 		var l *debtLease
 		if len(live) > 0 {
@@ -1446,18 +1475,21 @@ func (d *debtWalk) checkCreditColumns() {
 		d.fatalf("reading the credit rows' columns: %v", err)
 	}
 	for i, m := range got {
-		// pause_epoch defaults to 0 and reads as one; a null array reads as
-		// no causes.
-		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || m.computed.Valid || m.latched.Valid || m.override.Valid ||
-			len(m.causes) != 0 || m.epoch != (spanner.NullInt64{Int64: 0, Valid: true}) || m.through.Valid || m.source.Valid {
-			d.fatalf("shard %d's other columns are %+v, and the walk set none of them", i, m)
+		// The seeded tier and metadata (newDebtWalkWith), and nothing else; a
+		// null array reads as no causes.
+		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(walkTick) ||
+			m.latched.Valid || m.override.Valid || len(m.causes) != 0 || m.epoch != (spanner.NullInt64{Int64: 17, Valid: true}) ||
+			!m.through.Valid || !m.through.Time.Equal(walkTick) || m.source.Valid {
+			d.fatalf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch 17 and two times of %v", i, m, walkTick)
 		}
 		prev := d.shards.updatedAt[i]
 		switch {
 		case d.shards.touched[i]:
-			if !m.updated.Valid || (prev.Valid && m.updated.Time.Before(prev.Time)) || m.updated.Time.After(d.stamps.last) {
-				d.fatalf("shard %d was written, and its updated_at is %v, after %v and at or before the walk's last commit %v",
-					i, m.updated, prev, d.stamps.last)
+			// Stamped by this step's write: at or after Spanner's time read
+			// before the step, at or before the walk's last commit.
+			if !m.updated.Valid || m.updated.Time.Before(d.opStart) || m.updated.Time.After(d.stamps.last) {
+				d.fatalf("shard %d was written, and its updated_at is %v, not between the step's start %v and the walk's last commit %v",
+					i, m.updated, d.opStart, d.stamps.last)
 			}
 		case m.updated != prev:
 			d.fatalf("shard %d was not written, and its updated_at moved from %v to %v", i, prev, m.updated)
