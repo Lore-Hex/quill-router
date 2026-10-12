@@ -222,12 +222,12 @@ def _compared(v: Any) -> None:
 
 
 class ComparedSchema(Schema):
-    def __call__(self, value: Any) -> None:
+    def _validate(self, value: Any) -> None:
         try:
             _compared(value)
         except (KeyError, TypeError, AttributeError, OverflowError) as exc:
             raise ValueError("evidence_schema_gap") from exc
-        super().__call__(value)
+        super()._validate(value)
 
 
 # Only the new discriminator is typed here. The pure retained parser owns all

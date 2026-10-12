@@ -57,16 +57,15 @@ def delegate_counter(obj: dict[str, Any]) -> None:
 
 
 class RetainedSchema(Schema):
-    """Retained validation precedes new fields, invariants, and executable deltas."""
+    """Retained shape validation follows the shared native-string gate."""
 
-    def __call__(self, value: Any) -> None:
+    def _validate(self, value: Any) -> None:
         shape = "sample" if "authorization_day" in self.fields else "counter"
         try:
             (delegate_sample if shape == "sample" else delegate_counter)(value)
         except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
             raise ValueError("evidence_schema_gap") from exc
-        apply_deltas("retained-object", value)
-        super().__call__(value)
+        super()._validate(value)
         apply_deltas(shape, value)
 
 

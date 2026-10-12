@@ -6,6 +6,7 @@ import copy
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -774,6 +775,8 @@ def parity_mutations(value: Any) -> Any:
         yield "control", chr(code)
     for item in ("é", "中", "😀", "\u2028", "x\\y", 'x"y', "x\ty", "a/b", "x y"):
         yield "unicode-escape", item
+    for item in ("\ud83d\ude00", "\ud800\udc00", "x\ud800\udc00y"):
+        yield "native-pair", item
     for item in ENUM_VALUES:
         yield "enum-vocabulary", item
     if isinstance(value, str):
@@ -1038,7 +1041,7 @@ ENUM_VALUES = sorted(enum_inventory(), key=lambda v: (type(v).__name__, str(v)))
 def required_mutation_counts(value: Any) -> dict[str, int]:
     counts = {"type": 8, "integer-boundary": 6, "string-length": 12,
               "printable-ascii": 95, "control": 33, "unicode-escape": 9,
-              "enum-vocabulary": len(ENUM_VALUES)}
+              "enum-vocabulary": len(ENUM_VALUES), "native-pair": 3}
     if isinstance(value, str):
         counts["domain-string-length"] = 12
     if isinstance(value, dict):
@@ -1050,7 +1053,7 @@ def required_mutation_counts(value: Any) -> dict[str, int]:
     return counts
 
 
-REQUIRED_CLASSES = {"type", "integer-boundary", "string-length", "printable-ascii", "control", "unicode-escape", "enum-vocabulary"}
+REQUIRED_CLASSES = {"type", "integer-boundary", "string-length", "printable-ascii", "control", "unicode-escape", "enum-vocabulary", "native-pair"}
 
 
 @pytest.mark.parametrize("name", list(CONSTRUCTION))
@@ -1118,7 +1121,7 @@ def v1_delegate(shape: str, value: Any) -> None:
 
 def v2_acceptor(shape: str, value: Any) -> None:
     if shape in ("sample", "counter", "wire"):
-        {"sample": e.SAMPLE, "counter": e.COUNTER, "wire": lambda v: contract.parse_terminal(canonical(v))}[shape](value)
+        {"sample": e.SAMPLE, "counter": e.COUNTER, "wire": lambda v: (contract.COMPARED_FULL if isinstance(v, dict) and "billing_snapshot" in v else contract.COMPARED_HASH_ONLY)(v)}[shape](value)
     elif shape == "binding":
         projection.validate_binding_claims(value, CONSTRUCTION["binding"][1]["iat"])
     else:
@@ -1138,7 +1141,7 @@ def constructed_acceptor(shape: str, value: Any) -> None:
     elif shape == "wire":
         s.require(value["variant"] == "compared" and type(value["v"]) is int and value["v"] == 2 and value["policy_version"] == "shadow-v2")
     for delta in deltas.DELTAS:
-        if delta.shape in (shape, "retained-object" if shape in ("sample", "counter") else shape) and delta.direction != "v2-only-broaden":
+        if delta.shape in (shape, "retained-object" if shape in ("sample", "counter", "wire") else shape) and delta.direction != "v2-only-broaden":
             assert not delta.predicate(value)
 
 
@@ -1182,6 +1185,9 @@ def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
         actual = accepts(lambda v: v2_acceptor(shape, v), value)
         expected = accepts(lambda v: constructed_acceptor(shape, v), value)
         assert actual == expected, (name, path, mutation, item, actual, expected)
+        if shape == "wire":
+            schema = contract.COMPARED_FULL if isinstance(value, dict) and "billing_snapshot" in value else contract.COMPARED_HASH_ONLY
+            assert accepts(schema.serialize, value) is expected
         if actual:
             assert_retained_round_trip(shape, value)
     assert executed == required_mutation_counts(parity_get(base, path))
@@ -1277,10 +1283,6 @@ def test_delta_inventory() -> None:
 
 # Independent route inventory, not expanded from production Delta.shape strings.
 DELTA_ROUTES = [
-    ("transport-spelling", "retained-transport", seed) for seed in ("sample-settle", "counter", "wire-settle-full")
-] + [
-    ("scalar-string", "retained-object", seed) for seed in ("sample-settle", "counter")
-] + [
     ("clean-requires-eligible", "sample", "sample-settle"),
     ("clean-requires-normalized-usage", "sample", "sample-settle"),
     ("clean-winner-conflict", "sample", "sample-settle"),
@@ -1299,7 +1301,7 @@ DELTA_ROUTES = [
 
 @pytest.mark.parametrize("name,shape,seed", DELTA_ROUTES, ids=[n + ":" + seed for n, _, seed in DELTA_ROUTES])
 def test_delta_enforcing_routes(name: str, shape: str, seed: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert {n for n, _, _ in DELTA_ROUTES} == DELTA_NAMES
+    assert {n for n, _, _ in DELTA_ROUTES} | {"transport-spelling", "scalar-string"} == DELTA_NAMES
     delta = next(d for d in deltas.DELTAS if d.name == name)
     assert delta.shape == shape
     if seed == "certificate":
@@ -1785,3 +1787,167 @@ def test_raw_stored_retained_token_pairs(name: str, path: tuple[Any, ...], key_t
             assert accepts(parser, raw) is expected, (path, scalar, mode)
             if scalar is None:
                 assert expected is (mode in ("canonical", "utf8"))
+
+
+def discovered_schemas() -> dict[int, tuple[str, s.Schema]]:
+    """Discover globals and nested Schema fields, including wrapped validators."""
+    found: dict[int, tuple[str, s.Schema]] = {}
+    seen: set[int] = set()
+
+    def visit(label: str, value: Any) -> None:
+        if id(value) in seen:
+            return
+        seen.add(id(value))
+        if isinstance(value, s.Schema):
+            found[id(value)] = (label, value)
+            for key, child in value.fields.items():
+                visit(label + "." + key, child)
+        elif callable(value) and getattr(value, "__module__", "").startswith("trusted_router.async_settle_shadow_v2_"):
+            for index, cell in enumerate(getattr(value, "__closure__", ()) or ()):
+                visit(label + f".closure{index}", cell.cell_contents)
+
+    for module in (s, cert, contract, e):
+        for name, value in vars(module).items():
+            visit(module.__name__ + "." + name, value)
+    return found
+
+
+def transport_seeds() -> dict[int, list[tuple[str, str, dict[str, Any]]]]:
+    seeds: dict[int, list[tuple[str, str, dict[str, Any]]]] = {}
+    for name, (shape, value) in CONSTRUCTION.items():
+        if shape not in ("sample", "counter", "wire"):
+            continue
+        schema = e.SAMPLE if shape == "sample" else e.COUNTER if shape == "counter" else (
+            contract.COMPARED_FULL if "billing_snapshot" in value else contract.COMPARED_HASH_ONLY)
+        seeds.setdefault(id(schema), []).append((name, shape, value))
+    wire = CONSTRUCTION["wire-settle-full"][1]
+    seeds[id(contract.AUTHORIZE_COMPARED)] = [("authorize-compared", "authorize", {
+        "billing_shadow_policy": "shadow-v2", "billing_shadow_binding": wire["billing_shadow_binding"],
+        "billing_snapshot": wire["billing_snapshot"],
+    })]
+    return seeds
+
+
+def all_string_positions(value: Any, path: tuple[Any, ...] = ()) -> Any:
+    # Every array element and nullable slot, not just a homogeneous representative.
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield (*path, key), True
+            yield from all_string_positions(child, (*path, key))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from all_string_positions(child, (*path, index))
+    elif isinstance(value, str) or value is None:
+        yield path, False
+
+
+def replace_string(base: Any, path: tuple[Any, ...], key: bool, text: str) -> Any:
+    value = copy.deepcopy(base)
+    parent = parity_get(value, path[:-1])
+    if key:
+        parent[text] = parent.pop(path[-1])
+    else:
+        parent[path[-1]] = text
+    return value
+
+
+DISCOVERED_SCHEMAS = discovered_schemas()
+TRANSPORT_SCHEMAS = [(label, schema) for label, schema in DISCOVERED_SCHEMAS.values() if schema.retained_strings]
+
+
+def test_transport_schema_seed_inventory() -> None:
+    enabled = {key for key, (_, schema) in discovered_schemas().items() if schema.retained_strings}
+    disabled = {key for key, (_, schema) in discovered_schemas().items() if not schema.retained_strings}
+    assert enabled.isdisjoint(disabled)
+    assert enabled | disabled == set(discovered_schemas())
+    assert enabled == set(transport_seeds()), "transport-enabled schema missing a seed"
+    assert {name for rows in transport_seeds().values() for name, shape, _ in rows if shape == "wire"} == {
+        f"wire-{phase}-{mode}" for phase in ("settle", "refund") for mode in ("full", "hash-only", "failure")}
+
+
+@pytest.mark.parametrize("label,schema", TRANSPORT_SCHEMAS, ids=[label for label, _ in TRANSPORT_SCHEMAS])
+def test_transport_schema_enumeration(label: str, schema: s.Schema) -> None:
+    seeds = transport_seeds()
+    assert id(schema) in seeds, (label, "transport-enabled schema missing a seed")
+    for name, shape, base in seeds[id(schema)]:
+        schema(base)
+        assert schema.parse(schema.serialize(base)) == base
+        for path, key in all_string_positions(base):
+            for pair in ("\ud83d\ude00", "\ud800\udc00", "x\ud800\udc00y"):
+                value = replace_string(base, path, key, pair)
+                for check in (schema, schema.serialize):
+                    with pytest.raises(ValueError, match="^scalar-string$"):
+                        check(value)
+            for scalar in ("😀", "\U00010000", "x\U00010000y"):
+                value = replace_string(base, path, key, scalar)
+                # Authorize's binding and snapshot strings are ASCII-only;
+                # all object keys are closed. Other shapes use the live v1
+                # delegate plus the independent new-field/delta oracle.
+                expected = False if shape == "authorize" else accepts(
+                    lambda v, shape=shape: constructed_acceptor(shape, v), value)
+                assert accepts(schema, value) is expected, (name, path, key, scalar)
+                assert accepts(schema.serialize, value) is expected
+                raw = canonical(value)  # supplementary scalars use JSON pairs
+                assert accepts(schema.parse, raw) is expected
+                if expected:
+                    assert schema.parse(raw) == value
+                    assert schema.parse(schema.serialize(value)) == value
+                    assert schema.serialize(schema.parse(raw)) == raw
+
+
+TRANSPORT_ROUTES = [(label, schema, stage) for label, schema in TRANSPORT_SCHEMAS
+    for stage in ("native", "serialize", "raw-key", "raw-value", "decode", "terminal", "header")
+    if stage not in ("terminal", "header") or any(shape == "wire" for _, shape, _ in transport_seeds().get(id(schema), []))]
+
+
+@pytest.mark.parametrize("label,schema,stage", TRANSPORT_ROUTES, ids=[label + ":" + stage for label, _, stage in TRANSPORT_ROUTES])
+def test_transport_enforcing_routes(label: str, schema: s.Schema, stage: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.detached_jws import b64encode
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("next stage reached before original input was rejected")
+
+    for _, _shape, base in transport_seeds()[id(schema)]:
+        value = copy.deepcopy(base)
+        schema(value)
+        raw = canonical(value)
+        with monkeypatch.context() as patch:
+            calls = []
+            if stage in ("native", "serialize"):
+                def reject_native(witness: Any, calls: list[Any] = calls, value: Any = value) -> bool:
+                    calls.append(witness)
+                    assert witness is value, "native input was replaced before scalar check"
+                    return True
+                patch.setattr(deltas, "DELTAS", tuple(replace(d, predicate=reject_native)
+                    if d.name == "scalar-string" else d for d in deltas.DELTAS))
+                patch.setattr(s, "canonical", forbidden)
+                patch.setattr(contract, "canonical", forbidden)
+                with pytest.raises(ValueError, match="^scalar-string$"):
+                    (schema if stage == "native" else schema.serialize)(value)
+                assert len(calls) == 1 and calls[0] is value
+            else:
+                # Alias a key or value's first ASCII character; the decoded
+                # object is valid and its canonical reserialization differs.
+                if stage == "raw-value":
+                    match = next(m for m in re.finditer(rb':"([A-Za-z])', raw))
+                    pos = match.start(1)
+                else:
+                    pos = raw.index(b'"') + 1
+                original = raw[:pos] + f"\\u{raw[pos]:04x}".encode() + raw[pos + 1:]
+                assert json.loads(original) == value and original != raw
+                def reject_original(witness: Any, calls: list[Any] = calls, original: bytes = original) -> bool:
+                    calls.append(witness)
+                    return witness == original
+                patch.setattr(deltas, "DELTAS", tuple(replace(d, predicate=reject_original)
+                    if d.name == "transport-spelling" else d for d in deltas.DELTAS))
+                # Isolate raw enforcement from both decoding and object checks.
+                patch.setattr(s, "bounded_json", forbidden)
+                patch.setattr(s.Schema, "__call__", forbidden)
+                if stage in ("terminal", "header"):
+                    patch.setattr(s.Schema, "parse", forbidden)
+                check = (contract.parse_terminal if stage == "terminal" else
+                         (lambda r: contract.parse_header((b64encode(r),))) if stage == "header" else
+                         (lambda r: s.decode(r, schema.limit, retained_strings=True)) if stage == "decode" else schema.parse)
+                with pytest.raises(ValueError, match="^json_encoding$"):
+                    check(original)
+                assert calls == [original], (label, stage)

@@ -165,12 +165,11 @@ def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
         # V1's pure decoder preserves scalar Unicode/escaped ASCII values,
         # bounds depth and integers, and rejects duplicate keys and surrogates.
         try:
-            value = bounded_json(raw, limit, signed=True)
             # Local import avoids the schema/delta definition cycle. The one
             # executable table owns the disclosed retained transport policy.
             from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
             apply_deltas("retained-transport", raw)
-            return value
+            return bounded_json(raw, limit, signed=True)
         except ValueError as exc:
             raise ValueError({"json_duplicate": "duplicate_key", "transport-spelling": "json_encoding"}.get(str(exc), str(exc))) from exc
     require(all(32 <= c <= 126 and c != 92 for c in raw), "json_encoding")
@@ -203,6 +202,14 @@ class Schema:
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
 
     def __call__(self, value: Any) -> None:
+        # Inspect the original native object before any subclass delegation or
+        # canonicalization can join surrogate code points into a scalar.
+        if self.retained_strings:
+            from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
+            apply_deltas("retained-object", value)
+        self._validate(value)
+
+    def _validate(self, value: Any) -> None:
         require(type(value) is dict and set(value) == set(self.fields))
         raw = canonical(value)
         decode(raw, self.limit, retained_strings=self.retained_strings)
