@@ -949,6 +949,7 @@ class Settings(BaseSettings):
     speculation_shadow_private_key_file: str = ""
 
     # Dormant async v1 authorize metadata; activation requires later PR gates.
+    async_settle_shadow_attachment_bucket: str = ""
     async_settle_shadow_policy: str = ""
     async_settle_shadow_health_region: str = ""
     async_settle_shadow_workspaces: str = ""

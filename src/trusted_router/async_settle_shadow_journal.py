@@ -6,29 +6,34 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from trusted_router.async_settle_shadow_v2_evidence import (
+from trusted_router.async_settle_shadow_v2_a1_evidence import (
     CAP,
-    CERTIFICATE_RECORD,
+    CLOSE_RESULT,
     CLOSURE,
     COUNTER,
+    KINDS,
+    MANIFEST,
+    RETENTION,
+    validate_row,
+)
+from trusted_router.async_settle_shadow_v2_a1_health import HEALTH, HEALTH_CLAIM
+from trusted_router.async_settle_shadow_v2_a1_reconciliation import (
+    event_locator,
+    validate_completion,
+)
+from trusted_router.async_settle_shadow_v2_evidence import (
+    CERTIFICATE_RECORD,
     EVENT,
     EVENT_BYTES,
     EVENT_CAP,
-    HEALTH,
-    HEALTH_CLAIM,
-    KINDS,
-    MANIFEST,
     MAX_DAY_BUCKETS,
     MAX_PAGES,
     PAGE,
     PAGE_BYTES,
     PAGE_EVENTS,
     RESERVATION_BLOCK,
-    RETENTION,
     SAMPLE,
     TERMINAL_CAP,
-    validate_completion,
-    validate_row,
 )
 from trusted_router.async_settle_shadow_v2_schema import (
     INT64,
@@ -40,7 +45,7 @@ from trusted_router.async_settle_shadow_v2_schema import (
 )
 from trusted_router.detached_jws import canonical
 
-SAMPLE_KIND, CERTIFICATE_KIND, PAGE_KIND, COUNTER_KIND, CLOSURE_KIND, CONTROL_KIND, HEALTH_KIND, CLAIM_KIND = KINDS
+SAMPLE_KIND, CERTIFICATE_KIND, PAGE_KIND, COUNTER_KIND, CLOSURE_KIND, CONTROL_KIND, HEALTH_KIND, CLAIM_KIND, CLOSE_RESULT_KIND = KINDS
 EMPTY_CHAIN = hashlib.sha256(b"").hexdigest()
 
 
@@ -54,7 +59,7 @@ class Row:
     def build(cls, kind: str, key: str, value: dict[str, Any]) -> Row:
         """The sole stored-body serialization boundary; P1 also checks key identity."""
         schemas = {SAMPLE_KIND: SAMPLE, CERTIFICATE_KIND: CERTIFICATE_RECORD, PAGE_KIND: PAGE, COUNTER_KIND: COUNTER, CLOSURE_KIND: CLOSURE,
-                   HEALTH_KIND: HEALTH, CLAIM_KIND: HEALTH_CLAIM, CONTROL_KIND: MANIFEST}
+                   HEALTH_KIND: HEALTH, CLAIM_KIND: HEALTH_CLAIM, CONTROL_KIND: MANIFEST, CLOSE_RESULT_KIND: CLOSE_RESULT}
         schema = schemas[kind]
         if kind == CONTROL_KIND:
             schema = RETENTION if key == "retention-v2" else CAP if key.endswith("/cap-v2") else MANIFEST
@@ -316,6 +321,8 @@ class Journal:
                 if kind == SAMPLE_KIND:
                     reference = (event["retry_original"] if event["phase"] == "completion" or event["retry_original"] is not None
                                  else dict(day=reservation.day, boot=reservation.boot, event_seq=f"{reservation.event_seq:020}"))
+                    if reference is None and event["phase"] == "completion":
+                        reference = dict(day=reservation.day, boot=reservation.boot, event_seq=event["completion_of"])
                     require(value["original_terminal_receipt"] == reference
                             and value["payload_hash"] == event["payload_sha256"]
                             and value["booking"]["outcome"] == event["booking"]["outcome"]
@@ -335,14 +342,21 @@ class Journal:
                             "reference_conflict")
         original_day = reservation.day
         if event["phase"] == "completion":
-            reference = event["retry_original"]
+            reference = event["retry_original"] or dict(day=reservation.day, boot=reservation.boot,
+                                                       event_seq=event["completion_of"])
+            originals = [r for r in found.values() if r.kind == PAGE_KIND
+                         and r.value()["day"] == reference["day"] and r.value()["boot"] == reference["boot"]
+                         and any(e["seq"] == reference["event_seq"] for e in r.value()["events"])]
+            require(len(originals) == 1, "retry_original_gap")
+            original_value = originals[0].value()
+            validate_completion(original_value, event_locator(original_value, reference["event_seq"]),
+                                page.value(), event_locator(page.value(), event["seq"]))
             original_slot = next((s for p in self.pages for s in p.slots
                 if (s.reservation.day, s.reservation.boot, f"{s.reservation.event_seq:020}") ==
                    (reference["day"], reference["boot"], reference["event_seq"])), None)
             if original_slot is not None:
                 require(original_slot.completion_requested and original_slot.body is not None, "completion_order")
                 assert original_slot.body is not None
-                validate_completion(EVENT.parse(original_slot.body), event)
                 for row in self.batches.get(original_slot.reservation, ()):
                     require(found.get((row.kind, row.key)) == row, "reference_conflict")
                 original_slot.reconciled = True
@@ -358,14 +372,11 @@ class Journal:
     def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any]) -> bytes:
         page = original_page.value()
         require(original_page.kind == PAGE_KIND, "completion_writer")
-        reference = event.get("retry_original")
-        require(reference == dict(day=page["day"], boot=page["boot"], event_seq=event.get("completion_of")),
-                "completion_reference")
-        require((page["day"], page["boot"]) != (reservation.day, reservation.boot)
-                or int(event["completion_of"]) < reservation.event_seq, "completion_order")
-        originals = [v for v in page["events"] if v["seq"] == event.get("completion_of")]
-        require(len(originals) == 1, "completion_original")
-        validate_completion(originals[0], event)
+        completion = ReceiptPage(reservation.day, reservation.boot, reservation.event_seq)
+        completion.slots.append(Slot(reservation))
+        proposed = completion.wrapper(None, [event])
+        validate_completion(page, event_locator(page, event.get("completion_of")),
+                            proposed, event_locator(proposed, event.get("seq")))
         slot = self.slot(reservation)
         require(slot.original_page in (None, original_page), "completion_conflict")
         require(self.work_bytes + (len(original_page.body) if slot.original_page is None else 0) <= 256*1024, "batch_bound")

@@ -10,12 +10,21 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
+from trusted_router.async_settle_shadow_attachments import Lane, Transport
 from trusted_router.async_settle_shadow_evidence import HIST_BOUNDS, Counters
-from trusted_router.async_settle_shadow_health_state import CYCLE_SECONDS, JITTER_US, SLOT_US, Slots
+from trusted_router.async_settle_shadow_health_state import (
+    CYCLE_SECONDS,
+    JITTER_US,
+    SLOT_US,
+    Slots,
+    health_basis,
+    prediction,
+)
 from trusted_router.async_settle_shadow_journal import (
     CERTIFICATE_KIND,
+    CLOSE_RESULT_KIND,
     CLOSURE_KIND,
     COUNTER_KIND,
     EMPTY_CHAIN,
@@ -25,20 +34,24 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
+from trusted_router.async_settle_shadow_v2_a1_evidence import COUNTER, validate_close_result
+from trusted_router.async_settle_shadow_v2_a1_health import (
+    PUBLISHER_OPERATIONS,
+    PUBLISHER_SLOT_TRACE,
+)
 from trusted_router.async_settle_shadow_v2_evidence import (
     BUCKET,
     CHECKPOINT_FIELDS,
-    COUNTER,
     COUNTS,
     EVENT,
     RESERVATION_BLOCK,
-    SEALED_CLOSURE,
 )
-from trusted_router.async_settle_shadow_v2_schema import POLICY, day_at, require
+from trusted_router.async_settle_shadow_v2_schema import POLICY, day_at, require, sha256
 from trusted_router.config import Settings
 from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
-from trusted_router.storage_gcp_io import observe_spanner_rpcs
+from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
+from trusted_router.storage_gcp_shadow_io import observe_spanner_rpcs, rpc_scope
 from trusted_router.storage_gcp_shadow_observation import (
     FLUSH_SECONDS,
     Budget,
@@ -48,6 +61,100 @@ from trusted_router.storage_gcp_shadow_observation import (
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+
+
+class _ObserverQuiesced(Exception):
+    pass
+
+
+class HealthObserver(Observer):
+    """V2 owns queued outcomes until they are accounted and folded."""
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.owners: dict[str | None, tuple[str, int]] = {}
+        self.outcome = threading.local()
+        self.scheduled_owner: tuple[str, int] | None = None
+        observer = self
+        class Ticks(dict[str | None, float]):
+            def __setitem__(self, key: str | None, value: float) -> None:
+                require(observer.scheduled_owner is not None, "observer_schedule_owner")
+                assert observer.scheduled_owner is not None
+                observer.owners[key] = observer.scheduled_owner
+                observer.scheduled_owner = None
+                super().__setitem__(key, value)
+        self.inflight_ticks = Ticks()
+
+    def _count(self, field: str) -> None:
+        owner = getattr(self.outcome, "owner", None)
+        scheduled = field in ("health_reads", "workspace_reads")
+        if scheduled:
+            stamp = int(self.evidence_wall()*1_000_000)
+            owner = self.scheduled_owner = (day_at(stamp), stamp)
+        if owner is None:
+            super()._count(field)
+            return
+        day, stamp = owner
+        self.counts[field] += 1
+        bucket = (self._daily_bucket(stamp/1_000_000) if scheduled else
+                  self.daily_counts.setdefault(day, dict(max_consecutive_failures=0,
+                      degraded_seconds=0., started_at_us=stamp)))
+        bucket[field] = bucket.get(field, 0) + 1
+
+    def _owned(self, key: str | None, started: float, read: Callable[[], None]) -> None:
+        with self.lock:
+            self.outcome.owner = self.owners.get(key)
+        try:
+            read()
+        finally:
+            with self.lock:
+                if self.inflight_ticks.get(key) == started:
+                    self.inflight_ticks.pop(key)
+                    owner = self.owners.pop(key, None)
+                    if owner is not None:
+                        bucket = self.daily_counts[owner[0]]
+                        bucket["max_consecutive_failures"] = max(bucket["max_consecutive_failures"], self.failures[key])
+                self.outcome.owner = None
+
+    def _health(self, started: float) -> None:
+        self._owned(None, started, lambda: super(HealthObserver, self)._health(started))
+
+    def _workspace(self, key: str, started: float) -> None:
+        self._owned(key, started, lambda: super(HealthObserver, self)._workspace(key, started))
+
+    async def run(self) -> None:
+        enabled = self.enabled
+        def scheduling_enabled() -> bool:
+            if not enabled():
+                raise _ObserverQuiesced
+            return True
+        self.enabled = scheduling_enabled
+        try:
+            await super().run()
+        except _ObserverQuiesced:
+            pass
+        finally:
+            self.enabled = enabled
+
+    async def close(self) -> None:
+        if self.task is not None:
+            self.task.cancel()  # Only the scheduling loop; submitted reads remain owned.
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
+        if self.executor is not None:
+            await asyncio.to_thread(self.executor.shutdown, wait=True)
+        await super().close()
+
+    def install_health(self, started: float, value: dict[str, Any] | None) -> None:
+        if self.stopped:
+            return
+        with self.lock:
+            if self.clock() - started > .25:
+                self._failure(None, started, "late_installs")
+            elif self._success(None, started):
+                self.health = dict(value) if value is not None else None
 
 
 class Port:
@@ -94,6 +201,28 @@ class Port:
     def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any]) -> bytes | None:
         return self.call(lambda: self.service.journal.complete_event(reservation, original_page, event))
 
+    def capture_prediction(self, workspace: str, observed_us: int) -> dict[str, Any] | None:
+        """P4 captures the prediction and its immutable basis at one cache instant."""
+        def action() -> dict[str, Any]:
+            svc = self.service
+            day = day_at(observed_us)
+            require(day in svc.counters and not svc.journal.days[day].sealing, "closed_day")
+            now = svc.store.clock()
+            svc.basis_tokens = min(10., svc.basis_tokens + max(0., now-svc.basis_tick)*2)
+            svc.basis_tick = now
+            require(svc.basis_tokens >= 1, "basis_rate")
+            svc.basis_tokens -= 1
+            require(svc.observer.lock.acquire(blocking=False), "cache_busy")
+            try:
+                at = svc.observer.clock()
+                value = health_basis(svc.observer, svc.journal.boot, at=at)
+                result = prediction(svc.observer, workspace, at=at)
+            finally:
+                svc.observer.lock.release()
+            result["basis_sha256"] = svc.bases.append(day, value)
+            return result
+        return self.call(action)
+
     def fold_counts(self, day: str, bucket: dict[str, Any]) -> bool:
         """Fold one P1 BUCKET delta atomically, including eligible demand.
 
@@ -138,20 +267,30 @@ class Port:
 
 
 class Service:
-    def __init__(self, settings: Settings, store: ObservationStore) -> None:
+    def __init__(self, settings: Settings, store: ObservationStore, transport: Transport | None = None) -> None:
         self.settings, self.store = settings, store
         self.workspaces = settings.async_settle_shadow_workspace_ids
         self.legacy = Counters(settings.effective_serving_region, settings.source_revision)
         self.journal = Journal(self.legacy.instance)
-        self.observer = Observer(self.workspaces, partial(read_admission, store.database), store.read_shadow_health,
+        if transport is None and settings.async_settle_shadow_attachment_bucket:
+            transport = GCSAttachments(settings.async_settle_shadow_attachment_bucket)
+        self.bases = Lane("basis", self.journal.boot, transport)
+        self.traces = Lane("trace", self.journal.boot, transport)
+        self.basis_tokens, self.basis_tick = 10., store.clock()
+        self.observer = HealthObserver(self.workspaces, partial(read_admission, store.workspace_database), store.read_shadow_health,
             cap=settings.async_settle_pilot_cap_micro, enabled=self.enabled, policy=POLICY,
             clock=store.clock, wall=store.wall)
+        cast(Any, self.observer).lock = threading.RLock()
         self.lock = threading.RLock()
         self.maintenance_lock = threading.Lock()
         self.port = Port(self)
         self.close_failures: dict[str, int] = {}
+        self.final_attempted: set[str] = set()
+        self.final_veto: set[str] = set()
+        self.handoff: tuple[str, list[Row], Row, Row] | None = None
         self.publishing: set[str] = set()
         self.slots = Slots()
+        self.last_claim_start = float("-inf")
         self.stopped = asyncio.Event()
         self.evidence_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-evidence")
         self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
@@ -194,11 +333,11 @@ class Service:
             # Reuse v1's initializer for retained fields, never re-declare them.
             self.legacy.clock = lambda: now_us / 1_000_000
             base = copy.deepcopy(self.legacy._day())
-            base.update(v=2, policy_version=POLICY, day=day, boot=self.journal.boot,
+            base.update(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=self.journal.boot,
                 **dict.fromkeys(COUNTS + CHECKPOINT_FIELDS, 0), eligible_demand=0,
                 event_seq=0, durable_event_hwm=0, checkpoint_seq=0, receipt_count=0,
                 receipt_chain_sha256=None, loss_count=0, reset_count=0, diagnostics={}, buckets=[],
-                publisher=dict(**dict.fromkeys("claim_attempts claims scans publications failures missed_slots".split(), 0),
+                publisher=dict(**dict.fromkeys(set(PUBLISHER_OPERATIONS.fields)-{"cycle_us", "rpc_us"}, 0),
                     cycle_us=dict(bounds_us=list(HIST_BOUNDS), counts=[0]*9),
                     rpc_us=dict(bounds_us=list(HIST_BOUNDS), counts=[0]*9)))
             self.counters[day] = base
@@ -208,41 +347,102 @@ class Service:
         with self.lock:
             self.counters[day]["publisher"][name] += count
 
+    def schedule_cycle(self, slot: int, claim_us: int) -> None:
+        # Called under the service lock BEFORE executor submission.
+        day = self.ensure_day(claim_us)
+        self.operation(day, "scheduled_slots")
+        self.publishing.add(day)
+
     def publish_cycle(self, slot: int, claim_us: int) -> None:
         day = day_at(claim_us)
-        actual_us = int(self.store.wall()*1_000_000)
-        if (not self.enabled() or self.stopped.is_set()
-                or actual_us // SLOT_US != slot or actual_us % SLOT_US > JITTER_US):
-            self.operation(day, "missed_slots")
-            return
-        claim_us = actual_us
-        started = self.store.clock()
-        budget = Budget(started+CYCLE_SECONDS, self.store.clock)
-        self.operation(day, "claim_attempts")
-        won = False
         with self.lock:
-            self.publishing.add(day)
+            if day not in self.publishing:
+                self.schedule_cycle(slot, claim_us)
+        started = self.store.clock()
+        budget = Budget(started + CYCLE_SECONDS, self.store.clock)
+        attempted = False
+        outcome = "missed_slots"
+        unknown = False
+        value = None
+        ack_us = None
+        rpc_durations: list[int] = []
+        actual_us = claim_us
+        self.store.last_claim = None
+        def record(elapsed: int) -> None:
+            rpc_durations.append(elapsed)
+            self.histogram(day, "rpc_us", elapsed)
         try:
-            with observe_spanner_rpcs(lambda elapsed: self.histogram(day, "rpc_us", elapsed)):
-                if not self.store.claim(self.journal.boot, slot, claim_us, budget):
-                    self.operation(day, "missed_slots")
+            with self.lock:
+                actual_us = int(self.store.wall()*1_000_000)
+                if (not self.enabled() or self.stopped.is_set() or actual_us // SLOT_US != slot
+                        or actual_us % SLOT_US > JITTER_US or self.store.clock()-self.last_claim_start < 2):
                     return
-                won = True
+                budget.remaining(CYCLE_SECONDS)
+                self.operation(day, "claim_attempts")
+                self.last_claim_start = self.store.clock()
+                attempted = True
+            outcome = "failures"
+            with rpc_scope(budget.deadline, CYCLE_SECONDS, self.store.clock), observe_spanner_rpcs(
+                    record):
+                if not self.store.claim(self.journal.boot, slot, actual_us, budget):
+                    outcome = "lost_claims"
+                    return
                 self.operation(day, "claims")
                 self.operation(day, "scans")
                 value = self.store.observe(self.journal.boot, self.settings.effective_serving_region,
                                            self.settings.source_revision, slot, budget)
                 if not self.enabled() or not self.store.publish(value, budget):
-                    self.operation(day, "failures")
                     return
                 budget.remaining(CYCLE_SECONDS)
-                self.operation(day, "publications")
-        except Exception:
-            self.operation(day, "failures" if won else "missed_slots")
+                ack_us = int(self.store.wall()*1_000_000)
+                outcome = "publications"
+        except Exception as error:
+            unknown = isinstance(error, UnknownCommit)
         finally:
-            self.histogram(day, "cycle_us", max(0, round((self.store.clock()-started)*1_000_000)))
+            elapsed = max(0, round((self.store.clock()-started)*1_000_000))
+            late = attempted and elapsed > round(CYCLE_SECONDS*1_000_000)
+            if late:
+                outcome = "failures"
             with self.lock:
-                self.publishing.discard(day)
+                self.operation(day, outcome)
+                if unknown:
+                    self.operation(day, "unknown_outcomes")
+                if late:
+                    self.operation(day, "late_cycles")
+                if attempted:
+                    self.histogram(day, "cycle_us", elapsed)
+                claim = self.store.last_claim
+                trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=self.journal.boot,
+                    slot=slot, claim_start_us=actual_us if attempted else None,
+                    claim_at_ns=claim["claim_at_ns"] if claim else None,
+                    observed_at_ns=value["observed_at_ns"] if value else None,
+                    publisher_heartbeat_ns=value["publisher_heartbeat_ns"] if value else None,
+                    body_sha256=sha256(value) if value else None, ack_at_us=ack_us,
+                    cycle_us=elapsed if attempted else None,
+                    outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
+                    unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
+                try:
+                    PUBLISHER_SLOT_TRACE(trace)
+                    self.traces.append(day, trace)
+                except ValueError:
+                    self.journal.loss(day)
+                finally:
+                    self.publishing.discard(day)
+
+    def missed_slot(self, slot: int, *, scheduled: bool = False) -> None:
+        day = self.ensure_day(slot*SLOT_US)
+        if not scheduled:
+            self.operation(day, "scheduled_slots")
+        self.operation(day, "missed_slots")
+        trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=self.journal.boot,
+            slot=slot, claim_start_us=None, claim_at_ns=None, observed_at_ns=None,
+            publisher_heartbeat_ns=None, ack_at_us=None, cycle_us=None, body_sha256=None,
+            outcome="missed", unknown_outcome=False, late_cycle=False, rpc_count=0, rpc_elapsed_us=0)
+        try:
+            PUBLISHER_SLOT_TRACE(trace)
+            self.traces.append(day, trace)
+        except ValueError:
+            self.journal.loss(day)
 
     def histogram(self, day: str, name: str, elapsed: int) -> None:
         with self.lock:
@@ -280,7 +480,8 @@ class Service:
 
     def closure_row(self, day: str, counter: Row, end_us: int, reason: str) -> Row:
         state = self.journal.days[day]
-        return Row.build(CLOSURE_KIND, counter.key, dict(v=2, policy_version=POLICY,
+        return Row.build(CLOSURE_KIND, counter.key, dict(v=2, policy_version=POLICY, contract_revision="a1",
+            authorization_obligations="receipt_chain",
             day=day, boot=self.journal.boot, router_revision=self.settings.source_revision,
             region=self.settings.effective_serving_region, reason=reason, interval_end_us=end_us,
             final_event_seq=state.next_seq-1, final_checkpoint_seq=state.checkpoint_seq,
@@ -292,14 +493,9 @@ class Service:
     def acknowledged(self, day: str, pages: list[Row], closure: Row | None) -> None:
         self.journal.acknowledge(pages)
         if closure is not None:
-            ack = dict(v=2, policy_version=POLICY, closure_sha256=closure.digest,
-                       physical_commit_ack_at_us=int(self.store.wall()*1_000_000))
-            SEALED_CLOSURE(ack)
-            self.last_closure_ack = ack
-            logger.info("shadow_v2_closure_ack day=%s boot=%s closure_sha256=%s physical_commit_ack_at_us=%s",
-                        day, self.journal.boot, closure.digest, ack["physical_commit_ack_at_us"])
             self.previous_closure = closure.digest
             self.journal.closed(day)
+            self.final_attempted.discard(day)
             self.counters.pop(day)
             self.legacy.days.pop(day, None)
             self.observer.acknowledge_daily_counts(day, day_at(self.folded_us))
@@ -345,6 +541,15 @@ class Service:
                         assert slot.body is not None
                         event = EVENT.parse(slot.body)
                         original = slot.original_page
+                    if original is None and event["phase"] == "completion":
+                        reference = event["retry_original"] or dict(day=reservation.day, boot=reservation.boot,
+                                                                   event_seq=event["completion_of"])
+                        with self.lock:
+                            original = next((p.row for p in self.journal.pages
+                                if p.day == reference["day"] and p.boot == reference["boot"] and p.row is not None
+                                and any(e["seq"] == reference["event_seq"] for e in p.row.value()["events"])), None)
+                        if original is None:
+                            continue  # No exact page coordinate: unresolved, never guessed/scanned.
                     if original is not None:
                         found = read(original.kind, original.key)
                         if found != original:
@@ -383,6 +588,8 @@ class Service:
 
     def _flush(self, deadline: float) -> None:
         budget = Budget(deadline, self.store.clock)
+        self.bases.step(budget)
+        self.traces.step(budget)
         with self.lock:
             now_us = int(self.store.wall()*1_000_000)
             today = day_at(now_us)
@@ -401,14 +608,25 @@ class Service:
                     return
                 with self.lock:
                     self.journal.reconciled_commit(day)
-                    self.acknowledged(day, pages, closure)
+                    if closure is None:
+                        self.acknowledged(day, pages, None)
                     self.unknown = None
             except Exception:
+                return
+        if self.handoff is not None:
+            day, pages, closure, result = self.handoff
+            if self.store.reconcile([result], budget):
+                with self.lock:
+                    self.acknowledged(day, pages, closure)
+                    self.handoff = None
+            else:
                 return
         with self.lock:
             days = sorted(self.counters)
         for day in days:
             with self.lock:
+                if day in self.final_attempted:
+                    continue
                 state = self.journal.days[day]
                 reason = self.closing_reason or ("utc_boundary" if day < today else None)
                 if reason:
@@ -417,15 +635,47 @@ class Service:
                 if reason == "utc_boundary":
                     import datetime as dt
                     end_us = int(dt.datetime.combine(dt.date.fromisoformat(day)+dt.timedelta(days=1), dt.time(), dt.UTC).timestamp()*1_000_000)
+                with self.observer.lock:
+                    self.fold(now_us)
+                    observer_inflight = len(self.observer.inflight_ticks)
                 pages = self.journal.freeze(day)
-                closed = bool(reason and self.journal.can_close(day, inflight=self.inflight + (day in self.publishing),
+                closed = bool(reason and not self.bases.pending(day) and not self.traces.pending(day)
+                    and self.journal.can_close(day, inflight=self.inflight + (day in self.publishing)
+                    + observer_inflight,
                     pending=self.pending, interval_end_us=end_us, folded_us=self.folded_us))
                 state.sealing = closed
                 self.journal.checkpoint(day)
                 counter = self.counter_row(day, now_us, closed=closed)
                 closure = self.closure_row(day, counter, end_us, reason) if closed and reason else None
+            started = self.store.clock()
+            attempt_us = int(self.store.wall()*1_000_000)
+            flush_remaining = max(0, int((deadline-started)*1_000_000))
+            shutdown_remaining = (max(0, int((self.termination_deadline-started)*1_000_000))
+                                  if self.termination_deadline is not None else None)
+            if closure is not None:
+                with self.lock:
+                    self.final_attempted.add(day)
             try:
                 self.store.flush(pages, counter, closure, budget)
+                elapsed = max(0, round((self.store.clock()-started)*1_000_000))
+                if closure is not None:
+                    observed = int(self.store.wall()*1_000_000)
+                    result = Row.build(CLOSE_RESULT_KIND, counter.key, dict(v=2, policy_version=POLICY,
+                        contract_revision="a1", day=day, boot=self.journal.boot,
+                        router_revision=self.settings.source_revision, closure_sha256=sha256(closure.value()),
+                        final_checkpoint_seq=counter.value()["checkpoint_seq"], attempt_started_at_us=attempt_us,
+                        observed_at_us=observed, physical_commit_ack_at_us=observed, elapsed_us=elapsed,
+                        outcome="acknowledged", flush_remaining_us=flush_remaining,
+                        shutdown_remaining_us=shutdown_remaining, handoff_attempt_limit=1))
+                    validate_close_result(result.value(), closure.value(), termination_applies=self.termination_deadline is not None)
+                    # Freeze only after the original reply. No readback path enters here.
+                    self.last_closure_ack = result.value()
+                    self.handoff = (day, pages, closure, result)
+                    try:
+                        self.store.close_result(result, budget)
+                    except Exception:
+                        return  # Exactly one write; later exact read can establish landing.
+                    self.handoff = None
                 with self.lock:
                     self.acknowledged(day, pages, closure)
                 self.reconcile_work(budget)
@@ -440,6 +690,7 @@ class Service:
                         if uncertain:
                             self.unknown = (day, pages, counter, closure)
                     if closure:
+                        self.final_veto.add(day)
                         self.close_failures[day] = self.close_failures.get(day, 0) + 1
                         logger.warning("shadow_v2_final_close_failed day=%s boot=%s unknown=%s",
                                        day, self.journal.boot, isinstance(error, UnknownCommit))
@@ -480,9 +731,16 @@ class Service:
             if self.contender():
                 busy = self.publisher_job is not None and not self.publisher_job.done()
                 slot, missed = self.slots.tick(now_us, busy=busy)
-                self.operation(day_at(now_us), "missed_slots", missed)
-                if slot is not None:
-                    self.publisher_job = loop.run_in_executor(self.publisher_executor, self.publish_cycle, slot, now_us)
+                with self.lock:
+                    for missed_slot in range(now_us//SLOT_US - missed + (slot is None), now_us//SLOT_US + (slot is None)):
+                        self.missed_slot(missed_slot)
+                    if slot is not None:
+                        self.schedule_cycle(slot, now_us)
+                        try:
+                            self.publisher_job = loop.run_in_executor(self.publisher_executor, self.publish_cycle, slot, now_us)
+                        except RuntimeError:
+                            self.missed_slot(slot, scheduled=True)
+                            self.publishing.discard(day_at(now_us))
             if now >= self.next_flush and (self.flush_job is None or self.flush_job.done()):
                 self.next_flush = now+5
                 self.flush_job = loop.run_in_executor(self.evidence_executor, self.maintain)
@@ -528,6 +786,8 @@ class Service:
             return
         self.close_task = asyncio.current_task()
         deadline = min(deadline or self.store.clock()+9, self.termination_deadline or self.store.clock()+9)
+        if reason == "shutdown":
+            self.termination_deadline = deadline
         self.stopped.set()
         self.slots.stopped = True
         with self.lock:
@@ -558,12 +818,20 @@ class Service:
                 # At most three days; pages/reference reconciliation and closure
                 # need separate passes. Leave unresolved writers open on no progress.
                 for _ in range(6):
-                    before = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None)
+                    before = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None, self.handoff is not None)
                     await asyncio.shield(asyncio.get_running_loop().run_in_executor(
                         self.evidence_executor, self.flush, min(deadline, self.store.clock()+FLUSH_SECONDS)))
-                    after = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None)
-                    if not self.journal.days or before == after:
+                    after = (len(self.journal.days), len(self.journal.pages), len(self.journal.batches), self.unknown is not None, self.handoff is not None)
+                    if not self.journal.days:
                         break
+                    if before == after:
+                        lanes = [lane for lane in (self.bases, self.traces) if lane.queue and lane.transport is not None]
+                        if not lanes:
+                            break
+                        wake = min(lane.next_operation for lane in lanes)
+                        if wake >= deadline:
+                            break
+                        await asyncio.sleep(max(0, wake-self.store.clock()))
         except (TimeoutError, ValueError):
             self.unclosed = True
         finally:

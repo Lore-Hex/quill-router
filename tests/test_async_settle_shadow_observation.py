@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 
 from tests.fakes.spanner import FakeSpannerDatabase
-from tests.test_async_settle_shadow_sdk_retry import sdk_database  # noqa: F401 - real SDK fixture
-from tests.test_async_settle_shadow_v2_contract import fixture
+from tests.test_async_settle_shadow_sdk_retry import sdk_database as sdk_base
+from tests.test_async_settle_shadow_v2_contract import fixture as p1_fixture
 from tests.test_async_settle_shadow_v2_evidence import (  # noqa: F401 - grid fixture
     exhaustive,
     untraced,
@@ -43,6 +43,34 @@ from trusted_router.storage_gcp_shadow_observation import Budget, ObservationSto
 NOW_US = int(dt.datetime(2026, 10, 12, tzinfo=dt.UTC).timestamp()*1_000_000)
 
 
+def fixture(name: str) -> Any:
+    if name in {"counter", "closure", "controls", "health", "health_claim"}:
+        import json
+        from pathlib import Path
+        return json.loads((Path(__file__).parent / "fixtures/async_settlement/shadow_v2_a1" / (name+".json")).read_text())["variants"]
+    return p1_fixture(name)
+
+
+@pytest.fixture
+def sdk_database(monkeypatch: Any, shadow_deadline_clock: Any) -> Any:
+    from google.cloud.spanner_v1.types import PartialResultSet
+    db, clock, sleeps = sdk_base.__wrapped__(monkeypatch, shadow_deadline_clock)
+    old = db.query
+    def query(**kwargs: Any) -> Any:
+        if "CURRENT_TIMESTAMP() AS claim_at" not in kwargs["request"].sql:
+            return old(**kwargs)
+        duration = db.read_durations.pop(0) if db.read_durations else db.read_duration
+        db.rpc("read", kwargs, duration, db.read_errors)
+        response = PartialResultSet(metadata=dict(transaction=dict(id=b"offline"), row_type=dict(fields=[
+            dict(name="body", type=dict(code="STRING")), dict(name="claim_at", type=dict(code="TIMESTAMP"))])))
+        response._pb.values.add(null_value=0)
+        response._pb.values.add(string_value=dt.datetime.fromtimestamp(db.server_ns/1e9, dt.UTC).isoformat().replace("+00:00", "Z"))
+        return iter([response])
+    db.server_ns = NOW_US*1000
+    db.spanner_api.execute_streaming_sql = query
+    return db, clock, sleeps
+
+
 def event_for(reservation: Any) -> dict[str, Any]:
     value = copy.deepcopy(next(v["object"] for v in fixture("receipt_pages") if v["schema"] == "AUTHORIZE_EVENT" and v["expected"] == "accept"))
     value.update(seq=f"{reservation.event_seq:020}", event_at_us=reservation.observed_us,
@@ -61,13 +89,34 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
     class Reader:
         def __init__(self, wrapped: Any) -> None:
             self.wrapped = wrapped
+        def insert(self, *, table: str, columns: Any, values: Any) -> None:
+            for row in values:
+                assert (row[0], row[1]) not in db.rows
+            self.wrapped.insert_or_update(table=table, columns=columns, values=values)
         def __getattr__(self, name: str) -> Any:
             return getattr(self.wrapped, name)
         def execute_sql(self, sql: str, *, params: Any, param_types: Any, **options: Any) -> Any:
             assert options["retry"] is None
             assert 0 < options["timeout"] <= 2
             assert options["request_options"]["priority"] == "PRIORITY_LOW"
-            return self.wrapped.execute_sql(sql, params=params, param_types=param_types)
+            from types import SimpleNamespace
+
+            from google.api_core.datetime_helpers import DatetimeWithNanoseconds
+            from google.protobuf.timestamp_pb2 import Timestamp
+
+            from trusted_router.storage_gcp_shadow_io import entity_point_statement
+            stamp = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=db.server_ns//10**9, nanos=db.server_ns%10**9))
+            if "CURRENT_TIMESTAMP() AS claim_at" in sql:
+                base = self.wrapped.execute_sql(entity_point_statement(params["kind"], params["id"])[0], params=params, param_types=param_types)
+                return [(list(base)[0][0] if (params["kind"], params["id"]) in db.rows else None, stamp)]
+            if "SELECT body, updated_at" in sql:
+                base = list(self.wrapped.execute_sql(entity_point_statement(params["kind"], params["id"])[0], params=params, param_types=param_types))
+                values = [(r[0], stamp) for r in base]
+            else:
+                values = list(self.wrapped.execute_sql(sql, params=params, param_types=param_types))
+            class Stream(list):
+                metadata = SimpleNamespace(transaction=SimpleNamespace(read_timestamp=stamp))
+            return Stream(values)
     class Database(FakeSpannerDatabase):
         _trusted_router_rpc_deadlines = True
         def run_in_transaction(self, callback: Any, **options: Any) -> Any:
@@ -78,13 +127,20 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
             with super().snapshot(**kwargs) as reader:
                 yield Reader(reader)
     db = Database()
+    db.server_ns = NOW_US*1000
     db._trusted_router_rpc_deadlines = True
     return ObservationStore(db, wall=lambda: NOW_US/1_000_000+100), db
 
 
 def health(*, now_us: int = NOW_US, rows: list[Any] | None = None) -> dict[str, Any]:
     return summarize(rows or [], boot="publisher", region="us-central1", revision="a"*40,
-        slot=now_us//2_000_000, observed_us=now_us, heartbeat_us=now_us, row_limit=10000)
+        slot=now_us//2_000_000, observed_ns=now_us*1000, age_seconds=now_us/1e6, row_limit=10000)
+
+
+def installed(body: dict[str, Any], *, read_ns: int | None = None, reply_at: float = 10.) -> dict[str, Any]:
+    return dict(body=body, committed_at_ns=body["observed_at_ns"],
+                read_at_ns=body["observed_at_ns"] if read_ns is None else read_ns,
+                read_elapsed_ns=0, reply_at=reply_at)
 
 
 def service() -> Service:
@@ -208,7 +264,7 @@ def test_unknown_commit_needs_exact_body_and_contiguous_references() -> None:
 
 @pytest.mark.parametrize("field,limit", [("terminal_reserved", 100000), ("event_reserved", 400000)])
 def test_cap_last_block_and_overflow(field: str, limit: int) -> None:
-    value = dict(v=2, policy_version="shadow-v2", day="2026-10-12", terminal_reserved=0, event_reserved=0)
+    value = dict(v=2, policy_version="shadow-v2", contract_revision="a1", day="2026-10-12", terminal_reserved=0, event_reserved=0)
     value[field] = limit-100
     value = reserve_cap(value, terminal=field == "terminal_reserved", event=field == "event_reserved")
     assert value[field] == limit
@@ -242,7 +298,7 @@ def test_real_observer_unknown_health(field: str, value: Any) -> None:
     h[field] = value
     if field == "sample_count":
         h["backlog_count"] = value
-    observer.install_health(10., h)
+    observer.install_health(10., installed(h))
     assert observer.peek("ws")["prediction"] == "unknown"
 
 
@@ -251,15 +307,15 @@ def test_real_observer_yes_no_and_five_second_boundary() -> None:
     observer = Observer(frozenset({"ws"}), lambda _: Admission(0, 2), lambda: None,
         policy="shadow-v2", clock=lambda: 10., wall=lambda: wall[0])
     observer.install_workspace("ws", 10., Admission(0, 2))
-    observer.install_health(10., health())
+    observer.install_health(10., installed(health()))
     assert observer.peek("ws")["prediction"] == "yes"
     assert observer.peek("ws")["prediction_basis"] == "counterfactual_backlog_v2"
     h = health(rows=[(dt.datetime.fromtimestamp((NOW_US-6_000_000)/1e6, dt.UTC), 1, "dead")])
-    observer.install_health(10., h)
+    observer.install_health(10., installed(h))
     assert observer.peek("ws")["prediction"] == "no"
-    wall[0] += 5
+    observer.install_health(10., installed(h, read_ns=h["observed_at_ns"]+5_000_000_000))
     assert observer.peek("ws")["prediction"] == "unknown"
-    assert observer.health == h  # no timestamp rejuvenation
+    assert observer.health["body"] == h  # no timestamp rejuvenation
 
 
 def test_shadow_body_rejected_by_money_reader() -> None:
@@ -292,7 +348,8 @@ def test_claim_fence_and_delayed_winner_fake() -> None:
     h = health()
     h["publisher_boot_id"] = "first"
     assert store.publish(h, budget)
-    assert store.read_shadow_health() == h
+    assert store.read_shadow_health()["body"] == h
+    db.server_ns += 2_000_000_000
     assert store.claim("second", slot+1, NOW_US+2_000_000, budget)
     assert not store.publish(h, budget)
     assert all(kind in (HEALTH_KIND, CLAIM_KIND) for kind, _ in db.rows)
@@ -305,6 +362,7 @@ def test_idle_checkpoint_close_and_recovery() -> None:
     svc.flush(time.monotonic()+4)
     assert svc.journal.days[day].attempts == 1
     svc.journal.failed(day, unknown=False)
+    svc.termination_deadline = svc.store.clock()+9
     svc.closing_reason, svc.interval_end_us = "shutdown", NOW_US
     svc.flush(time.monotonic()+4)
     assert not svc.journal.days
@@ -409,11 +467,31 @@ def test_native_encoding_six_maximum_rows(tmp_path: Any) -> None:
         transaction_id=b"t"*128, mutations=tx._mutations,
         request_options={"priority": "PRIORITY_LOW", "transaction_tag": "tr_shadow_v2"})
     encoded = CommitRequest.serialize(request)
+    import json as json_module
+    from pathlib import Path
+
+    from trusted_router.async_settle_shadow_journal import CLOSE_RESULT_KIND
+    result_value = json_module.loads((Path(__file__).parent / "fixtures/async_settlement/shadow_v2_a1/close_result.json").read_text())["variants"][0]["object"]
+    result_value.update(boot="b"*64, closure_sha256=closure.digest)
+    result_raw = canonical(result_value)
+    result_row = Row(CLOSE_RESULT_KIND, result_value["day"]+"/"+result_value["boot"], result_raw+b" "*(4096-len(result_raw)))
+    result_row.value()
+    result_tx = Transaction(SimpleNamespace())
+    result_tx.insert(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
+                     values=[(result_row.kind, result_row.key, result_row.body.decode(), dt.datetime.now(dt.UTC))])
+    result_request = CommitRequest(session=request.session, transaction_id=b"t"*128,
+        mutations=result_tx._mutations, request_options=request.request_options)
+    result_encoded = CommitRequest.serialize(result_request)
+    # Both maximum bounded attachment lanes, including encoded/native copies.
+    attachments = [memoryview(b"x"*65536).tobytes() for _ in range(8)]
+    assert sum(map(len, attachments)) == 512*1024
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert retained >= 331776+256*1024
-    assert peak >= retained + len(encoded)
-    measurements = dict(body_bytes=331776, key_bytes=sum(len(r.kind)+len(r.key) for r in rows),
+    assert peak >= retained + len(encoded) + len(result_encoded) + sum(map(len, attachments))
+    measurements = dict(body_bytes=331776, close_result_body_bytes=4096,
+        close_result_key_bytes=len(result_row.key), close_result_native_bytes=len(result_encoded),
+        close_result_native_overhead_bytes=len(result_encoded)-4096, attachment_retained_body_bytes=sum(map(len, attachments)), key_bytes=sum(len(r.kind)+len(r.key) for r in rows),
         native_request_bytes=len(encoded), native_overhead_bytes=len(encoded)-331776,
         python_encoding_peak_bytes=peak, retained_body_bytes=331776+256*1024,
         retained_work_body_bytes=256*1024,
@@ -584,6 +662,7 @@ def test_same_owner_later_slot_fences_unpublished_winner() -> None:
     store, _ = fake_store()
     slot = NOW_US//2_000_000
     assert store.claim("publisher", slot, NOW_US, Budget(time.monotonic()+.5))
+    store.database.server_ns += 2_000_000_000
     assert store.claim("publisher", slot+1, NOW_US+2_000_000, Budget(time.monotonic()+.5))
     assert not store.publish(health(), Budget(time.monotonic()+.5))
     assert store.read_shadow_health() is None
@@ -616,7 +695,7 @@ def test_all_cumulative_count_families_cannot_regress(field: str) -> None:
 
 
 def test_late_health_commit_is_failure_but_reader_uses_observation_age(monkeypatch: Any) -> None:
-    from trusted_router.async_settle_shadow_v2_evidence import health_usable
+    from trusted_router.async_settle_shadow_v2_a1_health import health_usable
 
     svc = service()
     from types import SimpleNamespace
@@ -646,7 +725,9 @@ def test_late_health_commit_is_failure_but_reader_uses_observation_age(monkeypat
     observer.install_health(10., svc.store.read_shadow_health())
     for elapsed in (.501, 4.75, 4.999999, 5., 5.000001):
         clock[0] = elapsed
-        usable = health_usable(landed[0], int(svc.store.wall()*1e6))
+        metadata = dict(committed_at_ns=NOW_US*1000+501_000_000, read_at_ns=NOW_US*1000+round(elapsed*1e9))
+        observer.install_health(10., dict(installed(landed[0]), **metadata))
+        usable = health_usable(landed[0], metadata, 0, 0)
         assert (observer.peek("ws")["prediction"] == "yes") == usable
 
 
@@ -670,17 +751,17 @@ def test_every_prediction_reader_uses_health_usable(monkeypatch: Any) -> None:
     from trusted_router import async_settle_shadow_health_state as state
 
     calls = []
-    def reject(body: Any, now: int) -> bool:
-        calls.append((body, now))
+    def reject(body: Any, metadata: Any, q: int, e: int) -> bool:
+        calls.append((body, metadata, q, e))
         return False
     monkeypatch.setattr(state, "health_usable", reject)
     observer = Observer(frozenset({"ws"}), lambda _: Admission(0, 2), lambda: health(),
         policy="shadow-v2", clock=lambda: 10., wall=lambda: NOW_US/1e6)
     observer.install_workspace("ws", 10., Admission(0, 2))
-    observer.install_health(10., health())
+    observer.install_health(10., installed(health()))
     assert observer.peek("ws")["prediction"] == "unknown"
     assert state.prediction(observer, "ws")["prediction"] == "unknown"
-    assert len(calls) == 2 and all(now == NOW_US for _, now in calls)
+    assert len(calls) == 2 and all(metadata["read_at_ns"] == NOW_US*1000 for _, metadata, _, _ in calls)
 
 
 @exhaustive
@@ -715,24 +796,27 @@ def test_publisher_slot_product(monkeypatch: Any) -> None:
         svc.publish_cycle(NOW_US//2_000_000, NOW_US)
         p = svc.counters["2026-10-12"]["publisher"]
         assert p["claims"] <= p["claim_attempts"] == 1
-        assert p["publications"] + p["failures"] <= p["claims"]
-        assert p["publications"] + p["failures"] + p["missed_slots"] == 1
+        from trusted_router.async_settle_shadow_v2_a1_health import validate_publisher_final
+        validate_publisher_final(p)
+        assert p["publications"] + p["failures"] + p["lost_claims"] == 1
         assert p["scans"] == p["claims"]
         assert p["publications"] == int(claim is True and scan is True and publish is True)
         assert sum(p["cycle_us"]["counts"]) == 1
 
 
 def test_rpc_histogram_native_success_failure_and_stream(sdk_database: Any) -> None:  # noqa: F811
-    from trusted_router.storage_gcp_io import observe_spanner_rpcs
+    from trusted_router.storage_gcp_shadow_io import observe_spanner_rpcs
     db, clock, _ = sdk_database
     svc = service()
     store = ObservationStore(db, clock=clock.monotonic)
     day = "2026-10-12"
+    db.server_ns = 2_000_000_000
     with observe_spanner_rpcs(lambda elapsed: svc.histogram(day, "rpc_us", elapsed)):
         assert store.claim("issuer", 1, 2_000_000, Budget(clock.monotonic()+.5, clock.monotonic))
     h = svc.counters[day]["publisher"]["rpc_us"]
     assert sum(h["counts"]) == len(db.calls) == 2
     assert h["counts"][5] == 1 and h["counts"][8] == 1  # 10ms read, 450ms commit
+    db.server_ns = 4_000_000_000
     db.errors = [RuntimeError("lost reply")]
     with observe_spanner_rpcs(lambda elapsed: svc.histogram(day, "rpc_us", elapsed)):
         with pytest.raises(UnknownCommit):
@@ -867,7 +951,7 @@ async def test_shutdown_full_pages_requires_second_pass() -> None:
     assert len(svc.journal.pages) == 4
     await svc.close()
     assert not svc.unclosed and not svc.journal.days
-    assert svc.store.database.commits == 2
+    assert svc.store.database.commits == 3
 
 
 @pytest.mark.asyncio
@@ -889,7 +973,7 @@ async def test_shutdown_fault_points(monkeypatch: Any, point: str) -> None:
             raise UnknownCommit("reply lost")
     monkeypatch.setattr(svc.store, "flush", fault)
     await svc.close()
-    assert svc.unclosed == (point != "after_closure")
+    assert svc.unclosed  # A1 permanently vetoes a lost original final reply.
     if point == "after_closure":
         assert svc.close_failures["2026-10-12"] == 1
 
@@ -908,7 +992,7 @@ async def test_unknown_final_close_miss_then_exact_late_landing(monkeypatch: Any
     pages, counter, closure = retained[0]
     real(pages, counter, closure, Budget(time.monotonic()+4))
     svc.flush(time.monotonic()+4)
-    assert not svc.journal.days and svc.unknown is None
+    assert svc.journal.days and svc.unknown is None and svc.last_closure_ack is None
     assert svc.close_failures["2026-10-12"] == 1
 
 
@@ -976,14 +1060,10 @@ def test_cross_midnight_retained_work_and_completion() -> None:
         proof_kind="none", comparison=None, prediction=None,
         booking=dict(outcome="not_attempted", reference=None, winner=None),
         retry_original=dict(day=r.day, boot=r.boot, event_seq=f"{r.event_seq:020}"), completion_of=f"{r.event_seq:020}")
-    assert svc.port.complete_event(c, page, completion)
-    assert svc.port.complete(c)
-    svc.flush(time.monotonic()+4)
-    assert svc.journal.days[c.day].hwm == 1
-    svc.closing_reason = "shutdown"
-    svc.flush(time.monotonic()+4)
-    linked = svc.store.read(CLOSURE_KIND, c.day+"/"+svc.journal.boot, Budget(time.monotonic()+1))
-    assert linked is not None and linked.value()["previous_day_closure_sha256"] == previous.digest
+    # A1 removes authorize-original completion: closure commits the obligation.
+    assert svc.port.complete_event(c, page, completion) is None
+    assert svc.journal.days[c.day].hwm == 0
+    assert previous.value()["authorization_obligations"] == "receipt_chain"
 
 
 def retained_case(kind: str, *, pending: bool = False) -> tuple[Service, Any, Row]:
@@ -1124,6 +1204,7 @@ def test_all_four_money_primitives_are_unreachable(monkeypatch: Any) -> None:
         calls.append(spy)
     svc = service()
     svc.store.wall = lambda: NOW_US/1e6+100
+    svc.store.database.server_ns = (NOW_US+100_000_000)*1000
     svc.publish_cycle((NOW_US+100_000_000)//2_000_000, NOW_US+100_000_000)
     svc.maintain()
     assert svc.counters["2026-10-12"]["publisher"]["publications"] == 1
@@ -1162,10 +1243,11 @@ def test_v1_drop_is_not_v2_recovery() -> None:
 
 @exhaustive
 def test_transaction_total_includes_counter_and_closure() -> None:
-    from trusted_router.async_settle_shadow_v2_evidence import transaction_bodies
     pages, counter, closure = maximum_rows()
-    assert transaction_bodies([r.body for r in pages], counter.body, closure.body) == 331776
-    assert transaction_bodies([r.body for r in pages], counter.body, None) == 327680
+    store, _ = fake_store()
+    store.flush(pages, counter, closure, Budget(time.monotonic()+4))
+    assert sum(len(row.body) for row in [*pages, counter, closure]) == 331776
+    assert sum(len(row.body) for row in [*pages, counter]) == 327680
 
 
 def test_health_names_never_touch_fleet_v1() -> None:
@@ -1233,7 +1315,8 @@ async def test_shutdown_waits_for_owned_reservation_with_flush_grace() -> None:
 def test_native_stream_iteration_never_restarts(sdk_database: Any, error: str) -> None:  # noqa: F811
     from google.api_core.exceptions import Aborted, InternalServerError
 
-    from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines, observe_spanner_rpcs
+    from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
+    from trusted_router.storage_gcp_shadow_io import observe_spanner_rpcs
     db, clock, sleeps = sdk_database
     db._trusted_router_rpc_deadlines = False
     original = db.query
@@ -1285,7 +1368,7 @@ def test_closure_condition_product() -> None:
 def test_cap_allocation_product() -> None:
     for terminal, event, terminals, events in itertools.product((False, True), (False, True),
             (0, 99900, 100000), (0, 399900, 400000)):
-        value = dict(v=2, policy_version="shadow-v2", day="2026-10-12",
+        value = dict(v=2, policy_version="shadow-v2", contract_revision="a1", day="2026-10-12",
                      terminal_reserved=terminals, event_reserved=events)
         legal = (not terminal or terminals <= 99900) and (not event or events <= 399900)
         if legal:
@@ -1343,7 +1426,7 @@ async def test_maximum_queue_shutdown_measurements(tmp_path: Any, monkeypatch: A
     await svc.close()
     elapsed = time.monotonic()-started
     assert not svc.unclosed and not svc.journal.days, (svc.journal.days, len(svc.journal.batches), svc.unknown, svc.journal.losses)
-    assert svc.store.database.commits == 2
+    assert svc.store.database.commits == 3
     measurement = dict(shutdown_seconds=elapsed, page_bytes=4*65536, counter_bytes=65536, closure_bytes=4096,
         transaction_body_bytes=[327680, 69632], commits=svc.store.database.commits,
         total_selects=svc.store.database.transaction_execute_sql_calls+svc.store.database.snapshot_execute_sql_calls,
@@ -1372,13 +1455,17 @@ for point in points:
         path = root / (point + ".json")
         def kill():
             os.kill(os.getpid(), signal.SIGKILL)
+            signal.pause()  # Do not cross the boundary while signal delivery is pending.
+            raise AssertionError("SIGKILL returned")
         def commit(callback, **options):
             def inside(tx):
                 result = callback(tx)
                 if point == "during_commit": kill()
                 return result
             result = original(inside, **options)
-            path.write_text(json.dumps([[k, i, row.body] for (k, i), row in db.rows.items()]))
+            staged = path.with_suffix(".tmp")
+            staged.write_text(json.dumps([[k, i, row.body] for (k, i), row in db.rows.items()]))
+            staged.replace(path)
             return result
         db.run_in_transaction = commit
         real = svc.store.flush

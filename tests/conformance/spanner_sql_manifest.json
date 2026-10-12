@@ -29,8 +29,8 @@
     "storage_gcp_async_settle_shadow:finalization_statement": "32ac2efa5936b82f57d56e9eb2866b63565beb69488969b31372aeeabd519892",
     "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
     "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78",
-    "storage_gcp_io:entity_point_statement": "8bb931a1acbf0f26bfe9541b031c16fc969ebfc288a9f7bcd6e93c32b8e684f9",
-    "storage_gcp_shadow_observation:read_shadow_health_statement": "0bbd264869e5b10c6208deec35fc406591d1c5228069a503a1b43cbdd4ca01af"
+    "storage_gcp_shadow_observation:read_shadow_health_statement": "2f2d967e5b6a0d8f55b72e915b0f781ef84e9fa3bb7fe9a697e60bfc53d39aac",
+    "storage_gcp_shadow_io:entity_point_statement": "8bb931a1acbf0f26bfe9541b031c16fc969ebfc288a9f7bcd6e93c32b8e684f9"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4424,7 +4424,7 @@
         }
       ]
     },
-    "storage_gcp_io:entity_point_statement:1": {
+    "storage_gcp_shadow_io:entity_point_statement:1": {
       "fingerprint": "8bb931a1acbf0f26bfe9541b031c16fc969ebfc288a9f7bcd6e93c32b8e684f9",
       "scenarios": [
         {
@@ -4535,6 +4535,30 @@
           "values": {
             "kind": "async_settle_shadow_certificate_v2",
             "id": "2026-10-12/authorization"
+          }
+        }
+      ]
+    },
+    "storage_gcp_shadow_observation:shadow_health_claim_read:1": {
+      "fingerprint": "be68d2939829c5948579602aae33954597fa678bbece55e651eeb8f18d07e306",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_shadow_observation:read_shadow_health_statement:1": {
+      "fingerprint": "2f2d967e5b6a0d8f55b72e915b0f781ef84e9fa3bb7fe9a697e60bfc53d39aac",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
           }
         }
       ]
@@ -4718,7 +4742,8 @@
     "storage_gcp_credit_debt:read_credit_rows": "265eb91cc06b8f0d0148cf74f25dd27002f71f6113fe5627a484bc655a6c6305",
     "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8",
     "storage_gcp_async_settle_shadow:EvidenceStore.query": "75decf7bf8d830c7da0ecfbcfabe866e73eee0d181b6c9e8b48de1ac1e2c4f35",
-    "storage_gcp_shadow_observation:ObservationStore.query": "c573ea41336d03a7726a0bb52547fd72d187340050b9a46f0e2c75726751652b"
+    "storage_gcp_shadow_observation:ObservationStore.query": "0ed34efb413e1f9e9ea396a09b708e9afc72b514e856ac45feb409be627576a0",
+    "storage_gcp_shadow_observation:ObservationStore.snapshot_query": "38de41cbeb36ab18571f5d2d4c930e6808612f63891925e3bfef866c36d58393"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

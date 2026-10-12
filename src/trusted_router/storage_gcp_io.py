@@ -25,67 +25,6 @@ from typing import Any, ParamSpec, TypeVar, cast
 
 from google.api_core.exceptions import InternalServerError
 
-# Opted-in shadow cycles cannot spend a second attempt after an abort/reset.
-_SPANNER_NO_RETRY: contextvars.ContextVar[bool] = contextvars.ContextVar("spanner_no_retry", default=False)
-
-
-@contextlib.contextmanager
-def spanner_no_retry() -> Iterator[None]:
-    token = _SPANNER_NO_RETRY.set(True)
-    try:
-        yield
-    finally:
-        _SPANNER_NO_RETRY.reset(token)
-
-
-_RPC_OBSERVER: contextvars.ContextVar[Callable[[int], None] | None] = contextvars.ContextVar(
-    "shadow_rpc_observer", default=None)
-
-
-@contextlib.contextmanager
-def observe_spanner_rpcs(record: Callable[[int], None]) -> Iterator[None]:
-    """Measure each native RPC, including stream consumption and failed calls."""
-    token = _RPC_OBSERVER.set(record)
-    try:
-        yield
-    finally:
-        _RPC_OBSERVER.reset(token)
-
-
-def _measured_rpc(call: Callable[..., Any], method: str, *args: Any, **kwargs: Any) -> Any:
-    record = _RPC_OBSERVER.get()
-    if record is None and not _SPANNER_NO_RETRY.get():
-        return call(*args, **kwargs)
-    started = time.monotonic()
-    streaming = False
-    try:
-        result = call(*args, **kwargs)
-        if method in ("execute_streaming_sql", "streaming_read"):
-            streaming = True
-            def consume() -> Iterator[Any]:
-                try:
-                    yield from result
-                except Exception:
-                    if _SPANNER_NO_RETRY.get():
-                        raise RuntimeError("shadow_stream_failed") from None
-                    raise
-                finally:
-                    if record is not None:
-                        record(max(0, round((time.monotonic()-started)*1_000_000)))
-            return consume()
-        return result
-    finally:
-        if not streaming and record is not None:
-            record(max(0, round((time.monotonic()-started)*1_000_000)))
-
-
-def entity_point_statement(kind: str, identity: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    from google.cloud.spanner_v1 import param_types
-    return ("SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
-            {"kind": kind, "id": identity},
-            {"kind": param_types.STRING, "id": param_types.STRING})
-
-
 T = TypeVar("T")
 P = ParamSpec("P")
 
@@ -322,20 +261,11 @@ def configure_spanner_rpc_deadlines(
             )
             if retry is not None and hasattr(retry, "with_timeout"):
                 kwargs["retry"] = retry.with_timeout(remaining)
-            if _SPANNER_NO_RETRY.get():
-                kwargs["retry"] = None
             counter = _SPANNER_RPC_COUNTER.get()
             if counter is not None:
                 counter.increment()
             try:
-                if _SPANNER_NO_RETRY.get():
-                    try:
-                        return _measured_rpc(_original, _method_name, *args, **kwargs)
-                    except Exception:
-                        # A non-SDK exception bypasses both transaction abort
-                        # retries and the private RST_STREAM retry sleep.
-                        raise RuntimeError("shadow_rpc_failed") from None
-                return _measured_rpc(_original, _method_name, *args, **kwargs)
+                return _original(*args, **kwargs)
             except InternalServerError as error:
                 deadline = _SPANNER_RPC_DEADLINE.get()
                 # Only shadow sets the per-RPC cap. Billing keeps the SDK's
@@ -364,20 +294,6 @@ def configure_spanner_rpc_deadlines(
             raise SpannerTransportReset("transport_reset") from None
 
         setattr(api, method_name, bounded_rpc)
-
-    # Session RPCs remain byte-for-byte passthrough outside a publisher context.
-    for method_name in ("create_session", "batch_create_sessions", "get_session", "list_sessions", "delete_session"):
-        session_method = getattr(api, method_name, None)
-        if not callable(session_method):
-            continue
-        def measured_session(*args: Any, _original: Callable[..., Any] = session_method,
-                             _method: str = method_name, **kwargs: Any) -> Any:
-            if _RPC_OBSERVER.get() is None:
-                return _original(*args, **kwargs)
-            kwargs["retry"] = None
-            kwargs["timeout"] = remaining_seconds()
-            return _measured_rpc(_original, _method, *args, **kwargs)
-        setattr(api, method_name, measured_session)
 
     original_run_in_transaction = database.run_in_transaction
 
