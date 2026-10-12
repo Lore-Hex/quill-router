@@ -2425,6 +2425,34 @@ def _typed_column(rec: dict, column: str) -> Any:
     return rec.get(column)
 
 
+# The fast path's lease statements the fake executes, whole: it models their
+# projection, join, filter and grouping in Python and nothing else, so a
+# statement that differs from these by a predicate the fake would not apply
+# is refused rather than answered as if it had been.
+_FASTPATH_LEASE_STATEMENTS = {
+    "/* fastpath_lease_allocations */": (
+        "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0) "
+        "FROM tr_lease_donor AS d JOIN tr_lease AS l "
+        "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id "
+        "WHERE l.state IN ('open', 'draining') GROUP BY d.workspace_id, d.credit_shard"
+    ),
+    "/* fastpath_lease_bookings */": (
+        "SELECT workspace_id, COALESCE(SUM(consumed + fault_usage), 0) FROM tr_lease GROUP BY workspace_id"
+    ),
+    "/* fastpath_live_leases_of */": (
+        "SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws AND state IN ('open', 'draining')"
+    ),
+    "/* fastpath_leases_of */": "SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws",
+}
+
+
+def _require_lease_statement(sql: str, marker: str) -> None:
+    expected = marker + " " + _FASTPATH_LEASE_STATEMENTS[marker]
+    assert " ".join(sql.split()) == expected, (
+        f"fake spanner executes only the registered {marker} statement, whole; got {sql!r}"
+    )
+
+
 def _require_pred(sql: str, needle: str, what: str) -> None:
     """Fail loudly if a load-bearing predicate is missing from the real SQL, so a
     predicate typo/drop FAILS a test instead of the fake silently enforcing the
@@ -2988,14 +3016,7 @@ def _execute_sql(
             if body.get("workspace_id") == workspace_id
         )]]
     if "/* fastpath_lease_allocations */" in sql:
-        # The projection, join and grouping are what the fake answers, so a
-        # query grouped by less than (workspace, shard) fails here.
-        _require_pred(sql, "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0)",
-                      "lease allocation projection")
-        _require_pred(sql, "FROM tr_lease_donor AS d JOIN tr_lease AS l "
-                      "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id", "lease donor join")
-        _require_pred(sql, "l.state IN ('open', 'draining')", "live-lease state filter")
-        _require_pred(sql, "GROUP BY d.workspace_id, d.credit_shard", "lease allocation grouping")
+        _require_lease_statement(sql, "/* fastpath_lease_allocations */")
         live = {
             lid for lid, lease in db.fastpath_leases.items()
             if lease.get("state") in ("open", "draining")
@@ -3011,9 +3032,7 @@ def _execute_sql(
             )
         return [[ws, shard, total] for (ws, shard), total in sorted(allocations.items())]
     if "/* fastpath_lease_bookings */" in sql:
-        _require_pred(sql, "SELECT workspace_id, COALESCE(SUM(consumed + fault_usage), 0) FROM tr_lease",
-                      "lease bookings sum")
-        _require_pred(sql, "GROUP BY workspace_id", "lease bookings grouping")
+        _require_lease_statement(sql, "/* fastpath_lease_bookings */")
         bookings: dict[str, int] = {}
         for lease in db.fastpath_leases.values():
             ws = str(lease["workspace_id"])
@@ -3022,10 +3041,8 @@ def _execute_sql(
             )
         return [[ws, total] for ws, total in sorted(bookings.items())]
     if "/* fastpath_live_leases_of */" in sql or "/* fastpath_leases_of */" in sql:
-        _require_pred(sql, "workspace_id=@ws", "lease workspace filter")
         live_only = "/* fastpath_live_leases_of */" in sql
-        if live_only:
-            _require_pred(sql, "state IN ('open', 'draining')", "live-lease state filter")
+        _require_lease_statement(sql, "/* fastpath_live_leases_of */" if live_only else "/* fastpath_leases_of */")
         return [[sum(
             1 for lease in db.fastpath_leases.values()
             if lease["workspace_id"] == params["ws"]

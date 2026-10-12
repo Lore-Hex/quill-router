@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -441,4 +442,51 @@ func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 		return Sums{}, err
 	}
 	return out, nil
+}
+
+// CheckWinners reads every retained pack of the workspace's leases and
+// returns each authorization a lease decided twice: a terminal's winner is
+// stored once per authorization, in one pack, and a second is a booking
+// made again. The packs are retained with their lease (seven days past its
+// close), so the check covers the leases still there.
+func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, error) {
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	type first struct {
+		version int64
+		kind    string
+	}
+	decided := map[string]map[string]first{}
+	var problems []string
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT lease_id, commit_version, pack FROM tr_lease_winners WHERE workspace_id = @w
+		       ORDER BY lease_id, commit_version`, Params: map[string]any{"w": workspace}},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		var lease string
+		var version int64
+		var body []byte
+		if err := row.Columns(&lease, &version, &body); err != nil {
+			return err
+		}
+		var decoded pack
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			return fmt.Errorf("store: pack %d of lease %s: %w", version, lease, err)
+		}
+		if decided[lease] == nil {
+			decided[lease] = map[string]first{}
+		}
+		for _, w := range decoded.Winners {
+			if prev, ok := decided[lease][w.AuthorizationID]; ok {
+				problems = append(problems, fmt.Sprintf("lease %s decides authorization %s twice: %s in pack %d and %s in pack %d",
+					lease, w.AuthorizationID, prev.kind, prev.version, w.Kind, version))
+				continue
+			}
+			decided[lease][w.AuthorizationID] = first{version, w.Kind}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return problems, nil
 }

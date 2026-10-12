@@ -6,8 +6,16 @@ exact incident class (a reserved that no longer matches its outstanding holds).
 
 from __future__ import annotations
 
+import pytest
+
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants
+from trusted_router.storage_gcp_counter_reconcile import (
+    _LEASE_BOOKINGS_BY_WS,
+    _LEASES_OF,
+    _LIVE_LEASES_OF,
+    _OPEN_LEASE_ALLOCATIONS,
+    audit_typed_invariants,
+)
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 
 
@@ -183,3 +191,25 @@ def test_auditor_flags_lease_bookings_of_a_workspace_with_no_typed_row() -> None
     report = audit_typed_invariants(store)
     assert report.usage_violations == 1
     assert report.samples["usage-orphan-booking:ws_no_row"]["lease_bookings"] == 5_000
+
+
+def test_the_fake_runs_the_lease_statements_whole_and_no_other() -> None:
+    """The fake models the lease statements' projection, join, filter and
+    grouping and nothing else: each registered statement runs, and one that
+    differs by a predicate the fake would not apply is refused, not answered
+    as if the predicate had held."""
+    store, db = make_fake_store()
+    _lease(db, "l1", "ws", donors=[(1, 70_000, 0)])
+    with store._database.snapshot(multi_use=True) as snap:
+        for sql in (_OPEN_LEASE_ALLOCATIONS, _LEASE_BOOKINGS_BY_WS):
+            assert list(snap.execute_sql(sql))
+        for sql in (_LIVE_LEASES_OF, _LEASES_OF):
+            assert list(snap.execute_sql(sql, params={"ws": "ws"}, param_types={"ws": store._param_types.STRING}))
+        for changed in (
+            _OPEN_LEASE_ALLOCATIONS.replace("WHERE l.state", "WHERE d.credit_shard = 0 AND l.state"),
+            _OPEN_LEASE_ALLOCATIONS.replace("GROUP BY d.workspace_id, d.credit_shard", "GROUP BY d.workspace_id"),
+            _LEASE_BOOKINGS_BY_WS.replace("consumed + fault_usage", "consumed"),
+            _LIVE_LEASES_OF.replace("AND state IN ('open', 'draining')", ""),
+        ):
+            with pytest.raises(AssertionError, match="registered"):
+                snap.execute_sql(changed, params={"ws": "ws"}, param_types={"ws": store._param_types.STRING})

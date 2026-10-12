@@ -7,7 +7,7 @@
 //	fastpathctl -database projects/P/instances/I/databases/D status WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D disable-all
 //	fastpathctl -database projects/P/instances/I/databases/D node ADDRESS
-//	fastpathctl -database projects/P/instances/I/databases/D [-funded MICRO] [-leases-only] audit WORKSPACE
+//	fastpathctl -database projects/P/instances/I/databases/D [-funded MICRO] audit WORKSPACE
 //
 // disable revokes the workspace's open leases with the switch, and
 // disable-all turns every workspace off and revokes every open lease, the one
@@ -21,14 +21,14 @@
 // rows in one snapshot and holds them to the design's identity (§4.7: each
 // credit shard's reservation is its live leases' donors' remaining
 // allocation, each lease's allocation and consumption its donors' sums, and
-// the debt marks as the headroom has them), read only, with the workspace's
-// status and sums beside: exit 0 when the rows keep it, 3 with each way they
-// do not, after every run of the load (rollout P1). Two things no row says
-// are the operator's to assert: -funded MICRO holds the credit rows' total
-// credits to what funded the workspace, and -leases-only holds their total
-// usage to what its leases booked, on their donors and past them, for a
-// workspace nothing else spends from. A command whose answer cannot be
-// written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
+// the debt marks as the headroom has them) and to one winner per
+// authorization across each lease's retained packs, read only, with the
+// workspace's status and sums (credits, usage, reservations, leases by state,
+// what the leases booked) beside: exit 0 when the rows keep them, 3 with each
+// way they do not, after every run of the load (rollout P1). One thing no
+// row says is the operator's to assert: -funded MICRO holds the credit rows'
+// total credits to what funded the workspace. A command whose answer cannot
+// be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
 // emulator instead.
 package main
 
@@ -81,8 +81,6 @@ func run(ctx context.Context, args []string, out io.Writer,
 	database := fs.String("database", "", "the database: projects/P/instances/I/databases/D")
 	timeout := fs.Duration("timeout", 30*time.Second, "how long the command may take")
 	funded := fs.Int64("funded", -1, "audit: the micro-credits that funded the workspace, which its credit rows must sum to")
-	leasesOnly := fs.Bool("leases-only", false,
-		"audit: nothing but leases spends from the workspace, so its usage must be what its leases booked")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -168,14 +166,14 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if err != nil {
 			return 1, err
 		}
+		twice, err := s.CheckWinners(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		problems = append(problems, twice...)
 		if *funded >= 0 && sums.Credits != *funded {
 			problems = append(problems, fmt.Sprintf("the credit rows hold %d credits, and the workspace was funded %d",
 				sums.Credits, *funded))
-		}
-		if booked := sums.Consumed + sums.FaultUsage; *leasesOnly && sums.Usage != booked {
-			problems = append(problems, fmt.Sprintf("the credit rows book %d of usage, and the leases booked %d "+
-				"(%d on their donors and %d past them), with nothing else to spend", sums.Usage, booked, sums.Consumed,
-				sums.FaultUsage))
 		}
 		if problems == nil {
 			problems = []string{}

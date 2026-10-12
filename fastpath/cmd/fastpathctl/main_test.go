@@ -329,34 +329,20 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	if code, _, err := audit(); code != 1 || !errors.Is(err, store.ErrCreditRowsIncomplete) {
 		t.Fatalf("a workspace with no credit rows: exit %d, %v", code, err)
 	}
-	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws),
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1),
 		spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": int64(0),
 			"total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
-	code, got, err := audit("-funded", "100", "-leases-only")
+	code, got, err := audit("-funded", "100")
 	if problems, _ := got["problems"].([]any); code != 0 || err != nil || len(problems) != 0 ||
 		got["status"].(map[string]any)["Enabled"] != true || got["sums"].(map[string]any)["Credits"] != float64(100) {
 		t.Fatalf("a workspace whose rows keep the identity: exit %d, %v %v", code, got, err)
 	}
-	// What no row says: the funding, and that nothing but leases spends.
+	// What no row says: the funding.
 	if code, got, err := audit("-funded", "90"); code != 3 || err != nil ||
 		!strings.Contains(fmt.Sprint(got["problems"]), "hold 100 credits, and the workspace was funded 90") {
 		t.Fatalf("funded 90: exit %d, %v %v", code, got, err)
-	}
-	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		_, err := txn.Update(ctx, spanner.Statement{
-			SQL: "UPDATE tr_credit_balance SET total_usage = 7 WHERE workspace_id = @w", Params: map[string]any{"w": ws}})
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if code, got, err := audit("-leases-only"); code != 3 || err != nil ||
-		!strings.Contains(fmt.Sprint(got["problems"]), "book 7 of usage, and the leases booked 0") {
-		t.Fatalf("usage no lease booked: exit %d, %v %v", code, got, err)
-	}
-	if code, got, err := audit(); code != 0 || err != nil {
-		t.Fatalf("the same rows, with neither assertion asked: exit %d, %v %v", code, got, err)
 	}
 	// A reservation held by no lease, written as the emulator takes a change
 	// to one column (DML).
@@ -371,5 +357,46 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	problems, _ := got["problems"].([]any)
 	if code != 3 || err != nil || len(problems) != 1 || !strings.Contains(problems[0].(string), "shard 0 reserves 5") {
 		t.Fatalf("a reservation no lease holds: exit %d, %v %v", code, got, err)
+	}
+	// A lease's booking with its winner, once: kept; the same winner stored
+	// again by a later commit books it twice, which the audit names.
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: "UPDATE tr_credit_balance SET reserved = 0 WHERE workspace_id = @w", Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := open(ctx, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: storetest.UniqueID("l")}
+	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: ref.LeaseID, Region: "us-central1",
+		Owner: store.Owner{Node: "node-a", Epoch: 1}, Amount: 30})
+	if err != nil || granted.Refused != "" {
+		t.Fatalf("the grant: %+v %v", granted, err)
+	}
+	book := func(readVersion, seq int64) int64 {
+		t.Helper()
+		results, _, err := s.Commit(ctx, []store.CommitRequest{{Ref: ref, ReadVersion: readVersion, AppliedSeq: seq,
+			Money:   []store.MoneyOp{store.Book(10, 0)},
+			Winners: []store.Winner{{AuthorizationID: "auth-1", Kind: "settle", Charge: 10, RecordID: "rec-1"}}}})
+		if err != nil || len(results) != 1 || results[0].Refused != "" {
+			t.Fatalf("the commit at version %d: %+v %v", readVersion, results, err)
+		}
+		return results[0].NewVersion
+	}
+	version := book(0, 1)
+	if code, got, err := audit("-funded", "100"); code != 0 || err != nil ||
+		got["sums"].(map[string]any)["Consumed"] != float64(10) {
+		t.Fatalf("one booking with its winner: exit %d, %v %v", code, got, err)
+	}
+	book(version, 2)
+	code, got, err = audit("-funded", "100")
+	problems, _ = got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "decides authorization auth-1 twice: settle in pack 1 and settle in pack 2") {
+		t.Fatalf("the winner stored twice: exit %d, %v %v", code, got, err)
 	}
 }
