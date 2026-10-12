@@ -253,10 +253,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 31,
+    "model_count": 32,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 31,
+    "route_count": 32,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -361,10 +361,10 @@
   },
   "io-net": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 37,
     "name": "IO Intelligence",
     "privacy": "Policy documented",
-    "route_count": 36,
+    "route_count": 37,
     "route_mode": "Prepaid",
     "slug": "io-net"
   },
@@ -541,10 +541,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 99,
+    "model_count": 77,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 193,
+    "route_count": 149,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -622,11 +622,11 @@
   },
   "perplexity": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 0,
     "name": "Perplexity",
     "privacy": "Policy documented",
-    "route_count": 1,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "perplexity"
   },
   "phala": {
@@ -838,10 +838,10 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Tinfoil",
     "privacy": "Confidential + ZDR",
-    "route_count": 14,
+    "route_count": 12,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },
@@ -919,10 +919,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 16,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
@@ -946,10 +946,10 @@
   },
   "zai": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 11,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },

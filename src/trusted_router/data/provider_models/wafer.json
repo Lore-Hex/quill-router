@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-09-24T13:22:08Z",
+  "generated_at": "2026-10-12T06:29:35Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
   "model_count": 15,
@@ -138,9 +138,15 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 250000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "moonshotai/kimi-k3",
@@ -158,9 +164,15 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 2100000,
-      "output_token_price_per_m": 10950000,
-      "cached_input_token_price_per_m": 210000
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "moonshotai/kimi-k3-fast",
@@ -197,15 +209,21 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 350000,
-      "cached_input_token_price_per_m": 20000,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000,
       "input_modalities": [
         "text",
         "image"
       ],
       "output_modalities": [
         "text"
+      ],
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
       ]
     },
     {
@@ -218,9 +236,15 @@
       "zdr_supported": true,
       "context_length": 1048576,
       "routable": true,
-      "input_token_price_per_m": 1190000,
+      "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "deepseek/deepseek-v4-flash-0423",
@@ -231,12 +255,16 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 250000,
-      "cached_input_token_price_per_m": 20000,
-      "missing_since": "2026-09-17",
-      "routable": false,
-      "routable_reason": "delisted-upstream"
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000,
+      "routable": true,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "deepseek/deepseek-v4.1-flash",
@@ -254,9 +282,15 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 10000
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -267,9 +301,15 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 980000,
-      "output_token_price_per_m": 2900000,
-      "cached_input_token_price_per_m": 30000
+      "input_token_price_per_m": 1320000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 44000,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     },
     {
       "id": "qwen/qwen3.8-27b",
@@ -287,9 +327,15 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 110000,
-      "output_token_price_per_m": 2500000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 420000,
+      "output_token_price_per_m": 2550000,
+      "cached_input_token_price_per_m": 85000,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ]
     }
   ]
 }
