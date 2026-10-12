@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/service"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
 // TestHelpIsNoFailure: -h prints the flags and is done, which main takes
@@ -109,22 +111,31 @@ func TestTheRunStartsOnlyOnceTheWorkspacesAreReady(t *testing.T) {
 	args := []string{"-front", srv.URL, "-mix", mix, "-rate", "100", "-duration", "50ms", "-seed", "1",
 		"-workspace", "ws-a, ws-b", "-database", "projects/p/instances/i/databases/d"}
 	var asked []string
-	notReady := func(_ context.Context, database string, workspaces []string) error {
+	var tier, floor int64
+	notReady := func(_ context.Context, database string, cfg store.Config, workspaces []string) error {
 		asked = append(asked, database)
 		asked = append(asked, workspaces...)
+		tier, floor = cfg.RequiredTier, cfg.Floor
 		return errors.New("workspace ws-b is not ready for the load: the workspace is not enabled for the fast path")
 	}
 	err := run(args, io.Discard, notReady)
 	if err == nil || !strings.Contains(err.Error(), "ws-b is not ready") ||
-		!slices.Equal(asked, []string{"projects/p/instances/i/databases/d", "ws-a", "ws-b"}) {
-		t.Fatalf("a workspace not ready: %v, asked %q", err, asked)
+		!slices.Equal(asked, []string{"projects/p/instances/i/databases/d", "ws-a", "ws-b"}) ||
+		tier != service.Defaults().Store.RequiredTier || floor != service.Defaults().Store.Floor {
+		t.Fatalf("a workspace not ready: %v, asked %q, tier %d floor %d", err, asked, tier, floor)
+	}
+	// The fleet's tier and floor reach the readiness, as the fast path's
+	// own flags set them.
+	if err := run(append(args, "-required-tier", "3", "-floor", "25"), io.Discard, notReady); err == nil ||
+		tier != 3 || floor != 25 {
+		t.Fatalf("-required-tier 3 -floor 25: %v, tier %d floor %d", err, tier, floor)
 	}
 	mu.Lock()
 	if len(seen) != 0 {
 		t.Fatalf("authorizes were sent before the readiness: %q", seen)
 	}
 	mu.Unlock()
-	if err := run(args, io.Discard, func(context.Context, string, []string) error { return nil }); err != nil {
+	if err := run(args, io.Discard, func(context.Context, string, store.Config, []string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -135,6 +146,13 @@ func TestTheRunStartsOnlyOnceTheWorkspacesAreReady(t *testing.T) {
 	if err := run(append(args, "-workspaces", "2"), io.Discard, nil); err == nil ||
 		!strings.Contains(err.Error(), "not both") {
 		t.Fatalf("-workspace beside -workspaces: %v", err)
+	}
+	empty := []string{"-front", srv.URL, "-mix", mix, "-duration", "1ms", "-workspace", "", "-workspaces", "2"}
+	if err := run(empty, io.Discard, nil); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("an empty -workspace beside -workspaces: %v", err)
+	}
+	if err := run(empty[:len(empty)-2], io.Discard, nil); err == nil || !strings.Contains(err.Error(), "names no workspace") {
+		t.Fatalf("an empty -workspace: %v", err)
 	}
 	if err := run([]string{"-front", srv.URL, "-mix", mix, "-duration", "1ms", "-database", "d"}, io.Discard, nil); err == nil {
 		t.Fatal("-database with no store to ask was taken")

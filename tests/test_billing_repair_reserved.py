@@ -159,3 +159,30 @@ def test_repair_refuses_a_workspace_with_a_live_fast_path_lease() -> None:
 
     db.fastpath_leases["l-draining"]["state"] = "closed"
     assert repair_typed_reserved(store, ws, apply=False).ready
+
+
+def test_repair_aborts_when_a_lease_is_granted_before_its_write(monkeypatch) -> None:
+    """The plan saw no lease; one granted between the plan and the write holds
+    allocation the write would drop from the row, so the transaction aborts
+    and writes nothing, as it does for a hold opened in that gap."""
+    store, db = make_fake_store()
+    ws = "ws_late_lease"
+    _paused_ws(store, ws)
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws, "shard": 0, "total_credits": 10_000_000,
+        "total_usage": 0, "reserved": 5_000_000,
+    }
+    run = store._run_in_transaction
+
+    def lease_then_run(fn):
+        db.fastpath_leases["l-late"] = {"workspace_id": ws, "state": "open", "consumed": 0}
+        db.fastpath_lease_donors.append({
+            "workspace_id": ws, "lease_id": "l-late", "credit_shard": 0, "allocation": 100, "consumed": 0,
+        })
+        return run(fn)
+
+    monkeypatch.setattr(store, "_run_in_transaction", lease_then_run)
+    result = repair_typed_reserved(store, ws, apply=True)
+    assert not result.ready and not result.applied, result
+    assert any("aborted" in reason and "a lease granted" in reason for reason in result.reasons), result.reasons
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 5_000_000

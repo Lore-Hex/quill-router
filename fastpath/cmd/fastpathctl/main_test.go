@@ -314,10 +314,10 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	open := onShared(t)
 	ctx := context.Background()
 	ws := storetest.UniqueID("ws")
-	audit := func() (int, map[string]any, error) {
+	audit := func(flags ...string) (int, map[string]any, error) {
 		t.Helper()
 		var out bytes.Buffer
-		code, err := run(ctx, []string{"-database", "d", "audit", ws}, &out, open)
+		code, err := run(ctx, append(append([]string{"-database", "d"}, flags...), "audit", ws), &out, open)
 		var got map[string]any
 		if out.Len() > 0 {
 			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
@@ -334,10 +334,29 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 			"total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
 		t.Fatal(err)
 	}
-	code, got, err := audit()
+	code, got, err := audit("-funded", "100", "-leases-only")
 	if problems, _ := got["problems"].([]any); code != 0 || err != nil || len(problems) != 0 ||
-		got["status"].(map[string]any)["Enabled"] != true {
+		got["status"].(map[string]any)["Enabled"] != true || got["sums"].(map[string]any)["Credits"] != float64(100) {
 		t.Fatalf("a workspace whose rows keep the identity: exit %d, %v %v", code, got, err)
+	}
+	// What no row says: the funding, and that nothing but leases spends.
+	if code, got, err := audit("-funded", "90"); code != 3 || err != nil ||
+		!strings.Contains(fmt.Sprint(got["problems"]), "hold 100 credits, and the workspace was funded 90") {
+		t.Fatalf("funded 90: exit %d, %v %v", code, got, err)
+	}
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: "UPDATE tr_credit_balance SET total_usage = 7 WHERE workspace_id = @w", Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, got, err := audit("-leases-only"); code != 3 || err != nil ||
+		!strings.Contains(fmt.Sprint(got["problems"]), "book 7 of usage, and the leases booked 0") {
+		t.Fatalf("usage no lease booked: exit %d, %v %v", code, got, err)
+	}
+	if code, got, err := audit(); code != 0 || err != nil {
+		t.Fatalf("the same rows, with neither assertion asked: exit %d, %v %v", code, got, err)
 	}
 	// A reservation held by no lease, written as the emulator takes a change
 	// to one column (DML).

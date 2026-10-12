@@ -333,4 +333,21 @@ func TestGrantReadinessSaysWhyAGrantWouldBeRefused(t *testing.T) {
 	if r := reserved(readRows(t, ws)); !slices.Equal(r, []int64{50, 30}) {
 		t.Fatalf("reserved %v after the readiness checks", r)
 	}
+	// The floor is the store's: with one of 10, a workspace needs headroom
+	// above it, across its shards, for a lease of anything.
+	floored := spikeStore(t, func(c *Config) { c.Floor = 10 })
+	readyAt := func(ws string, want Refusal, what string) {
+		t.Helper()
+		if why, err := floored.GrantReadiness(ctx, ws); err != nil || why != want {
+			t.Fatalf("%s: %q %v, want %q", what, why, err, want)
+		}
+	}
+	readyAt(seedWorkspace(t, 5), RefusedFloor, "headroom below the floor")
+	readyAt(seedWorkspace(t, 4, 6), RefusedFloor, "headroom at the floor")
+	above := seedWorkspace(t, 4, 7)
+	readyAt(above, "", "headroom above the floor")
+	if got, err := floored.Grant(ctx, grantOf(above, 1)); err != nil || got.Refused != "" {
+		t.Fatalf("the grant above the floor: %+v %v", got, err)
+	}
+	readyAt(above, RefusedFloor, "headroom at the floor once a lease holds the rest")
 }

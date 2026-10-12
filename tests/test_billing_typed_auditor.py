@@ -98,9 +98,9 @@ def test_auditor_key_invariant() -> None:
     assert f"api_key:{kh}:0" in report.samples
 
 
-def _lease(db, lid: str, ws: str, *, state: str = "open", consumed: int = 0, donors=()) -> None:
+def _lease(db, lid: str, ws: str, *, state: str = "open", consumed: int = 0, fault: int = 0, donors=()) -> None:
     """A fast-path lease and its donors: each donor (shard, allocation, consumed)."""
-    db.fastpath_leases[lid] = {"workspace_id": ws, "state": state, "consumed": consumed}
+    db.fastpath_leases[lid] = {"workspace_id": ws, "state": state, "consumed": consumed, "fault_usage": fault}
     for shard, allocation, booked in donors:
         db.fastpath_lease_donors.append({
             "workspace_id": ws, "lease_id": lid, "credit_shard": shard,
@@ -160,7 +160,8 @@ def test_auditor_counts_lease_bookings_as_booked_usage() -> None:
     }
     _resv(db, "r1", ws=ws, credit=0, settled=True)
     db.reservations["r1"].update({"actual_micro": 120_000, "settled_usage_type": "Credits"})
-    _lease(db, "l-closed", ws, state="closed", consumed=30_000, donors=[(0, 30_000, 30_000)])
+    # 30k booked: 20k on the donors and 10k past them, as fault usage.
+    _lease(db, "l-closed", ws, state="closed", consumed=20_000, fault=10_000, donors=[(0, 20_000, 20_000)])
 
     report = audit_typed_invariants(store)
     assert report.clean and report.fully_audited, (report.summary(), report.samples, report.unauditable)

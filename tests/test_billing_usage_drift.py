@@ -583,3 +583,24 @@ def test_repair_refuses_a_workspace_whose_leases_booked_usage() -> None:
 
     del db.fastpath_leases["l-closed"]
     assert repair_typed_usage(store, ws, apply=False).ready
+
+
+def test_repair_aborts_when_a_lease_books_before_its_write(monkeypatch) -> None:
+    """The plan saw no lease; one that booked between the plan and the write
+    is usage the rebuilt total would lose, so the transaction aborts."""
+    store, db = make_fake_store()
+    ws = "ws_late_lease_usage"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=2_000_000, total_usage=2_000_000)
+    _settled(db, "r1", ws, 420_000)
+    run = store._run_in_transaction
+
+    def lease_then_run(fn):
+        db.fastpath_leases["l-late"] = {"workspace_id": ws, "state": "closed", "consumed": 100}
+        return run(fn)
+
+    monkeypatch.setattr(store, "_run_in_transaction", lease_then_run)
+    result = repair_typed_usage(store, ws, apply=True)
+    assert not result.ready and not result.applied, result
+    assert any("aborted" in reason and "a lease booked" in reason for reason in result.reasons), result.reasons
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 2_000_000

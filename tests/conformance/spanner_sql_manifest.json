@@ -1534,7 +1534,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:audit_typed_invariants:1": {
-      "fingerprint": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
+      "fingerprint": "2964007b3cf3afa91603dcacadb47b7b71ba2ad83d519cba18d0607381bfe264",
       "scenarios": [
         {
           "bindings": {},
@@ -1543,7 +1543,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:audit_typed_invariants:2": {
-      "fingerprint": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
+      "fingerprint": "2964007b3cf3afa91603dcacadb47b7b71ba2ad83d519cba18d0607381bfe264",
       "scenarios": [
         {
           "bindings": {},
@@ -1552,7 +1552,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:1": {
-      "fingerprint": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
+      "fingerprint": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
       "scenarios": [
         {
           "bindings": {},
@@ -1563,7 +1563,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:2": {
-      "fingerprint": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
+      "fingerprint": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
       "scenarios": [
         {
           "bindings": {},
@@ -1574,7 +1574,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:3": {
-      "fingerprint": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
+      "fingerprint": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
       "scenarios": [
         {
           "bindings": {},
@@ -1585,7 +1585,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:4": {
-      "fingerprint": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
+      "fingerprint": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
       "scenarios": [
         {
           "bindings": {},
@@ -1596,7 +1596,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:5": {
-      "fingerprint": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
+      "fingerprint": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
       "scenarios": [
         {
           "bindings": {},
@@ -1607,7 +1607,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_reserved:6": {
-      "fingerprint": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
+      "fingerprint": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
       "scenarios": [
         {
           "bindings": {},
@@ -1618,7 +1618,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_usage:1": {
-      "fingerprint": "af2875b1f2b475098fbed4a234cb209e6614c1a4a6084ff3777cb9d51edd11f6",
+      "fingerprint": "a2f1c29b0f23cd97e3049160b331098840927b550a6f4eb7d73b7fa50938be2b",
       "scenarios": [
         {
           "bindings": {},
@@ -1629,7 +1629,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_usage:2": {
-      "fingerprint": "af2875b1f2b475098fbed4a234cb209e6614c1a4a6084ff3777cb9d51edd11f6",
+      "fingerprint": "a2f1c29b0f23cd97e3049160b331098840927b550a6f4eb7d73b7fa50938be2b",
       "scenarios": [
         {
           "bindings": {},
@@ -1640,7 +1640,7 @@
       ]
     },
     "storage_gcp_counter_reconcile:repair_typed_usage:3": {
-      "fingerprint": "af2875b1f2b475098fbed4a234cb209e6614c1a4a6084ff3777cb9d51edd11f6",
+      "fingerprint": "a2f1c29b0f23cd97e3049160b331098840927b550a6f4eb7d73b7fa50938be2b",
       "scenarios": [
         {
           "bindings": {},
@@ -4381,6 +4381,46 @@
           }
         }
       ]
+    },
+    "storage_gcp_counter_reconcile:constants:10": {
+      "fingerprint": "146c4f7a3671a93d10b00648789164d5cfe97ff733f428f230ec74790c7d8f69",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "storage_gcp_counter_reconcile:constants:11": {
+      "fingerprint": "825d8e1c0e4d399d998e8f53c4c9a5514a4ffebcaeeccf5944b03dee0024af9b",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "storage_gcp_counter_reconcile:constants:12": {
+      "fingerprint": "dfbc97335fb21aad85488eb2513cd872ddb62ac6925830fc89db477af3fad575",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ws": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_counter_reconcile:constants:13": {
+      "fingerprint": "9e2531a55adac58ee3df7aa0d82fb5cbbc64ba8ca73e2d35d373aee340385541",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ws": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4466,13 +4506,13 @@
     "storage_gcp_counter_dml:read_reservation_by_idempotency": "5ef222631a8b3c1caedc551feb8d0d66601c0a4bedde382f7cbdb3d9a9ffed98",
     "storage_gcp_counter_dml:read_reservation": "f1772e5b115030a3e3559277354354703c3edfd1c81727892bdd964ccc4e0f5d",
     "storage_gcp_counter_dml:claim_reservation": "7236e4dc950ce66fac130e8b753fcac8e59bf11b219d923a61660a6a250fc182",
-    "storage_gcp_counter_reconcile:audit_typed_invariants": "fb1be7f19184fdc93497b15295a7991b87bb9c88dfd8a873b3546b9026c41a9d",
-    "storage_gcp_counter_reconcile:_confirm_behind_ledger": "08089d2dd3647164ae49ea570aab34b6797757787d8233f2506b9c65e103c166",
+    "storage_gcp_counter_reconcile:audit_typed_invariants": "2964007b3cf3afa91603dcacadb47b7b71ba2ad83d519cba18d0607381bfe264",
+    "storage_gcp_counter_reconcile:_confirm_behind_ledger": "91d2c2b41fc9622e4babb3a065c0a9d816d476b7c82204397b3496ac55ea869f",
     "storage_gcp_counter_reconcile:propose_usage_baselines": "542e2199b35a54736cb75eba85a621f10b7d06fb7bbbd30f4150528feecd1ad1",
-    "storage_gcp_counter_reconcile:repair_typed_reserved": "e98e5ca9b08a20bc4675876919ad1bd324333fe4cc59ad7482537f0bc4c1cd71",
-    "storage_gcp_counter_reconcile:repair_typed_usage": "af2875b1f2b475098fbed4a234cb209e6614c1a4a6084ff3777cb9d51edd11f6",
-    "storage_gcp_counter_reconcile:repair_typed_usage._txn": "6c1ba00aa7663892cc08af11951cdb9767028a986ba8f3eefc91b4d03c440110",
-    "storage_gcp_counter_reconcile:repair_typed_reserved._txn": "442b31d3fb204192d79dd7d5e7eddc1fe15d8a91de1b7fc9a0b3210907f6d5ce",
+    "storage_gcp_counter_reconcile:repair_typed_reserved": "431b828955121aaefa4b214e81074dd3e276375bb942cb8b26c6dd4f685b5369",
+    "storage_gcp_counter_reconcile:repair_typed_usage": "a2f1c29b0f23cd97e3049160b331098840927b550a6f4eb7d73b7fa50938be2b",
+    "storage_gcp_counter_reconcile:repair_typed_usage._txn": "8244f1803714d981fd12109e7831ddaf91365d632f18fe150048938a40658e2d",
+    "storage_gcp_counter_reconcile:repair_typed_reserved._txn": "9f7d1cd83b19cb5318be6b3bac878ece0b0058287f4e97f89c5d8abcb1e17cab",
     "storage_gcp_counter_reconcile:record_usage_baseline._txn": "6edab65e3359a87ca7664372a250b2e2402417632c0931229dbd2cfcfe584d8b",
     "storage_gcp_credit_json_cleanup:_inspect_reader": "8e30b9701e22a9c56307bfecca369515b6693c3bc760830118d0532b31cff3b1",
     "storage_gcp_credit_json_cleanup:legacy_credit_workspace_ids": "31c5139361245bdf1d10f540c13ccd18d91aa1c79ccc0973aaca6b798aad59d2",

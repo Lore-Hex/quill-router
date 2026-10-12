@@ -393,3 +393,52 @@ func (s *Store) GrantReadiness(ctx context.Context, workspace string) (Refusal, 
 	}
 	return "", nil
 }
+
+// Sums is a workspace's money as its rows sum it, read in one snapshot, for
+// an audit against what the operator knows of the workspace and no row
+// does: what funded it, and whether anything but leases spent from it.
+type Sums struct {
+	// Credits, Usage and Reserved are the credit rows' columns summed over
+	// the shards.
+	Credits, Usage, Reserved int64
+	// Leases counts the workspace's leases by state.
+	Leases map[string]int64
+	// Consumed and FaultUsage are summed over every lease, in any state:
+	// what the leases booked on their donors, and past them.
+	Consumed, FaultUsage int64
+}
+
+// AuditSums reads a workspace's sums.
+func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
+	ro := s.client.ReadOnlyTransaction()
+	defer ro.Close()
+	params := map[string]any{"w": workspace}
+	out := Sums{Leases: map[string]int64{}}
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT COALESCE(SUM(total_credits), 0), COALESCE(SUM(total_usage), 0), COALESCE(SUM(reserved), 0)
+		        FROM tr_credit_balance WHERE workspace_id = @w`, Params: params},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		return row.Columns(&out.Credits, &out.Usage, &out.Reserved)
+	})
+	if err != nil {
+		return Sums{}, err
+	}
+	err = ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT state, COUNT(*), COALESCE(SUM(consumed), 0), COALESCE(SUM(fault_usage), 0)
+		        FROM tr_lease WHERE workspace_id = @w GROUP BY state`, Params: params},
+		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		var state string
+		var n, consumed, fault int64
+		if err := row.Columns(&state, &n, &consumed, &fault); err != nil {
+			return err
+		}
+		out.Leases[state] = n
+		out.Consumed += consumed
+		out.FaultUsage += fault
+		return nil
+	})
+	if err != nil {
+		return Sums{}, err
+	}
+	return out, nil
+}

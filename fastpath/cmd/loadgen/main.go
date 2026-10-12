@@ -9,7 +9,8 @@
 // With -workspace the load spreads over the workspaces named, instead of
 // ws-0 on; with -database the run starts only once each is enabled, funded
 // and at the tier that allows leases, read from the store as a grant reads
-// (rollout P1), and otherwise says which is not and why.
+// (rollout P1) with the fleet's -required-tier and -floor, and otherwise
+// says which is not and why.
 package main
 
 import (
@@ -35,18 +36,19 @@ import (
 )
 
 // readiness says why a run must not start against the workspaces, by the
-// database: an error naming the first workspace a grant would refuse.
-type readiness func(ctx context.Context, database string, workspaces []string) error
+// database and the store's configuration the fleet runs with: an error
+// naming the first workspace a grant would refuse.
+type readiness func(ctx context.Context, database string, cfg store.Config, workspaces []string) error
 
 // storeReadiness asks the store, as a grant would, whether each workspace is
 // enabled, funded and at the tier.
-func storeReadiness(ctx context.Context, database string, workspaces []string) error {
+func storeReadiness(ctx context.Context, database string, cfg store.Config, workspaces []string) error {
 	client, err := spanner.NewClient(ctx, database)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	s, err := store.New(client, service.Defaults().Store)
+	s, err := store.New(client, cfg)
 	if err != nil {
 		return err
 	}
@@ -82,6 +84,11 @@ func run(args []string, out io.Writer, ready readiness) error {
 	workspace := fs.String("workspace", "", "the workspaces the load spreads over, by ID, separated by commas, instead of -workspaces")
 	database := fs.String("database", "",
 		"the database, projects/P/instances/I/databases/D: the run starts only once every workspace is enabled, funded and at the tier that allows leases")
+	storeCfg := service.Defaults().Store
+	fs.Int64Var(&storeCfg.RequiredTier, "required-tier", storeCfg.RequiredTier,
+		"the trust tier the fleet's leases need (the fast path's -required-tier), for the readiness")
+	fs.Int64Var(&storeCfg.Floor, "floor", storeCfg.Floor,
+		"the headroom the fleet's grants leave outside leases (the fast path's -floor), for the readiness")
 	heartbeat := fs.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
 	openHeartbeat := fs.Bool("open-heartbeat", false,
 		"the boot declares the heartbeat at stream open: each stream's authorize says so, and its first heartbeat is sent as it opens")
@@ -131,16 +138,22 @@ func run(args []string, out io.Writer, ready readiness) error {
 			cfg.Gateways = append(cfg.Gateways, frontdoor.Gateway{Client: client, Base: base})
 		}
 	}
-	counted := false
-	fs.Visit(func(f *flag.Flag) { counted = counted || f.Name == "workspaces" })
+	named, counted := false, false
+	fs.Visit(func(f *flag.Flag) {
+		named = named || f.Name == "workspace"
+		counted = counted || f.Name == "workspaces"
+	})
 	switch {
-	case *workspace != "" && counted:
+	case named && counted:
 		return errors.New("-workspace names the workspaces, or -workspaces counts them, not both")
-	case *workspace != "":
+	case named:
 		for _, ws := range strings.Split(*workspace, ",") {
 			if ws = strings.TrimSpace(ws); ws != "" {
 				cfg.Workspaces = append(cfg.Workspaces, ws)
 			}
+		}
+		if len(cfg.Workspaces) == 0 {
+			return errors.New("-workspace names no workspace")
 		}
 	default:
 		for i := range *workspaces {
@@ -166,7 +179,7 @@ func run(args []string, out io.Writer, ready readiness) error {
 		if ready == nil {
 			return errors.New("-database: no store to ask")
 		}
-		if err := ready(ctx, *database, cfg.Workspaces); err != nil {
+		if err := ready(ctx, *database, storeCfg, cfg.Workspaces); err != nil {
 			return err
 		}
 	}

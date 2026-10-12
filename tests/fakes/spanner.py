@@ -2988,8 +2988,14 @@ def _execute_sql(
             if body.get("workspace_id") == workspace_id
         )]]
     if "/* fastpath_lease_allocations */" in sql:
+        # The projection, join and grouping are what the fake answers, so a
+        # query grouped by less than (workspace, shard) fails here.
+        _require_pred(sql, "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0)",
+                      "lease allocation projection")
+        _require_pred(sql, "FROM tr_lease_donor AS d JOIN tr_lease AS l "
+                      "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id", "lease donor join")
         _require_pred(sql, "l.state IN ('open', 'draining')", "live-lease state filter")
-        _require_pred(sql, "SUM(d.allocation - d.consumed)", "remaining allocation")
+        _require_pred(sql, "GROUP BY d.workspace_id, d.credit_shard", "lease allocation grouping")
         live = {
             lid for lid, lease in db.fastpath_leases.items()
             if lease.get("state") in ("open", "draining")
@@ -3005,11 +3011,15 @@ def _execute_sql(
             )
         return [[ws, shard, total] for (ws, shard), total in sorted(allocations.items())]
     if "/* fastpath_lease_bookings */" in sql:
-        _require_pred(sql, "SUM(consumed)", "lease bookings sum")
+        _require_pred(sql, "SELECT workspace_id, COALESCE(SUM(consumed + fault_usage), 0) FROM tr_lease",
+                      "lease bookings sum")
+        _require_pred(sql, "GROUP BY workspace_id", "lease bookings grouping")
         bookings: dict[str, int] = {}
         for lease in db.fastpath_leases.values():
             ws = str(lease["workspace_id"])
-            bookings[ws] = bookings.get(ws, 0) + int(lease.get("consumed", 0))
+            bookings[ws] = (
+                bookings.get(ws, 0) + int(lease.get("consumed", 0)) + int(lease.get("fault_usage", 0))
+            )
         return [[ws, total] for ws, total in sorted(bookings.items())]
     if "/* fastpath_live_leases_of */" in sql or "/* fastpath_leases_of */" in sql:
         _require_pred(sql, "workspace_id=@ws", "lease workspace filter")

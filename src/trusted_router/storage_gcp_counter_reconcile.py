@@ -89,31 +89,6 @@ _JSON_USAGE_BASELINE = (
     "FROM tr_entities WHERE kind='credit'"
 )
 _TYPED_USAGE_ROWS = "SELECT workspace_id, shard, total_usage FROM tr_credit_balance"
-
-# ── The fast path's leases (docs/design/fast-admission-and-batched-settlement.md
-# §4.7): a credit shard's `reserved` is its open request holds PLUS the
-# remaining allocation on that shard of every open or draining lease, and its
-# `total_usage` rises with the leases' bookings (`consumed`) as with settled
-# actuals. One identity covers both, so the lease terms are read in the same
-# snapshot as the holds and added to them, and the repairs, which count holds
-# alone, refuse a workspace with a lease.
-_OPEN_LEASE_ALLOCATIONS = (
-    "/* fastpath_lease_allocations */ "
-    "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0) "
-    "FROM tr_lease_donor AS d JOIN tr_lease AS l "
-    "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id "
-    "WHERE l.state IN ('open', 'draining') "
-    "GROUP BY d.workspace_id, d.credit_shard"
-)
-_LEASE_BOOKINGS_BY_WS = (
-    "/* fastpath_lease_bookings */ "
-    "SELECT workspace_id, COALESCE(SUM(consumed), 0) FROM tr_lease GROUP BY workspace_id"
-)
-_LIVE_LEASES_OF = (
-    "/* fastpath_live_leases_of */ SELECT COUNT(*) FROM tr_lease "
-    "WHERE workspace_id=@ws AND state IN ('open', 'draining')"
-)
-_LEASES_OF = "/* fastpath_leases_of */ SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws"
 #: Entity kind holding a RECORDED pre-ledger baseline, for the workspaces whose
 #: JSON one was deleted before anyone needed it. Its own kind rather than a key
 #: back in the credit body, because the credit body is precisely what
@@ -150,6 +125,33 @@ _FEDERATED_SETTLEMENT_APPLIED_BY_WS = (
     "FROM tr_entities WHERE kind='federated_settlement_claim' "
     "GROUP BY JSON_VALUE(body, '$.workspace_id')"
 )
+
+# ── The fast path's leases (docs/design/fast-admission-and-batched-settlement.md
+# §4.7): a credit shard's `reserved` is its open request holds PLUS the
+# remaining allocation on that shard of every open or draining lease, and its
+# `total_usage` rises with the leases' bookings (`consumed`) as with settled
+# actuals. One identity covers both, so the lease terms are read in the same
+# snapshot as the holds and added to them, and the repairs, which count holds
+# alone, refuse a workspace with a lease.
+_OPEN_LEASE_ALLOCATIONS = (
+    "/* fastpath_lease_allocations */ "
+    "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0) "
+    "FROM tr_lease_donor AS d JOIN tr_lease AS l "
+    "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id "
+    "WHERE l.state IN ('open', 'draining') "
+    "GROUP BY d.workspace_id, d.credit_shard"
+)
+_LEASE_BOOKINGS_BY_WS = (
+    "/* fastpath_lease_bookings */ "
+    "SELECT workspace_id, COALESCE(SUM(consumed + fault_usage), 0) FROM tr_lease "
+    "GROUP BY workspace_id"
+)
+_LIVE_LEASES_OF = (
+    "/* fastpath_live_leases_of */ SELECT COUNT(*) FROM tr_lease "
+    "WHERE workspace_id=@ws AND state IN ('open', 'draining')"
+)
+_LEASES_OF = "/* fastpath_leases_of */ SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws"
+
 
 @dataclass
 class InvariantReport:
@@ -292,7 +294,8 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
             if r[0] is not None
         }
         # The leases' bookings raise total_usage as settled actuals do, with
-        # no reservation row of their own; a closed lease's stay booked.
+        # no reservation row of their own; a closed lease's stay booked, and
+        # a charge past the donors' allocation is booked as fault usage.
         lease_bookings = {
             str(r[0]): int(r[1] or 0) for r in snap.execute_sql(_LEASE_BOOKINGS_BY_WS)
         }
@@ -636,6 +639,12 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
             nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]) != 0:
             return None
+        # A lease granted between the plan and here holds allocation this
+        # write would drop from the row: abort, as for a hold opened.
+        if int(list(transaction.execute_sql(
+            _LIVE_LEASES_OF, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]) != 0:
+            return None
         credit_row = list(transaction.execute_sql(
             credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
         ))
@@ -683,7 +692,8 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
     if result is None:
         res.ready = False
         res.reasons.append(
-            "aborted: not paused / nonzero shard / a typed row was missing (key deleted?)"
+            "aborted: not paused / nonzero shard / a lease granted / a typed row was "
+            "missing (key deleted?)"
         )
         return res
     res.applied = True
@@ -869,6 +879,12 @@ def repair_typed_usage(
             open_holds_sql, params=ws_param, param_types=ws_type,
         ))[0][0]) != 0:
             return None
+        # A lease booked between the plan and here is usage this write would
+        # lose: abort, as for a hold opened.
+        if int(list(transaction.execute_sql(
+            _LEASES_OF, params=ws_param, param_types=ws_type,
+        ))[0][0]) != 0:
+            return None
         current = list(transaction.execute_sql(
             usage_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
         ))
@@ -920,8 +936,8 @@ def repair_typed_usage(
     if result is None:
         res.ready = False
         res.reasons.append(
-            "aborted: not paused / sharded / a hold opened / typed row missing / "
-            "baseline gone / the ledger moved between plan and write"
+            "aborted: not paused / sharded / a hold opened / a lease booked / typed row "
+            "missing / baseline gone / the ledger moved between plan and write"
         )
         return res
     res.applied = True
