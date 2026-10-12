@@ -54,9 +54,9 @@ type Donor struct {
 	Allocation int64
 }
 
-// GrantResult is a grant's outcome: refused and why, or the lease's expiry
-// and donors. CommitTS is the grant's commit, or for a retry that found its
-// lease, the retry's.
+// GrantResult is a grant's outcome: refused and why, with nothing else set,
+// as the other refusals answer; or the lease's expiry and donors. CommitTS
+// is the grant's commit, or for a retry that found its lease, the retry's.
 type GrantResult struct {
 	Refused  Refusal
 	Expiry   time.Time
@@ -205,7 +205,11 @@ func (s *Store) Grant(ctx context.Context, req GrantRequest) (GrantResult, error
 	if err != nil {
 		return GrantResult{}, err
 	}
-	out.CommitTS = resp.CommitTs.UTC()
+	// A refusal found before any write commits an empty transaction, whose
+	// timestamp is no grant's.
+	if out.Refused == "" {
+		out.CommitTS = resp.CommitTs.UTC()
+	}
 	return out, nil
 }
 

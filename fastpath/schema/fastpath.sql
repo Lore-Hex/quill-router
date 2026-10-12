@@ -68,7 +68,8 @@ CREATE TABLE tr_lease (
   -- on, the highest owner sequence number applied, the last tick, the sum
   -- the checkpoints are audited against, the sequence number of the applied
   -- final checkpoint or manifest that listed the open holds (NULL until a
-  -- whole list is applied), the alert, and the gap that stops the lease.
+  -- whole list is applied), the alert (the first audit fault's sequence
+  -- number), and the gap that stops the lease.
   commit_version INT64 NOT NULL DEFAULT (0),
   applied_seq INT64 NOT NULL DEFAULT (0),
   last_tick INT64 NOT NULL DEFAULT (0),

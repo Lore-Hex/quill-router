@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -75,7 +77,7 @@ func (r row) headroom() int64 { return r.credits - r.usage - r.reserved }
 func readRows(t *testing.T, workspace string) []row {
 	t.Helper()
 	var rows []row
-	err := shared.Single().Query(context.Background(), spanner.Statement{
+	err := single().Query(context.Background(), spanner.Statement{
 		SQL: `SELECT total_credits, total_usage, reserved, COALESCE(in_debt, FALSE) FROM tr_credit_balance
 		       WHERE workspace_id = @w ORDER BY shard`,
 		Params: map[string]any{"w": workspace},
@@ -91,6 +93,143 @@ func readRows(t *testing.T, workspace string) []row {
 		t.Fatal(err)
 	}
 	return rows
+}
+
+// creditShards says how the workspace's credit rows differ from the shards
+// seeded, 0 to n-1, if they do: a row dropped, added or renumbered is seen
+// before any value is compared, since readRows returns only what is there.
+func creditShards(workspace string, n int) error {
+	var got []int64
+	err := single().Query(context.Background(), spanner.Statement{
+		SQL:    `SELECT shard FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": workspace},
+	}).Do(func(r *spanner.Row) error {
+		var shard int64
+		if err := r.Column(0, &shard); err != nil {
+			return err
+		}
+		got = append(got, shard)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	want := make([]int64, n)
+	for i := range want {
+		want[i] = int64(i)
+	}
+	if !slices.Equal(got, want) {
+		return fmt.Errorf("the credit rows are shards %v, and %v were seeded", got, want)
+	}
+	return nil
+}
+
+// Metadata the store neither reads nor writes, seeded on every credit row
+// of a walk's workspace so a write that reset a column to its default, or
+// copied one into another, is seen: the tier it reads, a computed time, an
+// epoch, and a reconciled-through time an hour on. By DML: an update
+// mutation on the emulator resets the row's other defaulted columns. The
+// instant is this file's own: the walks' files are left out of the race
+// build, and these helpers are in it.
+const seededEpoch = 17
+
+var seededAt = time.Date(2026, 10, 8, 1, 0, 0, 0, time.UTC)
+
+func seedCreditMetadata(t testing.TB, workspace string) {
+	t.Helper()
+	_, err := shared.ReadWriteTransaction(context.Background(), func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: `UPDATE tr_credit_balance SET trust_computed_at = @t, pause_epoch = @e, trust_reconciled_through = @u
+			       WHERE workspace_id = @w`,
+			Params: map[string]any{"t": seededAt, "u": seededAt.Add(time.Hour), "e": int64(seededEpoch), "w": workspace},
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seeding the credit rows' metadata: %v", err)
+	}
+}
+
+// creditMetadata says how a credit row's columns other than its money and
+// mark differ from what seedWorkspace and seedCreditMetadata left, if they
+// do: the tier, the seeded times and epoch, and nothing else set.
+func creditMetadata(workspace string) error {
+	type meta struct {
+		shard    int64
+		tier     spanner.NullInt64
+		computed spanner.NullTime
+		latched  spanner.NullTime
+		override spanner.NullInt64
+		causes   []spanner.NullString
+		epoch    spanner.NullInt64
+		through  spanner.NullTime
+		source   spanner.NullTime
+	}
+	var problem error
+	err := single().Query(context.Background(), spanner.Statement{
+		SQL: `SELECT shard, trust_tier, trust_computed_at, trust_latched_at, trust_override_tier, billing_pause_causes,
+		             pause_epoch, trust_reconciled_through, source_updated_at
+		        FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": workspace},
+	}).Do(func(r *spanner.Row) error {
+		var m meta
+		if err := r.Columns(&m.shard, &m.tier, &m.computed, &m.latched, &m.override, &m.causes, &m.epoch, &m.through,
+			&m.source); err != nil {
+			return err
+		}
+		if m.tier != (spanner.NullInt64{Int64: 3, Valid: true}) || !m.computed.Valid || !m.computed.Time.Equal(seededAt) ||
+			m.latched.Valid || m.override.Valid || len(m.causes) != 0 ||
+			m.epoch != (spanner.NullInt64{Int64: seededEpoch, Valid: true}) ||
+			!m.through.Valid || !m.through.Time.Equal(seededAt.Add(time.Hour)) || m.source.Valid {
+			problem = fmt.Errorf("shard %d's other columns are %+v, and the walk seeded tier 3, epoch %d, computed at %v and reconciled an hour on",
+				m.shard, m, seededEpoch, seededAt)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return problem
+}
+
+// creditRowsText is every column of the workspace's credit rows, in shard
+// order, as text: held equal across a write that must leave them alone.
+func creditRowsText(workspace string) (string, error) {
+	var b strings.Builder
+	err := single().Query(context.Background(), spanner.Statement{
+		SQL:    `SELECT * FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`,
+		Params: map[string]any{"w": workspace},
+	}).Do(func(r *spanner.Row) error {
+		for i, name := range r.ColumnNames() {
+			var v spanner.GenericColumnValue
+			if err := r.Column(i, &v); err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, "%s=%v ", name, v.Value.AsInterface())
+		}
+		b.WriteString("; ")
+		return nil
+	})
+	return b.String(), err
+}
+
+// lastLanded is the commit timestamp of the last write a running walk made,
+// zero outside a walk. A walk's writes are serialized, each stamped through
+// stamps.next, so a read at or after the last commit sees every write the
+// walk made; and on the emulator a strong read costs about 110 ms where a
+// read bounded below by that timestamp costs about 12 (measured 2026-10-12),
+// the difference between a two-hour debt walk and a short one. A bound that
+// missed a write would fail a check against the ledger, never pass one.
+var lastLanded time.Time
+
+// single is a single-use read-only transaction for the test helpers'
+// reads: at or after the running walk's last commit, or strong.
+func single() *spanner.ReadOnlyTransaction {
+	ro := shared.Single()
+	if !lastLanded.IsZero() {
+		ro = ro.WithTimestampBound(spanner.MinReadTimestamp(lastLanded))
+	}
+	return ro
 }
 
 func headrooms(rows []row) []int64 {

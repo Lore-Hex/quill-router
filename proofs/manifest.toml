@@ -39,10 +39,22 @@
 
 [AuditorCommit]
 # docs/design/fast-admission-and-batched-settlement.md, section 4.8. Its
-# shadow is a package of its own in the Go service.
+# shadow is a package of its own in the Go service. The spike's store makes
+# its Spanner side durable (the commit, the load, the reap and the close),
+# and walk_test.go drives the store through the shadow's random runs, with
+# the rows read back as the shadow's Spanner variables after each step.
 state = "implemented"
-code = ["fastpath/internal/auditorcommit"]
-tests = ["fastpath/internal/auditorcommit/auditorcommit_test.go"]
+code = [
+    "fastpath/internal/auditorcommit",
+    "fastpath/internal/store/commit.go",
+    "fastpath/internal/store/load.go",
+    "fastpath/internal/store/reap.go",
+    "fastpath/internal/store/close.go",
+]
+tests = [
+    "fastpath/internal/auditorcommit/auditorcommit_test.go",
+    "fastpath/internal/store/walk_test.go",
+]
 
 # The commit version: a member another overtook cannot commit over its work.
 [[AuditorCommit.mutants]]
@@ -1666,6 +1678,8 @@ new = '''
 # Python module's results by golden vectors that
 # tests/test_fastpath_credit_debt_vectors.py keeps current; the store's
 # credit.go applies it to the spike's credit rows, and grant.go grants.
+# debt_walk_test.go runs random operations of the store on one workspace and
+# holds the rows to this spec's claims after each.
 state = "implemented"
 code = [
     "src/trusted_router/credit_debt.py",
@@ -1679,6 +1693,7 @@ tests = [
     "fastpath/internal/creditdebt/creditdebt_test.go",
     "fastpath/internal/store/credit_test.go",
     "fastpath/internal/store/grant_test.go",
+    "fastpath/internal/store/debt_walk_test.go",
 ]
 
 # Section 4.2's first claim, and what keeps it.
