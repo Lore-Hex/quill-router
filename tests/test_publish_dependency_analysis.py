@@ -144,10 +144,10 @@ def test_import_closure_follows_relative_conditional_and_dynamic_imports(tmp_pat
         "scripts/generate.py": '''
 import trusted_router.catalog
 from sibling import snapshot
-from importlib import import_module as load
+import importlib
 def deferred():
     from trusted_router import pricing
-load(f"scripts.providers.{slug}")
+importlib.import_module(f"scripts.providers.{slug}")
 ''',
         "scripts/sibling.py": "from trusted_router.policy import snapshot\n",
         "scripts/providers/__init__.py": "",
