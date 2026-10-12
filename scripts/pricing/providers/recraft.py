@@ -48,6 +48,35 @@ def _microdollars(raw: str) -> int:
 def _parse_pricing(html: str) -> dict[str, int]:
     soup = BeautifulSoup(html, "html.parser")
     prices: dict[str, int] = {}
+    # October's table splits raster/vector and Pro pricing into named columns.
+    # Match only known model identities; editing/tool prices are different fees.
+    families = {
+        "V4.1 and V4.1 Utility": ("Recraft V4.1", "Recraft V4.1 Utility"),
+        "V4": ("Recraft V4",), "V3": ("Recraft V3",), "V2": ("Recraft V2",),
+    }
+    for table in soup.select("table"):
+        headers = [cell.get_text(" ", strip=True) for cell in table.select("thead th")]
+        if not {"Model", "Raster", "Pro raster (2K)"}.issubset(headers):
+            continue
+        if len(set(headers)) != len(headers):
+            raise RuntimeError("recraft: duplicate pricing columns")
+        for row in table.select("tbody tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all("td")]
+            if len(cells) != len(headers):
+                raise RuntimeError("recraft: malformed generation price row")
+            fields = dict(zip(headers, cells, strict=True))
+            for name in families.get(fields["Model"], ()):
+                for variant, column in ((name, "Raster"), (name + " Pro", "Pro raster (2K)")):
+                    if variant not in MODELS:
+                        continue
+                    match = re.fullmatch(r"\$([0-9]+(?:\.[0-9]+)?)", fields[column])
+                    if match is None:
+                        raise RuntimeError("recraft: missing exact USD raster price")
+                    model_id, _ = MODELS[variant]
+                    price = _microdollars(match[1])
+                    if price <= 0 or (model_id in prices and prices[model_id] != price):
+                        raise RuntimeError("recraft: invalid or conflicting raster price")
+                    prices[model_id] = price
     for row in soup.select("tr"):
         cells = row.find_all(["td", "th"])
         if len(cells) < 2:
@@ -66,6 +95,8 @@ def _parse_pricing(html: str) -> dict[str, int]:
             # siblings.
             if re.search(rf"{re.escape(name)}(?=$|\n)", description):
                 model_id, _ = MODELS[name]
+                if model_id in prices and prices[model_id] != price:
+                    raise RuntimeError("recraft: conflicting raster price")
                 prices[model_id] = price
     return prices
 

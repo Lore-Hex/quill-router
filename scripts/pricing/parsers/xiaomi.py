@@ -44,33 +44,54 @@ def _html_overseas_payg_prices(soup: BeautifulSoup) -> dict[str, dict[str, int]]
         cell.get_text(" ", strip=True).casefold() == "inference type"
         for cell in table.find_all("th")
     )
-    inference_type = "real-time api"
-    remaining_rows = 0
+    # Both inference labels and prices can span rows. Expand by column so a
+    # shared price cannot shift into another field or leak out of its span.
+    width = 5 if typed_table else 4
+    carried: dict[int, tuple[str, int]] = {}
     for row in table.find_all("tr"):
         cells = row.find_all("td")
         if not cells:
             continue
+        expanded = {column: value for column, (value, _count) in carried.items()}
+        next_carried = {
+            column: (value, count - 1)
+            for column, (value, count) in carried.items() if count > 1
+        }
+        column = 0
+        for cell in cells:
+            while column in expanded:
+                column += 1
+            span = str(cell.get("rowspan", "1"))
+            if (column >= width or str(cell.get("colspan", "1")) != "1"
+                    or not re.fullmatch(r"[1-9][0-9]?", span)):
+                raise ValueError("xiaomi: ambiguous pricing row span")
+            if typed_table and column == 0 and any(index > 1 for index in carried):
+                raise ValueError("xiaomi: price row span crosses inference type")
+            value = cell.get_text(" ", strip=True)
+            expanded[column] = value
+            if int(span) > 1:
+                if column == (1 if typed_table else 0):
+                    raise ValueError("xiaomi: model identity row span is unsupported")
+                next_carried[column] = (value, int(span) - 1)
+            column += 1
+        carried = next_carried
+        if len(expanded) != width:
+            raise ValueError("xiaomi: ambiguous pricing row span")
+        values_by_column = [expanded[index] for index in range(width)]
         if typed_table:
-            if len(cells) == 5:
-                inference_type = cells[0].get_text(" ", strip=True).casefold()
-                remaining_rows = int(str(cells[0].get("rowspan", "1"))) - 1
-                cells = cells[1:]
-            elif len(cells) == 4 and remaining_rows > 0:
-                remaining_rows -= 1
-            else:
-                raise ValueError("xiaomi: ambiguous inference-type row span")
+            inference_type = values_by_column.pop(0).casefold()
+            if inference_type not in {"real-time api", "batch api"}:
+                raise ValueError("xiaomi: unknown inference type")
             if inference_type != "real-time api":
                 continue
-        if len(cells) != 4:
-            continue
         models = re.findall(
             r"\bmimo-[a-z0-9._-]+",
-            cells[0].get_text(" ", strip=True),
+            values_by_column[0],
             flags=re.I,
         )
         values = [
-            re.fullmatch(r"\$\s*([0-9.]+)", cell.get_text(" ", strip=True))
-            for cell in cells[1:4]
+            re.fullmatch(r"\$\s*([0-9.]+)", value)
+            for value in values_by_column[1:4]
         ]
         if not models or any(value is None for value in values):
             continue
@@ -85,6 +106,8 @@ def _html_overseas_payg_prices(soup: BeautifulSoup) -> dict[str, dict[str, int]]
             if model_id in prices and prices[model_id] != price:
                 raise ValueError("xiaomi: conflicting real-time USD prices")
             prices[model_id] = price
+    if carried:
+        raise ValueError("xiaomi: pricing row span extends beyond table")
     return prices
 
 
