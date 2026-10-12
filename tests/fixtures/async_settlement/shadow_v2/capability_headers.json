@@ -1,0 +1,1 @@
+{"policy_version":"shadow-v2","v":2,"variants":[{"expected":"accept","name":"authorize-marker","object":{"X-TR-Settlement-Shadow-Policy":"shadow-v2"},"schema":"CAPABILITY_HEADERS"}]}
