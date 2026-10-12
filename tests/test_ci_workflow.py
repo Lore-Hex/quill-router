@@ -119,9 +119,11 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     deploy = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     assert ci.count('-m "not provider_health and not proof_oracle"') == 2
-    # The price refresh validates its catalog like CI does: a provider delisting
-    # one model must not stop every other provider's prices from publishing.
-    assert refresh.count('-m "not provider_health and not proof_oracle"') == 1
+    # The price refresh runs no local suite: it publishes only after the exact
+    # generated SHA passes ci.yml, whose shards exclude provider_health, so one
+    # provider delisting a model cannot stop every other provider's prices.
+    assert "uv run pytest" not in refresh
+    assert "gh workflow run ci.yml" in refresh
     assert "schedule:" in monitor
     assert "workflow_dispatch:" in monitor
     assert "-m provider_health" in monitor
