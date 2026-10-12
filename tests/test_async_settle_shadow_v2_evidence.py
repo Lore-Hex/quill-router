@@ -9,14 +9,25 @@ import os
 import re
 import subprocess
 import sys
-from collections import Counter
+from collections import Counter, OrderedDict, defaultdict
 from dataclasses import replace
+from decimal import Decimal
+from enum import Enum, IntEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 
-from tests.test_async_settle_shadow_v2_contract import CASES, fixture, proof, signer
+from tests.test_async_settle_shadow_v2_contract import (
+    CASES,
+    FIXTURES,
+    assert_round_trip,
+    fixture,
+    proof,
+    signer,
+    strict_equal,
+)
 from trusted_router import async_settle_shadow_v2_certificate as cert
 from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_deltas as deltas
@@ -852,9 +863,9 @@ def test_shared_retained_domain_vectors(file: str, vector: dict[str, Any]) -> No
     old(obj)
     new(obj)
     schema = contract.COMPARED_FULL if shape == "wire" else e.SAMPLE if shape == "sample" else e.COUNTER
-    assert schema.parse(schema.serialize(obj)) == obj
+    assert_round_trip(schema, obj)
     if shape == "wire":
-        assert contract.parse_terminal(vector["canonical"].encode()) == obj
+        assert strict_equal(contract.parse_terminal(vector["canonical"].encode()), obj)
 
 
 def test_retained_strings_do_not_weaken_locator_aliases() -> None:
@@ -1129,6 +1140,8 @@ def v2_acceptor(shape: str, value: Any) -> None:
 
 
 def constructed_acceptor(shape: str, value: Any) -> None:
+    if shape in ("sample", "counter", "wire", "normal-usage"):
+        oracle_native_domain(value)
     v1_delegate(shape, value)
     if shape in ("sample", "counter"):
         schema = e.SAMPLE if shape == "sample" else e.COUNTER
@@ -1163,19 +1176,20 @@ def assert_retained_round_trip(shape: str, value: Any) -> None:
     else:
         schema = schemas.get(shape)
     if schema is not None:
-        assert schema.parse(schema.serialize(value)) == value
+        assert_round_trip(schema, value)
     else:
         # Binding/observed/raw-usage expose validators, not Schema codecs.
         decoded = json.loads(canonical(value))
         v2_acceptor(shape, decoded)
-        assert decoded == value
+        assert strict_equal(decoded, value)
 
 
 @pytest.mark.parametrize("name,path", PARITY_CASES, ids=[name + ":" + ".".join(map(str, path)) for name, path in PARITY_CASES])
 def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
     shape, base = CONSTRUCTION[name]
     executed: Counter[str] = Counter()
-    for mutation, item in parity_mutations(parity_get(base, path)):
+    for mutation, item in (*parity_mutations(parity_get(base, path)),
+                           *(normalization_witnesses(parity_get(base, path)) if shape in ("sample", "counter", "wire", "normal-usage") else ())):
         executed[mutation] += 1
         value = copy.deepcopy(base)
         if path:
@@ -1190,7 +1204,10 @@ def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
             assert accepts(schema.serialize, value) is expected
         if actual:
             assert_retained_round_trip(shape, value)
-    assert executed == required_mutation_counts(parity_get(base, path))
+    expected_counts = Counter(required_mutation_counts(parity_get(base, path)))
+    if shape in ("sample", "counter", "wire", "normal-usage"):
+        expected_counts.update(kind for kind, _ in normalization_witnesses(parity_get(base, path)))
+    assert executed == expected_counts
 
 
 @pytest.mark.parametrize("shape", ["sample", "counter", "wire", "binding", "observed", "raw-usage", "normal-usage"])
@@ -1271,7 +1288,7 @@ DELTA_NAMES = {
     "excluded-admission", "strict-dimension", "strict-diagnostic-array", "v2-counter-reasons",
     "wire-wrapper-size", "sample-wrapper-size", "counter-wrapper-size",
     "certificate-issuer-bound", "certificate-origin", "certificate-authority",
-    "transport-spelling", "scalar-string",
+    "transport-spelling", "scalar-string", "native-json-domain",
 }
 
 
@@ -1301,7 +1318,7 @@ DELTA_ROUTES = [
 
 @pytest.mark.parametrize("name,shape,seed", DELTA_ROUTES, ids=[n + ":" + seed for n, _, seed in DELTA_ROUTES])
 def test_delta_enforcing_routes(name: str, shape: str, seed: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert {n for n, _, _ in DELTA_ROUTES} | {"transport-spelling", "scalar-string"} == DELTA_NAMES
+    assert {n for n, _, _ in DELTA_ROUTES} | {"transport-spelling", "scalar-string", "native-json-domain"} == DELTA_NAMES
     delta = next(d for d in deltas.DELTAS if d.name == name)
     assert delta.shape == shape
     if seed == "certificate":
@@ -1314,7 +1331,7 @@ def test_delta_enforcing_routes(name: str, shape: str, seed: str, monkeypatch: p
         if name == "v2-counter-reasons":
             value["drops"][0]["reason"] = "candidate_receipt_size"
     schema(value)
-    assert schema.parse(schema.serialize(value)) == value
+    assert_round_trip(schema, value)
     calls = []
     def reject(witness: Any) -> bool:
         calls.append(witness)
@@ -1333,6 +1350,11 @@ def test_delta_enforcing_routes(name: str, shape: str, seed: str, monkeypatch: p
 @pytest.mark.parametrize("name", sorted(DELTA_NAMES))
 def test_independent_delta_oracle(name: str) -> None:
     delta = next(d for d in deltas.DELTAS if d.name == name)
+    if name == "native-json-domain":
+        assert delta.shape == "every v2 object" and delta.direction == "strengthen"
+        assert delta.predicate({"x": (1,)})
+        assert not delta.predicate({"x": [1, True, None]})
+        return
     if name == "transport-spelling":
         assert delta.predicate(b'{"x":"\\u0061"}')
         assert not delta.predicate(b'{"x":"a"}')
@@ -1516,7 +1538,7 @@ def test_all_sized_objects_encoded_boundary(name: str, schema: s.Schema, base: A
             continue  # A base exactly at its limit has no whitespace to remove.
         padded = raw + b" " * (length - len(raw))
         if offset <= 0:
-            assert schema.parse(padded) == base, name
+            assert strict_equal(schema.parse(padded), base), name
         else:
             with pytest.raises(ValueError):
                 schema.parse(padded)
@@ -1666,10 +1688,14 @@ def test_raw_retained_token_pairs(name: str, path: tuple[Any, ...], key_token: b
             raw = raw_token_variant(value, path, key_token, mode)
             legacy_raw = raw_token_variant(old, path, key_token, mode)
             if mode != "control":
-                assert json.loads(raw) == value
+                assert strict_equal(json.loads(raw), value)
                 assert json.loads(legacy_raw) == old
             expected = accepts(lambda pair: constructed_raw_wire(*pair), (raw, legacy_raw))
             assert accepts(contract.parse_terminal, raw) is expected, (path, scalar, mode)
+            if expected:
+                decoded = contract.parse_terminal(raw)
+                assert strict_equal(decoded, value)
+                assert_retained_round_trip("wire", decoded)
             if scalar is None:
                 assert accepts(v1_raw_wire, legacy_raw) is (mode != "control")
                 assert expected is (mode in ("canonical", "utf8"))
@@ -1704,7 +1730,8 @@ def test_retained_object_scalar_edges(shape: str, path: tuple[str, ...], key_tok
         0xd800 <= ord(c) <= 0xdfff for c in parity_get(decoded, path))
     assert accepts(schema.parse, canonical(value)) is raw_expected
     if raw_expected:
-        assert schema.parse(canonical(value)) == decoded
+        assert strict_equal(schema.parse(canonical(value)), decoded)
+        assert schema.serialize(decoded) == canonical(decoded)
         assert_retained_round_trip(shape, decoded)
 
 
@@ -1781,10 +1808,14 @@ def test_raw_stored_retained_token_pairs(name: str, path: tuple[Any, ...], key_t
             raw = raw_token_variant(value, path, key_token, mode)
             if mode != "control":
                 decoded = json.loads(raw)
-                assert decoded == value
+                assert strict_equal(decoded, value)
                 assert accepts(lambda v: v1_delegate(shape, v), decoded) == accepts(lambda v: v1_delegate(shape, v), value)
             expected = accepts(lambda data: constructed_raw_object(shape, data), raw)
             assert accepts(parser, raw) is expected, (path, scalar, mode)
+            if expected:
+                decoded = parser(raw)
+                assert strict_equal(decoded, value)
+                assert_retained_round_trip(shape, decoded)
             if scalar is None:
                 assert expected is (mode in ("canonical", "utf8"))
 
@@ -1861,39 +1892,47 @@ def test_transport_schema_seed_inventory() -> None:
     assert enabled.isdisjoint(disabled)
     assert enabled | disabled == set(discovered_schemas())
     assert enabled == set(transport_seeds()), "transport-enabled schema missing a seed"
-    assert {name for rows in transport_seeds().values() for name, shape, _ in rows if shape == "wire"} == {
-        f"wire-{phase}-{mode}" for phase in ("settle", "refund") for mode in ("full", "hash-only", "failure")}
+    for key, rows in transport_seeds().items():
+        for name, _, base in rows:
+            assert [p for _, schema, n, _, _, positions in TRANSPORT_GRID if id(schema) == key and n == name for p in positions] == list(all_string_positions(base))
+    assert {name for rows in transport_seeds().values() for name, _, _ in rows} == {
+        "sample-settle", "sample-refund", "counter", "authorize-compared",
+        *(f"wire-{phase}-{mode}" for phase in ("settle", "refund") for mode in ("full", "hash-only", "failure"))}
 
 
-@pytest.mark.parametrize("label,schema", TRANSPORT_SCHEMAS, ids=[label for label, _ in TRANSPORT_SCHEMAS])
-def test_transport_schema_enumeration(label: str, schema: s.Schema) -> None:
-    seeds = transport_seeds()
-    assert id(schema) in seeds, (label, "transport-enabled schema missing a seed")
-    for name, shape, base in seeds[id(schema)]:
-        schema(base)
-        assert schema.parse(schema.serialize(base)) == base
-        for path, key in all_string_positions(base):
-            for pair in ("\ud83d\ude00", "\ud800\udc00", "x\ud800\udc00y"):
-                value = replace_string(base, path, key, pair)
-                for check in (schema, schema.serialize):
-                    with pytest.raises(ValueError, match="^scalar-string$"):
-                        check(value)
-            for scalar in ("😀", "\U00010000", "x\U00010000y"):
-                value = replace_string(base, path, key, scalar)
-                # Authorize's binding and snapshot strings are ASCII-only;
-                # all object keys are closed. Other shapes use the live v1
-                # delegate plus the independent new-field/delta oracle.
-                expected = False if shape == "authorize" else accepts(
-                    lambda v, shape=shape: constructed_acceptor(shape, v), value)
-                assert accepts(schema, value) is expected, (name, path, key, scalar)
-                assert accepts(schema.serialize, value) is expected
-                raw = canonical(value)  # supplementary scalars use JSON pairs
-                assert accepts(schema.parse, raw) is expected
-                if expected:
-                    assert schema.parse(raw) == value
-                    assert schema.parse(schema.serialize(value)) == value
-                    assert schema.serialize(schema.parse(raw)) == raw
+TRANSPORT_GRID = [(label, schema, name, shape, base, positions[start:start + 32])
+                  for label, schema in TRANSPORT_SCHEMAS
+                  for name, shape, base in transport_seeds()[id(schema)]
+                  for positions in [list(all_string_positions(base))]
+                  for start in range(0, len(positions), 32)]
 
+
+@pytest.mark.parametrize("label,schema,name,shape,base,positions", TRANSPORT_GRID,
+                         ids=[label + ":" + name + ":" + str(positions[0]) for label, _, name, _, _, positions in TRANSPORT_GRID])
+def test_transport_schema_enumeration(label: str, schema: s.Schema, name: str, shape: str, base: Any, positions: Any) -> None:
+    schema(base)
+    assert_round_trip(schema, base)
+    for path, key in positions:
+        for pair in ("\ud83d\ude00", "\ud800\udc00", "x\ud800\udc00y"):
+            value = replace_string(base, path, key, pair)
+            for check in (schema, schema.serialize):
+                with pytest.raises(ValueError, match="^scalar-string$"):
+                    check(value)
+        for scalar in ("😀", "\U00010000", "x\U00010000y"):
+            value = replace_string(base, path, key, scalar)
+            # Authorize's binding and snapshot strings are ASCII-only;
+            # all object keys are closed. Other shapes use the live v1
+            # delegate plus the independent new-field/delta oracle.
+            expected = False if shape == "authorize" else accepts(
+                lambda v, shape=shape: constructed_acceptor(shape, v), value)
+            assert accepts(schema, value) is expected, (name, path, key, scalar)
+            assert accepts(schema.serialize, value) is expected
+            raw = canonical(value)  # supplementary scalars use JSON pairs
+            assert accepts(schema.parse, raw) is expected
+            if expected:
+                assert strict_equal(schema.parse(raw), value)
+                assert_round_trip(schema, value)
+                assert schema.serialize(schema.parse(raw)) == raw
 
 TRANSPORT_ROUTES = [(label, schema, stage) for label, schema in TRANSPORT_SCHEMAS
     for stage in ("native", "serialize", "raw-key", "raw-value", "decode", "terminal", "header")
@@ -1951,3 +1990,267 @@ def test_transport_enforcing_routes(label: str, schema: s.Schema, stage: str, mo
                 with pytest.raises(ValueError, match="^json_encoding$"):
                     check(original)
                 assert calls == [original], (label, stage)
+
+
+def oracle_native_domain(value: Any, ancestors: tuple[int, ...] = ()) -> None:
+    """Independent original-object check, before the reference canonicalizes."""
+    if type(value) in (dict, list):
+        assert len(ancestors) < 16 and id(value) not in ancestors
+        chain = (*ancestors, id(value))
+        if type(value) is dict:
+            for key, child in value.items():
+                assert type(key) is str
+                oracle_native_domain(child, chain)
+        else:
+            for child in value:
+                oracle_native_domain(child, chain)
+    else:
+        assert type(value) in (str, int, bool, type(None))
+
+
+class NativeString(str):
+    pass
+
+
+class NativeInt(int):
+    pass
+
+
+class NativeList(list):
+    pass
+
+
+class NativeDict(dict):
+    pass
+
+
+class NativeEnum(Enum):
+    ITEM = "item"
+
+
+class NativeIntEnum(IntEnum):
+    ONE = 1
+
+
+def normalization_witnesses(value: Any) -> Any:
+    """Table of encoder losses; apply matching witnesses at EVERY seed position.
+
+    tuple -> list; non-string keys -> strings (including post-coercion collisions);
+    subclasses -> base types; float/int and bool/int equality; -0.0 and NaN/Inf;
+    native surrogate pairs -> scalar (the separate scalar-string policy).
+    Dict order is semantically irrelevant; duplicate keys cannot exist natively.
+    Those last two and integer -0 are exercised as transport controls below.
+    """
+    for label, item in (
+        ("float-int", 1.0), ("negative-zero", -0.0), ("nan", float("nan")),
+        ("infinity", float("inf")), ("negative-infinity", -float("inf")),
+        ("bytes", b"x"), ("bytearray", bytearray(b"x")), ("decimal", Decimal(1)),
+        ("enum", NativeEnum.ITEM), ("int-enum", NativeIntEnum.ONE),
+        ("int-subclass", NativeInt(1)), ("set", {1}), ("frozenset", frozenset({1})),
+    ):
+        yield label, item
+    if type(value) is dict:
+        for label, item in (("dict-subclass", NativeDict(value)),
+                            ("ordered-dict", OrderedDict(value)),
+                            ("default-dict", defaultdict(int, value)),
+                            ("mapping-proxy", MappingProxyType(value))):
+            yield label, item
+        for key in (1, True, None, 1.5, (1,)):
+            yield "key-" + type(key).__name__, {**value, key: None}
+        for key, spelling in ((1, "1"), (True, "true"), (None, "null"), (1.5, "1.5")):
+            yield "key-collision-" + type(key).__name__, {**value, key: 0, spelling: 1}
+        if value:
+            key = next(iter(value))
+            yield "key-subclass", {NativeString(k) if k == key else k: v for k, v in value.items()}
+    elif type(value) is list:
+        yield "tuple", tuple(value)
+        yield "list-subclass", NativeList(value)
+    elif type(value) is str:
+        yield "str-subclass", NativeString(value)
+
+
+def every_position(value: Any, path: tuple[Any, ...] = ()) -> Any:
+    yield path, value
+    if type(value) is dict:
+        for key, child in value.items():
+            yield from every_position(child, (*path, key))
+    elif type(value) is list:
+        for index, child in enumerate(value):
+            yield from every_position(child, (*path, index))
+
+
+def native_seeds() -> dict[int, list[tuple[str, dict[str, Any]]]]:
+    """All distinct committed fixture values for every discovered Schema identity.
+
+    Keep variant provenance, and deduplicate only identical bytes within a schema.
+    Exact field matching is independent of whether the schema accepts the seed:
+    rejection fixtures are explicitly filtered after matching, never manufactured.
+    """
+    seeds: dict[int, dict[bytes, tuple[str, dict[str, Any]]]] = {}
+    for path in sorted(FIXTURES.glob("*.json")):
+        for variant in json.loads(path.read_bytes()).get("variants", []):
+            for position, value in every_position(variant):
+                if type(value) is not dict:
+                    continue
+                for key, (_, schema) in DISCOVERED_SCHEMAS.items():
+                    if set(value) == set(schema.fields) and accepts(schema, value):
+                        label = path.stem + ":" + variant["name"] + ":" + ".".join(map(str, position))
+                        seeds.setdefault(key, {}).setdefault(canonical(value), (label, value))
+    for key, rows in transport_seeds().items():
+        for name, _, value in rows:
+            seeds.setdefault(key, {}).setdefault(canonical(value), (name, value))
+    return {key: list(rows.values()) for key, rows in seeds.items()}
+
+
+FIXTURE_NATIVE_SEEDS = native_seeds()
+UNSEEDED_FIXTURE_SCHEMAS = {
+    "trusted_router.async_settle_shadow_v2_evidence.TERMINAL_EVENT.diagnostic.closure0":
+        {"reason": "candidate_receipt_size", "required_bytes": 100, "candidate_count": 1},
+    "trusted_router.async_settle_shadow_v2_evidence.PROOF_MANIFEST.attachments.closure0":
+        {"sha256": "0" * 64, "bytes": 1},
+}
+NATIVE_SEEDS = dict(FIXTURE_NATIVE_SEEDS)
+for _key, (_label, _schema) in DISCOVERED_SCHEMAS.items():
+    if _key not in NATIVE_SEEDS:
+        NATIVE_SEEDS[_key] = [("explicit-no-fixture:" + _label, UNSEEDED_FIXTURE_SCHEMAS[_label])]
+
+# Split by seed and at most 32 positions; no sampling or timeout changes.
+NATIVE_GRID = [(label, schema, name, base, positions[start:start + 32])
+              for key, (label, schema) in DISCOVERED_SCHEMAS.items()
+              for name, base in NATIVE_SEEDS.get(key, [])
+              for positions in [[path for path, _ in every_position(base)]]
+              for start in range(0, len(positions), 32)]
+
+
+def test_native_schema_seed_inventory() -> None:
+    assert len(DISCOVERED_SCHEMAS) == 56
+    assert {label for key, (label, _) in DISCOVERED_SCHEMAS.items() if key not in FIXTURE_NATIVE_SEEDS} == set(UNSEEDED_FIXTURE_SCHEMAS)
+    # Explicit seeds fill the two empty nullable/mapping fixture slots.
+    assert set(NATIVE_SEEDS) == set(DISCOVERED_SCHEMAS)
+    assert all(rows for rows in NATIVE_SEEDS.values())
+    assert {(id(schema), name) for _, schema, name, _, _ in NATIVE_GRID} == {
+        (key, name) for key, rows in NATIVE_SEEDS.items() for name, _ in rows}
+    for key, rows in NATIVE_SEEDS.items():
+        for name, base in rows:
+            scheduled = [p for _, schema, n, _, paths in NATIVE_GRID if id(schema) == key and n == name for p in paths]
+            assert scheduled == [p for p, _ in every_position(base)]
+
+
+@pytest.mark.parametrize("label,schema,name,base,paths", NATIVE_GRID,
+                         ids=[label + ":" + name + ":" + str(paths[0]) for label, _, name, _, paths in NATIVE_GRID])
+def test_native_normalization_grid(label: str, schema: s.Schema, name: str, base: Any, paths: Any) -> None:
+    assert_round_trip(schema, base)
+    for path in paths:
+        original = parity_get(base, path)
+        for _kind, item in normalization_witnesses(original):
+            value = copy.deepcopy(base)
+            if path:
+                parity_get(value, path[:-1])[path[-1]] = item
+            else:
+                value = item
+            with pytest.raises(AssertionError):
+                oracle_native_domain(value)
+            for check in (schema, schema.serialize):
+                with pytest.raises(ValueError, match="^native-json-domain$"):
+                    check(value)
+        # Surrogate joining is an independent, already accepted delta. Exercise
+        # it on strict seeds too, including each original dictionary key.
+        for key in original if type(original) is dict else (None,) if type(original) is str else ():
+            value = copy.deepcopy(base)
+            if key is not None:
+                parent = parity_get(value, path)
+                parent["\ud800\udc00"] = parent.pop(key)
+            else:
+                parity_get(value, path[:-1])[path[-1]] = "\ud800\udc00"
+            for check in (schema, schema.serialize):
+                with pytest.raises(ValueError):
+                    check(value)
+        # Exact JSON types still need exact FIELD types. Equality must not hide
+        # bool/int substitution; these are valid domain objects, invalid fields.
+        if type(original) in (bool, int):
+            value = copy.deepcopy(base)
+            parity_get(value, path[:-1])[path[-1]] = int(original) if type(original) is bool else bool(original)
+            oracle_native_domain(value)
+            for check in (schema, schema.serialize):
+                assert not accepts(check, value), (label, name, path, "bool-int")
+
+
+@pytest.mark.parametrize("label,schema", list(DISCOVERED_SCHEMAS.values()), ids=[label for label, _ in DISCOVERED_SCHEMAS.values()])
+def test_native_gate_precedes_delegation(label: str, schema: s.Schema, monkeypatch: pytest.MonkeyPatch) -> None:
+    value = copy.deepcopy(NATIVE_SEEDS[id(schema)][0][1])
+    calls = []
+    def reject(original: Any) -> bool:
+        assert original is value
+        calls.append(original)
+        return True
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("delegation/canonicalization preceded native domain gate")
+    monkeypatch.setattr(deltas, "DELTAS", tuple(replace(d, predicate=reject) if d.name == "native-json-domain" else d for d in deltas.DELTAS))
+    monkeypatch.setattr(s.Schema, "_validate", forbidden)
+    monkeypatch.setattr(projection.RetainedSchema, "_validate", forbidden)
+    monkeypatch.setattr(contract.ComparedSchema, "_validate", forbidden)
+    monkeypatch.setattr(s, "canonical", forbidden)
+    monkeypatch.setattr(contract, "canonical", forbidden)
+    for check in (schema, schema.serialize):
+        with pytest.raises(ValueError, match="^native-json-domain$"):
+            check(value)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("left,right", [(True, 1), (1.0, 1), ((1,), [1]), (NativeInt(1), 1),
+    (NativeString("x"), "x"), (NativeList([1]), [1]), (NativeDict(a=1), {"a": 1}),
+    ({True: 1}, {1: 1}), ({"nested": [True]}, {"nested": [1]})])
+def test_strict_equal_detects_type_erasure(left: Any, right: Any) -> None:
+    assert left == right or (type(left) is tuple and type(right) is list)
+    assert not strict_equal(left, right)
+    assert not strict_equal(right, left)
+    assert strict_equal(left, left)
+
+
+def test_native_depth_cycles_and_shared_children() -> None:
+    schema = s.Schema({"x": lambda v: None}, 4096, retained_strings=True)
+    value: Any = 0
+    for _ in range(15):
+        value = [value]
+    assert_round_trip(schema, {"x": value})  # 16 containers including the root
+    cyclic_list: list[Any] = []
+    cyclic_list.append(cyclic_list)
+    cyclic_dict: dict[str, Any] = {}
+    cyclic_dict["self"] = cyclic_dict
+    for bad in ([value], cyclic_list, cyclic_dict):
+        with pytest.raises(AssertionError):
+            oracle_native_domain({"x": bad})
+        for check in (schema, schema.serialize):
+            with pytest.raises(ValueError, match="^native-json-domain$"):
+                check({"x": bad})
+    child = {"a": [1, True, None]}
+    assert_round_trip(schema, {"x": [child, child]})
+
+
+@pytest.mark.parametrize("label,schema", list(DISCOVERED_SCHEMAS.values()), ids=[label for label, _ in DISCOVERED_SCHEMAS.values()])
+def test_native_transport_normalization_controls(label: str, schema: s.Schema) -> None:
+    for _, base in NATIVE_SEEDS[id(schema)]:
+        raw = schema.serialize(base)
+        # Ordering does not participate in JSON object identity or strict_equal.
+        reordered = dict(reversed(list(base.items())))
+        assert strict_equal(reordered, base)
+        assert_round_trip(schema, reordered)
+        for transport in (json.dumps(reordered, ensure_ascii=True, separators=(",", ":")).encode(), raw + b" "):
+            if len(transport) <= schema.limit:
+                decoded = schema.parse(transport)
+                assert strict_equal(decoded, base)
+                assert schema.serialize(decoded) == raw
+        # Duplicate native keys are unrepresentable; duplicate transport keys fail.
+        key = next(iter(base))
+        duplicate = b"{" + canonical(key) + b":" + canonical(base[key]) + b"," + raw[1:]
+        assert not accepts(schema.parse, duplicate)
+        # Python integer -0 is the SAME exact int as 0. Strict decoder rejects
+        # raw -0; retained decoder accepts it and canonicalizes it to 0.
+        zero = re.search(rb":0(?=[,}])", raw)
+        if zero:
+            transport = raw[:zero.start()] + b":-0" + raw[zero.end():]
+            if accepts(schema.parse, transport):
+                decoded = schema.parse(transport)
+                assert strict_equal(decoded, base)
+                assert schema.serialize(decoded) == raw
+                assert_round_trip(schema, decoded)

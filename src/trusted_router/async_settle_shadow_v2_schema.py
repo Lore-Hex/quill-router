@@ -1,9 +1,11 @@
 """Pure exact-shape primitives for the dormant shadow-v2 byte contract.
 
+The native-json-domain delta first checks every original v2 object for exact
+JSON-native types and at most sixteen container levels, before any delegation.
 Retained JSON-object constraint inventory (sample/counter standalone v1 object
 validators; wire complete v1 raw decoder plus validator): exact retained keys,
-container types, booleans, integer range/type, finite numbers and bounded nesting
-are delegated to their closed v1 schemas. New keys/types/nesting belong to the
+field types, booleans and integer ranges are delegated to their closed v1
+schemas. New keys/types/nesting belong to the
 new-field schemas. Duplicate keys, UTF-8/BOM/raw-control validity and numeric
 lexemes are already rejected by the legacy wire decoder; they have no analogue
 in an already decoded object. Wrapper byte budgets are the three size deltas.
@@ -203,9 +205,10 @@ class Schema:
 
     def __call__(self, value: Any) -> None:
         # Inspect the original native object before any subclass delegation or
-        # canonicalization can join surrogate code points into a scalar.
+        # canonicalization can erase container/scalar types or join surrogates.
+        from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
+        apply_deltas("every v2 object", value)
         if self.retained_strings:
-            from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
             apply_deltas("retained-object", value)
         self._validate(value)
 

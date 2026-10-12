@@ -1,6 +1,7 @@
 """Executable shadow-v2 deltas. Predicates mean rejection, or vocabulary membership.
 
-Strengthen/size predicates reject after retained delegation. Broaden predicates
+Object-domain predicates reject before any delegation; shape strengthen/size
+predicates reject after retained delegation. Broaden predicates
 identify only new vocabularies; they never excuse a failed retained constraint.
 The exclusion certificate is a new object, not a relaxed price binding.
 
@@ -31,6 +32,27 @@ original_receipt_identity_gap original_receipt_digest_gap original_receipt_backi
 original_receipt_missing candidate_receipt_size receipt_locator_size exclusion_conflict
 missing_signer missing_context transport_failure local_work_overflow evaluator_failed
 ambiguous_fallback evidence_schema_gap evidence_identity_gap""".split())
+
+
+def native_json_domain(value: Any, depth: int = 0) -> bool:
+    """Reject non-exact JSON-native types before encoding can normalize them.
+
+    V1 native validators may accept dict/list/str/int subclasses, tuples and
+    integral floats (see the differential grid); v2 deliberately does not.
+    This includes OrderedDict/defaultdict, str-subclass keys and IntEnum members.
+    Bool and int are separate exact domain members; field validators still
+    decide which applies.
+    Sixteen container levels match both decoders. Cycles necessarily exceed
+    that bound, so they produce the same fixed diagnostic without recursion
+    exhaustion. Shared acyclic children are allowed; nothing is normalized.
+    """
+    kind = type(value)
+    if kind is dict:
+        return depth >= 16 or any(type(k) is not str or native_json_domain(v, depth + 1)
+                                  for k, v in value.items())
+    if kind is list:
+        return depth >= 16 or any(native_json_domain(v, depth + 1) for v in value)
+    return not (kind is str or kind is int or kind is bool or value is None)
 
 
 def transport_spelling(raw: bytes) -> bool:
@@ -85,6 +107,7 @@ class Delta:
 
 
 DELTAS = (
+    Delta("native-json-domain", "every v2 object", "strengthen", "§8 G1 (no coercions) / §7 (exact schemas)", native_json_domain),
     Delta("transport-spelling", "retained-transport", "strengthen", "§4.2 / §7 (round-1 lexical resolution)", transport_spelling),
     Delta("scalar-string", "retained-object", "strengthen", "§4.2 / §7 (Unicode scalar strings)", scalar_string),
     Delta("clean-requires-eligible", "sample", "strengthen", "§2", lambda v: clean(v) and v["eligibility"]["observed"] is not True),

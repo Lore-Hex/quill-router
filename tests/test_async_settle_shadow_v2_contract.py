@@ -23,6 +23,28 @@ ROOT = Path(__file__).parent / "fixtures/async_settlement"
 FIXTURES = ROOT / "shadow_v2"
 
 
+def strict_equal(left: Any, right: Any) -> bool:
+    """JSON structural equality preserving every native type, including keys."""
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        if all(type(k) is str for k in (*left, *right)):
+            return left.keys() == right.keys() and all(strict_equal(v, right[k]) for k, v in left.items())
+        return len(left) == len(right) and all(
+            any(strict_equal(k, other) and strict_equal(v, right[other]) for other in right)
+            for k, v in left.items())
+    if type(left) in (list, tuple):
+        return len(left) == len(right) and all(strict_equal(a, b) for a, b in zip(left, right, strict=True))
+    return bool(left == right)
+
+
+def assert_round_trip(schema: s.Schema, value: Any) -> None:
+    raw = schema.serialize(value)
+    decoded = schema.parse(raw)
+    assert strict_equal(decoded, value)
+    assert schema.serialize(decoded) == raw
+
+
 def fixture(name: str) -> list[dict[str, Any]]:
     return json.loads((FIXTURES / (name + ".json")).read_bytes())["variants"]
 
@@ -108,7 +130,8 @@ def test_existing_fixture_bytes_remain_frozen() -> None:
 @pytest.mark.parametrize("name,schema,value", CASES, ids=[v[0] for v in CASES])
 def test_exact_schema_acceptance_and_missing_extra(name: str, schema: s.Schema, value: dict[str, Any]) -> None:
     raw = canonical(value)
-    assert schema.parse(raw) == value
+    assert strict_equal(schema.parse(raw), value)
+    assert_round_trip(schema, value)
     assert schema.serialize(value) == raw
     for field in value:
         damaged = dict(value)
@@ -123,7 +146,7 @@ def test_exact_schema_acceptance_and_missing_extra(name: str, schema: s.Schema, 
 def test_every_object_byte_limit_and_duplicate_keys(name: str, schema: s.Schema, value: dict[str, Any]) -> None:
     raw = canonical(value)
     # All actual serialized bytes count, including transport whitespace.
-    assert schema.parse(raw + b" " * (schema.limit - len(raw))) == value
+    assert strict_equal(schema.parse(raw + b" " * (schema.limit - len(raw))), value)
     with pytest.raises(ValueError, match="evidence_size"):
         schema.parse(raw + b" " * (schema.limit + 1 - len(raw)))
     key = next(iter(value))
@@ -162,7 +185,7 @@ def test_terminal_wire_literal_byte_echo_compatibility(name: str) -> None:
     v = fixture(name)[0]
     assert canonical(v["object"]).decode() == v["canonical"]
     assert b64encode(v["canonical"].encode()) == v["header"]
-    assert c.parse_header((v["header"],)) == v["object"]
+    assert strict_equal(c.parse_header((v["header"],)), v["object"])
     assert c.parse_header((v["header"],)) == c.parse_terminal(b64decode(v["header"]))
     if v["object"]["variant"] == "excluded":
         assert v["object"]["certificate"] == proof()["certificate"]
