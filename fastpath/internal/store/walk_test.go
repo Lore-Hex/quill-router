@@ -91,16 +91,18 @@ const walkTickNumber = 7
 // the walk writes it for auth's heartbeat at seq: the snapshot's hash and
 // usage, and the reap basis its first heartbeat brought. A reap after a
 // takeover is rebuilt from them.
-func holdPayload(auth string, seq int64) (hash, usage, basis []byte) {
+func holdPayload(auth string, seq int64) (hash, usage, basis, boot []byte) {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s@%d", auth, seq)))
-	return h[:], []byte(fmt.Sprintf(`{"auth":%q,"seq":%d}`, auth, seq)), []byte("the basis of " + auth)
+	return h[:], []byte(fmt.Sprintf(`{"auth":%q,"seq":%d}`, auth, seq)), []byte("the basis of " + auth),
+		[]byte(fmt.Sprintf("the boot binding of %s@%d", auth, seq))
 }
 
 // payloadIs reports whether a hold row keeps the payload the walk wrote for
 // its heartbeat at owner sequence seq, the gateway's sequence among it.
 func payloadIs(h HoldRow, seq int64) bool {
-	hash, usage, basis := holdPayload(h.AuthorizationID, seq)
+	hash, usage, basis, boot := holdPayload(h.AuthorizationID, seq)
 	return bytes.Equal(h.SnapshotHash, hash) && bytes.Equal(h.SnapshotUsage, usage) && bytes.Equal(h.ReapBasis, basis) &&
+		bytes.Equal(h.Boot, boot) &&
 		h.SnapshotSeq == (spanner.NullInt64{Int64: gatewaySeq(seq), Valid: true})
 }
 
@@ -189,7 +191,7 @@ func TestTheStoreWalksWithAuditorCommit(t *testing.T) {
 		"a close past its time", "a stored hold's snapshot moved on", "a reap at a snapshot moved on",
 		"a commit of a tick's number", "S committed again with another time", "a later audit fault",
 		"drain rows whose IDs sort before an earlier row's", "drain rows whose IDs sort after an earlier row's",
-		"an empty drain read", "a winner beside an open hold", "a stored hold left unsent"}
+		"an empty drain read", "a winner beside an open hold", "a stored hold left unsent", "an audit fault answered"}
 	// Each guard the store has, refused at least once for its own reason.
 	for kind, reasons := range map[string][]Refusal{
 		"commit":         {RefusedVersion, RefusedClosed, RefusedGap, RefusedBoundary},
@@ -728,12 +730,12 @@ func (w *walker) request(m int8, from ac.State) CommitRequest {
 	// after a commit that sent none.
 	for a := range w.c.Auths {
 		if mem.Holds[a] != ac.NoHold && side.holdSeq[a] != side.sentSeq[a] {
-			hash, usage, basis := holdPayload(w.c.Auths[a], side.holdSeq[a])
+			hash, usage, basis, boot := holdPayload(w.c.Auths[a], side.holdSeq[a])
 			req.PutHolds = append(req.PutHolds, HoldRow{AuthorizationID: w.c.Auths[a], Estimate: walkEstimate,
 				Deadline: walkDeadline, SnapshotSeq: spanner.NullInt64{Int64: gatewaySeq(side.holdSeq[a]), Valid: true},
 				SnapshotHash: hash, SnapshotUsage: usage,
 				RunningCharge:    spanner.NullInt64{Int64: int64(mem.Holds[a]), Valid: true},
-				SnapshotOwnerSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true}, ReapBasis: basis})
+				SnapshotOwnerSeq: spanner.NullInt64{Int64: side.holdSeq[a], Valid: true}, ReapBasis: basis, Boot: boot})
 		}
 	}
 	req.LastTick = side.lastTick
@@ -844,9 +846,21 @@ func (w *walker) commit(m int8, from, to ac.State, want Refusal) {
 	if req.Boundary != nil && !req.Boundary.T.Equal(walkTick) {
 		w.seen["S committed again with another time"]++
 	}
+	// The result names the audit fault this commit stored as the lease's
+	// first, and none when the lease held one already or the commit carried
+	// none.
+	wantFault := req.AuditFault
+	if w.fault != 0 {
+		wantFault = nil
+	}
+	if (got[0].AuditFault == nil) != (wantFault == nil) || (wantFault != nil && *got[0].AuditFault != *wantFault) {
+		w.fatalf("member %s's commit answered audit fault %v, and the walk expects %v", w.c.Members[m], got[0].AuditFault,
+			wantFault)
+	}
 	if req.AuditFault != nil {
 		if w.fault == 0 {
 			w.fault = *req.AuditFault
+			w.seen["an audit fault answered"]++
 		} else {
 			w.seen["a later audit fault"]++
 		}
@@ -1366,8 +1380,8 @@ func walkCommit(s *Store, req CommitRequest, want Refusal) (CommitResult, time.T
 		return got[0], ts, fmt.Errorf("the result names lease %v, and the request %v", got[0].Ref, req.Ref)
 	case got[0].Refused != want:
 		return got[0], ts, fmt.Errorf("refused %q, want %q: %+v", got[0].Refused, want, got[0])
-	case want != "" && (got[0].NewVersion != 0 || got[0].State != "" || len(got[0].Faults) != 0):
-		return got[0], ts, fmt.Errorf("refused %q, and with a version, a state or a fault: %+v", want, got[0])
+	case want != "" && (got[0].NewVersion != 0 || got[0].State != "" || len(got[0].Faults) != 0 || got[0].AuditFault != nil):
+		return got[0], ts, fmt.Errorf("refused %q, and with a version, a state, a fault or an audit fault: %+v", want, got[0])
 	}
 	return got[0], ts, nil
 }

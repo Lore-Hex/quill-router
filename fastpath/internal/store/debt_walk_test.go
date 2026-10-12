@@ -99,7 +99,7 @@ func TestTheStoreKeepsCreditDebtsClaims(t *testing.T) {
 		"refused grant: the listed holds alone", "refused close: holds open", "shortfall write: the stored total again",
 		"shortfall write: below the stored total", "shortfall write below a total a booking raised",
 		"a release's excess kept on its shard", "a commit of two leases", "a commit of two leases' returns",
-		"a commit of two leases' holds"} {
+		"a commit of two leases' holds", "a commit of a lease beside a refused one"} {
 		if seen[k] == 0 {
 			t.Errorf("no walk made a %s", k)
 		}
@@ -612,8 +612,66 @@ func (d *debtWalk) script() {
 	d.opStart = spannerNow(d.t)
 	d.commitTwo(ctx, first, []MoneyOp{Book(2, first.shortfall)}, second, []MoneyOp{Book(3, second.shortfall)})
 	step("the two leases' commit")
+	// Then a lease's booking beside another's refused commit, in both
+	// orders: the one lands, the other's rows stay, and a store that threw
+	// the batch's changes away at a refusal fails the replica.
+	d.opStart = spannerNow(d.t)
+	d.commitBeside(ctx, third, []MoneyOp{Book(1, third.shortfall)}, fourth)
+	step("a commit beside a refused one")
+	d.opStart = spannerNow(d.t)
+	d.commitBeside(ctx, fourth, []MoneyOp{Book(1, fourth.shortfall)}, third)
+	step("a commit beside a refused one, the other way")
 	d.deep()
 	d.checkAllPacks()
+}
+
+// commitBeside commits a lease's money in one transaction with another
+// lease's request at a version it never had, which the store refuses for
+// that lease alone: the first lands and is booked as commit books it, the
+// second's rows stay, and the batch's answer names each.
+func (d *debtWalk) commitBeside(ctx context.Context, l *debtLease, money []MoneyOp, stale *debtLease) {
+	d.t.Helper()
+	d.note("commit %s %v beside %s at a version it never had", l.ref.LeaseID, money, stale.ref.LeaseID)
+	seq := l.seq
+	if !l.stored {
+		seq++
+	}
+	reqs := []CommitRequest{
+		{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money},
+		{Ref: stale.ref, ReadVersion: stale.version + 1, AppliedSeq: stale.seq + 1,
+			Money: []MoneyOp{Book(1, stale.shortfall)}},
+	}
+	d.touch(l)
+	d.touch(stale)
+	changes, releases := l.moneyEffect(money)
+	before := d.rows(stale.ref)
+	got, ts, err := d.s.Commit(ctx, detached(reqs))
+	if err != nil || len(got) != 2 {
+		d.fatalf("the commit beside a refused one: %+v %v", got, err)
+	}
+	d.landed("commit", ts)
+	if got[1].Ref != stale.ref || got[1].Refused != RefusedVersion || got[1].NewVersion != 0 || got[1].State != "" ||
+		len(got[1].Faults) != 0 || got[1].AuditFault != nil {
+		d.fatalf("the stale lease's part of the batch: %+v", got[1])
+	}
+	if after := d.rows(stale.ref); after != before {
+		d.fatalf("a refused part of a batch changed lease %s's rows from %s to %s", stale.ref.LeaseID, before, after)
+	}
+	if got[0].Ref != l.ref || got[0].Refused != "" || got[0].State != l.state || got[0].AuditFault != nil {
+		d.fatalf("the batch answered %+v for lease %s, which the walk has %q", got[0], l.ref.LeaseID, l.state)
+	}
+	d.shards.settle(changes, releases)
+	l.advance(d, "the commit beside a refused one", got[0].NewVersion)
+	l.seq = seq
+	l.packs = append(l.packs, Pack{CommitVersion: l.version})
+	_, faults := l.bookedEach(money)
+	if !slices.Equal(got[0].Faults, faults) {
+		d.fatalf("the commit beside a refused one faulted %v, and the walk's ledger %v", got[0].Faults, faults)
+	}
+	d.checkPacks(l)
+	d.checkHolds(l)
+	d.checkLeaseRow(l, "the commit beside a refused one")
+	d.seen["a commit of a lease beside a refused one"]++
 }
 
 // commitTwo commits two leases' money in one transaction, as the store
@@ -636,8 +694,9 @@ func (d *debtWalk) commitTwo(ctx context.Context, a *debtLease, moneyA []MoneyOp
 		auth := l.ref.LeaseID + "-two"
 		hold := l.ref.LeaseID + "-hold"
 		return CommitRequest{Ref: l.ref, ReadVersion: l.version, AppliedSeq: seq, Money: money,
-			Winners:  []Winner{{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release", Work: workOf(auth, "two")}},
-			PutHolds: []HoldRow{{AuthorizationID: hold, Estimate: 1, Deadline: seededAt}}}
+			Winners: []Winner{{AuthorizationID: auth, Kind: "release", RecordID: auth + "-release", Work: workOf(auth, "two")}},
+			PutHolds: []HoldRow{{AuthorizationID: hold, Estimate: 1, Deadline: seededAt,
+				Boot: []byte("the boot binding of " + hold)}}}
 	}
 	reqs := []CommitRequest{request(a, moneyA), request(b, moneyB)}
 	d.touch(a)
@@ -705,14 +764,17 @@ func (d *debtWalk) run() {
 			// With no lease left, a walk ends once it is granted none.
 			if !d.grant(ctx) {
 				d.check(before, headrooms(readRows(d.t, d.ws)))
+				d.deep()
 				d.checkAllPacks()
 				return
 			}
 		case d.shards.marked && d.pastDebt(live) != nil:
 			// In debt, a lease whose room is more than the debt returns it
 			// all: the money repays the debt and the excess must stay on the
-			// shard that freed it (giveBack), which the walks must see.
-			d.giveBack(ctx, d.pastDebt(live))
+			// shard that freed it (giveBack), which the walks must see. It is
+			// the lease the step writes, and the one its check deep-reads.
+			l = d.pastDebt(live)
+			d.giveBack(ctx, l)
 		case op == 0 && len(live) < 4:
 			d.grant(ctx)
 		case op <= 2:
@@ -1008,7 +1070,7 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 			for i := range 1 + d.probes.Intn(2) {
 				auth := fmt.Sprintf("%s-h%d", l.ref.LeaseID, i)
 				l.holds[auth] = HoldRow{AuthorizationID: auth, Estimate: int64(1 + d.probes.Intn(20)), Deadline: walkTick,
-					Listed: true}
+					Listed: true, Boot: []byte("the boot binding of " + auth)}
 				req.PutHolds = append(req.PutHolds, l.holds[auth])
 				d.seen["a listed hold"]++
 			}
@@ -1023,6 +1085,9 @@ func (d *debtWalk) commit(ctx context.Context, l *debtLease, money []MoneyOp, bo
 		d.fatalf("the commit %+v: %v", req, err)
 	}
 	d.landed("commit", ts)
+	if result.AuditFault != nil {
+		d.fatalf("the commit answered an audit fault %d, and carried none", *result.AuditFault)
+	}
 	d.seen["a release's excess kept on its shard"] += d.shards.settle(changes, releases)
 	if result.State != l.state {
 		d.fatalf("the commit left lease %s %q, and the walk has it %q", l.ref.LeaseID, result.State, l.state)
@@ -1612,6 +1677,72 @@ func (d *debtWalk) deep() {
 	}
 }
 
+// checkEveryLeasesHoldsAndPacks holds every lease's hold rows and every
+// pack's winner count to the walk's account in two reads of the whole
+// workspace, after every step: a lease untouched by the step waits for the
+// sweep for its deep reads, its rows do not.
+func (d *debtWalk) checkEveryLeasesHoldsAndPacks() {
+	d.t.Helper()
+	ctx := context.Background()
+	holds := map[string][]HoldRow{}
+	err := single().Query(ctx, spanner.Statement{
+		SQL: `SELECT lease_id, ` + strings.Join(holdColumns[2:], ", ") + ` FROM tr_lease_hold
+		       WHERE workspace_id = @w ORDER BY lease_id, authorization_id`,
+		Params: map[string]any{"w": d.ws},
+	}).Do(func(r *spanner.Row) error {
+		var lease string
+		var h HoldRow
+		if err := r.Columns(&lease, &h.AuthorizationID, &h.Estimate, &h.Deadline, &h.Listed, &h.SnapshotSeq, &h.SnapshotHash,
+			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot); err != nil {
+			return err
+		}
+		holds[lease] = append(holds[lease], h)
+		return nil
+	})
+	if err != nil {
+		d.fatalf("reading the workspace's holds: %v", err)
+	}
+	counts := map[string][]int64{}
+	err = single().Query(ctx, spanner.Statement{
+		SQL: `SELECT lease_id, winner_count FROM tr_lease_winners WHERE workspace_id = @w
+		       ORDER BY lease_id, commit_version`,
+		Params: map[string]any{"w": d.ws},
+	}).Do(func(r *spanner.Row) error {
+		var lease string
+		var n int64
+		if err := r.Columns(&lease, &n); err != nil {
+			return err
+		}
+		counts[lease] = append(counts[lease], n)
+		return nil
+	})
+	if err != nil {
+		d.fatalf("reading the workspace's winner counts: %v", err)
+	}
+	for _, l := range d.leases {
+		want := make([]HoldRow, 0, len(l.holds))
+		for _, auth := range slices.Sorted(maps.Keys(l.holds)) {
+			want = append(want, l.holds[auth])
+		}
+		if why := sameHolds(holds[l.ref.LeaseID], want); why != "" {
+			d.fatalf("lease %s's hold rows: %s", l.ref.LeaseID, why)
+		}
+		wantCounts := make([]int64, len(l.packs))
+		for i, p := range l.packs {
+			wantCounts[i] = int64(len(p.Winners))
+		}
+		if !slices.Equal(counts[l.ref.LeaseID], wantCounts) {
+			d.fatalf("lease %s's packs' winner counts are %v, and the walk's commits stored %v", l.ref.LeaseID,
+				counts[l.ref.LeaseID], wantCounts)
+		}
+		delete(holds, l.ref.LeaseID)
+		delete(counts, l.ref.LeaseID)
+	}
+	if len(holds) != 0 || len(counts) != 0 {
+		d.fatalf("holds or packs of leases the walk never granted: %v %v", holds, counts)
+	}
+}
+
 // check holds the workspace's rows to CreditDebt's claims, after an
 // operation that moved the headroom from before to after.
 func (d *debtWalk) check(before, after []int64) {
@@ -1709,19 +1840,21 @@ func (d *debtWalk) check(before, after []int64) {
 	// workspace.
 	type money struct {
 		granted, shortfall, doorRaised, returned, consumed, fault, allocation, appends, raised int64
+		seq, version                                                                           int64
 		state                                                                                  string
 		raises                                                                                 map[string]int64
 	}
 	got := map[string]*money{}
 	err = single().Query(ctx, spanner.Statement{
-		SQL: `SELECT lease_id, granted, shortfall_total, door_raised, returned, consumed, fault_usage, allocation, state
+		SQL: `SELECT lease_id, granted, shortfall_total, door_raised, returned, consumed, fault_usage, allocation, state,
+		             applied_seq, commit_version
 		        FROM tr_lease WHERE workspace_id = @w`,
 		Params: map[string]any{"w": d.ws},
 	}).Do(func(r *spanner.Row) error {
 		var lease string
 		var m money
 		if err := r.Columns(&lease, &m.granted, &m.shortfall, &m.doorRaised, &m.returned, &m.consumed, &m.fault,
-			&m.allocation, &m.state); err != nil {
+			&m.allocation, &m.state, &m.seq, &m.version); err != nil {
 			return err
 		}
 		got[lease] = &m
@@ -1768,7 +1901,8 @@ func (d *debtWalk) check(before, after []int64) {
 		if m == nil || m.granted != l.granted || m.shortfall != l.shortfall || m.doorRaised != l.doorRaised ||
 			m.returned != l.returned || m.consumed != l.consumed || m.fault != l.fault || m.state != l.state ||
 			m.allocation != l.allocation() || (l.state == "closed" && m.allocation != m.consumed) ||
-			m.appends != int64(l.appends) || m.raised != l.doorRaised || len(m.raises) != len(l.raises) {
+			m.appends != int64(l.appends) || m.raised != l.doorRaised || len(m.raises) != len(l.raises) ||
+			m.seq != l.seq || m.version != l.version {
 			d.fatalf("lease %s holds %+v, and the walk did %+v", l.ref.LeaseID, m, *l)
 		}
 		for record, raise := range l.raises {
@@ -1777,6 +1911,7 @@ func (d *debtWalk) check(before, after []int64) {
 			}
 		}
 	}
+	d.checkEveryLeasesHoldsAndPacks()
 	negative := false
 	for i, h := range after {
 		negative = negative || h < 0
