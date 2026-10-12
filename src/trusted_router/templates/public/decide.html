@@ -102,8 +102,9 @@
 
 <section style="margin-top:48px">
   <div class="panel">
-    <div class="panel-head"><h2>Models</h2><span class="pill good">Nine names, one API</span></div>
+    <div class="panel-head"><h2>Models</h2><span class="pill good">One decision API</span></div>
     <div class="panel-body">
+      <p><strong>New: <a href="/models/microsoft/microsoft-decision-1">Microsoft Decision-1</a>.</strong> Use <code>microsoft/microsoft-decision-1</code> for yes/no probabilities, category selection and ordered scores. Served directly by Azure Foundry, with a 32,768-token text context and free output. This preview model accepts <code>state</code> and <code>questions</code> on <code>POST {{ decide_path }}</code>, rather than chat messages. It does not generate prose, accept images or expose reasoning. See <a href="https://ai.azure.com/catalog/models/Microsoft-Decision-1" target="_blank" rel="noopener noreferrer">Microsoft's model card</a> and <a href="https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision" target="_blank" rel="noopener noreferrer">protocol documentation</a>. The measurements below predate its addition.</p>
       <p>Every model below takes the same request and returns the same response, so switching is changing one string. A decision usually sits in the middle of a request, so speed comes first: <strong>four of these answer in about a third of a second, and a fifth in about half.</strong> Start with <code>trustedrouter/trev-1.0</code>: it is among the fastest, it reasons briefly before it answers, and it fails over across four hosts.</p>
       <div class="model-table-wrap">
         <table>

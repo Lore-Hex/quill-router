@@ -169,7 +169,12 @@ def test_every_decision_fallback_route_became_an_endpoint() -> None:
         # The vendor's own route is built only for a known prepaid provider.
         assert spec["id"] in models, spec["id"]
         assert spec["provider"] in PROVIDERS and spec["provider"] in GATEWAY_PREPAID_PROVIDER_SLUGS
-        assert spec["fallback_routes"], f"{spec['id']} has no failover host"
+        if spec["id"] == "microsoft/microsoft-decision-1":
+            # Azure is the only verified direct host for this preview. Never
+            # substitute a different model or a relay as implicit failover.
+            assert spec["provider"] == "azure" and spec["fallback_routes"] == ()
+        else:
+            assert spec["fallback_routes"], f"{spec['id']} has no failover host"
         served = {(e.provider, e.upstream_id) for e in built.values() if e.model_id == spec["id"]}
         for route in spec["fallback_routes"]:
             assert (route["provider"], route["upstream_id"]) in served, route
@@ -466,7 +471,7 @@ async def test_native_decision_request_authorizes_as_chat_on_the_pinned_provider
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", [JEV, TREV_1_0_MODEL_ID])
+@pytest.mark.parametrize("model_id", [JEV, TREV_1_0_MODEL_ID, *(["microsoft/microsoft-decision-1"] if "microsoft/microsoft-decision-1" in MODELS else [])])
 @pytest.mark.parametrize("route_type", ["chat.completions", "responses", "embeddings", None])
 async def test_a_decision_model_answers_only_the_decide_route(
     model_id: str, route_type: str | None

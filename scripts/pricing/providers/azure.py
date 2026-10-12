@@ -32,6 +32,7 @@ from scripts.pricing.manifest import write_discovered_chat_manifest
 from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "azure"
+DECISION_MODEL_ID = "microsoft/microsoft-decision-1"
 URL = (
     "https://prices.azure.com/api/retail/prices"
     "?$filter=serviceName%20eq%20%27Foundry%20Models%27"
@@ -68,9 +69,11 @@ class RetailRule:
     require_cached: bool = False
     production_hold_reason: str | None = None
     price_tiers: tuple[RetailTierRule, ...] = ()
+    input_only_meter: str | None = None
 
 
 _CANONICAL_IDS: dict[str, str] = {
+    "microsoft-decision-1": DECISION_MODEL_ID,
     "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
     "claude-opus-4-1": "anthropic/claude-opus-4.1",
     "claude-opus-4-5": "anthropic/claude-opus-4.5",
@@ -109,6 +112,12 @@ _CANONICAL_IDS: dict[str, str] = {
 }
 
 _RETAIL_RULES: dict[str, RetailRule] = {
+    DECISION_MODEL_ID: RetailRule(
+        "Microsoft Decision Models",
+        ("Microsoft Decision 1",),
+        # Microsoft's single meter bills input; decision outputs are free.
+        input_only_meter="Microsoft Decision 1 1M Tokens",
+    ),
     "cohere/command-a": RetailRule("Cohere Models", ("command a",), ("command a plus",)),
     "cohere/command-a-plus-05-2026": RetailRule(
         "Cohere Models",
@@ -273,6 +282,7 @@ _RETAIL_RULES: dict[str, RetailRule] = {
 # verified.  A newly advertised default must remain dark until this contract
 # is reviewed, updated, deployed with NoAutoUpgrade, and canaried.
 _ALLOWED_MODEL_VERSIONS: dict[str, tuple[str, ...]] = {
+    DECISION_MODEL_ID: ("1",),
     "cohere/command-a": ("1",),
     "cohere/command-a-plus-05-2026": ("1",),
     "deepseek/deepseek-v3.2": ("1",),
@@ -312,6 +322,9 @@ def canonical_model_id(native_name: str) -> str | None:
 
 
 def deployment_name(native_name: str) -> str:
+    if canonical_model_id(native_name) == DECISION_MODEL_ID:
+        # Azure reserves 'microsoft' in customer deployment names.
+        return "tr-decision-1"
     value = re.sub(r"[^a-z0-9-]+", "-", native_name.strip().lower()).strip("-")
     return value[:64]
 
@@ -368,7 +381,10 @@ def _retail_rate(
             if not is_cached:
                 continue
         elif kind == "input":
-            if is_cached or not words & _INPUT_WORDS:
+            if rule.input_only_meter is not None:
+                if row.get("meterName") != rule.input_only_meter:
+                    continue
+            elif is_cached or not words & _INPUT_WORDS:
                 continue
         elif kind == "output":
             if is_cached or not words & _OUTPUT_WORDS:
@@ -492,6 +508,11 @@ def parse_retail_prices(
                 kind="output",
                 tier_rule=tier_rule,
             )
+            if rule.input_only_meter is not None:
+                # Fail closed if Microsoft starts publishing a paid output meter.
+                if completion not in (None, 0):
+                    raise ValueError(f"Azure input-only output tariff changed for {model_id}")
+                completion = 0
             cached = _retail_rate(
                 rows,
                 rule,

@@ -154,6 +154,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     Provider,
     _EmbeddingSpec,
 )
+from trusted_router.catalog_deployment import unavailable_gateway_model_ids
 from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time build below
     _AUTHOR_TO_PROVIDER_SLUG,
     _INGEST_PATH,
@@ -1766,3 +1767,13 @@ for _named_decision_model_id in NAMED_DECISION_MODEL_PROVIDERS:
         MODELS[_named_decision_model_id] = _named_decision_model_with_chain_prices(
             _named_decision_model_id
         )
+
+# Apply gateway rollout holds after EVERY catalog source has merged. A future
+# snapshot or provider refresh must not reintroduce an unsupported protocol.
+_unavailable_gateway_models = unavailable_gateway_model_ids()
+for _model_id in _unavailable_gateway_models:
+    MODELS.pop(_model_id, None)
+MODEL_ENDPOINTS = {
+    identity: endpoint for identity, endpoint in MODEL_ENDPOINTS.items()
+    if endpoint.model_id not in _unavailable_gateway_models
+}
