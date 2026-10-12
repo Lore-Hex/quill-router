@@ -155,7 +155,7 @@ def _bad_number(lexeme: str) -> Any:
     raise ValueError("integer")
 
 
-def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
+def decode(raw: bytes, limit: int, *, retained_strings: bool = False, binary64_paths: tuple[tuple[str, ...], ...] = ()) -> Any:
     """Strict ASCII by default; retained mode admits canonical scalar strings.
 
     Whitespace is allowed for transport; byte limits charge those actual bytes.
@@ -163,6 +163,9 @@ def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
     the object and must be removed explicitly by fixture readers.
     """
     require(type(raw) is bytes and len(raw) <= limit, "evidence_size")
+    if binary64_paths:
+        from trusted_router.async_settle_shadow_v2_a1_numbers import decode_numbers
+        return decode_numbers(raw, limit, binary64_paths)
     if retained_strings:
         # V1's pure decoder preserves scalar Unicode/escaped ASCII values,
         # bounds depth and integers, and rejects duplicate keys and surrogates.
@@ -199,6 +202,7 @@ class Schema:
     limit: int
     invariant: Check | None = None
     retained_strings: bool = False
+    binary64_paths: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
@@ -207,22 +211,28 @@ class Schema:
         # Inspect the original native object before any subclass delegation or
         # canonicalization can erase container/scalar types or join surrogates.
         from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
-        apply_deltas("every v2 object", value)
-        if self.retained_strings:
+        apply_deltas("every v2 object", value, binary64_paths=self.binary64_paths)
+        if self.retained_strings or self.binary64_paths:
             apply_deltas("retained-object", value)
         self._validate(value)
 
     def _validate(self, value: Any) -> None:
         require(type(value) is dict and set(value) == set(self.fields))
         raw = canonical(value)
-        decode(raw, self.limit, retained_strings=self.retained_strings)
+        self._decode(raw)
         for field, check in self.fields.items():
             check(value[field])
         if self.invariant is not None:
             self.invariant(value)
 
+    def _decode(self, raw: bytes) -> Any:
+        if self.binary64_paths:
+            return decode(raw, self.limit, retained_strings=self.retained_strings,
+                          binary64_paths=self.binary64_paths)
+        return decode(raw, self.limit, retained_strings=self.retained_strings)
+
     def parse(self, raw: bytes) -> dict[str, Any]:
-        value = decode(raw, self.limit, retained_strings=self.retained_strings)
+        value = self._decode(raw)
         self(value)
         assert isinstance(value, dict)
         return value

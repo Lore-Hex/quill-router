@@ -18,6 +18,7 @@ where their v1 validator permits them; new fields keep their own strict schemas.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ missing_signer missing_context transport_failure local_work_overflow evaluator_f
 ambiguous_fallback evidence_schema_gap evidence_identity_gap""".split())
 
 
-def native_json_domain(value: Any, depth: int = 0) -> bool:
+def native_json_domain(value: Any, depth: int = 0, *, binary64_paths: tuple[tuple[str, ...], ...] = ()) -> bool:
     """Reject non-exact JSON-native types before encoding can normalize them.
 
     V1 native validators may accept dict/list/str/int subclasses, tuples and
@@ -48,10 +49,12 @@ def native_json_domain(value: Any, depth: int = 0) -> bool:
     """
     kind = type(value)
     if kind is dict:
-        return depth >= 16 or any(type(k) is not str or native_json_domain(v, depth + 1)
+        return depth >= 16 or any(type(k) is not str or native_json_domain(v, depth + 1, binary64_paths=tuple(p[1:] for p in binary64_paths if p and p[0] == k) if binary64_paths else ())
                                   for k, v in value.items())
     if kind is list:
-        return depth >= 16 or any(native_json_domain(v, depth + 1) for v in value)
+        return depth >= 16 or any(native_json_domain(v, depth + 1, binary64_paths=tuple(p[1:] for p in binary64_paths if p and p[0] == "*") if binary64_paths else ()) for v in value)
+    if kind is float and () in binary64_paths:
+        return not math.isfinite(value)
     return not (kind is str or kind is int or kind is bool or value is None)
 
 
@@ -103,7 +106,7 @@ class Delta:
     shape: str
     direction: Literal["strengthen", "v2-only-broaden", "size"]
     design: str
-    predicate: Callable[[Any], bool]
+    predicate: Callable[..., bool]
 
 
 DELTAS = (
@@ -131,7 +134,9 @@ def broadening(name: str, value: Any) -> bool:
     return next(d for d in DELTAS if d.name == name).predicate(value)
 
 
-def apply_deltas(shape: str, value: Any) -> None:
+def apply_deltas(shape: str, value: Any, *, binary64_paths: tuple[tuple[str, ...], ...] = ()) -> None:
     for delta in DELTAS:
         if delta.shape == shape and delta.direction != "v2-only-broaden":
-            require(not delta.predicate(value), delta.name)
+            rejected = (delta.predicate(value, binary64_paths=binary64_paths)
+                        if binary64_paths and delta.name == "native-json-domain" else delta.predicate(value))
+            require(not rejected, delta.name)
