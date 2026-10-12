@@ -267,7 +267,10 @@ def test_elevenlabs_and_microsoft_price_parsers() -> None:
     ):
         with pytest.raises(ValueError):
             parse_elevenlabs_prices(broken)
-    article = "MAI-Voice-2.1 is available at $22 per 1M characters; MAI-Voice-2.1 Flash is available at $15 per 1M characters"
+    article = "".join(
+        f'<p class="text-lead">{name}: Speech synthesis</p><p>${rate} per 1M characters</p>'
+        for name, rate in (("MAI-Voice-2.1", 22), ("MAI-Voice-2.1-Flash", 15))
+    )
     assert parse_microsoft_prices(article) == {
         "microsoft/mai-voice-2.1": 22_000_000,
         "microsoft/mai-voice-2.1-flash": 15_000_000,

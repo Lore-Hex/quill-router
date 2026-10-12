@@ -17,6 +17,7 @@ NEW_TOKEN_PRICES = {
     "google/gemini-3.8-flash-tts": {"input": 1_000_000, "output": 18_000_000},
     "google/gemini-3.8-flash-lite-tts": {"input": 1_000_000, "output": 12_000_000},
 }
+MICROSOFT_ARTICLE = Path(__file__).parent / "fixtures/pricing/microsoft_speech_article_2026-10-12.html"
 
 
 def _freeze_today(monkeypatch: pytest.MonkeyPatch, today: date) -> None:
@@ -55,8 +56,7 @@ def refresh_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
             f"<section><h3>{name}</h3><p>Text to Speech</p><p>${price}</p><p>Price per 1K characters</p></section>"
             for name, price in (("v3", "0.08"), ("v2 Multilingual", "0.08"), ("Flash / Turbo", "0.04"))
         ),
-        speech.MICROSOFT_URL:
-            "MAI-Voice-2.1 is available at $22 per 1M characters; MAI-Voice-2.1 Flash is available at $15 per 1M characters",
+        speech.MICROSOFT_URL: MICROSOFT_ARTICLE.read_text(),
         speech.GEMINI_URL: "".join(
             f"""<h2>{name}</h2><h3>Standard</h3><table>
             <tr><th></th><th>Free</th><th>Paid Tier, per 1M tokens in USD</th></tr>
@@ -76,6 +76,54 @@ def refresh_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
     monkeypatch.setattr(speech, "SNAPSHOT", snapshot)
     monkeypatch.setattr(speech.requests, "get", get)
     return snapshot, pages
+
+
+@pytest.mark.parametrize("change", ["unit", "missing", "duplicate", "conflicting", "zero", "precision", "unlabelled"])
+def test_microsoft_article_fail_closed(change: str) -> None:
+    html = MICROSOFT_ARTICLE.read_text()
+    if change == "unit":
+        html = html.replace("1M characters", "1M tokens")
+    elif change == "missing":
+        html = html.replace("MAI-Voice-2.1-Flash:", "Another model:")
+    elif change in {"duplicate", "conflicting"}:
+        html += MICROSOFT_ARTICLE.read_text().replace("$22", "$23" if change == "conflicting" else "$22")
+    elif change == "zero":
+        html = html.replace("$22", "$0")
+    elif change == "precision":
+        html = html.replace("$22", "$22.0000001")
+    else:
+        html = html.replace('class="text-lead"', 'class="description"')
+    with pytest.raises(ValueError):
+        speech.parse_microsoft_prices(html)
+
+
+def test_microsoft_fetch_failure_preserves_snapshot(
+    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot, _ = refresh_sources
+    before = snapshot.read_bytes()
+    get = speech.requests.get
+
+    def reject(url: str, **kwargs: object) -> requests.Response:
+        if url == speech.MICROSOFT_URL:
+            response = requests.Response()
+            response.status_code = 403
+            return response
+        return get(url, **kwargs)
+
+    monkeypatch.setattr(speech.requests, "get", reject)
+    with pytest.raises(requests.HTTPError):
+        speech.refresh()
+    assert snapshot.read_bytes() == before
+
+
+def test_microsoft_missing_price_preserves_snapshot(refresh_sources: tuple[Path, dict[str, str]]) -> None:
+    snapshot, pages = refresh_sources
+    before = snapshot.read_bytes()
+    pages[speech.MICROSOFT_URL] = pages[speech.MICROSOFT_URL].replace("$15", "Unavailable")
+    with pytest.raises(ValueError):
+        speech.refresh()
+    assert snapshot.read_bytes() == before
 
 
 @pytest.mark.parametrize("today", [date(2026, 12, 31), date(2027, 1, 1), date(2027, 1, 2)])
