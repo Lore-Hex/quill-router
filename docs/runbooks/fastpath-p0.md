@@ -34,9 +34,20 @@ default network behind the project's NAT with no external address.
    Once a node holds leases it is replaced, never reset
    (`fastpath-deploy.md`).
 
-3. Roles only an owner can grant, if the apply refuses them: the nodes'
-   `roles/logging.logWriter` and `roles/monitoring.metricWriter` on the
-   project are the only project-level bindings.
+3. Roles only an owner can grant. The deploy identity's, once, before the
+   first apply (`infra/fastpath_deploy_roles.tf` records them):
+
+   ```bash
+   for role in roles/pubsub.admin roles/iam.serviceAccountAdmin roles/iam.serviceAccountUser roles/secretmanager.admin roles/storage.admin roles/compute.instanceAdmin.v1 roles/spanner.databaseAdmin; do gcloud projects add-iam-policy-binding quill-cloud-proxy --member=serviceAccount:tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com --role=$role --condition=None --quiet; done
+   ```
+
+   And the nodes', once the apply has created their service account, which
+   Terraform does not bind because the deploy identity does not edit the
+   project's IAM policy:
+
+   ```bash
+   for role in roles/logging.logWriter roles/monitoring.metricWriter; do gcloud projects add-iam-policy-binding quill-cloud-proxy --member=serviceAccount:tr-fastpath-node@quill-cloud-proxy.iam.gserviceaccount.com --role=$role --condition=None --quiet; done
+   ```
 
 ## Exit checks
 
