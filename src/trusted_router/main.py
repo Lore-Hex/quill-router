@@ -288,7 +288,12 @@ def create_app(
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
         app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
-        if settings.async_settle_shadow_workspace_ids:
+        if settings.async_settle_shadow_policy == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
+            from trusted_router.services.async_settle_shadow_health import (
+                install as install_shadow_health,
+            )
+            install_shadow_health(app, settings, typed_billing_store(STORE))
+        elif settings.async_settle_shadow_workspace_ids and not settings.async_settle_shadow_policy:
             from trusted_router.services.async_settle_shadow import install as install_settle_shadow
             install_settle_shadow(app, settings, typed_billing_store(STORE))
     app.state.settings = settings

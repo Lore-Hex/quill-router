@@ -400,12 +400,23 @@ def test_g3_g4_partition_schemas_reject_false_equations() -> None:
 
 
 def test_no_runtime_imports_or_calls_to_new_modules() -> None:
+    allowed = {'async_settle_shadow_journal.py': {'trusted_router.async_settle_shadow_v2_evidence': ['CAP', 'CERTIFICATE_RECORD', 'CLOSURE', 'COUNTER', 'EVENT', 'EVENT_BYTES', 'EVENT_CAP', 'HEALTH', 'HEALTH_CLAIM', 'KINDS', 'MANIFEST', 'MAX_DAY_BUCKETS', 'MAX_PAGES', 'PAGE', 'PAGE_BYTES', 'PAGE_EVENTS', 'RESERVATION_BLOCK', 'RETENTION', 'SAMPLE', 'TERMINAL_CAP', 'validate_completion', 'validate_row'], 'trusted_router.async_settle_shadow_v2_schema': ['INT64', 'POLICY', 'day_at', 'identity', 'integer', 'require']}, 'async_settle_shadow_health_state.py': {'trusted_router.async_settle_shadow_v2_evidence': ['HEALTH', 'health_usable'], 'trusted_router.async_settle_shadow_v2_schema': ['INT64', 'POLICY']}, 'storage_gcp_shadow_observation.py': {'trusted_router.async_settle_shadow_v2_evidence': ['transaction_bodies'], 'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'require']}, 'services/async_settle_shadow_health.py': {'trusted_router.async_settle_shadow_v2_evidence': ['BUCKET', 'CHECKPOINT_FIELDS', 'COUNTER', 'COUNTS', 'EVENT', 'RESERVATION_BLOCK', 'SEALED_CLOSURE'], 'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'day_at', 'require']}}
     root = Path(__file__).parents[1] / "src"
     new = {path.stem for path in root.rglob("async_settle_shadow_v2_*.py")}
     for path in root.rglob("*.py"):
         tree = ast.parse(path.read_text())
         if path.stem not in new:
-            assert not any(name in path.read_text() for name in new), str(path)
+            permitted = allowed.get(path.relative_to(root / "trusted_router").as_posix(), {})
+            actual = {n.module: sorted(a.name for a in n.names) for n in ast.walk(tree)
+                      if isinstance(n, ast.ImportFrom) and n.module and n.module.rsplit(".", 1)[-1] in new}
+            assert actual == permitted, str(path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    assert not any(a.name.rsplit(".", 1)[-1] in new for a in node.names), str(path)
+            remaining = path.read_text()
+            for module in permitted:
+                remaining = remaining.replace(module, "")
+            assert not any(name in remaining for name in new), str(path)
         else:
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("trusted_router"):

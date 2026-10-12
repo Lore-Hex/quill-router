@@ -178,16 +178,28 @@ def _page(v: Any) -> None:
 
 
 def validate_completion(original: dict[str, Any], completion: dict[str, Any]) -> None:
-    """Reconcile a supplied original terminal, including cross-page references.
+    """Reconcile an original receipt, including full cross-day references.
 
-    P3/P5 must supply the exact same-writer original; local shape alone is not
+    P3/P5 must supply the exact referenced original; local shape alone is not
     resolution. The original prediction and observation timestamp never move.
     """
     EVENT(original)
     EVENT(completion)
-    require(original["phase"] in ("settle", "refund") and completion["phase"] == "completion")
-    require(completion["completion_of"] == original["seq"] < completion["seq"])
+    require(original["phase"] in ("authorize", "settle", "refund") and completion["phase"] == "completion")
+    require(completion["completion_of"] == original["seq"])
+    reference = completion["retry_original"]
+    if reference is None:
+        require(original["seq"] < completion["seq"])
+    else:
+        require(reference["event_seq"] == original["seq"]
+                and reference["day"] == day_at(original["event_at_us"]))
     require(completion["event_at_us"] >= original["event_at_us"])
+    if original["phase"] == "authorize":
+        for key in ("authorization_day", "authorization_id", "identity", "dimensions", "eligibility", "decision"):
+            require(completion[key] == original[key])
+        require(completion["partition"] == "C" and completion["proof_kind"] == "none"
+                and completion["booking"]["outcome"] == "not_attempted")
+        return
     for key in ("authorization_day", "authorization_id", "identity", "dimensions", "eligibility",
                 "proof_kind", "original_receipt", "certificate_sha256", "payload_sha256", "decision"):
         require(completion[key] == original[key])

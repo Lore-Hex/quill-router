@@ -28,7 +28,9 @@
     "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
     "storage_gcp_async_settle_shadow:finalization_statement": "32ac2efa5936b82f57d56e9eb2866b63565beb69488969b31372aeeabd519892",
     "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
-    "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78"
+    "storage_gcp_async_settle_shadow:day_statement": "e55af37ba2885a6451222ee514965e5d31c92d282f85d1a64030f50402f75c78",
+    "storage_gcp_io:entity_point_statement": "8bb931a1acbf0f26bfe9541b031c16fc969ebfc288a9f7bcd6e93c32b8e684f9",
+    "storage_gcp_shadow_observation:read_shadow_health_statement": "0bbd264869e5b10c6208deec35fc406591d1c5228069a503a1b43cbdd4ca01af"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4421,6 +4423,121 @@
           }
         }
       ]
+    },
+    "storage_gcp_io:entity_point_statement:1": {
+      "fingerprint": "8bb931a1acbf0f26bfe9541b031c16fc969ebfc288a9f7bcd6e93c32b8e684f9",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_health_v2",
+            "id": "local/fleet"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_health_control_v2",
+            "id": "local/publish"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_receipts_v2",
+            "id": "2026-10-12/boot/00000000000000000001"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_counter_v2",
+            "id": "2026-10-12/boot"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_closure_v2",
+            "id": "2026-10-12/boot"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_control_v2",
+            "id": "2026-10-12/cap-v2"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_control_v2",
+            "id": "2026-10-12/manifest-v2"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_control_v2",
+            "id": "retention-v2"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_sample_v2",
+            "id": "2026-10-12/authorization"
+          }
+        },
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "id": "STRING"
+          },
+          "values": {
+            "kind": "async_settle_shadow_certificate_v2",
+            "id": "2026-10-12/authorization"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4600,7 +4717,8 @@
     "storage_gcp:SpannerStore._heal_stale_debt_mark": "c6e3e52d7699599f2d21d7aba9a5cdd13238e87e6251e66f6bb653b0829e3b85",
     "storage_gcp_credit_debt:read_credit_rows": "265eb91cc06b8f0d0148cf74f25dd27002f71f6113fe5627a484bc655a6c6305",
     "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8",
-    "storage_gcp_async_settle_shadow:EvidenceStore.query": "75decf7bf8d830c7da0ecfbcfabe866e73eee0d181b6c9e8b48de1ac1e2c4f35"
+    "storage_gcp_async_settle_shadow:EvidenceStore.query": "75decf7bf8d830c7da0ecfbcfabe866e73eee0d181b6c9e8b48de1ac1e2c4f35",
+    "storage_gcp_shadow_observation:ObservationStore.query": "c573ea41336d03a7726a0bb52547fd72d187340050b9a46f0e2c75726751652b"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

@@ -23,8 +23,9 @@ class Observer:
                  health_read: Callable[[], dict[str, Any] | None], *, cap: int = 0,
                  clock: Callable[[], float] = time.monotonic,
                  wall: Callable[[], float] = time.time,
-                 enabled: Callable[[], bool] = lambda: True) -> None:
+                 enabled: Callable[[], bool] = lambda: True, policy: str = "") -> None:
         self.enabled = enabled
+        self.policy = policy
         self.workspaces, self.read, self.health_read = workspaces, read, health_read
         self.cap, self.clock, self.wall = cap, clock, wall
         self.lock = threading.Lock()
@@ -186,6 +187,9 @@ class Observer:
         if not self.lock.acquire(blocking=False):
             return unknown("cache_busy")
         try:
+            if self.policy == "shadow-v2":
+                from trusted_router.async_settle_shadow_health_state import prediction
+                return prediction(self, workspace)
             stale = workspace in self.stale or None in self.stale
             result = unknown("cache_stale" if stale else "cache_missing")
             item, health = self.entries.get(workspace), self.health
