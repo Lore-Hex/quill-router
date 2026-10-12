@@ -1248,10 +1248,6 @@ def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
     blocker_step = workflow[blocker:commit]
     assert "steps.coverage_audit.outcome == 'failure'" in blocker_step
     assert "exit 1" in blocker_step
-    validation = workflow.index("- name: Validate generated catalog")
-    validation_step = workflow[validation:commit]
-    assert "if: always()" not in validation_step
-    assert "continue-on-error: true" not in validation_step
     assert "last known-good snapshot remains live" in workflow
     assert "manifest_attention=true" in workflow
     assert "discovery_attention=true" in workflow

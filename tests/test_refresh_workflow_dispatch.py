@@ -60,22 +60,22 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     assert "WARN: failed to dispatch deploy.yml" not in workflow
 
 
-def test_price_refresh_validates_generated_catalog_before_committing() -> None:
+def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
+    # The gate is the full ci.yml run on the exact generated SHA; a local
+    # ruff/mypy/pytest pass duplicated a subset of it and cost ~2 h per run.
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
         encoding="utf-8"
     )
-    validation_step = "- name: Validate generated catalog before commit"
     commit_step = "- name: Commit, verify, and push if changed"
-
-    assert validation_step in workflow
-    assert workflow.index(validation_step) < workflow.index(commit_step)
-    validation = workflow[
-        workflow.index(validation_step) : workflow.index(commit_step)
-    ]
-    assert "uv run ruff check ." in validation
-    assert "uv run mypy" in validation
-    assert "uv run pytest -q -n 4 --dist loadgroup" in validation
-    assert '-m "not provider_health and not proof_oracle"' in validation
+    assert "- name: Validate generated catalog before commit" not in workflow
+    before_commit = workflow[: workflow.index(commit_step)]
+    assert "uv run pytest" not in before_commit
+    publish = workflow[workflow.index(commit_step) :]
+    dispatch = publish.index("gh workflow run ci.yml")
+    exact_sha = publish.index('map(select(.headSha == \\"${SNAPSHOT_SHA}\\"))')
+    success = publish.index('if [ "${conclusion}" = "success" ]; then')
+    main_push = publish.index('git push origin "HEAD:refs/heads/main"')
+    assert dispatch < exact_sha < success < main_push
 
 
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
