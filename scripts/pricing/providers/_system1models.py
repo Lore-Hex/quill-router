@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -14,12 +15,30 @@ import httpx
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json
 from scripts.pricing.manifest import (
     apply_canary_results,
-    models_requiring_canary,
+    set_manifest_canary_state,
     write_discovered_chat_manifest,
 )
 
 BASE_URL = "https://api.decisionmodels.io/v1"
 URL = f"{BASE_URL}/models"
+PRICING_URL = "https://decisionmodels.io/pricing"
+PRO_LEGACY_UNTIL = date(2026, 11, 12)
+
+
+def _input_price(rates: Any, tier: str) -> int:
+    if (
+        not isinstance(rates, dict)
+        or rates.get("unit") != "per_million_input_tokens"
+        or rates.get("output_tokens") != "free"
+    ):
+        raise ValueError("changed input-only billing contract")
+    raw = rates["USD"][tier]
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", raw):
+        raise ValueError("not a decimal USD string")
+    amount = Decimal(raw) * 1_000_000
+    if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
+        raise ValueError("invalid precision or nonpositive rate")
+    return int(amount)
 
 
 class System1Catalog:
@@ -39,16 +58,17 @@ class System1Catalog:
     def canonical_model_id(self, native_id: str) -> str | None:
         return (
             f"{self.slug}/{native_id}"
-            if re.fullmatch(r"s1-[a-z0-9]+(?:-[a-z0-9]+)*", native_id)
+            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", native_id)
             else None
         )
 
-    def discover(self, payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
+    def discover(self, payload: object, *, today: date | None = None) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             raise RuntimeError(f"{self.slug}: catalog has no data list")
         prices: dict[str, ModelPrice] = {}
         rows: dict[str, dict[str, Any]] = {}
         seen: set[str] = set()
+        today = today or datetime.now(UTC).date()
         for item in payload["data"]:
             native = item.get("id") if isinstance(item, dict) else None
             model_id = self.canonical_model_id(native) if isinstance(native, str) else None
@@ -63,19 +83,14 @@ class System1Catalog:
             if item.get("status") != "available" or availability.get(self.tier) is not True:
                 continue
             rates = item.get("prices")
-            if (
-                not isinstance(rates, dict)
-                or rates.get("unit") != "per_million_input_tokens"
-                or rates.get("output_tokens") != "free"
-            ):
-                raise RuntimeError(f"{self.slug}: {native} changed its input-only billing contract")
             try:
-                raw = rates["USD"][self.tier]
-                if not isinstance(raw, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", raw):
-                    raise ValueError("not a decimal USD string")
-                amount = Decimal(raw) * 1_000_000
-                if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
-                    raise ValueError("invalid precision or nonpositive rate")
+                amount = _input_price(rates, self.tier)
+                image_rates = rates.get("image_requests")
+                image_amount = None
+                if image_rates is not None:
+                    image_amount = _input_price(image_rates, self.tier)
+                    if image_rates.get("applies_to") != "requests_with_image":
+                        raise ValueError("unknown image billing condition")
             except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
                 raise RuntimeError(
                     f"{self.slug}: {native} has no exact USD/{self.tier} price"
@@ -87,10 +102,31 @@ class System1Catalog:
                 or not isinstance(question_types, list)
                 or not all(isinstance(kind, str) for kind in question_types)
                 or set(question_types) != {"noul", "choice", "score"}
-                or ("image" in modalities and native != "s1-vision")
             ):
                 raise RuntimeError(f"{self.slug}: {native} has an unsupported decision contract")
-            prices[model_id] = ModelPrice(int(amount), 0)
+            # Published regional existing-customer terms, corroborated by the
+            # EU account's EUR receipts on 2026-10-12. Never convert charge_nanos
+            # as USD or apply the discount to a different future tariff.
+            legacy_pro = (
+                native in {"s1-pro", "s1-pro-2"}
+                and today < PRO_LEGACY_UNTIL
+                and amount == {"eu": 84_000, "global": 80_000}[self.tier]
+            )
+            if legacy_pro:
+                amount = {"eu": 40_000, "global": 38_000}[self.tier]
+            prices[model_id] = ModelPrice(amount, 0)
+            context = item.get("max_input_tokens", 0)
+            if type(context) is not int or context < 0:
+                raise RuntimeError(f"{self.slug}: {native} has invalid input-token limit")
+            hold = None
+            if item.get("fixed_questions") is not None:
+                hold = "decision-fixed-questions-unsupported"
+            elif not native.startswith("s1-"):
+                hold = "decision-model-namespace-unsupported"
+            elif image_amount is not None:
+                hold = "decision-image-pricing-unsupported"
+            elif "image" in modalities and native != "s1-vision":
+                hold = "decision-image-contract-unsupported"
             example = {
                 "model": model_id,
                 "state": "Mia owns a red bicycle.",
@@ -106,8 +142,7 @@ class System1Catalog:
                 "id": model_id,
                 "upstream_id": native,
                 "display_name": f"Decision Models {native} ({self.tier.upper()})",
-                # The contract publishes byte/tokenizer bounds, not a model context window.
-                "context_length": 0,
+                "context_length": context,
                 "model_type": "decision",
                 "endpoints": ["decide"],
                 "input_modalities": modalities,
@@ -118,7 +153,8 @@ class System1Catalog:
                     "description": str(
                         item.get("description") or "Typed decisions with probabilities."
                     ),
-                    "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. Vision accepts one images entry: PNG, JPEG or WebP data URL, at most 4 MiB decoded and 2 megapixels. No streaming.",
+                    "input_format": "POST /v1/decide: state (at most 16 KiB serialized JSON) and exactly one boolean/noul, choice or score question. The model's input-token limit also applies. No streaming."
+                    + (" This model is not currently routable through TrustedRouter: " + hold + "." if hold else ""),
                     "output_format": "Verified answers and probabilities, with inputTokens usage. Input-only billing; output tokens are free. The EU route cannot fall back to Global.",
                     "example_input": json.dumps(example),
                     "example_output": json.dumps(
@@ -134,7 +170,14 @@ class System1Catalog:
                         }
                     ),
                 },
+                "decision_contract_hold": hold,
+                "decision_image_input_price_per_m": image_amount,
+                "pricing_valid_until": f"{PRO_LEGACY_UNTIL.isoformat()}T00:00:00Z" if legacy_pro else None,
             }
+            if hold:
+                rows[model_id].update(routable=False, routable_reason=hold)
+                rows[model_id]["documentation"].pop("example_input")
+                rows[model_id]["documentation"].pop("example_output")
         if not prices:
             raise RuntimeError(f"{self.slug}: no available priced decision models")
         return prices, rows
@@ -182,7 +225,9 @@ class System1Catalog:
         if not key:
             raise RuntimeError(f"{self.slug}: {self.key_env} required for discovery canaries")
         prices, rows = self.discover(fetch_json(URL))
-        checked = models_requiring_canary(self.manifest_path, set(prices))
+        # This is a small catalog. Recheck existing routes too: /models can
+        # advertise an available Global tier while inference returns 503.
+        checked = {model_id for model_id, row in rows.items() if not row["decision_contract_hold"]}
         healthy = {model_id for model_id in sorted(checked) if self.probe(key, rows[model_id])}
         apply_canary_results(rows, checked_model_ids=checked, healthy_model_ids=healthy)
         self.rows = rows
@@ -198,10 +243,36 @@ class System1Catalog:
     def write_provider_manifest(self, result: ProviderPricingResult) -> list[str]:
         if not self.rows:
             raise RuntimeError(f"{self.slug}: fetch must succeed before writing manifest")
-        return write_discovered_chat_manifest(
+        if self.manifest_path.exists():
+            previous = json.loads(self.manifest_path.read_text())
+            for old in previous.get("models", []):
+                row = self.rows.get(old.get("id"))
+                if row is None or row.get("routable") is not False or old.get("routable") is False:
+                    continue
+                prompt, output = old.get("input_token_price_per_m"), old.get("output_token_price_per_m")
+                if type(prompt) is int and prompt > 0 and type(output) is int and output == 0:
+                    row["settlement_prices"] = {"input_token_price_per_m": prompt, "output_token_price_per_m": output}
+        holds = {model: row["decision_contract_hold"] for model, row in self.rows.items() if row["decision_contract_hold"]}
+        # An all-failed live canary is evidence of unavailability, not a
+        # discovery disappearance. The mass-prune guard must not keep serving
+        # these old routes. Recovery is checked on the next hourly refresh.
+        candidates = [row for row in self.rows.values() if not row["decision_contract_hold"]]
+        all_failed = bool(candidates) and all(row.get("routable") is False for row in candidates)
+        if all_failed and self.manifest_path.exists():
+            set_manifest_canary_state(self.manifest_path, healthy=False)
+        notes = write_discovered_chat_manifest(
             result,
             manifest_path=self.manifest_path,
             discovered_rows=self.rows,
             source_url=URL,
             pricing_source_url=URL,
+            operator_hold_reasons=holds,
         )
+        raw = json.loads(self.manifest_path.read_text())
+        deadlines = [row["pricing_valid_until"] for row in self.rows.values() if row["pricing_valid_until"]]
+        if deadlines:
+            raw["pricing_valid_until"] = min(deadlines)
+        else:
+            raw.pop("pricing_valid_until", None)
+        self.manifest_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+        return notes

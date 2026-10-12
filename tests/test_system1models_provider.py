@@ -93,7 +93,6 @@ def test_discovery_uses_exact_regional_usd_not_eur(tier, slug, cost):
         "unsupported_question",
         "bad_availability",
         "bad_question_types",
-        "unknown_vision",
     ],
 )
 def test_ambiguous_catalog_and_prices_fail_closed(change):
@@ -126,11 +125,205 @@ def test_ambiguous_catalog_and_prices_fail_closed(change):
         row["tier_availability"] = None
     elif change == "bad_question_types":
         row["question_types"] = [{}]
-    elif change == "unknown_vision":
-        row["id"] = "s1-future-vision"
-        row["modalities"] = ["text", "image"]
     with pytest.raises(RuntimeError):
         System1Catalog("eu").discover(payload)
+
+
+def test_october_catalog_additions_do_not_freeze_supported_routes():
+    payload = catalog("s1-fast", "s1-fast-2", "s1-pro-2", "quyet-1-large", "s1-vision-2", "s1-llm-auto-router")
+    by_id = {row["id"]: row for row in payload["data"]}
+    by_id["s1-fast-2"]["max_input_tokens"] = 8192
+    by_id["s1-vision-2"]["modalities"] = ["text", "image"]
+    by_id["s1-vision-2"]["prices"]["image_requests"] = {
+        "applies_to": "requests_with_image", "unit": "per_million_input_tokens",
+        "output_tokens": "free", "USD": {"eu": "0.228", "global": "0.217"},
+    }
+    by_id["s1-llm-auto-router"]["fixed_questions"] = {"category": "choice"}
+    prices, rows = System1Catalog("eu").discover(payload)
+    assert len(prices) == len(rows) == 6
+    assert rows["system1models-eu/s1-fast-2"]["context_length"] == 8192
+    for native in ("s1-fast", "s1-fast-2", "s1-pro-2"):
+        assert rows[f"system1models-eu/{native}"]["decision_contract_hold"] is None
+    for native, reason in (
+        ("quyet-1-large", "decision-model-namespace-unsupported"),
+        ("s1-vision-2", "decision-image-pricing-unsupported"),
+        ("s1-llm-auto-router", "decision-fixed-questions-unsupported"),
+    ):
+        row = rows[f"system1models-eu/{native}"]
+        assert row["routable"] is False and row["routable_reason"] == reason
+        assert "example_input" not in row["documentation"]
+    assert rows["system1models-eu/s1-vision-2"]["decision_image_input_price_per_m"] == 228_000
+
+
+@pytest.mark.parametrize("change", ["unit", "output_tokens", "applies_to", "USD"])
+def test_image_tariff_must_be_exact_and_understood(change):
+    payload = catalog("s1-vision")
+    payload["data"][0]["modalities"] = ["text", "image"]
+    image = copy.deepcopy(payload["data"][0]["prices"])
+    image["applies_to"] = "requests_with_image"
+    image[change] = "unexpected"
+    payload["data"][0]["prices"]["image_requests"] = image
+    with pytest.raises(RuntimeError, match="exact USD"):
+        System1Catalog("eu").discover(payload)
+
+
+@pytest.mark.parametrize("tier,public,legacy", [("eu", "0.084", 40_000), ("global", "0.08", 38_000)])
+@pytest.mark.parametrize("native", ["s1-pro", "s1-pro-2"])
+def test_existing_customer_pro_tariff_has_exact_cutover(tier, public, legacy, native):
+    from datetime import date
+
+    from trusted_router.pricing_approvals import approved_dated_price_transition
+
+    payload = catalog(native)
+    payload["data"][0]["prices"]["USD"][tier] = public
+    adapter = System1Catalog(tier)
+    model = f"{adapter.slug}/{native}"
+    before, rows = adapter.discover(payload, today=date(2026, 11, 11))
+    after, later_rows = adapter.discover(payload, today=date(2026, 11, 12))
+    assert before[model].prompt_micro_per_m == legacy
+    public_micro = 84_000 if tier == "eu" else 80_000
+    assert after[model].prompt_micro_per_m == public_micro
+    assert rows[model]["pricing_valid_until"] == "2026-11-12T00:00:00Z"
+    assert later_rows[model]["pricing_valid_until"] is None
+    route = f"{model} [{adapter.slug}:{adapter.slug}:{native}]"
+    assert not approved_dated_price_transition(route, (legacy, 0), (public_micro, 0), today=date(2026, 11, 11))
+    assert approved_dated_price_transition(route, (legacy, 0), (public_micro, 0), today=date(2026, 11, 12))
+    assert not approved_dated_price_transition(route, (legacy, 0), (public_micro * 2, 0), today=date(2026, 11, 12))
+    payload["data"][0]["prices"]["USD"][tier] = "0.2"
+    changed, _ = adapter.discover(payload, today=date(2026, 11, 11))
+    assert changed[model].prompt_micro_per_m == 200_000
+
+
+def test_current_models_rechecked_and_recover_without_clearing_contract_holds(monkeypatch, tmp_path):
+    from scripts.pricing.providers import _system1models
+    from trusted_router.provider_manifest_policy import (
+        EXPIRED_PROVIDER_MANIFEST,
+        provider_manifest_canary_quarantine_valid_until,
+    )
+
+    adapter = System1Catalog("global")
+    adapter.manifest_path = tmp_path / "system1models.json"
+    payload = catalog("s1-fast", "s1-pro", "s1-vision")
+    monkeypatch.setenv(adapter.key_env, "test")
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: payload)
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    adapter.write_provider_manifest(adapter.fetch())
+    payload["data"].extend(catalog("quyet-1-large", "s1-fast-2")["data"])
+    vision = payload["data"][2]
+    vision["modalities"] = ["text", "image"]
+    vision["prices"]["image_requests"] = {
+        "applies_to": "requests_with_image", "unit": "per_million_input_tokens",
+        "output_tokens": "free", "USD": {"global": "0.217", "eu": "0.228"},
+    }
+    checked = []
+
+    def failed(_key, row):
+        checked.append(row["upstream_id"])
+        return False
+
+    monkeypatch.setattr(adapter, "probe", failed)
+    adapter.write_provider_manifest(adapter.fetch())
+    assert set(checked) == {"s1-fast", "s1-fast-2", "s1-pro"}
+    raw = json.loads(adapter.manifest_path.read_text())
+    assert len(raw["models"]) == 5
+    assert all(row["routable"] is False for row in raw["models"])
+    assert provider_manifest_canary_quarantine_valid_until(adapter.slug, raw) != EXPIRED_PROVIDER_MANIFEST
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    adapter.write_provider_manifest(adapter.fetch())
+    rows = {row["upstream_id"]: row for row in json.loads(adapter.manifest_path.read_text())["models"]}
+    assert all(rows[native]["routable"] is True for native in checked)
+    assert rows["s1-vision"]["routable_reason"] == "decision-image-pricing-unsupported"
+    assert rows["quyet-1-large"]["routable_reason"] == "decision-model-namespace-unsupported"
+
+
+def test_quarantine_keeps_only_previously_published_settlement_tariffs(monkeypatch, tmp_path):
+    from scripts.pricing.providers import _system1models
+    from trusted_router import catalog_ingest, catalog_registry
+    from trusted_router.pricing import _customer_price
+    from trusted_router.routes.internal.gateway import _endpoint_for_id_compat
+
+    adapter = System1Catalog("eu")
+    adapter.manifest_path = tmp_path / "system1models-eu.json"
+    payload = catalog("s1-old")
+    monkeypatch.setenv(adapter.key_env, "test")
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: payload)
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    adapter.write_provider_manifest(adapter.fetch())
+    payload["data"][0]["prices"]["USD"]["eu"] = "0.1"
+    payload["data"].extend(catalog("s1-new")["data"])
+    monkeypatch.setattr(adapter, "probe", lambda *_a: False)
+    adapter.write_provider_manifest(adapter.fetch())
+    # Repeated failures must not replace the pre-hold tariff with new prices.
+    adapter.write_provider_manifest(adapter.fetch())
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, active = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert not models and not active
+    held_models, held = catalog_ingest._supplemental_provider_models_and_endpoints(held_decisions_only=True)
+    identity = "system1models-eu/s1-old@system1models-eu/prepaid"
+    assert set(held) == {identity}
+    assert set(held_models) == {"system1models-eu/s1-old"}
+    endpoint = held[identity]
+    assert endpoint.prompt_price_microdollars_per_million_tokens == _customer_price(34_000)
+    assert endpoint.completion_price_microdollars_per_million_tokens == 0
+    assert endpoint.usage_type == "Credits"
+    monkeypatch.setattr(catalog_registry, "HELD_PREPAID_SETTLEMENT_ENDPOINTS", held)
+    assert _endpoint_for_id_compat(identity) == endpoint
+    assert _endpoint_for_id_compat("system1models-eu/s1-new@system1models-eu/prepaid") is None
+
+
+@pytest.mark.parametrize("price", [None, True, -1, "34000"])
+def test_malformed_settlement_history_cannot_create_endpoint(monkeypatch, tmp_path, price):
+    from trusted_router import catalog_ingest
+
+    adapter = System1Catalog("eu")
+    _, rows = adapter.discover(catalog("s1-old"))
+    row = rows["system1models-eu/s1-old"]
+    row.update(routable=False, input_token_price_per_m=34_000, output_token_price_per_m=0,
+               settlement_prices={"input_token_price_per_m": price, "output_token_price_per_m": 0})
+    (tmp_path / "system1models-eu.json").write_text(json.dumps({"provider": adapter.slug, "models": [row]}))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    assert catalog_ingest._supplemental_provider_models_and_endpoints(held_decisions_only=True) == ({}, {})
+
+
+def test_unsupported_vision_remains_visible_but_not_routable():
+    payload = catalog("s1-future-vision")
+    payload["data"][0]["modalities"] = ["text", "image"]
+    _, rows = System1Catalog("eu").discover(payload)
+    assert rows["system1models-eu/s1-future-vision"]["routable_reason"] == "decision-image-contract-unsupported"
+
+
+@pytest.mark.parametrize("hold", [[], {}, True, "unknown", "decision-image-pricing-unsupported"])
+def test_contract_holds_cannot_be_made_routable(hold):
+    from trusted_router.provider_manifest_policy import decision_manifest_price_is_valid
+
+    _, rows = System1Catalog("eu").discover(catalog("s1-fast"))
+    row = rows["system1models-eu/s1-fast"]
+    row.update(input_token_price_per_m=34_000, output_token_price_per_m=0, routable=True, decision_contract_hold=hold)
+    assert not decision_manifest_price_is_valid(row)
+
+
+def test_legacy_rate_manifest_expires_at_cutover(monkeypatch, tmp_path):
+    from datetime import UTC, date, datetime
+
+    from scripts.pricing.providers import _system1models
+    from trusted_router.provider_manifest_policy import provider_manifest_valid_until
+
+    adapter = System1Catalog("eu")
+    adapter.manifest_path = tmp_path / "eu.json"
+    payload = catalog("s1-pro")
+    payload["data"][0]["prices"]["USD"]["eu"] = "0.084"
+    original = adapter.discover
+    monkeypatch.setattr(adapter, "discover", lambda value: original(value, today=date(2026, 11, 11)))
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: payload)
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    monkeypatch.setenv(adapter.key_env, "test")
+    adapter.write_provider_manifest(adapter.fetch())
+    raw = json.loads(adapter.manifest_path.read_text())
+    raw["generated_at"] = "2026-11-11T00:00:00Z"
+    assert provider_manifest_valid_until(adapter.slug, raw) == datetime(2026, 11, 12, tzinfo=UTC)
+    monkeypatch.setattr(adapter, "discover", lambda value: original(value, today=date(2026, 11, 12)))
+    adapter.write_provider_manifest(adapter.fetch())
+    assert "pricing_valid_until" not in json.loads(adapter.manifest_path.read_text())
 
 
 def test_tiers_and_availability_never_cross():
