@@ -1,0 +1,54 @@
+name: Fast path release
+
+# Builds the fast admission node's binaries from a commit on main whose CI
+# passed, and uploads them to the releases bucket under fastpath/<commit>/,
+# where infra/fastpath.tf's nodes read the release they are told to run.
+# Only CI's success triggers it, so no commit is uploaded whose checks failed
+# (docs/design/fast-admission-production-rollout.md, W8).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release:
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha }}
+      BUCKET: tr-fastpath-releases-quill-cloud-proxy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: fastpath/go.sum
+      - name: Build the node's binaries
+        working-directory: fastpath
+        env:
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p ../release
+          go build -trimpath -ldflags="-s -w" -o ../release/fastpath ./cmd/fastpath
+          go build -trimpath -ldflags="-s -w" -o ../release/fastpathctl ./cmd/fastpathctl
+          (cd ../release && sha256sum fastpath fastpathctl > SHA256SUMS)
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Upload the release
+        run: |
+          gcloud storage cp release/fastpath release/fastpathctl release/SHA256SUMS "gs://$BUCKET/fastpath/$COMMIT/"
+          echo "uploaded fastpath/$COMMIT" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,46 @@
+#!/bin/bash
+# The fast path's node: installs the release the instance's metadata names
+# (fastpath-release, a commit on main whose CI passed, built and uploaded by
+# .github/workflows/fastpath-release.yml) and runs it as the systemd unit
+# `fastpath`, which docs/runbooks/fastpath-deploy.md marks leaving and stops.
+set -euo pipefail
+release="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-release' || true)"
+if [ -z "$release" ]; then
+  echo "fastpath: no release pinned in the instance's metadata; the node stays stopped" | systemd-cat -t fastpath -p warning
+  exit 0
+fi
+address="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip'):8080"
+install -d /opt/fastpath
+for binary in fastpath fastpathctl; do
+  gcloud storage cp "gs://${release_bucket}/fastpath/$release/$binary" "/opt/fastpath/$binary.new"
+  chmod 0755 "/opt/fastpath/$binary.new"
+  mv "/opt/fastpath/$binary.new" "/opt/fastpath/$binary"
+done
+echo "$release" > /opt/fastpath/release
+cat > /etc/systemd/system/fastpath.service <<UNIT
+[Unit]
+Description=TrustedRouter fast admission node ($release)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/fastpath/fastpath \
+  -roles admission,auditor \
+  -address $address \
+  -region ${region} \
+  -database ${database} \
+  -project ${project} \
+  -key-secret ${key_secret} \
+  -topics settle-log,records \
+  -subscriptions auditor,stager
+# SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now fastpath

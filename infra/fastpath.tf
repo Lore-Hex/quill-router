@@ -1,0 +1,287 @@
+# The fast admission path's production install, stage P0 of
+# docs/design/fast-admission-production-rollout.md: the settle log and the
+# record topic, the auditor's subscriptions, an archive of each topic, the
+# nodes' identity and the envelope key's secret, and two nodes in
+# us-central1 with no external address, the workspace allow-list empty, so
+# nothing admits until W1's switch names a workspace. The schema is the
+# deploy workflow's (scripts/deploy/migrate_fastpath.sh), not Terraform's.
+#
+# The nodes run the release named below: a commit on main whose CI passed,
+# built and uploaded by .github/workflows/fastpath-release.yml. Changing it
+# changes the instances' metadata only; a node picks it up when replaced or
+# restarted, per docs/runbooks/fastpath-deploy.md.
+locals {
+  fastpath_region = "us-central1"
+  # Empty until fastpath-release.yml has uploaded a commit's binaries; a
+  # node with no release pinned stays stopped. Set to that commit, apply,
+  # and reset the nodes (docs/runbooks/fastpath-p0.md).
+  fastpath_release        = ""
+  fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
+  fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
+  fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+# --- The topics and the auditor's subscriptions ---------------------------
+
+# The settle log: an owner's records for a lease, in order on the lease's
+# ordering key, published through the region's locational endpoint, so the
+# topic stores its messages in that region.
+resource "google_pubsub_topic" "fastpath_settle_log" {
+  project                    = local.gcp_project_id
+  name                       = "settle-log"
+  message_retention_duration = "604800s"
+
+  message_storage_policy {
+    allowed_persistence_regions = [local.fastpath_region]
+  }
+}
+
+# The record topic: each request's full record and each winner's outcome,
+# unordered.
+resource "google_pubsub_topic" "fastpath_records" {
+  project                    = local.gcp_project_id
+  name                       = "records"
+  message_retention_duration = "604800s"
+
+  message_storage_policy {
+    allowed_persistence_regions = [local.fastpath_region]
+  }
+}
+
+# The auditor's ordered subscription to the settle log. The ack deadline is
+# the one the service's tests give it; the client extends it while a
+# message is in hand.
+resource "google_pubsub_subscription" "fastpath_auditor" {
+  project                    = local.gcp_project_id
+  name                       = "auditor"
+  topic                      = google_pubsub_topic.fastpath_settle_log.id
+  enable_message_ordering    = true
+  ack_deadline_seconds       = 10
+  message_retention_duration = "604800s"
+
+  expiration_policy {
+    ttl = "" # never expires for want of subscribers
+  }
+}
+
+# The record stager's subscription to the record topic.
+resource "google_pubsub_subscription" "fastpath_stager" {
+  project                    = local.gcp_project_id
+  name                       = "stager"
+  topic                      = google_pubsub_topic.fastpath_records.id
+  ack_deadline_seconds       = 10
+  message_retention_duration = "604800s"
+
+  expiration_policy {
+    ttl = ""
+  }
+}
+
+# --- The archives (W7): every message of each topic, with its attributes
+# --- and metadata, kept; the only way back for a lease stopped at a gap.
+
+resource "google_storage_bucket" "fastpath_archive" {
+  for_each = toset(["settle-log", "records"])
+
+  project                     = local.gcp_project_id
+  name                        = "tr-fastpath-archive-${each.key}-${local.gcp_project_id}"
+  location                    = upper(local.fastpath_region)
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Pub/Sub's service agent writes the archives.
+resource "google_storage_bucket_iam_member" "fastpath_archive_writer" {
+  for_each = google_storage_bucket.fastpath_archive
+
+  bucket = each.value.name
+  role   = "roles/storage.admin"
+  member = local.fastpath_pubsub_agent
+}
+
+resource "google_pubsub_subscription" "fastpath_archive" {
+  for_each = {
+    "settle-log" = google_pubsub_topic.fastpath_settle_log.id
+    "records"    = google_pubsub_topic.fastpath_records.id
+  }
+
+  project                    = local.gcp_project_id
+  name                       = "${each.key}-archive"
+  topic                      = each.value
+  ack_deadline_seconds       = 60
+  message_retention_duration = "604800s"
+
+  expiration_policy {
+    ttl = ""
+  }
+
+  cloud_storage_config {
+    bucket          = google_storage_bucket.fastpath_archive[each.key].name
+    filename_prefix = "${each.key}/"
+    max_duration    = "300s"
+    max_bytes       = 100000000
+
+    avro_config {
+      write_metadata = true
+    }
+  }
+
+  depends_on = [google_storage_bucket_iam_member.fastpath_archive_writer]
+}
+
+# --- The nodes' identity, the key's secret, and the releases ---------------
+
+resource "google_service_account" "fastpath_node" {
+  project      = local.gcp_project_id
+  account_id   = "tr-fastpath-node"
+  display_name = "TrustedRouter fast admission node"
+}
+
+# The envelope key: a version is added by hand, pinned by number in the
+# nodes' -key-secret (docs/runbooks/fastpath-key-rotation.md).
+resource "google_secret_manager_secret" "fastpath_envelope_key" {
+  project   = local.gcp_project_id
+  secret_id = "fastpath-envelope-key"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "fastpath_node_key" {
+  project   = local.gcp_project_id
+  secret_id = google_secret_manager_secret.fastpath_envelope_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.fastpath_node.member
+}
+
+resource "google_pubsub_topic_iam_member" "fastpath_node_publisher" {
+  for_each = {
+    "settle-log" = google_pubsub_topic.fastpath_settle_log.name
+    "records"    = google_pubsub_topic.fastpath_records.name
+  }
+
+  project = local.gcp_project_id
+  topic   = each.value
+  role    = "roles/pubsub.publisher"
+  member  = google_service_account.fastpath_node.member
+}
+
+resource "google_pubsub_subscription_iam_member" "fastpath_node_subscriber" {
+  for_each = {
+    "auditor" = google_pubsub_subscription.fastpath_auditor.name
+    "stager"  = google_pubsub_subscription.fastpath_stager.name
+  }
+
+  project      = local.gcp_project_id
+  subscription = each.value
+  role         = "roles/pubsub.subscriber"
+  member       = google_service_account.fastpath_node.member
+}
+
+resource "google_spanner_database_iam_member" "fastpath_node_database" {
+  project  = local.gcp_project_id
+  instance = google_spanner_instance.trusted_router.name
+  database = "trusted-router"
+  role     = "roles/spanner.databaseUser"
+  member   = google_service_account.fastpath_node.member
+}
+
+resource "google_project_iam_member" "fastpath_node_observability" {
+  for_each = toset(["roles/logging.logWriter", "roles/monitoring.metricWriter"])
+
+  project = local.gcp_project_id
+  role    = each.key
+  member  = google_service_account.fastpath_node.member
+}
+
+# The releases: fastpath-release.yml uploads each CI-passed main commit's
+# binaries under fastpath/<commit>/; the nodes read the one named above.
+resource "google_storage_bucket" "fastpath_releases" {
+  project                     = local.gcp_project_id
+  name                        = local.fastpath_release_bucket
+  location                    = upper(local.fastpath_region)
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+}
+
+resource "google_storage_bucket_iam_member" "fastpath_releases_writer" {
+  bucket = google_storage_bucket.fastpath_releases.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:tr-deploy@${local.gcp_project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_storage_bucket_iam_member" "fastpath_releases_reader" {
+  bucket = google_storage_bucket.fastpath_releases.name
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.fastpath_node.member
+}
+
+# --- The nodes ---------------------------------------------------------------
+
+# Two nodes, each in a zone of its own, on the default network's us-central1
+# subnet behind the project's NAT (tr-nat), no external address; the
+# network's default-allow-internal rule lets the fleet reach port 8080. A
+# node is replaced, never restarted in place, once it holds leases
+# (docs/runbooks/fastpath-deploy.md); at P0 it holds none.
+resource "google_compute_instance" "fastpath_node" {
+  for_each = {
+    "tr-fastpath-1" = "us-central1-a"
+    "tr-fastpath-2" = "us-central1-b"
+  }
+
+  project      = local.gcp_project_id
+  name         = each.key
+  zone         = each.value
+  machine_type = "e2-standard-2"
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+    }
+  }
+
+  network_interface {
+    network    = "default"
+    subnetwork = "default"
+    # No access_config: no external address.
+  }
+
+  service_account {
+    email  = google_service_account.fastpath_node.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    enable-oslogin   = "TRUE"
+    fastpath-release = local.fastpath_release
+  }
+
+  metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
+    release_bucket = google_storage_bucket.fastpath_releases.name
+    region         = local.fastpath_region
+    database       = local.fastpath_database
+    project        = local.gcp_project_id
+    key_secret     = "projects/${local.gcp_project_id}/secrets/${google_secret_manager_secret.fastpath_envelope_key.secret_id}/versions/1"
+  })
+
+  labels = {
+    service = "fastpath"
+    stage   = "p0"
+  }
+
+  allow_stopping_for_update = true
+
+  depends_on = [
+    google_spanner_database_iam_member.fastpath_node_database,
+    google_pubsub_subscription_iam_member.fastpath_node_subscriber,
+    google_storage_bucket_iam_member.fastpath_releases_reader,
+  ]
+}
