@@ -94,21 +94,39 @@ def _micro_per_m(value: str) -> int:
 def _official_prices(markdown: str) -> dict[str, ModelPrice]:
     prices: dict[str, ModelPrice] = {}
     for line in markdown.splitlines():
-        if not line.startswith("|") or "Input/output tokens" not in line:
+        if not line.startswith("|"):
             continue
         for _native_id, (model_id, label) in _MODEL_CONFIG.items():
             if f"[{label}]" not in line:
                 continue
-            values = _PRICE_RE.findall(line)
+            if "USD per 1 million tokens." in line:
+                # Only the all-context standard tariff is supported here.
+                # Never use the first numbers of a long-context/fast/flex row.
+                terms = line.strip().strip("|").rsplit("|", 1)[-1].strip()
+                match = re.fullmatch(
+                    r"USD per 1 million tokens\. Standard, All prompts: "
+                    r"Input \$([0-9]+(?:\.[0-9]+)?); Output \$([0-9]+(?:\.[0-9]+)?)"
+                    r"(?:; Cache read \$([0-9]+(?:\.[0-9]+)?))?\.", terms,
+                )
+                if match is None:
+                    raise RuntimeError(f"digitalocean: unsupported tariff for {model_id}")
+                values = [value for value in match.groups() if value is not None]
+            elif "Input/output tokens" in line:
+                values = _PRICE_RE.findall(line)
+            else:
+                continue
             if len(values) < 2:
                 continue
-            prices[model_id] = ModelPrice(
+            price = ModelPrice(
                 prompt_micro_per_m=_micro_per_m(values[0]),
                 completion_micro_per_m=_micro_per_m(values[1]),
                 prompt_cached_micro_per_m=(
                     _micro_per_m(values[2]) if len(values) >= 3 else None
                 ),
             )
+            if model_id in prices and prices[model_id] != price:
+                raise RuntimeError(f"digitalocean: conflicting tariffs for {model_id}")
+            prices[model_id] = price
             break
     return prices
 
