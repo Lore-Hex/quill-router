@@ -10,6 +10,8 @@ import re
 import subprocess
 import sys
 from collections import Counter, OrderedDict, defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
 from enum import Enum, IntEnum
@@ -37,6 +39,48 @@ from trusted_router import async_settle_shadow_v2_retained as retained
 from trusted_router import async_settle_shadow_v2_schema as s
 from trusted_router import billing_snapshot as billing
 from trusted_router.detached_jws import canonical
+
+
+@contextmanager
+def no_line_tracing() -> Iterator[None]:
+    """Switch this thread's trace function off, then put the same one back."""
+    saved = sys.gettrace()
+    sys.settrace(None)
+    try:
+        yield
+    finally:
+        sys.settrace(saved)
+
+
+@pytest.fixture
+def untraced() -> Iterator[None]:
+    with no_line_tracing():
+        yield
+
+
+def exhaustive(test: Any) -> Any:
+    """Mark an exhaustive grid to run without coverage's per-line callback.
+
+    The grids below call the validators several hundred thousand times.
+    Under branch tracing that is roughly five times slower, and it pushed
+    two CI shards past their 25-minute cap. Every case and every assertion
+    still runs in the ordinary shards; only the tracing is off for the
+    call. The modules' coverage comes from the other tests in this file and
+    in test_async_settle_shadow_v2_contract.py.
+
+    The timeout keeps its configured length but uses the signal method.
+    The default thread method starts a timer thread while coverage is
+    tracing, and that thread then parks. While any thread still holds a
+    trace function, CPython 3.12 runs this thread at less than half speed
+    even with its own tracing off. These tests are in-process and
+    CPU-bound, so the subprocess caveat on timeout_method in pyproject.toml
+    does not reach them. Off the main thread pytest-timeout falls back to
+    the thread method by itself.
+
+    A debugger attached before the call loses its trace function for these
+    tests; call breakpoint() inside the test instead.
+    """
+    return pytest.mark.usefixtures("untraced")(pytest.mark.timeout(method="signal")(test))
 
 
 def backing(p: dict[str, Any]) -> cert.ReceiptVerification:
@@ -1184,6 +1228,7 @@ def assert_retained_round_trip(shape: str, value: Any) -> None:
         assert strict_equal(decoded, value)
 
 
+@exhaustive
 @pytest.mark.parametrize("name,path", PARITY_CASES, ids=[name + ":" + ".".join(map(str, path)) for name, path in PARITY_CASES])
 def test_systematic_retained_parity(name: str, path: tuple[Any, ...]) -> None:
     shape, base = CONSTRUCTION[name]
@@ -1675,6 +1720,7 @@ for _name, (_shape, _base) in CONSTRUCTION.items():
             RAW_TOKEN_CASES.append((_name, _path, False))
 
 
+@exhaustive
 @pytest.mark.parametrize("name,path,key_token", RAW_TOKEN_CASES,
                          ids=[n + ":" + ".".join(map(str, p)) + (":key" if k else ":value") for n, p, k in RAW_TOKEN_CASES])
 def test_raw_retained_token_pairs(name: str, path: tuple[Any, ...], key_token: bool) -> None:
@@ -1795,6 +1841,7 @@ def constructed_raw_object(shape: str, raw: bytes) -> None:
     assert len(raw) <= (8192 if shape == "sample" else 65536)
 
 
+@exhaustive
 @pytest.mark.parametrize("name,path,key_token", OBJECT_TOKEN_CASES,
                          ids=[n + ":" + ".".join(map(str, p)) + (":key" if k else ":value") for n, p, k in OBJECT_TOKEN_CASES])
 def test_raw_stored_retained_token_pairs(name: str, path: tuple[Any, ...], key_token: bool) -> None:
@@ -1907,6 +1954,7 @@ TRANSPORT_GRID = [(label, schema, name, shape, base, positions[start:start + 32]
                   for start in range(0, len(positions), 32)]
 
 
+@exhaustive
 @pytest.mark.parametrize("label,schema,name,shape,base,positions", TRANSPORT_GRID,
                          ids=[label + ":" + name + ":" + str(positions[0]) for label, _, name, _, _, positions in TRANSPORT_GRID])
 def test_transport_schema_enumeration(label: str, schema: s.Schema, name: str, shape: str, base: Any, positions: Any) -> None:
@@ -2136,6 +2184,7 @@ def test_native_schema_seed_inventory() -> None:
             assert scheduled == [p for p, _ in every_position(base)]
 
 
+@exhaustive
 @pytest.mark.parametrize("label,schema,name,base,paths", NATIVE_GRID,
                          ids=[label + ":" + name + ":" + str(paths[0]) for label, _, name, _, paths in NATIVE_GRID])
 def test_native_normalization_grid(label: str, schema: s.Schema, name: str, base: Any, paths: Any) -> None:
@@ -2254,3 +2303,20 @@ def test_native_transport_normalization_controls(label: str, schema: s.Schema) -
                 assert strict_equal(decoded, base)
                 assert schema.serialize(decoded) == raw
                 assert_round_trip(schema, decoded)
+
+
+def test_no_line_tracing_restores_the_active_tracer() -> None:
+    def tracer(frame: Any, event: str, arg: Any) -> None:
+        return None
+
+    outer = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        with no_line_tracing():
+            assert sys.gettrace() is None
+        assert sys.gettrace() is tracer
+        with pytest.raises(RuntimeError, match="^inside$"), no_line_tracing():
+            raise RuntimeError("inside")
+        assert sys.gettrace() is tracer
+    finally:
+        sys.settrace(outer)
