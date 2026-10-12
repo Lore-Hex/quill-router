@@ -134,6 +134,7 @@ def _parse_prices(
     soup = BeautifulSoup(html, "html.parser")
     if "Prices shown are per 1 million tokens." not in soup.get_text(" ", strip=True):
         raise RuntimeError("wandb: pricing page no longer declares per-million-token units")
+    price_rows: list[tuple[str, list[str]]] = []
     for comparison in soup.select("div.compare-table"):
         header = comparison.find("table", attrs={"data-compare": "header-table"})
         body = comparison.find("table", attrs={"data-compare": "body-table"})
@@ -145,26 +146,56 @@ def _parse_prices(
             if label_cell is None or len(cells) != 3:
                 continue
             label = label_cell.get_text(" ", strip=True)
-            native_id = label_to_native_id.get(label)
-            model_id = (
-                mapped_or_canonical_model_id(native_id, {})
-                if native_id is not None
-                else _PRICE_LABEL_MODEL_IDS.get(label)
-            )
-            if model_id is None:
+            price_rows.append((label, [cell.get_text(" ", strip=True) for cell in cells]))
+    # CoreWeave's October redesign replaced HTML tables with labelled cells.
+    # Select the hosted-model table by its tariff labels, never by page order:
+    # adjacent sandbox/ARIA tables have unrelated billing units and surcharges.
+    required = {"model", "input tokens", "output tokens", "cache hit"}
+    for table in soup.select(".kat26-pricing-table"):
+        rows = table.select(".kat26-pricing-table-row")
+        labels = {
+            cell.get_text(" ", strip=True).casefold()
+            for row in rows for cell in row.select(".text-block-75")
+        }
+        if not required <= labels:
+            continue
+        for row in rows:
+            values: dict[str, str] = {}
+            for cell in row.select(".kat26-pricing-table-cell"):
+                label_node = cell.select_one(".text-block-75")
+                value_node = cell.select_one(".text-block-73")
+                if label_node is None:
+                    continue
+                label = label_node.get_text(" ", strip=True).casefold()
+                if label not in required:
+                    continue
+                if label in values or value_node is None:
+                    raise RuntimeError("wandb: ambiguous hosted-model price cell")
+                values[label] = value_node.get_text(" ", strip=True)
+            if not values:
                 continue
-            prompt = _microdollars_per_million(cells[0].get_text(" ", strip=True))
-            completion = _microdollars_per_million(cells[1].get_text(" ", strip=True))
-            cached = _microdollars_per_million(cells[2].get_text(" ", strip=True))
-            if prompt is None or completion is None:
-                raise RuntimeError(f"wandb: incomplete price for {native_id or label}")
-            if model_id in prices:
-                raise RuntimeError(f"wandb: duplicate price for {model_id}")
-            prices[model_id] = ModelPrice(
-                prompt,
-                completion,
-                prompt_cached_micro_per_m=cached,
-            )
+            if set(values) != required:
+                raise RuntimeError("wandb: incomplete hosted-model price row")
+            price_rows.append((values["model"], [
+                values["input tokens"], values["output tokens"], values["cache hit"],
+            ]))
+    for label, cells_text in price_rows:
+        native_id = label_to_native_id.get(label)
+        model_id = (
+            mapped_or_canonical_model_id(native_id, {})
+            if native_id is not None
+            else _PRICE_LABEL_MODEL_IDS.get(label)
+        )
+        if model_id is None:
+            continue
+        prompt, completion, cached = map(_microdollars_per_million, cells_text)
+        if prompt is None or completion is None:
+            raise RuntimeError(f"wandb: incomplete price for {native_id or label}")
+        if cached is not None and cached > prompt:
+            raise RuntimeError(f"wandb: cache price exceeds input price for {model_id}")
+        if model_id in prices:
+            raise RuntimeError(f"wandb: duplicate price for {model_id}")
+        prices[model_id] = ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached)
     if len(prices) < 10:
         raise RuntimeError("wandb: official pricing page returned fewer than 10 model prices")
     return prices

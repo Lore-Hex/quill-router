@@ -90,6 +90,70 @@ def test_wandb_parses_first_party_models_prices_and_capabilities() -> None:
     assert "z-ai/glm-5.3-flash" not in prices
 
 
+def _coreweave_pricing_html() -> str:
+    rows = []
+    for index, (label, *_rest) in enumerate(_MODELS, start=1):
+        # The live October layout uses repeated per-cell labels for mobile.
+        # Deliberately reorder them and include its non-price training column.
+        cells = (("Cache hit", "-"), ("Model", label),
+                 ("Available for Post-Training", "Yes"),
+                 ("Output tokens", f"${index / 5:.2f}"),
+                 ("Input tokens", f"${index / 10:.2f}"))
+        rows.append('<div class="kat26-pricing-table-row">' + "".join(
+            '<div class="kat26-pricing-table-cell">'
+            f'<div class="text-block-75">{name}</div>'
+            f'<div class="text-block-73">{value}</div></div>'
+            for name, value in cells
+        ) + '</div>')
+    return ('<p>Prices shown are per 1 million tokens.</p>'
+            '<div class="kat26-pricing-table">' + "".join(rows) + '</div>')
+
+
+def test_wandb_coreweave_redesign_uses_named_tariffs_not_cell_positions() -> None:
+    documented = wandb._parse_model_docs(_model_docs_html())
+    prices = wandb._parse_prices(_coreweave_pricing_html(), documented_models=documented)
+    assert len(prices) == 10
+    assert prices["deepseek/deepseek-v4-pro"] == ModelPrice(100_000, 200_000)
+    assert prices["z-ai/glm-5.2"] == ModelPrice(300_000, 600_000)
+    # The adjacent ARIA table must not be mistaken for hosted model tariffs.
+    aria = _coreweave_pricing_html().replace("Input tokens", "Input / 1M")
+    combined = wandb._parse_prices(_coreweave_pricing_html() + aria, documented_models=documented)
+    assert combined == prices
+
+
+@pytest.mark.parametrize("old,new", [
+    ('<div class="text-block-75">Cache hit</div>', ''),
+    ('<div class="text-block-73">$0.20</div>', ''),
+    ('<div class="text-block-73">$0.20</div>', '<div class="text-block-73">unknown</div>'),
+    ('<div class="text-block-73">-</div>', '<div class="text-block-73">$999</div>'),
+    ('per 1 million tokens', 'per hour'),
+])
+def test_wandb_redesigned_price_rows_fail_closed(old: str, new: str) -> None:
+    with pytest.raises(RuntimeError):
+        wandb._parse_prices(_coreweave_pricing_html().replace(old, new, 1),
+                            documented_models=wandb._parse_model_docs(_model_docs_html()))
+
+
+def test_wandb_redesigned_duplicate_prices_fail_closed() -> None:
+    with pytest.raises(RuntimeError, match="duplicate"):
+        wandb._parse_prices(_coreweave_pricing_html() * 2,
+                            documented_models=wandb._parse_model_docs(_model_docs_html()))
+
+
+def test_wandb_october_public_pages_replay_exact_hosted_prices() -> None:
+    fixtures = Path(__file__).parent / "fixtures/pricing"
+    documented = wandb._parse_model_docs(
+        (fixtures / "wandb_coreweave_models_2026-10-12.html").read_text(),
+    )
+    prices = wandb._parse_prices(
+        (fixtures / "wandb_coreweave_prices_2026-10-12.html").read_text(),
+        documented_models=documented,
+    )
+    assert prices["z-ai/glm-5.3-flash"] == ModelPrice(150_000, 500_000, prompt_cached_micro_per_m=50_000)
+    assert prices["deepseek/deepseek-v4.1-flash"] == ModelPrice(200_000, 650_000, prompt_cached_micro_per_m=30_000)
+    assert "openai/gpt-5.5" not in prices
+
+
 def test_wandb_reviewed_price_label_can_precede_model_docs() -> None:
     documented = wandb._parse_model_docs(_model_docs_html())
     # Synthetic future price: tests parsing, not a published W&B rate.

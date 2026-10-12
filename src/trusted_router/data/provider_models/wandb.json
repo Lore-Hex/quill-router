@@ -20,7 +20,8 @@
       "context_length": 163840,
       "routable": true,
       "input_token_price_per_m": 550000,
-      "output_token_price_per_m": 1650000
+      "output_token_price_per_m": 1650000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "DeepSeek V4-Flash",
@@ -43,7 +44,8 @@
       "routable": true,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 70000
+      "cached_input_token_price_per_m": 70000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "DeepSeek V4-Flash-0731",
@@ -88,7 +90,8 @@
       "routable": true,
       "input_token_price_per_m": 1150000,
       "output_token_price_per_m": 2550000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Google Gemma 4 31B",
@@ -132,7 +135,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "JetBrains Mellum2 12B A2.5B",
@@ -154,7 +158,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Meta Llama 3.1 70B",
@@ -176,7 +181,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 800000,
-      "output_token_price_per_m": 800000
+      "output_token_price_per_m": 800000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Meta Llama 3.1 8B",
@@ -441,7 +447,8 @@
       "context_length": 32768,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 220000
+      "output_token_price_per_m": 220000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Qwen3 30B A3B",
@@ -463,7 +470,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Qwen3 Coder 480B A35B",
@@ -509,7 +517,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 1250000
+      "output_token_price_per_m": 1250000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Qwen3.6 27B",
@@ -533,7 +542,8 @@
       "routable": true,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3600000,
-      "cached_input_token_price_per_m": 120000
+      "cached_input_token_price_per_m": 120000,
+      "missing_since": "2026-10-12"
     },
     {
       "display_name": "Qwen3.6 35B A3B",
@@ -742,7 +752,7 @@
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-09-30T12:23:53Z",
+  "generated_at": "2026-10-12T15:53:02Z",
   "price_scale": "microdollars_per_million",
   "model_count": 33
 }

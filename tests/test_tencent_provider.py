@@ -40,6 +40,16 @@ def test_tencent_uses_singapore_usd_not_cheaper_guangzhou_prices() -> None:
     assert all("vendor direct" not in key for key in prices)
 
 
+def test_tencent_step5_october_price_matches_published_singapore_tariff() -> None:
+    prices = tencent.parse_prices(
+        (FIXTURES / "tencent_singapore_prices_2026-10-12.html").read_text(),
+    )
+    step = prices["step 5 preview"]
+    assert step.prompt_micro_per_m == 1_000_000
+    assert step.completion_micro_per_m == 2_700_000
+    assert step.tiers[0].prompt_cached_micro_per_m == 50_000
+
+
 @pytest.mark.parametrize("old,new", [
     ("Singapore", "Somewhere"), ("USD / million tokens", "CNY / million tokens"),
     ("Input length 512k+", "Input length 256k+"),

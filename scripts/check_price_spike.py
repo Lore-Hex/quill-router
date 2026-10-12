@@ -42,6 +42,16 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Tencent's Singapore USD table, verified 2026-10-12:
+        # https://intl.cloud.tencent.com/document/product/1300/78937
+        # Step 5 Preview is $1 input / $2.70 output / $0.05 cached per M.
+        # Only approve the exact formerly stored output rate, not other routes.
+        (
+            "stepfun/step-5-preview [tencent:tencent:step-5-preview]",
+            "completion",
+            Decimal("0.00000027"),
+            Decimal("0.0000027"),
+        ),
         # Featherless's authenticated GET https://api.featherless.ai/v1/models,
         # verified 2026-10-11: XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B reports
         # prompt=0.0000004312 and completion=0.00000112 USD/token (4x), with
