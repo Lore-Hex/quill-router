@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -453,25 +454,50 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 		t.Fatal("the load started under a watch that could not read the CPU")
 	}
 	// A load that ignores the stop is killed, before the workspace is
-	// turned off; and so is one the watch's own stop leaves running. The
-	// load says when it ignores the stop, and the CPU runs hot only then:
-	// a stop sent before the shell set its trap would end it.
+	// turned off, and is gone, not a zombie, once the command returns; and
+	// so is one the watch's own stop leaves running. The load says when it
+	// ignores the stop, and the CPU runs hot only then: a stop sent before
+	// the shell set its trap would end it. The command's term hook sees
+	// the load's PID, and the workspace still on as it is told to stop.
 	armed := filepath.Join(t.TempDir(), "armed")
 	stubborn := "trap '' TERM; touch " + armed + "; while :; do sleep 0.1; done"
+	var told int
+	observing := func(base deps) deps {
+		o := base
+		o.term = func(pid int) error {
+			told = pid
+			if !enabled(t, ws) {
+				t.Error("the workspace was turned off before the load was told to stop")
+			}
+			return base.term(pid)
+		}
+		return o
+	}
+	gone := func(what string) {
+		t.Helper()
+		if told == 0 {
+			t.Fatalf("%s: the load was never told to stop", what)
+		}
+		if err := syscall.Kill(told, 0); !errors.Is(err, syscall.ESRCH) {
+			t.Fatalf("%s: the load %d is still there once the command returned: %v", what, told, err)
+		}
+	}
 	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
 		_, s, closeAll, _ := d.open(context.Background(), target{})
 		return &warming{cool: 1, armed: armed}, s, closeAll, nil
 	}
 	out.Reset()
 	code, err = run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-stop-wait", "300ms", "-run",
-		"sh", "-c", stubborn), &out, hot)
+		"sh", "-c", stubborn), &out, observing(hot))
 	if code != stopped || err != nil || !strings.Contains(out.String(), "killed") {
 		t.Fatalf("a load that will not stop: exit %d, %v %s", code, err, out.String())
 	}
+	gone("a load that will not stop")
 	if _, err := shared.Apply(context.Background(), []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.Remove(armed)
+	told = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		for {
@@ -484,12 +510,26 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 	}()
 	out.Reset()
 	code, err = run(ctx, append(slices.Clone(flags), "-workspace", ws, "-stop-wait", "300ms", "-run", "sh", "-c",
-		stubborn), &out, d)
+		stubborn), &out, observing(d))
 	if code != 0 || err != nil || !strings.Contains(out.String(), "killed") {
 		t.Fatalf("a watch stopped first over a load that will not stop: exit %d, %v %s", code, err, out.String())
 	}
+	gone("a watch stopped first")
 	if !enabled(t, ws) {
 		t.Fatal("the workspace was turned off by a watch stopped first")
+	}
+	// With one miss allowed, a first look that cannot read is still exit 1
+	// and no load, not a stop.
+	unseenOnce := filepath.Join(t.TempDir(), "unseen-once")
+	if code, err := run(context.Background(), append(slices.Clone(flags), "-workspace", ws, "-misses", "1", "-run",
+		"sh", "-c", "touch "+unseenOnce), &out, partial); code != 1 || err == nil || !strings.Contains(err.Error(), "could not read") {
+		t.Fatalf("one miss allowed, the first look cannot read the CPU: exit %d, %v", code, err)
+	}
+	if _, err := os.Stat(unseenOnce); err == nil {
+		t.Fatal("the load started under a watch that could not read the CPU, one miss allowed")
+	}
+	if !enabled(t, ws) {
+		t.Fatal("the workspace was turned off by a watch that could not see at its start")
 	}
 	// A watch that cannot open never starts the load.
 	blind := d

@@ -278,14 +278,14 @@ func (w *Watcher) Look(ctx context.Context) (Reading, []string) {
 // starts its load after it). A look that read everything and found
 // nothing past returns nil, nil.
 func (w *Watcher) Sees(ctx context.Context) (past []string, err error) {
+	w.lastFailed = nil
 	_, why := w.Look(ctx)
-	if len(why) > 0 {
-		return why, nil
-	}
 	if len(w.lastFailed) > 0 {
+		// A read that failed is the answer, whatever the look made of it:
+		// with one miss allowed, the look would call it a stop.
 		return nil, fmt.Errorf("watch: the first look could not read: %s", strings.Join(w.lastFailed, "; "))
 	}
-	return nil, nil
+	return why, nil
 }
 
 // overdue counts the packs pending longer than the ceiling allows, by when

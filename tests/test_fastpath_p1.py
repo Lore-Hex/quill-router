@@ -48,10 +48,15 @@ def _commands(runbook: str) -> list[str]:
     with a path or a tool."""
     commands: list[tuple[int, str]] = []
     for block in re.finditer(r"```bash\n(.*?)```", runbook, re.S):
-        commands.extend((block.start(), line.strip()) for line in block.group(1).splitlines() if line.strip())
+        at = block.start(1)
+        for line in block.group(1).splitlines(keepends=True):
+            if line.strip():
+                commands.append((at, line.strip()))
+            at += len(line)
     for inline in re.finditer(r"`((?:/opt/fastpath/|fastpathctl |loadgen |fastpathwatch |gcloud |uv run )[^`]*)`", runbook):
         commands.append((inline.start(), inline.group(1)))
-    return [command for _, command in sorted(commands)]
+    commands.sort(key=lambda c: c[0])
+    return [command for _, command in commands]
 
 
 def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_path() -> None:
@@ -86,4 +91,13 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     role = next(i for i, c in enumerate(commands) if "roles/monitoring.viewer" in c and "tr-fastpath-node@" in c)
     assert max(override, role) < commands.index(watch)
     exercised = runbook.index("each of the watch's stops is exercised once")
-    assert runbook.index("raises `-rate` by a step") > exercised
+    raised = re.search(r"raises\s+`-rate` by a step", runbook)
+    assert raised is not None and raised.start() > exercised
+    # The fifth exercise is -run's: a watch that cannot see at its start
+    # starts no load, exit 1, and no stop to confirm by status.
+    assert "cannot see at its start starts no load" in runbook and "exits 1 before any" in runbook
+
+
+def test_commands_keep_their_order_within_a_block() -> None:
+    doc = "```bash\nuv run b\ngcloud a\n/opt/fastpath/c\n```\n`/opt/fastpath/d`\n"
+    assert _commands(doc) == ["uv run b", "gcloud a", "/opt/fastpath/c", "/opt/fastpath/d"]

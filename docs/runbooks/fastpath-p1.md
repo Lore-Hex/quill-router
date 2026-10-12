@@ -97,11 +97,17 @@ with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trus
 The first run is one generation a second. Before the rate is raised past
 it, each of the watch's stops is exercised once at that rate, as
 `fastpath-watch.md` lists them (`-max-cpu 0.01`; a backlog; `-overdue 1s
--max-overdue 0` with the pending worker stopped; `-max-spend 1`; a
-subscription that does not exist), each ending with the generator gone and
+-max-overdue 0` with the pending worker stopped; `-max-spend 1`), each
+ending with the generator gone and
 `/opt/fastpath/fastpathctl -database $DB status $WS` at exit 0, then the
-workspace enabled again. Each later run raises `-rate` by a step toward the
-design's benchmark rate (§6), within the same ceilings.
+workspace enabled again. The fifth is the one `-run` gives instead: a watch
+that cannot see at its start starts no load, so the command with
+`-subscriptions` naming one that does not exist exits 1 before any
+generation is sent, the report empty and the workspace left as it was. A
+view lost once the load runs stops the stage after `-misses` looks, which
+the watch's own tests hold and no run exercises. Each later run raises
+`-rate` by a step toward the design's benchmark rate (§6), within the same
+ceilings.
 
 ## The mix
 
