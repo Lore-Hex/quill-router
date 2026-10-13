@@ -2120,7 +2120,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         title="AI Token Exchange for Enterprise",
         description=(
             "Buy AI on your terms. Compare models and providers, control your privacy "
-            "requirements, and connect through one API. Download the Token Exchange brochure."
+            "requirements, and connect through one API. Download the Token Exchange buyer deck."
         ),
         og_card="token-exchange.png",
         og_alt="TrustedRouter: the AI token exchange for enterprise",

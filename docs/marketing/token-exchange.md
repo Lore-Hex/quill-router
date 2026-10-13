@@ -23,8 +23,10 @@ page is linked from Token Exchange, Security, Trust, and the core sitemap.
 This is a marketing gate, not an NDA or private document vault; the documents
 are included in the public source, as is the existing brochure.
 
-The primary conversion is a request for the nine-page Token Exchange
-brochure. Secondary calls to action open Joseph's existing sales calendar and
+The primary conversion is a request for the 13-page Token Exchange
+buyer deck. The New York, global and regional exchange homepages use the same
+email gate, with the backwards-compatible `resource: "brochure"` value.
+Secondary calls to action open Joseph's existing sales calendar and
 `enterprise@trustedrouter.com`. The page is in the core sitemap, resource hub
 and shared footer.
 
@@ -57,11 +59,13 @@ and shared footer.
 
 ## Assets and copy
 
-`data/enterprise/TrustedRouter-Token-Exchange-Brochure.pdf` is the owner-supplied
-nine-page brochure (footer dated September 2026, supplied 2026-09-23),
+`data/enterprise/NYTE-Buyer-Deck.pdf` is the owner-supplied
+13-page buyer deck (dated October 2026, supplied 2026-10-13),
 published byte-for-byte. SHA-256:
-`1d005ae234da1a68782e333023569b4f23653c78d081e05e4d2c2587ee54bbc7`.
+`7b7fb9a872a6130e57894f749c9acbf38bcd880b1d56e68baf9ecb85d5561b2e`.
 Its content is not rewritten by the download endpoint.
+The provider deck remains separate and private. Updating the buyer download
+does not publish provider documents or change the security pack.
 The page uses Secure / Intelligent / Cheaper positioning and
 distinguishes attested gateway protection, contractual provider ZDR and verified
 downstream confidential inference. Following the owner's confirmation, the

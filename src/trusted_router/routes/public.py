@@ -774,7 +774,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
 
 
 _ENTERPRISE_BRIEF = (
-    Path(__file__).parents[1] / "data" / "enterprise" / "TrustedRouter-Token-Exchange-Brochure.pdf"
+    Path(__file__).parents[1] / "data" / "enterprise" / "NYTE-Buyer-Deck.pdf"
 )
 _SECURITY_PACK = _ENTERPRISE_BRIEF.with_name("TrustedRouter-Security-Pack.zip")
 _BRIEF_HEADERS = {"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"}

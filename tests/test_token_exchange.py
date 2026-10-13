@@ -85,20 +85,20 @@ def test_soc2_observation_status_does_not_claim_an_issued_report(client: TestCli
     assert packet["target_report"]["current_target"] == "SOC 2 Type II"
 
 
-def test_enterprise_brief_is_the_approved_september_revision() -> None:
+def test_enterprise_brief_is_the_supplied_october_buyer_deck() -> None:
     assert hashlib.sha256(public_routes._ENTERPRISE_BRIEF.read_bytes()).hexdigest() == (
-        "1d005ae234da1a68782e333023569b4f23653c78d081e05e4d2c2587ee54bbc7"
+        "7b7fb9a872a6130e57894f749c9acbf38bcd880b1d56e68baf9ecb85d5561b2e"
     )
 
 
 def test_brochure_copy_states_the_pdf_page_count(client: TestClient) -> None:
     pdf = public_routes._ENTERPRISE_BRIEF.read_bytes()
     pages = len(re.findall(rb"/Type\s*/Page(?![a-zA-Z])", pdf))
-    assert pages == 9
+    assert pages == 13
     soup = BeautifulSoup(client.get("/token-exchange").text, "html.parser")
     text = soup.select_one("#enterprise-brief").get_text(" ", strip=True)
-    assert f"Brochure · {pages} pages" in text
-    assert "nine-page Token Exchange brochure" in text
+    assert f"Buyer deck · {pages} pages" in text
+    assert "13-page buyer deck" in text
 
 
 def test_original_brief_delivered_after_lead_acceptance(
@@ -120,7 +120,7 @@ def test_original_brief_delivered_after_lead_acceptance(
     assert response.headers["content-type"] == "application/pdf"
     assert response.headers["cache-control"] == "private, no-store"
     assert "attachment" in response.headers["content-disposition"]
-    assert "TrustedRouter-Token-Exchange-Brochure.pdf" in response.headers["content-disposition"]
+    assert "NYTE-Buyer-Deck.pdf" in response.headers["content-disposition"]
     assert response.headers["x-robots-tag"] == "noindex, nofollow"
     assert response.content.startswith(b"%PDF-")
     assert hashlib.sha256(response.content).digest() == hashlib.sha256(public_routes._ENTERPRISE_BRIEF.read_bytes()).digest()
@@ -217,7 +217,7 @@ def test_missing_asset_never_captures_lead(client: TestClient, sent_messages: li
 
 def test_no_ungated_http_download(client: TestClient) -> None:
     assert client.get("/token-exchange/brief").status_code == 405
-    for name in ("TrustedRouter-Token-Exchange-Brochure.pdf", "TrustedRouter-Enterprise-Brief.pdf"):
+    for name in ("NYTE-Buyer-Deck.pdf", "TrustedRouter-Token-Exchange-Brochure.pdf", "TrustedRouter-Enterprise-Brief.pdf"):
         assert client.get(f"/static/enterprise/{name}").status_code == 404
         assert client.get(f"/data/enterprise/{name}").status_code == 404
 
@@ -337,4 +337,3 @@ def test_other_origins_get_no_cors_answer(client: TestClient, sent_messages: lis
 def test_exchange_origins_are_exactly_the_canonical_static_site_domains() -> None:
     markets = json.loads((Path(__file__).resolve().parents[1] / "sites" / "token-exchange" / "markets.json").read_text())
     assert public_routes._EXCHANGE_ORIGINS == {f"https://{market['domain']}" for market in markets}
-
