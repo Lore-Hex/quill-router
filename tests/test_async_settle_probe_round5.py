@@ -24,7 +24,6 @@ from tests.test_async_settle_probe_round3 import (
 from trusted_router.async_settle_shadow_evidence import SAMPLE
 from trusted_router.security import new_api_key
 from trusted_router.storage import InMemoryStore
-from trusted_router.storage_models import generation_id_for_authorization
 from trusted_router.storage_operational_analytics import analytics_surrogate
 
 
@@ -36,26 +35,12 @@ def typed(monkeypatch):
 
 
 def evidence_case():
-    now = dt.datetime(2026, 10, 12, 12, tzinfo=dt.UTC)
-    row = dict(
-        workspace_fingerprint=analytics_surrogate("workspace", "cohort"),
-        observed_at_us=int(now.timestamp() * 1e6),
-        authorization_id="auth-one",
-        adapter="openai",
-        route_type="chat.completions",
-        streamed=False,
-        classification="exact",
-    )
-    rows = [row]
+    from tests.test_async_settle_probe_stream_identity import full_pass
+    from trusted_router.synthetic.shadow_probe import denominator
+    now, rows, results, _, _ = full_pass()
     counters = []
-    evidence = SimpleNamespace(
-        day=lambda kind, day: (
-            [(str(i), json.dumps(r)) for i, r in enumerate(rows if kind == SAMPLE else counters)]
-            if day == now.date().isoformat()
-            else []
-        )
-    )
-    return now, row, rows, counters, evidence, [generation_id_for_authorization("auth-one")]
+    evidence = SimpleNamespace(day=lambda kind, day: [(str(i), json.dumps(r)) for i, r in enumerate(rows if kind == SAMPLE else counters)] if day == now.date().isoformat() else [])
+    return now, rows[0], rows, counters, evidence, denominator(results).splitlines()
 
 
 @pytest.mark.parametrize(
@@ -267,10 +252,9 @@ def test_checker_rejects_conflicting_retry():
 
     workspace = context().authorization.workspace_id
     assert row["workspace_fingerprint"] == analytics_surrogate("workspace", workspace)
-    result = check(
-        evidence, workspace, now, [generation_id_for_authorization(row["authorization_id"])]
-    )
-    assert result["errors"], "retained first exact sample masks a conflicting retry"
+    result = check(evidence, workspace, now)
+    assert "writer/day loss, exclusion or conflict; cohort attribution unavailable" in result["errors"], (
+        "retained first exact sample masks a conflicting retry")
 
 
 @pytest.mark.parametrize("state", ["personal", "renamed", "funded", "keyed"])

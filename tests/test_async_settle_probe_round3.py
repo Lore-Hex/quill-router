@@ -22,8 +22,6 @@ from scripts.async_settle.probe_cohort_check import check
 from tests.test_async_settle_probe import success
 from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings, validate_shadow_probe_key
 from trusted_router.storage import InMemoryStore
-from trusted_router.storage_models import generation_id_for_authorization
-from trusted_router.storage_operational_analytics import analytics_surrogate
 from trusted_router.synthetic import cli, shadow_probe
 from trusted_router.synthetic.shadow_probe_contract import SHAPES
 
@@ -412,6 +410,7 @@ async def test_pass_never_ingests_and_writes_denominator(once, tmp_path, monkeyp
     assert len(lines) == len(set(lines)) == 17
     assert all(line.startswith('gen-') for line in lines[:-1])
     summary = json.loads(lines[-1].removeprefix(shadow_probe.DENOMINATOR_PREFIX))
+    assert 0 < summary.pop('first_request_sent_at_us') <= summary.pop('last_response_finished_at_us')
     assert summary == dict(requests_sent=32, buffered_with_id=16, streams_sent=16,
                            streams_without_id=16, failed=0, stream_generation_ids=[],
                            by_shape={s.name: dict(sent=4, with_id=0 if s.stream else 4) for s in SHAPES})
@@ -609,21 +608,18 @@ def test_missing_or_mismatched_credential_never_succeeds(tmp_path, monkeypatch, 
 
 
 def test_reconcile_each_identity_and_conservative_loss_veto():
+    from tests.test_async_settle_probe_stream_identity import full_pass
     from trusted_router.async_settle_shadow_evidence import SAMPLE
-    now = dt.datetime.now(dt.UTC)
-    rows = [dict(workspace_fingerprint=analytics_surrogate('workspace', 'cohort'),
-                 observed_at_us=int(now.timestamp()*1e6), authorization_id='auth-' + str(i),
-                 adapter=shape.provider, route_type='responses' if shape.route == '/responses' else 'chat.completions',
-                 streamed=shape.stream, classification='exact') for i, shape in enumerate(SHAPES)]
-    ids = [generation_id_for_authorization(row['authorization_id']) for row in rows]
+    now, rows, results, _, _ = full_pass()
+    ids = shadow_probe.denominator(results).splitlines()
     counters = []
     evidence = SimpleNamespace(day=lambda kind, day: [(str(i), json.dumps(row)) for i, row in enumerate(rows if kind == SAMPLE else counters)] if day == now.date().isoformat() else [])
     assert not check(evidence, 'cohort', now, ids)['errors']
     assert check(evidence, 'cohort', now)['errors'] == ['no denominator']
-    missing = rows.pop()
-    assert any(ids[-1] in e for e in check(evidence, 'cohort', now, ids)['errors'])
+    missing = rows.pop(0)
+    assert any(ids[0] in e for e in check(evidence, 'cohort', now, ids)['errors'])
     rows.append(missing | {'classification': 'unevaluable'})
-    assert any(ids[-1] in e for e in check(evidence, 'cohort', now, ids)['errors'])
+    assert any(ids[0] in e for e in check(evidence, 'cohort', now, ids)['errors'])
     rows[-1] = missing
     rows.append(missing)
     assert check(evidence, 'cohort', now, ids)['errors']
