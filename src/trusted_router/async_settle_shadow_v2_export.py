@@ -272,9 +272,13 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
                     gap(kind + '/' + row.key, 'row_without_page')
                 else:
                     page = port.pages[-1]
-                    found = actual.setdefault(id(page), dict(count=0, first=row.key, last=None))
+                    row_snapshot = row.commit.get('read_snapshot_ns')
+                    found = actual.setdefault(id(page), dict(count=0, first=row.key, last=None,
+                        row_snapshot=row_snapshot, differing_row_snapshots=False))
                     found['count'] += 1
                     found['last'] = row.key
+                    if row_snapshot != found['row_snapshot']:
+                        found['differing_row_snapshots'] = True
                     if native and (original_kind != kind or not row.commit.get('read_snapshot_ns')
                             or row.commit.get('read_snapshot_ns') != page.get('snapshot')
                             or row.commit.get('received_before_failure')):
@@ -306,6 +310,9 @@ def export_day(port: StoragePort, day: str, *, completed_at_us: int,
             low, high = bounds(day)
             found = actual.get(id(page), dict(count=0, first=None, last=None))
             if any(page.get(field) != found[field] for field in ('count', 'first', 'last')):
+                gap(kind + '/' + day, 'page_originals_disagree')
+            if native and found['count'] and (found['differing_row_snapshots']
+                    or page.get('snapshot') != found['row_snapshot']):
                 gap(kind + '/' + day, 'page_originals_disagree')
             if (page.get('source') != 'rows' or page.get('kind') != kind
                     or page.get('start') != low or page.get('end') != high

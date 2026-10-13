@@ -484,6 +484,36 @@ def test_exact_cap_final_range_validates_page_and_cleanup(fault, tmp_path):
         assert reason in {g['reason'] for g in result.gaps}
 
 
+@pytest.mark.parametrize('exact_cap', [False, True])
+@pytest.mark.parametrize('change', [False, True])
+def test_final_page_snapshot_matches_retained_row(exact_cap, change, tmp_path):
+    kind = DAY_KINDS[-1] if exact_cap else DAY_KINDS[0]
+    port = native(Database([(kind, DAY+'/a', RAW)]))
+    original = port.rows
+    closed = []
+
+    def rows(kind, day):
+        start = len(port.pages)
+        try:
+            yield from original(kind, day)
+        finally:
+            closed.append(kind)
+            if change:
+                for page in port.pages[start:]:
+                    page['snapshot'] += 1
+    port.rows = rows
+    dest = tmp_path/'source'
+    result = export_day(port, DAY, completed_at_us=1, object_keys=(), spool_dir=dest,
+        max_objects=1 if exact_cap else 10000)
+    account = json.loads(result.accounting)
+    entries = json.loads((dest/'export/entries/00000.json').read_bytes())['entries']
+    assert closed == list(DAY_KINDS)
+    assert len(entries) == 1 and entries[0]['key'] == DAY+'/a'
+    assert (dest/entries[0]['original']).read_bytes() == RAW
+    assert account['operations']['native_rpcs'] == 14
+    assert account['complete'] is (not change)
+
+
 def test_plan_persisted_before_first_native_operation_and_failure(tmp_path):
     from trusted_router.async_settle_shadow_v2_export import bounds
     from trusted_router.detached_jws import canonical
