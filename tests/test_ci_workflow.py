@@ -211,7 +211,7 @@ def assert_ci_uses_repository_python(document: object, location: str = "ci") -> 
                 )
                 assert_no_uv_interpreter_flags(value, here)
                 assert ".python-version" not in value, f"{here}: rewrites the interpreter pin"
-                assert not re.search(r"\buv\s+python\s+pin\b", value), f"{here}: re-pins the interpreter"
+                assert not re.search(r"\buv(?:\s+-\S+)*\s+python\s+pin\b", value), f"{here}: re-pins the interpreter"
             assert_ci_uses_repository_python(value, here)
     elif isinstance(document, list):
         for i, value in enumerate(document):
@@ -235,7 +235,16 @@ def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
             args = command[uv + 1:]
             if Path(command[uv]).name == "uvx":
                 # uvx options precede the tool name; later options are the tool's.
-                end = next((i for i, arg in enumerate(args) if not arg.startswith("-")), len(args))
+                # Skip option values so `--from ruff --python 3.11 ruff` is seen.
+                uvx_value_options = {
+                    "--from", "--with", "--with-editable", "--with-requirements",
+                    "--python", "-p", "--python-preference", "--index", "--default-index",
+                    "--index-url", "--extra-index-url", "--find-links", "--config-file",
+                    "--cache-dir", "--directory", "--project",
+                }
+                end = 0
+                while end < len(args) and args[end].startswith("-") and args[end] != "--":
+                    end += 2 if args[end] in uvx_value_options else 1
                 args = args[:end]
             # After `uv run` reaches its executable, subsequent options belong
             # to that executable. Account for uv options that consume a value.
@@ -307,6 +316,9 @@ def test_ci_python_check_allows_unrelated_command_flags() -> None:
     "uvx --python 3.11 ruff check .",
     "uv python pin 3.11 && uv sync",
     "echo 3.11 > .python-version && uv sync",
+    "uvx --from ruff --python 3.11 ruff check .",
+    "uvx --with x --python 3.11 ruff",
+    "uv --quiet python pin 3.11",
 ])
 def test_ci_python_pin_bypass_mutations_are_detected(command: str) -> None:
     mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
