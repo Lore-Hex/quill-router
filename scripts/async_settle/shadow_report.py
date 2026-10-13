@@ -816,9 +816,8 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
         fixtures = (root / 'tests/fixtures/async_settlement/shadow_v2_a2/manifest.json').read_bytes()
         approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, b'[]', (),
             hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
-    from trusted_router.async_settle_shadow_v2_gate_inputs import SHUTDOWN_SOURCE
-    measurements = {path: SHUTDOWN_SOURCE.parse for path in release.artifacts
-                    if path.startswith('sources/measurement/')} if release is not None else {}
+    from trusted_router.async_settle_shadow_v2_gate_release import measurement_parsers
+    measurements = measurement_parsers(release)
     from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
     release_files = {path: (root / path).read_bytes() for path in RELEASE_FILES.values()}
     return LoadingPorts(verify_certificate, verify_original_receipt, verify_binding,
@@ -871,7 +870,7 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
             return None
         try:
             return path.read_bytes()
-        except OSError:
+        except (OSError, ValueError):
             damaged_inputs.append('tool_input/' + name)
             return None
 
@@ -883,7 +882,7 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
         ports = shadow_v2_ports(None, None, release=release)
     try:
         original = args.bundle.read_bytes()
-    except OSError:
+    except (OSError, ValueError):
         original = b''
     bundle = load(original, ports)
     if damaged_inputs:

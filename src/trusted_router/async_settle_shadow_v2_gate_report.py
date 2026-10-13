@@ -84,36 +84,59 @@ def population(ctx: Context, window: dict[str, int], required: tuple[str, ...]) 
         terminations=[v for v in measurements if (v['day'], v['boot']) in term] if known_measurements and 'G8' in required else None)
 
 
-def window_for(ctx: Context) -> dict[str, int]:
-    # Observation scope survives optional/missing manifests: approved independent
-    # writer lifetimes and validated selected days are the authority.
+def diagnostic_scope(ctx: Context) -> tuple[tuple[str, ...], dict[str, int] | None]:
+    """Select days and interval together, once, before semantic evaluation.
+
+    Independent lifetimes describe observed scope. Decoded proof/day lifetimes
+    and valid requested calendar days are diagnostic fallbacks only; clock()
+    still independently requires original approved coverage and positive seeds.
+    """
+    import datetime as dt
+
+    from trusted_router.async_settle_shadow_v2_schema import day_at
     intervals = [(b.start_us, min(b.end_us or ctx.bundle.completed_at_us, ctx.bundle.completed_at_us))
                  for b in ctx.bundle.inventory.boots if b.role == 'router'] if ctx.bundle.inventory else []
     intervals = [(left, right) for left, right in intervals if left < right]
+    days = set(ctx.bundle.days)
     if not intervals:
-        # Damage to an approved source must not erase the diagnostic report's
-        # scope. These decoded lifetimes describe what was requested, and never
-        # establish clock coverage (clock() still requires independent boots).
-        rosters = list((ctx.proof or {}).get('rosters_by_day', {}).values())
-        rosters.extend(dict(router=m['router_writers']) for m in ctx.kind(p1.KINDS[5])
-                       if 'router_writers' in m)
-        intervals = [(w['lifetime']['start_us'], w['lifetime']['end_us'])
-                     for roster in rosters for w in roster.get('router', {}).values()
-                     if w['lifetime']['start_us'] < w['lifetime']['end_us']]
-        if not intervals and ctx.bundle.days:
-            import datetime as dt
-            left = (dt.date.fromisoformat(ctx.bundle.days[0]) - dt.date(1970, 1, 1)).days * 86400000000
-            right = (dt.date.fromisoformat(ctx.bundle.days[-1]) - dt.date(1970, 1, 1)).days * 86400000000 + 86400000000
-            intervals = [(left, right)]
-    require(bool(intervals), 'artifact_gap: observation scope unavailable')
-    left, right = min(v[0] for v in intervals), max(v[1] for v in intervals)
-    if ctx.certified_end_us is not None:
+        rosters = [(day, roster.get('router', {})) for day, roster in
+                   (ctx.proof or {}).get('rosters_by_day', {}).items()]
+        rosters.extend((m['day'], m['router_writers']) for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m)
+        for day, writers in rosters:
+            for writer in writers.values():
+                lifetime = writer['lifetime']
+                if lifetime['start_us'] < lifetime['end_us']:
+                    intervals.append((lifetime['start_us'], lifetime['end_us']))
+                    if not ctx.bundle.days:
+                        days.add(day)
+    if not days:
+        for left, right in intervals:
+            days.update(day_at(at) for at in range(left // 86400000000 * 86400000000,
+                        min(right, left + 32 * 86400000000), 86400000000))
+    selected = tuple(sorted(days)[:32])
+    if not intervals and selected:
+        left = (dt.date.fromisoformat(selected[0]) - dt.date(1970, 1, 1)).days * 86400000000
+        right = (dt.date.fromisoformat(selected[-1]) - dt.date(1970, 1, 1)).days * 86400000000 + 86400000000
+        intervals = [(left, right)]
+    if not intervals or not selected:
+        return (), None
+    value = dict(start_us=min(v[0] for v in intervals), end_us=max(v[1] for v in intervals))
+    p1.INTERVAL(value)
+    return selected, value
+
+
+def window_for(ctx: Context, scope: dict[str, int] | None) -> dict[str, int]:
+    require(scope is not None, 'artifact_gap: observation scope unavailable')
+    assert scope is not None
+    left, right = scope['start_us'], scope['end_us']
+    # A clock interruption may shorten coverage, but cannot erase an existing
+    # nonempty diagnostic scope. Its gap remains a failed G10 predicate.
+    if ctx.certified_end_us is not None and left < ctx.certified_end_us:
         right = min(right, ctx.certified_end_us)
     value = dict(start_us=left, end_us=right)
     p1.INTERVAL(value)
     requested = ctx.bundle.window
-    if requested is not None and (dict(requested) != value or
-            ctx.certified_start_us is not None and requested['start_us'] < ctx.certified_start_us):
+    if requested is not None and not (left <= requested['start_us'] < requested['end_us'] <= right):
         ctx.issue('artifact_gap', 'requested window is not closed by original evidence')
         ctx.issue('continuous_window_gap', 'requested interval exceeds certified continuous coverage', unavailable=True)
     return value

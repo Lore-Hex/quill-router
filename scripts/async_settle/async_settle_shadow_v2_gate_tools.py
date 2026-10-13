@@ -96,42 +96,5 @@ def run_retained(entry_point: str, payload: Any, files: Mapping[str, bytes]) -> 
 
 def read_release_plan(raw: bytes, approved_sha256: str) -> Any:
     """Explicit independently pinned release input; never infer a trusted pin."""
-    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
-    from trusted_router.async_settle_shadow_v2_gate_inputs import ReleasePlan
-    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
-    from trusted_router.async_settle_shadow_v2_schema import digest, name
-
-    digest(approved_sha256)
-    require(file_digest(raw) == approved_sha256, 'artifact_gap')
-    value = retained_json(raw)
-    require(type(value) is dict and set(value) in ({'artifacts', 'criteria', 'verifiers', 'required'},
-        {'artifacts', 'criteria', 'verifiers', 'required', 'required_stages'}), 'evidence_schema_gap')
-    for path, pin in value['artifacts'].items():
-        FILE_REF.fields['path'](path)
-        digest(pin)
-    for criterion, checks in value['criteria'].items():
-        name(criterion)
-        require(type(checks) is list and checks and len(checks) == len(set(checks)), 'evidence_schema_gap')
-        for check in checks:
-            name(check)
-    verifiers = {}
-    for entry, pins in value['verifiers'].items():
-        name(entry)
-        require(type(pins) is list and len(pins) == 3, 'evidence_schema_gap')
-        digest(pins[0])
-        digest(pins[1])
-        if pins[2] is not None:
-            digest(pins[2])
-        verifiers[entry] = tuple(pins)
-    require(type(value['required']) is list and len(value['required']) == len(set(value['required'])), 'evidence_schema_gap')
-    for criterion in value['required']:
-        name(criterion)
-    required_stages = value.get('required_stages', {})
-    from trusted_router.async_settle_shadow_v2_a2_contract import REQUIRED_RULES
-    require(type(required_stages) is dict, 'evidence_schema_gap')
-    for stage, criteria in required_stages.items():
-        require(stage in REQUIRED_RULES and type(criteria) is list and criteria
-            and len(criteria) == len(set(criteria)) and set(criteria) <= set(value['required']), 'evidence_schema_gap')
-    require(not required_stages or {c for values in required_stages.values() for c in values} == set(value['required']), 'evidence_schema_gap')
-    return ReleasePlan('loading/release-plan.json', raw, value['artifacts'],
-        {k: tuple(v) for k, v in value['criteria'].items()}, verifiers, tuple(value['required']), {stage: tuple(values) for stage, values in required_stages.items()})
+    from trusted_router.async_settle_shadow_v2_gate_release import decode_release_plan
+    return decode_release_plan(raw, approved_sha256)

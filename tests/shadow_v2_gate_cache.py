@@ -1,4 +1,4 @@
-"""Session-local pure lookup caches; retained/verifier calls always execute.
+"""Module-local pure lookup caches; retained/verifier calls always execute.
 
 Only immutable bytes are retained. Every caller receives a fresh decoded object,
 so a mutation or a consumer's pop/update cannot poison another graph. Content
@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(scope='module', autouse=True)
 def payloadgraph_shared_lookup_cache():
     from trusted_router import async_settle_shadow_v2_a2_contract as contract
     from trusted_router import async_settle_shadow_v2_gate_payloads as payloads
@@ -142,6 +142,10 @@ def payloadgraph_shared_lookup_cache():
     def checked_output(*args, **kwargs):
         return pure_check(output_checks, args, kwargs)
 
+    originals = [(contract, 'validate_preimages', preimage_checks),
+        (contract, 'validate_gate_output', output_checks), (Schema, '_validate', schema_validate),
+        (Schema, 'parse', schema_parse), (contract, '_object_bytes', parse),
+        (payloads, 'retained_json', lookup), (payloads.PayloadGraph, 'detail', detail)]
     patch.setattr(contract, 'validate_preimages', checked_preimages)
     patch.setattr(contract, 'validate_gate_output', checked_output)
     patch.setattr(Schema, '_validate', validated)
@@ -151,6 +155,7 @@ def payloadgraph_shared_lookup_cache():
     patch.setattr(payloads.PayloadGraph, 'detail', indexed)
     yield dict(schema=schema_result, objects=checked, lookups=looked_up, indexes=indexes, parse=schema_parse)
     patch.undo()
+    assert all(getattr(owner, name) is original for owner, name, original in originals)
     graph_results.clear()
     validations.clear()
     schema_result.cache_clear()

@@ -103,3 +103,158 @@ def validate_original_bytes(bundle: Bundle, ports: Ports | None) -> list[dict[st
     return [dict(gap=issue.gap, detail=issue.detail,
                  subject=issue.subject.wire or a2.N())
             for issue in ctx.issues if not issue.detail.startswith('undefined preimage:')]
+
+
+def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[LoadingIssue]]:
+    """Decode siblings before validation; damage has only its own object scope.
+
+    Duplicate keys are ambiguous at that key, not at independently decoded
+    siblings. No repaired child is evidence: every rejection is a permanent G1
+    issue, and original JSON strings are never normalized before validation.
+    """
+    damaged = object()
+    duplicates = []
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                duplicates.append(key)
+                # Equal original strings still supply their exact commitments.
+                if type(value) is not str or value != result[key]:
+                    result[key] = damaged
+            else:
+                result[key] = value
+        return result
+
+    require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
+    text = raw.decode('utf-8', errors='surrogateescape')
+    try:
+        value = json.loads(text, object_pairs_hook=pairs)
+    except RecursionError:
+        # Python's recursive JSON decoder must not discard independent proof
+        # strings merely because a sibling exceeds its recursion limit. Scan
+        # only the outer member boundaries, iteratively and string-aware.
+        decoder = json.JSONDecoder(object_pairs_hook=pairs)
+        at = 0
+        members = []
+        try:
+            require(text.lstrip().startswith('{'))
+            at = text.index('{') + 1
+            while True:
+                while at < len(text) and text[at].isspace():
+                    at += 1
+                if text[at] == '}':
+                    break
+                key, at = decoder.raw_decode(text, at)
+                require(type(key) is str)
+                while text[at].isspace():
+                    at += 1
+                require(text[at] == ':')
+                at += 1
+                start = at
+                stack: list[str] = []
+                while at < len(text):
+                    character = text[at]
+                    if character == '"':
+                        _, at = decoder.raw_decode(text, at)
+                        continue
+                    if not stack and character in ',}':
+                        break
+                    if character in '[{':
+                        stack.append(character)
+                    elif character in ']}':
+                        require(bool(stack) and stack.pop() == ('[' if character == ']' else '{'))
+                    at += 1
+                require(at < len(text) and not stack)
+                try:
+                    child = json.loads(text[start:at], object_pairs_hook=pairs)
+                except (ValueError, RecursionError):
+                    child = damaged
+                members.append((key, child))
+                if text[at] == '}':
+                    break
+                at += 1
+            require(not text[at + 1:].strip())
+            value = pairs(members)
+        except (ValueError, IndexError) as exc:
+            raise ValueError('evidence_schema_gap') from exc
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError('evidence_schema_gap') from exc
+    require(type(value) is dict, 'evidence_schema_gap')
+    issues: list[LoadingIssue] = [LoadingIssue('evidence_schema_gap', 'transport/duplicate-key',
+        'duplicate transport member') for _ in duplicates[:1]]
+    cleaned: dict[str, Any] = {}
+
+    def reject(path: str) -> None:
+        # Invalid identifiers cannot become a contract object subject.
+        try:
+            a2.FILE_REF.fields['path'](path)
+        except (ValueError, UnicodeError):
+            path = 'transport/invalid-child'
+        issues.append(LoadingIssue('evidence_schema_gap', path, 'invalid transport child'))
+
+    def valid(child: Any, path: str) -> bool:
+        try:
+            pending = [(child, 0)]
+            while pending:
+                item, depth = pending.pop()
+                require(depth <= 16)
+                if type(item) is dict:
+                    for key, value in item.items():
+                        key.encode('utf-8')
+                        pending.append((value, depth + 1))
+                elif type(item) is list:
+                    pending.extend((value, depth + 1) for value in item)
+                elif type(item) is str:
+                    item.encode('utf-8')
+                elif type(item) is int:
+                    require(-(1 << 63) <= item < (1 << 63))
+                else:
+                    require(item is None or type(item) is bool)
+            return True
+        except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
+            reject(path)
+            return False
+
+    arrays = {'rows': {'kind', 'id', 'raw'}, 'attachments': {'kind', 'id', 'raw'},
+              'preimages': {'name', 'raw'}, 'ledgers': None}
+    allowed = {'v', 'policy_version', 'contract_revision', 'proof', 'transport', 'fleet',
+               'pre', 'serving', 'completed_at_us', 'days', 'window', *arrays}
+    for key, child in value.items():
+        if key not in allowed:
+            reject('transport/extra')
+        elif key in arrays:
+            cleaned[key] = []
+            if type(child) is not list or len(child) > (4096 if key == 'ledgers' else 10000):
+                reject('transport/' + key)
+                continue
+            for index, item in enumerate(child):
+                path = 'transport/' + key + '/' + str(index)
+                fields = arrays[key]
+                if type(item) is dict and type(item.get('name')) is str:
+                    path = item['name']
+                elif type(item) is dict and all(type(item.get(k)) is str for k in ('kind', 'id')):
+                    path = 'rows/' + item['kind'] + '/' + item['id']
+                shape = type(item) is str if fields is None else (
+                    type(item) is dict and set(item) == fields and all(type(v) is str for v in item.values()))
+                if not shape:
+                    reject(path)
+                elif valid(item, path):
+                    if key in ('rows', 'attachments'):
+                        try:
+                            a2.O(item['kind'], item['id'])
+                            from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+                            a2.FILE_REF.fields['path'](path + '/' + file_digest(item['raw'].encode()))
+                        except ValueError:
+                            reject(path)
+                            continue
+                    if key == 'preimages':
+                        try:
+                            a2.FILE_REF.fields['path'](item['name'])
+                        except ValueError:
+                            reject(path)
+                            continue
+                    cleaned[key].append(item)
+        elif valid(child, 'transport/' + key):
+            cleaned[key] = child
+    return cleaned, issues

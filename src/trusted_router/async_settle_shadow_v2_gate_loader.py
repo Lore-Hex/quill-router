@@ -9,7 +9,7 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Key, Ports
 from trusted_router.async_settle_shadow_v2_gate_loading import (
     LoadingIssue,
     error_gap,
-    retained_json,
+    transport_children,
     validate_original_bytes,
 )
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
@@ -27,7 +27,7 @@ def load(raw: bytes, ports: Ports | None = None, *, _recover: bool = True) -> Bu
     try:
         # This is the finite transport containing many original files, not one
         # FILE_REF payload. Each child keeps its own contract byte bound.
-        value = retained_json(raw, limit=MAX_BUNDLE_BYTES, allow_float=False, max_depth=16, bounded_integers=False)
+        value, transport_issues = transport_children(raw, MAX_BUNDLE_BYTES)
         require(type(value) is dict and value.get('policy_version') == 'shadow-v2'
                 and value.get('contract_revision') == 'a1', 'policy_version_gap')
         require(set(value) <= {'v', 'policy_version', 'contract_revision', 'rows', 'attachments', 'proof', 'ledgers',
@@ -47,7 +47,10 @@ def load(raw: bytes, ports: Ports | None = None, *, _recover: bool = True) -> Bu
         ledgers = value.get('ledgers', [])
         require(type(ledgers) is list and len(ledgers) <= 4096 and all(type(x) is str for x in ledgers), 'artifact_gap')
         days = value.get('days', [])
-        metadata_issues = []
+        metadata_issues = [issue.path.removeprefix('transport/') for issue in transport_issues
+                           if issue.path in ('transport/days', 'transport/window', 'transport/completed_at_us')]
+        if 'completed_at_us' not in value:
+            metadata_issues.append('completed_at_us')
         try:
             require(type(days) is list and 0 < len(days) <= 32 and days == sorted(set(days)), 'artifact_gap')
             for selected in days:
@@ -74,7 +77,7 @@ def load(raw: bytes, ports: Ports | None = None, *, _recover: bool = True) -> Bu
         require(type(files) is list and len(files) <= 10000, 'artifact_gap')
         preimages = []
         payloads = {}
-        issues: list[LoadingIssue] = []
+        issues: list[LoadingIssue] = list(transport_issues)
         unique: dict[str, bytes] = {}
         conflicts: set[str] = set()
         for source in files:
@@ -179,7 +182,7 @@ def load(raw: bytes, ports: Ports | None = None, *, _recover: bool = True) -> Bu
                       signatures=views.get('loading/signatures.json', ()))
         graph.streams['loading_validation'] = validate_original_bytes(bundle, ports)
         return bundle
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, TypeError, KeyError, RecursionError, OverflowError) as exc:
         # A malformed sibling cannot erase a present original proof commitment.
         # Recover only independently decodable transport children, with one
         # bounded retry and a permanent G1 failure for the damaged container.
@@ -215,5 +218,10 @@ def load(raw: bytes, ports: Ports | None = None, *, _recover: bool = True) -> Bu
                 if field in value:
                     repaired[field] = value[field]
             recovered = load(canonical(repaired), ports, _recover=False)
-            return replace(recovered, undefined_preimages=(*recovered.undefined_preimages, 'invalid_or_cross_version_bundle'))
+            diagnostics = [*recovered.a2_streams.get('loading_issues', []),
+                *(issue.as_dict() for issue in transport_issues),
+                LoadingIssue('policy_version_gap' if str(exc) == 'policy_version_gap' else error_gap(exc),
+                    'transport/container', str(exc)).as_dict()]
+            return replace(recovered, undefined_preimages=(*recovered.undefined_preimages, 'invalid_or_cross_version_bundle'),
+                a2_streams={**recovered.a2_streams, 'loading_issues': diagnostics})
         return Bundle(undefined_preimages=('invalid_or_cross_version_bundle', *UNDEFINED_PREIMAGES))

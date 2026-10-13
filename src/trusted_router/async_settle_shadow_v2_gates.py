@@ -268,12 +268,18 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
     if not isinstance(bundle, Bundle):
         bundle = Bundle(undefined_preimages=('bundle',))
     ctx = decode_bundle(bundle, ports, gate)
-    if not bundle.days and ctx.proof is not None:
+    days, observation_scope = a2report.diagnostic_scope(ctx)
+    if days != bundle.days:
         from dataclasses import replace
-        days = tuple(sorted(ctx.proof['rosters_by_day']))
-        if days:
-            bundle = replace(bundle, days=days)
-            ctx.bundle = bundle
+        bundle = replace(bundle, days=days)
+        ctx.bundle = bundle
+    if observation_scope is not None and any(issue.get('path') == 'transport/completed_at_us'
+            for issue in bundle.a2_streams.get('loading_issues', [])):
+        from dataclasses import replace
+        # A damaged completion keeps its G1 failure. The diagnostic timestamp
+        # is an original scope bound, never a fabricated zero or gate success.
+        bundle = replace(bundle, completed_at_us=observation_scope['end_us'])
+        ctx.bundle = bundle
     needed = ('inventory', 'cohort', 'budget') if gate == 'fleet-budgets-pre' else ('inventory', 'cohort', 'budget', 'external', 'reset_support')
     for name in needed:
         if getattr(bundle, name) is None:
@@ -293,7 +299,7 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
     window = None
     populations = None
     try:
-        window = a2report.window_for(ctx)
+        window = a2report.window_for(ctx, observation_scope)
         populations = a2report.population(ctx, window, selected)
     except ValueError:
         ctx.issue('artifact_gap', 'report observation window unavailable')

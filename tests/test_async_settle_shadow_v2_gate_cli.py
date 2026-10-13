@@ -252,3 +252,112 @@ def test_tool_input_damage_has_one_result(cli_original: Any, tmp_path: Path, mon
     else:
         assert result['verdict'] == 'BLOCKED'
         assert (tmp_path / 'gate-output/report.json').exists()
+
+
+@pytest.mark.parametrize('field', ['rows', 'preimages'])
+@pytest.mark.parametrize('damage', ['surrogate', 'nonfinite', 'domain', 'depth', 'object', 'scalar'])
+def test_round11_sibling_damage(cli_original: Any, tmp_path: Path, field: str, damage: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from tests.shadow_v2_gate_totality import tool
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    original, ports, _ = cli_original
+    value = json.loads(transport(original))
+    bad: Any = {'surrogate': '\ud800', 'nonfinite': float('nan'), 'domain': 2**100,
+                'object': {}, 'scalar': False}.get(damage)
+    if damage == 'depth':
+        bad = 0
+        for _ in range(24):
+            bad = [bad]
+    if field in ('rows', 'attachments', 'preimages', 'ledgers'):
+        # Damage a single original child; all its siblings must survive.
+        child = value[field][0]
+        subject_path = child['name'] if field == 'preimages' else 'rows/' + child['kind'] + '/' + child['id']
+        if isinstance(child, dict):
+            child['raw'] = bad
+        else:
+            value[field][0] = bad
+    else:
+        value[field] = bad
+    raw = json.dumps(value).encode()
+    loaded = load(raw, ports)
+    assert loaded.proof == original.proof
+    result = evaluate(loaded, ports, gate='shadow-serving')
+    expected = json.loads(render(result)[0])
+    assert expected['verdict'] == 'BLOCKED'
+    assert any(f.gap == 'evidence_schema_gap' and f.subject.get('object', {})
+        and f.subject['object']['kind'] == 'a2_file' and f.subject['object']['key'] == subject_path
+        for f in result.failures)
+    for which in ('report', 'pilot'):
+        assert tool(raw, ports, tmp_path / which, which) == expected
+
+
+@pytest.mark.parametrize('sources', ['days+inventory', 'days+roster', 'days+manifest',
+    'inventory+roster', 'inventory+manifest', 'roster+manifest', 'days+inventory+roster'])
+def test_round11_scope_source_deletions(cli_original: Any, tmp_path: Path, sources: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from tests.shadow_v2_gate_totality import library, tool
+    original, ports, _ = cli_original
+    data = json.loads(transport(original))
+    if 'days' in sources:
+        data['days'] = []
+    if 'inventory' in sources:
+        data['preimages'] = []
+    if 'roster' in sources:
+        proof = json.loads(data['proof'])
+        proof.update(rosters_by_day={}, instance_regions_by_day={})
+        data['proof'] = json.dumps(proof)
+    if 'manifest' in sources:
+        data['rows'] = [r for r in data['rows'] if r['kind'] != 'async_settle_shadow_control_v2']
+    raw = canonical(data)
+    expected = library(raw, ports)
+    assert expected['verdict'] == 'BLOCKED'
+    for which in ('report', 'pilot'):
+        assert tool(raw, ports, tmp_path / which, which) == expected
+
+
+@pytest.mark.parametrize('field', ['artifacts', 'criteria', 'verifiers'])
+@pytest.mark.parametrize('bad', [[]])
+def test_round11_release_collection_shape(cli_original: Any, tmp_path: Path, field: str, bad: Any) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from tests.shadow_v2_gate_totality import tool
+    original, ports, _ = cli_original
+    plan = json.loads(ports.release.raw)
+    if field.endswith('_member'):
+        if field == 'criterion_member':
+            plan['criteria'][next(iter(plan['criteria']))] = [bad]
+        elif field == 'verifier_member':
+            plan['verifiers'][next(iter(plan['verifiers']))] = [bad, bad, bad]
+        elif field == 'required_member':
+            plan['required'] = [bad]
+        else:
+            plan['required_stages'] = {'transport': [bad]}
+    else:
+        plan[field] = bad
+    for which in ('report', 'pilot'):
+        output = tool(transport(original), ports, tmp_path / which, which, release=json.dumps(plan).encode())
+        assert output['verdict'] == 'BLOCKED'
+
+
+def test_round11_decoder_depth_does_not_erase_proof(cli_original: Any, tmp_path: Path) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from tests.shadow_v2_gate_totality import library, tool
+    original, ports, _ = cli_original
+    raw = transport(original)[:-1] + b',"unused":' + b'[' * 2000 + b'0' + b']' * 2000 + b'}'
+    expected = library(raw, ports)
+    assert expected['verdict'] == 'BLOCKED'
+    for which in ('report', 'pilot'):
+        assert tool(raw, ports, tmp_path / which, which) == expected
+
+
+@pytest.mark.parametrize('field', ['kind', 'id'])
+def test_round11_oversized_identity_preserves_report(cli_original: Any, tmp_path: Path, field: str) -> None:
+    from tests.shadow_v2_gate_a2_fixture import transport
+    from tests.shadow_v2_gate_totality import library, tool
+    original, ports, _ = cli_original
+    data = json.loads(transport(original))
+    data['rows'][0][field] = 'x' * 2000
+    raw = canonical(data)
+    expected = library(raw, ports)
+    assert expected['verdict'] == 'BLOCKED'
+    for which in ('report', 'pilot'):
+        assert tool(raw, ports, tmp_path / which, which) == expected

@@ -38,7 +38,7 @@ from trusted_router.async_settle_shadow_v2_schema import Schema
 from trusted_router.detached_jws import canonical
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='module')
 def validation_cache(request: Any):
     # The shared immutable fixture validates every distinct byte object once.
     # Keys include all arguments; mutations never inherit an old acceptance.
@@ -230,8 +230,10 @@ def validation_cache(request: Any):
     patch.setattr(contract, 'validate_preimages', audited)
     patch.setattr(Schema, 'parse', dispatch)
     patch.setattr(health, 'validate_publisher_traces', traces)
+    originals = tuple(patch._setattr)
     yield
     patch.undo()
+    assert all(getattr(owner, name) is original for owner, name, original in originals)
     parsed.cache_clear()
     decoded_pages.clear()
     checked.clear()
@@ -346,7 +348,7 @@ def test_byte_witness_inventory_is_explicit() -> None:
             if stage != row['stage'] and list(contract.REQUIRED_RULES).index(stage) < list(contract.REQUIRED_RULES).index(row['stage'])) or row['rule'] in ('G10', 'G11') or row['gap'] == 'close_handoff_budget_gap'
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='module')
 def real_seven_days(tmp_path_factory: Any, validation_cache: Any) -> Any:
     with no_line_tracing():
         original, bound_ports, _ = real_fixture(tmp_path_factory.mktemp('real-seven-days'),
@@ -482,3 +484,116 @@ def test_short_verified_clock_branches(short_family: Any, mode: str) -> None:
     assert any(i.gap == 'continuous_window_gap' for i in ctx.issues) == (mode != 'threshold')
     if mode == 'seed':
         assert any(i.gap == 'regional_seed_gap' for i in ctx.issues)
+
+
+@pytest.fixture(scope='module')
+def totality_original(tmp_path_factory: Any, validation_cache: Any) -> Any:
+    # No historical graph is necessary for transport; all originals and the
+    # approved release are real. Schema caches remain module-local.
+    return real_fixture(tmp_path_factory.mktemp('totality-original'), chain=False, traffic=False)
+
+
+@pytest.fixture(scope='module')
+def boundary_cache(totality_original: Any) -> Any:
+    from tests.shadow_v2_gate_totality import BoundaryCache
+    with BoundaryCache().installed() as cache:
+        yield cache
+
+
+@pytest.mark.proof_oracle
+@pytest.mark.parametrize('shard', range(128))
+@pytest.mark.timeout(3600, method='signal')
+def test_round11_generated_boundary_property(totality_original: Any, boundary_cache: Any, tmp_path: Any, shard: int, record_property: Any) -> None:
+    import json
+    import random
+    from dataclasses import replace
+
+    from scripts.async_settle import shadow_report
+    from scripts.async_settle.async_settle_shadow_v2_gate_tools import read_release_plan
+    from tests.shadow_v2_gate_totality import (
+        damage_cases,
+        damaged_document,
+        inert_damage,
+        library,
+        proof_condition,
+        tool,
+    )
+    original, ports, _ = totality_original
+    raw = transport(original)
+    keys = {name: next(a.keyset for a in ports.approvals if a.entry_point.endswith('.verify_' + name))
+            for name in ('certificate', 'binding')}
+    key_paths = {}
+    for name, key_raw in keys.items():
+        key_path = tmp_path / (name + '.json')
+        key_path.write_bytes(key_raw)
+        key_paths[name + '_keys'] = str(key_path)
+    documents = {'bundle': json.loads(raw), 'release': json.loads(ports.release.raw),
+                 **{name: json.loads(value) for name, value in keys.items()},
+                 'options': {'release_plan_sha256': roots.file_digest(ports.release.raw),
+                             **key_paths}}
+    documents['bundle']['window'] = dict(start_us=min(b.start_us for b in original.inventory.boots), end_us=original.completed_at_us)
+    cases = damage_cases(documents)
+    assert len(cases) >= 3000
+    record_property('seed', 1101740)
+    record_property('cases', len(cases) * (shard + 1) // 128 - len(cases) * shard // 128)
+    record_property('total_cases', len(cases))
+    rng = random.Random(1101740 + shard)  # noqa: S311 - deterministic damage corpus
+    for index in range(len(cases) * shard // 128, len(cases) * (shard + 1) // 128):
+        if index % 100 == 0:
+            print('boundary-case', shard, index, 'of', len(cases), flush=True)
+        document, path, kind, replacement = cases[index]
+        changed = damaged_document(documents[document], path, kind, replacement)
+        # Sample pairs in the same document without introducing a second parser.
+        if index % 17 == 0 and kind != 'duplicate':
+            decoded = json.loads(changed)
+            if isinstance(decoded, dict) and decoded:
+                decoded.pop(rng.choice(list(decoded)))
+                changed = json.dumps(decoded).encode()
+        candidate = changed if document == 'bundle' else raw
+        plan = changed if document == 'release' else ports.release.raw
+        public = {**keys, **({document: changed} if document in keys else {})}
+        options = None
+        if document == 'options':
+            # CLI argv is strings. Damaged option values become literal argv
+            # strings, retaining the real parser and actual file-open boundary.
+            decoded = json.loads(changed)
+            options = {key: value if isinstance(value, str) else json.dumps(value)
+                for key, value in decoded.items()} if isinstance(decoded, dict) else {'release_plan_sha256': changed.decode()}
+        damaged = []
+        try:
+            release = read_release_plan(plan, (options or {}).get('release_plan_sha256', roots.file_digest(plan)))
+        except (ValueError, TypeError, KeyError):
+            release = None
+            damaged.append('release')
+        effective_keys = dict(public)
+        for name in ('certificate', 'binding'):
+            if options is not None and name + '_keys' in options:
+                try:
+                    effective_keys[name] = Path(options[name + '_keys']).read_bytes()
+                except (OSError, ValueError):
+                    effective_keys[name] = None
+                    damaged.append(name + '-keys')
+        try:
+            bound = shadow_report.shadow_v2_ports(effective_keys['certificate'], effective_keys['binding'], release=release)
+        except (ValueError, TypeError, KeyError, UnicodeError):
+            bound = shadow_report.shadow_v2_ports(None, None, release=release)
+            damaged.append('keys')
+        if damaged:
+            from trusted_router.async_settle_shadow_v2_gate_loader import load
+            from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput
+            bundle = load(candidate, bound)
+            bundle = replace(bundle, undefined_preimages=(*bundle.undefined_preimages, *damaged))
+            rendered = render(evaluate(bundle, bound, gate='transport'))
+            output = rendered.diagnostic() if isinstance(rendered, UnavailableGateOutput) else json.loads(rendered[0])
+        else:
+            output = library(candidate, bound, gate='transport')
+        outcomes = [output, *(tool(candidate, ports, tmp_path / which, which, gate='transport',
+            release=plan, keys=public, options=options) for which in ('report', 'pilot'))]
+        for outcome_index, output in enumerate(outcomes):
+            if output.get('error'):
+                # Single damage and sampled pairs cannot remove all four scope
+                # sources unless they remove the proof too. Proof takes priority.
+                assert output['condition'] == proof_condition(candidate), (index, document, path, kind, output)
+            elif output['verdict'] == 'PASS':
+                assert inert_damage(document, path, kind, replacement, documents, changed, options,
+                    library_call=outcome_index == 0), (index, document, path, kind, output)

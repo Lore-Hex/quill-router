@@ -70,3 +70,54 @@ def release_checks(graph: PayloadGraph, payloads: dict[str, dict[str, Any]]) -> 
         function = getattr(ports, 'verify_' + name)
         matches = [a for a in ports.approvals if a.entry_point.endswith('.verify_' + name)]
         require(len(matches) == 1 and matches[0].function is function, 'evidence_schema_gap')
+
+
+def decode_release_plan(raw: bytes, approved_sha256: str) -> ReleasePlan:
+    """Validate every collection and member before iterating trusted approvals."""
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_inputs import ReleasePlan
+    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
+    from trusted_router.async_settle_shadow_v2_schema import digest, name
+
+    digest(approved_sha256)
+    require(file_digest(raw) == approved_sha256, 'artifact_gap')
+    value = retained_json(raw)
+    require(type(value) is dict and set(value) in ({'artifacts', 'criteria', 'verifiers', 'required'},
+        {'artifacts', 'criteria', 'verifiers', 'required', 'required_stages'}), 'evidence_schema_gap')
+    require(all(type(value[field]) is dict for field in ('artifacts', 'criteria', 'verifiers')), 'evidence_schema_gap')
+    for path, pin in value['artifacts'].items():
+        a2.FILE_REF.fields['path'](path)
+        digest(pin)
+    for criterion, checks in value['criteria'].items():
+        name(criterion)
+        require(type(checks) is list and bool(checks) and all(type(c) is str for c in checks) and len(checks) == len(set(checks)), 'evidence_schema_gap')
+        for check in checks:
+            name(check)
+    verifiers = {}
+    for entry, pins in value['verifiers'].items():
+        name(entry)
+        require(type(pins) is list and len(pins) == 3, 'evidence_schema_gap')
+        digest(pins[0])
+        digest(pins[1])
+        if pins[2] is not None:
+            digest(pins[2])
+        verifiers[entry] = tuple(pins)
+    require(type(value['required']) is list and all(type(c) is str for c in value['required']) and len(value['required']) == len(set(value['required'])), 'evidence_schema_gap')
+    for criterion in value['required']:
+        name(criterion)
+    required_stages = value.get('required_stages', {})
+    from trusted_router.async_settle_shadow_v2_a2_contract import REQUIRED_RULES
+    require(type(required_stages) is dict, 'evidence_schema_gap')
+    for stage, criteria in required_stages.items():
+        require(stage in REQUIRED_RULES and type(criteria) is list and bool(criteria) and all(type(c) is str for c in criteria)
+            and len(criteria) == len(set(criteria)) and set(criteria) <= set(value['required']), 'evidence_schema_gap')
+    require(not required_stages or {c for values in required_stages.values() for c in values} == set(value['required']), 'evidence_schema_gap')
+    return ReleasePlan('loading/release-plan.json', raw, value['artifacts'],
+        {k: tuple(v) for k, v in value['criteria'].items()}, verifiers, tuple(value['required']), {stage: tuple(values) for stage, values in required_stages.items()})
+
+
+def measurement_parsers(release: ReleasePlan | None) -> dict[str, Any]:
+    """The tool's approved producer format, selected by the original plan."""
+    from trusted_router.async_settle_shadow_v2_gate_inputs import SHUTDOWN_SOURCE
+    return {path: SHUTDOWN_SOURCE.parse for path in release.artifacts
+            if path.startswith('sources/measurement/')} if release is not None else {}

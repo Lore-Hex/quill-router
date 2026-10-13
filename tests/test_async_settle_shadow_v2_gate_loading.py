@@ -713,3 +713,145 @@ def test_prior_budget_linkage_to_current_approval(round9_originals: Any) -> None
     assert 'fleet' not in ctx.gates
     result = round9_render(transport(candidate), ports)
     assert 'positive_seed_gap' in result.gaps
+
+
+@pytest.mark.parametrize('scope', ['exact', 'seed'])
+def test_round11_explicit_observation_scope(round9_originals: Any, scope: str) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    _, raw, ports, _ = round9_originals
+    baseline = evaluate(load(raw, ports), ports, gate='shadow-serving')
+    assert baseline.verdict == 'PASS'
+    value = json.loads(raw)
+    value['window'] = dict(baseline.gate_report['window'])
+    if scope == 'seed':
+        value['window']['start_us'] = baseline.report.first_seed_us
+    explicit = evaluate(load(canonical(value), ports), ports, gate='shadow-serving')
+    assert explicit.verdict == 'PASS'
+    assert explicit.report.elapsed_seconds == baseline.report.elapsed_seconds == 18
+    assert render(explicit) == render(baseline)
+
+
+@pytest.mark.parametrize('change', ['earlier', 'later', 'tally', 'metric', 'rule'])
+def test_round11_coherent_prior_replay(round9_originals: Any, change: str) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_prior import _VERIFIED
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    _, raw, ports, _ = round9_originals
+    _VERIFIED.clear()
+    for _ in range(2):
+        assert evaluate(load(raw, ports), ports, gate='shadow-serving').verdict == 'PASS'
+    value = json.loads(raw)
+    output = json.loads(value['transport'])
+    report = json.loads(next(f['raw'] for f in value['preimages']
+        if roots.file_digest(f['raw'].encode()) == output['coverage_sha256']))
+    if change in ('earlier', 'later'):
+        report['completed_at_us'] += -2000000 if change == 'earlier' else 22000000
+        output['completed_at_us'] = report['completed_at_us']
+    elif change == 'metric':
+        report['fleet_peaks']['cpu_percent']['numerator'] += 1
+    elif change == 'rule':
+        report['rules']['G11'] = 'pass'
+    else:
+        # A self-consistent zero tally with changed completeness is still a lie
+        # about what rendering these original inputs produced.
+        report['failure_counts']['artifact_gap']['complete'] = False
+    report_raw = canonical(report)
+    output['coverage_sha256'] = roots.file_digest(report_raw)
+    value['preimages'].append(dict(name='prior-artifacts/' + output['coverage_sha256'], raw=report_raw.decode()))
+    value['transport'] = canonical(output).decode()
+    for _ in range(2):
+        result = round9_render(canonical(value), ports)
+        assert {'artifact_gap', 'boot_prerequisite_gap'} <= set(result.gaps)
+        assert any('prior_gate_original_graph: transport' in f.detail for f in result.failures)
+
+
+def test_round11_cache_restores_every_function_identity() -> None:
+    from trusted_router import async_settle_shadow_v2_a2_contract as contract
+    from trusted_router import async_settle_shadow_v2_gate_payloads as payloads
+    from trusted_router.async_settle_shadow_v2_schema import Schema
+    targets = [(contract, 'validate_preimages'), (contract, 'validate_gate_output'),
+        (contract, '_object_bytes'), (Schema, '_validate'), (Schema, 'parse'),
+        (payloads, 'retained_json'), (payloads.PayloadGraph, 'detail')]
+    originals = [getattr(owner, key) for owner, key in targets]
+    fixture = payloadgraph_shared_lookup_cache.__wrapped__()
+    next(fixture)
+    assert all(getattr(owner, key) is not original for (owner, key), original in zip(targets, originals, strict=True))
+    with pytest.raises(StopIteration):
+        next(fixture)
+    assert all(getattr(owner, key) is original for (owner, key), original in zip(targets, originals, strict=True))
+
+
+def test_round11_module_teardown_before_contract_subprocess() -> None:
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).parents[1]
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:xdist', '-p', 'no:cacheprovider',
+        'tests/test_async_settle_shadow_v2_gate_complete.py::test_original_bytes_stage_pass[transport]',
+        'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-key]',
+        'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-value]'],
+        cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, capture_output=True, text=True, check=False)  # noqa: S603
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_round11_prior_evaluated_once_per_content(round9_originals: Any, monkeypatch: Any) -> None:
+    from collections import Counter
+
+    from trusted_router import async_settle_shadow_v2_gates as gates
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_prior import _VERIFIED
+    _, raw, ports, _ = round9_originals
+    original = gates.evaluate
+    calls: Any = Counter()
+    def counted(bundle: Any, ports: Any = None, *, gate: str = 'pre-flip') -> Any:
+        calls[gate] += 1
+        return original(bundle, ports, gate=gate)
+    _VERIFIED.clear()
+    monkeypatch.setattr(gates, 'evaluate', counted)
+    for _ in range(2):
+        assert original(load(raw, ports), ports, gate='shadow-serving').verdict == 'PASS'
+    assert calls == {'transport': 1, 'fleet-budgets-pre': 1, 'fleet-budgets': 1}
+
+
+@pytest.mark.parametrize('field', ['policy_version', 'ledgers'])
+def test_round11_container_damage_retains_commitments(round9_originals: Any, field: str) -> None:
+    import json
+    _, raw, ports, _ = round9_originals
+    data = json.loads(raw)
+    data[field] = 'wrong-policy' if field == 'policy_version' else ['{}'] * 4097
+    result = round9_render(canonical(data), ports)
+    assert result.proof_manifest_sha256 == roots.file_digest(data['proof'].encode())
+    if field == 'policy_version':
+        assert 'policy_version_gap' in result.gaps
+
+
+def test_round11_prior_cache_includes_approval_pins(round9_originals: Any) -> None:
+    from dataclasses import replace
+
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_prior import _VERIFIED
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    _, raw, ports, _ = round9_originals
+    _VERIFIED.clear()
+    assert evaluate(load(raw, ports), ports, gate='shadow-serving').verdict == 'PASS'
+    damaged = replace(ports, approvals=tuple(replace(a, source_pin='0' * 64)
+        if a.entry_point.endswith('.verify_certificate') else a for a in ports.approvals))
+    result = round9_render(raw, damaged)
+    assert any('prior_gate_original_graph: transport' in f.detail for f in result.failures)
+
+
+def test_round11_invalid_completion_uses_original_scope_bound(round9_originals: Any) -> None:
+    import json
+    original, raw, ports, _ = round9_originals
+    data = json.loads(raw)
+    data['completed_at_us'] = float('inf')
+    result = round9_render(json.dumps(data).encode(), ports)
+    assert result.completed_at_us == original.completed_at_us
+    assert 'evidence_schema_gap' in result.gaps
