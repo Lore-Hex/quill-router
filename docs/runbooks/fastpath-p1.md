@@ -10,30 +10,27 @@ on `main`.
 
 ## What is done by hand, once
 
-1. **The workspace.** One of Joseph's own, made for this: a new workspace
-   under his user in the console, named `fastpath-synthetic`. No API key is
-   made for it, so nothing but leases can spend from it.
-2. **Its funding**, an admin grant Joseph approves, through the typed
-   ledger with an event ID that makes a retry idempotent (dry run first,
-   then `--apply`):
+1. **The workspace, its funding and its tier**, in one step the operator
+   runs on a machine signed in to GCP as themselves
+   (`gcloud auth application-default login` once): a workspace of their
+   own named `fastpath-synthetic` with no API key, so nothing but leases
+   can spend from it; funded by an admin grant through the typed ledger
+   with an event ID that makes a retry idempotent; and put at trust tier 1
+   by the override the internal admin route sets, since a grant is not a
+   payment and the rows would stay at tier 0, which the fleet refuses. Dry
+   run first, then `--apply`; the console has no way to create a
+   workspace, and the script is idempotent:
 
    ```bash
-   uv run python scripts/grant_credit.py --email josephjavierperla@tt.live --workspace-id WORKSPACE --amount 100 --event-id fastpath_p1_funding_2026_10 --apply
+   uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --apply
    ```
 
-   The amount in micro-credits (`100` USD is `100000000`) is `-funded` for
-   every audit below. Nothing of the fast path moves `total_credits`.
-3. **Its tier.** A grant is not a payment, so the workspace's credit rows
-   stay at trust tier 0 and the fleet, which needs tier 1, would refuse its
-   first grant. The override the internal admin route sets, through the
-   store, raises every shard's effective tier (dry run first, then
-   `--apply`):
-
-   ```bash
-   uv run python scripts/set_trust_override.py --workspace-id WORKSPACE --tier 1 --operator josephjavierperla@tt.live --reason "fastpath P1 synthetic workspace" --apply
-   ```
-
-4. **The watch's reads.** `fastpathwatch` reads Spanner's CPU and the
+   It prints the workspace's ID and `credits_total_microdollars`, what
+   the credit rows hold once the grant is in (`100` USD is `100000000`
+   micro-credits, plus whatever an owned workspace of the name already
+   held): that total is the `FUNDED` of every audit below. Nothing of the
+   fast path moves `total_credits`.
+2. **The watch's reads.** `fastpathwatch` reads Spanner's CPU and the
    subscriptions' backlogs from Cloud Monitoring as the node, so the nodes'
    service account gets `roles/monitoring.viewer` beside the writer roles
    P0 gave it:
@@ -42,7 +39,7 @@ on `main`.
    gcloud projects add-iam-policy-binding quill-cloud-proxy --member=serviceAccount:tr-fastpath-node@quill-cloud-proxy.iam.gserviceaccount.com --role=roles/monitoring.viewer --condition=None --quiet
    ```
 
-5. **A release from P1 on** pinned in `infra/fastpath.tf`
+3. **A release from P1 on** pinned in `infra/fastpath.tf`
    (`fastpath_release`), so the nodes carry `loadgen`, `fastpathwatch` and
    `load-mix.json` in `/opt/fastpath`; then the nodes reset (P0's runbook).
    Done 2026-10-13 02:10Z with bfa94e22e.
@@ -56,7 +53,8 @@ gcloud compute ssh tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-prox
 ```
 
 with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
-`WS` the workspace's ID, `FUNDED` its funding in micro-credits, and `FRONT`
+`WS` the workspace's ID, `FUNDED` the `credits_total_microdollars` the
+provisioner printed, and `FRONT`
 the nodes' front doors by their internal IPs, which a node keeps only
 until it is replaced (a change to the startup script replaces both nodes,
 as the apply of 2026-10-13 01:38Z did):
