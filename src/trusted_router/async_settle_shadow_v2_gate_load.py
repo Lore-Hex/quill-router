@@ -261,3 +261,76 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
     if budget.close_transactions < 2 * closes or budget.close_rows < 7 * closes or budget.close_elapsed_us > 2000000 or budget.handoff_elapsed_us > 2000000 or budget.close_elapsed_us + budget.handoff_elapsed_us > min(4000000, budget.grace_us):
         ctx.issue('close_handoff_budget_gap', 'separate final/close-result transaction budget')
     return peaks
+
+
+def measured_peaks(ctx: Context, region: str | None, *, publisher: bool = False) -> dict[str, Any]:
+    """Sum simultaneous load evidence, then maximize; never sum historical peaks.
+
+    LOAD_SEGMENT rates are conservative bounds on their half-open intervals.
+    Null in any active contributor invalidates that component for the scope.
+    Configured projections and measured CPU come from the approved Budget.
+    """
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_load_evidence import segments
+    budget, cohort = ctx.bundle.budget, ctx.bundle.cohort
+    independent = ('simultaneous_routers', 'simultaneous_publishers', 'reads_per_second',
+                   'pending_rows_per_second', 'trust_rows_per_second', 'health_rows_per_second')
+    result: dict[str, Any] = {k: None for k in a2.PEAKS.fields if k not in independent}
+    if budget is None or cohort is None:
+        return result
+    values = segments(ctx.bundle, ctx.gate)
+    try:
+        require(values is not None)
+        assert values is not None
+        for segment in values:
+            a2.LOAD_SEGMENT(segment)
+        expected = {(r.boot, r.start_us, r.end_us) for r in budget.rates}
+        require(expected == {(s['boot'], s['start_us'], s['end_us']) for s in values if s['role'] == 'router'})
+        require(len(values) == len({(s['boot'], s['start_us'], s['end_us']) for s in values}))
+        boots = {b.boot: b for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else {}
+        require(all(s['boot'] in boots and s['region'] == boots[s['boot']].region
+            and s['contender'] == boots[s['boot']].contender and s['role'] == boots[s['boot']].role
+            and s['workspace_count'] == cohort.workspace_count and s['day'] == day_at(s['start_us']) for s in values))
+    except (ValueError, KeyError, TypeError):
+        values = None
+    scoped = tuple(s for s in values or () if s['role'] == 'router' and (region is None or s['region'] == region) and (not publisher or s['contender']))
+    fields = tuple(a2.PEAKS.fields)
+    measured = fields[4:7] + fields[11:16]
+    maxima: dict[str, Fraction | None] = dict.fromkeys(measured, Fraction(0) if values is not None else None)
+    edges = sorted({s[k] for s in scoped for k in ('start_us', 'end_us')})
+    for at in edges[:-1]:
+        active = [s for s in scoped if s['start_us'] <= at < s['end_us']]
+        for name in measured:
+            parts = [s['peaks'][name] for s in active]
+            old = maxima[name]
+            if old is None or any(p is None for p in parts):
+                maxima[name] = None
+            else:
+                maxima[name] = max(old, sum((Fraction(p['numerator'], p['denominator']) if isinstance(p, dict) else Fraction(p) for p in parts), Fraction(0)))
+    cap = budget.fleet_cap if region is None else budget.regional_caps.get(region)
+    publishers = budget.publisher_cap if region is None or region == cohort.primary_region else 0
+    result.update(configured_routers=None if cap is None else cap + budget.surge, configured_publishers=publishers)
+    for name, number in maxima.items():
+        result[name] = None if number is None else int(number) if name.endswith('_1s') else dict(numerator=number.numerator, denominator=number.denominator)
+    configured = 0 if cap is None else cap + budget.surge
+    projections = {
+        'configured_reads_per_second': lambda: Fraction(configured) * (Fraction(cohort.workspace_count, 4) + 1) + (Fraction(budget.publisher_reads) if publishers else 0),
+        'configured_pending_rows_per_second': lambda: Fraction(configured * 1001 * cohort.workspace_count, 4),
+        'cpu_percent': lambda: Fraction(budget.cpu_peak),
+    }
+    for name, project in projections.items():
+        try:
+            number = project()
+            result[name] = dict(numerator=number.numerator, denominator=number.denominator)
+        except (ValueError, OverflowError, TypeError):
+            result[name] = None
+    for name, check in a2.PEAKS.fields.items():
+        if name not in result:
+            continue
+        try:
+            check(result[name])
+        except ValueError:
+            result[name] = None
+    if cap is None:
+        result['configured_reads_per_second'] = result['configured_pending_rows_per_second'] = None
+    return result

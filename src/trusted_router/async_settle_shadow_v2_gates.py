@@ -8,7 +8,7 @@ from typing import Any
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router import async_settle_shadow_v2_gate_report as a2report
-from trusted_router.async_settle_shadow_v2_a2_contract import REQUIRED_RULES
+from trusted_router.async_settle_shadow_v2_a2_contract import PASS_AGGREGATES, REQUIRED_RULES
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
 from trusted_router.async_settle_shadow_v2_gate_accounting import (
     PREREQUISITES,
@@ -23,7 +23,8 @@ from trusted_router.async_settle_shadow_v2_gate_bundle import (
     decode_bundle,
     verify_samples,
 )
-from trusted_router.async_settle_shadow_v2_gate_failures import PRODUCERS, normalize
+from trusted_router.async_settle_shadow_v2_gate_failures import collect as collect_failures
+from trusted_router.async_settle_shadow_v2_gate_failures import normalize
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Ports
 from trusted_router.async_settle_shadow_v2_gate_load import load_budgets, observer_health
 from trusted_router.async_settle_shadow_v2_gate_result import (
@@ -59,7 +60,7 @@ def resets(ctx: Context) -> tuple[int, ...]:
             history.append(dict(at_us=sample['observed_at_us'], revision=sample['deployment']['router_revision'], reason=sample['classification']))
     for counter in ctx.kind(p1.KINDS[3]):
         if counter['diagnostics'].get('exclusion_conflict', 0):
-            ctx.issue('exclusion_conflict', 'conflicting exclusion retained in counter', Subject(counter['day'], counter['boot']))
+            history.append(dict(at_us=counter['flushed_at_us'], revision=counter['router_revision'], reason='exclusion_conflict'))
         if counter['last_mismatch_at_us'] is not None or counter['conflicting_samples']:
             history.append(dict(at_us=counter['last_mismatch_at_us'], revision=counter['router_revision'], reason='counter_mismatch'))
     try:
@@ -76,11 +77,33 @@ def resets(ctx: Context) -> tuple[int, ...]:
         invoke_retained(ctx, 'collect_rollbacks', history, serving, support.proof.get('resolved_mismatches', []), manifests)
     except (ValueError, KeyError, TypeError):
         ctx.issue('missing_support', 'invalid retained reset/resolution evidence')
+    from trusted_router.async_settle_shadow_v2_gate_resets import normalized, supported
+    from trusted_router.detached_jws import canonical
+    entries: dict[bytes, dict[str, Any]] = {}
     for reset in history:
-        reason = reset['reason'] if reset['reason'] in names('G9') else 'missing_support'
-        if 'resolved_at_us' not in reset or 'invalidated_at_us' in reset:
-            ctx.issue(reason, 'unresolved correctness history', Subject(object_id=str(reset.get('at_us'))))
-    return tuple(sorted(r['at_us'] for r in history if type(r.get('at_us')) is int))
+        try:
+            entry = normalized(reset)
+        except (ValueError, KeyError, TypeError):
+            if reset.get('reason') in names('G9'):
+                ctx.issue(reset['reason'], 'reset assertion identity unavailable', Subject(wire=a2.N()), unavailable=True)
+            ctx.issue('missing_support', 'reset identity cannot be normalized')
+            ctx.issue('artifact_gap', 'reset history identity unavailable')
+            continue
+        wire = a2.Q(entry)
+        identity = canonical(wire)
+        if identity in entries and entries[identity] != entry:
+            ctx.issue('missing_support', 'conflicting reset resolution records', Subject(wire=wire))
+            ctx.issue('artifact_gap', 'reset history conflict')
+            continue
+        entries[identity] = entry
+        if not supported(ctx, entry):
+            ctx.issue('missing_support', 'reset provenance unavailable', Subject(wire=wire))
+            ctx.issue('artifact_gap', 'reset support bytes unavailable')
+        elif entry['resolved_at_us'] is None or entry['invalidated_at_us'] is not None:
+            ctx.issue(entry['reason'], 'unresolved correctness history', Subject(wire=wire))
+    ctx.reset_history = [entries[key] for key in sorted(entries)]
+    return tuple(sorted(r['at_us'] for r in ctx.reset_history if r['at_us'] is not None))
+
 
 
 def external(ctx: Context) -> None:
@@ -250,14 +273,35 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
     normalize(ctx)
     if any(i.gap == 'evidence_schema_gap' for i in ctx.issues):
         ctx.issue('artifact_gap', 'incomplete evaluation after schema damage')
-    failures = tuple(failure for rule in a2.FAILURE_RULES if rule.rule in selected
-                     for failure in PRODUCERS[rule.name](ctx))
+    failures = collect_failures(ctx, selected)
     metrics = report(ctx, peaks, start, elapsed, reset_times, gap_times)
     gate_report = None
     streams: dict[str, list[dict[str, Any]]] = {}
     leaves: dict[str, bytes] = {}
     if window is not None and populations is not None and ctx.proof is not None:
         gate_report, streams, leaves = a2report.build(ctx, failures, metrics, window, populations, records(ctx))
+        unavailable: list[str] = []
+        for rule, paths in PASS_AGGREGATES[gate].items():
+            if gate_report['rules'][rule] in ('not_required', 'unevaluable'):
+                continue
+            for path in paths:
+                value = gate_report
+                for part in path.split('.'):
+                    value = value[part]
+                if value is None:
+                    unavailable.append(rule)
+                    gap = {'G6': 'publisher_trace_gap', 'G7': 'close_handoff_budget_gap' if path.startswith('timing.') else 'fleet_headroom_gap',
+                           'G8': 'handoff_coverage_gap' if path.startswith(('handoff.', 'timing.handoff', 'timing.drain')) else 'writer_closure_gap'}.get(rule, names(rule)[0])
+                    ctx.issue(gap, 'required aggregate unavailable: ' + path, unavailable=True)
+                    break
+        if unavailable:
+            ctx.issue('artifact_gap', 'required report aggregate unavailable')
+            normalize(ctx)
+            failures = collect_failures(ctx, selected)
+            gate_report, streams, leaves = a2report.build(ctx, failures, metrics, window, populations, records(ctx))
+            for rule in unavailable:
+                gate_report['rules'][rule] = 'unevaluable'
+
     return Result(gate, bundle.completed_at_us, file_digest(bundle.proof) if bundle.proof else None,
                   ctx.proof['ledger_root'] if ctx.proof else None,
                   tuple(sorted({f.gap for f in failures})), failures, metrics, gate_report, streams, leaves)

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from trusted_router.async_settle_shadow_v2_gate_bundle import Context
 
 
-def peaks(value: Peak | None) -> dict[str, Any]:
+def peaks(value: Peak | None, ctx: Context, *, publisher: bool = False) -> dict[str, Any]:
     result = dict.fromkeys(a2.PEAKS.fields)
     if value is not None:
         result.update(simultaneous_routers=value.simultaneous, simultaneous_publishers=value.publisher_simultaneous)
@@ -31,6 +31,14 @@ def peaks(value: Peak | None) -> dict[str, Any]:
                             ('trust_rows_per_second', value.trust), ('health_rows_per_second', value.health)):
             fraction = Fraction(str(number))
             result[key] = dict(numerator=fraction.numerator, denominator=fraction.denominator)
+    from trusted_router.async_settle_shadow_v2_gate_load import measured_peaks
+    if value is not None:
+        result.update(measured_peaks(ctx, value.region, publisher=publisher))
+    for key, check in a2.PEAKS.fields.items():
+        try:
+            check(result[key])
+        except ValueError:
+            result[key] = None
     return result
 
 
@@ -48,10 +56,14 @@ def population(ctx: Context, window: dict[str, int], required: tuple[str, ...]) 
     available_samples = terminal_complete and len([s for s in all_samples if (s['original_terminal_receipt']['day'], s['original_terminal_receipt']['boot']) in expected]) == sum(c['samples_inserted'] for c in counters)
     references = {(e['authorization_day'], e['authorization_id']) for e in terminals if e['partition'] == 'A'}
     available_samples &= references <= {(s['authorization_day'], s['authorization_id']) for s in all_samples}
+    by_boot = {b.boot: b.region for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else {}
+    available_samples &= all(s['deployment']['instance'] == s['original_terminal_receipt']['boot']
+        and s['deployment']['region'] == by_boot.get(s['original_terminal_receipt']['boot']) for s in samples)
     slots = [e for page in ctx.attached('publisher_trace') for e in page['entries'] if left <= e['slot'] * 2000000 < right]
     available_slots = known and not any(i.gap == 'publisher_trace_gap' for i in ctx.issues)
     shutdown = [v for v in ctx.attached('shutdown_entry') if left < v['interval_end_us'] <= right]
-    expected_closes = {(c['day'], c['boot']) for c in counters if left < c['flushed_at_us'] <= right}
+    expected_closes = {(m['day'], boot) for m in ctx.kind(p1.KINDS[5]) if 'router_writers' in m
+        for boot, writer in m['router_writers'].items() if left < writer['lifetime']['end_us'] <= right}
     known_closes = known and expected_closes == {(s['day'], s['boot']) for s in shutdown}
     closes = [v for v in ctx.kind(a1.KINDS[-1]) if (v['day'], v['boot']) in expected_closes]
     known_results = known_closes and {(v['day'], v['boot']) for v in closes} == expected_closes
@@ -62,7 +74,7 @@ def population(ctx: Context, window: dict[str, int], required: tuple[str, ...]) 
         (terminal_complete, 'G5', 'terminal_coverage_gap'), (available_slots, 'G6', 'publisher_trace_gap'),
         (known_results, 'G8', 'writer_closure_gap'), (known_measurements, 'G8', 'close_handoff_budget_gap')):
         if rule in required and not available:
-            ctx.issue(gap, 'required metric population unavailable')
+            ctx.issue(gap, 'required metric population unavailable', unavailable=True)
             ctx.issue('artifact_gap', 'required metric source unavailable')
     return dict(samples=samples if available_samples and 'G5' in required else None,
         terminals=terminals if terminal_complete and 'G5' in required else None,
@@ -109,7 +121,10 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
         writers.append(dict(**TAG, day=day, boot=boot, role=role, revision=inventoried.revision,
             region=inventoried.region, interval=interval, **metrics,
             first_seed_at_us=legacy.first_seed_us if any(s['deployment']['instance'] == boot and s['observed_at_us'] == legacy.first_seed_us for s in populations['samples'] or []) else None,
-            first_reset_at_us=None, first_gap_at_us=None))
+            first_reset_at_us=None if role != 'router' or any(r['at_us'] is None and r['revision'] == inventoried.revision for r in ctx.reset_history) else min((r['at_us'] for r in ctx.reset_history if r['at_us'] is not None
+                and r['revision'] == inventoried.revision and interval['start_us'] <= r['at_us'] < interval['end_us']), default=None),
+            first_gap_at_us=min((max(interval['start_us'], g['interval']['start_us']) for g in manifest['gaps']
+                if g['interval']['start_us'] < interval['end_us'] and interval['start_us'] < g['interval']['end_us']), default=None) if manifest else None))
     by_boot = {b.boot: b.region for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else {}
     regions = []
     for region in sorted(set(by_boot.values())):
@@ -124,18 +139,27 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
             selected[pop] = None if values is None or any(actual(v) is None for v in values) else [v for v in values if actual(v) == region]
         observed = observations(**selected)
         regions.append(dict(**TAG, region=region, writer_days=sum(w['region'] == region for w in writers),
-            peaks=peaks(next((p for p in legacy.peaks or () if p.region == region), None)), timing=observed['timing'],
+            peaks=peaks(next((p for p in legacy.peaks or () if p.region == region), None), ctx), timing=observed['timing'],
             seed_at_us=min((s['observed_at_us'] for s in populations['samples'] or [] if s['deployment']['region'] == region and s['authorization_day'] + '/' + s['authorization_id'] in ctx.verified), default=None)))
     tallies, listed = listing(failures, ctx.bundle.days)
     inputs, leaves = input_inventory(ctx)
-    streams = dict(writers=writers, regions=regions, failures=listed, input_inventory=inputs, reset_history=[])
+    streams = dict(writers=writers, regions=regions, failures=listed, input_inventory=inputs, reset_history=sorted(ctx.reset_history, key=lambda r: (-1 if r['at_us'] is None else r['at_us'], r['revision'], r['reason'], r['support']['root'])))
     details = {}
     pages = {}
     for stream, entries in streams.items():
         details[stream], pages[stream] = detail(entries, stream)
     publisher: dict[str, Any] = {field: total(c['publisher'][field] for c in all_counters) if available and 'G6' in required else None
                  for field in a2.PUBLISHER.fields if field != 'peaks'}
-    publisher['peaks'] = peaks(None)
+    from trusted_router.async_settle_shadow_v2_gate_load import sweep
+    publisher_sweep: tuple[Peak, ...] = ()
+    if ctx.bundle.inventory and ctx.bundle.budget and ctx.bundle.cohort and 'G6' in required:
+        boots = tuple(b for b in ctx.bundle.inventory.boots if b.role == 'router' and b.contender)
+        rates = tuple(r for r in ctx.bundle.budget.rates if any(b.boot == r.boot for b in boots))
+        try:
+            publisher_sweep = sweep(boots, rates, ctx.bundle.cohort.workspace_count, ctx.bundle.completed_at_us)
+        except ValueError:
+            pass
+    publisher['peaks'] = peaks(next((p for p in publisher_sweep if p.region is None), None), ctx, publisher=True)
     handoffs = ctx.attached('handoff_accounting')
     handoff = {field: total(int(h['expected_handoffs' if field == 'expected' else field]) for h in handoffs) if available and 'G8' in required and len(handoffs) == len(expected) else None
                for field in a2.HANDOFF.fields}
@@ -145,10 +169,10 @@ def build(ctx: Context, failures: tuple[Failure, ...], legacy: Report, window: d
     output = dict(**TAG, gate=ctx.gate, completed_at_us=ctx.bundle.completed_at_us,
         proof_manifest_sha256=file_digest(ctx.bundle.proof), prerequisite_ledger_root=ctx.proof['ledger_root'],
         days=list(ctx.bundle.days), window=window,
-        rules={f'G{i}': 'not_required' if f'G{i}' not in required else 'fail' if any(f.rule == f'G{i}' for f in failures) else 'pass' for i in range(1, 12)},
+        rules={f'G{i}': 'not_required' if f'G{i}' not in required else 'unevaluable' if any(issue.unavailable and next(r.rule for r in a2.FAILURE_RULES if r.name == issue.gap) == f'G{i}' for issue in ctx.issues) else 'fail' if any(f.rule == f'G{i}' for f in failures) else 'pass' for i in range(1, 12)},
         **aggregate, handoff=handoff, publisher=publisher,
-        fleet_peaks=peaks(next((p for p in legacy.peaks or () if p.region is None), None)), **observations(**populations),
-        first_seed_at_us=legacy.first_seed_us, first_reset_at_us=min(legacy.reset_timestamps_us, default=None),
+        fleet_peaks=peaks(next((p for p in legacy.peaks or () if p.region is None), None), ctx), **observations(**populations),
+        first_seed_at_us=legacy.first_seed_us, first_reset_at_us=None if any(r['at_us'] is None for r in ctx.reset_history) else min(legacy.reset_timestamps_us, default=None),
         first_gap_at_us=min(legacy.gap_timestamps_us, default=None), clock_start_us=legacy.clock_start_us,
         elapsed_seconds=None if legacy.clock_start_us is None else (window['end_us'] - legacy.clock_start_us) // 1000000,
         failure_counts=tallies, **details, verifiers=verifiers,

@@ -1,6 +1,7 @@
 """Lossless internal gate results; the output attachment seam is deliberately closed."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, Literal
@@ -35,6 +36,22 @@ class Failure:
     object_ids: tuple[str, ...]
     detail: str
     days: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FailureSummary:
+    count: int
+    day_counts: dict[str, int]
+
+
+class FailureSet(tuple[Failure, ...]):
+    """Only canonical prefixes are retained; exact totals travel separately."""
+    summaries: dict[str, FailureSummary]
+
+    def __new__(cls, prefix: Iterable[Failure], summaries: dict[str, FailureSummary]) -> FailureSet:
+        result = super().__new__(cls, prefix)
+        result.summaries = summaries
+        return result
 
 
 @dataclass(frozen=True)

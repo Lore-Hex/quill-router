@@ -5,18 +5,20 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
-from trusted_router.async_settle_shadow_v2_schema import integer
+from trusted_router.async_settle_shadow_v2_schema import INT64
 
 if TYPE_CHECKING:
     from trusted_router.async_settle_shadow_v2_gate_bundle import Context
 
 
 def total(values: Iterable[int | None]) -> int | None:
-    items = list(values)
-    if None in items:
-        return None
-    result = sum(v for v in items if v is not None)
-    integer(result)
+    result = 0
+    for value in values:
+        if value is None or type(value) is not int or not 0 <= value <= INT64:
+            return None
+        result += value
+        if result > INT64:
+            return None
     return result
 
 
@@ -24,6 +26,8 @@ def stat(values: Iterable[int | None] | None) -> dict[str, Any]:
     if values is None:
         return dict.fromkeys(a2.STAT.fields)
     items = list(values)
+    if any(v is not None and (type(v) is not int or not 0 <= v <= INT64) for v in items):
+        return dict.fromkeys(a2.STAT.fields)
     known = sorted(v for v in items if v is not None)
     result = dict(count=len(known), null_count=len(items) - len(known),
                   min=known[0] if known else None, max=known[-1] if known else None)
@@ -45,6 +49,8 @@ def deltas(values: Iterable[int | None] | None) -> dict[str, Any]:
     if values is None:
         return dict(count=None, null_count=None, min_micro=None, max_micro=None, bins=dict.fromkeys(a2.BINS))
     items = list(values)
+    if any(v is not None and (type(v) is not int or not -INT64 <= v <= INT64) for v in items):
+        return deltas(None)
     known = [v for v in items if v is not None]
     bins = dict.fromkeys(a2.BINS, 0)
     for value in known:
@@ -73,31 +79,51 @@ def ratio(numerator: int | None, denominator: int | None, *, required: bool, clo
     return result
 
 
+def series(items: list[dict[str, Any]] | None, *path: str, required: bool = False) -> list[Any] | None:
+    if items is None:
+        return None
+    result = []
+    for item in items:
+        value: Any = item
+        for key in path:
+            if not isinstance(value, dict) or key not in value:
+                return None
+            value = value[key]
+        if required and value is None:
+            return None
+        result.append(value)
+    return result
+
+
+def nulls_in(items: list[Any] | None) -> int | None:
+    return None if items is None else total(int(v is None) for v in items)
+
+
 def observations(*, samples: list[dict[str, Any]] | None, terminals: list[dict[str, Any]] | None,
                  slots: list[dict[str, Any]] | None, closes: list[dict[str, Any]] | None,
                  handoffs: list[dict[str, Any]] | None, terminations: list[dict[str, Any]] | None) -> dict[str, Any]:
     timing = {}
     for name in a2.TIMINGS[:8]:
         parent = 'admission' if name in ('workspace_age_us', 'health_age_us') else 'timing'
-        timing[name] = stat(None if samples is None else [s[parent][name] for s in samples])
+        timing[name] = stat(series(samples, parent, name))
     for name, field in (('publisher_cycle_us', 'cycle_us'), ('publisher_slot_rpc_elapsed_us', 'rpc_elapsed_us')):
-        timing[name] = stat(None if slots is None else [s[field] for s in slots])
+        timing[name] = stat(series(slots, field, required=field == 'rpc_elapsed_us'))
     for name, items, field in (('close_us', closes, 'elapsed_us'), ('handoff_us', handoffs, 'result_us'),
                                ('drain_us', terminations, 'final_pass_us')):
-        timing[name] = stat(None if items is None else [s[field] for s in items])
-    delta = deltas(None if samples is None else [s['booked_minus_frozen'] for s in samples])
-    nulls = dict(eligibility=None if samples is None else sum(s['eligibility']['observed'] is None for s in samples),
-        booking=None if samples is None else sum(s['booked_micro'] is None for s in samples),
-        comparison=None if terminals is None else sum(t['comparison'] is None for t in terminals),
-        prediction=None if terminals is None else sum(t['prediction'] is None for t in terminals),
+        timing[name] = stat(series(items, field, required=True))
+    delta = deltas(series(samples, 'booked_minus_frozen'))
+    nulls = dict(eligibility=nulls_in(series(samples, 'eligibility', 'observed')),
+        booking=nulls_in(series(samples, 'booked_micro')),
+        comparison=nulls_in(series(terminals, 'comparison')),
+        prediction=nulls_in(series(terminals, 'prediction')),
         timing=total(s['null_count'] for s in timing.values()), delta=delta['null_count'])
     if samples is not None:
-        assert all(timing[k]['count'] + timing[k]['null_count'] == len(samples) for k in a2.TIMINGS[:8])
-        assert delta['count'] + delta['null_count'] == len(samples)
-        assert timing['evidence_write_us']['count'] == 0
+        assert all(timing[k]['count'] + timing[k]['null_count'] == len(samples) for k in a2.TIMINGS[:8] if timing[k]['count'] is not None)
+        assert delta['count'] is None or delta['count'] + delta['null_count'] == len(samples)
+        assert timing['evidence_write_us']['count'] in (0, None)
     if slots is not None:
-        assert all(timing[k]['count'] + timing[k]['null_count'] == len(slots) for k in a2.TIMINGS[8:10])
-        assert timing['publisher_slot_rpc_elapsed_us']['null_count'] == 0
+        assert all(timing[k]['count'] + timing[k]['null_count'] == len(slots) for k in a2.TIMINGS[8:10] if timing[k]['count'] is not None)
+        assert timing['publisher_slot_rpc_elapsed_us']['null_count'] in (0, None)
     return dict(timing=timing, deltas=delta, null_counts=nulls)
 
 

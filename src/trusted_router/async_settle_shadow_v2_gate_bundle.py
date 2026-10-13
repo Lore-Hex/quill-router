@@ -32,6 +32,7 @@ class Issue:
     detail: str
     object_ids: tuple[str, ...] = ()
     count: int = 1
+    unavailable: bool = False
 
 
 @dataclass
@@ -50,6 +51,7 @@ class Context:
     obligations: list[dict[str, Any]] = field(default_factory=list)
     salvaged_events: list[tuple[dict[str, Any], dict[str, Any]]] = field(default_factory=list)
     release_files: dict[str, bytes] = field(default_factory=dict)
+    reset_history: list[dict[str, Any]] = field(default_factory=list)
 
     def kind(self, kind: str) -> list[dict[str, Any]]:
         return [v for k, v in self.rows.items() if k.kind == kind]
@@ -61,9 +63,9 @@ class Context:
         return [(page, event) for page in self.kind(p1.KINDS[2]) for event in page['events']] + self.salvaged_events
 
     def issue(self, gap: str, detail: str, subject: Subject = Subject(),
-              ids: tuple[str, ...] = (), *, count: int | None = None) -> None:
+              ids: tuple[str, ...] = (), *, count: int | None = None, unavailable: bool = False) -> None:
         a2.GAP_NAME(gap)
-        self.issues.append(Issue(gap, subject, detail, tuple(sorted(ids)), len(ids) or 1 if count is None else count))
+        self.issues.append(Issue(gap, subject, detail, tuple(sorted(ids)), (len(ids) or 1) if count is None else count, unavailable))
 
 
 def subject(value: dict[str, Any], object_id: str | None = None) -> Subject:

@@ -48,6 +48,22 @@ def basis_damage(bundle: Bundle, damage: str) -> Bundle:
     return change_row(result, p1.KINDS[2], lambda p: p['events'][1]['prediction'].update(basis_sha256=sha256(basis)))
 
 
+def with_reset(bundle: Bundle, reason: str, at_us: int = START + 1) -> Bundle:
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_failures import detail
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
+    raw = canonical(dict(at_us=at_us, revision='a' * 40, reason=reason))
+    path = 'reset-facts/' + file_digest(raw)
+    files = [dict(path=path, sha256=file_digest(raw), bytes=len(raw))]
+    support, _ = detail(files, 'files')
+    entry = dict(at_us=at_us, revision='a' * 40, reason=reason, support=support,
+                 resolved_at_us=None, fixed_revision=None, invalidated_at_us=None)
+    assert bundle.reset_support
+    return replace(bundle, reset_support=replace(bundle.reset_support, resets=(entry,)),
+        preimages=(*bundle.preimages, Preimage(path, raw)),
+        a2_streams={**bundle.a2_streams, 'files/' + support['root']: files})
+
+
 def damage(bundle: Bundle, gap: str) -> Bundle:
     def counter(fn: Any) -> Bundle:
         return change_row(bundle, p1.KINDS[3], fn)
@@ -142,14 +158,11 @@ def damage(bundle: Bundle, gap: str) -> Bundle:
         return replace(bundle, rows=(*bundle.rows, Row(row.key, canonical(value))))
     if gap == 'handoff_coverage_gap':
         return replace(bundle, attachments=tuple(r for r in bundle.attachments if r.key.kind != 'handoff_accounting'))
-    if gap == 'exclusion_conflict':
-        return counter(lambda c: c['diagnostics'].update(exclusion_conflict=1))
     if gap == 'missing_support':
         return replace(bundle, reset_support=None)
     if gap in names('G9'):
         assert bundle.reset_support
-        return replace(bundle, reset_support=replace(bundle.reset_support,
-            resets=(dict(at_us=START + 1, revision='a' * 40, reason=gap),)))
+        return with_reset(bundle, gap)
     if gap == 'positive_seed_gap':
         gate = json.loads(bundle.transport)
         gate['completed_at_us'] = START + 2000000
@@ -212,9 +225,11 @@ def test_lossless_more_than_128_subjects() -> None:
     for i in range(200):
         context.issue('writer_closure_gap', 'absent', Subject('2026-10-06', f'boot{i}'), tuple(f'receipt{j:04}' for j in range(300)))
     failures = PRODUCERS['writer_closure_gap'](context)
-    assert len(failures) == 200
+    assert len(failures) == 16
+    assert failures.summaries['writer_closure_gap'].count == 200
+    assert failures.summaries['writer_closure_gap'].day_counts == {'2026-10-06': 200}
     assert all(f.count == 1 and len(f.object_ids) == 300 for f in failures)
-    assert len({f.subject['boot'] for f in failures}) == 200
+    assert len({f.subject['boot'] for f in failures}) == 16
 
 
 def test_evaluates_later_rules_after_failure(passing: Bundle) -> None:
@@ -494,3 +509,358 @@ def test_completion_reuses_contextual_contract(name: str) -> None:
     ctx = decode_bundle(Bundle(rows=rows[1:]), ports(), 'pre-flip')
     durability(ctx)
     assert any(i.gap == 'retry_original_gap' for i in ctx.issues)
+
+
+def test_all_required_peak_sources_and_missing_component(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_load_evidence import BudgetEvidence
+    assert isinstance(passing.budget, BudgetEvidence)
+    result = evaluate(passing, ports(), gate='fleet-budgets-pre')
+    raw, _ = render(result)
+    assert json.loads(raw)['verdict'] == 'PASS'
+    assert result.gate_report['fleet_peaks']['cpu_percent'] == dict(numerator=20, denominator=1)
+    assert result.gate_report['fleet_peaks']['configured_reads_per_second'] == dict(numerator=13, denominator=4)
+    assert result.gate_report['fleet_peaks']['reads_per_second'] == dict(numerator=13, denominator=4)
+    assert result.gate_report['fleet_peaks']['export_operations_per_second'] == dict(numerator=2, denominator=5)
+    assert result.gate_report['publisher']['peaks']['export_operations_per_second'] is None
+    for field in ('startup_operations_1s', 'close_operations_1s', 'export_operations_1s',
+                  'claim_operations_per_second', 'scan_operations_per_second',
+                  'publication_operations_per_second', 'export_operations_per_second', 'export_bytes_per_second'):
+        source = passing.budget.load_segments[0]
+        bad = replace(passing, budget=replace(passing.budget,
+            load_segments=({**source, 'peaks': {**source['peaks'], field: None}}, *passing.budget.load_segments[1:])))
+        blocked = evaluate(bad, ports(), gate='fleet-budgets-pre')
+        assert blocked.gate_report['fleet_peaks'][field] is None
+        assert blocked.gate_report['rules']['G7'] == 'unevaluable'
+        assert json.loads(render(blocked)[0])['verdict'] == 'BLOCKED'
+
+
+# Normative singleton populations cannot contain three distinct subjects. This
+# named seam records that contract limit rather than making up noncanonical IDs.
+SINGLETON_POPULATIONS = frozenset(('pre_enable_budget', 'pilot_prerequisite_gap',
+    'evidence_export_budget_gap', 'positive_seed_gap', 'continuous_window_gap'))
+
+
+@pytest.mark.parametrize('rule', FAILURE_RULES, ids=lambda row: row.name)
+def test_all_failure_populations(rule, passing: Bundle, positive_results: dict[str, Any]) -> None:
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_failures import detail, listing, normalize
+    from trusted_router.async_settle_shadow_v2_gate_resets import normalized
+    from trusted_router.async_settle_shadow_v2_gate_result import Dimensions
+    def one(index):
+        day, boot = f'2026-10-{5 + index:02}', 'boot' + str(index)
+        ctx = Context(Bundle(days=(day,)), None, 'pre-flip')
+        code = rule.constructor[0]
+        if code == 'W':
+            sub, wire = Subject(day, boot), a2.W(day, 'router', boot)
+        elif code == 'D':
+            sub, wire = Subject(day), a2.D(day)
+        elif code == 'B':
+            dims = dict(adapter='openai', route_type='chat.completions', streamed=False)
+            sub, wire = Subject(day, boot, 'settle', Dimensions(**dims)), a2.B(day, boot, 'settle', dims)
+        elif code == 'A':
+            sub, wire = Subject(), a2.A('pre')
+        elif code == 'N':
+            sub, wire = Subject(), a2.N()
+        elif code == 'V':
+            sub, wire = Subject(object_id='region' + str(index)), a2.V('region' + str(index))
+        elif code == 'P':
+            name = 'pilot' if rule.name == 'pilot_prerequisite_gap' else 'proof' + str(index)
+            sub, wire = Subject(object_id=name), a2.P('pre-flip', name)
+        elif code == 'K':
+            # A diagnosed stage/scope is one assertion, not both stages.
+            wire = a2.K('post', 'region' + str(index))
+            sub = Subject(wire=wire)
+        elif code == 'Q':
+            entry = normalized(dict(at_us=START + index, revision='a' * 40,
+                reason='hash' if rule.name == 'missing_support' else rule.name))
+            ctx.reset_history = [entry]
+            sub, wire = Subject(object_id=str(START + index)), a2.Q(entry)
+        elif code == 'E':
+            page = json.loads(next(r.raw for r in passing.rows if r.key.kind == p1.KINDS[2]))
+            event = page['events'][0 if rule.rule == 'G3' else 1]
+            page = {**page, 'boot': boot}
+            event = {**event, 'seq': f'{index + 1:020}'}
+            if event.get('receipt_locator') is not None:
+                event['receipt_locator'] = dict(day=page['day'], boot=boot, first_seq=page['first_seq'], event_seq=event['seq'])
+            page['events'] = [event]
+            if rule.name == 'retry_original_gap':
+                event['retry_original'] = dict(day=page['day'], boot='original', event_seq=f'{1:020}')
+            ctx.rows[next(r.key for r in passing.rows if r.key.kind == p1.KINDS[2])] = page
+            sub = Subject(page['day'], boot, object_id=event['seq'])
+            wire = a2.E(page['day'], boot, page['first_seq'], event['seq'], event=event)
+        elif rule.name.startswith('close_result_'):
+            sub, wire = Subject(day, boot), a2.O(a1.KINDS[-1], day + '/' + boot)
+        else:
+            row = next(r for r in passing.rows if r.key.kind == p1.KINDS[0])
+            from trusted_router.async_settle_shadow_v2_gate_inputs import Key
+            row = Row(Key(row.key.kind, day + '/sample' + str(index)), row.raw)
+            ctx.bundle = replace(ctx.bundle, rows=(row,))
+            sub, wire = Subject(object_id=row.key.id), a2.O(row.key.kind, row.key.id)
+        ctx.issue(rule.name, 'failed assertion', sub)
+        normalize(ctx)
+        produced = PRODUCERS[rule.name](ctx)
+        assert len(produced) == 1 and canonical(produced[0].subject) == canonical(wire)
+        return ctx, wire
+    ctx, wire = one(0)
+    tally, entries = listing(PRODUCERS[rule.name](ctx), ctx.bundle.days)
+    assert tally[rule.name]['count'] == 1 and canonical(entries[0]['subject']) == canonical(wire)
+    contexts = [one(i)[0] for i in (2, 0, 1)]
+    merged = Context(Bundle(days=('2026-10-05', '2026-10-06', '2026-10-07')), None, 'pre-flip')
+    expected = []
+    for context in contexts:
+        for failure in PRODUCERS[rule.name](context):
+            merged.issue(rule.name, 'failed assertion', Subject(wire=failure.subject))
+            expected.append(failure.subject)
+    failures = PRODUCERS[rule.name](merged)
+    tally, entries = listing(failures, merged.bundle.days)
+    count = 1 if rule.name in SINGLETON_POPULATIONS else 3
+    assert tally[rule.name]['count'] == count
+    assert [canonical(e['subject']) for e in entries] == sorted(set(map(canonical, expected)))
+    unknown = Context(Bundle(days=merged.bundle.days), None, 'pre-flip')
+    unknown.issue(rule.name, 'population unavailable', Subject(wire=a2.N()), unavailable=True)
+    normalize(unknown)
+    assert PRODUCERS[rule.name](unknown)[0].subject == a2.N()
+    assert PRODUCERS['artifact_gap'](unknown)
+    # A singleton prefix is complete; the whole report must be incomplete.
+    assert any(i.gap == 'artifact_gap' for i in unknown.issues)
+    baseline = positive_results['pre-flip']
+    failures = {canonical([f.gap, f.subject]): f for f in baseline.failures}
+    for row in FAILURE_RULES:
+        for failure in PRODUCERS[row.name](unknown):
+            failures[canonical([failure.gap, failure.subject])] = failure
+    selected = tuple(failures.values())
+    tallies, entries = listing(selected, tuple(baseline.gate_report['days']))
+    reference, pages = detail(entries, 'failures')
+    report = {**baseline.gate_report, 'failure_counts': tallies, 'failures': reference,
+        'complete': False,
+        'rules': {r: 'fail' if any(f.rule == r for f in selected) else state
+                  for r, state in baseline.gate_report['rules'].items()}}
+    output = replace(baseline, failures=selected, gaps=tuple(sorted({f.gap for f in selected})),
+                     gate_report=report, detail_streams={**baseline.detail_streams, 'failures': pages})
+    _, attachments = render(output)
+    assert json.loads(attachments[0])['complete'] is False
+
+
+@pytest.mark.parametrize('reason', [r.name for r in FAILURE_RULES if r.rule == 'G9' and r.name != 'missing_support'])
+def test_reset_subject_support_routing(passing: Bundle, reason: str) -> None:
+    good = with_reset(passing, reason)
+    result = evaluate(good, ports(), gate='shadow-serving')
+    own = [f for f in result.failures if f.gap == reason]
+    assert len(own) == 1 and own[0].subject['scope'] == 'reset'
+    bad = replace(good, a2_streams={})
+    result = evaluate(bad, ports(), gate='shadow-serving')
+    assert reason not in result.gaps
+    unsupported = [f for f in result.failures if f.gap == 'missing_support']
+    assert unsupported[0].subject == own[0].subject
+    assert 'artifact_gap' in result.gaps and not result.gate_report['complete']
+    render(result)
+
+
+def test_reset_history_and_writer_first_times(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_a2_roots import entry_root
+    bundle = with_reset(passing, 'hash', START + 1)
+    bundle = change_row(bundle, p1.KINDS[5], lambda m: m.update(complete=False, gaps=[dict(
+        interval=dict(start_us=START + 3, end_us=START + 4), reason='observation_missing')]))
+    result = evaluate(bundle, ports(), gate='shadow-serving')
+    raw, attachments = render(result)
+    assert json.loads(raw)['verdict'] == 'BLOCKED'
+    history = [e for page in result.detail_streams['reset_history'] for e in page['entries']]
+    assert history == list(bundle.reset_support.resets)
+    assert result.gate_report['reset_history']['root'] == entry_root(history, stream='reset_history')
+    assert result.gate_report['first_reset_at_us'] == START + 1
+    assert result.gate_report['first_gap_at_us'] == START + 3
+    writers = [e for page in result.detail_streams['writers'] for e in page['entries']]
+    first = next(w for w in writers if w['boot'] == 'boot0')
+    second = next(w for w in writers if w['boot'] == 'boot1')
+    assert first['first_reset_at_us'] == START + 1 and first['first_gap_at_us'] == START + 3
+    assert second['first_reset_at_us'] is second['first_gap_at_us'] is None
+    assert json.loads(attachments[0]) == result.gate_report
+
+
+def test_metric_source_table_and_availability(passing: Bundle) -> None:
+    from copy import deepcopy
+
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_metrics import observations
+    sample = json.loads(next(r.raw for r in passing.rows if r.key.kind == p1.KINDS[0]))
+    terminal = json.loads(next(r.raw for r in passing.rows if r.key.kind == p1.KINDS[2]))['events'][1]
+    samples = [deepcopy(sample) for _ in range(3)]
+    for i, s in enumerate(samples):
+        for j, key in enumerate(a2.TIMINGS[:8]):
+            parent = 'admission' if key.endswith('_age_us') else 'timing'
+            s[parent][key] = None if key == 'evidence_write_us' or i == 1 else 10 * j + i
+        s['booked_minus_frozen'] = [-5, None, 11][i]
+        s['booked_micro'] = None if i == 1 else 10
+        s['eligibility']['observed'] = None if i == 2 else True
+    terminals = [deepcopy(terminal) for _ in range(3)]
+    terminals[0]['comparison'] = None
+    terminals[1]['prediction'] = None
+    terminals[2]['prediction']['prediction'] = 'unknown'
+    inputs = dict(samples=samples, terminals=terminals,
+        slots=[dict(cycle_us=2, rpc_elapsed_us=11, rpc_count=99), dict(cycle_us=None, rpc_elapsed_us=0, rpc_count=0)],
+        closes=[dict(elapsed_us=3), dict(elapsed_us=7)],
+        handoffs=[dict(result_us=4), dict(result_us=8)], terminations=[dict(final_pass_us=9)])
+    result = observations(**inputs)
+    for j, key in enumerate(a2.TIMINGS[:8]):
+        stat = result['timing'][key]
+        if key == 'evidence_write_us':
+            assert stat == dict(count=0, null_count=3, min=None, p50=None, p95=None, p99=None, max=None)
+        else:
+            assert stat == dict(count=2, null_count=1, min=j * 10, p50=j * 10, p95=j * 10 + 2, p99=j * 10 + 2, max=j * 10 + 2)
+    assert result['timing']['publisher_cycle_us']['count'] == 1
+    assert result['timing']['publisher_cycle_us']['null_count'] == 1
+    assert result['timing']['publisher_slot_rpc_elapsed_us'] == dict(count=2, null_count=0, min=0, p50=0, p95=11, p99=11, max=11)
+    assert [result['timing'][k]['count'] for k in ('close_us', 'handoff_us', 'drain_us')] == [2, 2, 1]
+    assert [result['timing'][k]['max'] for k in ('close_us', 'handoff_us', 'drain_us')] == [7, 8, 9]
+    assert result['deltas'] == dict(count=2, null_count=1, min_micro=-5, max_micro=11,
+        bins={k: int(k in ('-2-10', '+11-100')) for k in a2.BINS})
+    assert result['null_counts'] == dict(eligibility=1, booking=1, comparison=1, prediction=1, timing=11, delta=1)
+    # Each exact metric-source row is removed independently. Its dependants
+    # become unavailable; unrelated observations retain their original values.
+    sources = [(k, 'samples', ('admission' if k.endswith('_age_us') else 'timing', k)) for k in a2.TIMINGS[:8]] + [
+        ('publisher_cycle_us', 'slots', ('cycle_us',)), ('publisher_slot_rpc_elapsed_us', 'slots', ('rpc_elapsed_us',)),
+        ('close_us', 'closes', ('elapsed_us',)), ('handoff_us', 'handoffs', ('result_us',)), ('drain_us', 'terminations', ('final_pass_us',))]
+    for key, population, path in sources:
+        changed = deepcopy(inputs)
+        parent = changed[population][0]
+        for field in path[:-1]:
+            parent = parent[field]
+        del parent[path[-1]]
+        observed = observations(**changed)
+        assert all(v is None for v in observed['timing'][key].values())
+        assert observed['null_counts']['timing'] is None
+        assert all(observed['timing'][other] == result['timing'][other] for other in a2.TIMINGS if other != key)
+    for population, path, field in (
+        ('samples', ('eligibility', 'observed'), 'eligibility'),
+        ('samples', ('booked_micro',), 'booking'),
+        ('samples', ('booked_minus_frozen',), 'delta'),
+        ('terminals', ('comparison',), 'comparison'),
+        ('terminals', ('prediction',), 'prediction')):
+        changed = deepcopy(inputs)
+        parent = changed[population][0]
+        for part in path[:-1]:
+            parent = parent[part]
+        del parent[path[-1]]
+        observed = observations(**changed)
+        assert observed['null_counts'][field] is None
+        assert observed['timing'] == result['timing']
+        if field == 'delta':
+            assert observed['deltas']['count'] is None
+            assert all(v is None for v in observed['deltas']['bins'].values())
+    for population in inputs:
+        absent = observations(**{**inputs, population: None})
+        if population == 'samples':
+            assert absent['deltas']['count'] is absent['null_counts']['delta'] is None
+            assert all(v is None for v in absent['deltas']['bins'].values())
+        elif population == 'terminals':
+            assert absent['null_counts']['prediction'] is absent['null_counts']['comparison'] is None
+        else:
+            assert absent['null_counts']['timing'] is None
+
+
+def test_overflow_propagates_and_rule_states(passing: Bundle) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_metrics import counts, deltas, stat, total
+    from trusted_router.async_settle_shadow_v2_schema import INT64
+    assert total([INT64, 1]) is None
+    assert total([0, None]) is None
+    assert total([]) == 0
+    assert all(v is None for v in stat([INT64 + 1]).values())
+    assert deltas([INT64 + 1])['count'] is None
+    ctx = decode_bundle(passing, ports(), 'shadow-serving')
+    counters = [dict(c) for c in ctx.kind(p1.KINDS[3])]
+    counters[0]['A'], counters[1]['A'] = INT64, 1
+    observed = counts(ctx, counters, [e for _, e in ctx.events()], ('G4', 'G5'))
+    assert observed['partition']['A'] is observed['partition']['T'] is None
+    assert observed['comparator']['compared'] is None
+    assert observed['comparator']['coverage']['state'] == 'unevaluable'
+    result = evaluate(damage(passing, 'eligible_coverage_gap'), ports(), gate='shadow-serving')
+    assert result.gate_report['rules']['G5'] == 'unevaluable'
+    assert result.gate_report['rules']['G11'] == 'not_required'
+    assert result.gate_report['rules']['G6'] == 'pass'
+    assert result.gate_report['rules']['G1'] == 'fail'
+    render(result)
+
+
+def test_regional_metric_partitions_and_hterm(passing: Bundle) -> None:
+    assert passing.inventory
+    bundle = replace(passing, inventory=replace(passing.inventory,
+        boots=tuple(replace(b, region='region-two') if b.boot == 'boot1' else b for b in passing.inventory.boots)))
+    result = evaluate(bundle, ports(), gate='shadow-serving')
+    render(result)
+    regions = [r for page in result.detail_streams['regions'] for r in page['entries']]
+    assert {r['region'] for r in regions} == {'us-central1', 'region-two'}
+    for key, fleet in result.gate_report['timing'].items():
+        for field in ('count', 'null_count'):
+            assert fleet[field] == sum(r['timing'][key][field] for r in regions)
+    assert [r['timing']['publisher_slot_rpc_elapsed_us']['count'] for r in regions] == [5, 5]
+    for timing in (result.gate_report['timing'], *(r['timing'] for r in regions)):
+        assert timing['close_us']['count'] == timing['handoff_us']['count']
+        assert timing['drain_us']['count'] <= timing['close_us']['count']
+
+
+def test_reset_history_uses_common_64_entry_pages(passing: Bundle) -> None:
+    bundle = passing
+    resets = []
+    for index in range(65):
+        bundle = with_reset(bundle, 'hash', START + index + 1)
+        resets.extend(bundle.reset_support.resets)
+    bundle = replace(bundle, reset_support=replace(bundle.reset_support, resets=tuple(reversed(resets))))
+    result = evaluate(bundle, ports(), gate='shadow-serving')
+    render(result)
+    assert result.gate_report['reset_history']['count'] == 65
+    assert [len(page['entries']) for page in result.detail_streams['reset_history']] == [64, 1]
+    history = [e for page in result.detail_streams['reset_history'] for e in page['entries']]
+    assert [r['at_us'] for r in history] == list(range(START + 1, START + 66))
+
+
+def test_failure_tally_streams_and_keeps_only_16_subjects() -> None:
+    import weakref
+
+    from trusted_router.async_settle_shadow_v2_a2_evidence import W
+    from trusted_router.async_settle_shadow_v2_gate_failures import bounded, listing
+    from trusted_router.async_settle_shadow_v2_gate_result import Failure
+    live = peak = consumed = 0
+    def released():
+        nonlocal live
+        live -= 1
+    def source():
+        nonlocal live, peak, consumed
+        for index in range(2000, 0, -1):
+            for day in ('2026-10-05', '2026-10-06'):
+                value = Failure('writer_closure_gap', 'G8', W('2026-10-05', 'router', f'boot{index:05}'),
+                                1, (), 'absent', (day,))
+                live += 1
+                consumed += 1
+                peak = max(peak, live)
+                weakref.finalize(value, released)
+                yield value
+    failures = bounded(source())
+    assert consumed == 4000 and peak <= 20
+    assert len(failures) == 16
+    counts, prefix = listing(failures, ('2026-10-05', '2026-10-06'))
+    assert counts['writer_closure_gap'] == dict(count=2000, listed=16, complete=False, day_counts=[2000, 2000])
+    assert [f['subject']['boot'] for f in prefix] == [f'boot{i:05}' for i in range(1, 17)]
+
+
+def test_peak_rationals_preserve_binary64(passing: Bundle) -> None:
+    from fractions import Fraction
+    assert passing.budget
+    bundle = replace(passing, budget=replace(passing.budget, cpu_peak=0.1))
+    result = evaluate(bundle, ports(), gate='shadow-serving')
+    expected = Fraction(0.1)
+    assert result.gate_report['fleet_peaks']['cpu_percent'] == dict(numerator=expected.numerator, denominator=expected.denominator)
+    assert result.gate_report['fleet_peaks']['cpu_percent'] != dict(numerator=1, denominator=10)
+    render(result)
+
+
+@pytest.mark.parametrize('reason', [r.name for r in FAILURE_RULES if r.rule == 'G9' and r.name != 'missing_support'])
+def test_unenumerable_reset_preserves_its_named_fallback(passing: Bundle, reason: str) -> None:
+    from trusted_router.async_settle_shadow_v2_a2_evidence import N
+    assert passing.reset_support
+    bad = replace(passing, reset_support=replace(passing.reset_support,
+        resets=(dict(at_us=START + 1, revision='invalid', reason=reason),)))
+    result = evaluate(bad, ports(), gate='shadow-serving')
+    assert [f.subject for f in result.failures if f.gap == reason] == [N()]
+    assert {'artifact_gap', 'missing_support', reason} <= set(result.gaps)
+    assert result.gate_report['complete'] is False
+    render(result)

@@ -21,7 +21,6 @@ from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import (
     Boot,
-    Budget,
     Bundle,
     Cohort,
     External,
@@ -37,6 +36,7 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import (
     VerifierApproval,
 )
 from trusted_router.async_settle_shadow_v2_gate_load import COMPONENT_BOUNDS
+from trusted_router.async_settle_shadow_v2_gate_load_evidence import BudgetEvidence
 from trusted_router.async_settle_shadow_v2_schema import day_at, sha256
 from trusted_router.detached_jws import TrustedKey, b64decode, canonical
 
@@ -230,7 +230,7 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
                         ack_at_us=stamp + 400000, body_sha256=sha256(body) if slot == body['slot'] else sha256({'slot': slot, 'boot': boot.boot}))
                     entries.append(trace)
                 tp = dict(**TAG, day=day, boot=boot.boot, first_slot=offset, last_slot=entries[-1]['slot'], previous_sha256=previous_trace, entries=entries)
-                attachments.append(Row(Key('publisher_trace', f'publisher-traces/{day}/{boot.boot}/{offset}'), health.PUBLISHER_TRACE_PAGE.serialize(tp)))
+                attachments.append(Row(Key('publisher_trace', f'publisher-traces/{day}/{boot.boot}/{offset}'), canonical(tp)))
                 previous_trace = sha256(tp)
             count_slots = last - first + 1
             counter['publisher'].update(scheduled_slots=count_slots, claim_attempts=count_slots,
@@ -271,7 +271,8 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
                 close_result=close_ref, measurement=dict(path=measured_key, sha256=hashlib.sha256(measured_raw).hexdigest(), bytes=len(measured_raw)))
             attachments.append(Row(Key('shutdown_entry', 'shutdown/' + day + '/' + boot.boot), a2.SHUTDOWN_ENTRY.serialize(entry)))
             joins.obligation_projection(closure, [obligation] if owns else [])
-            rate_segments.append(Rate(boot.boot, left, right, max(1, duration // 4), max(1, duration)))
+            rate_segments.append(Rate(boot.boot, left, right, max(1, duration // 4), max(1, duration),
+                publisher_reads=2 * duration, publisher_writes=duration))
     preimages = []
     proof = fixture('proof_manifest')
     proof.update(rosters_by_day={}, instance_regions_by_day={}, ledger_root=ledger_root, attachments=[], explicit_keys=[])
@@ -327,13 +328,30 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
     pre_input['monitoring']['sha256'] = hashlib.sha256(monitoring_path.read_bytes()).hexdigest()
     pre_result = pilot.fleet_budgets_pre(pre_input)
     caps = pre_result['maximum_router_instances_by_region']
-    budget = Budget(pre_input, caps, sum(caps.values()), 0, 1,
+    budget = BudgetEvidence(pre_input, caps, sum(caps.values()), 0, 1,
         {REGION: 10.}, {REGION: 300.}, 10., 2., 1., 20., 1., COMPONENT_BOUNDS.copy(),
         tuple(rate_segments), START - 1, START, sha256(pre_result), sha256(pre_result), 1, caps,
         100000, 1000000000, 100, 1000, 1000000, 1000000, 4000000,
         publisher_unresolved_rows_per_second=5000.5, publisher_control_rows_per_second=1.5,
         publisher_transactions_per_second=1., publisher_rpc_per_second=3., metadata_bytes_per_second=20.,
         export_passes=1, export_root_writes=1, export_write_bytes=262144)
+    # Explicit measured load intervals for this fixture: two producer lanes,
+    # one claim/scan/publication each two seconds and two close transactions.
+    # These are source observations, consumed through the evaluation seam.
+    load_segments = []
+    for rate in rate_segments:
+        observed = dict.fromkeys(a2.PEAKS.fields)
+        observed.update(startup_operations_1s=rate.burst_reads, close_operations_1s=2,
+            export_operations_1s=2)
+        for field, numerator, denominator in (
+            ('claim_operations_per_second', 1, 2), ('scan_operations_per_second', 1, 2),
+            ('publication_operations_per_second', 1, 2), ('export_operations_per_second', 2, 5),
+            ('export_bytes_per_second', 131072, 5)):
+            observed[field] = dict(numerator=numerator, denominator=denominator)
+        load_segments.append(dict(day=day_at(rate.start_us), boot=rate.boot, region=REGION,
+            start_us=rate.start_us, end_us=rate.end_us, role='router', contender=True,
+            workspace_count=1, peaks=observed))
+    budget = replace(budget, load_segments=tuple(load_segments))
     def gate(name: str, at: int) -> bytes:
         value = fixture('gate_outputs')
         value.update(gate=name, verdict='PASS', gaps=[], completed_at_us=at, proof_manifest_sha256=sha256(proof), prerequisite_ledger_root=ledger_root)
