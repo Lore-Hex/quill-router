@@ -15,7 +15,7 @@ def test_postgres_service_uses_digest_pinned_official_public_mirror() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     postgres = jobs["test"]["services"]["postgres"]
     assert postgres["image"] == (
-        "public.ecr.aws/docker/library/postgres:17@sha256:"
+        "mirror.gcr.io/library/postgres:17@sha256:"
         "2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3"
     )
     assert "5432:5432" in postgres["ports"]
