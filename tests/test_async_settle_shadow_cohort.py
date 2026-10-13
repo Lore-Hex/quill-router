@@ -588,6 +588,11 @@ def _case_exact_authorize_event_fit(target: int) -> None:
     candidates[0]['endpoint_id'] += 'x'*needed
     value = replace(value, candidates=canonical(candidates))
     prepared = build()
+    native = prepare_authorization(reserve, identity=identity, revision=value.revision,
+        dimensions=value.dimensions, facts=None, candidates=None,
+        server_facts=value.facts.object(), server_candidates=candidates, native_request=True,
+        complete_candidates=True, complete_supported_context=True, reason=None)
+    assert native == prepared
     if target == 2048:
         assert len(prepared.body) == target and prepared.decision.eligibility == 'eligible'
     else:
@@ -838,3 +843,102 @@ def test_mapped_decision_matches_contract():
     candidates = json.loads(value.candidates)
     assert mapped_decision(base, None, candidates, True, True) == decide(
         value.facts, None, value.candidates, complete_candidates=True)
+
+
+@exhaustive
+def test_authorize_size_matches_p3_fixtures():
+    from trusted_router.async_settle_shadow_cohort import authorization_size
+    from trusted_router.async_settle_shadow_v2_native import event_bytes
+
+    # Every authorize EVENT embedded in the pinned v2 / A1 / A2 fixtures,
+    # including malformed values whose fit still must count exact JSON bytes.
+    sizes = accepted = 0
+    keys = fixture('receipt_pages')[1]['object'].keys()
+    def visit(value):
+        nonlocal sizes, accepted
+        if isinstance(value, dict):
+            if (value.get('phase') == 'authorize' and value.get('partition') == 'C'
+                    and value.get('v') == 2 and value.get('policy_version') == 'shadow-v2'
+                    and value.keys() == keys):
+                assert authorization_size(value) == len(canonical(value))
+                sizes += 1
+                try:
+                    raw = event_bytes(value)
+                except ValueError:
+                    pass  # Invalid fixtures have no P3 bytes; exact size above still applies.
+                else:
+                    assert authorization_size(value) == len(raw)
+                    accepted += 1
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    root = Path(__file__).parent / 'fixtures/async_settlement'
+    for directory in ('shadow_v2', 'shadow_v2_a1', 'shadow_v2_a2'):
+        for path in sorted((root / directory).rglob('*.json')):
+            visit(json.loads(path.read_bytes()))
+    assert sizes > accepted > 0
+
+
+@exhaustive
+def test_generated_authorize_size_fit_and_port_bytes(monkeypatch):
+    import random
+
+    from tests.test_async_settle_shadow_observation import fake_store
+    from trusted_router import async_settle_shadow_cohort as core
+    from trusted_router.async_settle_shadow_v2_contract import fit_decision
+    from trusted_router.services.async_settle_shadow_health import Service
+
+    rng = random.Random(6)  # noqa: S311 - fixed differential seed
+    value = inputs()
+    captured = []
+    measure = core.authorization_size
+    def record(event):
+        assert measure(event) == len(canonical(event))
+        captured.append(copy.deepcopy(event))
+        return measure(event)
+    monkeypatch.setattr(core, 'authorization_size', record)
+    results = set()
+    for index in range(600):
+        store, _ = fake_store()
+        store.wall = lambda: NOW
+        service = Service(config(), store)
+        stamp = value.observed_us + rng.randrange(1000000)
+        service.journal.grant(day_at(stamp), 100)
+        slot = service.port.reserve(stamp)
+        assert slot is not None
+        facts = value.facts.object()
+        reason = rng.choice([None, 'header_absent', 'request_fee', 'partner', 'service_tier'])
+        facts['streamed'] = bool(index % 2)
+        facts['service_tier'] = 'priority' if reason == 'service_tier' else None
+        candidates = [dict(endpoint_id='ep' + str(i) + 'x' * rng.randrange(120),
+            adapter='other' if reason == 'partner' else 'openai',
+            features=['request_fee'] if reason == 'request_fee' else [])
+            for i in range(rng.choice([1, 2, 3, 8, 32, 128]))]
+        identity = committed_identity(value.identity)
+        identity['epoch'] = rng.choice([1, 9, 10, 2**63-1])
+        identity['journal_region'] = 'r' * rng.randrange(1, 129)
+        complete, supported = index % 7 != 0, index % 5 != 0
+        initial = core.mapped_decision(facts, reason, candidates, complete, supported)
+        prepared = prepare_authorization(slot, identity=identity, revision=value.revision,
+            dimensions=value.dimensions, facts=None, candidates=None,
+            server_facts=facts, server_candidates=candidates, native_request=True,
+            complete_candidates=complete, complete_supported_context=supported, reason=reason)
+        expected = fit_decision(initial, captured[-1])
+        assert prepared.decision == expected
+        results.add(expected.reason)
+        expected_raw = EVENT.serialize(prepared.event)
+        raw = service.port.finalize(slot, prepared.event)
+        assert raw is not None
+        assert measure(prepared.event) == len(raw)
+        assert raw == expected_raw
+    assert {None, 'receipt_locator_size', 'candidate_receipt_size'} <= results
+    # Exact framing also counts escaping and non-ASCII on rejected native inputs.
+    for text in ('quote"', 'slash\\', '\x00', 'é', '😀'):
+        event = copy.deepcopy(captured[0])
+        event['identity']['journal_region'] = text
+        event['candidates'] = [dict(endpoint_id=text, adapter='openai', features=[])]
+        assert measure(event) == len(canonical(event))
+        assert fit_decision(initial, event).required_bytes == (
+            measure(event) if measure(event) > EVENT.limit else None)

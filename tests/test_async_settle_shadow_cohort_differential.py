@@ -29,6 +29,7 @@ from tests.test_gateway_authorize_spanner_operations import fixed_operation_cata
 
 _COMPILED = {}
 _APPS = {}
+_FRESH_CLIENT = oracle._client
 
 
 def reuse_frozen_compilation(monkeypatch, path=None):
@@ -64,33 +65,66 @@ def reset_app_ingress(app):
     assert found == 1
 
 
-def reuse_registered_apps(monkeypatch):
-    """Reuse route compilation, resetting settings and app state for every leg.
+def registered_client(cfg):
+    """One registration per exact settings/private-state/handler configuration.
 
-    The frozen and live handlers have separate real FastAPI apps. Each request
-    still uses a fresh HTTP client, backend state and the original byte/SQL oracle.
-    Lifecycle installation is exercised independently by the live HTTP tests.
+    Settings captured by route dependencies are restored before each lease;
+    intentional in-test cfg changes remain visible to those dependencies.
+    Each lease gets fresh HTTP transport, ingress limits and application state.
+    Backend/SQL/request caches are still reset by the unchanged oracle.
     """
-    factory = oracle._client
-    apps = _APPS
-    def client(cfg):
-        old = oracle.gateway.register.__code__.co_filename
-        if old not in apps:
-            result = factory(cfg)
-            apps[old] = (result.app, cfg, dict(result.app.state._state))
-            return result
-        app, settings, state = apps[old]
-        values, private = copy.deepcopy(cfg.__dict__), copy.deepcopy(cfg.__pydantic_private__)
-        settings.__dict__.clear()
-        settings.__dict__.update(values)
-        settings.__pydantic_private__ = private
-        settings.__pydantic_fields_set__ = set(cfg.__pydantic_fields_set__)
-        settings.__pydantic_extra__ = copy.deepcopy(cfg.__pydantic_extra__)
-        app.state._state.clear()
-        app.state._state.update(state)
-        reset_app_ingress(app)
-        return TestClient(app)
-    monkeypatch.setattr(oracle, '_client', client)
+    values = copy.deepcopy(cfg.__dict__)
+    private = copy.deepcopy(cfg.__pydantic_private__)
+    extra = copy.deepcopy(cfg.__pydantic_extra__)
+    fields = set(cfg.__pydantic_fields_set__)
+    key = (oracle.gateway.register.__code__, cfg.model_dump_json(),
+           tuple(sorted((k, repr(v)) for k, v in private.items())),
+           tuple(sorted(fields)), repr(extra))
+    if key not in _APPS:
+        result = _FRESH_CLIENT(cfg)
+        _APPS[key] = (result.app, cfg, dict(result.app.state._state))
+        return result
+    app, settings, state = _APPS[key]
+    settings.__dict__ = values
+    settings.__pydantic_private__ = private
+    settings.__pydantic_fields_set__ = fields
+    settings.__pydantic_extra__ = extra
+    cfg.__dict__ = settings.__dict__
+    cfg.__pydantic_private__ = settings.__pydantic_private__
+    app.state._state.clear()
+    app.state._state.update(state)
+    reset_app_ingress(app)
+    return TestClient(app)
+
+
+@pytest.fixture(scope="session")
+def registered_apps(request):
+    """Worker-local construction cache, shared by both HTTP modules."""
+    if not getattr(request.session, '_p4a_registered_apps', False):
+        request.session._p4a_registered_apps = True
+        request.addfinalizer(close_registered_apps)
+    return registered_client
+
+
+def close_registered_apps():
+    for _app, _, state in _APPS.values():
+        legacy = state.get('async_settle_shadow')
+        if legacy is not None:
+            legacy.executor.shutdown()
+        shell = state.get('async_settle_shadow_cohort')
+        if shell is not None:
+            shell.close()
+            shell.worker.join(2)
+    _APPS.clear()
+
+
+@pytest.fixture(autouse=True)
+def shared_differential_apps(monkeypatch, registered_apps):
+    monkeypatch.setattr(oracle, '_client', registered_apps)
+
+
+def reuse_registered_apps(monkeypatch):
+    monkeypatch.setattr(oracle, '_client', registered_client)
 
 
 def forbid_cohort_calls(monkeypatch):
@@ -151,7 +185,7 @@ def test_authorize_shadow_exception_preserves_http_bytes_and_money(monkeypatch):
 
 @pytest.mark.usefixtures('fixed_operation_catalog')
 def test_registered_app_reuse_matches_fresh_app_after_settings_change(monkeypatch):
-    factory = oracle._client
+    factory = _FRESH_CLIENT
     reuse_frozen_compilation(monkeypatch)
     reuse_registered_apps(monkeypatch)
     store, db, key = oracle._seed_typed_gateway_store()
@@ -505,3 +539,22 @@ def test_fresh_process_import_construction_and_lifespan():
         assert evidence[mode] == dict(imports=[], entries=[], installed=False)
     assert evidence['active']['imports'] and evidence['active']['entries']
     assert evidence['active']['installed'] is True
+
+
+def test_registered_app_factory_exact_configuration_and_reset(registered_apps):
+    before = len(_APPS)
+    cfg = oracle.settings(source_revision='b'*40)
+    first = registered_apps(cfg)
+    first.app.state.test_only_dirty = True
+    second = registered_apps(oracle.settings(source_revision='b'*40))
+    assert second.app is first.app
+    assert not hasattr(second.app.state, 'test_only_dirty')
+    # Both public configuration and the resolved private cohort affect install.
+    changed = registered_apps(oracle.settings(source_revision='b'*40, async_settle_enabled=False))
+    private = oracle.settings(source_revision='b'*40)
+    private._async_settle_shadow_workspace_ids = frozenset({'different'})
+    third = registered_apps(private)
+    assert len({id(first.app), id(changed.app), id(third.app)}) == 3
+    assert len(_APPS) == before + 3
+    for client in (first, second, changed, third):
+        client.close()

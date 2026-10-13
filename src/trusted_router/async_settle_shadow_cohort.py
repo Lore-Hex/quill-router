@@ -49,18 +49,37 @@ class PreparedAuthorization:
         return EVENT.serialize(self.event)
 
 
+# The authorize envelope is constructed here with these four literal values.
+# Size only its variable payload; JSON object keys, separators and fixed values
+# never need a request-time walk. P3 still validates/encodes the complete EVENT.
+_AUTHORIZE_FIXED = dict(v=2, policy_version=POLICY, phase="authorize", partition="C")
+_AUTHORIZE_VARIABLE = (
+    "seq", "event_at_us", "receipt_at_us", "authorization_day", "authorization_id",
+    "identity", "router_revision", "dimensions", "decision", "facts", "candidates",
+    "receipt_locator", "eligibility", "diagnostic",
+)
+_AUTHORIZE_FRAMING = (
+    len(canonical({**_AUTHORIZE_FIXED, **dict.fromkeys(_AUTHORIZE_VARIABLE)}))
+    - len(canonical([None] * len(_AUTHORIZE_VARIABLE)))
+)
 _ESCAPED_JSON = r'[\x00-\x1f"\\]|[^\x00-\x7f]'
 
 
 def event_size(value: Any) -> int:
-    """Exact JSON fit for native EVENT values; validation belongs to finalize."""
-    if isinstance(value, dict):
-        return 2 + max(0, len(value)-1) + sum(len(k)+3+event_size(v) for k, v in value.items())
-    if isinstance(value, list):
-        return 2 + max(0, len(value)-1) + sum(map(event_size, value))
-    if isinstance(value, str):
-        return len(value)+2 if re.search(_ESCAPED_JSON, value) is None else len(canonical(value))
-    return 4 if value is None or value is True else 5 if value is False else len(str(value))
+    """Exact size of one variable part, with no validation or Python tree walk."""
+    if isinstance(value, str) and re.search(_ESCAPED_JSON, value) is None:
+        return len(value) + 2
+    return len(canonical(value))
+
+
+def authorization_size(event: dict[str, Any]) -> int:
+    """Fixed envelope framing plus one native encoding of variable values only.
+
+    This is a size calculation, not a schema boundary. Escapes, UTF-8, nulls,
+    integer widths, candidate counts and diagnostic backing are counted exactly.
+    The fixed members are literal values at the sole construction site below.
+    """
+    return _AUTHORIZE_FRAMING + event_size([event[k] for k in _AUTHORIZE_VARIABLE])
 
 
 def decision_reference(decision: Decision) -> dict[str, Any]:
@@ -152,7 +171,7 @@ def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
         eligibility="eligible" if decision.eligibility == "eligible" else "unknown",
         diagnostic=(None if decision.eligibility == "eligible" else
                     dict(reason=decision.reason or "missing_context", required_bytes=0, candidate_count=0)))
-    required = event_size(event)
+    required = authorization_size(event)
     count = len(projection) if projection is not None else 0
     fitted = (Decision("unknown", "candidate_receipt_size" if decision.candidate_dependent else "receipt_locator_size",
                        False, None, None, required, count) if required > EVENT.limit else decision)

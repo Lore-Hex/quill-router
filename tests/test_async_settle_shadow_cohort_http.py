@@ -9,10 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 
 from tests.test_async_settle_shadow import NOW
 from tests.test_async_settle_shadow_cohort import fixture
+from tests.test_async_settle_shadow_cohort_differential import registered_apps  # noqa: F401
 from tests.test_async_settle_shadow_cohort_runtime import installed
 from tests.test_async_settle_shadow_http import pin_clocks
 from tests.test_async_settle_ticket import endpoint, runtime
@@ -26,40 +26,17 @@ from trusted_router.detached_jws import b64encode, canonical
 from trusted_router.routes.internal import gateway
 
 
-@pytest.fixture(scope="module", autouse=True)
-def shared_http_app():
-    global _client
-    app = None
-    retained_settings = None
-    state = None
+@pytest.fixture(autouse=True)
+def shared_http_app(monkeypatch, registered_apps):  # noqa: F811 - imported fixture
     def client(cfg):
-        nonlocal app, retained_settings, state
-        if app is None:
-            # Start with emission off; the explicit installed runtime below owns
-            # observation. Avoid creating an abandoned second runtime per app.
-            pin = cfg.async_settle_shadow_policy
-            cfg.async_settle_shadow_policy = ''
-            initial = fresh_client(cfg)
+        # Explicit installed() runtime below owns observation in these tests.
+        pin = cfg.async_settle_shadow_policy
+        cfg.async_settle_shadow_policy = ''
+        try:
+            return registered_apps(cfg)
+        finally:
             cfg.async_settle_shadow_policy = pin
-            app, retained_settings = initial.app, cfg
-            state = dict(app.state._state)
-            return initial
-        retained_settings.__dict__.clear()
-        retained_settings.__dict__.update(copy.deepcopy(cfg.__dict__))
-        retained_settings.__pydantic_private__ = copy.deepcopy(cfg.__pydantic_private__)
-        app.state._state.clear()
-        app.state._state.update(state)
-        from tests.test_async_settle_shadow_cohort_differential import reset_app_ingress
-        reset_app_ingress(app)
-        # The request settings dependency closes over the retained object.
-        cfg.__dict__ = retained_settings.__dict__
-        cfg.__pydantic_private__ = retained_settings.__pydantic_private__
-        return TestClient(app)
-    _client = client
-    yield
-    _client = fresh_client
-    if state and state.get('async_settle_shadow'):
-        state['async_settle_shadow'].executor.shutdown()
+    monkeypatch.setattr(__name__ + '._client', client)
 
 
 _client = fresh_client
@@ -222,6 +199,7 @@ def probe(monkeypatch, adapter, route, streamed, *, marker=True, kind='settle', 
         return events
     finally:
         shell.close()
+        shell.worker.join(2)
         client.close()
 
 

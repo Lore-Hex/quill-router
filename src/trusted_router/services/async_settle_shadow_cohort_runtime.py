@@ -57,6 +57,11 @@ assert set(FEATURES + DEPENDENT) == {
 }
 
 
+_ORDINARY_PARAMETERS = frozenset({"temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
+                    "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias", "logprobs",
+                    "top_logprobs", "response_format", "reasoning_effort", "stream"})
+
+
 def receipt_dimensions(adapter: str | None, route: str | None, streamed: bool | None) -> dict[str, Any]:
     """The v2 schema represents unobserved dimensions with null."""
     values = dimensions(adapter, route, streamed)
@@ -92,10 +97,7 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
         require(body.route_type is not None and type(body.stream) is bool, "missing_context")
         require(body.requested_parameters is not None, "missing_context")
         require(not body.model_extra and "input_modalities" not in body.model_fields_set, "missing_context")
-        ordinary = {"temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
-                    "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias", "logprobs",
-                    "top_logprobs", "response_format", "reasoning_effort", "stream"}
-        require(not set(body.requested_parameters) - ordinary, "unknown_parameters")
+        require(not set(body.requested_parameters) - _ORDINARY_PARAMETERS, "unknown_parameters")
         # A compound/alias route has no complete program witness at this seam.
         require(body.model == auth.model_id and not body.models, "missing_context")
         require(type(auth.additional_cost_reservation_microdollars) is int, "missing_context")
