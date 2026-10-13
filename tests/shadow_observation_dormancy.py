@@ -8,7 +8,7 @@ from functools import lru_cache
 
 import pytest
 
-NAMES = {'async_settle_shadow_v2_deltas', 'async_settle_shadow_lifecycle', 'async_settle_shadow_health_state', 'async_settle_shadow_v2_a1_numbers', 'storage_gcp_shadow_io', 'async_settle_shadow_v2_a1_health', 'async_settle_shadow_journal', 'async_settle_shadow_v2_retained', 'async_settle_shadow_health', 'async_settle_shadow_v2_contract', 'async_settle_shadow_v2_native', 'async_settle_shadow_v2_evidence', 'async_settle_shadow_v2_projection', 'async_settle_shadow_v2_certificate', 'async_settle_shadow_attachments', 'async_settle_shadow_v2_a1_evidence', 'storage_gcp_shadow_attachments', 'async_settle_shadow_v2_a1_deltas', 'async_settle_shadow_v2_a1_reconciliation', 'async_settle_shadow_v2_schema', 'storage_gcp_shadow_observation'}
+NAMES = {'async_settle_shadow_v2_a2_evidence', 'async_settle_shadow_v2_a2_roots', 'async_settle_shadow_v2_a2_contract', 'async_settle_shadow_v2_deltas', 'async_settle_shadow_lifecycle', 'async_settle_shadow_health_state', 'async_settle_shadow_v2_a1_numbers', 'storage_gcp_shadow_io', 'async_settle_shadow_v2_a1_health', 'async_settle_shadow_journal', 'async_settle_shadow_v2_retained', 'async_settle_shadow_health', 'async_settle_shadow_v2_contract', 'async_settle_shadow_v2_native', 'async_settle_shadow_v2_evidence', 'async_settle_shadow_v2_projection', 'async_settle_shadow_v2_certificate', 'async_settle_shadow_attachments', 'async_settle_shadow_v2_a1_evidence', 'storage_gcp_shadow_attachments', 'async_settle_shadow_v2_a1_deltas', 'async_settle_shadow_v2_a1_reconciliation', 'async_settle_shadow_v2_schema', 'storage_gcp_shadow_observation'}
 
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):

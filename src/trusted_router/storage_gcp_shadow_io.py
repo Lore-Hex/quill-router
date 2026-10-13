@@ -121,10 +121,21 @@ def configure(database: Any) -> None:
     api = getattr(database, "spanner_api", None)
     if api is None:
         return
-    for name in ("begin_transaction", "commit", "execute_sql", "execute_batch_dml",
-                 "execute_streaming_sql", "read", "streaming_read", "rollback",
-                 "create_session", "batch_create_sessions", "get_session", "list_sessions", "delete_session"):
-        original = getattr(api, name, None)
+    for name, original in (
+            ("begin_transaction", api.begin_transaction if hasattr(api, "begin_transaction") else None),
+            ("commit", api.commit if hasattr(api, "commit") else None),
+            ("execute_sql", api.execute_sql if hasattr(api, "execute_sql") else None),
+            ("execute_batch_dml", api.execute_batch_dml if hasattr(api, "execute_batch_dml") else None),
+            ("execute_streaming_sql", api.execute_streaming_sql if hasattr(api, "execute_streaming_sql") else None),
+            ("read", api.read if hasattr(api, "read") else None),
+            ("streaming_read", api.streaming_read if hasattr(api, "streaming_read") else None),
+            ("rollback", api.rollback if hasattr(api, "rollback") else None),
+            ("create_session", api.create_session if hasattr(api, "create_session") else None),
+            ("batch_create_sessions", api.batch_create_sessions if hasattr(api, "batch_create_sessions") else None),
+            ("get_session", api.get_session if hasattr(api, "get_session") else None),
+            ("list_sessions", api.list_sessions if hasattr(api, "list_sessions") else None),
+            ("delete_session", api.delete_session if hasattr(api, "delete_session") else None),
+    ):
         if not callable(original):
             continue
         # Offline SDK harnesses may arrive with the baseline wrapper installed.

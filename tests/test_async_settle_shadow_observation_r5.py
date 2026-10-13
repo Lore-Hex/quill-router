@@ -135,7 +135,7 @@ def test_every_port_method_with_each_owned_lock_held(monkeypatch, sealing):
     locks = [(obj, name) for obj in objects for name, value in vars(obj).items()
              if callable(getattr(value, "acquire", None)) and callable(getattr(value, "release", None))]
     assert {(type(obj).__name__, name) for obj, name in locks} == {
-        ("Service", "lock"),
+        ("Service", "lock"), ("Service", "admission_lock"),
         ("HealthObserver", "lock"), ("Lane", "lock")}
     from contextlib import contextmanager
     with ThreadPoolExecutor(max_workers=1) as worker:

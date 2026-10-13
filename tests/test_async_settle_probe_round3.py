@@ -34,7 +34,10 @@ SOURCE_ALLOWLIST = frozenset({
 })
 # Existing request-path reflection sites: (file, function, kind): count.
 # Additions require explicit review; no blanket module/function exemptions.
-REFLECTION_EXCEPTIONS = {('trusted_router/async_settle_shadow_compare.py', '_compare', 'dynamic getattr'): 3,
+# P3 uses P1's frozen counter validator. The graph walks even gated local imports;
+# retain its exact audited loader until P1 replaces the frozen import adapter.
+REFLECTION_EXCEPTIONS = {('trusted_router/async_settle_shadow_v2_retained.py', '_frozen_import', 'dynamic import'): 1,
+ ('trusted_router/async_settle_shadow_compare.py', '_compare', 'dynamic getattr'): 3,
  ('trusted_router/async_settle_shadow_wire.py', 'parse_header', 'dynamic getattr'): 2,
  ('trusted_router/axiom_config.py', '_resolve_level', 'dynamic getattr'): 1,
  ('trusted_router/billing_snapshot.py', '_validate_strings', 'dynamic getattr'): 1,

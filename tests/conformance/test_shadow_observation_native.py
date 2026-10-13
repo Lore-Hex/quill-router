@@ -4,16 +4,52 @@ from __future__ import annotations
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
+from tests.shadow_observation_diagnostics import client_history, status
 from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_observation import NOW_US, maximum_rows
 from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
 
 pytestmark = pytest.mark.xdist_group("conformance-spanner-emulator")
+
+
+def _diagnostics():
+    return "no service constructed"
+
+
+@pytest.fixture(autouse=True)
+def native_diagnostics(monkeypatch):
+    from trusted_router.services.async_settle_shadow_health import Service
+    global _diagnostics
+    services, stores = [], []
+    initialize_store, initialize_service = ObservationStore.__init__, Service.__init__
+    with ExitStack() as stack:
+        def store_init(store, *args, **kwargs):
+            initialize_store(store, *args, **kwargs)
+            stores.append((store, stack.enter_context(client_history(store))))
+        def service_init(svc, *args, **kwargs):
+            initialize_service(svc, *args, **kwargs)
+            services.append(svc)
+        monkeypatch.setattr(ObservationStore, "__init__", store_init)
+        monkeypatch.setattr(Service, "__init__", service_init)
+        def diagnostic():
+            return "\n".join([status(svc, next(h for st, h in stores if st is svc.store)) for svc in services]
+                             + [repr(dict(operations=h, wall_us=int(st.wall()*1e6), mono=st.clock(),
+                                          lifecycle=None, journal=None, final_interval=None))
+                                for st, h in stores if all(st is not s.store for s in services)])
+        _diagnostics = diagnostic
+        try:
+            yield
+        finally:
+            print("NATIVE_STATUS", diagnostic())
+            for svc in services:
+                svc.publisher_executor.shutdown(wait=True, cancel_futures=True)
+                svc.evidence_executor.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.fixture(scope="module")
@@ -49,15 +85,15 @@ def test_shadow_observation_native_six_rows(shadow_emulator_resources: Any, back
         return commit(*args, **kwargs)
     monkeypatch.setattr(store.database.spanner_api, "commit", encode)
     store.flush(pages, counter, closure, Budget(time.monotonic()+4))
-    assert len(captured) == 1
+    assert len(captured) == 1, _diagnostics()
     native = captured[0]
     fake = Transaction(SimpleNamespace())
     store.write(fake, [*pages, counter, closure], Budget(time.monotonic()+4))
-    assert list(native.mutations) == list(fake._mutations)
-    assert sum(len(row.body) for row in [*pages, counter, closure]) == 331776
-    assert max(len(row.key) for row in pages) == 96
-    assert 331776 < len(CommitRequest.serialize(native)) < 336000
-    assert store.reconcile([*pages, counter, closure], Budget(time.monotonic()+4))
+    assert list(native.mutations) == list(fake._mutations), _diagnostics()
+    assert sum(len(row.body) for row in [*pages, counter, closure]) == 331776, _diagnostics()
+    assert max(len(row.key) for row in pages) == 96, _diagnostics()
+    assert 331776 < len(CommitRequest.serialize(native)) < 336000, _diagnostics()
+    assert store.reconcile([*pages, counter, closure], Budget(time.monotonic()+4)), _diagnostics()
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -78,7 +114,7 @@ def test_shadow_observation_native_slot_race(shadow_emulator_resources: Any, bac
             if not contender_store.claim(boot, slot, now_us, budget):
                 return None
             value = contender_store.observe(boot, "us-central1", "a"*40, slot, budget)
-            assert contender_store.publish(value, budget)
+            assert contender_store.publish(value, budget), _diagnostics()
             return value
         except Exception:
             return None
@@ -87,14 +123,14 @@ def test_shadow_observation_native_slot_race(shadow_emulator_resources: Any, bac
         a = pool.submit(contender, "a", store)
         b = pool.submit(contender, "b", other)
         winners = [value for value in (a.result(), b.result()) if value is not None]
-    assert len(winners) == 1
+    assert len(winners) == 1, _diagnostics()
     value = winners[0]
     read = store.read_shadow_health()
-    assert read is not None and read["body"] == value
-    assert value["observed_at_ns"] <= read["committed_at_ns"] <= read["read_at_ns"]
+    assert read is not None and read["body"] == value, _diagnostics()
+    assert value["observed_at_ns"] <= read["committed_at_ns"] <= read["read_at_ns"], _diagnostics()
     with pytest.raises(ValueError, match="a1-server-slot"):
         store.claim("future", slot+100, now_us+200_000_000, Budget(time.monotonic()+.5))
-    assert not store.publish(value, Budget(time.monotonic()+.5))  # Same slot cannot overwrite.
+    assert not store.publish(value, Budget(time.monotonic()+.5)), _diagnostics()  # Same slot cannot overwrite.
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -112,7 +148,7 @@ def test_shadow_observation_native_checkpoint_fences(shadow_emulator_resources: 
     svc.store.flush([], newer, None, Budget(time.monotonic()+4))
     with pytest.raises(ValueError, match="checkpoint_regression"):
         svc.store.flush([], older, None, Budget(time.monotonic()+4))
-    assert svc.store.reconcile([newer], Budget(time.monotonic()+4))
+    assert svc.store.reconcile([newer], Budget(time.monotonic()+4)), _diagnostics()
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -125,11 +161,11 @@ def test_shadow_observation_native_reference_readback(shadow_emulator_resources:
         async_settle_shadow_workspaces="ws", source_revision="a"*40), ObservationStore(database))
     svc.maintain()
     r = svc.port.reserve(int(time.time()*1e6))
-    assert r is not None
-    assert svc.port.finalize(r, event_for(r))
-    assert svc.port.complete(r)
+    assert r is not None, _diagnostics()
+    assert svc.port.finalize(r, event_for(r)), _diagnostics()
+    assert svc.port.complete(r), _diagnostics()
     svc.flush(time.monotonic()+4)
-    assert svc.journal.days[r.day].hwm == 1
+    assert svc.journal.days[r.day].hwm == 1, _diagnostics()
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -141,26 +177,24 @@ def test_shadow_observation_native_empty_nonempty_metadata(shadow_emulator_resou
     store = ObservationStore(database)
     slot = int(time.time())//2
     empty = store.observe("reader", "us-central1", "a"*40, slot, Budget(time.monotonic()+.5))
-    assert empty["observed_at_ns"] > 0 and empty["backlog_count"] == 0
+    assert empty["observed_at_ns"] > 0 and empty["backlog_count"] == 0, _diagnostics()
     identity = uuid4().hex
     with database.batch() as batch:
         batch.insert(table="tr_settle_outbox", columns=("authorization_id", "intent_kind", "settle_origin", "actual_cost_micro", "status", "created_at"),
             values=[(identity, "settle", "typed", 1, "dead", dt.datetime.now(dt.UTC))])
     try:
         nonempty = store.observe("reader", "us-central1", "a"*40, slot, Budget(time.monotonic()+.5))
-        assert nonempty["observed_at_ns"] > empty["observed_at_ns"]
-        assert nonempty["backlog_count"] == empty["backlog_count"]+1
-        assert nonempty["dead_count"] == empty["dead_count"]+1
+        assert nonempty["observed_at_ns"] > empty["observed_at_ns"], _diagnostics()
+        assert nonempty["backlog_count"] == empty["backlog_count"]+1, _diagnostics()
+        assert nonempty["dead_count"] == empty["dead_count"]+1, _diagnostics()
     finally:
         with database.batch() as batch:
             batch.delete("tr_settle_outbox", KeySet(keys=[(identity, "settle")]))
 
 
 def native_service(database):
-    from trusted_router.config import Settings
-    from trusted_router.services.async_settle_shadow_health import Service
-    return Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
-        async_settle_shadow_workspaces="ws", source_revision="a"*40), ObservationStore(database, wall=lambda: NOW_US/1e6))
+    from tests.shadow_observation_fixtures import observation_service
+    return observation_service(ObservationStore(database, wall=lambda: NOW_US/1e6+100))
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -180,9 +214,10 @@ def test_shadow_native_one_attempt_handoff(shadow_emulator_resources, backend):
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
 @pytest.mark.parametrize("signum", ["SIGTERM", "SIGKILL"])
-@pytest.mark.parametrize("point", ["before_first_flush", "during_commit", "before_ack", "after_ack", "before_result", "after_result"])
+@pytest.mark.parametrize("point", ["before_first_flush", "during_commit", "request_sent", "before_ack", "after_ack", "before_result", "after_result", "full_queues", "graceful"])
 def test_shadow_native_process_restart(shadow_emulator_resources, backend, point, signum, tmp_path):
     import json
+    import select
     import signal
     import subprocess
     import sys
@@ -191,22 +226,57 @@ def test_shadow_native_process_restart(shadow_emulator_resources, backend, point
     boot = uuid4().hex
     args = [sys.executable, str(Path(__file__).parents[1]/"shadow_observation_restart.py"),
         database._instance._client.project, database._instance.instance_id, database.database_id, boot]
-    with (tmp_path/"child.log").open("w") as errors:
-        child = subprocess.Popen([*args, point], stdout=subprocess.PIPE, stderr=errors, text=True)  # noqa: S603
+    manifest = str(tmp_path/"manifest.json")
+    log = tmp_path/"child.log"
+    output = []
+    with log.open("w") as errors:
+        child = subprocess.Popen([*args, point, manifest], stdout=subprocess.PIPE, stderr=errors, text=True)  # noqa: S603
+        def child_state():
+            return "\n".join(output)+"\nSTDERR\n"+log.read_text()+"\nPARENT\n"+_diagnostics()
         try:
-            assert child.stdout.readline().strip() == "BOUNDARY", (tmp_path/"child.log").read_text()
+            # The child emits status before its marker. A bounded child watchdog
+            # reports errors rather than leaving the parent on an infinite read.
+            ready_deadline = time.monotonic()+45
+            while True:
+                readable, _, _ = select.select([child.stdout], [], [], max(0, ready_deadline-time.monotonic()))
+                assert readable, "child boundary deadline: "+child_state()
+                line = child.stdout.readline()
+                if not line:
+                    break
+                output.append(line.rstrip())
+                if line.strip() == "BOUNDARY":
+                    break
+            assert output and output[-1] == "BOUNDARY", child_state()
             child.send_signal(getattr(signal, signum))
-            assert child.wait(timeout=180) == -getattr(signal, signum)
+            code = child.wait(timeout=35)
+            output.extend(child.stdout.read().splitlines())
+            assert code == (0 if signum == "SIGTERM" else -signal.SIGKILL), child_state()
+            if signum == "SIGTERM":
+                shutdown = json.loads(output[-1])
+                assert shutdown["handler_called"] and shutdown["shutdown"], child_state()
+                assert shutdown["status"]["unclosed"] == (point != "graceful"), child_state()
         finally:
             if child.poll() is None:
                 child.kill()
                 child.wait()
-    recovered = subprocess.run([*args, "recover"], capture_output=True, text=True, timeout=180)  # noqa: S603
-    assert recovered.returncode == 0, recovered.stderr
+            print("CHILD_DIAGNOSTICS", child_state())
+    recovered = subprocess.run([*args, "recover", manifest], capture_output=True, text=True, timeout=60)  # noqa: S603
+    diagnostics = child_state()+"\nRECOVERY\n"+recovered.stdout+recovered.stderr
+    assert recovered.returncode == 0, diagnostics
     state = json.loads(recovered.stdout.splitlines()[-1])
-    assert state["durable"] == (point == "after_result")
-    assert state["missing_close"] == (point != "after_result")
-    assert state["closure"] == (point in {"before_ack", "after_ack", "before_result", "after_result"})
+    durable = point == "after_result" or (point == "graceful" and signum == "SIGTERM")
+    assert state["durable"] == durable and state["missing_close"] != durable, diagnostics
+    assert state["result_attempts"] == int(durable), diagnostics
+    assert state["closure"] == (durable or point in {"request_sent", "before_ack", "after_ack", "before_result"}), diagnostics
+    if point == "full_queues":
+        assert state["sticky_loss"] and state["missing_close"], diagnostics
+        memory = state["lost_memory"]
+        assert {k: memory[k] for k in ("pages", "retained", "basis", "trace", "observers", "publishers")} == dict(
+            pages=4, retained=32, basis=4, trace=4, observers=32, publishers=1), diagnostics
+        assert memory["work_bytes"] == 256*1024, diagnostics
+        assert state["hwm"] == 0 and state["event_seq"] > 32 and len(state["lost_attachments"]) == 8, diagnostics
+        assert len(state["found"]) == 6 and state["found"] == state["landed"], diagnostics
+
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
@@ -219,7 +289,8 @@ def test_shadow_native_exact_miss_then_late_landing(shadow_emulator_resources, b
     database, _ = shadow_emulator_resources
     svc = native_service(database)
     now = [100.]
-    svc.store.clock = lambda: now[0]
+    from tests.shadow_observation_fixtures import bind_clock
+    bind_clock(svc, lambda: now[0])
     svc.closing_reason, svc.termination_deadline = "shutdown", 109.
     api = svc.store.database.spanner_api
     commit = api.commit
@@ -233,7 +304,7 @@ def test_shadow_native_exact_miss_then_late_landing(shadow_emulator_resources, b
         return commit(*args, **kwargs)
     monkeypatch.setattr(api, "commit", defer)
     svc.flush(104.)
-    assert len(pending) == 1 and svc.final_veto
+    assert len(pending) == 1 and svc.final_veto, _diagnostics()
     day = next(iter(svc.journal.days))
     key = day+"/"+svc.journal.boot
     # The read boundary drops the first exact reply; no full scan or retry.
@@ -241,15 +312,15 @@ def test_shadow_native_exact_miss_then_late_landing(shadow_emulator_resources, b
     reads = []
     def first_miss(kind, requested, budget):
         reads.append((kind, requested))
-        assert kind == CLOSURE_KIND and requested == key
+        assert kind == CLOSURE_KIND and requested == key, _diagnostics()
         return None
     with monkeypatch.context() as local:
         local.setattr(svc.store, "read", first_miss)
-        assert not svc.store.reconcile([svc.unknown[3]], Budget(104., svc.store.clock))
-    assert reads == [(CLOSURE_KIND, key)]
+        assert not svc.store.reconcile([svc.unknown[3]], Budget(104., svc.store.clock)), _diagnostics()
+    assert reads == [(CLOSURE_KIND, key)], _diagnostics()
     with rpc_scope(104., 2., svc.store.clock):
         commit(*pending[0][0], **pending[0][1])
-    assert read(CLOSURE_KIND, key, Budget(104., svc.store.clock)) is not None
+    assert read(CLOSURE_KIND, key, Budget(104., svc.store.clock)) is not None, _diagnostics()
     svc.flush(104.)
-    assert day in svc.final_veto and len(pending) == 1
-    assert read(CLOSE_RESULT_KIND, key, Budget(104., svc.store.clock)) is None
+    assert day in svc.final_veto and len(pending) == 1, _diagnostics()
+    assert read(CLOSE_RESULT_KIND, key, Budget(104., svc.store.clock)) is None, _diagnostics()

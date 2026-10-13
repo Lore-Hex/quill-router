@@ -314,6 +314,12 @@ def test_terminal_cap_blocks_even_with_event_permits():
     assert svc.port.reserve(NOW_US, terminal=True) is None
     assert svc.port.lost.is_set() and svc.journal.permits[day] == 100
     assert svc.journal.days[day].next_seq == 1
+    svc.closing_reason = "shutdown"
+    svc.flush(svc.store.clock()+4)
+    assert not svc.state.days[0].closed and svc.journal.days[day].losses
+    counter = svc.counter_row(day, int(svc.store.wall()*1e6), closed=False).value()
+    assert not counter["closed"] and counter["loss_count"] > 0
+    assert counter["receipt_count"] == counter["settle_attempts"] == counter["refund_attempts"] == 0
 
 
 @pytest.mark.parametrize("streamed", [None, False, True])

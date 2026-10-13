@@ -3,6 +3,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tests.shadow_observation_diagnostics import client_history, status
+from tests.shadow_observation_fixtures import bind_clock
 from trusted_router.async_settle_shadow_journal import CLOSE_RESULT_KIND, CLOSURE_KIND
 from trusted_router.storage_gcp_shadow_observation import UnknownCommit
 
@@ -43,31 +45,31 @@ def original_reply_fault(store, *, kind, fault, now):
 
 def verify_final_fault(svc, fault):
     now = [100.]
-    svc.store.clock = lambda: now[0]
+    bind_clock(svc, lambda: now[0])
     day = next(iter(svc.journal.days))
     svc.closing_reason = "shutdown"
     svc.termination_deadline = now[0]+9
-    with original_reply_fault(svc.store, kind=CLOSURE_KIND, fault=fault, now=now) as history:
+    with client_history(svc.store) as operations, original_reply_fault(svc.store, kind=CLOSURE_KIND, fault=fault, now=now) as history:
         svc.flush(now[0]+4)
-        assert history.fired and history.attempts == 1
-        assert day in svc.final_veto and day not in {d.day for d in svc.state.days if d.closed}
+        assert history.fired and history.attempts == 1, status(svc, operations)
+        assert day in svc.final_veto and day not in {d.day for d in svc.state.days if d.closed}, status(svc, operations)
         from trusted_router.storage_gcp_shadow_observation import Budget
         key = day+"/"+svc.journal.boot
-        assert svc.store.read(CLOSURE_KIND, key, Budget(now[0]+4, svc.store.clock)) is not None
+        assert svc.store.read(CLOSURE_KIND, key, Budget(now[0]+4, svc.store.clock)) is not None, status(svc, operations)
         svc.flush(now[0]+4)
-        assert history.attempts == 1
-        assert svc.store.read(CLOSE_RESULT_KIND, key, Budget(now[0]+4, svc.store.clock)) is None
-        assert day in svc.final_veto
+        assert history.attempts == 1, status(svc, operations)
+        assert svc.store.read(CLOSE_RESULT_KIND, key, Budget(now[0]+4, svc.store.clock)) is None, status(svc, operations)
+        assert day in svc.final_veto, status(svc, operations)
 
 
 def verify_handoff_fault(svc):
     now = [100.]
-    svc.store.clock = lambda: now[0]
+    bind_clock(svc, lambda: now[0])
     svc.closing_reason = "shutdown"
     svc.termination_deadline = now[0]+9
-    with original_reply_fault(svc.store, kind=CLOSE_RESULT_KIND, fault="lost", now=now) as history:
+    with client_history(svc.store) as operations, original_reply_fault(svc.store, kind=CLOSE_RESULT_KIND, fault="lost", now=now) as history:
         svc.flush(now[0]+4)
-        assert history.fired and history.attempts == 1 and svc.handoff is not None
+        assert history.fired and history.attempts == 1 and svc.handoff is not None, status(svc, operations)
         svc.flush(now[0]+4)
-        assert svc.handoff is None and not svc.journal.days
-        assert history.attempts == 1
+        assert svc.handoff is None and not svc.journal.days, status(svc, operations)
+        assert history.attempts == 1, status(svc, operations)

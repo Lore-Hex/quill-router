@@ -244,7 +244,7 @@ class Port:
     def reserve(self, observed_us: int, *, terminal: bool = False) -> Reservation | None:
         def action() -> Reservation | None:
             svc, day = self.service, day_at(observed_us)
-            require(svc.enabled() and not svc.journal.stopped, "quiesced")
+            require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
             if terminal:
@@ -402,18 +402,10 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                   job: lifecycle.PublisherJob, claim_us: int, admission: Service) -> PublisherReply:
     """Worker I/O only. All inputs are captured by the owner before submission."""
     started = store.clock()
-    generation = admission.generation
     slot = job.slot
     day = day_at(slot*SLOT_US)
-    reason = ("revoked" if generation != job.generation else
-              "outside_window" if not job.earliest_start_mono <= started <= job.latest_start_mono else None)
-    if reason is not None:
-        trace = dict(v=2, policy_version=POLICY, contract_revision="a1", day=day, boot=boot,
-            slot=slot, claim_start_us=None, claim_at_ns=None, observed_at_ns=None,
-            publisher_heartbeat_ns=None, ack_at_us=None, cycle_us=None, body_sha256=None,
-            outcome="missed", unknown_outcome=False, late_cycle=False, rpc_count=0, rpc_elapsed_us=0)
-        return PublisherReply(trace, (), False, job.generation, started, reason)
-    budget = Budget(started + CYCLE_SECONDS, store.clock)
+    reason = None
+    budget = Budget(job.latest_start_mono + CYCLE_SECONDS, store.clock)
     claimed = False
     attempted = False
     outcome = "missed_slots"
@@ -426,16 +418,20 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     def record(elapsed: int) -> None:
         rpc_durations.append(elapsed)
     def attempt() -> None:
-        nonlocal actual_us, attempted, outcome, claimed, value, ack_us
-        actual_us = int(store.wall()*1_000_000)
-        if (reason is not None or actual_us // SLOT_US != slot
-                or actual_us % SLOT_US > JITTER_US):
-            return
-        budget.remaining(CYCLE_SECONDS)
-        attempted = True
-        outcome = "failures"
-        with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(
-                record):
+        nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason
+        # Scope setup may sample time or be delayed. Admission happens AFTER it.
+        with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
+            with admission.admission_lock:
+                generation = admission.generation
+                actual_us = int(store.wall()*1_000_000)
+                started = store.clock()
+                reason = ("revoked" if generation != job.generation else
+                    "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
+                        and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
+                if reason is not None:
+                    return
+                budget = Budget(started + CYCLE_SECONDS, store.clock)
+                attempted, outcome = True, "failures"
             if not store.claim(boot, slot, actual_us, budget):
                 outcome = "lost_claims"
                 return
@@ -486,6 +482,8 @@ class Service:
         self.observer.service = self
         self.lock = threading.RLock()
         self.owner_thread = threading.get_ident()
+        # SIGTERM may interrupt the owner inside its tiny generation update.
+        self.admission_lock = threading.RLock()
         self.generation = 0
         self.policy_pin = self.pin()
         self.publisher_faults = 0
@@ -534,8 +532,13 @@ class Service:
     def enabled(self) -> bool:
         if threading.get_ident() == self.owner_thread and self.policy_pin != self.pin():
             self.policy_pin = self.pin()
-            self.generation += 1
+            with self.admission_lock:
+                self.generation += 1
             self._state, _ = lifecycle.step(self.state, lifecycle.PolicyChanged(0, self.generation))
+        return self.policy_enabled()
+
+    def policy_enabled(self) -> bool:
+        """Request-side pin check: owner lifecycle alone publishes revocations."""
         return (self.settings.async_settle_shadow_policy == POLICY
                 and self.settings.async_settle_shadow_workspace_ids == self.workspaces
                 and bool(self.workspaces) and not self.settings.async_settle_enabled)
@@ -841,7 +844,8 @@ class Service:
         with self.lock:
             before = self.state
             self._state, effects = lifecycle.step(before, event)
-            self.generation = self.state.generation
+            with self.admission_lock:
+                self.generation = self.state.generation
             for effect in effects:
                 if isinstance(effect, lifecycle.StartFinalClose):
                     self.journal.days[effect.day].sealing = True
@@ -965,8 +969,10 @@ class Service:
         budget = Budget(deadline, self.store.clock)
         self.sync_fold_obligations()
         if self.closing_reason is not None and not self.state.shutdown:
+            if self.interval_end_us is None:
+                self.interval_end_us = int(self.store.wall()*1_000_000)
             if not self.state.days:
-                self.tick(int(self.store.wall()*1_000_000), publisher=False)
+                self.tick(self.interval_end_us, publisher=False)
             self.accept(lifecycle.ShutdownRequested(self.interval_end_us or int(self.store.wall()*1_000_000)))
         if not self.state.shutdown:
             stamp = int(self.store.wall()*1_000_000)
@@ -1199,7 +1205,9 @@ class Service:
         def stop(signum: int, frame: Any) -> None:
             deadline = self.store.clock()+9
             self.termination_deadline = min(self.termination_deadline or deadline, deadline)
-            self.generation += 1
+            with self.admission_lock:
+                self.generation += 1
+            self._state, _ = lifecycle.step(self.state, lifecycle.PolicyChanged(0, self.generation))
             self.stopped.set()
             self.slots.stopped = self.journal.stopped = True
             if self.close_task is None:
@@ -1239,7 +1247,7 @@ class Service:
         with self.lock:
             self.journal.stopped = True
             self.closing_reason = reason
-            self.interval_end_us = int(self.store.wall()*1_000_000)
+            self.interval_end_us = stamp
         try:
             async with asyncio.timeout(max(0, deadline-self.store.clock())):
                 if self.task is not None and not from_loop:

@@ -33,7 +33,6 @@ from trusted_router.async_settle_shadow_journal import (
     reserve_cap,
 )
 from trusted_router.async_settle_shadow_v2_evidence import RESERVATION_BLOCK
-from trusted_router.config import Settings
 from trusted_router.services.async_settle import (
     Admission,
     AdmissionCache,
@@ -206,8 +205,8 @@ def installed(body: dict[str, Any], *, read_ns: int | None = None, reply_at: flo
 
 def service() -> Service:
     store, _ = fake_store()
-    return Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
-        async_settle_shadow_workspaces="ws", source_revision="a"*40), store)
+    from tests.shadow_observation_fixtures import observation_service
+    return observation_service(store)
 
 
 def test_reservation_order_freeze_and_hwm() -> None:
@@ -1612,7 +1611,8 @@ async def test_sigterm_chains_host_and_preserves_remaining_grace(monkeypatch: An
     monkeypatch.setattr(signal, "signal", lambda sig, handler: current.__setitem__(0, handler))
     svc.trap_sigterm()
     before = svc.store.clock()
-    current[0](signal.SIGTERM, None)
+    with svc.admission_lock:  # Signal can interrupt an owner generation update.
+        current[0](signal.SIGTERM, None)
     assert calls[0][:3] == (signal.SIGTERM, True, True)
     assert before+9 <= calls[0][3] <= svc.store.clock()+9
     assert svc.close_task is not None
