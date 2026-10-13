@@ -60,25 +60,10 @@ def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, 
     """
     require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
 
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in items:
-            require(key not in result)
-            result[key] = value
-        return result
-
-    def finite(token: str) -> float:
-        require(allow_float)
-        value = float(token)
-        require(math.isfinite(value))
-        return value
-
-    def invalid(token: str) -> Any:
-        raise ValueError('evidence_schema_gap')
-
     try:
-        value = json.loads(raw.decode('utf-8'), object_pairs_hook=pairs,
-                           parse_float=finite, parse_constant=invalid)
+        value, issues = decode_original(raw, limit, allow_float=allow_float,
+            max_depth=max_depth + 1, bounded_integers=bounded_integers)
+        require(not issues)
         pending = [(value, 0)]
         while pending:
             child, depth = pending.pop()
@@ -115,7 +100,69 @@ MAX_TRANSPORT_DEPTH = 16
 _INVALID = object()
 
 
+def same_decoded(left: Any, right: Any) -> bool:
+    """Compare types and insertion order as well as scalar values, iteratively."""
+    pending = [(left, right)]
+    while pending:
+        left, right = pending.pop()
+        if type(left) is not type(right):
+            return False
+        if type(left) is dict:
+            if list(left) != list(right):
+                return False
+            pending.extend((left[key], right[key]) for key in left)
+        elif type(left) is list:
+            if len(left) != len(right):
+                return False
+            pending.extend(zip(left, right, strict=True))
+        elif left != right:
+            return False
+    return True
+
+
+def decode_original(raw: bytes, limit: int, *, allow_float: bool = False,
+                    max_depth: int = MAX_TRANSPORT_DEPTH, bounded_integers: bool = True
+                    ) -> tuple[Any, list[tuple[Any, ...]]]:
+    """The only original-byte decoder: clean requires both decoders to agree.
+
+    Standard rejection never discards locally recovered siblings. A local clean
+    result after standard rejection (or a different value) gets a fixed root
+    issue, without carrying exception text into evidence.
+    """
+    require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
+    def invalid(token: str) -> Any:
+        raise ValueError('evidence_schema_gap')
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, child in items:
+            require(key not in value)
+            value[key] = child
+        return value
+    def finite(token: str) -> float:
+        number = float(token)
+        require(math.isfinite(number))
+        return number
+    standard = _INVALID
+    try:
+        standard = json.loads(raw.decode('utf-8'), object_pairs_hook=pairs,
+                              parse_float=finite, parse_constant=invalid, strict=True)
+    except (ValueError, UnicodeError, RecursionError, OverflowError):
+        pass
+    value, issues = _local_values(raw, allow_float=allow_float,
+        max_depth=max_depth, bounded_integers=bounded_integers)
+    if not issues and (standard is _INVALID or not same_decoded(value, standard)):
+        issues.append(('transport', 'decoder-disagreement'))
+    return value, issues
+
+
 def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[tuple[Any, ...]]]:
+    value, issues = decode_original(raw, limit)
+    require(type(value) is dict)
+    return value, issues
+
+
+def _local_values(raw: bytes, *, allow_float: bool, max_depth: int,
+                  bounded_integers: bool) -> tuple[Any, list[tuple[Any, ...]]]:
     """Iterative JSON frames isolate every value, including malformed scalars.
 
     Only delimiters/quotes frame children; decoding a token cannot consume its
@@ -123,7 +170,6 @@ def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[tuple
     not a Python call stack. Original strings are decoded exactly once.
     """
     import re
-    require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
     text = raw.decode('utf-8', errors='surrogateescape')
     errors: list[tuple[Any, ...]] = []
     # frame: container, path, next key, grammar state
@@ -133,14 +179,21 @@ def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[tuple
 
     def scalar(token: str) -> Any:
         def integer(value: str) -> int:
-            require(len(value.lstrip('-')) <= 19)
+            if bounded_integers and not allow_float:
+                require(len(value.lstrip('-')) <= 19)
             number = int(value)
-            require(-(1 << 63) <= number < (1 << 63))
+            if bounded_integers and not allow_float:
+                require(-(1 << 63) <= number < (1 << 63))
             return number
         def invalid(value: str) -> Any:
             raise ValueError('evidence_schema_gap')
+        def finite(token: str) -> float:
+            require(allow_float)
+            number = float(token)
+            require(math.isfinite(number))
+            return number
         try:
-            value = json.loads(token, parse_int=integer, parse_float=invalid, parse_constant=invalid)
+            value = json.loads(token, parse_int=integer, parse_float=finite, parse_constant=invalid)
             if isinstance(value, str):
                 value.encode('utf-8')
             return value
@@ -248,16 +301,18 @@ def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[tuple
                 continue
         if lexeme in ('{', '['):
             location = path()
-            if len(frames) >= MAX_TRANSPORT_DEPTH:
+            if len(frames) >= max_depth:
                 put(_INVALID)
                 skip = 1
             else:
                 child: Any = {} if lexeme == '{' else []
                 put(child)
                 frames.append([child, location, None, 'first'])
-        else:
+        elif lexeme == '':
             put(decoded)
-    require(not frames and not skip and type(root) is dict, 'evidence_schema_gap')
+        else:
+            put(_INVALID)
+    require(not frames and not skip and root is not _INVALID, 'evidence_schema_gap')
     return root, errors
 
 
@@ -335,7 +390,9 @@ def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[Loa
         # 'rows/0' can never masquerade as the first rows element.
         parts = error
         key = parts[1] if len(parts) > 1 else ''
-        if key not in allowed:
+        if parts == ('transport', 'decoder-disagreement'):
+            reject('transport/decoder-disagreement')
+        elif key not in allowed:
             reject('transport/extra')
         elif key in arrays and len(parts) > 2 and type(parts[2]) is int and type(value.get(key)) is list:
             index = parts[2]

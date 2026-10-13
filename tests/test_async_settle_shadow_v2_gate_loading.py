@@ -547,6 +547,8 @@ def test_every_gate_input_field_has_provenance_row() -> None:
     assert len(rows) == len(expected)
     assert {row[0] for row in rows} == expected
     assert all(source.strip() and validator.strip() for _, source, validator in rows)
+    assert "gate_loading.decode_original" in table
+    assert "transport/decoder-disagreement" in table
 
 
 def test_shutdown_population_requires_original_proof_commitment(round9_originals: Any) -> None:
@@ -792,18 +794,7 @@ def test_round11_cache_restores_every_function_identity() -> None:
     assert all(getattr(owner, key) is original for (owner, key), original in zip(targets, originals, strict=True))
 
 
-def test_round11_module_teardown_before_contract_subprocess() -> None:
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-    root = Path(__file__).parents[1]
-    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:xdist', '-p', 'no:cacheprovider',
-        'tests/test_async_settle_shadow_v2_gate_complete.py::test_lookup_cache_keeps_mutation_isolation_and_schema_rejections',
-        'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-key]',
-        'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-value]'],
-        cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, capture_output=True, text=True, check=False)  # noqa: S603
-    assert result.returncode == 0, result.stdout + result.stderr
+
 
 
 def test_round11_prior_evaluated_once_per_content(round9_originals: Any, monkeypatch: Any) -> None:
@@ -996,42 +987,7 @@ def test_round12_false_pass_classifier(round12_original: Any, mutation: str, del
                     library_call=library_call)
 
 
-def test_round12_inventory_cache_differential(round12_original: Any) -> None:
-    import json
-    from types import SimpleNamespace
 
-    from tests.test_async_settle_shadow_v2_gate_window import validation_cache
-    from trusted_router import async_settle_shadow_v2_gate_report as reports
-    from trusted_router.async_settle_shadow_v2_gate_bundle import Context
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    from trusted_router.async_settle_shadow_v2_gate_result import render
-    from trusted_router.async_settle_shadow_v2_gates import evaluate
-    from trusted_router.async_settle_shadow_v2_schema import Schema
-    _, raw, ports = round12_original
-    value = json.loads(raw)
-    changes = [raw]
-    # Every native transport member, including all four previously omitted
-    # prior-envelope inputs; the entire rendered graph is compared bytewise.
-    for key in value:
-        altered = copy.deepcopy(value)
-        altered[key] = '' if key in ('transport', 'pre', 'fleet', 'serving') else None
-        changes.append(canonical(altered))
-    def output(candidate: bytes) -> Any:
-        return render(evaluate(load(candidate, ports), ports, gate='transport'))
-    pristine = [output(candidate) for candidate in changes]
-    generator = validation_cache.__wrapped__(SimpleNamespace(getfixturevalue=lambda name: {'parse': Schema.parse}))
-    next(generator)
-    try:
-        assert [output(candidate) for candidate in changes] == pristine
-        ctx = Context(load(raw, ports), ports, 'transport')
-        expected = copy.deepcopy(reports.input_inventory(ctx))
-        entries, leaves = reports.input_inventory(ctx)
-        entries.clear()
-        leaves.clear()
-        assert reports.input_inventory(ctx) == expected
-    finally:
-        with pytest.raises(StopIteration):
-            next(generator)
 
 
 @pytest.mark.parametrize('requested', ['0001-01-01', '1969-12-31'])
@@ -1095,3 +1051,226 @@ def test_round12_empty_value_keeps_collection_sibling() -> None:
     assert value['proof'] == 'original'
     assert value['rows'] == [dict(kind='sample', id='key', raw='exact bytes')]
     assert any(issue.path == 'transport/rows/0' for issue in issues)
+
+
+# Complete token classes, including the independent review's scalar matrix.
+ROUND13_LEXEMES = (b':', b',', b'{', b'}', b'[', b']', b'', b'NaN', b'Infinity',
+    b'1.0', b'1e0', b'01', b'+1', b'9' * 30, b'"\\q"', b'[,]', b'[1,]',
+    b'{"a":1,}', b'1 2', b'["a" "b"]')
+
+
+def assert_round13_clean_agreement(raw: bytes) -> None:
+    import json
+
+    from trusted_router.async_settle_shadow_v2_gate_loading import same_decoded, transport_values
+    try:
+        local, issues = transport_values(raw, len(raw))
+    except ValueError:
+        return
+    if not issues:
+        def invalid(token: str) -> Any:
+            raise ValueError('invalid constant')
+        def pairs(items: Any) -> Any:
+            result = dict(items)
+            assert len(result) == len(items)
+            return result
+        standard = json.loads(raw, parse_constant=invalid, object_pairs_hook=pairs, strict=True)
+        assert same_decoded(local, standard)
+
+
+def test_round13_default_token_classes() -> None:
+    members = ('v', 'policy_version', 'contract_revision', 'proof', 'pre', 'fleet',
+        'transport', 'serving', 'completed_at_us', 'window', 'rows', 'attachments',
+        'preimages', 'ledgers', 'days')
+    # All top-level members; object/list nesting for every collection kind.
+    documents = [b'{"' + key.encode() + b'":TOKEN}' for key in members]
+    documents += [b'{"' + key.encode() + b'":[{"raw":TOKEN}]}'
+        for key in ('rows', 'attachments', 'preimages')]
+    documents += [b'{"' + key.encode() + b'":[TOKEN]}' for key in ('ledgers', 'days')]
+    documents += [b'{"window":{"start_us":TOKEN}}']
+    for document in documents:
+        for lexeme in ROUND13_LEXEMES:
+            assert_round13_clean_agreement(document.replace(b'TOKEN', lexeme))
+
+
+@pytest.mark.parametrize('field', ['pre', 'fleet', 'transport', 'serving', 'window'])
+@pytest.mark.parametrize('boundary', ['library', 'report', 'pilot'])
+def test_round13_colon_original_bytes(round12_original: Any, tmp_path: Any, field: str, boundary: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import library, tool
+    _, raw, ports = round12_original
+    value = {**json.loads(raw), field: None}
+    candidate = canonical(value).replace(('"' + field + '":null').encode(),
+        ('"' + field + '"::').encode(), 1)
+    output = (library(candidate, ports, gate='transport') if boundary == 'library' else
+        tool(candidate, ports, tmp_path / boundary, boundary, gate='transport'))
+    assert output['verdict'] == 'BLOCKED'
+    assert 'evidence_schema_gap' in output['gaps']
+
+
+@pytest.mark.parametrize('raw,local', [(b'{"pre"::}', {'pre': None}),
+    (b'{"pre":1,"fleet":2}', {'fleet': 2, 'pre': 1}), (b'{"pre":1}', {'pre': 1.0}),
+    (b'{"pre":1}', {'pre': True}), (b'{"pre":1}', {'pre': 2}),
+    (b'{"pre":1,"pre":1}', {'pre': 1}), (b'{"pre":NaN}', {'pre': None}),
+    (b'{"pre":' + b'9' * 5000 + b'}', {'pre': None}),
+    (b'{"pre":' + b'[' * 2000 + b'0' + b']' * 2000 + b'}', {'pre': None})],
+    ids=['colon', 'order', 'float', 'boolean', 'value', 'duplicate', 'constant', 'integer-limit', 'recursion-limit'])
+def test_round13_agreement_is_required(monkeypatch: Any, raw: bytes, local: Any) -> None:
+    from trusted_router import async_settle_shadow_v2_gate_loading as loading
+    monkeypatch.setattr(loading, '_local_values', lambda *a, **kw: (local, []))
+    decoded, issues = loading.transport_children(raw, len(raw))
+    assert decoded == local
+    assert [(issue.gap, issue.path) for issue in issues] == [
+        ('evidence_schema_gap', 'transport/decoder-disagreement')]
+    with pytest.raises(ValueError):
+        loading.retained_json(raw, limit=len(raw))
+    if raw == b'{"pre":NaN}':
+        monkeypatch.setattr(loading, '_local_values', lambda *a, **kw: ({'pre': float('inf')}, []))
+        for token in (b'Infinity', b'1e999'):
+            candidate = b'{"pre":' + token + b'}'
+            _, issues = loading.transport_children(candidate, len(candidate))
+            assert [(issue.gap, issue.path) for issue in issues] == [
+                ('evidence_schema_gap', 'transport/decoder-disagreement')]
+
+
+def test_round13_local_value_tokens() -> None:
+    from trusted_router.async_settle_shadow_v2_gate_loading import _local_values
+    value, issues = _local_values(b'{"pre"::,"days":["2026-10-06"]}',
+        allow_float=False, max_depth=16, bounded_integers=True)
+    assert issues == [('transport', 'pre')]
+    assert value['days'] == ['2026-10-06']
+
+
+def test_round13_valid_documents() -> None:
+    import json
+    import random
+
+    from trusted_router.async_settle_shadow_v2_gate_loading import same_decoded, transport_values
+    rng = random.Random(401740)  # noqa: S311 - repeatable generated documents
+    scalars = [None, True, False, 0, -1, 2**63 - 1, -2**63, '', 'abc', '\\\n"', 'é', '😀', 'x/y', '\x00']
+    def make(depth: int = 0) -> Any:
+        if depth >= 5 or rng.randrange(3) == 0:
+            return rng.choice(scalars)
+        if rng.randrange(2):
+            return [make(depth + 1) for _ in range(rng.randrange(5))]
+        return {f'{i}/{rng.randrange(99)}': make(depth + 1) for i in range(rng.randrange(5))}
+    for index in range(250):
+        value = {f'k{j}': make() for j in range(rng.randrange(1, 6))}
+        raw = json.dumps(value, ensure_ascii=bool(index % 2)).encode()
+        decoded, issues = transport_values(raw, len(raw))
+        assert not issues and same_decoded(decoded, json.loads(raw))
+    for value in (1.0, [1, 1.0, True], {'b': 1e20, 'a': -0.5}):
+        raw = json.dumps(value).encode()
+        assert same_decoded(retained_json(raw), json.loads(raw))
+    raw = b'[' * 65 + b']' * 65
+    assert retained_json(raw, max_depth=64) is not None
+    with pytest.raises(ValueError):
+        retained_json(b'[' + raw + b']', max_depth=64)
+
+
+def test_round13_decoder_call_inventory() -> None:
+    import ast
+    from collections import Counter
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    paths = sorted((root / 'src/trusted_router').glob('async_settle_shadow_v2_gate*.py'))
+    paths += [root / ('scripts/async_settle/' + name + '.py') for name in
+        ('async_settle_shadow_v2_gate_tools', 'shadow_report', 'pilot_enablement')]
+    found: Any = Counter()
+    names = {'loads', 'JSONDecoder', 'raw_decode', '_local_values', 'tokens', 'scalar', 'decode_original', 'transport_values'}
+    aliases: dict[str, str] = {}
+    def decoder_name(node: Any) -> str:
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return aliases.get(node.id, node.id) if isinstance(node, ast.Name) else ''
+    def scan(source: str, path: Any) -> None:
+        tree = ast.parse(source)
+        aliases.clear()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                aliases.update({item.asname or item.name: item.name for item in node.names if item.name in names})
+        # Include ordinary callable aliases as well as renamed imports.
+        for _ in range(len(list(ast.walk(tree)))):
+            before = dict(aliases)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and decoder_name(node.value) in names:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            aliases[target.id] = decoder_name(node.value)
+            if aliases == before:
+                break
+        visit(tree, path)
+    def visit(node: Any, path: Any, context: str = '') -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            context = context + '.' + node.name if context else node.name
+        if isinstance(node, ast.Call):
+            name = decoder_name(node.func)
+            if name in names:
+                found[(path.name, context, name)] += 1
+        for child in ast.iter_child_nodes(node):
+            visit(child, path, context)
+    for path in paths:
+        scan(path.read_text(), path)
+    loading = 'async_settle_shadow_v2_gate_loading.py'
+    # Each exception names its reason; the local scanner is reachable only from
+    # decode_original. Frozen schema parsers remain the contract's own boundary.
+    allowed = {
+        (loading, 'decode_original', 'loads'): (1, 'strict standard decoder in choke point'),
+        (loading, 'decode_original', '_local_values'): (1, 'local decoder in choke point'),
+        (loading, 'retained_json', 'decode_original'): (1, 'retained original bytes use agreement'),
+        (loading, 'transport_values', 'decode_original'): (1, 'transport original bytes use agreement'),
+        (loading, 'transport_children', 'transport_values'): (1, 'cleaner uses the agreement wrapper'),
+        (loading, '_local_values.scalar', 'loads'): (1, 'isolated scalar inside local decoder'),
+        (loading, '_local_values', 'JSONDecoder'): (1, 'string scanner inside local decoder'),
+        (loading, '_local_values.tokens', 'raw_decode'): (1, 'isolated string inside local decoder'),
+        (loading, '_local_values.tokens', 'scalar'): (1, 'scalar tokenizer inside local decoder'),
+        (loading, '_local_values', 'tokens'): (1, 'tokenizer inside local decoder'),
+        ('pilot_enablement.py', 'point_evidence', 'loads'): (1, 'unchanged retained v1 row reader'),
+        ('pilot_enablement.py', 'fleet_budgets_pre', 'loads'): (3, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'shadow_serving', 'loads'): (1, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'fleet_budgets', 'loads'): (1, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'pre_flip', 'loads'): (2, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'post_flip', 'loads'): (1, 'unchanged retained v1 callable'),
+        ('pilot_enablement.py', 'main', 'loads'): (1, 'no-policy branch after v2 dispatch returns'),
+    }
+    assert all(reason for _, reason in allowed.values())
+    assert found == Counter({key: count for key, (count, _) in allowed.items()})
+    for source, name in (
+        ('from json import loads as decode\ndef outside(raw): return decode(raw)', 'loads'),
+        ('import json\ndecode = json.loads\nread = decode\ndef outside(raw): return read(raw)', 'loads'),
+        ('from json import JSONDecoder as Decoder\ndef outside(raw): return Decoder().decode(raw)', 'JSONDecoder'),
+        ('from trusted_router.async_settle_shadow_v2_gate_loading import _local_values as decode\n'
+         'def outside(raw): return decode(raw, allow_float=False, max_depth=16, bounded_integers=True)', '_local_values'),
+    ):
+        found.clear()
+        scan(source, Path('alias-control.py'))
+        assert found[('alias-control.py', 'outside', name)] == 1
+
+
+def test_round13_inventory_cache_key_and_copy() -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tests.test_async_settle_shadow_v2_gate_window import validation_cache
+    from trusted_router import async_settle_shadow_v2_gate_report as reports
+    from trusted_router.async_settle_shadow_v2_gate_bundle import Context
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle
+    from trusted_router.async_settle_shadow_v2_schema import Schema
+    bundles = [Bundle(proof=b'{}')]
+    bundles += [replace(bundles[0], **{name: b'{}'}) for name in ('pre', 'fleet', 'transport', 'serving')]
+    expected = [reports.input_inventory(Context(bundle, None, 'transport')) for bundle in bundles]
+    generator = validation_cache.__wrapped__(SimpleNamespace(getfixturevalue=lambda name: {'parse': Schema.parse}))
+    next(generator)
+    try:
+        for bundle, original in zip(bundles, expected, strict=True):
+            ctx = Context(bundle, None, 'transport')
+            assert reports.input_inventory(ctx) == original
+            entries, leaves = reports.input_inventory(ctx)
+            entries.clear()
+            leaves.clear()
+            assert reports.input_inventory(ctx) == original
+    finally:
+        with pytest.raises(StopIteration):
+            next(generator)

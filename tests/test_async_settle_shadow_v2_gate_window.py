@@ -20,6 +20,7 @@ from tests.shadow_v2_gate_fixture_generator import (
     no_line_tracing,
     untraced,  # noqa: F401
 )
+from tests.test_async_settle_shadow_v2_gate_loading import round12_original  # noqa: F401
 from tests.test_async_settle_shadow_v2_gates import GAPS
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_health as health
@@ -294,7 +295,9 @@ def test_long_family_has_ci_selection() -> None:
     expression = Expression.compile(options[options.index('-m') + 1]) if '-m' in options else Expression.compile('')
     workflow = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())
     command = '\n'.join(step.get('run', '') for step in workflow['jobs']['proof-oracle']['steps'])
-    for test in (test_seven_day_churn_render, test_seven_day_blocked_render):
+    for test in (test_seven_day_churn_render, test_seven_day_blocked_render,
+                 test_round12_every_value_decode_is_local, test_round12_inventory_cache_differential,
+                 test_round11_module_teardown_before_contract_subprocess):
         markers = {mark.name for mark in test.pytestmark}
         default = expression.evaluate(lambda name, markers=markers: name in markers)
         assert default or ('proof_oracle' in markers and 'tests/test_async_settle_shadow_v2_gate_window.py' in command)
@@ -494,8 +497,9 @@ def test_round11_generated_boundary_property(totality_original: Any, boundary_ca
 
 
 @pytest.mark.proof_oracle
+@pytest.mark.timeout(3600, method='signal')
 def test_round12_every_value_decode_is_local(totality_original: Any, monkeypatch: Any) -> None:
-    """Every native path, every hostile lexeme; original strings stay leaves."""
+    """Every native path, every damaged lexeme; original strings stay leaves."""
     import json
 
     from trusted_router import async_settle_shadow_v2_gate_loading as loading
@@ -591,3 +595,67 @@ def test_round12_every_value_decode_is_local(totality_original: Any, monkeypatch
             for source in ('days', 'rows', 'preimages'):
                 if path[0] != source:
                     assert cleaned[source] == original[source]
+
+    from tests.test_async_settle_shadow_v2_gate_loading import (
+        ROUND13_LEXEMES,
+        assert_round13_clean_agreement,
+    )
+    for path in paths:
+        for lexeme in ROUND13_LEXEMES:
+            left, right = spans[path]
+            assert_round13_clean_agreement(encoded_transport[:left] + lexeme + encoded_transport[right:])
+
+
+@pytest.mark.proof_oracle
+def test_round11_module_teardown_before_contract_subprocess() -> None:
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).parents[1]
+    result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:xdist', '-p', 'no:cacheprovider',
+        'tests/test_async_settle_shadow_v2_gate_complete.py::test_lookup_cache_keeps_mutation_isolation_and_schema_rejections',
+        'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-key]',
+        'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-value]'],
+        cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, capture_output=True, text=True, check=False)  # noqa: S603
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.proof_oracle
+def test_round12_inventory_cache_differential(round12_original: Any) -> None:  # noqa: F811
+    import copy
+    import json
+    from types import SimpleNamespace
+
+    from tests.test_async_settle_shadow_v2_gate_window import validation_cache
+    from trusted_router import async_settle_shadow_v2_gate_report as reports
+    from trusted_router.async_settle_shadow_v2_gate_bundle import Context
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    from trusted_router.async_settle_shadow_v2_schema import Schema
+    _, raw, ports = round12_original
+    value = json.loads(raw)
+    changes = [raw]
+    # Every native transport member, including all four previously omitted
+    # prior-envelope inputs; the entire rendered graph is compared bytewise.
+    for key in value:
+        altered = copy.deepcopy(value)
+        altered[key] = '' if key in ('transport', 'pre', 'fleet', 'serving') else None
+        changes.append(canonical(altered))
+    def output(candidate: bytes) -> Any:
+        return render(evaluate(load(candidate, ports), ports, gate='transport'))
+    pristine = [output(candidate) for candidate in changes]
+    generator = validation_cache.__wrapped__(SimpleNamespace(getfixturevalue=lambda name: {'parse': Schema.parse}))
+    next(generator)
+    try:
+        assert [output(candidate) for candidate in changes] == pristine
+        ctx = Context(load(raw, ports), ports, 'transport')
+        expected = copy.deepcopy(reports.input_inventory(ctx))
+        entries, leaves = reports.input_inventory(ctx)
+        entries.clear()
+        leaves.clear()
+        assert reports.input_inventory(ctx) == expected
+    finally:
+        with pytest.raises(StopIteration):
+            next(generator)

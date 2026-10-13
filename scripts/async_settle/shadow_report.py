@@ -786,6 +786,7 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
         verify_original_receipt,
     )
     from trusted_router.async_settle_shadow_v2_gate_inputs import LoadingPorts, VerifierApproval
+    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
     from trusted_router.async_settle_shadow_v2_gate_retained import unchanged_checks
     from trusted_router.async_settle_shadow_v2_gate_views import budget_view
     from trusted_router.detached_jws import TrustedKey, canonical
@@ -800,7 +801,7 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
                               (verify_binding, binding_keys, 'shadow_v1.json')):
         if raw is None:
             continue
-        values = json.loads(raw)
+        values = retained_json(raw)
         if type(values) is not list or canonical(values) != raw:
             raise ValueError('evidence_schema_gap: canonical public descriptors required')
         keys = tuple(TrustedKey(**value) for value in values)
