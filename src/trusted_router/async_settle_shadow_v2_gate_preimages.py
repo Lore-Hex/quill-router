@@ -89,6 +89,10 @@ def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes],
 
 
 def audit(ctx: Context) -> None:
+    for issue in ctx.bundle.a2_streams.get('loading_issues', []):
+        ctx.issue(issue['gap'], issue['detail'], Subject(wire=a2.O('a2_file', issue['path'])))
+    if 'loading_issues' in ctx.bundle.a2_streams:
+        ledger_preimages(ctx)
     if ctx.proof is None:
         return
     expected_ledgers = {a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us))
@@ -123,6 +127,65 @@ def audit(ctx: Context) -> None:
             gap = str(exc) if str(exc) in ('artifact_gap', 'evidence_schema_gap') else 'evidence_schema_gap'
             ctx.issue(gap, 'A2 manifest/proof preimage validation failed',
                 Subject(day=manifest['day'], wire=a2.O(p1.KINDS[5], manifest['day'] + '/manifest-v2')))
+
+
+def ledger_preimages(ctx: Context) -> None:
+    """Resolve ledger F commitments from named original files, never hex alone.
+
+    The descriptor has no path. All candidates must therefore be in the finite
+    supplied inventory; no filesystem search is permitted. Unknown prerequisite
+    evidence formats have an explicit parser seam, not a completion-time guess.
+    """
+    files: dict[str, set[bytes]] = defaultdict(set)
+    for source in ctx.bundle.preimages:
+        if source.name not in RELEASE_FILES and len(source.raw) <= 262144:
+            files[roots.file_digest(source.raw)].add(source.raw)
+    previous_files: dict[str, set[bytes]] = defaultdict(set)
+    for raw in ctx.bundle.ledgers:
+        previous_files[roots.file_digest(raw)].add(raw)
+    for ledger in ctx.ledgers:
+        key = a2.L(*(str(ledger[k]) for k in ('role', 'boot', 'revision', 'region', 'boot_at_us')))
+        subject = Subject(wire=a2.O('prerequisite_ledger', key))
+        for field in ('policy_sha256', 'config_sha256', 'fixture_sha256'):
+            if len(files[ledger[field]]) != 1:
+                ctx.issue('artifact_gap', 'ledger file preimage absent or ambiguous: ' + field, subject)
+        previous = ledger['previous_ledger_sha256']
+        if previous is not None:
+            candidates = previous_files[previous]
+            if len(candidates) != 1:
+                ctx.issue('artifact_gap', 'previous exact ledger preimage absent or ambiguous', subject)
+            else:
+                try:
+                    contract._object_bytes(next(iter(candidates)), a1.PREREQUISITE_LEDGER)
+                except ValueError:
+                    ctx.issue('evidence_schema_gap', 'invalid previous ledger preimage', subject)
+        for field in ('transport', 'size', 'regional_load', 'boot_transport', 'observer_freshness', 'marker_keys'):
+            artifact = ledger[field]
+            candidates = files[artifact['sha256']]
+            if len(candidates) != 1:
+                ctx.issue('artifact_gap', 'prerequisite evidence preimage absent or ambiguous: ' + field, subject)
+                continue
+            raw = next(iter(candidates))
+            # These are the only contract-owned completed-evidence wrappers.
+            # Retained/opaque tool outputs require the named retained parser.
+            evidence = None
+            for schema in (a1.GATE_OUTPUT, a2.PROOF_RESULT):
+                try:
+                    evidence = contract._object_bytes(raw, schema)
+                except ValueError:
+                    continue
+                break
+            if evidence is None:
+                ctx.issue('evidence_schema_gap', 'ledger_artifact_parser_unbound:' + field, subject)
+            elif evidence['completed_at_us'] != artifact['completed_at_us']:
+                ctx.issue('artifact_gap', 'prerequisite completion differs from original evidence: ' + field, subject)
+            elif 'criterion' in evidence:
+                if evidence['criterion'] != field or evidence[ledger['role'] + '_revision'] != ledger['revision']:
+                    ctx.issue('evidence_schema_gap', 'prerequisite criterion or producer revision differs: ' + field, subject)
+            else:
+                # A generic gate output does not establish a particular boot's
+                # readiness (§5.3); don't invent a mapping to daily fleet gates.
+                ctx.issue('evidence_schema_gap', 'ledger_artifact_context_unbound:' + field, subject)
 
 
 def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
