@@ -17,6 +17,7 @@ from shadow_observation_diagnostics import (  # noqa: E402
     client_history,
     hold_boundary,
     status,
+    track_sessions,
 )
 from shadow_observation_fixtures import (  # noqa: E402
     NOW_US,
@@ -97,7 +98,9 @@ async def run():
                 validate_close_result(result.value(), closure.value(), termination_applies=True)
             for identity, digest in manifest["landed"].items():
                 assert found.get(identity) == digest, json.dumps(dict(missing_landed=identity, history=history))
-            state = dict(missing_close=result is None, durable=result is not None, closure=closure is not None,
+            state = dict(missing_close=result is None, writer_closure_gap=result is None,
+                original_acknowledgement=False, final_attempts=manifest.get("final_attempts", 0),
+                durable=result is not None, closure=closure is not None,
                 found=found, landed=manifest["landed"], result_attempts=manifest["result_attempts"],
                 sticky_loss=bool(counter and counter.value()["loss_count"]),
                 lost_memory=manifest.get("lost_memory", {}), lost_attachments=manifest.get("attachments", []),
@@ -106,6 +109,9 @@ async def run():
             print(json.dumps(state), flush=True)
         return
     svc = observation_service(store)
+    # No publisher transaction may compete with the evidence history. The
+    # saturated history deliberately queues its publisher before transaction entry.
+    svc.settings.async_settle_shadow_health_region = ""
     svc.journal = Journal(boot)
     svc.bases.boot = svc.traces.boot = boot
     svc.counters.clear()
@@ -116,7 +122,7 @@ async def run():
     if point == "full_queues":
         history_elapsed[0] = 480.  # Deterministic prior missed-slot history; no sleep.
         stamp = NOW_US+1000_000_000
-    manifest = dict(rows={}, landed={}, result_attempts=0)
+    manifest = dict(rows={}, landed={}, result_attempts=0, sessions=[])
     def save():
         manifest_file.write_text(json.dumps(manifest))
     def remember(rows, landed=False):
@@ -126,6 +132,11 @@ async def run():
             if landed:
                 manifest["landed"][identity] = row.digest
         save()
+    # Persist only exact emulator session names for parent cleanup AFTER death.
+    # Killing an open transaction does not promptly release the emulator's
+    # database-wide RW lock; deleting that dead child's session does.
+    api = store.database.spanner_api
+    track_sessions(api, manifest, save)
     with client_history(store) as history:
         def diagnostic():
             return status(svc, history)
@@ -135,12 +146,19 @@ async def run():
             hold_boundary(svc, history, label, sys.stdout, boundary_seen, threading.Event())
         # Model a host handler, then exercise the actual Service.start/trap_sigterm chain.
         host_called = []
-        signal.signal(signal.SIGTERM, lambda *_: host_called.append(True))
+        def host_stop(*_):
+            host_called.append(True)
+            if point.startswith("request_pending"):
+                # This history needs death while the RPC is outstanding. Chain
+                # a terminating host handler; graceful shutdown is a separate
+                # native history, with the full production grace interval.
+                os._exit(0)
+        signal.signal(signal.SIGTERM, host_stop)
         svc.loop = asyncio.get_running_loop()
         svc.next_flush = float("inf")
         if point == "full_queues":
             retained = saturate(svc, stamp)
-            svc.publisher_executor.submit(lambda: threading.Event().wait())
+            svc.publisher_executor.submit(lambda: threading.Event().wait(25))
             svc.submit_publisher(stamp//2_000_000, stamp)
             pages = svc.journal.freeze(day)
             svc.journal.checkpoint(day)
@@ -183,9 +201,23 @@ async def run():
             from google.cloud.spanner_v1.types import CommitRequest
             request = CommitRequest(kwargs["request"])
             selected = any(row[0] == CLOSURE_KIND for mutation in request.mutations for row in mutation.insert_or_update.values)
+            if selected and point.startswith("request_pending"):
+                # All earlier RPCs have returned. Arm the parent's transport gate
+                # before allowing this synchronous commit to leave the client.
+                import select
+                manifest["final_attempts"] = manifest.get("final_attempts", 0)+1
+                save()
+                print("GATE_ARM", flush=True)
+                assert select.select([sys.stdin], [], [], 3)[0], "gate arm deadline"
+                assert sys.stdin.buffer.read(1) == b"1", "gate arm acknowledgement"
             if selected and point == "during_commit":
                 boundary("before_commit_send")
-            result = commit(*args, **kwargs)
+            try:
+                result = commit(*args, **kwargs)
+            finally:
+                if selected and point.startswith("request_pending"):
+                    manifest["pending_call_returned"] = True
+                    save()
             landed_commit(request)
             if selected and point == "before_ack":
                 boundary("before_ack")
@@ -235,20 +267,21 @@ async def run():
             sys.stdout.flush()
             os._exit(0)  # End the held worker after the installed bounded close returned.
         except BaseException:
-            import traceback
             print("CHILD_STATUS "+diagnostic(), file=sys.stderr, flush=True)
-            traceback.print_exc()
+            print("CHILD_FAILURE "+type(sys.exception()).__name__, file=sys.stderr, flush=True)
             sys.stderr.flush()
             os._exit(1)
 
 
 if __name__ == "__main__":
+    watchdog = threading.Timer(25, lambda: os._exit(2))
+    watchdog.daemon = True
+    watchdog.start()
     try:
         asyncio.run(run())
     except BaseException:
-        import traceback
         print(json.dumps(dict(failure=True, status=child_diagnostic())), flush=True)
         print("CHILD_STATUS "+child_diagnostic(), file=sys.stderr, flush=True)
-        traceback.print_exc()
+        print("CHILD_FAILURE "+type(sys.exception()).__name__, file=sys.stderr, flush=True)
         sys.stderr.flush()
         os._exit(1)

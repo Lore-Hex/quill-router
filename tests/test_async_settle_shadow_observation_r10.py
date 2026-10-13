@@ -243,4 +243,4 @@ def test_native_history_preserves_suppressed_rpc_cause(monkeypatch):
     with client_history(store) as history:
         with pytest.raises(RuntimeError, match="shadow_rpc_failed"):
             store.database.run_in_transaction(lambda tx: None)
-    assert history[-1]["causes"] == [dict(error="ValueError", reason="native cause witness")]
+    assert history[-1]["causes"] == [dict(error="ValueError", code=None)]

@@ -426,7 +426,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 generation = admission.generation
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
-                reason = ("revoked" if generation != job.generation else
+                reason = ("revoked" if generation != job.generation or admission.revocation_epoch else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
@@ -483,9 +483,13 @@ class Service:
         self.observer.service = self
         self.lock = threading.RLock()
         self.owner_thread = threading.get_ident()
-        # SIGTERM may interrupt the owner inside its tiny generation update.
+        # Workers linearize ordinary generation admission under this lock.
         self.admission_lock = threading.RLock()
         self.generation = 0
+        # Terminal epoch: every publisher job is issued in epoch zero. Once a
+        # signal revokes it, no later owner transition can reopen admission.
+        self.revocation_epoch = 0
+        self.signal_stamp: float | None = None
         self.policy_pin = self.pin()
         self.publisher_faults = 0
         self._state = lifecycle.State()
@@ -1203,16 +1207,21 @@ class Service:
         if not callable(previous):
             return
         loop = asyncio.get_running_loop()
-        def stop(signum: int, frame: Any) -> None:
-            deadline = self.store.clock()+9
-            self.termination_deadline = min(self.termination_deadline or deadline, deadline)
-            with self.admission_lock:
-                self.generation += 1
-            self._state, _ = lifecycle.step(self.state, lifecycle.PolicyChanged(0, self.generation))
-            self.stopped.set()
-            self.slots.stopped = self.journal.stopped = True
+        def shutdown_on_owner() -> None:
+            self.assert_owner()
             if self.close_task is None:
                 self.close_task = loop.create_task(self.close())
+
+        def stop(signum: int, frame: Any) -> None:
+            # A terminal latch, not a read/modify/write counter: nested signals
+            # and interrupted State assignments cannot roll it back. No locks,
+            # lifecycle access or asyncio task mutation in the signal handler.
+            self.revocation_epoch = 1
+            stamp = self.store.clock()
+            self.signal_stamp = min(self.signal_stamp if self.signal_stamp is not None else stamp, stamp)
+            deadline = self.signal_stamp+9
+            self.termination_deadline = min(self.termination_deadline or deadline, deadline)
+            loop.call_soon_threadsafe(shutdown_on_owner)
             previous(signum, frame)
         self.previous_signal_handler, self.signal_handler = previous, stop
         signal.signal(signal.SIGTERM, stop)

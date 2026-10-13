@@ -1601,6 +1601,7 @@ for point in points:
 
 @pytest.mark.asyncio
 async def test_sigterm_chains_host_and_preserves_remaining_grace(monkeypatch: Any) -> None:
+    import asyncio
     import signal
     svc = service()
     calls = []
@@ -1613,8 +1614,10 @@ async def test_sigterm_chains_host_and_preserves_remaining_grace(monkeypatch: An
     before = svc.store.clock()
     with svc.admission_lock:  # Signal can interrupt an owner generation update.
         current[0](signal.SIGTERM, None)
-    assert calls[0][:3] == (signal.SIGTERM, True, True)
+    assert calls[0][:3] == (signal.SIGTERM, False, False)
+    assert svc.revocation_epoch == 1
     assert before+9 <= calls[0][3] <= svc.store.clock()+9
+    await asyncio.sleep(0)  # The handler queues owner work; it never mutates State.
     assert svc.close_task is not None
     await svc.close_task
     assert current[0] is host and not svc.unclosed
