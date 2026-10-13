@@ -7,6 +7,7 @@
 //	fastpathctl -database projects/P/instances/I/databases/D status WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D disable-all
 //	fastpathctl -database projects/P/instances/I/databases/D node ADDRESS
+//	fastpathctl -database projects/P/instances/I/databases/D [-funded MICRO] audit WORKSPACE
 //
 // disable revokes the workspace's open leases with the switch, and
 // disable-all turns every workspace off and revokes every open lease, the one
@@ -16,8 +17,20 @@
 // work pending and no staged record, and 3 until then: turning a workspace
 // off waits on it before any node stops (W2). node reads a node's row and the
 // open leases it owns, and exits 0 once it is marked leaving and owns none,
-// so a deploy may stop it, and 3 until then (W8). A command whose answer
-// cannot be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
+// so a deploy may stop it, and 3 until then (W8). audit reads a workspace's
+// rows in one snapshot and holds them to the design's identity (§4.7: each
+// credit shard's reservation is its live leases' donors' remaining
+// allocation, each lease's allocation and consumption its donors' sums, and
+// the debt marks as the headroom has them), to each shard's usage not below
+// what the retained leases booked on it, and to each lease's retained packs: one winner
+// per authorization, their charges summing to what the lease booked; read
+// only, with the
+// workspace's status and sums (credits, usage, reservations, leases by state,
+// what the leases booked) beside: exit 0 when the rows keep them, 3 with each
+// way they do not, after every run of the load (rollout P1). One thing no
+// row says is the operator's to assert: -funded MICRO holds the credit rows'
+// total credits to what funded the workspace. A command whose answer cannot
+// be written exits 1. With SPANNER_EMULATOR_HOST set, the client reaches the
 // emulator instead.
 package main
 
@@ -69,13 +82,15 @@ func run(ctx context.Context, args []string, out io.Writer,
 	fs := flag.NewFlagSet("fastpathctl", flag.ContinueOnError)
 	database := fs.String("database", "", "the database: projects/P/instances/I/databases/D")
 	timeout := fs.Duration("timeout", 30*time.Second, "how long the command may take")
+	funded := fs.Int64("funded", -1, "audit: the micro-credits that funded the workspace, which its credit rows must sum to")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
 		}
 		return 2, err
 	}
-	usage := errors.New("usage: fastpathctl -database D enable|disable|status WORKSPACE, node|leave|closed ADDRESS, or disable-all")
+	usage := errors.New("usage: fastpathctl -database D enable|disable|status|audit WORKSPACE, node|leave|closed ADDRESS, " +
+		"or disable-all")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
@@ -86,8 +101,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 2, usage
 		}
 	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "leave" &&
-		command != "closed":
-		return 2, fmt.Errorf("%q is not enable, disable, status, node, leave, closed or disable-all", command)
+		command != "closed" && command != "audit":
+		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed or disable-all", command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	}
@@ -138,6 +153,43 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 		answer = map[string]any{"node": st, "done": done, "why_not": why}
 		if !done {
+			code = notDone
+		}
+	case "audit":
+		problems, err := s.CheckIdentity(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		st, err := s.WorkspaceStatus(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		sums, err := s.AuditSums(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		twice, err := s.CheckWinners(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		problems = append(problems, twice...)
+		// The leases' rows retire, so usage is not held equal to what they
+		// booked; each shard's is never below what the retained ones booked
+		// on it.
+		below, err := s.CheckBookedUsage(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		problems = append(problems, below...)
+		if *funded >= 0 && sums.Credits != *funded {
+			problems = append(problems, fmt.Sprintf("the credit rows hold %d credits, and the workspace was funded %d",
+				sums.Credits, *funded))
+		}
+		if problems == nil {
+			problems = []string{}
+		}
+		answer = map[string]any{"workspace": workspace, "problems": problems, "status": st, "sums": sums}
+		if len(problems) > 0 {
 			code = notDone
 		}
 	default:

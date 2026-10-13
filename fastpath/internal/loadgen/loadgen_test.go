@@ -276,7 +276,8 @@ func TestAGenerationIsPlayedThrough(t *testing.T) {
 	}
 	if rep.Outcomes["heartbeat accepted"] != 3 || rep.Outcomes["stream complete"] != 1 ||
 		rep.Outcomes["settle attempt won"] != 1 || rep.Outcomes["settle won"] != 1 ||
-		rep.Latencies["authorize"].N != 1 || rep.Latencies["heartbeat"].N != 3 || rep.Latencies["settle"].N != 1 {
+		rep.Latencies["authorize"].N != 1 || rep.Latencies["authorize admitted"].N != 1 ||
+		rep.Latencies["heartbeat"].N != 3 || rep.Latencies["settle"].N != 1 {
 		t.Fatalf("the report: %+v", rep)
 	}
 }
@@ -791,7 +792,8 @@ func TestAnAuthorizeNotAdmittedEndsTheGeneration(t *testing.T) {
 		}
 		// An answer's latency is kept, whatever it says; a call that
 		// failed has none.
-		if answered := name == "busy"; (rep.Latencies["authorize"].N == 1) != answered {
+		if answered := name == "busy"; (rep.Latencies["authorize"].N == 1) != answered ||
+			rep.Latencies["authorize admitted"].N != 0 {
 			t.Fatalf("%s: latencies %+v", name, rep.Latencies)
 		}
 	}

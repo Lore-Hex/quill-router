@@ -289,3 +289,65 @@ func TestTheWindowIsWholeMicroseconds(t *testing.T) {
 		t.Fatalf("a grant with a window of 30.0005 s: %+v %v", got, err)
 	}
 }
+
+// TestGrantReadinessSaysWhyAGrantWouldBeRefused: read only, the refusal a
+// grant would meet before its amount: not enabled, below the tier or
+// latched, paused, in debt, or no headroom above the floor; "" once a grant
+// could land, and the floor again once grants take the headroom.
+func TestGrantReadinessSaysWhyAGrantWouldBeRefused(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ready := func(ws string, want Refusal, what string) {
+		t.Helper()
+		if why, err := s.GrantReadiness(ctx, ws); err != nil || why != want {
+			t.Fatalf("%s: %q %v, want %q", what, why, err, want)
+		}
+	}
+	ready(storetest.UniqueID("ws"), RefusedNotEnabled, "a workspace never enabled")
+	tier := seedWorkspace(t, 50, 30)
+	setRow(t, tier, 1, map[string]any{"trust_tier": int64(2)})
+	ready(tier, RefusedTier, "a shard below the tier")
+	latched := seedWorkspace(t, 50)
+	setRows(t, latched, map[string]any{"trust_latched_at": time.Now()})
+	ready(latched, RefusedTier, "a shard latched")
+	paused := seedWorkspace(t, 50)
+	setRows(t, paused, map[string]any{"billing_pause_causes": []string{"manual"}})
+	ready(paused, RefusedPaused, "a shard paused")
+	debt := seedWorkspace(t, 50)
+	setRows(t, debt, map[string]any{"in_debt": true, "total_usage": int64(60)})
+	ready(debt, RefusedInDebt, "a workspace in debt")
+	ready(seedWorkspace(t, 0), RefusedFloor, "a workspace with no credit")
+	spent := seedWorkspace(t, 50)
+	setRows(t, spent, map[string]any{"total_usage": int64(50)})
+	ready(spent, RefusedFloor, "a workspace whose credit is used")
+	ws := seedWorkspace(t, 50, 30)
+	ready(ws, "", "a funded workspace at the tier")
+	if got, err := s.Grant(ctx, grantOf(ws, 70)); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	ready(ws, "", "a workspace with headroom left beside its lease")
+	if got, err := s.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != "" {
+		t.Fatalf("the second grant: %+v %v", got, err)
+	}
+	ready(ws, RefusedFloor, "a workspace whose leases hold all its headroom")
+	if r := reserved(readRows(t, ws)); !slices.Equal(r, []int64{50, 30}) {
+		t.Fatalf("reserved %v after the readiness checks", r)
+	}
+	// The floor is the store's: with one of 10, a workspace needs headroom
+	// above it, across its shards, for a lease of anything.
+	floored := spikeStore(t, func(c *Config) { c.Floor = 10 })
+	readyAt := func(ws string, want Refusal, what string) {
+		t.Helper()
+		if why, err := floored.GrantReadiness(ctx, ws); err != nil || why != want {
+			t.Fatalf("%s: %q %v, want %q", what, why, err, want)
+		}
+	}
+	readyAt(seedWorkspace(t, 5), RefusedFloor, "headroom below the floor")
+	readyAt(seedWorkspace(t, 4, 6), RefusedFloor, "headroom at the floor")
+	above := seedWorkspace(t, 4, 7)
+	readyAt(above, "", "headroom above the floor")
+	if got, err := floored.Grant(ctx, grantOf(above, 1)); err != nil || got.Refused != "" {
+		t.Fatalf("the grant above the floor: %+v %v", got, err)
+	}
+	readyAt(above, RefusedFloor, "headroom at the floor once a lease holds the rest")
+}

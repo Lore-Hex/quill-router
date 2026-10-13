@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -72,7 +73,8 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "status", ""}, {"-database", "d"}, {"-database", "d", "disable-all", "ws"},
 		{"-database", "d", "enable", "ws", "more"}, {"-database", "d", "node"}, {"-database", "d", "node", ""},
 		{"-database", "d", "node", "a", "b"}, {"-database", "d", "closed"}, {"-database", "d", "closed", "a", "b"},
-		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}} {
+		{"-database", "d", "leave"}, {"-database", "d", "leave", "a", "b"}, {"-database", "d", "audit"},
+		{"-database", "d", "audit", "a", "b"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -303,4 +305,301 @@ func TestClosedSaysWhenNothingOfANodeIsLeft(t *testing.T) {
 	if code, got := closed(); code != 0 || got["done"] != true {
 		t.Fatalf("a node fenced, its every lease closed: exit %d, %v", code, got)
 	}
+}
+
+// TestAuditHoldsTheRowsToTheIdentity: a workspace with no credit rows cannot
+// be audited, exit 1; one whose rows keep the identity answers no problem,
+// exit 0; and a reservation no lease holds is a problem named, exit 3, with
+// the rows left as they were.
+func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	audit := func(flags ...string) (int, map[string]any, error) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, append(append([]string{"-database", "d"}, flags...), "audit", ws), &out, open)
+		var got map[string]any
+		if out.Len() > 0 {
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("audit wrote %q: %v", out.String(), err)
+			}
+		}
+		return code, got, err
+	}
+	if code, _, err := audit(); code != 1 || !errors.Is(err, store.ErrCreditRowsIncomplete) {
+		t.Fatalf("a workspace with no credit rows: exit %d, %v", code, err)
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1),
+		spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": int64(0),
+			"total_credits": int64(100), "trust_tier": int64(3)})}); err != nil {
+		t.Fatal(err)
+	}
+	code, got, err := audit("-funded", "100")
+	if problems, _ := got["problems"].([]any); code != 0 || err != nil || len(problems) != 0 ||
+		got["status"].(map[string]any)["Enabled"] != true || got["sums"].(map[string]any)["Credits"] != float64(100) {
+		t.Fatalf("a workspace whose rows keep the identity: exit %d, %v %v", code, got, err)
+	}
+	// What no row says: the funding.
+	if code, got, err := audit("-funded", "90"); code != 3 || err != nil ||
+		!strings.Contains(fmt.Sprint(got["problems"]), "hold 100 credits, and the workspace was funded 90") {
+		t.Fatalf("funded 90: exit %d, %v %v", code, got, err)
+	}
+	// A reservation held by no lease, written as the emulator takes a change
+	// to one column (DML).
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: "UPDATE tr_credit_balance SET reserved = 5 WHERE workspace_id = @w", Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, got, err = audit()
+	problems, _ := got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 1 || !strings.Contains(problems[0].(string), "shard 0 reserves 5") {
+		t.Fatalf("a reservation no lease holds: exit %d, %v %v", code, got, err)
+	}
+	// A lease's booking with its winner, once: kept; the same winner stored
+	// again by a later commit books it twice, which the audit names.
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL: "UPDATE tr_credit_balance SET reserved = 0 WHERE workspace_id = @w", Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := open(ctx, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: storetest.UniqueID("l")}
+	granted, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: ref.LeaseID, Region: "us-central1",
+		Owner: store.Owner{Node: "node-a", Epoch: 1}, Amount: 30})
+	if err != nil || granted.Refused != "" {
+		t.Fatalf("the grant: %+v %v", granted, err)
+	}
+	book := func(readVersion, seq int64) int64 {
+		t.Helper()
+		results, _, err := s.Commit(ctx, []store.CommitRequest{{Ref: ref, ReadVersion: readVersion, AppliedSeq: seq,
+			Money:   []store.MoneyOp{store.Book(10, 0)},
+			Winners: []store.Winner{{AuthorizationID: "auth-1", Kind: "settle", Charge: 10, RecordID: "rec-1"}}}})
+		if err != nil || len(results) != 1 || results[0].Refused != "" {
+			t.Fatalf("the commit at version %d: %+v %v", readVersion, results, err)
+		}
+		return results[0].NewVersion
+	}
+	version := book(0, 1)
+	if code, got, err := audit("-funded", "100"); code != 0 || err != nil ||
+		got["sums"].(map[string]any)["Consumed"] != float64(10) {
+		t.Fatalf("one booking with its winner: exit %d, %v %v", code, got, err)
+	}
+	// Usage below what the retained leases booked.
+	setUsage := func(usage int64) {
+		t.Helper()
+		if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{SQL: "UPDATE tr_credit_balance SET total_usage = @u WHERE workspace_id = @w",
+				Params: map[string]any{"w": ws, "u": usage}})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setUsage(0)
+	if code, got, err := audit("-funded", "100"); code != 3 || err != nil ||
+		!strings.Contains(fmt.Sprint(got["problems"]), "shard 0 books 0 of usage, below the 10 its retained leases booked on it") {
+		t.Fatalf("usage below the leases' bookings: exit %d, %v %v", code, got, err)
+	}
+	setUsage(10)
+	// The same winner stored again by a later commit.
+	version = book(version, 2)
+	code, got, err = audit("-funded", "100")
+	problems, _ = got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "decides authorization auth-1 twice: settle in pack 1 and settle in pack 2") {
+		t.Fatalf("the winner stored twice: exit %d, %v %v", code, got, err)
+	}
+	// One authorization decided as a release and then, under another
+	// record, as a settle; and one pack naming a winner twice, written as
+	// no commit would (the request refuses it), straight to the table.
+	commit := func(readVersion, seq int64, money []store.MoneyOp, winners ...store.Winner) int64 {
+		t.Helper()
+		results, _, err := s.Commit(ctx, []store.CommitRequest{{Ref: ref, ReadVersion: readVersion, AppliedSeq: seq,
+			Money: money, Winners: winners}})
+		if err != nil || len(results) != 1 || results[0].Refused != "" {
+			t.Fatalf("the commit at version %d: %+v %v", readVersion, results, err)
+		}
+		return results[0].NewVersion
+	}
+	version = commit(version, 3, nil, store.Winner{AuthorizationID: "auth-2", Kind: "release", Charge: 0, RecordID: "rec-2"})
+	commit(version, 4, []store.MoneyOp{store.Book(10, 0)},
+		store.Winner{AuthorizationID: "auth-2", Kind: "settle", Charge: 10, RecordID: "rec-3"})
+	twice := store.Winner{AuthorizationID: "auth-3", Kind: "release", Charge: 0, RecordID: "rec-5"}
+	packBody, err := json.Marshal(map[string]any{"v": 1, "winners": []store.Winner{twice, twice}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_lease_winners", map[string]any{
+		"workspace_id": ws, "lease_id": ref.LeaseID, "commit_version": int64(99), "pack": packBody, "winner_count": int64(2)})}); err != nil {
+		t.Fatal(err)
+	}
+	code, got, err = audit("-funded", "100")
+	problems, _ = got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 3 ||
+		!strings.Contains(problems[0].(string), "auth-1 twice: settle in pack 1 and settle in pack 2") ||
+		!strings.Contains(problems[1].(string), "auth-2 twice: release in pack 3 and settle in pack 4") ||
+		!strings.Contains(problems[2].(string), "auth-3 twice: release in pack 99 and release in pack 99") {
+		t.Fatalf("the winners stored twice: exit %d, %v %v", code, got, err)
+	}
+	// A booking apart from its winner's charge: the lease books 20 more,
+	// past its donors' allocation, and its new winner charges 10, so the
+	// retained packs charge 40 and the rows book 50.
+	commit(version+1, 5, []store.MoneyOp{store.Book(20, 0)},
+		store.Winner{AuthorizationID: "auth-4", Kind: "settle", Charge: 10, RecordID: "rec-6"})
+	code, got, err = audit("-funded", "100")
+	problems, _ = got["problems"].([]any)
+	if code != 3 || err != nil || len(problems) != 4 ||
+		!strings.Contains(problems[3].(string), "retained packs charge 40, and its rows book 50 (30 on the donors and 20 past them)") {
+		t.Fatalf("a booking apart from its winner's charge: exit %d, %v %v", code, got, err)
+	}
+}
+
+// TestAuditHoldsEachShardAndSumsExactly: usage booked to the wrong shard
+// is below the bound on the shard it left, though the workspace's total is
+// right; and winner charges whose exact sum is past int64 do not wrap to
+// the lease's bookings.
+func TestAuditHoldsEachShardAndSumsExactly(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	audit := func(flags ...string) (int, []any, error) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, append(append([]string{"-database", "d"}, flags...), "audit", ws), &out, open)
+		var got map[string]any
+		if out.Len() > 0 {
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("audit wrote %q: %v", out.String(), err)
+			}
+		}
+		problems, _ := got["problems"].([]any)
+		return code, problems, err
+	}
+	rows := []*spanner.Mutation{storetest.Enabled(ws), storetest.Member("node-a", 1)}
+	for shard := range int64(2) {
+		rows = append(rows, spanner.InsertMap("tr_credit_balance", map[string]any{"workspace_id": ws, "shard": shard,
+			"total_credits": int64(100), "trust_tier": int64(3)}))
+	}
+	if _, err := shared.Apply(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := open(ctx, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := store.LeaseRef{Workspace: ws, LeaseID: storetest.UniqueID("l")}
+	if got, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: ref.LeaseID, Region: "us-central1",
+		Owner: store.Owner{Node: "node-a", Epoch: 1}, Amount: 30}); err != nil || got.Refused != "" {
+		t.Fatalf("the grant: %+v %v", got, err)
+	}
+	commit := func(readVersion, seq int64, money []store.MoneyOp, winners ...store.Winner) int64 {
+		t.Helper()
+		results, _, err := s.Commit(ctx, []store.CommitRequest{{Ref: ref, ReadVersion: readVersion, AppliedSeq: seq,
+			Money: money, Winners: winners}})
+		if err != nil || len(results) != 1 || results[0].Refused != "" {
+			t.Fatalf("the commit at version %d: %+v %v", readVersion, results, err)
+		}
+		return results[0].NewVersion
+	}
+	version := commit(0, 1, []store.MoneyOp{store.Book(10, 0)},
+		store.Winner{AuthorizationID: "auth-1", Kind: "settle", Charge: 10, RecordID: "rec-1"})
+	if code, problems, err := audit("-funded", "200"); code != 0 || err != nil || len(problems) != 0 {
+		t.Fatalf("a booking on its donor's shard: exit %d, %v %v", code, problems, err)
+	}
+	// The same total usage, on the other shard.
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL:    "UPDATE tr_credit_balance SET total_usage = CASE shard WHEN 0 THEN 0 ELSE 10 END WHERE workspace_id = @w",
+			Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, problems, err := audit("-funded", "200")
+	if code != 3 || err != nil || len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "shard 0 books 0 of usage, below the 10 its retained leases booked on it") {
+		t.Fatalf("usage on the wrong shard: exit %d, %v %v", code, problems, err)
+	}
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.Update(ctx, spanner.Statement{
+			SQL:    "UPDATE tr_credit_balance SET total_usage = CASE shard WHEN 0 THEN 10 ELSE 0 END WHERE workspace_id = @w",
+			Params: map[string]any{"w": ws}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Winners whose charges, with the first's 10, sum to 2^64 + 10, which
+	// wraps in int64 to exactly the lease's bookings: not taken as equal.
+	huge := int64(math.MaxInt64)
+	version = commit(version, 2, nil,
+		store.Winner{AuthorizationID: "auth-2", Kind: "settle", Charge: huge, RecordID: "rec-2"},
+		store.Winner{AuthorizationID: "auth-3", Kind: "settle", Charge: huge, RecordID: "rec-3"},
+		store.Winner{AuthorizationID: "auth-4", Kind: "settle", Charge: 2, RecordID: "rec-4"})
+	code, problems, err = audit("-funded", "200")
+	if code != 3 || err != nil || len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "retained packs charge 18446744073709551626, and its rows book 10") {
+		t.Fatalf("charges past int64: exit %d, %v %v", code, problems, err)
+	}
+	// A closed lease still there whose donor's consumption is gone, with
+	// the usage it booked: the shard's bound no longer holds it, so the
+	// lease's row does.
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		for _, sql := range []string{
+			"UPDATE tr_lease SET state = 'closed', closed_at = CURRENT_TIMESTAMP(), close_kind = 'auditor', " +
+				"fence_time = expiry, drained_by = 'auditor', returned = 20, allocation = 10 " +
+				"WHERE workspace_id = @w AND lease_id = @l",
+			"UPDATE tr_lease_donor SET allocation = 10, consumed = 0 WHERE workspace_id = @w AND lease_id = @l",
+			"UPDATE tr_credit_balance SET reserved = 0, total_usage = 0 WHERE workspace_id = @w",
+		} {
+			if _, err := txn.Update(ctx, spanner.Statement{SQL: sql, Params: map[string]any{"w": ws, "l": ref.LeaseID}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The winners' charges still differ from the bookings; the donor's
+	// loss is the problem named first.
+	code, problems, err = audit("-funded", "200")
+	if code != 3 || err != nil || len(problems) < 1 ||
+		!strings.Contains(fmt.Sprint(problems), "'s donors consumed 0, and its row books 10 on them") {
+		t.Fatalf("a closed lease's donor consumption lost: exit %d, %v %v", code, problems, err)
+	}
+	// Sums over the leases' states that do not fit int64 are no answer:
+	// a second lease, draining, with fault usage past what the first's
+	// leaves room for.
+	second := store.LeaseRef{Workspace: ws, LeaseID: storetest.UniqueID("l")}
+	if got, err := s.Grant(ctx, store.GrantRequest{Workspace: ws, LeaseID: second.LeaseID, Region: "us-central1",
+		Owner: store.Owner{Node: "node-a", Epoch: 1}, Amount: 5}); err != nil || got.Refused != "" {
+		t.Fatalf("the second grant: %+v %v", got, err)
+	}
+	if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		for _, stmt := range []spanner.Statement{
+			{SQL: "UPDATE tr_lease SET fault_usage = @f WHERE workspace_id = @w AND lease_id = @l",
+				Params: map[string]any{"w": ws, "l": ref.LeaseID, "f": huge}},
+			{SQL: "UPDATE tr_lease SET state = 'draining', fence_time = expiry, drained_by = 'auditor', " +
+				"fault_usage = 1 WHERE workspace_id = @w AND lease_id = @l", Params: map[string]any{"w": ws, "l": second.LeaseID}},
+		} {
+			if _, err := txn.Update(ctx, stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, err := audit("-funded", "200"); code != 1 || !errors.Is(err, store.ErrSumsPastInt64) {
+		t.Fatalf("sums past int64: exit %d, %v", code, err)
+	}
+	_ = version
 }

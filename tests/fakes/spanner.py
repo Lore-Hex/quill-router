@@ -255,6 +255,12 @@ class FakeSpannerDatabase:
         self.reservation_versions: dict[str, int] = {}
         self.reservation_auth_versions: dict[str, int] = {}
         self.reservation_idemp: dict[str, str] = {}  # idempotency_scope -> reservation_id
+        # The fast path's leases (tr_lease: lease_id -> {workspace_id, state,
+        # consumed}) and their donors (tr_lease_donor rows: workspace_id,
+        # lease_id, credit_shard, allocation, consumed), read by the counter
+        # reconciler's combined identity.
+        self.fastpath_leases: dict[str, dict] = {}
+        self.fastpath_lease_donors: list[dict] = []
         # tr_gateway_authorization: bounded per-request state keyed by
         # authorization_id. Kept separate from generic tr_entities so tests
         # catch accidental fallback writes after the typed cutover.
@@ -2419,6 +2425,34 @@ def _typed_column(rec: dict, column: str) -> Any:
     return rec.get(column)
 
 
+# The fast path's lease statements the fake executes, whole: it models their
+# projection, join, filter and grouping in Python and nothing else, so a
+# statement that differs from these by a predicate the fake would not apply
+# is refused rather than answered as if it had been.
+_FASTPATH_LEASE_STATEMENTS = {
+    "/* fastpath_lease_allocations */": (
+        "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0) "
+        "FROM tr_lease_donor AS d JOIN tr_lease AS l "
+        "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id "
+        "WHERE l.state IN ('open', 'draining') GROUP BY d.workspace_id, d.credit_shard"
+    ),
+    "/* fastpath_lease_bookings */": (
+        "SELECT workspace_id, COALESCE(SUM(consumed + fault_usage), 0) FROM tr_lease GROUP BY workspace_id"
+    ),
+    "/* fastpath_live_leases_of */": (
+        "SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws AND state IN ('open', 'draining')"
+    ),
+    "/* fastpath_leases_of */": "SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws",
+}
+
+
+def _require_lease_statement(sql: str, marker: str) -> None:
+    expected = marker + " " + _FASTPATH_LEASE_STATEMENTS[marker]
+    assert " ".join(sql.split()) == expected, (
+        f"fake spanner executes only the registered {marker} statement, whole; got {sql!r}"
+    )
+
+
 def _require_pred(sql: str, needle: str, what: str) -> None:
     """Fail loudly if a load-bearing predicate is missing from the real SQL, so a
     predicate typo/drop FAILS a test instead of the fake silently enforcing the
@@ -2980,6 +3014,39 @@ def _execute_sql(
             int(body.get("cost_microdollars") or 0)
             for body in _claim_bodies()
             if body.get("workspace_id") == workspace_id
+        )]]
+    if "/* fastpath_lease_allocations */" in sql:
+        _require_lease_statement(sql, "/* fastpath_lease_allocations */")
+        live = {
+            lid for lid, lease in db.fastpath_leases.items()
+            if lease.get("state") in ("open", "draining")
+        }
+        allocations: dict[tuple[str, int], int] = {}
+        for donor in db.fastpath_lease_donors:
+            if donor["lease_id"] not in live:
+                continue
+            scope = (str(donor["workspace_id"]), int(donor.get("credit_shard", 0)))
+            allocations[scope] = (
+                allocations.get(scope, 0)
+                + int(donor.get("allocation", 0)) - int(donor.get("consumed", 0))
+            )
+        return [[ws, shard, total] for (ws, shard), total in sorted(allocations.items())]
+    if "/* fastpath_lease_bookings */" in sql:
+        _require_lease_statement(sql, "/* fastpath_lease_bookings */")
+        bookings: dict[str, int] = {}
+        for lease in db.fastpath_leases.values():
+            ws = str(lease["workspace_id"])
+            bookings[ws] = (
+                bookings.get(ws, 0) + int(lease.get("consumed", 0)) + int(lease.get("fault_usage", 0))
+            )
+        return [[ws, total] for ws, total in sorted(bookings.items())]
+    if "/* fastpath_live_leases_of */" in sql or "/* fastpath_leases_of */" in sql:
+        live_only = "/* fastpath_live_leases_of */" in sql
+        _require_lease_statement(sql, "/* fastpath_live_leases_of */" if live_only else "/* fastpath_leases_of */")
+        return [[sum(
+            1 for lease in db.fastpath_leases.values()
+            if lease["workspace_id"] == params["ws"]
+            and (not live_only or lease.get("state") in ("open", "draining"))
         )]]
     if "SELECT workspace_id, shard, total_usage FROM tr_credit_balance" in sql:
         return [

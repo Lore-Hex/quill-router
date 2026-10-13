@@ -126,6 +126,33 @@ _FEDERATED_SETTLEMENT_APPLIED_BY_WS = (
     "GROUP BY JSON_VALUE(body, '$.workspace_id')"
 )
 
+# ── The fast path's leases (docs/design/fast-admission-and-batched-settlement.md
+# §4.7): a credit shard's `reserved` is its open request holds PLUS the
+# remaining allocation on that shard of every open or draining lease, and its
+# `total_usage` rises with the leases' bookings (`consumed`) as with settled
+# actuals. One identity covers both, so the lease terms are read in the same
+# snapshot as the holds and added to them, and the repairs, which count holds
+# alone, refuse a workspace with a lease.
+_OPEN_LEASE_ALLOCATIONS = (
+    "/* fastpath_lease_allocations */ "
+    "SELECT d.workspace_id, d.credit_shard, COALESCE(SUM(d.allocation - d.consumed), 0) "
+    "FROM tr_lease_donor AS d JOIN tr_lease AS l "
+    "ON l.workspace_id = d.workspace_id AND l.lease_id = d.lease_id "
+    "WHERE l.state IN ('open', 'draining') "
+    "GROUP BY d.workspace_id, d.credit_shard"
+)
+_LEASE_BOOKINGS_BY_WS = (
+    "/* fastpath_lease_bookings */ "
+    "SELECT workspace_id, COALESCE(SUM(consumed + fault_usage), 0) FROM tr_lease "
+    "GROUP BY workspace_id"
+)
+_LIVE_LEASES_OF = (
+    "/* fastpath_live_leases_of */ SELECT COUNT(*) FROM tr_lease "
+    "WHERE workspace_id=@ws AND state IN ('open', 'draining')"
+)
+_LEASES_OF = "/* fastpath_leases_of */ SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws"
+
+
 @dataclass
 class InvariantReport:
     credit_rows: int = 0
@@ -134,6 +161,9 @@ class InvariantReport:
     key_violations: int = 0
     usage_rows: int = 0
     usage_violations: int = 0  # counter below retained ledger, or orphan booking
+    #: (workspace, shard) groups on which open or draining fast-path leases
+    #: hold allocation, counted into that shard's expected `reserved`.
+    lease_groups: int = 0
     #: Rows whose lifetime equality is unrecoverable, either because the legacy
     #: baseline is absent or because 30-day terminal-row retention has removed
     #: part of the settled ledger. Counted apart from violations: calling them
@@ -190,7 +220,7 @@ class InvariantReport:
         return (
             f"credit: {self.credit_violations}/{self.credit_rows} | "
             f"key: {self.key_violations}/{self.key_rows} | "
-            f"{usage} | "
+            f"{usage} | lease groups: {self.lease_groups} | "
             f"{'CLEAN' if self.clean else 'VIOLATIONS'}"
             f"{'' if self.fully_audited else ' (PARTIAL)'}"
         )
@@ -211,7 +241,8 @@ def _required_int(body: dict[str, Any], field_name: str) -> int:
 
 def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantReport:
     """Assert, in one consistent snapshot, that every typed `reserved` equals the
-    sum of that (scope, shard)'s request holds.
+    sum of that (scope, shard)'s request holds and, for credit, the remaining
+    allocation its open or draining fast-path leases hold on it (§4.7).
     Checks BOTH directions: a typed row whose reserved != its open holds, AND an
     open hold group with no typed row (that leak is invisible if you only iterate
     typed rows). Read-only."""
@@ -233,6 +264,13 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
             shard = int(row[1] if row[1] is not None else (row[2] or 0))
             scope = (str(row[0]), shard)
             credit_holds[scope] = credit_holds.get(scope, 0) + int(row[3] or 0)
+        # The fast path's share of the same identity, in the same snapshot: a
+        # shard's live leases hold their remaining allocation on it as request
+        # holds hold their estimate.
+        for row in snap.execute_sql(_OPEN_LEASE_ALLOCATIONS):
+            scope = (str(row[0]), int(row[1]))
+            credit_holds[scope] = credit_holds.get(scope, 0) + int(row[2] or 0)
+            report.lease_groups += 1
         key_holds = {(r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
         # Usage arm, read in the SAME snapshot: a settle that lands between two
         # reads would otherwise show as drift equal to its own actual.
@@ -254,6 +292,12 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
             str(r[0]): int(r[1] or 0)
             for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
             if r[0] is not None
+        }
+        # The leases' bookings raise total_usage as settled actuals do, with
+        # no reservation row of their own; a closed lease's stay booked, and
+        # a charge past the donors' allocation is booked as fault usage.
+        lease_bookings = {
+            str(r[0]): int(r[1] or 0) for r in snap.execute_sql(_LEASE_BOOKINGS_BY_WS)
         }
         usage_baselines = {
             str(r[0]): (None if r[1] is None else int(r[1]))
@@ -300,7 +344,11 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
     behind_candidates: dict[str, tuple[int, int]] = {}
     for workspace_id, actual_usage in typed_usage.items():
         report.usage_rows += 1
-        booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
+        booked = (
+            settled_actuals.get(workspace_id, 0)
+            + federated_applied.get(workspace_id, 0)
+            + lease_bookings.get(workspace_id, 0)
+        )
         baseline = recorded_baselines.get(workspace_id)
         if baseline is None:
             baseline = usage_baselines.get(workspace_id)
@@ -355,6 +403,7 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                     "baseline": baseline,
                     "settled_actuals": settled_actuals.get(workspace_id, 0),
                     "federated_applied": federated_applied.get(workspace_id, 0),
+                    "lease_bookings": lease_bookings.get(workspace_id, 0),
                     "delta": actual_usage - expected,
                 },
             )
@@ -380,10 +429,14 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                     "or an independently verified historical checkpoint.",
                 },
             )
-    for workspace_id in set(settled_actuals) | set(federated_applied):
+    for workspace_id in set(settled_actuals) | set(federated_applied) | set(lease_bookings):
         if workspace_id in typed_usage:
             continue
-        booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
+        booked = (
+            settled_actuals.get(workspace_id, 0)
+            + federated_applied.get(workspace_id, 0)
+            + lease_bookings.get(workspace_id, 0)
+        )
         if booked > 0:
             report.usage_violations += 1
             _sample(
@@ -392,6 +445,7 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                     "typed_total_usage": None,
                     "settled_actuals": settled_actuals.get(workspace_id, 0),
                     "federated_applied": federated_applied.get(workspace_id, 0),
+                    "lease_bookings": lease_bookings.get(workspace_id, 0),
                 },
             )
 
@@ -449,10 +503,15 @@ def _confirm_behind_ledger(
             for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
             if r[0] is not None and str(r[0]) in candidates
         }
+        leases = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_LEASE_BOOKINGS_BY_WS)
+            if str(r[0]) in candidates
+        }
     confirmed: dict[str, tuple[int, int] | None] = {}
     for workspace_id, (first_usage, first_booked) in candidates.items():
         usage = typed.get(workspace_id, 0)
-        booked = settled.get(workspace_id, 0) + federated.get(workspace_id, 0)
+        booked = settled.get(workspace_id, 0) + federated.get(workspace_id, 0) + leases.get(workspace_id, 0)
         if usage >= booked:
             confirmed[workspace_id] = None
             continue
@@ -533,9 +592,22 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         nonzero_shard = list(snap.execute_sql(
             nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]
+        live_leases = list(snap.execute_sql(
+            _LIVE_LEASES_OF, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
 
     if workspace is None or not workspace_billing_paused(workspace):
         res.reasons.append("workspace not billing-paused — pause it before repair")
+    if int(live_leases) != 0:
+        # A lease's remaining allocation is part of `reserved` (§4.7), and this
+        # repair counts request holds alone: it would write the leases out of
+        # the row. The fast path's own switch drains them (fastpathctl disable,
+        # then status until done).
+        res.reasons.append(
+            f"{live_leases} fast-path leases open or draining — this repair counts "
+            "request holds alone; turn the fast path off for the workspace and "
+            "wait for its status to be done"
+        )
     if credit_account is not None and credit_shard_count(credit_account) != 1:
         res.reasons.append("credit ledger is sharded — consolidate before shard-zero repair")
     if any(key_usage_shard_count(body) != 1 for body in key_bodies):
@@ -565,6 +637,12 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
             return None
         if int(list(transaction.execute_sql(
             nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]) != 0:
+            return None
+        # A lease granted between the plan and here holds allocation this
+        # write would drop from the row: abort, as for a hold opened.
+        if int(list(transaction.execute_sql(
+            _LIVE_LEASES_OF, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]) != 0:
             return None
         credit_row = list(transaction.execute_sql(
@@ -614,7 +692,8 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
     if result is None:
         res.ready = False
         res.reasons.append(
-            "aborted: not paused / nonzero shard / a typed row was missing (key deleted?)"
+            "aborted: not paused / nonzero shard / a lease granted / a typed row was "
+            "missing (key deleted?)"
         )
         return res
     res.applied = True
@@ -706,6 +785,9 @@ def repair_typed_usage(
         federated = list(snap.execute_sql(
             _FEDERATED_SETTLEMENT_APPLIED, params=ws_param, param_types=ws_type,
         ))[0][0]
+        leases = list(snap.execute_sql(
+            _LEASES_OF, params=ws_param, param_types=ws_type,
+        ))[0][0]
 
     baseline = None
     if recorded_row and recorded_row[0][1] is not None:
@@ -723,6 +805,14 @@ def repair_typed_usage(
         res.reasons.append(
             f"{open_holds} holds still open — drain them first, or their actuals "
             "land after this write and the counter is wrong again"
+        )
+    if int(leases) != 0:
+        # The leases' bookings are in total_usage with no settled row behind
+        # them, closed leases' too: this repair, which rebuilds the counter
+        # from the retained ledger, would lose them.
+        res.reasons.append(
+            f"{leases} fast-path leases (any state) booked usage this repair "
+            "cannot rebuild — not handled"
         )
     booked_total = int(settled) + int(federated)
     current_usage = int(usage_row[0][0]) if usage_row else None
@@ -789,6 +879,12 @@ def repair_typed_usage(
             open_holds_sql, params=ws_param, param_types=ws_type,
         ))[0][0]) != 0:
             return None
+        # A lease booked between the plan and here is usage this write would
+        # lose: abort, as for a hold opened.
+        if int(list(transaction.execute_sql(
+            _LEASES_OF, params=ws_param, param_types=ws_type,
+        ))[0][0]) != 0:
+            return None
         current = list(transaction.execute_sql(
             usage_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
         ))
@@ -840,8 +936,8 @@ def repair_typed_usage(
     if result is None:
         res.ready = False
         res.reasons.append(
-            "aborted: not paused / sharded / a hold opened / typed row missing / "
-            "baseline gone / the ledger moved between plan and write"
+            "aborted: not paused / sharded / a hold opened / a lease booked / typed row "
+            "missing / baseline gone / the ledger moved between plan and write"
         )
         return res
     res.applied = True
@@ -894,13 +990,20 @@ def propose_usage_baselines(store: Any) -> list[UsageBaselineProposal]:
             for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
             if r[0] is not None
         }
+        # The leases' bookings are ledger, as the auditor counts them: a
+        # proposal that left them out would record lease spend as history.
+        leases = {
+            str(r[0]): int(r[1] or 0) for r in snap.execute_sql(_LEASE_BOOKINGS_BY_WS)
+        }
         recorded = {
             str(r[0]): int(r[1])
             for r in snap.execute_sql(_RECORDED_USAGE_BASELINES)
             if r[0] is not None and r[1] is not None
         }
     for workspace_id, usage in sorted(typed.items()):
-        booked = settled.get(workspace_id, 0) + federated.get(workspace_id, 0)
+        booked = (
+            settled.get(workspace_id, 0) + federated.get(workspace_id, 0) + leases.get(workspace_id, 0)
+        )
         if usage <= booked:
             continue
         report_rows.append(

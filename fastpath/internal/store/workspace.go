@@ -16,7 +16,7 @@ import (
 
 // workspaceEnabled reads the workspace's switch in the transaction: false
 // when it has no row.
-func workspaceEnabled(ctx context.Context, txn *spanner.ReadWriteTransaction, workspace string) (bool, error) {
+func workspaceEnabled(ctx context.Context, txn rowReader, workspace string) (bool, error) {
 	row, err := txn.ReadRowWithOptions(ctx, "tr_fastpath_workspace", spanner.Key{workspace}, []string{"enabled"},
 		&spanner.ReadOptions{RequestTag: tag("grant")})
 	if spanner.ErrCode(err) == codes.NotFound {

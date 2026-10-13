@@ -560,3 +560,47 @@ def test_a_shortfall_that_persists_IS_reported() -> None:
     assert report.usage_violations == 0
     assert not report.behind_ledger_clean
     assert report.unauditable[f"usage-behind-ledger:{ws}"]["shortfall"] == 100_000
+
+
+def test_repair_refuses_a_workspace_whose_leases_booked_usage() -> None:
+    """A fast-path lease's bookings are in total_usage with no settled row
+    behind them, a closed lease's too; a repair that rebuilds the counter from
+    the retained ledger would lose them, so it refuses, and takes the
+    workspace again once the leases' rows are gone."""
+    store, db = make_fake_store()
+    ws = "ws_lease_usage"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=2_000_000, total_usage=2_420_000)
+    _settled(db, "r1", ws, 420_000)
+    db.fastpath_leases["l-closed"] = {"workspace_id": ws, "state": "closed", "consumed": 30_000}
+
+    result = repair_typed_usage(store, ws, apply=False)
+    assert not result.ready
+    assert any("1 fast-path leases (any state)" in reason for reason in result.reasons), result.reasons
+    result = repair_typed_usage(store, ws, apply=True)
+    assert not result.ready and not result.applied
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 2_420_000
+
+    del db.fastpath_leases["l-closed"]
+    assert repair_typed_usage(store, ws, apply=False).ready
+
+
+def test_repair_aborts_when_a_lease_books_before_its_write(monkeypatch) -> None:
+    """The plan saw no lease; one that booked between the plan and the write
+    is usage the rebuilt total would lose, so the transaction aborts."""
+    store, db = make_fake_store()
+    ws = "ws_late_lease_usage"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=2_000_000, total_usage=2_000_000)
+    _settled(db, "r1", ws, 420_000)
+    run = store._run_in_transaction
+
+    def lease_then_run(fn):
+        db.fastpath_leases["l-late"] = {"workspace_id": ws, "state": "closed", "consumed": 100}
+        return run(fn)
+
+    monkeypatch.setattr(store, "_run_in_transaction", lease_then_run)
+    result = repair_typed_usage(store, ws, apply=True)
+    assert not result.ready and not result.applied, result
+    assert any("aborted" in reason and "a lease booked" in reason for reason in result.reasons), result.reasons
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 2_000_000

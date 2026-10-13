@@ -3,6 +3,14 @@
 //
 //	loadgen -front http://10.0.0.7:8080,http://10.0.0.8:8080 -mix load-mix.json \
 //	    -rate 1000 -duration 10m -workspaces 50 -log generations.jsonl
+//	loadgen -front http://10.128.0.51:8080 -mix load-mix.json -rate 1 -duration 10m \
+//	    -workspace ws-synthetic -database projects/P/instances/I/databases/D
+//
+// With -workspace the load spreads over the workspaces named, instead of
+// ws-0 on; with -database the run starts only once each is enabled, funded
+// and at the tier that allows leases, read from the store as a grant reads
+// (rollout P1) with the fleet's -required-tier and -floor, and otherwise
+// says which is not and why.
 package main
 
 import (
@@ -19,19 +27,53 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/spanner"
+
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/loadgen"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/service"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
+// readiness says why a run must not start against the workspaces, by the
+// database and the store's configuration the fleet runs with: an error
+// naming the first workspace a grant would refuse.
+type readiness func(ctx context.Context, database string, cfg store.Config, workspaces []string) error
+
+// storeReadiness asks the store, as a grant would, whether each workspace is
+// enabled, funded and at the tier.
+func storeReadiness(ctx context.Context, database string, cfg store.Config, workspaces []string) error {
+	client, err := spanner.NewClient(ctx, database)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	s, err := store.New(client, cfg)
+	if err != nil {
+		return err
+	}
+	for _, ws := range workspaces {
+		why, err := s.GrantReadiness(ctx, ws)
+		if err != nil {
+			return fmt.Errorf("workspace %s: %w", ws, err)
+		}
+		if why != "" {
+			return fmt.Errorf("workspace %s is not ready for the load: %s", ws, why)
+		}
+	}
+	return nil
+}
+
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdout, storeReadiness); err != nil {
 		fmt.Fprintln(os.Stderr, "loadgen:", err)
 		os.Exit(1)
 	}
 }
 
-// run runs the load generator as args say, and prints its report to out.
-func run(args []string, out io.Writer) error {
+// run runs the load generator as args say, and prints its report to out;
+// with -database it starts only once ready, asked of the database, allows.
+func run(args []string, out io.Writer, ready readiness) error {
 	fs := flag.NewFlagSet("loadgen", flag.ContinueOnError)
 	front := fs.String("front", "", "the front doors' base URLs, separated by commas")
 	mixPath := fs.String("mix", "", "the load's mix, as fastpath/testdata/load-mix.json")
@@ -39,6 +81,14 @@ func run(args []string, out io.Writer) error {
 	duration := fs.Duration("duration", time.Minute, "how long generations start")
 	inFlight := fs.Int("in-flight", 100_000, "the most generations at once")
 	workspaces := fs.Int("workspaces", 10, "how many workspaces the load spreads over, ws-0 on")
+	workspace := fs.String("workspace", "", "the workspaces the load spreads over, by ID, separated by commas, instead of -workspaces")
+	database := fs.String("database", "",
+		"the database, projects/P/instances/I/databases/D: the run starts only once every workspace is enabled, funded and at the tier that allows leases")
+	storeCfg := service.Defaults().Store
+	fs.Int64Var(&storeCfg.RequiredTier, "required-tier", storeCfg.RequiredTier,
+		"the trust tier the fleet's leases need (the fast path's -required-tier), for the readiness")
+	fs.Int64Var(&storeCfg.Floor, "floor", storeCfg.Floor,
+		"the headroom the fleet's grants leave outside leases (the fast path's -floor), for the readiness")
 	heartbeat := fs.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
 	openHeartbeat := fs.Bool("open-heartbeat", false,
 		"the boot declares the heartbeat at stream open: each stream's authorize says so, and its first heartbeat is sent as it opens")
@@ -88,8 +138,27 @@ func run(args []string, out io.Writer) error {
 			cfg.Gateways = append(cfg.Gateways, frontdoor.Gateway{Client: client, Base: base})
 		}
 	}
-	for i := range *workspaces {
-		cfg.Workspaces = append(cfg.Workspaces, fmt.Sprintf("ws-%d", i))
+	named, counted := false, false
+	fs.Visit(func(f *flag.Flag) {
+		named = named || f.Name == "workspace"
+		counted = counted || f.Name == "workspaces"
+	})
+	switch {
+	case named && counted:
+		return errors.New("-workspace names the workspaces, or -workspaces counts them, not both")
+	case named:
+		for _, ws := range strings.Split(*workspace, ",") {
+			if ws = strings.TrimSpace(ws); ws != "" {
+				cfg.Workspaces = append(cfg.Workspaces, ws)
+			}
+		}
+		if len(cfg.Workspaces) == 0 {
+			return errors.New("-workspace names no workspace")
+		}
+	default:
+		for i := range *workspaces {
+			cfg.Workspaces = append(cfg.Workspaces, fmt.Sprintf("ws-%d", i))
+		}
 	}
 	if *keyPath != "" {
 		if cfg.Key, err = os.ReadFile(*keyPath); err != nil {
@@ -106,6 +175,14 @@ func run(args []string, out io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *database != "" {
+		if ready == nil {
+			return errors.New("-database: no store to ask")
+		}
+		if err := ready(ctx, *database, storeCfg, cfg.Workspaces); err != nil {
+			return err
+		}
+	}
 	rep, err := loadgen.Run(ctx, cfg)
 	if err != nil {
 		return err

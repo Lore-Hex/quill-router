@@ -567,12 +567,16 @@ func (r *run) generation(ctx context.Context, n int64) {
 		r.count("authorize error")
 		return
 	}
-	r.latency("authorize", time.Since(began))
+	took := time.Since(began)
+	r.latency("authorize", took)
 	g.Authorized = string(got.Status)
 	r.count("authorize " + g.Authorized)
 	if got.Status != frontdoor.Admitted {
 		return
 	}
+	// The admitted authorizes' latency apart from the refusals', which
+	// answer before any lease is weighed: the number the budget is held to.
+	r.latency("authorize admitted", took)
 	if len(cfg.Key) > 0 {
 		if e, err := frontdoor.Open(cfg.Key, got.Envelope); err == nil {
 			g.Auth, g.Lease = e.Auth, e.Lease
