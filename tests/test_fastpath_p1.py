@@ -127,14 +127,31 @@ def test_commands_keep_their_order_within_a_block() -> None:
 def test_node_ships_its_journal_to_cloud_logging() -> None:
     """The unit writes its alerts as structured JSON to journald; W7's
     alerting reads them in Cloud Logging, so the node runs the Ops Agent
-    with a journald receiver that parses the JSON (P1's second run found
-    the alerts stopping in journald)."""
+    with a journald receiver whose parser reads the journal's MESSAGE and
+    whose fields processor promotes the alert's severity (P1's second run
+    found the alerts stopping in journald). The agent is set up before the
+    release is looked up, so a node with no release still ships its journal,
+    and restarted on its configuration before the unit starts."""
+    import yaml
+
     script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
     assert "add-google-cloud-ops-agent-repo.sh" in script and "--also-install" in script
-    assert "type: systemd_journald" in script and "type: parse_json" in script
-    assert "systemctl restart google-cloud-ops-agent" in script
-    # The agent is set up after the release is installed, so a node without
-    # a release still records why it stays stopped, and before the unit
-    # starts.
-    assert script.index("google-cloud-ops-agent") > script.index('echo "$release" > /opt/fastpath/release')
-    assert script.index("systemctl restart google-cloud-ops-agent") < script.index("systemctl enable")
+    config = yaml.safe_load(re.search(r"<<AGENT\n(.*?)\nAGENT\n", script, re.S).group(1))
+    logging = config["logging"]
+    receiver = next(iter(logging["receivers"].values()))
+    assert receiver == {"type": "systemd_journald"}
+    parser = logging["processors"]["fastpath_json"]
+    assert parser == {"type": "parse_json", "field": "MESSAGE"}
+    fields = logging["processors"]["fastpath_fields"]
+    assert fields["type"] == "modify_fields"
+    assert fields["fields"]["severity"] == {"move_from": "jsonPayload.severity"}
+    assert fields["fields"]['labels."unit"'] == {"move_from": "jsonPayload._SYSTEMD_UNIT"}
+    pipeline = logging["service"]["pipelines"]["fastpath"]
+    assert pipeline == {"receivers": list(logging["receivers"]), "processors": ["fastpath_json", "fastpath_fields"]}
+    # Order: install, then the configuration written, then the agent
+    # restarted on it, then the release looked up (and its early exit), then
+    # the unit started.
+    order = [script.index(step) for step in (
+        "--also-install", "/etc/google-cloud-ops-agent/config.yaml <<AGENT", "systemctl restart google-cloud-ops-agent",
+        'release="$(', 'if [ -z "$release" ]', "systemctl enable --now fastpath")]
+    assert order == sorted(order), order
