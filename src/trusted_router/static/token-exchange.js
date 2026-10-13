@@ -8,9 +8,9 @@
   const label = button.innerHTML;
   const resource = form.dataset.resource || "brochure";
   const security = resource === "security";
-  const documentLabel = security ? "security pack" : "brochure";
+  const documentLabel = security ? "security pack" : "buyer deck";
   const mediaType = security ? "application/zip" : "application/pdf";
-  const filename = security ? "TrustedRouter-Security-Pack.zip" : "TrustedRouter-Token-Exchange-Brochure.pdf";
+  const filename = security ? "TrustedRouter-Security-Pack.zip" : "NYTE-Buyer-Deck.pdf";
   let busy = false;
   button.disabled = false;
   form.addEventListener("submit", async (event) => {
@@ -56,7 +56,7 @@
       status.dataset.state = "success";
       status.textContent = security
         ? "Your download has started. The ZIP contains both PDFs, ready to share with your security team."
-        : "Your download has started. Share the brochure with your team. We'd be happy to discuss your requirements.";
+        : "Your download has started. Share the buyer deck with your team. We'd be happy to discuss your requirements.";
     } catch (error) {
       status.dataset.state = "error";
       status.textContent = error.name === "AbortError"

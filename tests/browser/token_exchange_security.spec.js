@@ -69,14 +69,14 @@ for (const status of [422, 429, 503, 200]) {
   });
 }
 
-test("brochure download retains its original filename and request type", async ({ page }) => {
+test("buyer deck download retains the brochure request type", async ({ page }) => {
   await page.route("**/token-exchange/brief", route => {
     expect(route.request().postDataJSON().resource).toBe("brochure");
-    return route.fulfill({ status: 200, contentType: "application/pdf", path: archivePath.replace("Security-Pack.zip", "Token-Exchange-Brochure.pdf") });
+    return route.fulfill({ status: 200, contentType: "application/pdf", path: path.join(path.dirname(archivePath), "NYTE-Buyer-Deck.pdf") });
   });
   await page.goto("/token-exchange");
   await page.locator("#brief-email").fill("ada@example.com");
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download the brochure" }).click();
-  expect((await downloadPromise).suggestedFilename()).toBe("TrustedRouter-Token-Exchange-Brochure.pdf");
+  await page.getByRole("button", { name: "Download the buyer deck" }).click();
+  expect((await downloadPromise).suggestedFilename()).toBe("NYTE-Buyer-Deck.pdf");
 });

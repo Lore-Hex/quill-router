@@ -212,7 +212,7 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
     // Disabling the focused button drops focus to the page; it is restored afterwards.
     const refocus = document.activeElement === button;
     button.disabled = true;
-    button.textContent = 'Preparing your brochure…';
+    button.textContent = 'Preparing your buyer deck…';
     form.setAttribute('aria-busy', 'true');
     status.textContent = '';
     status.dataset.state = 'loading';
@@ -244,13 +244,13 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
       const url = URL.createObjectURL(blob);
       const download = document.createElement('a');
       download.href = url;
-      download.download = 'TrustedRouter-Token-Exchange-Brochure.pdf';
+      download.download = 'NYTE-Buyer-Deck.pdf';
       document.body.appendChild(download);
       download.click();
       download.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
       status.dataset.state = 'success';
-      status.textContent = "Your download has started. Share the brochure with your team. We'd be happy to discuss your requirements.";
+      status.textContent = "Your download has started. Share the buyer deck with your team. We'd be happy to discuss your requirements.";
     } catch (error) {
       status.dataset.state = 'error';
       status.textContent = error.name === 'AbortError'
