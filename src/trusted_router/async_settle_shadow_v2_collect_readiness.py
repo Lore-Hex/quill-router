@@ -142,7 +142,14 @@ def collect(run: Pass, *, inventory: InventoryResult, ci: CIPort, logs: Lifecycl
             require(len(joined) == 1)
             receipt = attempt['receipt']
             require(receipt['boot'] == attempt['boot'] and receipt['day'] == startup_query.day)
-            run.files.read(receipt['original'])
+            page = p1.PAGE.parse(run.files.read(receipt['original']))
+            require(page['boot'] == receipt['boot'])
+            require(page['day'] == receipt['day'])
+            selected = [event for event in page['events'] if int(event['seq']) == receipt['sequence']]
+            require(len(selected) == 1)
+            event = selected[0]
+            require(event['receipt_locator'] is not None)
+            require(event['event_at_us'] == attempt['at_us'])
         except (KeyError, ValueError, TypeError, OSError):
             run.gap('readiness', 'attempt_without_inventory_interval', 'boot_prerequisite_gap')
     if not inventory.complete:

@@ -277,6 +277,45 @@ CHANNEL_KINDS = {
     'shutdown': ('a3_shutdown_span',),
 }
 
+# Runtime coordinates replace only the listed captured FILE_REF fields. The
+# offline adapter resolves against a supplied original index; no source lookup.
+EMITTED_COORDINATE_FIELDS = 'kind sha256 bytes'
+EMITTED_COORDINATES: dict[str, dict[str, Any]] = {
+    'clock_basis.original': dict(kind='boot_clock', max_bytes=262144, producer='boot_clock_recorder'),
+    'health_basis': dict(kind='health_basis', max_bytes=6144, producer='health_reader'),
+    'claim': dict(kind='health_claim', max_bytes=1024, producer='health_publisher'),
+    'publication': dict(kind='health', max_bytes=4096, producer='health_publisher'),
+    'public_descriptors': dict(kind='public_descriptors', max_bytes=16384, producer='release_loader'),
+    'attested_image': dict(kind='image_record', max_bytes=16384, producer='image_record_loader'),
+    'receipt.original': dict(kind='receipt_page', max_bytes=65536, producer='receipt_page_writer'),
+    'originals.original_close': dict(kind='closure', max_bytes=4096, producer='daily_close_writer'),
+    'originals.close_result': dict(kind='close_result', max_bytes=4096, producer='close_result_writer'),
+}
+EMITTED_COORDINATE_TYPES = dict(kind='field_kind', sha256='lower_hex_64', bytes='positive_integer_to_max_bytes')
+LAUNCH_DESCRIPTOR_FIELDS = 'instance launch role revision region'
+LAUNCH_COORDINATE_FIELDS = {
+    'cloud_run_instance': 'project location service revision_name instance_id',
+    'launcher_start': 'project zone instance_id vm_boot_id start_insert_id',
+    'supervisor_start': 'project location instance_id supervisor_boot_id child_start_sequence',
+}
+
+
+def resolve_emitted_reference(files: Files, field: str, coordinate: dict[str, Any],
+                              originals: Mapping[tuple[str, str, int], dict[str, Any]]) -> dict[str, Any]:
+    """Join bounded emitted coordinates to an indexed, retained original file."""
+    require(field in EMITTED_COORDINATES)
+    spec = EMITTED_COORDINATES[field]
+    fields(coordinate, EMITTED_COORDINATE_FIELDS)
+    require(coordinate['kind'] == spec['kind'])
+    require(type(coordinate['sha256']) is str and re.fullmatch('[0-9a-f]{64}', coordinate['sha256']) is not None)
+    integer(coordinate['bytes'])
+    require(0 < coordinate['bytes'] <= spec['max_bytes'])
+    ref = originals[(coordinate['kind'], coordinate['sha256'], coordinate['bytes'])]
+    source_ref(ref)
+    require(all(coordinate[k] == ref[k] for k in ('sha256', 'bytes')))
+    files.read(ref)
+    return ref
+
 
 def identifier(value: Any) -> None:
     require(type(value) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}', value) is not None)

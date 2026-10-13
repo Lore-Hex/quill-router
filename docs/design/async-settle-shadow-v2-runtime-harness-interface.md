@@ -1,4 +1,4 @@
-# A3-C1 runtime harness interface, proposal version 1
+# A3-C1 runtime harness interface, proposal version 2
 
 Status: under review, offline and dormant. This document does not approve a source,
 qualify native capture, enable ingress or activate a release. The source-binding
@@ -38,7 +38,67 @@ A captured source reference has exactly `path,sha256,bytes` under FILE_REF;
 path is at most 256 characters, bytes at most 262144, with exact digest/length
 and local path validation. Runtime uses bounded original coordinates; the
 capture adapter resolves them to these references without changing source bytes.
+The emitted form uses the same closed record keys below, replacing only the
+listed reference fields with the closed coordinates in the next section. Both
+emitted and captured forms must meet the published per-record byte limits.
 No arbitrary text, attached objects or extra result descriptions are allowed.
+
+## Emitted coordinates and retained-file joins
+
+Every reference-bearing runtime field has exactly `{kind,sha256,bytes}` in the
+emitted form. The machine inventory's `emitted_coordinates` lists every field,
+its one allowed kind, byte ceiling and internally owned producer. `kind` is that
+literal ASCII string; `sha256` is exactly 64 lowercase hexadecimal characters;
+`bytes` is a JSON integer, not boolean, in 1..max_bytes. The digest is SHA-256 of
+the exact original bytes, before any capture envelope. The producer computes
+both digest and byte count from the same retained buffer, never from request
+fields, filenames, a later reconstruction, or a declared result. No optional
+coordinate keys or additional original kinds are allowed.
+
+| Field | Exact original kind and internally owned value producer | Original-record join after byte resolution |
+|---|---|---|
+| clock_basis.original | boot_clock_recorder retains the exact JSON object `{clock,boot,boot_at_us}` when it records the boot's UTC relation | clock is utc_ns; boot and boot_at_us equal the enclosing clock_basis and inventoried boot |
+| health_basis | health_reader retains its A1 HEALTH_BASIS buffer after the actual read and installation decision | reader_boot equals this boot; source_state is installed; read_at_ns/read_elapsed_ns join the measured install interval |
+| claim | health_publisher retains its A1 HEALTH_CLAIM buffer from this contender's completed claim | owner_boot_id, slot and claim_at_ns join the publication and this boot's observation |
+| publication | health_publisher retains the A1 HEALTH buffer it wrote | existing validate_publication joins claim; observed_at_ns joins published_at_ns; body equals installed HEALTH_BASIS.body |
+| public_descriptors | release_loader retains the release-supplied exact JSON object `{authority_epoch,config_sha256,source_revision,descriptor_ids}` as loaded | positive epoch, config digest, released revision and ordered descriptor IDs equal this boot's released inputs |
+| attested_image | image_record_loader retains the enclave-supplied exact JSON object `{revision,image_sha256}` as loaded | revision and image digest equal the released revision and config's enclave_image_sha256 |
+| receipt.original | receipt_page_writer retains the existing v2 PAGE buffer containing the selected start event once that page is closed | PAGE boot/day, selected seq and event_at_us join receipt boot/day/sequence and attempt at_us as specified below |
+| originals.original_close | daily_close_writer retains the A1 CLOSURE buffer written for this writer/day | boot/day/revision/region/interval_end_us join the inventory interval |
+| originals.close_result | close_result_writer retains the A1 CLOSE_RESULT buffer after the actual close result | existing validate_close_result joins closure_sha256, boot/day/revision/final_checkpoint_seq; elapsed_us joins the measured close interval |
+
+`originals.original_close` and `originals.close_result` are fields of the separate
+NativeExport input, not extra keys on a3_shutdown_span. NativeExport groups these
+coordinates by the exact `day + "/" + boot` key; the capture adapter supplies the
+shutdown collector's existing `originals` map with resolved FILE_REF values.
+An unavailable close or result is an absent map entry, never a coordinate for an
+empty or invented original. All other rows replace the identically named field
+inside the corresponding record; claim/publication occur only for a contender.
+`a3_startup_correlation` and `a3_traffic_ready` have no FILE_REF fields.
+
+The capture owner builds a finite original index for the named resource/day,
+keyed by `(kind,sha256,bytes)` from retained source buffers of that kind. Each key
+maps to one captured FILE_REF. Repeated identical bytes coalesce; choose the
+lexicographically smallest local path if capture retained several copies.
+Resolve by exact key lookup, then check FILE_REF length and digest against the
+coordinate and read the bytes. Never search by boot alone, nearest timestamp,
+or latest record. The offline `resolve_emitted_reference` helper performs this
+bounded index lookup and byte check; collecting modules apply the original
+validators and joins in the table. Missing index entries, changed files,
+wrong kinds, or failed original joins retain a missing state. The adapter must
+retain the emitted record and original source pages even when resolution fails;
+it must not silently omit the record from the channel or attempt denominator.
+The helper and declarations define the offline interface; acquiring native
+originals and building their index remain adapter work.
+
+For non-FILE_REF source selectors, boot checks' `inputs` values are exact bounded
+artifact IDs supplied by the release loader's CI/trial manifest. They join one
+retained artifact by id and then its source/criterion/release/config/region and
+original times; they are not runtime-created filenames. Other pin digests and
+revision fields come from that same internally loaded release bundle. Boot is
+allocated by the local journal, times by the named local recorder, check results
+by the criterion runner, and role/region/instance/launch by the descriptor bridge.
+These fields are never copied from an incoming request.
 
 ## Launch descriptor acquisition and clocks
 
@@ -56,6 +116,41 @@ starts in one VM boot require separate identities. The actual acquisition method
 and exact origin fields are missing from the names/counts samples. The native
 owner must capture them and both witnesses; if the existing launcher cannot
 supply them, implement the additional supervisor for that demonstrated gap.
+
+The runtime delivery interface is one inherited read-only descriptor at file
+descriptor 3, containing one canonical UTF-8 JSON object, at most 2048 bytes,
+followed by EOF. It has exactly `instance,launch,role,revision,region` as declared
+by `launch_descriptor_fields`: instance/launch/region use the 1..128 ASCII
+identifier rule, role is router|enclave and revision is the released 40-character
+SHA. The internally owned launch-descriptor bridge supplies every value before
+runtime startup; the child reads it once, requires EOF within the byte bound,
+and cannot proceed to ready with a missing or malformed descriptor. No environment
+text or user request can replace the descriptor. The actual bridge installation
+and native acquisition remain deferred.
+
+The bridge retains its source coordinate separately using exactly the fields in
+`launch_coordinate_fields`. Each value is a 1..128 ASCII identifier, except
+child_start_sequence, which is a positive integer <=9223372036854775807.
+Cloud Run project/location/service/revision_name/instance_id come from the
+platform descriptor and retained revision mapping. Launcher project/zone/
+instance_id/vm_boot_id/start_insert_id come from the original launch record
+(vm_boot_id is its _BOOT_ID). Supervisor project/location/instance_id come from
+its platform descriptor; supervisor_boot_id and child_start_sequence come from
+its retained child-start record, allocated before child execution. No sequence
+is inferred from the child's stdout. The native bridge must deliver the exact
+retained start coordinate, rather than discovering it by a later time search.
+
+Encode a scoped instance as `instance:` plus the SHA-256 hex digest of canonical
+JSON `{source,coordinate}`. Here source is the corresponding key from
+launch_coordinate_fields; coordinate is the full Cloud Run coordinate, the
+launcher subset `{project,zone,instance_id}`, or the supervisor subset
+`{project,location,instance_id}`. Encode launch as `launch:` plus the same digest
+construction using the full source coordinate for every source. The independent
+inventory adapter uses the identical encoding. The bridge copies role/region
+from the retained deployment mapping and revision from the released SHA mapping.
+Its retained mapping from descriptor to source coordinate must join exactly one
+independent launch. This defines the encoding and delivery contract; the named
+native witnesses, origin fields and bridge implementation remain outstanding.
 
 `process_start_us,recorded_at_us,boot_at_us,completed_at_us,at_us,observed_at_us`
 are UTC Unix microseconds; health source clocks ending `_ns` are UTC Unix
@@ -181,6 +276,65 @@ Otherwise those fields are absent.
     "shutdown": [
       "a3_shutdown_span"
     ]
+  },
+  "emitted_coordinate_fields": "kind sha256 bytes",
+  "emitted_coordinate_types": {
+    "kind": "field_kind",
+    "sha256": "lower_hex_64",
+    "bytes": "positive_integer_to_max_bytes"
+  },
+  "emitted_coordinates": {
+    "clock_basis.original": {
+      "kind": "boot_clock",
+      "max_bytes": 262144,
+      "producer": "boot_clock_recorder"
+    },
+    "health_basis": {
+      "kind": "health_basis",
+      "max_bytes": 6144,
+      "producer": "health_reader"
+    },
+    "claim": {
+      "kind": "health_claim",
+      "max_bytes": 1024,
+      "producer": "health_publisher"
+    },
+    "publication": {
+      "kind": "health",
+      "max_bytes": 4096,
+      "producer": "health_publisher"
+    },
+    "public_descriptors": {
+      "kind": "public_descriptors",
+      "max_bytes": 16384,
+      "producer": "release_loader"
+    },
+    "attested_image": {
+      "kind": "image_record",
+      "max_bytes": 16384,
+      "producer": "image_record_loader"
+    },
+    "receipt.original": {
+      "kind": "receipt_page",
+      "max_bytes": 65536,
+      "producer": "receipt_page_writer"
+    },
+    "originals.original_close": {
+      "kind": "closure",
+      "max_bytes": 4096,
+      "producer": "daily_close_writer"
+    },
+    "originals.close_result": {
+      "kind": "close_result",
+      "max_bytes": 4096,
+      "producer": "close_result_writer"
+    }
+  },
+  "launch_descriptor_fields": "instance launch role revision region",
+  "launch_coordinate_fields": {
+    "cloud_run_instance": "project location service revision_name instance_id",
+    "launcher_start": "project zone instance_id vm_boot_id start_insert_id",
+    "supervisor_start": "project location instance_id supervisor_boot_id child_start_sequence"
   }
 }
 ```
@@ -189,14 +343,26 @@ Otherwise those fields are absent.
 role, release and region. Independent start <= process_start_us <= recorded_at_us
 < independent end. A missing, changed or unmatched record blocks its launch.
 Independent events and carry-in build the expected-launch map before the first
-startup page; startup records cannot enlarge it or the serving roster.
+startup page; startup records cannot enlarge it or the serving roster. Write the correlation
+once, immediately after reading the descriptor and allocating the journal boot,
+before boot checks and before any ready record. process_start_us is the measured
+process start, recorded_at_us is this correlation write time. If descriptor read,
+journal creation or retention fails, no replacement correlation is invented and
+readiness remains unavailable; independent launch inventory retains the gap.
 
 `a3_boot_check`: exactly one final adoption per criterion per boot; identical
 and conflicting duplicates both block. `checks` has exactly the listed names,
 each `pass|fail`; `inputs` has exactly the listed source roles, whose values are
 bounded artifact IDs. All records join boot, role, revision, region, boot_at_us
 and released config digest. Adoption is within this boot's interval. A failed
-check/source stays failed with its original record retained.
+check/source stays failed with its original record retained. The criterion runner
+writes one final adoption record as soon as its local checks and selected source
+reads have finished, with completed_at_us sampled at that adoption. A measured
+failed check uses fail and retains the same inputs/originals. A missing required
+input or unfinished measurement cannot be represented as a completed check: keep
+the available source records, emit no substitute success record, and leave that
+criterion missing. Do not rewrite an earlier final adoption after a later retry;
+a new boot is required for a new adoption set.
 
 For `boot_transport`, `dependencies` is a list of 1..16 exact records:
 `{boot,region,config_sha256,operation,resource,attempts,marker_matches,elapsed_us,
@@ -236,7 +402,11 @@ enclave_image_sha256. A filename plus a passing check is insufficient. The
 native/release owner supplies the reviewed descriptor and image originals.
 
 `a3_traffic_ready`: exactly one record per inventoried boot; at_us is strictly
-after all six completion times and before interval end. `PreIngressRetention`
+after all six completion times and before interval end. The readiness coordinator
+samples at_us and writes this record once immediately after adopting all six
+successful checks, before enabling opted admission; it then waits for the durable
+record acknowledgement. Failed write or acknowledgement leaves ready unavailable,
+without inventing another timestamp. `PreIngressRetention`
 is runtime work: the router enforcement point is `Runtime.authorize_http` in
 `src/trusted_router/services/async_settle_shadow_cohort_runtime.py`, before its
 call to `authorize` creates the opted handoff fields. The release must also gate
@@ -250,16 +420,45 @@ The offline collector checks retained order; it cannot enforce this admission
 point or turn a ledger parser pass into evidence that ingress was blocked.
 
 `a3_opted_attempt`: result is exactly accepted, failed, rejected or timeout.
-`receipt` is exactly `{day,boot,sequence,original}` with the types above and the
-bounded original reference. Here sequence is the numeric value of the native
-receipt's 20-digit event_seq, joined without rounding or truncation; the capture
-owner retains that original coordinate and bytes. The boot and day join the inventoried interval and
-native receipt coordinates. Every attempt, including malformed/unmatched and
+The attempt recorder samples `at_us` at the actual attempt/admission start being
+checked, at the same event boundary used by the native receipt writer's start
+event. It preserves that value while the attempt runs. This is **not** receipt
+storage time, terminal-result time, or projected-record write time. The original
+event-time join is `PAGE.events[selected].event_at_us == attempt.at_us`.
+The recorder writes the single result projection when the result is known and
+the page containing that start event has been retained; accepted means admission
+accepted, not eventual settlement. Failed/rejected/timeout results retain the
+same start coordinate. Later result emission, including after midnight, keeps
+the start day's receipt coordinate and is captured into that event day's input;
+the capture owner must establish delivery closure before calling the day complete.
+If the process ends before result emission or the receipt page is unavailable,
+retain the native originals and leave the attempt join missing. Do not stamp a
+later completion event with a new start time or make up a receipt reference.
+
+`receipt` is exactly `{day,boot,sequence,original}`. In the emitted form original
+is the receipt_page coordinate above; in the captured form it is FILE_REF.
+The retained original is the full **v2 PAGE** defined by
+`async_settle_shadow_v2_evidence.PAGE` (65536 bytes, 1..128 events), with exactly
+`v,policy_version,boot,day,first_seq,last_seq,previous_page_sha256,events`.
+Use its existing parser, including its event validators and page/locator joins;
+no reduced `{boot,sequence}` record is a receipt page. Select the unique event
+whose numeric `seq` equals receipt.sequence. Require its non-null receipt_locator
+(the native start event), PAGE.boot == receipt.boot == attempt.boot, and
+PAGE.day == receipt.day == the collected UTC day. The parser joins the locator's
+boot/day/first_seq/event_seq to the page and selected seq. Sequence is a JSON
+integer from 1 through 9223372036854775807, compared exactly to the native
+20-digit positive seq/event_seq without rounding or truncation. Native values
+outside the projection's integer range remain missing, never wrapped. Zero,
+empty bytes, malformed pages, missing selected events and changed coordinates
+are missing joins, even if a FILE_REF still matches the file's bytes.
+
+The event time must equal at_us, lie within the inventoried boot interval, and
+be strictly after readiness. Every attempt, including malformed/unmatched and
 failed attempts, remains in attempts.json and the denominator; missing joins
 and attempts at or before ready block the day. Packaging retains status.json,
 its missing states, original pages and attempt/receipt references. NativeExport's
-original receipt population must still be reconciled; this optional projection
-cannot prove there were no absent attempts.
+full original receipt population must still be reconciled externally; this
+projection cannot prove there were no absent attempts.
 
 `a3_shutdown_span`: clock is exactly monotonic_us, with
 `clock_origin={boot,monotonic_at_boot_us}` in this process's monotonic epoch;
@@ -274,6 +473,32 @@ result <=2 s, close + result <= final_pass <=4 s and preparation + wait + final_
 <=min(actual remaining grace,9 s). Nested transactions are counted once.
 Gate aggregate corrections belong to the gates package; C1 retains these actual
 measurement semantics.
+
+The close coordinator writes one final a3_shutdown_span per inventoried router
+writer/day interval after the measured final pass has ended. Trigger it for
+**each daily UTC close**, even when the process continues into the next day,
+and for **termination** of the current interval. Set interval_end_us to the
+independent interval end (UTC boundary or process end), not the later log-write
+time. A close that finishes after midnight still belongs to the day it closes.
+When termination coincides with a daily boundary, one record covers that ending
+interval; do not emit a duplicate or an empty next-day interval. A running process
+that spans several days emits a separate daily record for each closed interval.
+The same measured phases apply to daily and terminating closes; actual measured
+zero-length phases are allowed, absent phases are not zero.
+
+Write after the close/result operations finish or their bounded attempt ends.
+If all five measured endpoint pairs exist but the close is incomplete, write
+complete=false with those actual pairs and retain available NativeExport
+originals. If any endpoint is missing, there is no well-formed final span:
+retain the partial original observations and leave the final record absent;
+never fill in a zero or a guessed endpoint. Missing/partial records keep the
+expected writer/day entry missing. A whole-process loss may prevent any final
+write; independent lifecycle records retain that interval and its missing span.
+A hard_kill outcome can only come from a retained observer with those actual
+measurements; the absent process cannot report its own later end. The collector
+keeps such an outcome incomplete. Both daily and terminating closes require the
+separate closure/result originals and coordinate joins above; missing originals
+remain missing even when the timing record is complete.
 
 ## External capture and release inputs
 

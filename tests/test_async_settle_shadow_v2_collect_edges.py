@@ -404,9 +404,10 @@ def test_compute_operations_retain_resource_and_resolve_only_completion(tmp_path
 
 @pytest.mark.parametrize('case', ['unknown', 'malformed', 'outside', 'early', 'valid'])
 def test_attempt_population_and_packaged_missing_state(tmp_path, case):
-    from tests.test_async_settle_shadow_v2_collect import attempt_record
+    from tests.test_async_settle_shadow_v2_collect import attempt_record, receipt_page
     from trusted_router import async_settle_shadow_v2_a1_evidence as a1
     from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router import async_settle_shadow_v2_evidence as p1
     from trusted_router.async_settle_shadow_v2_gate_provenance import prerequisite
     files, binding, fake, queries = setup(tmp_path, ('zero-row',))
     _, value = inventory(files, binding, fake, queries)
@@ -415,7 +416,7 @@ def test_attempt_population_and_packaged_missing_state(tmp_path, case):
     if case == 'unknown':
         attempt['boot'] = attempt['receipt']['boot'] = 'not-in-inventory'
         attempt['receipt']['original'] = files.obj('native/unmatched-attempt.json',
-            dict(boot='not-in-inventory', sequence=1))
+            receipt_page('not-in-inventory', attempt['at_us']), p1.PAGE)
     elif case == 'malformed':
         attempt['at_us'] = 'unknown'
     elif case == 'outside':
@@ -667,8 +668,45 @@ def test_runtime_interface_matches_closed_collector_schemas():
     inventory = json.loads(doc.split('```json\n', 1)[1].split('\n```', 1)[0])
     expected = dict(fields=ports.RECORD_FIELDS, role_fields=ports.ROLE_FIELDS, limits=ports.RECORD_LIMITS,
                     checks=ports.CHECKS, sources=ports.SOURCES, attempt_results=ports.ATTEMPT_RESULTS,
-                    channels=ports.CHANNEL_KINDS)
+                    channels=ports.CHANNEL_KINDS,
+                    emitted_coordinate_fields=ports.EMITTED_COORDINATE_FIELDS,
+                    emitted_coordinate_types=ports.EMITTED_COORDINATE_TYPES,
+                    emitted_coordinates=ports.EMITTED_COORDINATES,
+                    launch_descriptor_fields=ports.LAUNCH_DESCRIPTOR_FIELDS,
+                    launch_coordinate_fields=ports.LAUNCH_COORDINATE_FIELDS)
     assert inventory == json.loads(json.dumps(expected))
+
+
+@pytest.mark.parametrize('field', ['clock_basis.original', 'health_basis', 'claim', 'publication',
+                                 'public_descriptors', 'attested_image', 'receipt.original',
+                                 'originals.original_close', 'originals.close_result'])
+@pytest.mark.parametrize('case', ['valid', 'extra', 'kind', 'digest', 'bytes', 'missing', 'changed_file'])
+def test_emitted_coordinate_file_join(tmp_path, field, case):
+    from trusted_router import async_settle_shadow_v2_collect_ports as ports
+    files = Files(tmp_path)
+    # This tests the byte join only. Original shape and coordinate checks are
+    # performed by the collecting module after resolution.
+    ref = files.put('original.json', b'{}')
+    spec = ports.EMITTED_COORDINATES[field]
+    coordinate = dict(kind=spec['kind'], sha256=ref['sha256'], bytes=ref['bytes'])
+    originals = {(coordinate['kind'], coordinate['sha256'], coordinate['bytes']): ref}
+    if case == 'extra':
+        coordinate['extra'] = 'unused'
+    elif case == 'kind':
+        coordinate['kind'] = 'other_kind'
+    elif case == 'digest':
+        coordinate['sha256'] = 'b' * 64
+    elif case == 'bytes':
+        coordinate['bytes'] = spec['max_bytes'] + 1
+    elif case == 'missing':
+        originals.clear()
+    elif case == 'changed_file':
+        (files.root / ref['path']).write_bytes(b'[]')
+    if case == 'valid':
+        assert ports.resolve_emitted_reference(files, field, coordinate, originals) == ref
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            ports.resolve_emitted_reference(files, field, coordinate, originals)
 
 
 @pytest.mark.parametrize('case', ['valid', 'old_claim', 'old_publication'])
@@ -735,3 +773,25 @@ def test_duration_reader_rejects_missing_original_interval(missing):
     del record['spans'][missing]
     with pytest.raises(ValueError):
         durations(record)
+
+
+@pytest.mark.parametrize('kind', ['a3_startup_correlation', 'a3_boot_check', 'a3_traffic_ready', 'a3_opted_attempt', 'a3_shutdown_span'])
+def test_runtime_record_exact_byte_limit(tmp_path, monkeypatch, kind):
+    from tests.test_async_settle_shadow_v2_collect import attempt_record
+    from trusted_router import async_settle_shadow_v2_collect_ports as ports
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    _, ready = readiness_sources(files, value)
+    records = {r['kind']: r for r in ready.records['readiness']}
+    records.update(a3_startup_correlation=fake.records['startup'][0],
+                   a3_opted_attempt=attempt_record(files, value.boots[0], START + 100),
+                   a3_shutdown_span=shutdown_sources(value).records['shutdown'][0])
+    record = records[kind]
+    ports.runtime_record(record)
+    # Isolate serialized length with a valid record. This does not claim that
+    # each kind has a fully valid canonical encoding of exactly its byte cap.
+    monkeypatch.setattr(ports, 'canonical', lambda _: b'x' * ports.RECORD_LIMITS[kind])
+    ports.runtime_record(record)
+    monkeypatch.setattr(ports, 'canonical', lambda _: b'x' * (ports.RECORD_LIMITS[kind] + 1))
+    with pytest.raises(ValueError, match='runtime_record_bytes'):
+        ports.runtime_record(record)

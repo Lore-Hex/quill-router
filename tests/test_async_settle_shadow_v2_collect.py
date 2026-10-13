@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +14,7 @@ from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_collect_inventory as inv
 from trusted_router import async_settle_shadow_v2_collect_readiness as ready
 from trusted_router import async_settle_shadow_v2_collect_shutdown as shut
+from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
 from trusted_router.async_settle_shadow_v2_collect_ports import (
     TAGS,
@@ -381,7 +383,53 @@ def test_deterministic_output_bytes(tmp_path):
     assert outputs[0] == outputs[1]
 
 
+def receipt_page(boot, at_us, day=DAY, sequence=1):
+    page = json.loads(Path('tests/fixtures/async_settlement/shadow_v2/receipt_pages.json').read_bytes())['variants'][0]['object']
+    seq = f'{sequence:020d}'
+    page.update(boot=boot, day=day, first_seq=seq, last_seq=seq)
+    event = page['events'][0]
+    event.update(seq=seq, event_at_us=at_us, receipt_at_us=at_us, authorization_day=day)
+    event['receipt_locator'].update(boot=boot, day=day, first_seq=seq, event_seq=seq)
+    return page
+
+
 def attempt_record(files, boot, at_us):
     return dict(kind='a3_opted_attempt', boot=boot['boot'], at_us=at_us, result='failed',
                 receipt=dict(day=DAY, boot=boot['boot'], sequence=1,
-                             original=files.obj('native/attempt.json', dict(boot=boot['boot'], sequence=1))))
+                             original=files.obj('native/attempt.json', receipt_page(boot['boot'], at_us), p1.PAGE)))
+
+
+@pytest.mark.parametrize('case', ['valid', 'empty', 'boot', 'day', 'sequence', 'zero', 'event_time', 'early_event'])
+def test_attempt_original_page_coordinates(tmp_path, case):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    attempt = attempt_record(files, value.boots[0], START + 100)
+    boot = 'different-boot' if case == 'boot' else attempt['boot']
+    day = '2026-10-11' if case == 'day' else DAY
+    at_us = START - 86_400_000_000 + 100 if case == 'day' else START + 100
+    if case in ('event_time', 'early_event'):
+        at_us = START + (101 if case == 'event_time' else 12)
+    page = receipt_page(boot, at_us, day, 2 if case == 'sequence' else 1)
+    if case == 'zero':
+        page = receipt_page(boot, at_us, day, 0)
+        attempt['receipt']['sequence'] = 0
+    # Changed coordinates, except zero, are independently valid PAGE objects.
+    # Empty/zero originals exercise the existing parser, not FILE_REF reading.
+    if case == 'empty':
+        ref = files.put('native/selected-page.json', b'')
+    else:
+        ref = files.obj('native/selected-page.json', page, None if case == 'zero' else p1.PAGE)
+    attempt['receipt']['original'] = ref
+    fake.records['readiness'].append(attempt)
+    run, result = get_readiness(files, value, pins, fake)
+    assert result.attempts == (attempt,)
+    assert result.complete is (case == 'valid')
+    status = json.loads((files.root / 'readiness/status.json').read_bytes())
+    assert status['complete'] is (case == 'valid')
+    assert json.loads(files.read(status['attempts'])) == [attempt]
+    if case == 'valid':
+        assert len(result.ledgers) == 1 and len(result.proofs) == 6 and not run.missing
+    else:
+        assert not result.ledgers
+        assert any(row['reason'] == 'attempt_without_inventory_interval' for row in run.missing)
