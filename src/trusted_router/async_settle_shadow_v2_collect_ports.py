@@ -1,11 +1,12 @@
 """Dormant A3-C1 read-only capture ports and bounded immutable packaging.
 
-NativeClients is deliberately absent: no credentials, network, retries or runtime
+NativeClients is deliberately absent: no network, retries or runtime
 imports. A capture records a call, including its failure; EOF is explicit and is
 not a delivery-completeness claim. Source adapters must be independently reviewed.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -235,3 +236,158 @@ class CapturedPort:
                     eof=capture['eof'], elapsed_us=capture['elapsed_us'],
                     complete_through_us=capture['complete_through_us'],
                     truncated=capture['truncated'], error=capture['error'])
+
+
+RECORD_LIMITS = dict(a3_startup_correlation=2048, a3_boot_check=16384,
+                    a3_traffic_ready=1024, a3_opted_attempt=2048, a3_shutdown_span=4096)
+CHECKS = {
+    'transport': ('actual_hops', 'both_routes_variants', 'compared_outcome'),
+    'size': ('event_snapshot', 'headers_fragments', 'native_memory', 'transactions'),
+    'regional_load': ('cpu_reads', 'envelope', 'publisher_export_shutdown'),
+    'boot_transport': ('local_dependencies', 'regional_hops'),
+    'observer_freshness': ('role_warm_path', 'slot_freshness'),
+    'marker_keys': ('deployed_pins', 'public_epoch', 'separation_negatives'),
+}
+SOURCES = {
+    'transport': ('ci', 'regional_trial'), 'size': ('ci', 'sizing_trial'),
+    'regional_load': ('budget_trial',), 'boot_transport': ('regional_trial',),
+    'observer_freshness': (), 'marker_keys': ('ci',),
+}
+RECORD_FIELDS = {
+    'a3_startup_correlation': 'kind instance launch boot role revision region process_start_us recorded_at_us',
+    'a3_boot_check': 'kind boot role revision region boot_at_us criterion completed_at_us checks config_sha256 inputs',
+    'a3_traffic_ready': 'kind boot at_us',
+    'a3_opted_attempt': 'kind boot at_us result receipt',
+    'a3_shutdown_span': 'kind boot instance launch revision region day interval_end_us complete clock clock_origin spans outcome',
+}
+ROLE_FIELDS = {
+    'boot_transport': {'router': 'dependencies clock_basis', 'enclave': 'dependencies clock_basis'},
+    'observer_freshness': {
+        'router': 'health_basis install_elapsed_us contender installed_at_ns clock_basis',
+        'enclave': 'router_path configured_router_region local_transport_ready echo_ready clock_basis'},
+    'marker_keys': {
+        'router': 'effective_pins source_revision authority_epoch public_descriptors policy_sha256 fixture_sha256',
+        'enclave': 'effective_pins source_revision authority_epoch public_descriptors policy_sha256 fixture_sha256 attested_image attested_revision'},
+}
+ATTEMPT_RESULTS = ('accepted', 'failed', 'rejected', 'timeout')
+# No non-lifecycle kinds have been reviewed for these projected runtime channels.
+CHANNEL_KINDS = {
+    'startup': ('a3_startup_correlation',),
+    'readiness': ('a3_boot_check', 'a3_traffic_ready', 'a3_opted_attempt'),
+    'shutdown': ('a3_shutdown_span',),
+}
+
+
+def identifier(value: Any) -> None:
+    require(type(value) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}', value) is not None)
+
+
+def integer(value: Any) -> None:
+    require(type(value) is int and 0 <= value <= 9223372036854775807)
+
+
+def fields(value: Any, names: str) -> None:
+    require(type(value) is dict and set(value) == set(names.split()))
+
+
+def source_ref(value: Any) -> None:
+    a2.FILE_REF(value)
+    require(len(value['path']) <= 256 and value['bytes'] <= 262144)
+
+
+def runtime_record(record: dict[str, Any]) -> None:
+    kind = record['kind']
+    require(kind in RECORD_LIMITS)
+    require(len(canonical(record)) <= RECORD_LIMITS[kind], 'runtime_record_bytes')
+    names = RECORD_FIELDS[kind]
+    if kind == 'a3_boot_check':
+        criterion, role = record['criterion'], record['role']
+        require(criterion in CHECKS and role in ('router', 'enclave'))
+        names += ' ' + ROLE_FIELDS.get(criterion, {}).get(role, '')
+        if criterion == 'observer_freshness' and role == 'router' and record.get('contender') is True:
+            names += ' claim publication publication_elapsed_us claim_at_ns published_at_ns'
+        fields(record['checks'], ' '.join(CHECKS[criterion]))
+        require(all(v in ('pass', 'fail') for v in record['checks'].values()))
+        fields(record['inputs'], ' '.join(SOURCES[criterion]))
+        for value in record['inputs'].values():
+            identifier(value)
+    fields(record, names)
+    for key, value in record.items():
+        if key in ('boot', 'instance', 'launch', 'region', 'configured_router_region'):
+            identifier(value)
+        elif key in ('revision', 'source_revision', 'attested_revision'):
+            a2.revision(value)
+        elif key.endswith('_sha256'):
+            require(type(value) is str and re.fullmatch('[0-9a-f]{64}', value) is not None)
+        elif key.endswith(('_us', '_ns')) or key == 'authority_epoch':
+            integer(value)
+        elif key in ('health_basis', 'claim', 'publication', 'public_descriptors', 'attested_image'):
+            source_ref(value)
+    if 'role' in record:
+        require(record['role'] in ('router', 'enclave'))
+    if 'clock_basis' in record:
+        basis = record['clock_basis']
+        fields(basis, 'clock boot boot_at_us original')
+        require(basis['clock'] == 'utc_ns' and basis['boot'] == record['boot'])
+        integer(basis['boot_at_us'])
+        source_ref(basis['original'])
+    if 'dependencies' in record:
+        require(type(record['dependencies']) is list and 0 < len(record['dependencies']) <= 16)
+        for row in record['dependencies']:
+            fields(row, 'boot region config_sha256 operation resource attempts marker_matches elapsed_us deadline_us observed_at_us')
+            for key in ('boot', 'region', 'resource'):
+                identifier(row[key])
+            require(row['operation'] in ('transport', 'read'))
+            for key in ('attempts', 'elapsed_us', 'deadline_us', 'observed_at_us'):
+                integer(row[key])
+            require(type(row['marker_matches']) is bool)
+    for key in ('contender', 'local_transport_ready', 'echo_ready'):
+        if key in record:
+            require(type(record[key]) is bool)
+    if 'router_path' in record:
+        row = record['router_path']
+        fields(row, 'ready resource router_boot region observed_at_us')
+        for key in ('resource', 'router_boot', 'region'):
+            identifier(row[key])
+        integer(row['observed_at_us'])
+        require(type(row['ready']) is bool)
+    if 'effective_pins' in record:
+        names = ('TR_ASYNC_SETTLE_ENABLED TR_ASYNC_SETTLE_PROTECTION TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED'
+                 if record['role'] == 'router' else 'TR_ASYNC_SETTLE_NEGOTIATE TR_ASYNC_SETTLE_SHADOW')
+        fields(record['effective_pins'], names)
+        require(all(v in ('false', 'true', 'on', 'off') for v in record['effective_pins'].values()))
+    if kind == 'a3_opted_attempt':
+        require(record['result'] in ATTEMPT_RESULTS)
+        receipt = record['receipt']
+        fields(receipt, 'day boot sequence original')
+        a2.day(receipt['day'])
+        identifier(receipt['boot'])
+        integer(receipt['sequence'])
+        source_ref(receipt['original'])
+    if kind == 'a3_shutdown_span':
+        a2.day(record['day'])
+        require(record['clock'] == 'monotonic_us' and type(record['complete']) is bool)
+        require(record['outcome'] in ('graceful', 'hard_kill'))
+        fields(record['clock_origin'], 'boot monotonic_at_boot_us')
+        require(record['clock_origin']['boot'] == record['boot'])
+        integer(record['clock_origin']['monotonic_at_boot_us'])
+        fields(record['spans'], 'preparation export_wait final_pass close result')
+        for span in record['spans'].values():
+            require(type(span) is list and len(span) == 2)
+            for coordinate in span:
+                integer(coordinate)
+            require(record['clock_origin']['monotonic_at_boot_us'] <= span[0] <= span[1])
+
+
+def classified_records(run: Pass, records: list[dict[str, Any]], channel: str) -> list[dict[str, Any]]:
+    valid = []
+    for record in records:
+        if record.get('kind') not in CHANNEL_KINDS[channel]:
+            run.gap(channel, 'missing_record_classification')
+            continue
+        try:
+            runtime_record(record)
+            valid.append(record)
+        except (ValueError, KeyError, TypeError):
+            run.gap(channel, 'malformed_runtime_record')
+    return valid

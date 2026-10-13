@@ -14,6 +14,7 @@ from trusted_router.async_settle_shadow_v2_collect_ports import (
     PlatformPort,
     Query,
     approval,
+    classified_records,
     day_bounds,
 )
 from trusted_router.async_settle_shadow_v2_schema import decode, require
@@ -46,7 +47,7 @@ def lifecycle(entry: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any] 
     if mode == 'supervisor':
         record = entry.get('jsonPayload', {})
         if record.get('kind') not in ('a3_process_launch', 'a3_process_exit', 'a3_process_boundary'):
-            return None
+            raise ValueError('missing_record_classification')
         require(record['supervisor'] == binding['supervisor'])
         return dict(instance=record['instance'], launch=record['launch'],
                     event=('start' if record['kind'] == 'a3_process_launch' else
@@ -78,14 +79,17 @@ def lifecycle(entry: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any] 
     require(payload['serviceName'] == 'compute.googleapis.com')
     method = payload['methodName']
     require(method in ('v1.compute.instances.insert', 'v1.compute.instances.delete'))
-    if entry.get('operation', {}).get('last') is not True:
-        return None
-    require(not payload.get('status', {}).get('code', 0))
     instance = labels['instance_id']
     member = binding['instances'][instance]
     require(member['resource_name'] == payload['resourceName'])
     require(member['mig'] in binding['migs'])
-    return dict(instance=instance, launch=instance, event='start' if method.endswith('.insert') else 'stop',
+    operation = entry['operation']
+    require(type(operation['id']) is str and 0 < len(operation['id']) <= 128)
+    state = ('failed' if payload.get('status', {}).get('code', 0) else
+             'completed' if operation.get('last') is True else 'pending')
+    return dict(operation_id=operation['id'], operation_state=state, resource_name=payload['resourceName'],
+                method=method, instance=instance, launch=instance,
+                event=('start' if method.endswith('.insert') else 'stop') if state == 'completed' else state,
                 at_us=timestamp(entry['timestamp']), role='enclave', revision=member['revision'],
                 region=member['region'], event_id=entry['insertId'])
 
@@ -112,7 +116,6 @@ def collect(run: Pass, *, platform: PlatformPort, logs: LifecyclePort, monitorin
             run.gap('platform', 'original_platform_page_missing', 'writer_roster_gap')
     config = valid_config
     events = list(run.scan(logs, queries['lifecycle']))
-    correlations = list(run.scan(logs, queries['startup']))
     boundaries = list(run.scan(monitoring, queries['monitoring']))
     for row in boundaries:
         try:
@@ -147,6 +150,19 @@ def collect(run: Pass, *, platform: PlatformPort, logs: LifecyclePort, monitorin
                 parsed.append(value)
         except (ValueError, KeyError, TypeError):
             run.gap('lifecycle', 'unclassified_or_invalid_event', 'writer_roster_gap')
+    operations: dict[str, list[dict[str, Any]]] = {}
+    if binding.get('mode') == 'compute_instance':
+        for event in parsed:
+            operations.setdefault(event['operation_id'], []).append(event)
+        parsed = []
+        for operation_id, rows in sorted(operations.items()):
+            completed = [r for r in rows if r['operation_state'] == 'completed']
+            identities = {(r['instance'], r['resource_name'], r['method']) for r in rows}
+            if len(completed) == 1 and len(identities) == 1 and not any(r['operation_state'] == 'failed' for r in rows):
+                parsed.append(completed[0])
+            else:
+                run.gap(operation_id, 'pending_failed_or_changed_operation', 'writer_roster_gap')
+                parsed.extend(r | dict(event='unresolved_operation') for r in rows)
     # Carry-in launches are independent prior-day enumerations with original refs.
     for carry in binding.get('carry_in', []):
         try:
@@ -155,8 +171,14 @@ def collect(run: Pass, *, platform: PlatformPort, logs: LifecyclePort, monitorin
         except (OSError, ValueError):
             run.gap('lifecycle', 'carry_in_missing', 'writer_roster_gap')
     launches: dict[str, list[dict[str, Any]]] = {}
+    observed = {r['launch'] for r in parsed if r['event'] in ('start', 'stop')}
     for event in parsed:
+        if event['event'] == 'unresolved_operation' and event['launch'] not in observed:
+            continue  # Pending-only operations remain in operations, not the launch population.
         launches.setdefault(event['launch'], []).append(event)
+    # Persist the classified independent map before requesting any startup page.
+    run.files.obj(f'inventory/{day}/expected-launches.json', launches)
+    correlations = classified_records(run, list(run.scan(logs, queries['startup'])), 'startup')
     expected, boots, serving = [], [], []
     seen_boots: set[str] = set()
     for launch_id, history in sorted(launches.items()):
@@ -167,6 +189,10 @@ def collect(run: Pass, *, platform: PlatformPort, logs: LifecyclePort, monitorin
         if len(starts) != 1 or len(exits) != 1:
             state['missing'].append('lifecycle_boundary')
             run.gap(launch_id, 'lifecycle_boundary', 'writer_roster_gap')
+            continue
+        if any(r['event'] == 'unresolved_operation' for r in history):
+            state['missing'].append('operation_boundary')
+            run.gap(launch_id, 'operation_boundary', 'writer_roster_gap')
             continue
         first, last = starts[0], exits[0]
         joins = [r for r in correlations if r.get('kind') == 'a3_startup_correlation'
@@ -208,7 +234,7 @@ def collect(run: Pass, *, platform: PlatformPort, logs: LifecyclePort, monitorin
     # Serving's historical field flushed_at_us means interval end here, not a writer ack.
     serving_ref = run.files.obj(f'inventory/{day}/serving.json', serving)
     deployment_ref = run.files.obj(f'inventory/{day}/deployment.json', dict(serving=serving,
-        expected=expected, binding=binding_ref, platform=config, monitoring=boundaries,
+        expected=expected, operations=operations, binding=binding_ref, platform=config, monitoring=boundaries,
         originals=run.sources, missing=run.missing))
     approved = approval(run.files, review, deployment_ref)
     envelope = None

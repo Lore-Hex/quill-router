@@ -180,8 +180,8 @@ def test_compute_parser_needs_completed_operation_and_membership():
     entry = dict(logName=binding['log_name'], resource=dict(labels=dict(instance_id='123')),
         protoPayload=dict(serviceName='compute.googleapis.com', methodName='v1.compute.instances.insert',
                           resourceName='projects/p/zones/z/instances/vm'),
-        operation=dict(last=False), insertId='insert-id', timestamp=DAY + 'T00:00:00Z')
-    assert inv.lifecycle(entry, binding) is None
+        operation=dict(id='operation-1', last=False), insertId='insert-id', timestamp=DAY + 'T00:00:00Z')
+    assert inv.lifecycle(entry, binding)['operation_state'] == 'pending'
     entry['operation']['last'] = True
     assert inv.lifecycle(entry, binding)['event'] == 'start'
     entry['protoPayload']['resourceName'] = 'unapproved-vm'
@@ -201,7 +201,8 @@ def test_shutdown_budget_view_seam_is_closed_without_c2_inputs(tmp_path):
         budget_view(g, {}, Inventory(()), ())
 
 
-def test_enclave_readiness_uses_own_echo_and_router_path(tmp_path):
+@pytest.mark.parametrize('case', ['valid', 'unrelated_path', 'old_path', 'changed_epoch', 'changed_image'])
+def test_enclave_readiness_uses_own_echo_and_router_path(tmp_path, case):
     files, binding, fake, queries = setup(tmp_path, ('enclave-boot',))
     for event in fake.records['lifecycle']:
         event['jsonPayload']['role'] = 'enclave'
@@ -211,15 +212,25 @@ def test_enclave_readiness_uses_own_echo_and_router_path(tmp_path):
     _, value = inventory(files, binding, fake, queries)
     pins, fake = readiness_sources(files, value)
     warm = next(r for r in fake.records['readiness'] if r.get('criterion') == 'observer_freshness')
-    del warm['health_basis']
+    for key in ('health_basis', 'install_elapsed_us', 'installed_at_ns', 'contender'):
+        del warm[key]
     warm.update(router_path=dict(ready=True, resource='configured-router', router_boot='router-boot',
-                                 region='us-central1'), configured_router_region='us-central1',
+                                 region='us-central1', observed_at_us=value.boots[0]['boot_at_us'] + 1), configured_router_region='us-central1',
                 local_transport_ready=True, echo_ready=True)
     marker = next(r for r in fake.records['readiness'] if r.get('criterion') == 'marker_keys')
-    marker.update(attested_image=files.obj('native/attested.json', dict(fake_attestation=REV)),
+    marker.update(attested_image=files.obj('native/attested.json', dict(revision=REV, image_sha256='b' * 64)),
                   attested_revision=REV)
+    if case == 'unrelated_path':
+        warm['router_path']['resource'] = 'unconfigured-router'
+    elif case == 'old_path':
+        warm['router_path']['observed_at_us'] = START
+    elif case == 'changed_epoch':
+        marker['authority_epoch'] = 2
+    elif case == 'changed_image':
+        marker['attested_image'] = files.obj('native/changed-image.json', dict(revision=REV, image_sha256='c' * 64))
     _, result = get_readiness(files, value, pins, fake)
-    assert result.complete and len(result.ledgers) == 1
+    assert result.complete is (case == 'valid')
+    assert len(result.ledgers) == (1 if case == 'valid' else 0)
 
 
 def test_shutdown_disjoint_outer_nested_transactions_and_grace():
@@ -311,3 +322,416 @@ def test_native_close_original_sources_and_deletion(tmp_path, deleted):
         g.materialize_one('proof.shutdown_inventory_sha256',
                          a2.SHUTDOWN_INVENTORY.parse(files.read(sealed.envelope)))
         assert len(g.shutdown.measurements) == 1
+
+
+@pytest.mark.parametrize('channel', ['lifecycle', 'startup', 'readiness', 'shutdown'])
+def test_unclassified_original_records_block_every_channel(tmp_path, channel):
+    from tests.test_async_settle_shadow_v2_collect import review
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    unknown = dict(kind='a3_new_exit', boot='zero-row')
+    if channel in ('lifecycle', 'startup'):
+        fake.records[channel].append(dict(insertId='unknown', jsonPayload=unknown) if channel == 'lifecycle' else unknown)
+        run, result = inventory(files, binding, fake, queries)
+        _, sealed = inventory(files, binding, fake, queries, review(files, result.deployment))
+        envelope = a2.INDEPENDENT_INVENTORY.parse(files.read(sealed.envelope))
+        assert not envelope['complete']
+        with pytest.raises(ValueError):
+            g = graph(files)
+            g.inventory({'manifest.independent_inventory_sha256': envelope}, g.ports)
+    else:
+        _, value = inventory(files, binding, fake, queries)
+        if channel == 'readiness':
+            pins, fake = readiness_sources(files, value)
+            fake.records[channel].append(unknown)
+            run, result = get_readiness(files, value, pins, fake)
+            assert not result.ledgers
+        else:
+            fake = shutdown_sources(value)
+            fake.records[channel].append(unknown)
+            run, draft = get_shutdown(files, value, fake)
+            run, result = get_shutdown(files, value, fake, review(files, draft.measurements))
+            envelope = a2.SHUTDOWN_INVENTORY.parse(files.read(result.envelope))
+            assert not envelope['complete']
+            with pytest.raises(ValueError):
+                graph(files).materialize_one('proof.shutdown_inventory_sha256', envelope)
+    assert not result.complete and run.missing
+    originals = [files.read(ref) for ref in run.sources]
+    assert any(b'a3_new_exit' in raw for raw in originals)
+
+
+@pytest.mark.parametrize('state', ['pending', 'failed', 'completed', 'pending_new_instance'])
+def test_compute_operations_retain_resource_and_resolve_only_completion(tmp_path, state):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    body = json.loads(files.read(binding))
+    body.update(mode='compute_instance', log_name='projects/p/logs/audit', migs=['mig'],
+                instances={'vm1': dict(resource_name='projects/p/zones/z/instances/vm', mig='mig',
+                                       revision=REV, region='us-central1')})
+    binding = files.obj('compute-binding.json', body)
+    fake.records['platform'][0]['role'] = 'enclave'
+    fake.records['startup'][0].update(role='enclave', launch='vm1', process_start_us=START + 1000001,
+                                      recorded_at_us=START + 1000002)
+    def event(op, method, last, second, failed=False):
+        return dict(logName=body['log_name'], resource=dict(type='gce_instance', labels=dict(instance_id='vm1')),
+            protoPayload=dict(serviceName='compute.googleapis.com', methodName='v1.compute.instances.' + method,
+                resourceName='projects/p/zones/z/instances/vm', status=dict(code=1 if failed else 0)),
+            operation=dict(id=op, first=not last, last=last), insertId=op + str(last),
+            timestamp=DAY + f'T00:00:0{second}Z')
+    fake.records['lifecycle'] = [event('start', 'insert', False, 0), event('start', 'insert', True, 1),
+                                 event('stop', 'delete', False, 1), event('stop', 'delete', True, 2)]
+    if state != 'completed':
+        fake.records['lifecycle'].append(event('pending', 'insert', state == 'failed', 3, state == 'failed'))
+    if state == 'pending_new_instance':
+        body['instances']['vm2'] = dict(body['instances']['vm1'], resource_name='projects/p/zones/z/instances/vm2')
+        binding = files.obj('compute-binding-new-instance.json', body)
+        fake.records['lifecycle'][-1]['resource']['labels']['instance_id'] = 'vm2'
+        fake.records['lifecycle'][-1]['protoPayload']['resourceName'] = 'projects/p/zones/z/instances/vm2'
+    run, value = inventory(files, binding, fake, queries)
+    assert value.complete is (state == 'completed')
+    retained = json.loads(files.read(value.deployment))['operations']
+    assert len(retained['start']) == 2
+    if state == 'pending_new_instance':
+        assert retained['pending'][0]['instance'] == 'vm2'
+        assert len(value.expected) == 1 and len(value.boots) == 1
+        assert run.missing
+    elif state != 'completed':
+        assert retained['pending'][0]['resource_name'] == 'projects/p/zones/z/instances/vm'
+        assert retained['pending'][0]['operation_state'] == state
+        assert run.missing and not value.boots
+    else:
+        assert len(value.boots) == 1 and len(value.expected) == 1
+
+
+@pytest.mark.parametrize('case', ['unknown', 'malformed', 'outside', 'early', 'valid'])
+def test_attempt_population_and_packaged_missing_state(tmp_path, case):
+    from tests.test_async_settle_shadow_v2_collect import attempt_record
+    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_provenance import prerequisite
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    attempt = attempt_record(files, value.boots[0], START + (12 if case == 'early' else 100))
+    if case == 'unknown':
+        attempt['boot'] = attempt['receipt']['boot'] = 'not-in-inventory'
+        attempt['receipt']['original'] = files.obj('native/unmatched-attempt.json',
+            dict(boot='not-in-inventory', sequence=1))
+    elif case == 'malformed':
+        attempt['at_us'] = 'unknown'
+    elif case == 'outside':
+        attempt['at_us'] = END
+    fake.records['readiness'].append(attempt)
+    run, result = get_readiness(files, value, pins, fake)
+    assert result.attempts == (attempt,)
+    assert result.complete is (case == 'valid')
+    status = json.loads((files.root / 'readiness/status.json').read_bytes())
+    assert json.loads(files.read(status['attempts'])) == [attempt]
+    assert status['complete'] is (case == 'valid')
+    if case == 'early':
+        assert any(r['reason'] == 'early_opted_attempt' for r in status['missing'])
+        ledger = a1.PREREQUISITE_LEDGER.parse(files.read(result.ledgers[0]))
+        proofs = {r['sha256']: a2.PROOF_RESULT.parse(files.read(r)) for r in result.proofs}
+        for criterion in ready_checks():
+            prerequisite(graph(files), proofs[ledger[criterion]['sha256']], ledger, criterion)
+    if case not in ('early', 'valid'):
+        assert not result.ledgers and run.missing
+
+
+def ready_checks():
+    from trusted_router.async_settle_shadow_v2_collect_readiness import CHECKS
+    return CHECKS
+
+
+@pytest.mark.parametrize('case', ['old_read', 'old_install', 'old_dependency', 'clock_boot', 'clock_original',
+                                  'large_check', 'extra_input', 'extra_field', 'attempt_result',
+                                  'wrong_dependency', 'duplicate_dependency', 'missing_dependency', 'wrong_role'])
+def test_original_readiness_records_and_boot_local_observations(tmp_path, case):
+    from tests.test_async_settle_shadow_v2_collect import attempt_record
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    warm = next(r for r in fake.records['readiness'] if r.get('criterion') == 'observer_freshness')
+    transport = next(r for r in fake.records['readiness'] if r.get('criterion') == 'boot_transport')
+    first = fake.records['readiness'][0]
+    if case == 'large_check':
+        first['inputs']['extra'] = 'x' * 20000
+        assert len(canonical(first)) == 20499
+    if case == 'old_read':
+        basis = json.loads(files.read(warm['health_basis']))
+        for key in ('committed_at_ns', 'read_at_ns'):
+            basis[key] -= 86400 * 1000000000
+        for key in ('observed_at_ns', 'publisher_heartbeat_ns'):
+            basis['body'][key] -= 86400 * 1000000000
+        basis['body']['slot'] -= 43200
+        basis['body']['backlog_age_at_seconds'] -= 86400
+        warm['health_basis'] = files.obj('native/old-basis.json', basis)
+        warm['installed_at_ns'] -= 86400 * 1000000000
+    elif case == 'old_install':
+        warm['installed_at_ns'] = START * 1000
+    elif case == 'old_dependency':
+        transport['dependencies'][0]['observed_at_us'] = START
+    elif case == 'clock_boot':
+        warm['clock_basis']['boot_at_us'] = START
+    elif case == 'clock_original':
+        warm['clock_basis']['original'] = files.obj('native/changed-clock.json', dict(clock='unqualified'))
+    elif case in ('large_check', 'extra_input'):
+        first['inputs']['extra'] = 'x' * (20000 if case == 'large_check' else 1)
+    elif case == 'extra_field':
+        first['unlisted'] = 'unlisted-value'
+    elif case == 'attempt_result':
+        attempt = attempt_record(files, value.boots[0], START + 100)
+        attempt['result'] = 'unlisted-result'
+        fake.records['readiness'].append(attempt)
+    elif case == 'wrong_dependency':
+        for row in transport['dependencies']:
+            row['resource'] = 'unconfigured-target'
+    elif case == 'duplicate_dependency':
+        transport['dependencies'].append(dict(transport['dependencies'][0]))
+    elif case == 'missing_dependency':
+        transport['dependencies'].pop()
+    else:
+        transport['dependencies'][0]['resource'] = 'enclave-dependency'
+    run, result = get_readiness(files, value, pins, fake)
+    assert not result.complete and not result.ledgers and run.missing
+    assert any(b'records' in files.read(ref) for ref in run.sources)
+
+
+@pytest.mark.parametrize('source', ['ci', 'regional_trial', 'sizing_trial', 'budget_trial'])
+@pytest.mark.parametrize('case', ['reversed', 'typed', 'over_hour'])
+def test_each_original_artifact_time_is_validated(tmp_path, source, case):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    artifact = next(r for r in fake.records['artifacts'] if r['source'] == source)
+    artifact['started_at_us'] = END if case == 'reversed' else str(START) if case == 'typed' else START - 3600000001
+    run, result = get_readiness(files, value, pins, fake)
+    assert result.complete is (source == 'ci' and case == 'over_hour')
+    if not result.complete:
+        assert run.missing and not result.ledgers
+
+
+def test_expected_launch_map_exists_before_first_startup_page(tmp_path):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    original_read = fake.read
+    def read(query, token):
+        if query.source == 'startup':
+            expected = json.loads((files.root / f'inventory/{DAY}/expected-launches.json').read_bytes())
+            assert set(expected) == {'launch-zero-row'}
+            assert [e['event'] for e in expected['launch-zero-row']] == ['start', 'stop']
+        return original_read(query, token)
+    fake.read = read
+    _, value = inventory(files, binding, fake, queries)
+    assert value.complete
+
+
+@pytest.mark.parametrize('case', ['orphan', 'two_starts'])
+def test_original_launch_population_cannot_be_enlarged_or_merged(tmp_path, case):
+    from tests.test_async_settle_shadow_v2_collect import review
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    if case == 'orphan':
+        fake.records['startup'].append(dict(fake.records['startup'][0], boot='other', launch='other-launch'))
+    else:
+        fake.records['lifecycle'].append(dict(fake.records['lifecycle'][0], insertId='second-start'))
+    run, value = inventory(files, binding, fake, queries)
+    assert len(value.expected) == 1 and not value.complete
+    assert len(value.boots) == (1 if case == 'orphan' else 0)
+    assert len(json.loads(files.read(value.serving))) == len(value.boots)
+    if case == 'two_starts':
+        assert value.expected[0]['missing'] == ['lifecycle_boundary']
+    _, sealed = inventory(files, binding, fake, queries, review(files, value.deployment))
+    assert not a2.INDEPENDENT_INVENTORY.parse(files.read(sealed.envelope))['complete']
+    assert run.missing
+
+
+def test_remaining_capacity_and_continuation_exhaustion(tmp_path):
+    for count, limit, sizes in ((201, 201, [200, 1]), (202, 201, [200, 1]), (202, 200, [200])):
+        fake = Fake(dict(x=[dict(i=i) for i in range(count)]))
+        run = Pass(Files(tmp_path / f'{count}-{limit}'), limit=limit)
+        assert len(list(run.scan(fake, Query('x', 'named', DAY)))) == limit
+        assert [q.page_size for q, _ in fake.calls] == sizes
+        assert bool(run.missing) is (count > limit)
+        if count > limit:
+            assert any(r['reason'] == 'records_per_pass' for r in run.missing)
+
+
+def test_ready_equal_to_last_completion_blocks(tmp_path):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    fake.records['readiness'][-1]['at_us'] = max(r['completed_at_us'] for r in fake.records['readiness'][:-1])
+    _, result = get_readiness(files, value, pins, fake)
+    assert not result.complete and not result.ledgers
+
+
+@pytest.mark.parametrize('criterion', ['transport', 'size', 'regional_load', 'boot_transport', 'observer_freshness', 'marker_keys'])
+@pytest.mark.parametrize('changed', [False, True])
+def test_duplicate_final_adoptions_block_by_criterion(tmp_path, criterion, changed):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    record = dict(next(r for r in fake.records['readiness'] if r.get('criterion') == criterion))
+    if changed:
+        record['completed_at_us'] -= 1
+    fake.records['readiness'].append(record)
+    _, result = get_readiness(files, value, pins, fake)
+    assert not result.complete and not result.ledgers
+
+
+@pytest.mark.parametrize('case', ['valid', 'close_binding', 'result_outcome'])
+def test_changed_original_close_and_result_independently_block(tmp_path, case):
+    from trusted_router import async_settle_shadow_v2_collect_shutdown as shut
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    originals = close_sources(files, value.boots[0])
+    refs = originals[DAY + '/zero-row']
+    body = json.loads(files.read(refs['close_result']))
+    if case == 'close_binding':
+        body['closure_sha256'] = 'f' * 64
+    elif case == 'result_outcome':
+        body['outcome'] = 'deadline'
+    if case != 'valid':
+        refs['close_result'] = files.obj('native/changed-result.json', body)
+    run = Pass(files)
+    result = shut.collect(run, inventory=value, logs=shutdown_sources(value), query=Query('shutdown', 'named', DAY), originals=originals)
+    assert result.complete is (case == 'valid')
+    if case != 'valid':
+        assert run.missing
+
+
+def test_retained_shared_trial_times_and_original_bytes(tmp_path):
+    from trusted_router import async_settle_shadow_v2_a1_evidence as a1
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_provenance import prerequisite
+    files, binding, fake, queries = setup(tmp_path, ('first', 'second'))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    for record in fake.records['readiness']:
+        if record.get('kind') == 'a3_boot_check' and record['boot'] == 'second':
+            record['inputs'] = {k: v.replace('second-', 'first-') for k, v in record['inputs'].items()}
+    _, result = get_readiness(files, value, pins, fake)
+    assert result.complete and len(result.ledgers) == 2
+    proofs = {r['sha256']: a2.PROOF_RESULT.parse(files.read(r)) for r in result.proofs}
+    for ref in result.ledgers:
+        ledger = a1.PREREQUISITE_LEDGER.parse(files.read(ref))
+        for criterion in ready_checks():
+            prerequisite(graph(files), proofs[ledger[criterion]['sha256']], ledger, criterion)
+    for boot in ('first', 'second'):
+        projections = list((files.root / 'readiness' / boot).glob('*-ci.json'))
+        projections += list((files.root / 'readiness' / boot).glob('*_trial.json'))
+        assert len(projections) == 7
+        for path in projections:
+            row = json.loads(path.read_bytes())
+            assert row['completed_at_us'] == START and row['started_at_us'] == START - 1000
+            original = json.loads(files.read(row['original']))
+            assert original['actual_trial_time'] == START
+            assert original['completed_at_us'] == START and original['started_at_us'] == START - 1000
+            assert row['id'].startswith('first-')
+
+
+@pytest.mark.parametrize('case', ['valid', 'close', 'result', 'final', 'total', 'grace'])
+def test_shutdown_independent_limits_and_valid_eight_point_five_seconds(tmp_path, case):
+    from trusted_router import async_settle_shadow_v2_collect_shutdown as shut
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    originals = close_sources(files, value.boots[0])
+    fake = shutdown_sources(value)
+    spans = dict(preparation=[0, 3000000], export_wait=[3000000, 6000000], final_pass=[6000000, 8500000],
+                 close=[6000000, 6000300], result=[6100000, 7100000])
+    if case == 'close':
+        spans.update(preparation=[0, 1], export_wait=[1, 2], final_pass=[2, 3000000], close=[2, 2000003], result=[2000003, 2000004])
+    elif case == 'result':
+        spans['result'] = [6000300, 8000301]
+    elif case == 'final':
+        spans.update(preparation=[0, 1], export_wait=[1, 2], final_pass=[2, 4000003], close=[2, 302], result=[302, 303])
+    elif case == 'total':
+        spans['preparation'][1] += 500001
+        for key in ('export_wait', 'final_pass', 'close', 'result'):
+            spans[key] = [t + 500001 for t in spans[key]]
+        spans['export_wait'][0] = spans['preparation'][1]
+    elif case == 'grace':
+        value.boots[0]['grace_us'] = 8000000
+    fake.records['shutdown'][0]['spans'] = spans
+    run = Pass(files)
+    result = shut.collect(run, inventory=value, logs=fake, query=Query('shutdown', 'named', DAY), originals=originals)
+    assert result.complete is (case == 'valid')
+    if case != 'valid':
+        assert any(r['reason'] == 'combined_grace_or_pass_exceeded' for r in run.missing)
+
+
+def test_runtime_interface_matches_closed_collector_schemas():
+    from pathlib import Path
+
+    from trusted_router import async_settle_shadow_v2_collect_ports as ports
+    doc = Path('docs/design/async-settle-shadow-v2-runtime-harness-interface.md').read_text()
+    inventory = json.loads(doc.split('```json\n', 1)[1].split('\n```', 1)[0])
+    expected = dict(fields=ports.RECORD_FIELDS, role_fields=ports.ROLE_FIELDS, limits=ports.RECORD_LIMITS,
+                    checks=ports.CHECKS, sources=ports.SOURCES, attempt_results=ports.ATTEMPT_RESULTS,
+                    channels=ports.CHANNEL_KINDS)
+    assert inventory == json.loads(json.dumps(expected))
+
+
+@pytest.mark.parametrize('case', ['valid', 'old_claim', 'old_publication'])
+def test_contender_claim_publication_and_install_are_boot_local(tmp_path, case):
+    from trusted_router import async_settle_shadow_v2_a1_health as health
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    record = next(r for r in fake.records['readiness'] if r.get('criterion') == 'observer_freshness')
+    boot = value.boots[0]
+    basis = json.loads(files.read(record['health_basis']))
+    body = basis['body']
+    body.update(publisher_boot_id=boot['boot'], observed_at_ns=boot['boot_at_us'] * 1000,
+                publisher_heartbeat_ns=boot['boot_at_us'] * 1000)
+    claim = dict(v=2, policy_version='shadow-v2', contract_revision='a1', authority='local',
+                 slot=body['slot'], owner_boot_id=boot['boot'], claim_at_ns=body['observed_at_ns'])
+    basis['committed_at_ns'] = body['observed_at_ns']
+    if case == 'old_claim':
+        claim['claim_at_ns'] = START * 1000
+    elif case == 'old_publication':
+        claim['claim_at_ns'] = START * 1000
+        body['observed_at_ns'] = body['publisher_heartbeat_ns'] = START * 1000
+        basis['committed_at_ns'] = START * 1000
+    record.update(contender=True, claim=files.obj('native/claim.json', claim, health.HEALTH_CLAIM),
+        publication=files.obj('native/publication.json', body, health.HEALTH),
+        claim_at_ns=claim['claim_at_ns'], published_at_ns=body['observed_at_ns'],
+        publication_elapsed_us=(body['observed_at_ns'] - claim['claim_at_ns']) // 1000,
+        health_basis=files.obj('native/contender-basis.json', basis, health.HEALTH_BASIS))
+    _, result = get_readiness(files, value, pins, fake)
+    assert result.complete is (case == 'valid')
+
+
+@pytest.mark.parametrize('kind', ['a3_startup_correlation', 'a3_boot_check', 'a3_traffic_ready', 'a3_opted_attempt', 'a3_shutdown_span'])
+@pytest.mark.parametrize('case', ['extra', 'identifier', 'over_limit', 'reference'])
+def test_closed_runtime_records_reject_extra_or_over_limit_originals(tmp_path, kind, case):
+    from tests.test_async_settle_shadow_v2_collect import attempt_record
+    from trusted_router.async_settle_shadow_v2_collect_ports import RECORD_LIMITS, runtime_record
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, ready = readiness_sources(files, value)
+    records = {r['kind']: r for r in ready.records['readiness']}
+    records.update(a3_startup_correlation=fake.records['startup'][0],
+                   a3_opted_attempt=attempt_record(files, value.boots[0], START + 100),
+                   a3_shutdown_span=shutdown_sources(value).records['shutdown'][0])
+    record = records[kind]
+    runtime_record(record)
+    if case == 'extra':
+        record['unlisted'] = 'unlisted-value'
+    elif case == 'identifier':
+        record['boot'] = 'x' * 129
+    elif case == 'over_limit':
+        record['boot'] = 'x' * RECORD_LIMITS[kind]
+    else:
+        record['unlisted_source'] = dict(path='x' * 257, sha256='a' * 64, bytes=262145)
+    with pytest.raises(ValueError, match='runtime_record_bytes' if case == 'over_limit' else None):
+        runtime_record(record)
+
+
+@pytest.mark.parametrize('missing', ['preparation', 'export_wait', 'final_pass', 'close', 'result'])
+def test_duration_reader_rejects_missing_original_interval(missing):
+    from trusted_router.async_settle_shadow_v2_collect_shutdown import durations
+    record = dict(spans=dict(preparation=[0, 100], export_wait=[100, 200], final_pass=[200, 500],
+                             close=[250, 350], result=[350, 450]))
+    del record['spans'][missing]
+    with pytest.raises(ValueError):
+        durations(record)

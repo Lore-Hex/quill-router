@@ -167,7 +167,12 @@ def test_inventory_missing_boundary_or_qualification(tmp_path, mutation):
 
 
 def readiness_sources(files, value):
-    pins = {k: files.obj(f'pins/{k}.json', dict(fake=k)) for k in ('policy', 'fixture', 'config')}
+    config = dict(dependencies={role: [dict(operation=op, resource=role + '-dependency', region='us-central1')
+                                     for op in ('transport', 'read')] for role in ('router', 'enclave')},
+                  router_path=dict(resource='configured-router', region='us-central1'),
+                  descriptor_ids=['released-public-1'], enclave_image_sha256='b' * 64)
+    pins = {k: files.obj(f'pins/{k}.json', config if k == 'config' else dict(fake=k))
+            for k in ('policy', 'fixture', 'config')}
     pins.update(router_revision=REV, enclave_revision=REV)
     artifacts, records = [], []
     for boot in value.boots:
@@ -175,7 +180,8 @@ def readiness_sources(files, value):
             inputs = {}
             for source in ready.SOURCES[criterion]:
                 identity = boot['boot'] + '-' + criterion + '-' + source
-                original = files.obj('native/' + identity + '.json', dict(fake=True, actual_trial_time=START))
+                original = files.obj('native/' + identity + '.json', dict(fake=True, actual_trial_time=START,
+                    started_at_us=START - 1000, completed_at_us=START))
                 artifacts.append(dict(id=identity, source=source, criterion=criterion,
                     router_revision=REV, enclave_revision=REV, config_sha256=pins['config']['sha256'],
                     region=boot['region'], completed_at_us=START, started_at_us=START - 1000,
@@ -189,10 +195,14 @@ def readiness_sources(files, value):
             if record.get('boot') != boot['boot']:
                 continue
             criterion = record.get('criterion')
+            if criterion in ('boot_transport', 'observer_freshness'):
+                clock = dict(clock='utc_ns', boot=boot['boot'], boot_at_us=boot['boot_at_us'])
+                record['clock_basis'] = dict(**clock, original=files.obj('native/' + boot['boot'] + '-clock.json', clock))
             if criterion == 'boot_transport':
                 record['dependencies'] = [dict(boot=boot['boot'], region=boot['region'],
-                    config_sha256=pins['config']['sha256'], operation=op, resource='named-dependency',
-                    attempts=1, marker_matches=True, elapsed_us=1, deadline_us=250000)
+                    config_sha256=pins['config']['sha256'], operation=op, resource=boot['role'] + '-dependency',
+                    attempts=1, marker_matches=True, elapsed_us=1, deadline_us=250000,
+                    observed_at_us=boot['boot_at_us'] + 1)
                     for op in ('transport', 'read')]
             elif criterion == 'observer_freshness':
                 body = dict(v=2, policy_version='shadow-v2', contract_revision='a1', authority='local',
@@ -203,13 +213,14 @@ def readiness_sources(files, value):
                                      'p95_age_us', 'oldest_unresolved_age_us', 'dead_count'), 0))
                 basis = dict(v=2, policy_version='shadow-v2', contract_revision='a1', reader_boot=boot['boot'],
                     source_state='installed', body=body, committed_at_ns=START * 1000,
-                    read_at_ns=START * 1000, read_elapsed_ns=1000, since_reply_ns=1000)
+                    read_at_ns=(boot['boot_at_us'] + 1) * 1000, read_elapsed_ns=1000, since_reply_ns=1000)
                 record.update(health_basis=files.obj('native/' + boot['boot'] + '-basis.json', basis,
                                                      health.HEALTH_BASIS),
-                              install_elapsed_us=1, contender=False)
+                              install_elapsed_us=1, installed_at_ns=(boot['boot_at_us'] + 2) * 1000, contender=False)
             elif criterion == 'marker_keys':
                 record.update(effective_pins=boot['pins'], source_revision=boot['revision'], authority_epoch=1,
-                    public_descriptors=files.obj('native/' + boot['boot'] + '-public.json', dict(fake_public=True)),
+                    public_descriptors=files.obj('native/' + boot['boot'] + '-public.json', dict(authority_epoch=1, config_sha256=pins['config']['sha256'], source_revision=REV,
+                        descriptor_ids=['released-public-1'])),
                     **{k + '_sha256': pins[k]['sha256'] for k in ('policy', 'fixture')})
         records.append(dict(kind='a3_traffic_ready' , boot=boot['boot'], at_us=boot['boot_at_us'] + 11))
     return pins, Fake(dict(artifacts=artifacts, readiness=records))
@@ -265,7 +276,7 @@ def test_early_and_failed_attempts_retained(tmp_path):
     _, value = inventory(files, binding, fake, queries)
     pins, fake = readiness_sources(files, value)
     fake.records['readiness'][0]['checks']['actual_hops'] = 'fail'
-    attempt = dict(kind='a3_opted_attempt', boot='zero-row', at_us=START + 12, result='failed')
+    attempt = attempt_record(files, value.boots[0], START + 12)
     fake.records['readiness'].append(attempt)
     run, result = get_readiness(files, value, pins, fake)
     assert result.attempts == (attempt,) and not result.complete
@@ -281,6 +292,7 @@ def shutdown_sources(value):
     return Fake(dict(shutdown=[dict(kind='a3_shutdown_span', **{k: b[k] for k in
         ('boot', 'instance', 'launch', 'revision', 'region')}, day=DAY,
         interval_end_us=b['end_us'], complete=True, clock='monotonic_us',
+        clock_origin=dict(boot=b['boot'], monotonic_at_boot_us=0),
         outcome='hard_kill' if b['reason'] == 'hard_kill' else 'graceful',
         spans=dict(preparation=[100, 200], export_wait=[200, 400], final_pass=[400, 1400],
                    close=[500, 800], result=[900, 1000])) for b in value.boots]))
@@ -367,3 +379,9 @@ def test_deterministic_output_bytes(tmp_path):
         get_shutdown(files, value, shutdown_sources(value))
         outputs.append({str(p.relative_to(files.root)): p.read_bytes() for p in files.root.rglob('*') if p.is_file()})
     assert outputs[0] == outputs[1]
+
+
+def attempt_record(files, boot, at_us):
+    return dict(kind='a3_opted_attempt', boot=boot['boot'], at_us=at_us, result='failed',
+                receipt=dict(day=DAY, boot=boot['boot'], sequence=1,
+                             original=files.obj('native/attempt.json', dict(boot=boot['boot'], sequence=1))))

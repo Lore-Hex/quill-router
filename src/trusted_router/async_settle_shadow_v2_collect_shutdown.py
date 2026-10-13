@@ -13,6 +13,7 @@ from trusted_router.async_settle_shadow_v2_collect_ports import (
     Pass,
     Query,
     approval,
+    classified_records,
 )
 from trusted_router.async_settle_shadow_v2_gate_inputs import SHUTDOWN_SOURCE
 from trusted_router.async_settle_shadow_v2_schema import require
@@ -49,6 +50,7 @@ def collect(run: Pass, *, inventory: InventoryResult, logs: LifecyclePort, query
             originals: dict[str, dict[str, dict[str, Any]]],
             review: dict[str, Any] | None = None) -> ShutdownResult:
     records = list(run.scan(logs, query))
+    records = classified_records(run, records, 'shutdown')
     entries = []
     missing = []
     if not inventory.complete:
@@ -65,6 +67,7 @@ def collect(run: Pass, *, inventory: InventoryResult, logs: LifecyclePort, query
             require(record['day'] == query.day and record['interval_end_us'] == boot['end_us'])
             require(record['clock'] == 'monotonic_us' and record['complete'] is True)
             measured = durations(record)
+            require(record['clock_origin']['monotonic_at_boot_us'] <= record['spans']['preparation'][0])
             outcome = 'hard_kill' if boot['reason'] == 'hard_kill' else 'graceful'
             require(record['outcome'] == outcome)
             if outcome == 'hard_kill':
