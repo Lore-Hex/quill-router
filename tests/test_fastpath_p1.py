@@ -76,9 +76,12 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     assert len(watches) == 1 and not loads and "-stop-pid" not in runbook and "$!" not in runbook
     watch = watches[0]
     for flag in ("-max-cpu 0.35", "-max-undelivered 1000", "-max-oldest 2m", "-overdue 5m", "-max-overdue 0",
-                 "-max-spend $((FUNDED / 10))", "-subscriptions auditor,stager,settle-log-archive,records-archive",
+                 "-max-spend $((FUNDED / 10))", "-subscriptions auditor,stager ",
                  "-workspace $WS", "-run /opt/fastpath/loadgen "):
         assert flag in watch, flag
+    # The archives batch for up to 300 seconds, so their message age is not
+    # the stage's: the watch must not name them.
+    assert "archive" not in watch
     load = watch.split("-run ", 1)[1]
     for flag in ("-workspace $WS", "-database $DB", "-mix /opt/fastpath/load-mix.json", "-rate 1", "-front $FRONT"):
         assert flag in load, flag
