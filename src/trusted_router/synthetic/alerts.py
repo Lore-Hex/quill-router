@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from trusted_router.synthetic.shadow_probe_contract import PROBE_NAMES
+
 logger = logging.getLogger(__name__)
 
 STREAK_THRESHOLD = 3
@@ -33,6 +35,8 @@ def alert_on_failure_streak(
 
     Called after the sample is recorded, so the store query includes it.
     """
+    if getattr(sample, "probe_type", None) in PROBE_NAMES:
+        return False
     if getattr(sample, "status", None) == "up":
         return False
     try:

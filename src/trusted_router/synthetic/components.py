@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
+from trusted_router.synthetic.shadow_probe_contract import PROBE_NAMES
 
 if TYPE_CHECKING:
     from trusted_router.config import Settings
@@ -39,7 +40,7 @@ MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
 # pipeline for storage and streak alerts but are NOT evidence for a published
 # service component, so they must stay out of every component, every SLO, and
 # — most importantly — the monitor-freshness clock.
-OPS_PROBE_TYPES = frozenset(
+OPS_PROBE_TYPES = PROBE_NAMES | frozenset(
     {
         "client_telemetry_ingest",
         "heartbeat",

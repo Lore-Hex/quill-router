@@ -113,3 +113,14 @@ done
 remove_retired_spend_lease_soak
 
 log "synthetic image refresh complete; identities, networks, and secrets unchanged"
+
+# Opt-in cohort: refresh image only when already provisioned. No creation,
+# configuration reconciliation, or absence warning on the release path.
+IFS=',' read -ra shadow_regions <<<"${TR_SYNTHETIC_MONITOR_REGIONS:-us-central1,europe-west4}"
+for shadow_region in "${shadow_regions[@]}"; do
+  [ -n "$shadow_region" ] || continue
+  shadow_job="trusted-router-async-settle-shadow-probe-${shadow_region}"
+  if gc run jobs describe "$shadow_job" --region "$shadow_region" >/dev/null 2>&1; then
+    gc run jobs update "$shadow_job" --region "$shadow_region" --image "$IMAGE" --quiet >/dev/null
+  fi
+done

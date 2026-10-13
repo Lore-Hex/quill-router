@@ -401,6 +401,10 @@ else
   log "Stage D probe key secret is missing; skipping recurring Stage D probe"
 fi
 
+# Isolated shadow cohort. An absent secret leaves every existing job unchanged.
+source "${SCRIPT_DIR}/_async_settle_shadow_probe_jobs.sh"
+async_settle_shadow_probe_jobs
+
 # Sustained-output benchmark: one deterministic top-200 route per tick. This
 # has a separate Cloud Run Job so a slow 512-token stream cannot delay or
 # overlap TLS, attestation, billing, fallback, or short provider probes.

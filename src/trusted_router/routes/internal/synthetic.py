@@ -44,6 +44,7 @@ from trusted_router.synthetic.route_health import (
     report_route_health,
     report_video_generation_failures,
 )
+from trusted_router.synthetic.shadow_probe_contract import PROBE_NAMES
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -640,6 +641,8 @@ def _record_benchmark_samples(samples: list[ProviderBenchmarkSample]) -> None:
 
 
 def _client_watch_pass(settings: Settings, samples: list[SyntheticProbeSample]) -> None:
+    if samples and all(sample.probe_type in PROBE_NAMES for sample in samples):
+        return
     if not settings.client_events_enabled:
         return
     if not (

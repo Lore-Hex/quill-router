@@ -10,6 +10,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -588,6 +589,59 @@ async def _run_scheduled_remediator(
         )
 
 
+async def run_shadow_probe(*, once: bool = False, no_ingest: bool = False) -> int:
+    from trusted_router.synthetic.shadow_probe import run_pass
+
+    try:
+        settings = get_settings()
+    except Exception:
+        print("Shadow probe configuration is invalid", file=sys.stderr)
+        return 2
+    # The one-shot observer job mounts its inference credential as a file.
+    # It is not an observer-service credential: keep the Settings env secret
+    # scoped to internal just like Stage D, without broadening any role.
+    key_file = os.environ.get("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY_FILE")
+    if no_ingest and (not key_file or os.environ.get("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY")):
+        print("Smoke mode requires only the credential file path", file=sys.stderr)
+        return 2
+    if key_file:
+        try:
+            key = Path(key_file).read_text(encoding="utf-8")
+            if not key or key != key.strip():
+                raise ValueError("invalid probe credential")
+        except Exception:
+            print("Shadow probe credential file is unavailable or invalid", file=sys.stderr)
+            return 2
+        settings = settings.model_copy(update={"async_settle_shadow_probe_api_key": key})
+    observer_token = synthetic_observer_token(settings)
+    if once:
+        settings = settings.model_copy(update={"async_settle_shadow_probe_repetitions": 1})
+    if not settings.async_settle_shadow_probe_api_key or (not no_ingest and not observer_token):
+        print("Dedicated shadow probe key and observer token are required", file=sys.stderr)
+        return 2
+    region = settings.synthetic_monitor_region or settings.primary_region
+    ingest_url = os.environ.get(
+        "TR_SYNTHETIC_INGEST_URL", "https://trustedrouter.com/v1/internal/synthetic/samples"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
+            samples = await run_pass(settings, monitor_region=region, client=client,
+                                     report=print if no_ingest else None)
+            if no_ingest:
+                return 0 if all(sample.status == "up" for sample in samples) else 1
+            assert observer_token is not None
+            response = await client.post(
+                ingest_url, headers={"x-trustedrouter-internal-token": observer_token},
+                json={"samples": [sample.public_dict() for sample in samples]},
+            )
+            response.raise_for_status()
+        print(f"shadow probe: {len(samples)} samples, {sum(s.status == 'down' for s in samples)} failed")
+        return 0 if all(sample.status == "up" for sample in samples) else 1
+    except Exception:
+        print("Shadow probe pass or ingestion failed", file=sys.stderr)
+        return 1
+
+
 async def run(*, expect_stage_d: bool = False) -> int:
     settings = get_settings()
     monitor_region = (
@@ -902,7 +956,9 @@ def main(argv: list[str] | None = None) -> int:
             "regional-quota pilot path."
         )
     )
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--async-settle-shadow-probe", action="store_true")
+    modes.add_argument(
         "--expect-stage-d",
         action="store_true",
         help=(
@@ -910,7 +966,15 @@ def main(argv: list[str] | None = None) -> int:
             "heartbeat_seq > 0"
         ),
     )
+    parser.add_argument("--once", action="store_true", help="one complete shadow probe pass")
+    parser.add_argument("--no-ingest", action="store_true", help="print smoke metadata only; credential file required")
     args = parser.parse_args(argv)
+    if (args.once or args.no_ingest) and not args.async_settle_shadow_probe:
+        parser.error("--once and --no-ingest require --async-settle-shadow-probe")
+    if args.no_ingest and not args.once:
+        parser.error("--no-ingest requires --once")
+    if args.async_settle_shadow_probe:
+        return asyncio.run(run_shadow_probe(once=args.once, no_ingest=args.no_ingest))
     return asyncio.run(run(expect_stage_d=args.expect_stage_d))
 
 

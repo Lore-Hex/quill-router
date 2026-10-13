@@ -1815,7 +1815,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     ),
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
-        failures=_RETIRED_SOAK_ABSENT,
+        failures=(*_RETIRED_SOAK_ABSENT, r"secrets describe trustedrouter-async-settle-shadow-probe-api-key"),
         responses=(
             (
                 r"run services describe trusted-router-billing.*--format=json",
@@ -1837,7 +1837,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             ),
             "SHA": "1234567890abcdef",
         },
-        failures=_RETIRED_SOAK_ABSENT,
+        failures=(*_RETIRED_SOAK_ABSENT, r"run jobs describe trusted-router-async-settle-shadow-probe-"),
         responses=(
             (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
         ),

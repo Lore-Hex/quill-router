@@ -291,6 +291,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "aws_secret_access_key": frozenset({"control", "actions"}),
     "synthetic_monitor_api_key": frozenset({"internal", "observer"}),
     "stage_d_probe_api_key": frozenset({"internal"}),
+    "async_settle_shadow_probe_api_key": frozenset({"internal"}),
     "federation_peer_token": frozenset({"internal"}),
     "federation_home_token": frozenset({"internal"}),
     "federation_credit_inbound_token": frozenset({"internal"}),
@@ -1033,6 +1034,9 @@ class Settings(BaseSettings):
     # Second internal probe credential, used by the enclave rollout gate
     # for the Stage D cohort. Empty leaves only the synthetic monitor key.
     stage_d_probe_api_key: str = ""
+    async_settle_shadow_probe_api_key: str = Field(default="", repr=False)
+    async_settle_shadow_probe_repetitions: int = Field(default=1, ge=1, le=8)
+    async_settle_shadow_probe_cadence_minutes: int = Field(default=4, ge=1, le=30)
     synthetic_monitor_model: str = "trustedrouter/monitor"
     # Exact HTTPS control-plane origin synthetic canaries exercise. None falls
     # back to the canonical GCP plane. Observer-authenticated requests cannot
@@ -1344,6 +1348,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
+        if 60 % self.async_settle_shadow_probe_cadence_minutes:
+            raise ValueError("TR_ASYNC_SETTLE_SHADOW_PROBE_CADENCE_MINUTES must divide 60")
+        probe_key = self.async_settle_shadow_probe_api_key
+        if probe_key and (
+            probe_key != probe_key.strip()
+            or any(value and hmac.compare_digest(probe_key.encode(), value.encode()) for value in (
+                self.synthetic_monitor_api_key, self.stage_d_probe_api_key,
+                self.internal_gateway_token, self.observer_internal_token,
+            ))
+        ):
+            raise ValueError("TR_ASYNC_SETTLE_SHADOW_PROBE_API_KEY must be distinct and whitespace-free")
         environment = self.environment.lower()
         surface = self.service_surface
         public_probe_types = {
@@ -2235,6 +2250,7 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "byok_envelope_key_b64",
     "byok_envelope_key_ref",
     "synthetic_monitor_api_key",
+    "async_settle_shadow_probe_api_key",
 )
 
 
