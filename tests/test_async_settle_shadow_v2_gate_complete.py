@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import (
     exhaustive,
     untraced,  # noqa: F401
@@ -44,7 +45,8 @@ def test_load_real_original_bytes_all_views_field_by_field(real: Any) -> None:
     pre = a2.BUDGET_ENVELOPE.parse(next(p.raw for p in original.preimages if p.name == 'proof.pre_budget_sha256'))
     wanted.update(pre_input=expected['pre_input'], pre_digest=sha256(pre), post_pre_digest=sha256(pre),
         post_completed_us=original.completed_at_us, cpu_increment=5., close_elapsed_us=2000000,
-        rates=tuple({**rate, 'publisher_reads': 40, 'publisher_writes': 20} for rate in expected['rates']))
+        rates=tuple({**rate, 'publisher_reads': 2 * (rate['end_us'] - rate['start_us']) // 1000000,
+            'publisher_writes': (rate['end_us'] - rate['start_us']) // 1000000} for rate in expected['rates']))
     wanted['load_segments'] = tuple(expected['segments'])
     wanted['projected_load_segments'] = tuple(expected['projected_segments'])
     actual = asdict(bundle.budget)
@@ -296,7 +298,6 @@ def pilot_real(tmp_path_factory: Any) -> Any:
     return real_fixture(tmp_path_factory.mktemp('real-pilot'), pilot_stage='pre-flip')
 
 
-@exhaustive
 @pytest.mark.parametrize('gate', ['transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving'])
 def test_original_bytes_stage_pass(real: Any, gate: str) -> None:
     import json
@@ -338,3 +339,50 @@ def test_original_bytes_empty_load_segment_is_legal(tmp_path: Any) -> None:
     assert result.gaps == (), [(f.gap, f.detail) for f in result.failures]
     assert result.gate_report['fleet_peaks']['publication_operations_per_second'] == dict(numerator=1, denominator=2)
     assert json.loads(render(result)[0])['verdict'] == 'PASS'
+
+
+def test_lookup_cache_keeps_mutation_isolation_and_schema_rejections(request: Any) -> None:
+    from trusted_router.async_settle_shadow_v2_schema import Schema, integer, literal
+    from trusted_router.detached_jws import canonical
+    caches = request.getfixturevalue('payloadgraph_shared_lookup_cache')
+    schema = Schema({'value': integer}, 128)
+    other_schema = Schema({'value': literal(2)}, 128)
+    raw = canonical({'value': 1})
+    before = caches['schema'].cache_info()
+    first = schema.parse(raw)
+    first['value'] = 99
+    assert schema.parse(raw) == {'value': 1}
+    assert schema.parse(canonical({'value': 2})) == {'value': 2}
+    for _ in range(2):
+        with pytest.raises(ValueError, match='evidence_schema_gap'):
+            schema.parse(canonical({'value': True}))
+        with pytest.raises(ValueError, match='evidence_schema_gap'):
+            other_schema.parse(raw)
+    after = caches['schema'].cache_info()
+    assert after.hits >= before.hits + 3
+    assert after.misses >= before.misses + 4
+
+
+def test_cached_loading_reexecutes_retained_calls(real: Any) -> None:
+    import sys
+    original, ports, _ = real
+    raw = transport(original)
+    code = ports.retained.__code__
+    calls = 0
+    previous = sys.getprofile()
+    def observed(frame: Any, event: str, arg: Any) -> None:
+        nonlocal calls
+        if event == 'call' and frame.f_code is code:
+            calls += 1
+        if callable(previous):
+            previous(frame, event, arg)
+    sys.setprofile(observed)
+    try:
+        first = load(raw, ports)
+        first_calls = calls
+        second = load(raw, ports)
+    finally:
+        sys.setprofile(previous)
+    assert first_calls > 0 and calls == 2 * first_calls
+    assert not diagnostics(first) and not diagnostics(second)
+    assert first.a2_streams['retained_calls'] == second.a2_streams['retained_calls']

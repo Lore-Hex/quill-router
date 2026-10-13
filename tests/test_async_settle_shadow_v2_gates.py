@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import (
     START,
     build,
@@ -198,6 +199,9 @@ def positive_results(passing: Bundle) -> dict[str, Any]:
     return {stage: evaluate(passing, ports(), gate=stage) for stage in ('shadow-serving', 'pre-flip')}
 
 
+# The same 58 predicates have traced original-byte witnesses; retain this
+# independent typed-view differential grid under the exhaustive convention.
+@exhaustive
 @pytest.mark.parametrize('gap', GAPS)
 def test_gap_negative(passing: Bundle, gap: str) -> None:
     result = evaluate(damage(passing, gap), ports())
@@ -227,7 +231,7 @@ def test_one_producer_and_both_directions() -> None:
     assert all(fn.__name__ == 'decide_' + name for name, fn in PRODUCERS.items())
     # The positive loop consumes GAPS directly; it verifies its executed set.
     assert set(GAPS) == set(expected)
-    assert set(test_gap_negative.pytestmark[0].args[1]) == set(expected)
+    assert set(next(mark.args[1] for mark in test_gap_negative.pytestmark if mark.name == 'parametrize')) == set(expected)
 
 
 def test_lossless_more_than_128_subjects() -> None:
@@ -532,17 +536,26 @@ def test_all_required_peak_sources_and_missing_component(passing: Bundle) -> Non
     assert result.gate_report['fleet_peaks']['reads_per_second'] == dict(numerator=13, denominator=4)
     assert result.gate_report['fleet_peaks']['export_operations_per_second'] == dict(numerator=2, denominator=5)
     assert result.gate_report['publisher']['peaks']['export_operations_per_second'] is None
+    assert_missing_peak(passing, 'publication_operations_per_second')
+
+
+def assert_missing_peak(passing: Bundle, field: str) -> None:
+    assert passing.budget is not None
+    source = passing.budget.load_segments[0]
+    bad = replace(passing, budget=replace(passing.budget,
+        projected_load_segments=({**source, 'peaks': {**source['peaks'], field: None}}, *passing.budget.load_segments[1:])))
+    blocked = evaluate(bad, ports(), gate='fleet-budgets-pre')
+    assert blocked.gate_report['fleet_peaks'][field] is None
+    assert blocked.gate_report['rules']['G7'] == 'unevaluable'
+    assert json.loads(render(blocked)[0])['verdict'] == 'BLOCKED'
+
+
+@exhaustive
+def test_exhaustive_missing_peak_components(passing: Bundle) -> None:
     for field in ('startup_operations_1s', 'close_operations_1s', 'export_operations_1s',
                   'claim_operations_per_second', 'scan_operations_per_second',
                   'publication_operations_per_second', 'export_operations_per_second', 'export_bytes_per_second'):
-        source = passing.budget.load_segments[0]
-        bad = replace(passing, budget=replace(passing.budget,
-            projected_load_segments=({**source, 'peaks': {**source['peaks'], field: None}}, *passing.budget.load_segments[1:])))
-        blocked = evaluate(bad, ports(), gate='fleet-budgets-pre')
-        assert blocked.gate_report['fleet_peaks'][field] is None
-        assert blocked.gate_report['rules']['G7'] == 'unevaluable'
-        assert json.loads(render(blocked)[0])['verdict'] == 'BLOCKED'
-
+        assert_missing_peak(passing, field)
 
 # Normative singleton populations cannot contain three distinct subjects. This
 # named seam records that contract limit rather than making up noncanonical IDs.

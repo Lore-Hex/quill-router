@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import pytest
 
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from trusted_router.async_settle_shadow_v2_gate_export import (
     KeyRange,
     Lane,

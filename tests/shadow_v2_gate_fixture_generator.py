@@ -116,7 +116,7 @@ def pre_enable_bundle(tmp_path: Path) -> dict[str, Any]:
         read_health=artifact('read-health.json', dict(started_at_us=start, flushed_at_us=end, regions={REGION: [.01, .02]})))
 
 
-def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_checkpoint: bool = False) -> Bundle:
+def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_checkpoint: bool = False, original_sources: bool = False, overlapping: bool = False, health_damage: str | None = None) -> Bundle:
     """Use seconds=604804 for a seven-day window with midnight/restart/idle days."""
     end = START + seconds * 1000000
     # Long-lived first boot crosses midnight; subsequent independent boots restart
@@ -126,6 +126,8 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
         splits = [START, START + (DAY + DAY // 2 if seconds > 172800 else 10000000), end]
     routers = tuple(Boot(f'boot{i}', 'router', REV, REGION, left, right, True, True)
         for i, (left, right) in enumerate(zip(splits, splits[1:], strict=False)))
+    if overlapping:
+        routers = (*routers, replace(routers[0], boot='boot1'))
     enclave = Boot('enclave', 'enclave', REV, REGION, START, end)
     inventory = Inventory((*routers, enclave))
     rows: list[Row] = []
@@ -168,8 +170,19 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
     basis = fixture('health_basis')
     basis.update(reader_boot='boot0', body=body, committed_at_ns=ns + 100000000,
                  read_at_ns=ns + 200000000, read_elapsed_ns=100000000)
-    basis_batch = dict(**TAG, day=days[0], boot='boot0', sequence=f'{1:020}', previous_sha256=None, bases=[basis])
-    attachments.append(Row(Key('health_basis', f'health-basis-batches/{days[0]}/boot0/{1:020}'), health.HEALTH_BASIS_BATCH.serialize(basis_batch)))
+    if health_damage == 'health_source_gap':
+        # Keep the demanded boot0 observation; this receipt incorrectly refers
+        # to a second reader's basis. Both original source objects are present.
+        good = dict(**TAG, day=days[0], boot='boot0', sequence=f'{1:020}', previous_sha256=None, bases=[basis.copy()])
+        attachments.append(Row(Key('health_basis', f'health-basis-batches/{days[0]}/boot0/{1:020}'),
+            health.HEALTH_BASIS_BATCH.serialize(good)))
+        basis['reader_boot'] = 'foreign'
+    elif health_damage == 'health_elapsed_gap':
+        basis.update(read_elapsed_ns=250000001, source_state='unusable')
+    elif health_damage == 'health_timestamp_gap':
+        basis.update(read_at_ns=basis['read_at_ns'] + 5000000000, source_state='unusable')
+    basis_batch = dict(**TAG, day=days[0], boot=basis['reader_boot'], sequence=f'{1:020}', previous_sha256=None, bases=[basis])
+    attachments.append(Row(Key('health_basis', f"health-basis-batches/{days[0]}/{basis['reader_boot']}/{1:020}"), health.HEALTH_BASIS_BATCH.serialize(basis_batch)))
     auth = fixture('receipt_pages', a1_release=False)['events'][0]
     facts = copy.deepcopy(auth['facts'])
     facts['receipt_requested'] = False
@@ -366,6 +379,14 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
     evidence = canonical({'fixture': 'offline external proof'})
     external = External((ExternalProof('fixture-ci', REV, REV, evidence, hashlib.sha256(evidence).hexdigest(), True),),
                         ('fixture-ci',), True, True, True, True)
+    if original_sources:
+        # Real-original callers generate their authoritative retained envelopes
+        # before the single final root pass; no typed placeholder graph is sealed.
+        from tests.shadow_v2_gate_a2_fixture import seal
+        return seal(Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory, Cohort(1, True, REGION), budget,
+            external, ResetSupport((), {}), (Signature(sample_key, token, (key,), START // 1000000 + 2),),
+            gate('transport', START), gate('fleet-budgets', START), gate('fleet-budgets-pre', START - 1),
+            gate('shadow-serving', end), end, days), commit=False)
     # Undefined payloads are supplied directly as typed inputs. Their original
     # bytes are retained for hash checking, without defining a production codec.
     material = {
@@ -398,7 +419,7 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
     return seal(Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory, Cohort(1, True, REGION), budget,
         external, ResetSupport((), {}), (Signature(sample_key, token, (key,), START // 1000000 + 2),),
         gate('transport', START), gate('fleet-budgets', START), gate('fleet-budgets-pre', START - 1),
-        gate('shadow-serving', end), end, days, preimages=tuple(preimages)))
+        gate('shadow-serving', end), end, days, preimages=tuple(preimages)), commit=not original_sources)
 
 
 def change_row(bundle: Bundle, kind: str, change: Any, index: int = 0) -> Bundle:

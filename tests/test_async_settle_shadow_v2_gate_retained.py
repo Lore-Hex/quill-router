@@ -10,6 +10,7 @@ import pytest
 from scripts.async_settle import pilot_enablement as pilot
 from scripts.async_settle import shadow_report
 from scripts.async_settle.async_settle_shadow_v2_gate_tools import run_retained
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import pre_enable_bundle
 from tests.test_async_settle_shadow_v2_gate_loading import TAG, detail, reference
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph

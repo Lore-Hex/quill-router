@@ -1,20 +1,21 @@
-"""One session-owned full seven-day churn construction and rendered gate."""
+"""Short original-byte witnesses and one session-owned seven-day group."""
 from __future__ import annotations
 
 import json
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests.shadow_v2_gate_a2_fixture import (
-    BYTE_WITNESS_SEAMS,
+    SEMANTIC_VARIANTS,
     mutate_transport,
     real_fixture,
     transport,
 )
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import (
-    build,
     exhaustive,
     no_line_tracing,
     untraced,  # noqa: F401
@@ -28,8 +29,8 @@ from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router import async_settle_shadow_v2_gate_load as load
 from trusted_router import async_settle_shadow_v2_gate_report as reports
 from trusted_router import async_settle_shadow_v2_gates as gates
+from trusted_router.async_settle_shadow_v2_a2_evidence import FAILURE_RULES
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
-from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle
 from trusted_router.async_settle_shadow_v2_gate_loader import load as load_original
 from trusted_router.async_settle_shadow_v2_gate_result import render
 from trusted_router.async_settle_shadow_v2_gates import evaluate
@@ -38,12 +39,32 @@ from trusted_router.detached_jws import canonical
 
 
 @pytest.fixture(scope='session')
-def validation_cache():
+def validation_cache(request: Any):
     # The shared immutable fixture validates every distinct byte object once.
     # Keys include all arguments; mutations never inherit an old acceptance.
     patch = pytest.MonkeyPatch()
-    parse = Schema.parse
+    parse = request.getfixturevalue('payloadgraph_shared_lookup_cache')['parse']
     call = Schema.__call__
+    decode = Schema._decode
+    decoded_pages = {}
+    def decoded(schema, raw):
+        # parse() and _validate() decode the same canonical trace page twice.
+        # Cache only this pure acceptance/rejection; retain immutable original
+        # bytes and give the parser a fresh native object on every hit.
+        if schema is not health.PUBLISHER_TRACE_PAGE:
+            return decode(schema, raw)
+        if raw not in decoded_pages:
+            try:
+                value = decode(schema, raw)
+            except ValueError as exc:
+                decoded_pages[raw] = str(exc)
+                raise
+            decoded_pages[raw] = None
+            return value
+        if decoded_pages[raw] is not None:
+            raise ValueError(decoded_pages[raw])
+        return json.loads(raw)
+
     validate = health.validate_publisher_traces
     # Only these parser results are immutable within this fixture family.
     # Other schemas (notably shutdown sources) are edited by fixture builders.
@@ -65,6 +86,21 @@ def validation_cache():
             return
         call(schema, value)
     digest = lru_cache(maxsize=16000)(roots.file_digest)
+    root_entry = roots._root_entry
+    @lru_cache(maxsize=16000)
+    def entry_bytes(key, bodies):
+        return canonical(root_entry(key, bodies))
+    def entry(key, bodies):
+        return json.loads(entry_bytes(key, tuple(bodies)))
+    entry_root = roots.entry_root
+    entry_roots = {}
+    def rooted(entries, *, stream):
+        values = list(entries)
+        key = (stream, canonical(values))
+        if key not in entry_roots:
+            entry_roots[key] = entry_root(values, stream=stream)
+        return entry_roots[key]
+
     root = a1.coverage_root
     coverage_roots = {}
     def content(value):
@@ -184,9 +220,12 @@ def validation_cache():
         if module_name.startswith('trusted_router.async_settle_shadow_v2_gate') and getattr(module, 'file_digest', None) is original_digest:
             patch.setattr(module, 'file_digest', digest)
     patch.setattr(roots, 'file_digest', digest)
+    patch.setattr(roots, '_root_entry', entry)
+    patch.setattr(roots, 'entry_root', rooted)
     patch.setattr(a1, 'coverage_root', coverage)
     patch.setattr(load, 'sha256', sha)
     patch.setattr(a1, 'sha256', sha)
+    patch.setattr(Schema, '_decode', decoded)
     patch.setattr(Schema, '__call__', checked_call)
     patch.setattr(contract, 'validate_preimages', audited)
     patch.setattr(Schema, 'parse', dispatch)
@@ -194,9 +233,12 @@ def validation_cache():
     yield
     patch.undo()
     parsed.cache_clear()
+    decoded_pages.clear()
     checked.clear()
     audits.clear()
     digest.cache_clear()
+    entry_bytes.cache_clear()
+    entry_roots.clear()
     coverage_roots.clear()
     hashes.clear()
     origins.clear()
@@ -204,15 +246,6 @@ def validation_cache():
     original.cache_clear()
     inventories.clear()
     observers.clear()
-
-
-@pytest.fixture(scope='session')
-def seven_days(tmp_path_factory: Any, validation_cache: Any) -> Bundle:
-    # No test mutates this frozen bundle or its byte objects. Negative variants
-    # replace only one immutable row/tuple. Short traced witnesses cover the
-    # same schema and gate branches as this exhaustive 302,402-slot population.
-    with no_line_tracing():
-        return build(tmp_path_factory.mktemp('p5-seven-days'), seconds=604804)
 
 
 @exhaustive
@@ -241,46 +274,110 @@ def test_seven_day_churn_render(real_seven_days: Any) -> None:
         assert all(value is not None for value in values.values()), (field, [key for key, value in values.items() if value is None])
 
 
-# Three byte mutations each cover two/three named failures. Evaluate each
-# distinct original once, retaining all corresponding named assertions.
-BYTE_CASES = {gap: (gap,) for gap in GAPS if gap not in BYTE_WITNESS_SEAMS}
-for representative, aliases in (
-    ('artifact_gap', ('external_proofs_missing', 'pilot_prerequisite_gap')),
-    ('positive_seed_gap', ('regional_seed_gap',)),
-    ('prediction_demand_gap', ('prediction_unknown_gap',)),
-):
-    BYTE_CASES[representative] += aliases
-    for alias in aliases:
-        del BYTE_CASES[alias]
+# Static reviewed family/stage assignment: one row for every contract gap.
+
+WITNESSES = json.loads(Path(__file__).with_name('shadow_v2_gate_witnesses.json').read_text())
+SHORT_CASES = [row for row in WITNESSES if row['family'] == 'short']
+LONG_CASES = {'continuous_window_gap': ('continuous_window_gap',),
+              'continuous_window_day_gap': ('continuous_window_gap',),
+              'positive_seed_gap': ('positive_seed_gap', 'regional_seed_gap')}
+
+
+@pytest.fixture(scope='module')
+def short_family(tmp_path_factory: Any, validation_cache: Any) -> Any:
+    original, ports, _ = real_fixture(tmp_path_factory.mktemp('short-originals'), pilot_stage='post-flip')
+    return transport(original), ports
+
+
+@pytest.mark.parametrize('case', SHORT_CASES, ids=lambda row: row['gap'])
+def test_short_blocked_render(short_family: Any, tmp_path: Any, case: Any) -> None:
+    gap = case['gap']
+    if gap in SEMANTIC_VARIANTS:
+        original, bound_ports, _ = real_fixture(tmp_path, variant=gap)
+        bad = load_original(transport(original), bound_ports)
+        assert bad.a2_streams['loading_issues'] == []
+        assert bad.a2_streams['loading_validation'] == []
+    else:
+        raw, bound_ports = short_family
+        bad = load_original(mutate_transport(raw, gap), bound_ports)
+    result = evaluate(bad, bound_ports, gate=case['stage'])
+    output, attachments = render(result)
+    assert gap in result.gaps, (gap, result.gaps)
+    assert json.loads(output)['verdict'] == 'BLOCKED'
+    assert json.loads(attachments[0]) == result.gate_report
+    if gap in SEMANTIC_VARIANTS:
+        assert not {'missing_support', 'evidence_schema_gap'} & set(result.gaps)
+        assert all(f.detail == 'required report aggregate unavailable'
+                   for f in result.failures if f.gap == 'artifact_gap')
+        tally = result.gate_report['failure_counts'][gap]
+        assert tally['count'] > 0 and tally['complete'] is True
+        assert result.gate_report['verifiers']['binding']['calls'] > 0
 
 
 @exhaustive
 @pytest.mark.xdist_group('p5-seven-days')
-@pytest.mark.parametrize('gap', BYTE_CASES)
+@pytest.mark.parametrize('gap', LONG_CASES)
 def test_seven_day_blocked_render(real_seven_days: Any, gap: str) -> None:
     raw, bound_ports, _ = real_seven_days
     bad = load_original(mutate_transport(raw, gap), bound_ports)
     result = evaluate(bad, bound_ports, gate='pre-flip')
     output, attachments = render(result)
-    assert set(BYTE_CASES[gap]) <= set(result.gaps), (gap, result.gaps)
+    assert set(LONG_CASES[gap]) <= set(result.gaps), (gap, result.gaps)
     assert json.loads(output)['verdict'] == 'BLOCKED'
     assert json.loads(attachments[0]) == result.gate_report
+    if gap == 'continuous_window_day_gap':
+        assert result.report.elapsed_seconds == 172798
+        assert len(result.report.gap_timestamps_us) == 1
 
 
 def test_byte_witness_inventory_is_explicit() -> None:
-    covered = {name for names in BYTE_CASES.values() for name in names}
-    assert covered.isdisjoint(BYTE_WITNESS_SEAMS)
-    assert covered | set(BYTE_WITNESS_SEAMS) == set(GAPS)
-    assert len(covered) == 44 and len(BYTE_WITNESS_SEAMS) == 14
+    assert len(WITNESSES) == len({row['gap'] for row in WITNESSES}) == 58
+    assert len(SEMANTIC_VARIANTS) == 14
+    assert {row['gap']: row['rule'] for row in WITNESSES} == {rule.name: rule.rule for rule in FAILURE_RULES}
+    assert {row['gap'] for row in WITNESSES} == set(GAPS)
+    covered = {row['gap'] for row in SHORT_CASES} | {name for names in LONG_CASES.values() for name in names}
+    assert covered == set(GAPS)
+    assert all(row['why'] and row['family'] in ('short', 'long') for row in WITNESSES)
+    for row in WITNESSES:
+        assert row['rule'] in contract.REQUIRED_RULES[row['stage']]
+        assert not any(row['rule'] in rules for stage, rules in contract.REQUIRED_RULES.items()
+            if stage != row['stage'] and list(contract.REQUIRED_RULES).index(stage) < list(contract.REQUIRED_RULES).index(row['stage'])) or row['rule'] in ('G10', 'G11') or row['gap'] == 'close_handoff_budget_gap'
 
 
 @pytest.fixture(scope='session')
-def real_seven_days(tmp_path_factory: Any, seven_days: Bundle) -> Any:
+def real_seven_days(tmp_path_factory: Any, validation_cache: Any) -> Any:
     with no_line_tracing():
         original, bound_ports, _ = real_fixture(tmp_path_factory.mktemp('real-seven-days'),
-            seconds=604804, pilot_stage='pre-flip', seed_bundle=seven_days)
+            seconds=604804, pilot_stage='pre-flip', churn=True)
         raw = transport(original)
         loaded = load_original(raw, bound_ports)
         assert loaded.a2_streams['loading_issues'] == []
         assert loaded.a2_streams['loading_validation'] == []
         return raw, bound_ports, loaded
+
+
+def test_short_family_population(short_family: Any) -> None:
+    raw, ports = short_family
+    bundle = load_original(raw, ports)
+    assert len(bundle.days) == 1
+    assert bundle.inventory is not None
+    routers = [boot for boot in bundle.inventory.boots if boot.role == 'router']
+    assert len(routers) == 1
+    assert routers[0].end_us - routers[0].start_us == 400000000
+    assert sum(len(json.loads(row.raw)['entries']) for row in bundle.attachments
+               if row.key.kind == 'publisher_trace') == 200
+
+
+def test_traced_midnight_continuity(tmp_path: Any, monkeypatch: Any) -> None:
+    from tests import shadow_v2_gate_fixture_generator as generator
+    # Tiny boundary witness covers the same cross-day code as the long grid.
+    monkeypatch.setattr(generator, 'START', generator.START + generator.DAY - 4000000)
+    original, ports, _ = real_fixture(tmp_path, seconds=16)
+    bundle = load_original(transport(original), ports)
+    assert bundle.a2_streams['loading_issues'] == []
+    assert bundle.a2_streams['loading_validation'] == []
+    result = evaluate(bundle, ports, gate='shadow-serving')
+    assert result.gaps == ()
+    assert result.report.elapsed_seconds == 14
+    assert len(result.gate_report['days']) == 2
+    assert json.loads(render(result)[0])['verdict'] == 'PASS'

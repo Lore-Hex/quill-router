@@ -17,7 +17,7 @@ from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_bundle import ATTACHMENTS, Context
 from trusted_router.async_settle_shadow_v2_gate_failures import TAG, detail
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Preimage, Row
-from trusted_router.async_settle_shadow_v2_gate_preimages import preimages
+from trusted_router.async_settle_shadow_v2_gate_preimages import _entry_digest, preimages
 from trusted_router.async_settle_shadow_v2_schema import day_at, sha256
 from trusted_router.detached_jws import canonical
 
@@ -30,7 +30,7 @@ def fixture_bytes(file: str, name: str) -> bytes:
     return canonical(next(v['object'] for v in values if v['name'] == name))
 
 
-def seal(bundle: Bundle) -> Bundle:
+def seal(bundle: Bundle, *, commit: bool = True) -> Bundle:
     assert bundle.budget and bundle.inventory and bundle.proof
     artifacts: dict[str, bytes] = {}
     def ref(path: str, raw: bytes) -> dict[str, Any]:
@@ -120,6 +120,10 @@ def seal(bundle: Bundle) -> Bundle:
             artifacts[day + '/manifest.' + field] = raw
             manifest[field] = r.file_digest(raw)
         manifests.append((row.key, manifest))
+    if not commit:
+        # Direct original family: envelopes now, one final commitment pass after
+        # retained sources, captures and synthetic approvals have been generated.
+        return replace(bundle, preimages=tuple(Preimage(k, v) for k, v in artifacts.items()))
     proof = a1.PROOF_MANIFEST.parse(bundle.proof)
     for field, schema in c.OBJECT_PREIMAGES.items():
         if field.startswith('proof.'):
@@ -137,7 +141,7 @@ def seal(bundle: Bundle) -> Bundle:
         _, roots = preimages(ctx, manifest)
         for field, stream in c.ENTRY_PREIMAGES.items():
             owner, key = field.split('.')
-            (manifest if owner == 'manifest' else proof)[key] = r.entry_root([r._root_entry(x['key'], x['bodies']) for x in roots[field]], stream=stream)
+            (manifest if owner == 'manifest' else proof)[key] = _entry_digest(stream, tuple((x['key'], tuple(x['bodies'])) for x in roots[field]))
         for field, stream in c.CROSS_DAY_PREIMAGES.items():
             proof[field.split('.')[1]] = r.entry_root([dict(day=v['day'], root=a1.coverage_root(v['pages']), count=sum(len(p['entries']) for p in v['pages'])) for v in roots[field]], stream=stream + '_root')
     raw_proof = a1.PROOF_MANIFEST.serialize(proof)
@@ -161,8 +165,8 @@ def transport(bundle: Bundle) -> bytes:
         **{key: getattr(bundle, key).decode() if getattr(bundle, key) else None for key in ('transport', 'fleet', 'pre', 'serving')}))
 
 
-def reseal(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
-    """Reconstruct all F/C/R roots after changing original fixture evidence."""
+def commit_originals(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
+    """Commit the completed original-byte graph exactly once."""
     assert bundle.proof is not None
     proof = a1.PROOF_MANIFEST.parse(bundle.proof)
     proof['attachments'] = [dict(sha256=r.file_digest(row.raw), bytes=len(row.raw))
@@ -176,7 +180,8 @@ def reseal(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
     current = replace(bundle, preimages=tuple(Preimage(k, v) for k, v in artifacts.items()))
     ctx = Context(current, None, 'pre-flip')
     ctx.rows = {row.key: a1.validate_row(row.key.kind, row.key.id, row.raw) for row in bundle.rows}
-    ctx.attachments = {row.key: ATTACHMENTS[row.key.kind].parse(row.raw) for row in bundle.attachments}
+    ctx.attachments = {row.key: ATTACHMENTS[row.key.kind].parse(row.raw)
+                       for row in bundle.attachments if row.key.kind == 'coverage'}
     manifests = []
     for row in bundle.rows:
         if row.key.kind != p1.KINDS[5]:
@@ -190,8 +195,7 @@ def reseal(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
         _, inputs = preimages(ctx, manifest)
         for field, stream in c.ENTRY_PREIMAGES.items():
             owner, key = field.split('.')
-            (manifest if owner == 'manifest' else proof)[key] = r.entry_root(
-                [r._root_entry(x['key'], x['bodies']) for x in inputs[field]], stream=stream)
+            (manifest if owner == 'manifest' else proof)[key] = _entry_digest(stream, tuple((x['key'], tuple(x['bodies'])) for x in inputs[field]))
         for field, stream in c.CROSS_DAY_PREIMAGES.items():
             proof[field.split('.')[1]] = r.entry_root([dict(day=v['day'], root=a1.coverage_root(v['pages']),
                 count=sum(len(p['entries']) for p in v['pages'])) for v in inputs[field]], stream=stream + '_root')
@@ -204,7 +208,7 @@ def reseal(bundle: Bundle, artifacts: dict[str, bytes]) -> Bundle:
     return replace(current, rows=tuple(rows), proof=raw_proof)
 
 
-def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None = None, seed_bundle: Bundle | None = None, empty_segment: bool = False) -> tuple[Bundle, Any, dict[str, Any]]:
+def real_fixture(tmp_path: Path, *, seconds: int = 400, pilot_stage: str | None = None, empty_segment: bool = False, variant: str | None = None, churn: bool = False) -> tuple[Bundle, Any, dict[str, Any]]:
     """Complete small original-byte fixture, with real retained function outputs.
 
     The release authority is a test trust root separate from the export. Every
@@ -237,10 +241,12 @@ def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None =
         MEASUREMENTS_PATH,
     )
 
-    bundle = seed_bundle if seed_bundle is not None else build(tmp_path, churn=False, seconds=seconds)
+    bundle = build(tmp_path, churn=churn, seconds=seconds, original_sources=True,
+        overlapping=variant == 'simultaneous_capacity_gap', health_damage=variant)
     assert bundle.inventory and bundle.budget
     end = bundle.completed_at_us
-    artifacts = {p.name: p.raw for p in bundle.preimages}
+    from trusted_router.async_settle_shadow_v2_gate_preimages import RELEASE_FILES
+    artifacts = {p.name: p.raw for p in bundle.preimages if p.name not in RELEASE_FILES}
     def ref(path: str, raw: bytes) -> dict[str, Any]:
         artifacts[path] = raw
         return dict(path=path, sha256=r.file_digest(raw), bytes=len(raw))
@@ -305,6 +311,7 @@ def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None =
         merged_serving[row['instance']]['intervals'].extend(row['intervals'])
     serving = list(merged_serving.values())
     counter = Counters(REGION, REV, clock=lambda: START / 1000000)
+    counter.instance = '00000000-0000-4000-8000-000000000001'
     counter._day()
     _, legacy_body = counter.snapshot(closed=True)[0]
     legacy_boot = legacy_body['instance']
@@ -313,7 +320,9 @@ def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None =
     for row in legacy_serving:
         if row['instance'] not in combined:
             combined[row['instance']] = {**row, 'intervals': []}
-        combined[row['instance']]['intervals'].extend(row['intervals'])
+        for span in row['intervals']:
+            if span not in combined[row['instance']]['intervals']:
+                combined[row['instance']]['intervals'].append(span)
     legacy_serving = list(combined.values())
     legacy_body.update(started_at_us=START, flushed_at_us=end)
     legacy_body['admission_observer'].update(workspace_reads=5, health_reads=20)
@@ -330,6 +339,11 @@ def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None =
     from trusted_router.async_settle_shadow_v2_gate_inputs import TOTALS
     measured.update({k: getattr(bundle.budget, k) for k in TOTALS})
     measured['component_us'] = {k: int(bundle.budget.component_seconds[k] * 1000000) for k in COMPONENTS}
+    if variant == 'freshness_budget_gap':
+        measured['component_us']['publication'] = 500001
+        post_input['freshness_maxima_seconds']['publication'] = 0.500001
+    elif variant == 'evidence_export_budget_gap':
+        measured['export_operations'] = 0
     measurement_ref = ref(MEASUREMENTS_PATH, BUDGET_MEASUREMENTS.serialize(measured))
     dependencies_post = [completed_pre, dependencies[1], measurement_ref]
     post_retained, post_call = delegated('pilot_enablement.fleet_budgets', post_input, dependencies_post, 'budgets/post')
@@ -427,8 +441,14 @@ def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None =
         resets=[], serving=[[b.start_us, b.end_us, b.revision] for b in bundle.inventory.boots if b.role == 'router'],
         manifests={m['day']: {'router_revisions': m['revisions']['router']} for m in
             (a1.MANIFEST.parse(row.raw) for row in bundle.rows if row.key.kind == p1.KINDS[5])})
+    if variant in RESET_VARIANTS:
+        reset_input['resets'] = [dict(at_us=START + 1, revision=REV, reason=variant)]
     reset_retained, reset_call = delegated('shadow_report.collect_rollbacks', reset_input, [], 'resets/real')
-    empty = stream([], 'reset_history', 'details/reset-history')
+    history = []
+    for reset in json.loads(reset_call.output)['resets']:
+        support = stream([reset_retained['payload']], 'files', 'details/reset-support')
+        history.append(dict(reset, support=support, resolved_at_us=None, fixed_revision=None, invalidated_at_us=None))
+    empty = stream(history, 'reset_history', 'details/reset-history')
     artifacts['proof.resolution_dag_sha256'] = e.RESOLUTION_DAG.serialize(dict(**TAG, retained=reset_retained, history=empty, approvals=[]))
 
     criteria = {}
@@ -496,7 +516,7 @@ def real_fixture(tmp_path: Path, *, seconds: int = 20, pilot_stage: str | None =
     ref(plan_path, plan_raw)
     release = ReleasePlan(plan_path, plan_raw, trusted_pins, criteria, verifier_pins, required)
     tool_ports = replace(tool_ports, release=release, measurements=parsers)
-    bundle = reseal(bundle, artifacts)
+    bundle = commit_originals(bundle, artifacts)
     expected = dict(pre_input=pre_input, pre_output=pre_output, post_input=post_input,
         post_output=json.loads(post_call.output), reset_output=json.loads(reset_call.output),
         segments=segments, projected_segments=pre_segments, measurements=measured, rates=[asdict(rate) for rate in bundle.budget.rates])
@@ -541,18 +561,14 @@ def retained_pilot_fixture(tmp_path: Path, stage: str) -> tuple[dict[str, Any], 
     return data, {'pilot-originals/' + path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
 
 
-# These semantic witnesses need a newly approved/recommitted dependency graph;
-# a single damaged original cannot remain a valid approved budget/reset fact.
-# The evaluator unit witnesses remain in test_async_settle_shadow_v2_gates.
-BYTE_WITNESS_SEAMS = {
-    **dict.fromkeys(('simultaneous_capacity_gap', 'freshness_budget_gap', 'evidence_export_budget_gap'),
-        'approved_budget_mutations: needs a coherent replacement approved budget graph'),
-    **dict.fromkeys(('hash', 'identity', 'normalization', 'evaluator_disagreement', 'counter_mismatch',
-        'reviewed_resolution', 'revision_rollback', 'exclusion_conflict'),
-        'supported_reset_mutations: needs matching retained output, history and original support'),
-    **dict.fromkeys(('health_source_gap', 'health_timestamp_gap', 'health_elapsed_gap'),
-        'referenced_basis_mutations: a changed basis also needs its receipt commitment changed'),
-}
+# Semantic variants change one source fact before the same generator derives
+# dependencies, retained outputs, approvals, release authority and root graph.
+BUDGET_VARIANTS = ('simultaneous_capacity_gap', 'freshness_budget_gap', 'evidence_export_budget_gap')
+RESET_VARIANTS = ('hash', 'identity', 'normalization', 'evaluator_disagreement', 'counter_mismatch',
+    'reviewed_resolution', 'revision_rollback', 'exclusion_conflict')
+HEALTH_VARIANTS = ('health_source_gap', 'health_timestamp_gap', 'health_elapsed_gap')
+SEMANTIC_VARIANTS = (*BUDGET_VARIANTS, *RESET_VARIANTS, *HEALTH_VARIANTS)
+
 
 
 @lru_cache(maxsize=1)
@@ -567,10 +583,10 @@ def mutate_transport(raw: bytes, gap: str) -> bytes:
     original_value = transport_object(raw)
     value = {**original_value, **{name: list(original_value[name])
         for name in ('rows', 'attachments', 'preimages', 'ledgers')}}
-    def row(kind: str, change: Any = None, *, remove: bool = False, conflict: bool = False) -> None:
+    def row(kind: str, change: Any = None, *, remove: bool = False, conflict: bool = False, occurrence: int = 0) -> None:
         collection = 'rows' if any(r['kind'] == kind for r in value['rows']) else 'attachments'
         rows = value[collection]
-        index = next(i for i, r in enumerate(rows) if r['kind'] == kind)
+        index = [i for i, r in enumerate(rows) if r['kind'] == kind][occurrence]
         if remove:
             rows.pop(index)
             return
@@ -648,10 +664,15 @@ def mutate_transport(raw: bytes, gap: str) -> bytes:
         sample = json.loads(next(r['raw'] for r in value['rows'] if r['kind'] == p1.KINDS[0]))
         gate['completed_at_us'] = sample['observed_at_us']
         value['transport'] = canonical(gate).decode()
+    elif gap == 'continuous_window_day_gap':
+        def interrupted(manifest: dict[str, Any]) -> None:
+            interval = manifest['disabled_flag_intervals'][0]['interval']
+            manifest.update(complete=False, gaps=[dict(interval=interval, reason='writer_closure_gap')])
+        row(p1.KINDS[5], interrupted, occurrence=2)
     elif gap == 'continuous_window_gap':
         value['completed_at_us'] -= 3000000
     else:
-        raise ValueError(BYTE_WITNESS_SEAMS[gap])
+        raise ValueError("semantic variant required: " + gap)
     changed_keys = [key for key in value if value[key] != original_value[key]]
     assert len(changed_keys) == 1
     key = changed_keys[0]

@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from scripts.async_settle import pilot_enablement, shadow_report
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import pre_enable_bundle
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle
 from trusted_router.async_settle_shadow_v2_gate_loader import load

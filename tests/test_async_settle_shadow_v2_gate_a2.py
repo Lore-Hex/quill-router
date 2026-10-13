@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import (
     build,
     exhaustive,
