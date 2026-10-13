@@ -96,8 +96,21 @@ def diagnostic_scope(ctx: Context) -> tuple[tuple[str, ...], dict[str, int] | No
     from trusted_router.async_settle_shadow_v2_schema import day_at
     intervals = [(b.start_us, min(b.end_us or ctx.bundle.completed_at_us, ctx.bundle.completed_at_us))
                  for b in ctx.bundle.inventory.boots if b.role == 'router'] if ctx.bundle.inventory else []
-    intervals = [(left, right) for left, right in intervals if left < right]
-    days = set(ctx.bundle.days)
+    def representable(left: int, right: int) -> bool:
+        try:
+            p1.INTERVAL(dict(start_us=left, end_us=right))
+            day_at(left)
+            day_at(right - 1)
+            return left < right
+        except (ValueError, TypeError, OverflowError):
+            return False
+    intervals = [(left, right) for left, right in intervals if representable(left, right)]
+    days = set()
+    for selected_day in ctx.bundle.days:
+        left = (dt.date.fromisoformat(selected_day) - dt.date(1970, 1, 1)).days * 86400000000
+        if representable(left, left + 86400000000):
+            days.add(selected_day)
+    requested_days = bool(days)
     if not intervals:
         rosters = [(day, roster.get('router', {})) for day, roster in
                    (ctx.proof or {}).get('rosters_by_day', {}).items()]
@@ -105,9 +118,9 @@ def diagnostic_scope(ctx: Context) -> tuple[tuple[str, ...], dict[str, int] | No
         for day, writers in rosters:
             for writer in writers.values():
                 lifetime = writer['lifetime']
-                if lifetime['start_us'] < lifetime['end_us']:
+                if representable(lifetime['start_us'], lifetime['end_us']):
                     intervals.append((lifetime['start_us'], lifetime['end_us']))
-                    if not ctx.bundle.days:
+                    if not requested_days:
                         days.add(day)
     if not days:
         for left, right in intervals:
@@ -117,7 +130,7 @@ def diagnostic_scope(ctx: Context) -> tuple[tuple[str, ...], dict[str, int] | No
     if not intervals and selected:
         left = (dt.date.fromisoformat(selected[0]) - dt.date(1970, 1, 1)).days * 86400000000
         right = (dt.date.fromisoformat(selected[-1]) - dt.date(1970, 1, 1)).days * 86400000000 + 86400000000
-        intervals = [(left, right)]
+        intervals = [(left, right)] if representable(left, right) else []
     if not intervals or not selected:
         return (), None
     value = dict(start_us=min(v[0] for v in intervals), end_us=max(v[1] for v in intervals))

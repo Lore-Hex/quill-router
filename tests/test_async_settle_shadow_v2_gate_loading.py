@@ -715,7 +715,7 @@ def test_prior_budget_linkage_to_current_approval(round9_originals: Any) -> None
     assert 'positive_seed_gap' in result.gaps
 
 
-@pytest.mark.parametrize('scope', ['exact', 'seed'])
+@pytest.mark.parametrize('scope', ['exact', 'seed', 'before-seed', 'interior'])
 def test_round11_explicit_observation_scope(round9_originals: Any, scope: str) -> None:
     import json
 
@@ -729,6 +729,11 @@ def test_round11_explicit_observation_scope(round9_originals: Any, scope: str) -
     value['window'] = dict(baseline.gate_report['window'])
     if scope == 'seed':
         value['window']['start_us'] = baseline.report.first_seed_us
+    if scope == 'before-seed':
+        value['window']['end_us'] = value['window']['start_us'] + 1000000
+    elif scope == 'interior':
+        value['window']['start_us'] += 3000000
+        value['window']['end_us'] -= 1000000
     explicit = evaluate(load(canonical(value), ports), ports, gate='shadow-serving')
     assert explicit.verdict == 'PASS'
     assert explicit.report.elapsed_seconds == baseline.report.elapsed_seconds == 18
@@ -794,7 +799,7 @@ def test_round11_module_teardown_before_contract_subprocess() -> None:
     from pathlib import Path
     root = Path(__file__).parents[1]
     result = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:xdist', '-p', 'no:cacheprovider',
-        'tests/test_async_settle_shadow_v2_gate_complete.py::test_original_bytes_stage_pass[transport]',
+        'tests/test_async_settle_shadow_v2_gate_complete.py::test_lookup_cache_keeps_mutation_isolation_and_schema_rejections',
         'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-key]',
         'tests/test_async_settle_shadow_v2_evidence.py::test_transport_enforcing_routes[trusted_router.async_settle_shadow_v2_contract.COMPARED_FULL:raw-value]'],
         cwd=root, env={**os.environ, 'PYTEST_ADDOPTS': ''}, capture_output=True, text=True, check=False)  # noqa: S603
@@ -855,3 +860,238 @@ def test_round11_invalid_completion_uses_original_scope_bound(round9_originals: 
     result = round9_render(json.dumps(data).encode(), ports)
     assert result.completed_at_us == original.completed_at_us
     assert 'evidence_schema_gap' in result.gaps
+
+
+@pytest.fixture(scope='module')
+def round12_original(tmp_path_factory: Any) -> Any:
+    from tests.shadow_v2_gate_a2_fixture import real_fixture, transport
+    bundle, ports, _ = real_fixture(tmp_path_factory.mktemp('round12'), chain=False, traffic=False)
+    return bundle, transport(bundle), ports
+
+
+@pytest.mark.parametrize('witness', ['integer', 'collection-sibling'])
+def test_round12_decoder_witnesses(round12_original: Any, tmp_path: Any, witness: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import library, tool
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    _, raw, ports = round12_original
+    value = json.loads(raw)
+    if witness == 'integer':
+        changed = raw[:-1] + b',"unused":' + b'9' * 5000 + b'}'
+    else:
+        proof = json.loads(value['proof'])
+        proof.update(rosters_by_day={}, instance_regions_by_day={})
+        value.update(days=[], preimages=[], proof=canonical(proof).decode())
+        changed = canonical(value).replace(b'"rows":[', b'"rows":[' + b'[' * 13000 + b'0' + b']' * 13000 + b',', 1)
+    loaded = load(changed, ports)
+    assert loaded.proof == value['proof'].encode()
+    assert any(r.key.kind == 'async_settle_shadow_control_v2' for r in loaded.rows)
+    for output in [library(changed, ports, gate='transport'), *(tool(changed, ports, tmp_path / which, which,
+            gate='transport') for which in ('report', 'pilot'))]:
+        assert output['verdict'] == 'BLOCKED'
+        assert 'evidence_schema_gap' in output['gaps']
+
+
+@pytest.mark.parametrize('day', ['0001-01-01', '1969-12-31', '1970-01-01', '9999-12-31'])
+@pytest.mark.parametrize('proof_present', [True, False])
+def test_round12_calendar_boundaries(round12_original: Any, tmp_path: Any, day: str, proof_present: bool) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import library, tool
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    _, raw, ports = round12_original
+    value = json.loads(raw)
+    proof = json.loads(value['proof'])
+    proof.update(rosters_by_day={}, instance_regions_by_day={})
+    value.update(rows=[], preimages=[], attachments=[], ledgers=[], days=[day],
+        proof=canonical(proof).decode() if proof_present else None)
+    changed = canonical(value)
+    # The direct stages must handle expected evidence damage without the backstop.
+    direct = render(evaluate(load(changed, ports), ports, gate='transport'))
+    assert direct is not None
+    expected = ('proof_manifest_absent_or_undecodable' if not proof_present else
+        'observation_scope_artifacts_absent_or_undecodable' if day < '1970-01-01' else None)
+    for output in [library(changed, ports, gate='transport'), *(tool(changed, ports, tmp_path / which, which,
+            gate='transport') for which in ('report', 'pilot'))]:
+        assert output.get('condition') == expected
+        if expected is None:
+            assert output['verdict'] == 'BLOCKED'
+
+
+@pytest.mark.parametrize('stage', ['load', 'evaluate', 'render', 'diagnostic_scope'])
+@pytest.mark.parametrize('missing', ['neither', 'proof', 'scope'])
+def test_round12_outer_boundary(round12_original: Any, tmp_path: Any, monkeypatch: Any, stage: str, missing: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import library, tool
+    from trusted_router import async_settle_shadow_v2_gate_loader as loader
+    from trusted_router import async_settle_shadow_v2_gate_result as result
+    from trusted_router import async_settle_shadow_v2_gates as gates
+    _, raw, ports = round12_original
+    value = json.loads(raw)
+    if missing == 'proof':
+        value['proof'] = None
+    elif missing == 'scope':
+        proof = json.loads(value['proof'])
+        proof.update(rosters_by_day={}, instance_regions_by_day={})
+        value.update(days=[], rows=[], preimages=[], proof=canonical(proof).decode())
+    changed = canonical(value)
+    def explode(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError('SECRET exception text must never escape')
+    monkeypatch.setattr({'load': loader, 'evaluate': gates, 'render': result,
+        'diagnostic_scope': gates.a2report}[stage], stage, explode)
+    for output in [library(changed, ports, gate='transport'), *(tool(changed, ports, tmp_path / which, which,
+            gate='transport') for which in ('report', 'pilot'))]:
+        assert b'SECRET' not in canonical(output)
+        if missing == 'neither':
+            assert output['verdict'] == 'BLOCKED' and output['gaps'] == ['artifact_gap']
+            report = json.loads((tmp_path / 'report/out/report.json').read_bytes())
+            assert report['complete'] is False
+            failure_pages = list((tmp_path / 'report/out').rglob('*failures*'))
+            assert failure_pages
+            assert any(b'internal-error' in path.read_bytes() for folder in failure_pages
+                for path in ([folder] if folder.is_file() else folder.rglob('*')) if path.is_file())
+            assert all(b'SECRET' not in path.read_bytes() for path in (tmp_path / 'report/out').rglob('*') if path.is_file())
+        else:
+            assert output['condition'] == ('proof_manifest_absent_or_undecodable' if missing == 'proof'
+                else 'observation_scope_artifacts_absent_or_undecodable')
+
+
+@pytest.mark.parametrize('mutation,deleted', [('review-8619', 'rows'), ('review-10251', 'days'),
+    ('optional', 'rows'), ('optional', 'days'), ('reorder', 'rows'), ('reorder', 'days')])
+def test_round12_false_pass_classifier(round12_original: Any, mutation: str, deleted: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import inert_damage
+    _, raw, _ = round12_original
+    original = json.loads(raw)
+    original['window'] = {'start_us': 1, 'end_us': 2}
+    changed = copy.deepcopy(original)
+    path: tuple[Any, ...]
+    if mutation.startswith('review'):
+        index = 5 if mutation == 'review-8619' else 0
+        path = ('attachments', index, 'id')
+        kind = 'truncate'
+        changed['attachments'][index]['id'] = changed['attachments'][index]['id'][:len(changed['attachments'][index]['id']) // 2]
+    elif mutation == 'optional':
+        path, kind = ('pre',), 'delete'
+        changed.pop('pre')
+    else:
+        path, kind = ('attachments',), 'reorder'
+        changed['attachments'].reverse()
+    changed.pop(deleted)
+    documents = {'bundle': original}
+    # Deliberately broken evaluator: the same generated-property PASS assertion
+    # must reject this result, for both library and tool classifications.
+    def wrong_evaluator() -> dict[str, str]:
+        return {'verdict': 'PASS'}
+    for library_call in (True, False):
+        with pytest.raises(AssertionError):
+            output = wrong_evaluator()
+            if output['verdict'] == 'PASS':
+                assert inert_damage('bundle', path, kind, None, documents, canonical(changed), None,
+                    library_call=library_call)
+
+
+def test_round12_inventory_cache_differential(round12_original: Any) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from tests.test_async_settle_shadow_v2_gate_window import validation_cache
+    from trusted_router import async_settle_shadow_v2_gate_report as reports
+    from trusted_router.async_settle_shadow_v2_gate_bundle import Context
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    from trusted_router.async_settle_shadow_v2_schema import Schema
+    _, raw, ports = round12_original
+    value = json.loads(raw)
+    changes = [raw]
+    # Every native transport member, including all four previously omitted
+    # prior-envelope inputs; the entire rendered graph is compared bytewise.
+    for key in value:
+        altered = copy.deepcopy(value)
+        altered[key] = '' if key in ('transport', 'pre', 'fleet', 'serving') else None
+        changes.append(canonical(altered))
+    def output(candidate: bytes) -> Any:
+        return render(evaluate(load(candidate, ports), ports, gate='transport'))
+    pristine = [output(candidate) for candidate in changes]
+    generator = validation_cache.__wrapped__(SimpleNamespace(getfixturevalue=lambda name: {'parse': Schema.parse}))
+    next(generator)
+    try:
+        assert [output(candidate) for candidate in changes] == pristine
+        ctx = Context(load(raw, ports), ports, 'transport')
+        expected = copy.deepcopy(reports.input_inventory(ctx))
+        entries, leaves = reports.input_inventory(ctx)
+        entries.clear()
+        leaves.clear()
+        assert reports.input_inventory(ctx) == expected
+    finally:
+        with pytest.raises(StopIteration):
+            next(generator)
+
+
+@pytest.mark.parametrize('requested', ['0001-01-01', '1969-12-31'])
+@pytest.mark.parametrize('source', ['independent', 'proof', 'manifest'])
+def test_round12_calendar_fallbacks(round12_original: Any, tmp_path: Any, requested: str, source: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import library, tool
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    _, raw, ports = round12_original
+    value = json.loads(raw)
+    value['days'] = [requested]
+    if source != 'independent':
+        value['preimages'] = []
+    if source == 'proof':
+        value['rows'] = []
+    elif source == 'manifest':
+        proof = json.loads(value['proof'])
+        proof.update(rosters_by_day={}, instance_regions_by_day={})
+        value['proof'] = canonical(proof).decode()
+    candidate = canonical(value)
+    direct = render(evaluate(load(candidate, ports), ports, gate='transport'))
+    assert isinstance(direct, tuple)
+    report = json.loads(direct[1][0])
+    assert report['window']['start_us'] >= 0 and report['days'] != [requested]
+    for output in [library(candidate, ports, gate='transport'), *(tool(candidate, ports, tmp_path / which, which,
+            gate='transport') for which in ('report', 'pilot'))]:
+        assert output['verdict'] == 'BLOCKED'
+
+
+@pytest.mark.parametrize('fragment', [b',}', b',"\\q":0}', b'\xc2\xa0}', b',"rows/0":' + b'9' * 5000 + b'}'],
+    ids=['trailing-comma', 'invalid-key', 'whitespace', 'path-separator'])
+def test_round12_framed_syntax_damage_preserves_siblings(fragment: bytes) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_loading import transport_children
+    raw = b'{"proof":"original proof bytes","rows":[],"days":["2026-10-06"]' + fragment
+    value, issues = transport_children(raw, len(raw))
+    assert value['proof'] == 'original proof bytes'
+    assert value['days'] == ['2026-10-06']
+    assert issues and all(issue.gap == 'evidence_schema_gap' for issue in issues)
+
+
+@pytest.mark.parametrize('label', ['', '\ud800', 'x' * 600])
+def test_round12_invalid_label_is_not_inert(round12_original: Any, label: str) -> None:
+    import json
+
+    from tests.shadow_v2_gate_totality import inert_damage
+    _, raw, _ = round12_original
+    original = json.loads(raw)
+    changed = copy.deepcopy(original)
+    changed['attachments'][0]['id'] = label
+    assert not inert_damage('bundle', ('attachments', 0, 'id'), 'replace', label,
+        {'bundle': original}, canonical(changed), None, library_call=True)
+
+
+def test_round12_empty_value_keeps_collection_sibling() -> None:
+    from trusted_router.async_settle_shadow_v2_gate_loading import transport_children
+    raw = b'{"proof":"original","rows":[,{"kind":"sample","id":"key","raw":"exact bytes"}]}'
+    value, issues = transport_children(raw, len(raw))
+    assert value['proof'] == 'original'
+    assert value['rows'] == [dict(kind='sample', id='key', raw='exact bytes')]
+    assert any(issue.path == 'transport/rows/0' for issue in issues)

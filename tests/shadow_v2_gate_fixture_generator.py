@@ -63,7 +63,6 @@ def fixture(file: str, *, a1_release: bool = True, name: str | None = None) -> d
     return copy.deepcopy(next(v['object'] for v in variants if name is None or v['name'] == name))
 
 
-@cache
 def base_ports() -> Ports:
     import inspect
     wire = json.loads((ROOT / 'shadow_v1.json').read_bytes())

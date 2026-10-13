@@ -26,8 +26,6 @@ from trusted_router import async_settle_shadow_v2_a1_health as health
 from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
 from trusted_router import async_settle_shadow_v2_evidence as p1
-from trusted_router import async_settle_shadow_v2_gate_load as load
-from trusted_router import async_settle_shadow_v2_gate_report as reports
 from trusted_router import async_settle_shadow_v2_gates as gates
 from trusted_router.async_settle_shadow_v2_a2_evidence import FAILURE_RULES
 from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
@@ -44,7 +42,6 @@ def validation_cache(request: Any):
     # Keys include all arguments; mutations never inherit an old acceptance.
     patch = pytest.MonkeyPatch()
     parse = request.getfixturevalue('payloadgraph_shared_lookup_cache')['parse']
-    call = Schema.__call__
     decode = Schema._decode
     decoded_pages = {}
     def decoded(schema, raw):
@@ -69,22 +66,11 @@ def validation_cache(request: Any):
     # Only these parser results are immutable within this fixture family.
     # Other schemas (notably shutdown sources) are edited by fixture builders.
     schemas = {id(schema): schema for schema in (health.PUBLISHER_TRACE_PAGE, a1.COVERAGE_PAGE)}
-    origins = {}
     @lru_cache(maxsize=16000)
     def parsed(schema_id, raw):
-        value = parse(schemas[schema_id], raw)
-        origins[id(value)] = (value, (schema_id, raw))
-        if schema_id == id(health.PUBLISHER_TRACE_PAGE):
-            for index, entry in enumerate(value['entries']):
-                origins[id(entry)] = (entry, (id(health.PUBLISHER_SLOT_TRACE), raw, index))
-        return value
+        return json.dumps(parse(schemas[schema_id], raw), separators=(',', ':'))
     def dispatch(schema, raw):
-        return parsed(id(schema), raw) if id(schema) in schemas else parse(schema, raw)
-    def checked_call(schema, value):
-        origin = origins.get(id(value))
-        if origin is not None and origin[0] is value and origin[1][0] == id(schema):
-            return
-        call(schema, value)
+        return json.loads(parsed(id(schema), raw)) if id(schema) in schemas else parse(schema, raw)
     digest = lru_cache(maxsize=16000)(roots.file_digest)
     root_entry = roots._root_entry
     @lru_cache(maxsize=16000)
@@ -104,83 +90,14 @@ def validation_cache(request: Any):
     root = a1.coverage_root
     coverage_roots = {}
     def content(value):
-        origin = origins.get(id(value))
-        return origin[1] if origin is not None and origin[0] is value else canonical(value)
+        return canonical(value)
     def coverage(pages):
         values = tuple(pages)
         key = tuple(content(v) for v in values)
         if key not in coverage_roots:
             coverage_roots[key] = root(list(values))
         return coverage_roots[key]
-    original_sha = load.sha256
-    hashes = {}
-    def sha(value):
-        origin = origins.get(id(value))
-        if origin is None or origin[0] is not value:
-            return original_sha(value)
-        key = origin[1]
-        if key not in hashes:
-            hashes[key] = original_sha(value)
-        return hashes[key]
-    input_inventory = reports.input_inventory
-    inventories = {}
-    def inventoried(ctx):
-        b = ctx.bundle
-        key = (b.rows, b.attachments, b.proof, b.ledgers, b.preimages)
-        if key not in inventories:
-            inventories[key] = input_inventory(ctx)
-        return inventories[key]
-    observer = gates.observer_health
-    observers = {}
-    def observed(ctx):
-        b = ctx.bundle
-        key = (tuple(r for r in b.rows if r.key.kind in (p1.KINDS[2], p1.KINDS[3])),
-               tuple(r for r in b.attachments if r.key.kind in ('health_basis', 'publisher_trace')),
-               b.inventory, b.cohort)
-        if key not in observers:
-            before = len(ctx.issues)
-            observer(ctx)
-            observers[key] = tuple(ctx.issues[before:])
-        else:
-            ctx.issues.extend(observers[key])
     checked = {}
-    audits = {}
-    audit = contract.validate_preimages
-    def freeze(value):
-        if isinstance(value, dict):
-            return tuple((k, freeze(v)) for k, v in sorted(value.items()))
-        if isinstance(value, list):
-            return tuple(map(freeze, value))
-        return value
-    def audited(manifest, proof, *, artifacts, roots):
-        # The generator gives every candidate exactly this digest-qualified key.
-        # Unreferenced row changes cannot affect this pure supplied-root check.
-        needed = {*contract.FILE_PREIMAGES, *contract.OBJECT_PREIMAGES, 'proof_manifest'}
-        def references(value):
-            if isinstance(value, dict):
-                if set(value) == {'path', 'sha256', 'bytes'}:
-                    needed.add(value['path'])
-                for child in value.values():
-                    references(child)
-            elif isinstance(value, list):
-                for child in value:
-                    references(child)
-        for qualified in contract.OBJECT_PREIMAGES:
-            if qualified in artifacts:
-                references(json.loads(artifacts[qualified]))
-        named = tuple((k, artifacts.get(k)) for k in sorted(needed))
-        presence = tuple((digest(body), artifacts.get('candidates/' + digest(body) + '.json') == body)
-            for key in contract.ENTRY_PREIMAGES for entry in roots[key] for body in entry['bodies'])
-        key = (canonical(manifest), canonical(proof), named, freeze(roots), presence)
-        if key not in audits:
-            try:
-                audit(manifest, proof, artifacts=artifacts, roots=roots)
-            except ValueError as exc:
-                audits[key] = str(exc)
-            else:
-                audits[key] = None
-        if audits[key] is not None:
-            raise ValueError(audits[key])
     def traces(publisher, entries, **kwargs):
         key = (canonical(publisher), tuple(content(e) for e in entries), tuple(sorted(kwargs.items())))
         if key not in checked:
@@ -192,16 +109,7 @@ def validation_cache(request: Any):
                 checked[key] = None
         if checked[key] is not None:
             raise ValueError(checked[key])
-    from trusted_router import async_settle_shadow_v2_gate_expected as expected
     from trusted_router import async_settle_shadow_v2_gate_loader as loader
-    enumerate_traces = expected.trace_keys
-    trace_populations = {}
-    def trace_keys(ctx):
-        b = ctx.bundle
-        key = (tuple(r for r in b.attachments if r.key.kind == 'publisher_trace'), b.inventory, b.completed_at_us)
-        if key not in trace_populations:
-            trace_populations[key] = frozenset(enumerate_traces(ctx))
-        return set(trace_populations[key])
     # Repeated transports contain equal original byte strings. Intern these at
     # the test loading boundary so per-mutation cache keys share their storage.
     row_type, file_type = loader.Row, loader.Preimage
@@ -210,10 +118,6 @@ def validation_cache(request: Any):
         return raw
     patch.setattr(loader, 'Row', lambda key, raw: row_type(key, original(raw)))
     patch.setattr(loader, 'Preimage', lambda name, raw: file_type(name, original(raw)))
-    patch.setattr(expected, 'trace_keys', trace_keys)
-    patch.setattr(expected, 'sha256', sha)
-    patch.setattr(gates, 'observer_health', observed)
-    patch.setattr(reports, 'input_inventory', inventoried)
     import sys
     original_digest = roots.file_digest
     for module_name, module in tuple(sys.modules.items()):
@@ -223,11 +127,7 @@ def validation_cache(request: Any):
     patch.setattr(roots, '_root_entry', entry)
     patch.setattr(roots, 'entry_root', rooted)
     patch.setattr(a1, 'coverage_root', coverage)
-    patch.setattr(load, 'sha256', sha)
-    patch.setattr(a1, 'sha256', sha)
     patch.setattr(Schema, '_decode', decoded)
-    patch.setattr(Schema, '__call__', checked_call)
-    patch.setattr(contract, 'validate_preimages', audited)
     patch.setattr(Schema, 'parse', dispatch)
     patch.setattr(health, 'validate_publisher_traces', traces)
     originals = tuple(patch._setattr)
@@ -237,17 +137,11 @@ def validation_cache(request: Any):
     parsed.cache_clear()
     decoded_pages.clear()
     checked.clear()
-    audits.clear()
     digest.cache_clear()
     entry_bytes.cache_clear()
     entry_roots.clear()
     coverage_roots.clear()
-    hashes.clear()
-    origins.clear()
-    trace_populations.clear()
     original.cache_clear()
-    inventories.clear()
-    observers.clear()
 
 
 @exhaustive
@@ -597,3 +491,103 @@ def test_round11_generated_boundary_property(totality_original: Any, boundary_ca
             elif output['verdict'] == 'PASS':
                 assert inert_damage(document, path, kind, replacement, documents, changed, options,
                     library_call=outcome_index == 0), (index, document, path, kind, output)
+
+
+@pytest.mark.proof_oracle
+def test_round12_every_value_decode_is_local(totality_original: Any, monkeypatch: Any) -> None:
+    """Every native path, every hostile lexeme; original strings stay leaves."""
+    import json
+
+    from trusted_router import async_settle_shadow_v2_gate_loading as loading
+    from trusted_router.async_settle_shadow_v2_gate_loading import (
+        MAX_TRANSPORT_DEPTH,
+        transport_children,
+        transport_values,
+    )
+    observed = []
+    def capture(current: bytes, limit: int) -> Any:
+        # Observe the real parser return inside the real cleaner. No cache or
+        # alternate evaluation: each candidate traverses the production path.
+        result = transport_values(current, limit)
+        observed[:] = [result]
+        return result
+    monkeypatch.setattr(loading, 'transport_values', capture)
+    original_bundle, _, _ = totality_original
+    raw = transport(original_bundle)
+    original = json.loads(raw)
+    paths = []
+    pending = [((), original)]
+    while pending:
+        path, value = pending.pop()
+        paths.append(path)
+        if isinstance(value, dict):
+            pending.extend(((*path, k), v) for k, v in value.items())
+        elif isinstance(value, list):
+            pending.extend(((*path, i), v) for i, v in enumerate(value))
+    damages = (b'9' * 5000, b'1e9999', b'NaN', b'Infinity', b'"\\ud800"', b'"\\q"',
+               b'[' * (MAX_TRANSPORT_DEPTH + 2) + b'0' + b']' * (MAX_TRANSPORT_DEPTH + 2),
+               b'tru', b'1e', b'{"duplicate":1,"duplicate":2}')
+    fragments = []
+    spans = {}
+    offset = 0
+    def emit(fragment: bytes) -> None:
+        nonlocal offset
+        fragments.append(fragment)
+        offset += len(fragment)
+    def indexed(value: Any, path: tuple[Any, ...] = ()) -> None:
+        start = offset
+        if isinstance(value, (dict, list)):
+            emit(b'{' if isinstance(value, dict) else b'[')
+            children = value.items() if isinstance(value, dict) else enumerate(value)
+            for index, (key, child) in enumerate(children):
+                if index:
+                    emit(b',')
+                if isinstance(value, dict):
+                    emit(canonical(key) + b':')
+                indexed(child, (*path, key))
+            emit(b'}' if isinstance(value, dict) else b']')
+        else:
+            emit(canonical(value))
+        spans[path] = (start, offset)
+    indexed(original)
+    encoded_transport = b''.join(fragments)
+    def exact(actual: Any, expected: Any) -> None:
+        assert type(actual) is type(expected)
+        if isinstance(expected, dict):
+            assert actual.keys() == expected.keys()
+            for key in expected:
+                exact(actual[key], expected[key])
+        elif isinstance(expected, list):
+            assert len(actual) == len(expected)
+            for left, right in zip(actual, expected, strict=True):
+                exact(left, right)
+        elif isinstance(expected, str):
+            assert actual.encode() == expected.encode()
+        else:
+            assert actual == expected
+    for path in paths:
+        for lexeme in damages:
+            left, right = spans[path]
+            changed = encoded_transport[:left] + lexeme + encoded_transport[right:]
+            if not path:
+                continue  # Root damage has no independent siblings.
+            cleaned, issues = transport_children(changed, len(changed))
+            decoded, errors = observed[0]
+            assert errors, (path, lexeme[:20])
+            before, after = original, decoded
+            # At EVERY ancestor, every sibling retains its exact original bytes.
+            for chosen in path:
+                siblings = before.items() if isinstance(before, dict) else enumerate(before)
+                for key, sibling in siblings:
+                    if key != chosen:
+                        exact(after[key], sibling)
+                before, after = before[chosen], after[chosen]
+            assert issues
+            if path[0] in ('rows', 'attachments', 'preimages', 'ledgers', 'days') and len(path) > 1:
+                siblings = [entry for index, entry in enumerate(original[path[0]]) if index != path[1]]
+                exact(cleaned[path[0]], siblings)
+            if path[0] != 'proof':
+                assert cleaned['proof'].encode() == original['proof'].encode()
+            for source in ('days', 'rows', 'preimages'):
+                if path[0] != source:
+                    assert cleaned[source] == original[source]

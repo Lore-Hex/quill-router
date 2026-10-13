@@ -1,6 +1,7 @@
 """A2 byte graph for P5 test bundles; no frozen fixture is modified."""
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 from dataclasses import replace
@@ -610,8 +611,12 @@ SEMANTIC_VARIANTS = (*BUDGET_VARIANTS, *RESET_VARIANTS, *HEALTH_VARIANTS)
 
 
 @lru_cache(maxsize=1)
-def transport_object(raw: bytes) -> dict[str, Any]:
+def _transport_object(raw: bytes) -> dict[str, Any]:
     return json.loads(raw)
+
+
+def transport_object(raw: bytes) -> dict[str, Any]:
+    return copy.deepcopy(_transport_object(raw))
 
 
 def mutate_transport(raw: bytes, gap: str) -> bytes:
@@ -874,7 +879,11 @@ def original_prior_chain() -> tuple[Bundle, Any, dict[str, bytes]]:
     sources += [Path(__file__), source_root / 'tests/shadow_v2_gate_fixture_generator.py',
                 source_root / 'scripts/async_settle/shadow_report.py', source_root / 'scripts/async_settle/pilot_enablement.py']
     key = r.file_digest(b''.join(path.read_bytes() for path in sources))
-    return _shared_prior_chain(key)
+    value = _shared_prior_chain(key)
+    # Bound methods close over immutable frozen contract schemas (mappingproxy
+    # fields); copy all caller-owned containers, retain callable identities.
+    memo = {id(parser): parser for parser in value[1].measurements.values()}
+    return copy.deepcopy(value, memo)
 
 
 @cache

@@ -179,3 +179,161 @@ def render(result: Result) -> tuple[bytes, tuple[bytes, ...]] | UnavailableGateO
         regions=streams['regions'], inputs=streams['input_inventory'], reset_history=streams['reset_history'],
         verifiers=report['verifiers'])
     return raw, attachments
+
+
+# Recovery serializes a deliberately minimal report, independently of the public
+# render dispatch. It still runs the unchanged final contract graph validator.
+_render_blocked = render
+
+
+def run(raw: bytes, ports: Any = None, *, gate: str = 'pre-flip',
+        damaged_inputs: tuple[str, ...] = ()) -> tuple[Result | None, tuple[bytes, tuple[bytes, ...]] | UnavailableGateOutput]:
+    """Outermost original-byte library boundary shared by both offline tools.
+
+    Unexpected load/evaluate/render exceptions cannot certify success or leak
+    exception text. Recovery reads only surviving original commitments and scope;
+    it never retries the failed semantic pipeline or invents a timestamp.
+    """
+    from dataclasses import replace
+
+    from trusted_router import async_settle_shadow_v2_gate_loader as loader
+    from trusted_router import async_settle_shadow_v2_gates as gates
+    try:
+        bundle = loader.load(raw, ports)
+        if damaged_inputs:
+            bundle = replace(bundle, undefined_preimages=(*bundle.undefined_preimages, *damaged_inputs))
+        result = gates.evaluate(bundle, ports, gate=gate)
+        return result, render(result)
+    except Exception:
+        return _internal_error(raw, gate)
+
+
+def _internal_error(raw: bytes, gate: str) -> tuple[Result | None, tuple[bytes, tuple[bytes, ...]] | UnavailableGateOutput]:
+    """Small recovery seam: commitments, diagnostic scope, fixed G1 failure."""
+    from dataclasses import replace
+
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router import async_settle_shadow_v2_evidence as p1
+    from trusted_router.async_settle_shadow_v2_a2_contract import REQUIRED_RULES
+    from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
+    from trusted_router.async_settle_shadow_v2_gate_bundle import Context
+    from trusted_router.async_settle_shadow_v2_gate_failures import TAG, detail, listing
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Key
+    from trusted_router.async_settle_shadow_v2_gate_loader import MAX_BUNDLE_BYTES
+    from trusted_router.async_settle_shadow_v2_gate_loading import transport_children
+    from trusted_router.async_settle_shadow_v2_schema import Schema, day, integer
+    try:
+        value, _ = transport_children(raw, MAX_BUNDLE_BYTES)
+        proof_raw = value['proof'].encode('utf-8')
+        proof = a1.PROOF_MANIFEST.parse(proof_raw)
+    except (ValueError, KeyError, AttributeError, TypeError, UnicodeError):
+        return None, UnavailableGateOutput('proof_manifest_absent_or_undecodable')
+    days = []
+    for selected in value.get('days', []):
+        try:
+            day(selected)
+            days.append(selected)
+        except (ValueError, TypeError):
+            continue
+    completed = value.get('completed_at_us')
+    try:
+        integer(completed)
+    except ValueError:
+        completed = None
+    bundle = Bundle(proof=proof_raw, days=tuple(sorted(set(days))[:32]), completed_at_us=completed or 0)
+    ctx = Context(bundle, None, gate, proof=proof)
+    for row in value.get('rows', []):
+        if row['kind'] != p1.KINDS[5]:
+            continue
+        try:
+            ctx.rows[Key(row['kind'], row['id'])] = a1.validate_row(row['kind'], row['id'], row['raw'].encode())
+        except (ValueError, UnicodeError):
+            continue
+    # Independent inventory is also a diagnostic source when no requested day,
+    # proof roster or manifest survives. Validate the original envelope and its
+    # exact serving FILE_REF; this supplies scope, never semantic authority.
+    from trusted_router.async_settle_shadow_v2_gate_loading import retained_json
+    files = {entry['name']: entry['raw'].encode() for entry in value.get('preimages', [])}
+    independent = []
+    for name, original in files.items():
+        if not name.endswith('manifest.independent_inventory_sha256'):
+            continue
+        try:
+            envelope = a2.INDEPENDENT_INVENTORY.parse(original)
+            reference = envelope['serving']
+            serving = files[reference['path']]
+            require(len(serving) == reference['bytes'] and file_digest(serving) == reference['sha256'])
+            rows = retained_json(serving)
+            require(type(rows) is list)
+            for row in rows:
+                if row['role'] != 'router':
+                    continue
+                for interval in row['intervals']:
+                    left, right = interval['started_at_us'], interval['flushed_at_us']
+                    p1.INTERVAL(dict(start_us=left, end_us=right))
+                    require(left < right)
+                    independent.append((left, right))
+        except (ValueError, KeyError, TypeError, UnicodeError):
+            continue
+    # Recovery does not call the semantic scope selector: a bug in that stage
+    # must not recur while building its diagnostic.
+    import datetime as dt
+
+    from trusted_router.async_settle_shadow_v2_schema import day_at
+    intervals = list(independent)
+    writers = [roster.get('router', {}) for roster in proof['rosters_by_day'].values()]
+    writers.extend(manifest['router_writers'] for manifest in ctx.kind(p1.KINDS[5]) if 'router_writers' in manifest)
+    intervals.extend((writer['lifetime']['start_us'], writer['lifetime']['end_us'])
+        for roster in writers for writer in roster.values())
+    surviving = []
+    for left, right in intervals:
+        try:
+            p1.INTERVAL(dict(start_us=left, end_us=right))
+            require(left < right)
+            day_at(left)
+            day_at(right - 1)
+            surviving.append((left, right))
+        except (ValueError, OverflowError):
+            continue
+    requested = []
+    for selected in days:
+        left = (dt.date.fromisoformat(selected) - dt.date(1970, 1, 1)).days * 86400000000
+        if left >= 0:
+            requested.append((selected, left, left + 86400000000))
+    if not surviving:
+        surviving = [(left, right) for _, left, right in requested]
+    days_tuple = tuple(sorted({selected for selected, _, _ in requested})[:32])
+    if not days_tuple:
+        days_tuple = tuple(sorted({day_at(at) for left, right in surviving
+            for at in range(left // 86400000000 * 86400000000,
+                            min(right, left + 32 * 86400000000), 86400000000)})[:32])
+    scope = dict(start_us=min(left for left, _ in surviving), end_us=max(right for _, right in surviving)) if surviving else None
+    if scope is None:
+        return None, UnavailableGateOutput('observation_scope_artifacts_absent_or_undecodable')
+    ctx.bundle = replace(bundle, days=days_tuple, completed_at_us=scope['end_us'] if completed is None else completed)
+    subject = a2.O('a2_file', 'internal-error')
+    failures = (Failure('artifact_gap', 'G1', subject, 1, (), 'internal gate error'),)
+    metrics = Report(None, None, None, None, (), None, None, (), (), None, (), (), None, None, None)
+    tallies, listed = listing(failures, days_tuple)
+    streams, references = {}, {}
+    for stream in ('writers', 'regions', 'failures', 'input_inventory', 'reset_history'):
+        references[stream], streams[stream] = detail(listed if stream == 'failures' else [], stream)
+    def unknown(schema: Any) -> dict[str, Any]:
+        # Recursion is over frozen schema definitions, never input-controlled.
+        return {name: unknown(check) if isinstance(check, Schema) else None for name, check in schema.fields.items()}
+    groups = ('comparator', 'admission', 'partition', 'attempts', 'checkpoint', 'handoff',
+              'publisher', 'fleet_peaks', 'timing', 'deltas', 'null_counts')
+    aggregates = {name: unknown(a2.GATE_REPORT.fields[name]) for name in groups}
+    for name in ('comparator', 'admission'):
+        aggregates[name]['coverage']['state'] = 'unevaluable' if 'G5' in REQUIRED_RULES[gate] else 'not_required'
+    report = dict(**TAG, gate=gate, completed_at_us=ctx.bundle.completed_at_us,
+        proof_manifest_sha256=file_digest(proof_raw), prerequisite_ledger_root=proof['ledger_root'],
+        days=list(days_tuple), window=scope, **aggregates, **references,
+        first_seed_at_us=None, first_reset_at_us=None, first_gap_at_us=None, clock_start_us=None,
+        elapsed_seconds=None, failure_counts=tallies, verifiers=dict(certificate=None, binding=None, retained_tools=[]),
+        complete=False, rules={rule: 'fail' if rule == 'G1' else 'unevaluable' if rule in REQUIRED_RULES[gate]
+            else 'not_required' for rule in (f'G{i}' for i in range(1, 12))})
+    leaves: dict[str, bytes] = {}
+    result = Result(gate, ctx.bundle.completed_at_us, file_digest(proof_raw), proof['ledger_root'],
+                    ('artifact_gap',), failures, metrics, report, streams, leaves)
+    return result, _render_blocked(result)

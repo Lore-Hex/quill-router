@@ -11,12 +11,18 @@ import pytest
 from scripts.async_settle import pilot_enablement, shadow_report
 from tests.shadow_v2_gate_cache import payloadgraph_shared_lookup_cache  # noqa: F401
 from tests.shadow_v2_gate_fixture_generator import pre_enable_bundle
+from trusted_router import async_settle_shadow_v2_gate_loader as loader
+from trusted_router import async_settle_shadow_v2_gates as gates
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle
-from trusted_router.async_settle_shadow_v2_gate_loader import load
-from trusted_router.async_settle_shadow_v2_gates import evaluate
 from trusted_router.detached_jws import canonical
 
 pytestmark = pytest.mark.timeout(method='signal')
+
+def load(*args: Any, **kwargs: Any) -> Any:
+    return loader.load(*args, **kwargs)
+
+def evaluate(*args: Any, **kwargs: Any) -> Any:
+    return gates.evaluate(*args, **kwargs)
 
 def test_no_policy_does_not_dispatch_v2(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
     def forbidden(*args: Any, **kwargs: Any) -> None:
@@ -97,7 +103,10 @@ def test_loader_v1_rejection_marker() -> None:
 @pytest.fixture(scope='module')
 def cli_original(tmp_path_factory: Any) -> Any:
     from tests.shadow_v2_gate_a2_fixture import real_fixture
-    return real_fixture(tmp_path_factory.mktemp('cli-original'))
+    from tests.shadow_v2_gate_totality import BoundaryCache
+    original = real_fixture(tmp_path_factory.mktemp('cli-original'))
+    with BoundaryCache().installed():
+        yield original
 
 
 @pytest.mark.parametrize('tool', ['report', 'pilot'])

@@ -1,5 +1,10 @@
 """P5 loading diagnostics and the limits shape specified in design §7.5.4.
 
+Invariant: invalid values never erase independently framed siblings at any
+level. Scalar decoding is local, containers use bounded iterative frames, and
+original evidence strings retain their exact decoded bytes. Rejections become
+permanent scoped G1 issues; proof and scope survive unrelated damage.
+
 The frozen Bundle has no diagnostic field. ``loading_issues`` in a2_streams is
 an internal handoff (not evidence and never hashed as an A2 attachment). Keep
 its producer/consumer here until that interface can acquire a typed field.
@@ -105,121 +110,189 @@ def validate_original_bytes(bundle: Bundle, ports: Ports | None) -> list[dict[st
             for issue in ctx.issues if not issue.detail.startswith('undefined preimage:')]
 
 
-def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[LoadingIssue]]:
-    """Decode siblings before validation; damage has only its own object scope.
+# Bounds apply to transport structure, never to the contents of original strings.
+MAX_TRANSPORT_DEPTH = 16
+_INVALID = object()
 
-    Duplicate keys are ambiguous at that key, not at independently decoded
-    siblings. No repaired child is evidence: every rejection is a permanent G1
-    issue, and original JSON strings are never normalized before validation.
+
+def transport_values(raw: bytes, limit: int) -> tuple[dict[str, Any], list[tuple[Any, ...]]]:
+    """Iterative JSON frames isolate every value, including malformed scalars.
+
+    Only delimiters/quotes frame children; decoding a token cannot consume its
+    sibling. Balanced containers beyond the bound are skipped with a counter,
+    not a Python call stack. Original strings are decoded exactly once.
     """
-    damaged = object()
-    duplicates = []
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in items:
-            if key in result:
-                duplicates.append(key)
-                # Equal original strings still supply their exact commitments.
-                if type(value) is not str or value != result[key]:
-                    result[key] = damaged
-            else:
-                result[key] = value
-        return result
-
+    import re
     require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
     text = raw.decode('utf-8', errors='surrogateescape')
-    try:
-        value = json.loads(text, object_pairs_hook=pairs)
-    except RecursionError:
-        # Python's recursive JSON decoder must not discard independent proof
-        # strings merely because a sibling exceeds its recursion limit. Scan
-        # only the outer member boundaries, iteratively and string-aware.
-        decoder = json.JSONDecoder(object_pairs_hook=pairs)
-        at = 0
-        members = []
+    errors: list[tuple[Any, ...]] = []
+    # frame: container, path, next key, grammar state
+    frames: list[list[Any]] = []
+    root: Any = _INVALID
+    skip = 0
+
+    def scalar(token: str) -> Any:
+        def integer(value: str) -> int:
+            require(len(value.lstrip('-')) <= 19)
+            number = int(value)
+            require(-(1 << 63) <= number < (1 << 63))
+            return number
+        def invalid(value: str) -> Any:
+            raise ValueError('evidence_schema_gap')
         try:
-            require(text.lstrip().startswith('{'))
-            at = text.index('{') + 1
-            while True:
-                while at < len(text) and text[at].isspace():
-                    at += 1
-                if text[at] == '}':
-                    break
-                key, at = decoder.raw_decode(text, at)
-                require(type(key) is str)
-                while text[at].isspace():
-                    at += 1
-                require(text[at] == ':')
+            value = json.loads(token, parse_int=integer, parse_float=invalid, parse_constant=invalid)
+            if isinstance(value, str):
+                value.encode('utf-8')
+            return value
+        except (ValueError, UnicodeError):
+            return _INVALID
+
+    string_decoder = json.JSONDecoder()
+
+    def tokens() -> Any:
+        # CPython's scalar string scanner is iterative and fast on large
+        # original-byte strings. A failed scalar uses only its lexical boundary;
+        # it never invokes a whole-document decoder or consumes a sibling.
+        at = 0
+        literal = re.compile(r'[^\s{}\[\],:"]+')
+        quoted = re.compile(r'"(?:[^"\\]|\\[\s\S])*(?:"|$)')
+        while at < len(text):
+            character = text[at]
+            if character.isspace():
+                if character not in ' \t\r\n' and ('transport', 'whitespace') not in errors:
+                    errors.append(('transport', 'whitespace'))
                 at += 1
-                start = at
-                stack: list[str] = []
-                while at < len(text):
-                    character = text[at]
-                    if character == '"':
-                        _, at = decoder.raw_decode(text, at)
-                        continue
-                    if not stack and character in ',}':
-                        break
-                    if character in '[{':
-                        stack.append(character)
-                    elif character in ']}':
-                        require(bool(stack) and stack.pop() == ('[' if character == ']' else '{'))
-                    at += 1
-                require(at < len(text) and not stack)
+            elif character == '"':
                 try:
-                    child = json.loads(text[start:at], object_pairs_hook=pairs)
-                except (ValueError, RecursionError):
-                    child = damaged
-                members.append((key, child))
-                if text[at] == '}':
-                    break
+                    value, end = string_decoder.raw_decode(text, at)
+                    value.encode('utf-8')
+                except (ValueError, UnicodeError):
+                    match = quoted.match(text, at)
+                    assert match is not None
+                    value, end = _INVALID, match.end()
+                yield '', value
+                at = end
+            elif character in '{}[],:':
+                yield character, None
                 at += 1
-            require(not text[at + 1:].strip())
-            value = pairs(members)
-        except (ValueError, IndexError) as exc:
-            raise ValueError('evidence_schema_gap') from exc
-    except (ValueError, UnicodeError) as exc:
-        raise ValueError('evidence_schema_gap') from exc
-    require(type(value) is dict, 'evidence_schema_gap')
-    issues: list[LoadingIssue] = [LoadingIssue('evidence_schema_gap', 'transport/duplicate-key',
-        'duplicate transport member') for _ in duplicates[:1]]
+            else:
+                match = literal.match(text, at)
+                assert match is not None
+                yield '', scalar(match.group())
+                at = match.end()
+
+    def path() -> tuple[Any, ...]:
+        if not frames:
+            return ('transport',)
+        container, prefix, key, _ = frames[-1]
+        return (*prefix, len(container) if isinstance(container, list) else key)
+
+    def put(value: Any) -> None:
+        nonlocal root
+        location = path()
+        if value is _INVALID:
+            errors.append(location)
+        if not frames:
+            require(root is _INVALID)
+            root = value
+            return
+        frame = frames[-1]
+        container, _, key, state = frame
+        require(state in ('value', 'first'))
+        if isinstance(container, list):
+            container.append(value)
+        else:
+            require(key is not None)
+            if key in container:
+                errors.append(location)
+                # An equal original string retains its exact commitment, but
+                # duplication always leaves a permanent scoped G1 rejection.
+                if type(value) is not str or container[key] != value:
+                    container[key] = _INVALID
+            else:
+                container[key] = value
+        frame[3] = 'comma'
+
+    for lexeme, decoded in tokens():
+        if skip:
+            skip += (lexeme in ('[', '{')) - (lexeme in (']', '}'))
+            continue
+        if frames:
+            frame = frames[-1]
+            container, _, _, state = frame
+            if lexeme in (']', '}'):
+                require(isinstance(container, list) == (lexeme == ']'))
+                if state == 'value':
+                    put(_INVALID)
+                if state == 'key':
+                    errors.append((*frame[1], 'trailing-comma'))
+                require(frame[3] in ('first', 'comma', 'key'))
+                frames.pop()
+                continue
+            if state in ('key', 'first') and isinstance(container, dict):
+                key = decoded
+                if type(key) is not str:
+                    key = 'invalid-key'
+                    errors.append((*frame[1], 'invalid-key'))
+                frame[2:4] = [key, 'colon']
+                continue
+            if state == 'colon':
+                require(lexeme == ':')
+                frame[3] = 'value'
+                continue
+            if lexeme == ',':
+                if state == 'value' or state == 'first' and isinstance(container, list):
+                    put(_INVALID)
+                require(frame[3] == 'comma')
+                frame[3] = 'value' if isinstance(container, list) else 'key'
+                continue
+        if lexeme in ('{', '['):
+            location = path()
+            if len(frames) >= MAX_TRANSPORT_DEPTH:
+                put(_INVALID)
+                skip = 1
+            else:
+                child: Any = {} if lexeme == '{' else []
+                put(child)
+                frames.append([child, location, None, 'first'])
+        else:
+            put(decoded)
+    require(not frames and not skip and type(root) is dict, 'evidence_schema_gap')
+    return root, errors
+
+
+def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[LoadingIssue]]:
+    """Reject only damaged evidence elements, preserving independent siblings."""
+    value, errors = transport_values(raw, limit)
+    issues: list[LoadingIssue] = []
     cleaned: dict[str, Any] = {}
 
     def reject(path: str) -> None:
-        # Invalid identifiers cannot become a contract object subject.
         try:
             a2.FILE_REF.fields['path'](path)
         except (ValueError, UnicodeError):
             path = 'transport/invalid-child'
-        issues.append(LoadingIssue('evidence_schema_gap', path, 'invalid transport child'))
+        issue = LoadingIssue('evidence_schema_gap', path, 'invalid transport child')
+        if issue not in issues:
+            issues.append(issue)
 
     def valid(child: Any, path: str) -> bool:
-        try:
-            pending = [(child, 0)]
-            while pending:
-                item, depth = pending.pop()
-                require(depth <= 16)
-                if type(item) is dict:
-                    for key, value in item.items():
-                        key.encode('utf-8')
-                        pending.append((value, depth + 1))
-                elif type(item) is list:
-                    pending.extend((value, depth + 1) for value in item)
-                elif type(item) is str:
-                    item.encode('utf-8')
-                elif type(item) is int:
-                    require(-(1 << 63) <= item < (1 << 63))
-                else:
-                    require(item is None or type(item) is bool)
-            return True
-        except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
-            reject(path)
-            return False
+        pending = [child]
+        while pending:
+            item = pending.pop()
+            if item is _INVALID:
+                reject(path)
+                return False
+            if type(item) is dict:
+                pending.extend(item.values())
+            elif type(item) is list:
+                pending.extend(item)
+        return True
 
     arrays = {'rows': {'kind', 'id', 'raw'}, 'attachments': {'kind', 'id', 'raw'},
-              'preimages': {'name', 'raw'}, 'ledgers': None}
+              'preimages': {'name', 'raw'}, 'ledgers': None, 'days': None}
     allowed = {'v', 'policy_version', 'contract_revision', 'proof', 'transport', 'fleet',
-               'pre', 'serving', 'completed_at_us', 'days', 'window', *arrays}
+               'pre', 'serving', 'completed_at_us', 'window', *arrays}
     for key, child in value.items():
         if key not in allowed:
             reject('transport/extra')
@@ -257,4 +330,22 @@ def transport_children(raw: bytes, limit: int) -> tuple[dict[str, Any], list[Loa
                     cleaned[key].append(item)
         elif valid(child, 'transport/' + key):
             cleaned[key] = child
+    for error in errors:
+        # Segments remain typed until rendering: an untrusted member named
+        # 'rows/0' can never masquerade as the first rows element.
+        parts = error
+        key = parts[1] if len(parts) > 1 else ''
+        if key not in allowed:
+            reject('transport/extra')
+        elif key in arrays and len(parts) > 2 and type(parts[2]) is int and type(value.get(key)) is list:
+            index = parts[2]
+            item = value[key][index]
+            path = 'transport/' + key + '/' + str(index)
+            if type(item) is dict and type(item.get('name')) is str:
+                path = item['name']
+            elif type(item) is dict and all(type(item.get(k)) is str for k in ('kind', 'id')):
+                path = 'rows/' + item['kind'] + '/' + item['id']
+            reject(path)
+        else:
+            reject('transport/' + key)
     return cleaned, issues

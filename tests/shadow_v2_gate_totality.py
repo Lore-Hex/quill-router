@@ -13,15 +13,13 @@ from scripts.async_settle import pilot_enablement, shadow_report
 from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
-from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput, render
+from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput
 from trusted_router.detached_jws import canonical
 
 
 def library(raw: bytes, ports: Any, gate: str = 'shadow-serving') -> Any:
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    from trusted_router.async_settle_shadow_v2_gates import evaluate
-    result = evaluate(load(raw, ports), ports, gate=gate)
-    rendered = render(result)
+    from trusted_router.async_settle_shadow_v2_gate_result import run
+    _, rendered = run(raw, ports, gate=gate)
     if isinstance(rendered, UnavailableGateOutput):
         return rendered.diagnostic()
     return json.loads(rendered[0])
@@ -218,6 +216,7 @@ class BoundaryCache:
             except ValueError:
                 pass
         digest = hashlib.sha256(pickle.dumps(content))
+        digest.update(str(id(function)).encode())
         digest.update(self.trusted(ports))
         digest.update(repr(kwargs).encode())
         key = digest.digest()
@@ -265,36 +264,45 @@ def inert_damage(document: str, path: tuple[Any, ...], kind: str, replacement: A
         return all(key not in supplied or supplied[key] == documents['options'][key]
                    for key in ('certificate_keys', 'binding_keys'))
     def effective(value: Any) -> Any:
+        # Explicit inert set, evaluated on the COMPLETE final document:
+        # absent/null optional prior envelopes (no input bytes); absent/null or
+        # baseline window (same containment); keyed collection order and exact
+        # duplicate entries (same inventory); valid non-shutdown attachment labels
+        # (their original body, rather than the transport id, owns identity).
+        import copy
+        value = copy.deepcopy(value)
         if not isinstance(value, dict):
             return value
-        value = dict(value)
         for field in ('serving', 'transport', 'pre', 'fleet'):
             if value.get(field) is None:
                 value.pop(field, None)
         if value.get('window') is None or value.get('window') == documents['bundle']['window']:
             value.pop('window', None)
+        for field in ('rows', 'attachments', 'preimages', 'ledgers'):
+            entries = value.get(field)
+            if not isinstance(entries, list):
+                continue
+            if field == 'attachments':
+                for entry in entries:
+                    if (isinstance(entry, dict) and set(entry) == {'kind', 'id', 'raw'}
+                            and isinstance(entry['id'], str)
+                            and entry['kind'] not in ('shutdown_entry', 'shutdown_measurement')):
+                        try:
+                            a2.O(entry['kind'], entry['id'])
+                            a2.FILE_REF.fields['path']('rows/' + entry['kind'] + '/' + entry['id'] + '/' + '0' * 64)
+                        except (ValueError, TypeError, UnicodeError):
+                            continue  # Malformed labels are never legitimately inert.
+                        entry['id'] = '<body-owned-label>'
+            value[field] = sorted({canonical(entry) for entry in entries})
         return value
-    if kind != 'duplicate':
-        try:
-            if canonical(effective(json.loads(changed))) == canonical(effective(documents['bundle'])):
-                return True  # Includes a paired deletion of an unused null option.
-        except ValueError:
-            pass
-    if not path:
+    try:
+        def unique(pairs: Any) -> Any:
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('duplicate member is not inert')
+                result[key] = value
+            return result
+        return effective(json.loads(changed, object_pairs_hook=unique)) == effective(documents['bundle'])
+    except (ValueError, TypeError):
         return False
-    if kind == 'duplicate':
-        return path in (('rows',), ('attachments',), ('preimages',), ('ledgers',))
-    if path[0] in ('serving', 'transport', 'pre', 'fleet', 'window') and len(path) == 1:
-        if kind == 'delete' or kind == 'replace' and replacement is None:
-            return True  # Optional/non-required transport-stage input.
-    if (len(path) == 3 and path[0] == 'attachments' and path[2] == 'id' and kind in ('truncate', 'reorder')
-            and documents['bundle']['attachments'][path[1]]['kind'] not in ('shutdown_entry', 'shutdown_measurement')):
-        return True  # This transport label is not the committed body identity.
-    if kind == 'reorder' and path in (('rows',), ('attachments',), ('preimages',), ('ledgers',)):
-        return True  # Inventories are keyed and sorted independently.
-    if kind == 'reorder':
-        try:
-            return canonical(json.loads(changed)) == canonical(documents['bundle'])
-        except ValueError:
-            return False
-    return False

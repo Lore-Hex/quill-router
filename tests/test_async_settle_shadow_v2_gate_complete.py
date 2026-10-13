@@ -1,6 +1,7 @@
 """Original-byte integration witnesses for all five loading deliverables."""
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, replace
 from typing import Any
 
@@ -27,6 +28,12 @@ from trusted_router.async_settle_shadow_v2_schema import sha256
 @pytest.fixture(scope='module')
 def real(tmp_path_factory: Any) -> Any:
     return real_fixture(tmp_path_factory.mktemp('real-loading'))
+
+
+@pytest.fixture(scope='module')
+def real_loaded(real: Any) -> Any:
+    original, ports, _ = real
+    return load(transport(original), ports)
 
 
 def diagnostics(bundle: Any) -> set[str]:
@@ -128,9 +135,9 @@ def test_deleting_every_observed_source_preserves_obligation(real: Any, kind: st
     assert 'artifact_gap' in diagnostics(loaded)
 
 
-def test_missing_trace_is_a_missing_entry_not_an_empty_root(real: Any) -> None:
+def test_missing_trace_is_a_missing_entry_not_an_empty_root(real: Any, real_loaded: Any) -> None:
     original, ports, _ = real
-    loaded = load(transport(original), ports)
+    loaded = copy.deepcopy(real_loaded)
     damaged = replace(loaded, attachments=tuple(r for r in loaded.attachments if r.key.kind != 'publisher_trace'))
     ctx = decode_bundle(damaged, ports, 'pre-flip')
     manifest = ctx.kind(p1.KINDS[5])[0]
@@ -140,9 +147,9 @@ def test_missing_trace_is_a_missing_entry_not_an_empty_root(real: Any) -> None:
     assert roots._root_entry(expected[0]['key'], expected[0]['bodies'])['state'] == 'missing'
 
 
-def test_unexpected_receipt_does_not_expand_expected_root(real: Any) -> None:
+def test_unexpected_receipt_does_not_expand_expected_root(real: Any, real_loaded: Any) -> None:
     original, ports, _ = real
-    loaded = load(transport(original), ports)
+    loaded = copy.deepcopy(real_loaded)
     receipt = next(r for r in loaded.rows if r.key.kind == p1.KINDS[2])
     unexpected = Row(Key(receipt.key.kind, receipt.key.id.replace('boot0', 'outsider')), receipt.raw)
     ctx = decode_bundle(replace(loaded, rows=loaded.rows + (unexpected,)), ports, 'pre-flip')
@@ -152,9 +159,9 @@ def test_unexpected_receipt_does_not_expand_expected_root(real: Any) -> None:
 
 @exhaustive
 @pytest.mark.parametrize('mutation', ['source-pin', 'fixture-pin', 'key-pin', 'review', 'plan', 'port', 'callable', 'key-order'])
-def test_independent_release_authority_blocks_substitutions(real: Any, mutation: str) -> None:
+def test_independent_release_authority_blocks_substitutions(real: Any, real_loaded: Any, mutation: str) -> None:
     original, ports, _ = real
-    loaded = load(transport(original), ports)
+    loaded = copy.deepcopy(real_loaded)
     if mutation in ('source-pin', 'fixture-pin', 'key-pin'):
         release = ports.release
         pins = dict(release.verifiers)
@@ -280,9 +287,9 @@ def test_prerequisite_provenance_is_contextual(real: Any, mutation: str) -> None
         prerequisite(PayloadGraph(files, original.completed_at_us, ports=ports), evidence, ledger, field)
 
 
-def test_loaded_signature_material_uses_approved_key_sequence(real: Any) -> None:
+def test_loaded_signature_material_uses_approved_key_sequence(real: Any, real_loaded: Any) -> None:
     original, ports, _ = real
-    loaded = load(transport(original), ports)
+    loaded = copy.deepcopy(real_loaded)
     assert loaded.signatures == original.signatures
     from trusted_router.async_settle_shadow_v2_gate_bundle import verify_samples
     ctx = decode_bundle(loaded, ports, 'pre-flip')
@@ -306,13 +313,13 @@ def pilot_real(tmp_path_factory: Any) -> Any:
 
 
 @pytest.mark.parametrize('gate', ['transport', 'fleet-budgets-pre', 'fleet-budgets', 'shadow-serving'])
-def test_original_bytes_stage_pass(real: Any, gate: str) -> None:
+def test_original_bytes_stage_pass(real: Any, real_loaded: Any, gate: str) -> None:
     import json
 
     from trusted_router.async_settle_shadow_v2_gate_result import render
     from trusted_router.async_settle_shadow_v2_gates import evaluate
     original, ports, _ = real
-    loaded = load(transport(original), ports)
+    loaded = copy.deepcopy(real_loaded)
     assert not diagnostics(loaded)
     result = evaluate(loaded, ports, gate=gate)
     raw, attachments = render(result)

@@ -838,9 +838,7 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
         from scripts.async_settle.shadow_report import shadow_v2_main as entry
         entry(argv, gate=gate)
         return
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    from trusted_router.async_settle_shadow_v2_gate_result import render
-    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    from trusted_router.async_settle_shadow_v2_gate_result import run
 
     parser = argparse.ArgumentParser(description="Offline shadow-v2 gate")
     parser.add_argument('--policy', choices=['shadow-v2'], required=True)
@@ -852,8 +850,6 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
     parser.add_argument('--release-plan', type=Path)
     parser.add_argument('--release-plan-sha256')
     args = parser.parse_args(argv)
-    from dataclasses import replace
-
     from scripts.async_settle.async_settle_shadow_v2_gate_tools import read_release_plan
     damaged_inputs = []
     release = None
@@ -884,15 +880,12 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
         original = args.bundle.read_bytes()
     except (OSError, ValueError):
         original = b''
-    bundle = load(original, ports)
-    if damaged_inputs:
-        bundle = replace(bundle, undefined_preimages=(*bundle.undefined_preimages, *damaged_inputs))
-    result = evaluate(bundle, ports, gate=args.gate)
+    result, rendered = run(original, ports, gate=args.gate, damaged_inputs=tuple(damaged_inputs))
     from trusted_router.async_settle_shadow_v2_gate_result import UnavailableGateOutput
-    rendered = render(result)
     if isinstance(rendered, UnavailableGateOutput):
         print(json.dumps(rendered.diagnostic(), sort_keys=True, separators=(',', ':')))
         raise SystemExit(1)
+    assert result is not None
     output, _attachments = rendered
     destination = args.output_dir or args.bundle.parent / 'gate-output'
     destination.mkdir(parents=True, exist_ok=True)
