@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from functools import cache
 from typing import Any, TypeVar
 
 from fastapi import HTTPException
@@ -41,7 +42,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.catalog_capabilities import union_supported_parameters
 from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
-from trusted_router.config import Settings
+from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.model_aliases import canonical_router_model_id
@@ -369,9 +370,16 @@ def routing_pool_routes(
         return []
 
 
+@cache
+def _app_settings() -> Settings:
+    # The app builds its Settings once at startup from this environment, and
+    # routing reads the auto ladder from them.
+    return get_settings()
+
+
 def routing_pool_discovery(
     model_id: str,
-    settings: Settings,
+    settings: Settings | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The supported_parameters and input_modalities /v1/models may publish
     for a routing pool: what a request naming the pool is sure to get.
@@ -393,7 +401,7 @@ def routing_pool_discovery(
     routes_by_model: dict[str, list[ModelEndpoint]] = {}
     named: set[str] = set()
     modalities: dict[str, None] = {}
-    for model, endpoint in routing_pool_routes(model_id, settings):
+    for model, endpoint in routing_pool_routes(model_id, settings or _app_settings()):
         routes_by_model.setdefault(model.id, []).append(endpoint)
         named.update(endpoint.supported_parameters)
         # Missing route metadata means text only, as in the routing filter.

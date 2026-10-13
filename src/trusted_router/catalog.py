@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
-from functools import cache
 
 from trusted_router.catalog_capabilities import (
     manifest_supported_parameters,
@@ -202,7 +201,6 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
     MODELS,
 )
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
-from trusted_router.config import Settings, get_settings
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
@@ -597,13 +595,6 @@ def model_eu_focused_provider_available(model: Model) -> bool:
     )
 
 
-@cache
-def _process_settings() -> Settings:
-    # Routing reads the auto ladder from the app's Settings, which the app
-    # builds once at startup from the same environment.
-    return get_settings()
-
-
 def _routing_pool_discovery(model: Model) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """supported_parameters and input_modalities a routing pool can promise,
     or nothing for any other model. Orchestration models (synth, advisors,
@@ -611,10 +602,11 @@ def _routing_pool_discovery(model: Model) -> tuple[tuple[str, ...], tuple[str, .
     parameters, so their rows are not derived from routes."""
     if orchestration_role(model.id) != "routing_pool":
         return (), ()
-    # routing imports this module, so it is imported when a row is built.
+    # routing imports this module and brings in the control plane's settings,
+    # which lightweight importers of the catalog (analytics workers) lack.
     from trusted_router.routing import routing_pool_discovery
 
-    return routing_pool_discovery(model.id, _process_settings())
+    return routing_pool_discovery(model.id)
 
 
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:

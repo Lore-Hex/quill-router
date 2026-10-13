@@ -26,7 +26,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
-from trusted_router import catalog
+from trusted_router import catalog, routing
 from trusted_router.catalog_data import AUTO_MODEL_ID, Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
@@ -141,7 +141,7 @@ def _fixture_pool(monkeypatch, *, a_routes, b_routes) -> Settings:
     """Make auto's ladder two fixture models, each served on the given routes:
     (host, supported_parameters, input_modalities) triples."""
     settings = Settings(environment="test", auto_model_order=f"{FIXTURE_A},{FIXTURE_B}")
-    monkeypatch.setattr(catalog, "_process_settings", lambda: settings)
+    monkeypatch.setattr(routing, "_app_settings", lambda: settings)
     for model_id, routes in ((FIXTURE_A, a_routes), (FIXTURE_B, b_routes)):
         for host, parameters, modalities in routes:
             serve_on_fixture_route(
