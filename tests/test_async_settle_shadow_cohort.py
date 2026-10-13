@@ -106,7 +106,7 @@ class Port:
         self.calls.append('reserve')
         return self.journal.reserve(observed_us)
 
-    def finalize(self, reservation: Reservation, event: dict[str, Any]) -> bytes:
+    def finalize(self, reservation: Reservation, event: dict[str, Any], *, fold_owed: bool = False) -> bytes:
         self.calls.append('finalize')
         return self.journal.finalize(reservation, event)
 
@@ -209,8 +209,7 @@ def _case_authorize_failure_isolation(failure: str, monkeypatch: Any) -> None:
     if failure == 'finalize':
         monkeypatch.setattr(port, 'finalize', lambda *a: None)
     if failure == 'bytes':
-        finalize = port.finalize
-        monkeypatch.setattr(port, 'finalize', lambda *a: finalize(*a)+b' ')
+        monkeypatch.setattr(port.journal, 'finalize', lambda *a: (_ for _ in ()).throw(ValueError('original_receipt_digest_gap')))
     if failure == 'snapshot':
         data['billing_snapshot_hash'] = '0'*64
     if failure == 'context':
@@ -449,7 +448,7 @@ HOOKS = {'_v2_authorize_hook', '_v2_settle_hook', '_v2_refund_hook', '_v2_captur
 
 
 def assert_cohort_tree(source: str, expected: set[str]) -> None:
-    tree = ast.parse(source)
+    tree = ast.parse(source) if isinstance(source, str) else source
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     hooks = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in HOOKS}
     assert set(hooks) == expected
@@ -492,13 +491,20 @@ def assert_cohort_tree(source: str, expected: set[str]) -> None:
             assert node in allowed, ('reference before guard', node.lineno)
 
 
-def test_every_request_path_import_is_cohort_gated() -> None:
+@pytest.fixture(scope="module")
+def source_inventory():
+    return parsed_inventory(Path(__file__).parents[1])
+
+
+def test_every_request_path_import_is_cohort_gated(source_inventory) -> None:
     root = Path(__file__).parents[1]/'src/trusted_router'
-    for path in (root/'routes').rglob('*.py'):
-        expected = HOOKS - {'_v2_install_hook'} if path == root/'routes/internal/gateway.py' else set()
-        assert_cohort_tree(path.read_text(), expected)
-    assert_cohort_tree((root/'main.py').read_text(), {'_v2_install_hook'})
-    assert_repository_references(root.parent.parent)
+    for path, tree in source_inventory.values():
+        if path.is_relative_to(root/'routes'):
+            expected = HOOKS - {'_v2_install_hook'} if path == root/'routes/internal/gateway.py' else set()
+            assert_cohort_tree(tree, expected)
+        elif path == root/'main.py':
+            assert_cohort_tree(tree, {'_v2_install_hook'})
+    assert_repository_references(root.parent.parent, source_inventory)
 
 
 def gateway_source() -> str:
@@ -534,13 +540,13 @@ def test_kills_live_unguarded_authorize_call() -> None:
         assert_cohort_tree(source, HOOKS - {'_v2_install_hook'})
 
 
-def test_zero_certificate_issuance_calls() -> None:
+def test_zero_certificate_issuance_calls(source_inventory) -> None:
     root = Path(__file__).parents[1]/'src/trusted_router'
     paths = [root/'async_settle_shadow_cohort.py', *root.glob('services/async_settle_shadow_cohort*.py')]
     for path in paths:
         source = path.read_text()
         assert 'ExclusionSigner' not in source and 'async_settle_shadow_v2_certificate' not in source
-        tree = ast.parse(source)
+        tree = next(tree for candidate, tree in source_inventory.values() if candidate == path)
         assert not any(isinstance(n, ast.Call) and 'certificate' in ast.unparse(n.func).lower() for n in ast.walk(tree))
 
 
@@ -748,7 +754,17 @@ def test_p4a_files_pass_unchanged_per_file_import_guard():
         validate_live_imports((root/'src/trusted_router'/name).read_text(), allowed[name], new)
 
 
-def assert_repository_references(root):
+def parsed_inventory(root):
+    sources = {}
+    for directory in ('src', 'scripts'):
+        for path in (root/directory).rglob('*.py'):
+            relative = path.relative_to(root/'src') if directory == 'src' else path.relative_to(root)
+            module = '.'.join(relative.with_suffix('').parts).removesuffix('.__init__')
+            sources[module] = (path, ast.parse(path.read_text()))
+    return sources
+
+
+def assert_repository_references(root, inventory=None):
     """Closed allowlist; propagate dependencies through imports and re-exports."""
     allowed = {
         'trusted_router.async_settle_shadow_cohort',
@@ -757,12 +773,7 @@ def assert_repository_references(root):
         'trusted_router.routes.internal.gateway', 'trusted_router.main',
     }
     own = {name for name in allowed if 'shadow_cohort' in name}
-    sources = {}
-    for directory in ('src', 'scripts'):
-        for path in (root/directory).rglob('*.py'):
-            relative = path.relative_to(root/'src') if directory == 'src' else path.relative_to(root)
-            module = '.'.join(relative.with_suffix('').parts).removesuffix('.__init__')
-            sources[module] = (path, ast.parse(path.read_text()))
+    sources = inventory if inventory is not None else parsed_inventory(root)
     dependencies = {}
     direct = set()
     for module, (path, tree) in sources.items():
@@ -780,7 +791,7 @@ def assert_repository_references(root):
                     (node.id if isinstance(node, ast.Name) else node.attr)
                     or isinstance(node, ast.Constant) and isinstance(node.value, str) and 'shadow_cohort' in node.value):
                 direct.add(module)
-        dependencies[module] = deps
+        dependencies[module] = {'.'.join(dep.split('.')[:i]) for dep in deps for i in range(1, len(dep.split('.'))+1)}
         if any(any(dep == name or dep.startswith(name+'.') for name in own) for dep in deps):
             direct.add(module)
     # Approved hook modules are boundaries; importing gateway itself does not
@@ -788,8 +799,42 @@ def assert_repository_references(root):
     tainted = direct - {'trusted_router.main', 'trusted_router.routes.internal.gateway'}
     while True:
         more = {module for module, deps in dependencies.items()
-                if any(dep == name or dep.startswith(name+'.') for dep in deps for name in tainted)} - allowed
+                if deps & tainted} - allowed
         if more <= tainted:
             break
         tainted |= more
     assert (direct | tainted) <= allowed, sorted((direct | tainted) - allowed)
+
+
+@exhaustive
+def test_mapped_decision_matches_contract():
+    """Same finite decision algebra; whole-EVENT validation owns native domains."""
+    import random
+
+    from trusted_router.async_settle_shadow_cohort import mapped_decision
+    from trusted_router.async_settle_shadow_v2_contract import decide
+    rng = random.Random(5)  # noqa: S311 - reproducible contract differential
+    value = inputs()
+    base = value.facts.object()
+    for index in range(600):
+        facts = copy.deepcopy(base)
+        reason = rng.choice([None, *sorted(COHORT_EXCLUSIONS | NEVER_EXCLUSIONS)])
+        for key in facts['features']:
+            facts['features'][key] = rng.randrange(10) == 0
+        facts.update(settle_origin=rng.choice(['typed', 'legacy']),
+            usage_class=rng.choice(['Credits', 'BYOK', 'Invoice']),
+            billing_authority=rng.choice(['local', 'federated']),
+            route=rng.choice(['chat.completions', 'responses', 'other']),
+            service_tier=rng.choice([None, 'default', 'priority']),
+            receipt_requested=bool(rng.randrange(2)), commercial_program=rng.choice(['ordinary', 'partner']))
+        candidates = [dict(endpoint_id='ep', adapter=rng.choice(['openai', 'anthropic', 'other']),
+                           features=['request_fee'] if index % 2 else [])] if index % 3 else None
+        complete, supported = bool(index % 4), bool(index % 5)
+        expected = decide(RequestedFacts.from_object(facts), reason,
+            canonical(candidates) if candidates is not None else None,
+            complete_candidates=complete, complete_supported_context=supported)
+        assert mapped_decision(facts, reason, candidates, complete, supported) == expected
+    # Explicit eligible positive control, rare in the deliberately mixed grid.
+    candidates = json.loads(value.candidates)
+    assert mapped_decision(base, None, candidates, True, True) == decide(
+        value.facts, None, value.candidates, complete_candidates=True)

@@ -5,6 +5,8 @@ not discover facts, look up authorizations, read a catalog or issue exclusions.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
@@ -39,8 +41,26 @@ from trusted_router.detached_jws import TrustedKey, b64encode, canonical
 @dataclass(frozen=True)
 class PreparedAuthorization:
     decision: Decision
-    body: bytes
     event: dict[str, Any]
+
+    @property
+    def body(self) -> bytes:
+        """Standalone evidence consumers validate here; requests use Port.finalize."""
+        return EVENT.serialize(self.event)
+
+
+_ESCAPED_JSON = r'[\x00-\x1f"\\]|[^\x00-\x7f]'
+
+
+def event_size(value: Any) -> int:
+    """Exact JSON fit for native EVENT values; validation belongs to finalize."""
+    if isinstance(value, dict):
+        return 2 + max(0, len(value)-1) + sum(len(k)+3+event_size(v) for k, v in value.items())
+    if isinstance(value, list):
+        return 2 + max(0, len(value)-1) + sum(map(event_size, value))
+    if isinstance(value, str):
+        return len(value)+2 if re.search(_ESCAPED_JSON, value) is None else len(canonical(value))
+    return 4 if value is None or value is True else 5 if value is False else len(str(value))
 
 
 def decision_reference(decision: Decision) -> dict[str, Any]:
@@ -50,11 +70,56 @@ def decision_reference(decision: Decision) -> dict[str, Any]:
                 candidate_set_sha256=decision.candidate_set_sha256)
 
 
+def mapped_decision(f: dict[str, Any], reason: str | None, projection: list[dict[str, Any]] | None,
+                    complete: bool, supported: bool) -> Decision:
+    """Contract decision algebra over handler-owned values, validated by EVENT.
+
+    This compared-only projection cannot issue an exclusion. The contract's
+    facts/candidate validators still run, once, inside P3's native EVENT walk.
+    The standalone input path below retains decide's external-input boundary.
+    """
+    unresolved = Decision("unknown", "missing_context", False, None, None)
+    if reason is not None and reason not in COHORT_EXCLUSIONS:
+        return Decision("unknown", reason, False, None, None)
+    fixed = {
+        "untyped": f["settle_origin"] != "typed", "non_credits": f["usage_class"] != "Credits",
+        "settlement_authority": f["billing_authority"] != "local",
+        "unsupported_route": f["route"] not in ("chat.completions", "responses"),
+        "service_tier": f["service_tier"] not in (None, "default"),
+        "app_markup": f["app_markup"] > 0, "custom_markup": f["custom_markup"] > 0,
+        "receipt_fee": f["receipt_requested"] or f["receipt_fee"] > 0,
+        "partner": f["commercial_program"] == "partner", **f["features"],
+    }
+    fixed["unsupported_adapter"] = fixed["partner"]
+    def digest(value: Any) -> str:
+        return hashlib.sha256(canonical(value)).hexdigest()
+    if reason is not None and fixed.get(reason, False):
+        return Decision("excluded", reason, False, digest({"facts": f, "reason": reason}), None)
+    if projection is None or not complete:
+        return unresolved
+    require(len({c["endpoint_id"] for c in projection}) == len(projection), "missing_context")
+    if reason in ("partner", "unsupported_adapter"):
+        qualifies = all(c["adapter"] == "other" for c in projection)
+    elif reason in ("tool_cost", "search_cost", "image_cost", "video_cost", "request_fee", "private_tier_basis"):
+        qualifies = all(reason in c["features"] for c in projection)
+    else:
+        qualifies = False
+    if qualifies:
+        return Decision("excluded", reason, True, digest({"facts": f, "reason": reason}), digest(projection))
+    if reason == "unknown_parameters" or any(fixed.values()):
+        return unresolved
+    if any(c["adapter"] in ("openai", "anthropic") for c in projection) and supported:
+        return Decision("eligible", None, False, None, None)
+    return unresolved
+
+
 def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
                           revision: str, dimensions: dict[str, Any],
                           facts: RequestedFacts | None, candidates: bytes | None,
                           complete_candidates: bool, complete_supported_context: bool,
-                          reason: str | None) -> PreparedAuthorization:
+                          reason: str | None, server_facts: dict[str, Any] | None = None,
+                          server_candidates: list[dict[str, Any]] | None = None,
+                          native_request: bool = False) -> PreparedAuthorization:
     """Fit the complete event before handing its immutable bytes to issuance.
 
     P4a preserves a qualifying reason but does not certify an exclusion. Missing
@@ -63,7 +128,11 @@ def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
     """
     decision = Decision("unknown", reason if reason in {"header_absent", "replay"} else "missing_context", False, None, None)
     projection = None
-    if facts is not None:
+    if server_facts is not None:
+        decision = mapped_decision(server_facts, reason, server_candidates,
+                                   complete_candidates, complete_supported_context)
+        projection = server_candidates if complete_candidates else None
+    elif facts is not None:
         try:
             decision = decide(facts, reason, candidates, complete_candidates=complete_candidates,
                               complete_supported_context=complete_supported_context)
@@ -78,19 +147,26 @@ def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
         phase="authorize", authorization_day=reservation.day,
         authorization_id=identity["authorization_id"], identity=identity,
         router_revision=revision, dimensions=dimensions, decision=decision_reference(decision),
-        facts=facts.object() if facts is not None else None, candidates=projection,
+        facts=server_facts if server_facts is not None else facts.object() if facts is not None else None, candidates=projection,
         receipt_locator=reservation.coordinates, partition="C",
         eligibility="eligible" if decision.eligibility == "eligible" else "unknown",
         diagnostic=(None if decision.eligibility == "eligible" else
                     dict(reason=decision.reason or "missing_context", required_bytes=0, candidate_count=0)))
-    fitted = fit_decision(decision, event)
+    required = event_size(event)
+    count = len(projection) if projection is not None else 0
+    fitted = (Decision("unknown", "candidate_receipt_size" if decision.candidate_dependent else "receipt_locator_size",
+                       False, None, None, required, count) if required > EVENT.limit else decision)
+    if not native_request and server_facts is None:
+        fitted = fit_decision(decision, event)
+    if decision.candidate_dependent and not projection:
+        fitted = Decision("unknown", "original_receipt_backing_gap", False, None, None)
     if fitted != decision:
         event.update(facts=None, candidates=None, decision=decision_reference(fitted), eligibility="unknown")
     if fitted.eligibility != "eligible":
         event["diagnostic"] = dict(reason=fitted.reason or "missing_context",
             required_bytes=fitted.required_bytes or 0, candidate_count=fitted.candidate_count or 0)
     # The diagnostic itself must fit; failure is a lost slot, never truncation.
-    return PreparedAuthorization(fitted, EVENT.serialize(event), event)
+    return PreparedAuthorization(fitted, event)
 
 
 def unresolved_authorization(prepared: PreparedAuthorization, reason: str) -> bytes:
@@ -110,6 +186,13 @@ def replay_decision(reservation: Reservation, *, original: dict[str, Any],
                     original_locator: dict[str, Any], revision: str) -> bytes:
     """Link an immutable finalized decision retained by this issuing worker."""
     EVENT(original)
+    return EVENT.serialize(replay_object(reservation, original=original,
+        original_locator=original_locator, revision=revision))
+
+
+def replay_object(reservation: Reservation, *, original: dict[str, Any],
+                  original_locator: dict[str, Any], revision: str) -> dict[str, Any]:
+    """Retained cache bytes were validated by their original finalize."""
     require(original["phase"] == "authorize", "authorization_link_gap")
     require(original["event_at_us"] <= reservation.observed_us, "authorization_link_gap")
     event = {**original, "seq": f"{reservation.event_seq:020}",
@@ -121,7 +204,7 @@ def replay_decision(reservation: Reservation, *, original: dict[str, Any],
         "booking": dict(outcome="not_attempted", reference=None, winner=None),
         "retry_original": {k: original_locator[k] for k in ("day", "boot", "event_seq")},
         "completion_of": None}
-    return EVENT.serialize(event)
+    return event
 
 
 def observed_binding_payload_reference() -> NoReturn:

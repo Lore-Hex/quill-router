@@ -493,7 +493,10 @@ def test_bounded_capture_drops_request_content(monkeypatch):
     try:
         cap, size = shell.capture_terminal(request(), ctx.body, ctx.authorization, 'refund')
         assert cap is not None and cap.body is not ctx.body
-        assert cap.body.metadata is None and cap.body.model_extra == {}
+        assert "metadata" not in cap.body._fields and "model_extra" not in cap.body._fields
+        assert set(cap.body._fields) == {"authorization_id", "route_type", "streamed", "usage_estimated",
+            "service_tier", "actual_input_tokens", "actual_output_tokens", "input_tokens", "output_tokens",
+            "cache_read_input_tokens", "cache_creation_input_tokens", "reasoning_tokens", "additional_cost_microdollars"}
         assert cap.authorization is not ctx.authorization and cap.authorization.tags == {}
         shell.release(size)
     finally:
@@ -749,6 +752,9 @@ def test_nonce_echo_exact_erratum_conditions(monkeypatch, condition):
 def test_request_threads_never_fold_and_capture_never_validates_contract(monkeypatch):
     import sys
 
+    from pydantic import BaseModel
+
+    from trusted_router.async_settle_shadow_v2_native import event_bytes
     from trusted_router.async_settle_shadow_v2_schema import Schema
     monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
     shell, service, _ = installed()
@@ -757,7 +763,8 @@ def test_request_threads_never_fold_and_capture_never_validates_contract(monkeyp
     shell.dispatch(lambda: (entered.set(), release.wait(10)))
     assert entered.wait(10)
     calls = []
-    codes = {Schema.__call__.__code__: 'contract', type(service.port).fold_counts.__code__: 'fold'}
+    codes = {Schema.__call__.__code__: 'contract', type(service.port).fold_counts.__code__: 'fold',
+             event_bytes.__code__: 'EVENT', BaseModel.__init__.__code__: 'model_construction'}
     def recorder(frame, event, arg):
         if event == 'call' and frame.f_code in codes:
             calls.append(codes[frame.f_code])
@@ -774,10 +781,10 @@ def test_request_threads_never_fold_and_capture_never_validates_contract(monkeyp
         shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]), body,
             ctx.authorization, values, [endpoint()], typed=True, federated=False, replay=False)
         sys.setprofile(None)
-        assert 'fold' not in calls
-        # Named remaining seam: the unchanged P3 finalize API mandates EVENT
-        # validation/serialization before byte exposure. Do not bypass it.
-        assert 'contract' in calls, 'P3_FINALIZE_VALIDATION seam changed; reassess the no-validation requirement'
+        assert calls == ['EVENT']
+        assert len(service.port.fold_obligations) == 1
+        assert list(service.port.fold_obligations.values()) == ['pending']
+        assert 'billing_shadow_binding' in values
         assert all(not slot.completion_requested for page in service.journal.pages for slot in page.slots)
         assert service.journal.days[cap.reservation.day].hwm == 0
         shell.release(size)
@@ -866,4 +873,86 @@ def test_worker_death_retains_open_checkpoint_hwm_debt_and_refuses_terminal(monk
     finally:
         die.set()
         shell.worker.join(10)
+        shell.close()
+
+
+@pytest.mark.parametrize('failure', ['build_delta', 'refused_dispatch', 'refused_admission'])
+def test_fold_failure_retains_failed_obligation(monkeypatch, failure):
+    from trusted_router.services import async_settle_shadow_cohort_runtime as module
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    ctx = context()
+    body = GatewayAuthorizeRequest(api_key_hash='key-v1', model=ctx.authorization.model_id,
+        route_type='chat.completions', stream=False, requested_parameters=[])
+    if failure == 'build_delta':
+        def broken(event):
+            raise ValueError('injected delta failure')
+        monkeypatch.setattr(module, 'receipt_bucket', broken)
+    elif failure == 'refused_dispatch':
+        monkeypatch.setattr(shell, 'dispatch', lambda *args: False)
+    else:
+        monkeypatch.setattr(shell, 'admit', lambda size: 'queue_full')
+    try:
+        shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]), body,
+            ctx.authorization, additions(), [endpoint()], typed=True, federated=False, replay=False)
+        shell.join()
+        assert list(service.port.fold_obligations.values()) == ['failed']
+        slot = service.journal.pages[0].slots[0]
+        assert slot.body is not None and not slot.completion_requested
+        assert service.counters[slot.reservation.day]['authorize_attempts'] == 0
+        assert service.port.lost.is_set()
+        service.sync_fold_obligations()
+        assert next(d for d in service.state.days if d.day == slot.reservation.day).veto
+    finally:
+        shell.close()
+
+
+def test_finalize_is_the_only_event_validator_and_exposure_boundary(monkeypatch):
+    from trusted_router.services.async_settle_shadow_cohort import authorize
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    seen = []
+    def retain(raw):
+        slot = service.journal.pages[0].slots[0]
+        assert slot.body is raw
+        assert service.port.fold_obligations[slot.reservation] == 'pending'
+        seen.append(raw)
+    # Hold worker work to observe the obligation before discharge.
+    monkeypatch.setattr(shell, 'dispatch', lambda *args: True)
+    try:
+        value = mapped()
+        result = authorize(shell.settings, ('shadow-v2',), service.port, value,
+            additions(), shell.signer, finalized_event=retain, finish_obligation=shell.defer_authorize)
+        assert result.get('billing_shadow_binding') and len(seen) == 1
+        # Corrupt a scalar that neither decision nor signer inspects. Only the
+        # final whole-EVENT validator can reject it before exposing the bytes.
+        bad = replace(value, dimensions={**value.dimensions, 'adapter': 'invalid'})
+        assert authorize(shell.settings, ('shadow-v2',), service.port, bad,
+            additions(), shell.signer, finalized_event=lambda raw: seen.append(raw),
+            finish_obligation=shell.defer_authorize) == {}
+        assert len(seen) == 1
+        assert service.journal.pages[0].slots[1].body is None
+    finally:
+        shell.close()
+
+
+def test_fold_obligation_capacity_refuses_exposure(monkeypatch):
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    monkeypatch.setattr(shell, 'dispatch', lambda *args: True)
+    ctx = context()
+    body = GatewayAuthorizeRequest(api_key_hash='key-v1', model=ctx.authorization.model_id,
+        route_type='chat.completions', stream=False, requested_parameters=[])
+    try:
+        for index in range(33):
+            shell.tokens = 10
+            values = additions()
+            shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]), body,
+                ctx.authorization, values, [endpoint()], typed=True, federated=False, replay=False)
+            assert bool(values.get('billing_shadow_binding')) is (index < 32)
+        assert len(service.port.fold_obligations) == 32
+        assert set(service.port.fold_obligations.values()) == {'pending'}
+        assert shell.pending == shell.queue.maxsize == 32
+        assert service.port.lost.is_set()
+    finally:
         shell.close()

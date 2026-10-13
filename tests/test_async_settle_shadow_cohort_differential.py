@@ -1,10 +1,15 @@
-"""Dormancy means no entry into this package, no import of its modules, the same
-v1 wrapper calls, and the same bytes, rows and SQL as the historical oracle,
-for pin empty, exact pin/nonmember, and money on across the represented fresh,
-replay, marker-absent, settle/refund and chat/Responses stream handler branches.
-Literal per-request expectations supply the v1 call counts; the unchanged 576-request historical money oracle remains separate. This does not
-claim every possible HTTP error branch, imported dependency immutability,
-network enclave execution, timing equality, or production certification.
+"""PROCESS scope: import, application construction and lifespan do not import or
+install this package when the pin is empty, money async is on, or the cohort
+workspace list is empty. Exact pin, money off and a nonempty list is an active
+process: it imports and installs the package process-wide.
+
+REQUEST scope: an outside-cohort request in an active process enters no package
+function, imports nothing, makes the base v1 wrapper calls and preserves bytes,
+rows and SQL. Every request in a dormant process has the same guarantee.
+Fresh-process recording covers all three dormant configurations and an active
+positive control. In-process recording covers fresh/replay, absent markers,
+settle/refund and chat/Responses streaming branches, with literal v1 counts.
+The unchanged historical money oracle remains a separate comparison.
 """
 from __future__ import annotations
 
@@ -486,20 +491,17 @@ def test_every_reached_hook_statement_preserves_real_http(env, monkeypatch, kind
                 next(setup, None)
 
 
-@pytest.mark.parametrize('dormant', ['empty', 'no_members', 'money', 'nonmember'])
-def test_fresh_process_import_construction_and_lifespan(dormant):
+def test_fresh_process_import_construction_and_lifespan():
     import json
     import subprocess
     import sys
 
     path = Path(__file__).parent/'fixtures/async_settlement/p4a_lifecycle_recorder.py'
-    result = subprocess.run([sys.executable, str(path), dormant], capture_output=True, text=True, timeout=180)  # noqa: S603 - fixed local witness and enum arguments
+    result = subprocess.run([sys.executable, str(path)], capture_output=True, text=True, timeout=180)  # noqa: S603 - fixed local witness and enum arguments
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout.splitlines()[-1])
-    if dormant == 'nonmember':
-        # P4A_NONMEMBER_LIFECYCLE: an app with a configured member installs
-        # process-wide before a request workspace exists. Per-request nonmember
-        # dormancy is proved separately; do not mislabel this as zero imports.
-        assert evidence['imports'] and evidence['entries']
-    else:
-        assert evidence == dict(imports=[], entries=[])
+    assert set(evidence) == {'empty', 'no_members', 'money', 'active'}
+    for mode in ('empty', 'no_members', 'money'):
+        assert evidence[mode] == dict(imports=[], entries=[], installed=False)
+    assert evidence['active']['imports'] and evidence['active']['entries']
+    assert evidence['active']['installed'] is True

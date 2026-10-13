@@ -86,8 +86,10 @@ def probe(monkeypatch, adapter, route, streamed, *, marker=True, kind='settle', 
     model = Model(id=e.model_id, provider=e.provider, name='Probe', context_length=1000000, prepaid_available=True)
     monkeypatch.setitem(gateway.MODELS, model.id, model)
     monkeypatch.setitem(gateway.model_catalog.MODEL_ENDPOINTS, e.id, e)
-    from tests.fixture_routes import clear_catalog_caches
-    clear_catalog_caches()
+    from tests.fixture_routes import bypass_catalog_caches
+    # Use the repository fixture-catalog boundary: request-local projections
+    # must not empty the session caches and force a full rebuild next setup.
+    bypass_catalog_caches(monkeypatch)
     shell, service, _ = installed()
     cfg = shell.settings
     cfg._async_settle_shadow_workspace_ids = frozenset({'ws-rpc'})
@@ -252,9 +254,12 @@ def test_installed_worker_dormant_http_bytes_money_and_counts(monkeypatch, dorma
 
 
 def test_lifecycle_installs_worker_only_in_existing_v2_branch(monkeypatch):
+    from fastapi import FastAPI
+
     from tests.test_async_settle_shadow_cohort import config
-    from trusted_router.main import create_app
+    from trusted_router.main import _v2_install_hook
     from trusted_router.services import async_settle_shadow_cohort_runtime as module
+    from trusted_router.storage import STORE
     _seed_typed_gateway_store()
     original = module.install
     calls = []
@@ -262,11 +267,16 @@ def test_lifecycle_installs_worker_only_in_existing_v2_branch(monkeypatch):
         calls.append(1)
         original(app, settings, backend)
     monkeypatch.setattr(module, 'install', install)
+    app = FastAPI()
+    shell, service, _ = installed()
+    shell.close()
+    app.state.async_settle = runtime()
+    app.state.async_settle_shadow_observation = service
     for pin, workspaces, money in [('', 'ws-rpc', False), ('shadow-v2', '', False),
                                    ('shadow-v2', 'ws-rpc', True), ('shadow-v2', 'ws-rpc', False)]:
         cfg = config(async_settle_shadow_policy=pin, async_settle_shadow_workspaces=workspaces,
                      async_settle_enabled=money)
-        app = create_app(cfg, configure_store_arg=False, init_observability=False)
+        _v2_install_hook(app, cfg, STORE, 'ws-rpc')
         active = pin == 'shadow-v2' and bool(workspaces) and not money
         assert hasattr(app.state, 'async_settle_shadow_cohort') is active
         if active:

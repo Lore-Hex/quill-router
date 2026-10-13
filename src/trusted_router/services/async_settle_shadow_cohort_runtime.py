@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import contextvars
 import datetime as dt
+import json
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from queue import Empty, Full, Queue
-from typing import Any, TypeVar
+from types import SimpleNamespace
+from typing import Any, NamedTuple, TypeVar
 
 from trusted_router.async_settle_shadow_binding import ShadowSigner
 from trusted_router.async_settle_shadow_cohort import (
@@ -72,7 +74,7 @@ def authorization_identity(auth: GatewayAuthorization, runtime: Any, typed: bool
 
 def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpoints: list[Any],
                         typed: bool, federated: bool, runtime: Any, revision: str,
-                        observed_us: int) -> AuthorizeInput:
+                        observed_us: int, validated_snapshot: bool = False, server_owned: bool = False) -> AuthorizeInput:
     """Ruling 5: one mapping of handler-owned facts and complete returned candidates.
 
     Missing members and unsupported feature representations are unresolved.
@@ -83,6 +85,7 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
     dims = receipt_dimensions(auth.provider, body.route_type, body.stream)
     identity = authorization_identity(auth, runtime, typed)
     facts = candidates = None
+    server_facts = None
     complete = supported = False
     reason: str | None = "missing_context"
     try:
@@ -96,7 +99,10 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
         # A compound/alias route has no complete program witness at this seam.
         require(body.model == auth.model_id and not body.models, "missing_context")
         require(type(auth.additional_cost_reservation_microdollars) is int, "missing_context")
-        requested = Eligibility(typed=typed, usage_type=auth.usage_type.value,
+        # Selection reads handler-owned scalars; the EVENT owns their strict
+        # domain validation. Do not validate them again through a billing DTO.
+        factory = SimpleNamespace if server_owned else Eligibility
+        requested: Any = factory(typed=typed, usage_type=auth.usage_type.value,
             authority="federated" if federated else auth.settlement,
             route_type=body.route_type, streamed=body.stream, service_tier=body.service_tier,
             app_markup=auth.app_markup_basis_points, custom_markup=auth.custom_model_markup_basis_points,
@@ -112,12 +118,13 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
         complete = [e.id for e in endpoints] == list(auth.candidate_endpoint_ids)
         # Pricing support is proved from the exact returned objects, never a later catalog.
         try:
-            project(tuple(endpoints), auth.created_at)
+            if not validated_snapshot:
+                project(tuple(endpoints), auth.created_at)
             supported = complete
         except (ValueError, TypeError, KeyError):
             supported = False
-        candidates = canonical(projection)
-        facts = RequestedFacts.from_object(dict(settle_origin="typed" if typed else "legacy",
+        candidates = None if server_owned else canonical(projection)
+        fact_values = dict(settle_origin="typed" if typed else "legacy",
             usage_class=requested.usage_type, billing_authority=requested.authority,
             route=requested.route_type, streamed=requested.streamed, service_tier=requested.service_tier,
             app_markup=requested.app_markup, custom_markup=requested.custom_markup,
@@ -127,7 +134,7 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
                 liberty=requested.liberty, tool_cost=requested.tool_cost, search_cost=requested.search_cost,
                 image_cost=requested.image_cost, video_cost=requested.video_cost,
                 request_fee=bool(requested.request_fee), private_tier_basis=requested.private_tier_basis),
-            unknown_features=[]))
+            unknown_features=[])
         reason = exclusion(requested)
         if body.inference_receipt:
             reason = "receipt_fee"
@@ -135,29 +142,46 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
             reason = "unsupported_adapter"
         if reason is None and projection and all("request_fee" in p["features"] for p in projection):
             reason = "request_fee"
+        if server_owned:
+            server_facts = fact_values
+        else:
+            facts = RequestedFacts.from_object(fact_values)
     except (ValueError, AttributeError, TypeError, KeyError) as error:
         reason = "unknown_parameters" if str(error) == "unknown_parameters" else "missing_context"
-    return AuthorizeInput(observed_us, identity, revision, dims, facts, candidates, complete, supported, reason)
+    return AuthorizeInput(observed_us, identity, revision, dims, facts, candidates, complete, supported, reason,
+                          server_facts, projection if server_facts is not None else None, validated_snapshot)
 
 
-def compact_terminal_facts(body: GatewaySettleRequest) -> GatewaySettleRequest:
+class TerminalFacts(NamedTuple):
+    """Bounded scalar handoff; strict DTO validation runs on the worker."""
+    authorization_id: str
+    route_type: Any
+    streamed: Any
+    usage_estimated: Any
+    service_tier: Any
+    actual_input_tokens: Any
+    actual_output_tokens: Any
+    input_tokens: Any
+    output_tokens: Any
+    cache_read_input_tokens: Any
+    cache_creation_input_tokens: Any
+    reasoning_tokens: Any
+    additional_cost_microdollars: Any
+
+
+def compact_terminal_facts(body: GatewaySettleRequest) -> TerminalFacts:
     """Retain only bounded comparator inputs, never request extras or metadata."""
-    values: dict[str, Any] = dict(authorization_id=body.authorization_id,
-        route_type=body.route_type,
-        streamed=body.streamed,
-        usage_estimated=body.usage_estimated,
-        service_tier=body.service_tier,
-        actual_input_tokens=body.actual_input_tokens,
-        actual_output_tokens=body.actual_output_tokens,
-        input_tokens=body.input_tokens,
-        output_tokens=body.output_tokens,
-        cache_read_input_tokens=body.cache_read_input_tokens,
-        cache_creation_input_tokens=body.cache_creation_input_tokens,
-        reasoning_tokens=body.reasoning_tokens,
-        additional_cost_microdollars=body.additional_cost_microdollars)
-    require(all(len(v) <= 128 for v in values.values() if isinstance(v, str)), "identity")
-    require(all(0 <= v < 1 << 63 for v in values.values() if type(v) is int), "integer")
-    return GatewaySettleRequest.model_construct(**values)
+    values = TerminalFacts(body.authorization_id, body.route_type, body.streamed,
+        body.usage_estimated, body.service_tier, body.actual_input_tokens,
+        body.actual_output_tokens, body.input_tokens, body.output_tokens,
+        body.cache_read_input_tokens, body.cache_creation_input_tokens,
+        body.reasoning_tokens, body.additional_cost_microdollars)
+    for value in values:
+        if isinstance(value, str):
+            require(len(value) <= 128, "identity")
+        elif type(value) is int:
+            require(0 <= value < 1 << 63, "integer")
+    return values
 
 
 def compact_authorization(auth: GatewayAuthorization) -> GatewayAuthorization:
@@ -215,7 +239,7 @@ def retained_replay_decision(cache: dict[str, bytes], authorization_id: str) -> 
     raw = cache.get(authorization_id)
     require(raw is not None, "authorization_link_gap")
     assert raw is not None
-    return EVENT.parse(raw)
+    return json.loads(raw)
 
 
 def receipt_prediction(capture: Capture, verified: VerifiedTerminal) -> dict[str, Any] | None:
@@ -293,7 +317,8 @@ class Runtime:
             else:
                 inputs = map_requested_facts(body=body, authorization=auth, endpoints=endpoints,
                     typed=typed, federated=federated, runtime=self.async_runtime,
-                    revision=self.settings.source_revision, observed_us=observed_us)
+                    revision=self.settings.source_revision, observed_us=observed_us,
+                    validated_snapshot="billing_snapshot" in additions, server_owned=True)
             def retain(raw: bytes) -> None:
                 if not self.guard.acquire(blocking=False):
                     self.port.lost.set()
@@ -306,7 +331,7 @@ class Runtime:
                     self.guard.release()
             fields = authorize(self.settings, capability,
                 self.port, inputs, additions, self.signer, replay=replay,
-                original_decision=original, original_locator=original["receipt_locator"] if original else None,
+                original_decision=original, retained_original=True, original_locator=original["receipt_locator"] if original else None,
                 finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize)
             additions.update(compared_handoff_fields(fields, auth))
         except Exception:
@@ -417,29 +442,31 @@ class Runtime:
 
     def defer_fold(self, reservation: Reservation, event: dict[str, Any],
                    rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
-        # P4A_PENDING_FOLD_PUBLICATION: register P3 deferred-fold debt here
-        # when its API lands. Current completion/HWM barriers retain this debt.
-        # EVENT's fixed 4096-byte maximum is charged alongside terminal work
+        # finalize(fold_owed=True) owns the debt before bytes are exposed.
+        # This integration point transfers only its bounded work to the worker.
+        # Charge two encoded EVENT bounds for the handoff alongside terminal work
         # and the retained decision cache, including the currently running item.
-        size = 4096
+        size = 2*EVENT.limit
         if self.admit(size):
-            self.port.lost.set()
+            self.port.fail_fold(reservation)
             return
         if not self.dispatch(self.fold_work, reservation, event, rows, prediction, size):
-            # Finalized but not completed: P3's HWM/close barrier retains the debt.
-            self.port.lost.set()
+            self.port.fail_fold(reservation)
             self.release(size)
 
     def fold_work(self, reservation: Reservation, event: dict[str, Any],
                   rows: tuple[Row, ...], prediction: dict[str, Any] | None, size: int) -> None:
         try:
             self.fold_complete(reservation, event, rows, prediction)
+        except Exception:
+            self.port.fail_fold(reservation)
+            raise
         finally:
             self.release(size)
 
     def fold_complete(self, reservation: Reservation, event: dict[str, Any],
                       rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
-        require(self.port.fold_counts(reservation.day, receipt_bucket(event)), "counter_overflow")
+        require(self.port.fold_counts(reservation.day, receipt_bucket(event), obligation=reservation), "counter_overflow")
         if prediction is not None:
             with self.port.service.lock:
                 self.port.service.counters[reservation.day]["admission_observer"]["prediction_"+prediction["prediction"]] += 1
@@ -473,6 +500,8 @@ class Runtime:
     def process(self, capture: Capture) -> None:
         if capture.finalized:
             return
+        if isinstance(capture.body, TerminalFacts):
+            capture.body = GatewaySettleRequest.model_validate(capture.body._asdict(), strict=True)
         if capture.prediction is None:
             capture.prediction = self.port.capture_prediction(capture.authorization.workspace_id, capture.reservation.observed_us)
         auth = capture.authorization
@@ -577,14 +606,17 @@ class Runtime:
                             self.port.service.journal.days[reservation.day].resets += 1
             else:
                 rows = (row,)
-        EVENT(event)
-        raw = self.port.finalize(reservation, event)
+        raw = self.port.finalize(reservation, event, fold_owed=True)
         require(raw is not None, "unfinished_slot")
         capture.finalized = True
         if defer:
             self.defer_fold(reservation, event, rows, prediction)
         else:
-            self.fold_complete(reservation, event, rows, prediction)
+            try:
+                self.fold_complete(reservation, event, rows, prediction)
+            except Exception:
+                self.port.fail_fold(reservation)
+                raise
         if reconcile is not None:
             self.reconcile_booking(reconcile, event)
 

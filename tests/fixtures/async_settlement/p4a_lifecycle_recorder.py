@@ -37,17 +37,26 @@ try:
     from trusted_router.main import create_app
 
     _seed_typed_gateway_store()
-    mode = sys.argv[1]
-    cfg = settings(async_settle_shadow_policy='' if mode == 'empty' else 'shadow-v2',
-        async_settle_enabled=mode == 'money',
-        async_settle_shadow_workspaces='' if mode == 'no_members' else 'nonmember')
-    app = create_app(cfg, configure_store_arg=False, init_observability=False)
-    async def lifecycle():
-        async with app.router.lifespan_context(app):
-            pass
-    asyncio.run(lifecycle())
+    evidence = {}
+    # Dormant modes have no package state. Run them before the positive control
+    # in one fresh interpreter; do not erase sys.modules to fake fresh imports.
+    assert not imports and not entries
+    for mode in ('empty', 'no_members', 'money', 'active'):
+        imports.clear()
+        entries.clear()
+        cfg = settings(async_settle_shadow_policy='' if mode == 'empty' else 'shadow-v2',
+            async_settle_enabled=mode == 'money',
+            async_settle_shadow_workspaces='' if mode == 'no_members' else 'member')
+        app = create_app(cfg, configure_store_arg=False, init_observability=False)
+        async def lifecycle(app=app):
+            async with app.router.lifespan_context(app):
+                pass
+        asyncio.run(lifecycle())
+        evidence[mode] = dict(imports=list(imports), entries=list(entries),
+                             installed=hasattr(app.state, 'async_settle_shadow_cohort'))
+
 finally:
     sys.setprofile(None)
     threading.setprofile(None)
     builtins.__import__ = original_import
-print(json.dumps(dict(imports=imports, entries=entries)))
+print(json.dumps(evidence))
