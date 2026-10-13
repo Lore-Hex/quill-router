@@ -383,12 +383,12 @@ def test_deterministic_output_bytes(tmp_path):
     assert outputs[0] == outputs[1]
 
 
-def receipt_page(boot, at_us, day=DAY, sequence=1):
+def receipt_page(boot, event_at_us, receipt_at_us, day=DAY, sequence=1):
     page = json.loads(Path('tests/fixtures/async_settlement/shadow_v2/receipt_pages.json').read_bytes())['variants'][0]['object']
     seq = f'{sequence:020d}'
     page.update(boot=boot, day=day, first_seq=seq, last_seq=seq)
     event = page['events'][0]
-    event.update(seq=seq, event_at_us=at_us, receipt_at_us=at_us, authorization_day=day)
+    event.update(seq=seq, event_at_us=event_at_us, receipt_at_us=receipt_at_us, authorization_day=day)
     event['receipt_locator'].update(boot=boot, day=day, first_seq=seq, event_seq=seq)
     return page
 
@@ -396,7 +396,57 @@ def receipt_page(boot, at_us, day=DAY, sequence=1):
 def attempt_record(files, boot, at_us):
     return dict(kind='a3_opted_attempt', boot=boot['boot'], at_us=at_us, result='failed',
                 receipt=dict(day=DAY, boot=boot['boot'], sequence=1,
-                             original=files.obj('native/attempt.json', receipt_page(boot['boot'], at_us), p1.PAGE)))
+                             original=files.obj('native/attempt.json', receipt_page(boot['boot'], at_us, at_us), p1.PAGE)))
+
+
+@pytest.mark.parametrize('event_offset', [-1, 1], ids=['before_readiness', 'after_readiness'])
+def test_attempt_delayed_storage_joins_event_time(tmp_path, event_offset):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    ready_at = next(row['at_us'] for row in fake.records['readiness'] if row['kind'] == 'a3_traffic_ready')
+    event_at = ready_at + event_offset
+    stored_at = ready_at + 100
+    attempt = attempt_record(files, value.boots[0], event_at)
+    page = receipt_page(attempt['boot'], event_at, stored_at)
+    ref = files.obj('native/delayed-storage.json', page, p1.PAGE)
+    assert p1.PAGE.parse(files.read(ref)) == page
+    assert page['events'][0]['event_at_us'] == attempt['at_us'] < stored_at
+    attempt['receipt']['original'] = ref
+    fake.records['readiness'].append(attempt)
+    run, result = get_readiness(files, value, pins, fake)
+    assert len(result.ledgers) == 1 and len(result.proofs) == 6
+    assert result.complete is (event_offset > 0)
+    assert result.attempts == (attempt,)
+    assert [row['reason'] for row in run.missing] == ([] if event_offset > 0 else ['early_opted_attempt'])
+    status = json.loads((files.root / 'readiness/status.json').read_bytes())
+    assert status['complete'] is (event_offset > 0)
+    assert json.loads(files.read(status['attempts'])) == [attempt]
+    assert p1.PAGE.parse(files.read(ref)) == page
+
+
+def test_attempt_earlier_event_cannot_join_later_storage_time(tmp_path):
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    ready_at = next(row['at_us'] for row in fake.records['readiness'] if row['kind'] == 'a3_traffic_ready')
+    stored_at = ready_at + 100
+    attempt = attempt_record(files, value.boots[0], stored_at)
+    page = receipt_page(attempt['boot'], ready_at - 1, stored_at)
+    ref = files.obj('native/earlier-event.json', page, p1.PAGE)
+    assert p1.PAGE.parse(files.read(ref)) == page
+    assert page['events'][0]['event_at_us'] < ready_at < attempt['at_us']
+    assert page['events'][0]['receipt_at_us'] == attempt['at_us']
+    attempt['receipt']['original'] = ref
+    fake.records['readiness'].append(attempt)
+    run, result = get_readiness(files, value, pins, fake)
+    assert not result.complete and not result.ledgers and not result.proofs
+    assert result.attempts == (attempt,)
+    assert any(row['reason'] == 'attempt_without_inventory_interval' for row in run.missing)
+    status = json.loads((files.root / 'readiness/status.json').read_bytes())
+    assert not status['complete']
+    assert json.loads(files.read(status['attempts'])) == [attempt]
+    assert p1.PAGE.parse(files.read(ref)) == page
 
 
 @pytest.mark.parametrize('case', ['valid', 'empty', 'boot', 'day', 'sequence', 'zero', 'event_time', 'early_event'])
@@ -410,9 +460,9 @@ def test_attempt_original_page_coordinates(tmp_path, case):
     at_us = START - 86_400_000_000 + 100 if case == 'day' else START + 100
     if case in ('event_time', 'early_event'):
         at_us = START + (101 if case == 'event_time' else 12)
-    page = receipt_page(boot, at_us, day, 2 if case == 'sequence' else 1)
+    page = receipt_page(boot, at_us, at_us, day, 2 if case == 'sequence' else 1)
     if case == 'zero':
-        page = receipt_page(boot, at_us, day, 0)
+        page = receipt_page(boot, at_us, at_us, day, 0)
         attempt['receipt']['sequence'] = 0
     # Changed coordinates, except zero, are independently valid PAGE objects.
     # Empty/zero originals exercise the existing parser, not FILE_REF reading.

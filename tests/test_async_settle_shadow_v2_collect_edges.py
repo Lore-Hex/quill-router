@@ -416,7 +416,7 @@ def test_attempt_population_and_packaged_missing_state(tmp_path, case):
     if case == 'unknown':
         attempt['boot'] = attempt['receipt']['boot'] = 'not-in-inventory'
         attempt['receipt']['original'] = files.obj('native/unmatched-attempt.json',
-            receipt_page('not-in-inventory', attempt['at_us']), p1.PAGE)
+            receipt_page('not-in-inventory', attempt['at_us'], attempt['at_us']), p1.PAGE)
     elif case == 'malformed':
         attempt['at_us'] = 'unknown'
     elif case == 'outside':
@@ -707,6 +707,61 @@ def test_emitted_coordinate_file_join(tmp_path, field, case):
     else:
         with pytest.raises((ValueError, KeyError)):
             ports.resolve_emitted_reference(files, field, coordinate, originals)
+
+
+@pytest.mark.parametrize('case', ['changed_digest', 'wrong_kind'])
+def test_emitted_receipt_existing_index_entry(tmp_path, case):
+    from tests.test_async_settle_shadow_v2_collect import attempt_record, receipt_page
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router import async_settle_shadow_v2_collect_ports as ports
+    from trusted_router import async_settle_shadow_v2_evidence as p1
+
+    files, binding, fake, queries = setup(tmp_path, ('zero-row',))
+    _, value = inventory(files, binding, fake, queries)
+    pins, fake = readiness_sources(files, value)
+    attempt = attempt_record(files, value.boots[0], START + 100)
+    first = attempt['receipt']['original']
+    first_page = p1.PAGE.parse(files.read(first))
+    ref = first
+    coordinate = dict(kind='receipt_page', sha256=first['sha256'], bytes=first['bytes'])
+    if case == 'changed_digest':
+        page = receipt_page(attempt['boot'], attempt['at_us'], attempt['at_us'])
+        revision = first_page['events'][0]['router_revision']
+        page['events'][0]['router_revision'] = ('b' if revision == 'a' * 40 else 'a') * 40
+        ref = files.obj('native/changed-page.json', page, p1.PAGE)
+        assert p1.PAGE.parse(files.read(ref)) == page
+        assert ref['bytes'] == first['bytes'] and ref['sha256'] != first['sha256']
+    else:
+        coordinate['kind'] = 'health'
+        assert files.read(ref) == files.read(first)
+        assert coordinate['sha256'] == ref['sha256']
+    a2.FILE_REF(ref)
+    # The lookup succeeds in both cases; the kind/digest comparison must reject it.
+    key = (coordinate['kind'], coordinate['sha256'], coordinate['bytes'])
+    originals = {key: ref}
+    assert originals[key] == ref
+    matching = dict(kind='receipt_page', sha256=ref['sha256'], bytes=ref['bytes'])
+    matching_key = (matching['kind'], matching['sha256'], matching['bytes'])
+    assert ports.resolve_emitted_reference(files, 'receipt.original', matching, {matching_key: ref}) == ref
+    attempt['receipt']['original'] = coordinate
+    resolved = None
+    try:
+        resolved = ports.resolve_emitted_reference(files, 'receipt.original', coordinate, originals)
+    except ValueError:
+        pass
+    if resolved is not None:
+        attempt['receipt']['original'] = resolved
+    fake.records['readiness'].append(attempt)
+    run, result = get_readiness(files, value, pins, fake)
+    assert resolved is None
+    assert not result.complete and not result.ledgers
+    assert result.attempts == (attempt,)
+    assert any(row['reason'] == 'attempt_without_inventory_interval' for row in run.missing)
+    status = json.loads((files.root / 'readiness/status.json').read_bytes())
+    assert not status['complete']
+    assert json.loads(files.read(status['attempts'])) == [attempt]
+    assert p1.PAGE.parse(files.read(first)) == first_page
+    assert p1.PAGE.parse(files.read(ref))
 
 
 @pytest.mark.parametrize('case', ['valid', 'old_claim', 'old_publication'])
