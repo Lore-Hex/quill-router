@@ -2336,3 +2336,8 @@ def get_settings() -> Settings:
     `_settings_customise_sources` on Settings itself, so this is now a
     pure factory with no side effects."""
     return Settings()
+
+
+def in_v2_cohort(pin: str, workspace: str, money_flag: bool, cohort: frozenset[str] | set[str]) -> bool:
+    """The only v2 request dormancy gate; capability is a separate protocol fact."""
+    return pin == "shadow-v2" and workspace in cohort and not money_flag

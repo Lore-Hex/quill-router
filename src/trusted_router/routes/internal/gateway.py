@@ -65,7 +65,7 @@ from trusted_router.catalog import (
     endpoint_zero_data_retention,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
-from trusted_router.config import Settings, get_settings
+from trusted_router.config import Settings, get_settings, in_v2_cohort
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
     USER_MODEL_OWNER_SETTLE_FIELD,
@@ -541,7 +541,7 @@ async def settle_gateway(
         from trusted_router.services.async_settle_shadow import observe_entry
         return await observe_entry(request, body, settings, background_tasks,
             lambda: run_in_threadpool(_settle_gateway_with_admission_sync, body,
-                settings=settings, background_tasks=background_tasks), kind="settle")
+                settings=settings, background_tasks=background_tasks, _shadow_request=request), kind="settle")
     return await run_in_threadpool(
         _settle_gateway_with_admission_sync,
         body,
@@ -2389,7 +2389,7 @@ def register(router: APIRouter) -> None:
             from trusted_router.services.async_settle_shadow import observe_entry
             return await observe_entry(request, body, settings, background_tasks,
                 lambda: run_in_threadpool(_settle_gateway_authorization, body, success=False,
-                    settings=settings, background_tasks=background_tasks), kind="refund")
+                    settings=settings, background_tasks=background_tasks, _shadow_request=request), kind="refund")
         return await run_in_threadpool(
             _settle_gateway_authorization,
             body,
@@ -2872,6 +2872,12 @@ def _gateway_authorize_response(
             typed=async_store is not None and getattr(async_store, "request_record_write_mode", "legacy") == "typed",
             federated=async_federated, replay=idempotent_replay, effective_at=async_effective_at,
         )
+    if async_request is not None:
+        try:
+            _v2_authorize_hook(settings, async_request, async_body, authorization, async_additions,
+                endpoint_candidates, async_federated, idempotent_replay)
+        except Exception:  # noqa: S110 - observation entry cannot change committed authorization
+            pass
     if authorization.workspace_id in settings.async_settle_shadow_workspace_ids and async_request is not None:
         try:
             shadow_runtime = getattr(async_request.app.state, "async_settle_shadow", None)
@@ -3468,6 +3474,83 @@ def _record_refund_benchmark_safely(
         )
 
 
+def _v2_authorize_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
+                       additions: dict, candidates: Any, federated: bool, replay: bool) -> None:
+    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+                        settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return None
+    try:
+        from trusted_router.services.async_settle_shadow_cohort_runtime import authorize_http
+        backend = typed_billing_store(STORE)
+        authorize_http(request, body, authorization, additions, [e for _, e in candidates],
+            typed=backend is not None and getattr(backend, "request_record_write_mode", "legacy") == "typed",
+            federated=federated, replay=replay)
+    except Exception:  # noqa: S110 - committed authorization owns the response
+        pass
+
+
+def _terminal_once(hook: Any, callback: Any) -> Any:
+    # The boundary includes acquisition/import/entry, and retains either money
+    # outcome before any observation error can escape. A faulty hook cannot retry it.
+    invoked = False
+    result: Any = None
+    failure: BaseException | None = None
+    def once() -> Any:
+        nonlocal invoked, result, failure
+        if not invoked:
+            invoked = True
+            try:
+                result = callback()
+            except BaseException as error:
+                failure = error
+        if failure is not None:
+            raise failure
+        return result
+    try:
+        hook(once)
+    except Exception:  # noqa: S110 - observation errors preserve the money outcome
+        pass
+    return once()
+
+
+def _v2_settle_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
+                    callback: Any) -> Any:
+    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+                        settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return callback()
+    def invoke(once: Any) -> Any:
+        from trusted_router.services.async_settle_shadow_cohort_runtime import terminal_http
+        return terminal_http(request, body, authorization, "settle", once)
+    return _terminal_once(invoke, callback)
+
+
+def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
+                    callback: Any, *, success: bool) -> Any:
+    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+                        settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return callback()
+    def invoke(once: Any) -> Any:
+        from trusted_router.services.async_settle_shadow_cohort_runtime import terminal_http
+        return terminal_http(request, body, authorization, "settle" if success else "refund", once)
+    return _terminal_once(invoke, callback)
+
+
+def _v2_capture_hook(settings: Settings, authorization: GatewayAuthorization, body: Any,
+                    endpoint: Any, document: Any, *, replay: bool) -> None:
+    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+                        settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return None
+    try:
+        from trusted_router.services.async_settle_shadow_cohort_runtime import capture_prices
+        if replay:
+            endpoint = _select_authorized_endpoint(authorization, body)
+            document = billing_pricing_snapshot(authorization)
+        capture_prices(authorization, endpoint, document, model_catalog.MODEL_ENDPOINTS,
+                       prices_match_booking=not replay)
+    except Exception:  # noqa: S110 - capture cannot affect money
+        pass
+
+
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 @timed_gateway_sync
 def _settle_gateway_with_admission_sync(
@@ -3475,11 +3558,19 @@ def _settle_gateway_with_admission_sync(
     *,
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
+    _shadow_request: Request | None = None,
+    _authorization: GatewayAuthorization | None = None,
 ) -> dict[str, Any]:
     with gateway_phase("key_lookup_ms", after="routing_ms"):
-        authorization = STORE.get_gateway_authorization(body.authorization_id)
+        authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+            authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return _terminal_once(
+            lambda once: _v2_settle_hook(settings, _shadow_request, body, authorization, once),
+            lambda: _settle_gateway_with_admission_sync(body, settings=settings,
+                background_tasks=background_tasks, _authorization=authorization))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3524,6 +3615,7 @@ def _settle_gateway_authorization(
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
     _authorization: GatewayAuthorization | None = None,
+    _shadow_request: Request | None = None,
 ) -> dict[str, Any]:
     timing_start = perf_counter()
     # getattr: some callers/tests build the settle body via model_construct,
@@ -3534,6 +3626,12 @@ def _settle_gateway_authorization(
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+            authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return _terminal_once(
+            lambda once: _v2_refund_hook(settings, _shadow_request, body, authorization, once, success=success),
+            lambda: _settle_gateway_authorization(body, success=success, settings=settings,
+                background_tasks=background_tasks, _authorization=authorization))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3541,6 +3639,10 @@ def _settle_gateway_authorization(
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
     if authorization.settled:
+        try:
+            _v2_capture_hook(settings, authorization, body, None, None, replay=True)
+        except Exception:  # noqa: S110 - observation entry cannot become a money failure
+            pass
         if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
             try:
                 from trusted_router.services.async_settle_shadow import capture_prices
@@ -3715,6 +3817,10 @@ def _settle_gateway_authorization(
         except ValueError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     billing_snapshot = billing_pricing_snapshot(authorization)
+    try:
+        _v2_capture_hook(settings, authorization, body, selected_endpoint, billing_snapshot, replay=False)
+    except Exception:  # noqa: S110 - observation entry cannot become a money failure
+        pass
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_prices

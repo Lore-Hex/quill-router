@@ -28,7 +28,7 @@ from trusted_router.analytics_sink import create_analytics_sink
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
 from trusted_router.catalog_ingest import report_refused_manifest_rows
-from trusted_router.config import Settings, get_settings
+from trusted_router.config import Settings, get_settings, in_v2_cohort
 from trusted_router.dashboard import public_not_found_html, public_not_found_markdown
 from trusted_router.errors import error_response
 from trusted_router.gateway_timing import gateway_error_timing_fields
@@ -207,6 +207,14 @@ def _configure_application_logging() -> None:
     app_logger.addHandler(handler)
 
 
+def _v2_install_hook(app: Any, settings: Settings, backend: Any, workspace: str) -> None:
+    if not in_v2_cohort(settings.async_settle_shadow_policy, workspace,
+                        settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        return None
+    from trusted_router.services.async_settle_shadow_cohort_runtime import install
+    install(app, settings, backend)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -293,6 +301,8 @@ def create_app(
                 install as install_shadow_health,
             )
             install_shadow_health(app, settings, typed_billing_store(STORE))
+            _v2_install_hook(app, settings, typed_billing_store(STORE),
+                next(iter(settings.async_settle_shadow_workspace_ids)))
         elif settings.async_settle_shadow_workspace_ids and not settings.async_settle_shadow_policy:
             from trusted_router.services.async_settle_shadow import install as install_settle_shadow
             install_settle_shadow(app, settings, typed_billing_store(STORE))

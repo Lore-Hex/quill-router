@@ -401,6 +401,25 @@ def test_g3_g4_partition_schemas_reject_false_equations() -> None:
 
 def test_no_runtime_imports_or_calls_to_new_modules() -> None:
     allowed = {'async_settle_shadow_lifecycle.py': {'trusted_router.async_settle_shadow_v2_evidence': ['MAX_DAY_BUCKETS']}, 'storage_gcp_shadow_observation.py': {'trusted_router.async_settle_shadow_v2_a1_deltas': ['counter_projection', 'without'], 'trusted_router.async_settle_shadow_v2_a1_health': ['HEALTH_CLAIM'], 'trusted_router.async_settle_shadow_v2_evidence': ['TRANSACTION_BODY_BYTES', 'transaction_bodies'], 'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'require']}, 'async_settle_shadow_journal.py': {'trusted_router.async_settle_shadow_v2_native': ['event_bytes'], 'trusted_router.async_settle_shadow_v2_a1_evidence': ['CAP', 'CLOSE_RESULT', 'CLOSURE', 'COUNTER', 'KINDS', 'MANIFEST', 'RETENTION', 'validate_row'], 'trusted_router.async_settle_shadow_v2_a1_health': ['HEALTH', 'HEALTH_CLAIM'], 'trusted_router.async_settle_shadow_v2_a1_reconciliation': ['event_locator', 'validate_completion'], 'trusted_router.async_settle_shadow_v2_evidence': ['CERTIFICATE_RECORD', 'EVENT', 'EVENT_BYTES', 'EVENT_CAP', 'MAX_DAY_BUCKETS', 'MAX_PAGES', 'PAGE', 'PAGE_BYTES', 'PAGE_EVENTS', 'RESERVATION_BLOCK', 'SAMPLE', 'TERMINAL_CAP'], 'trusted_router.async_settle_shadow_v2_schema': ['INT64', 'POLICY', 'day_at', 'identity', 'integer', 'require']}, 'async_settle_shadow_health_state.py': {'trusted_router.async_settle_shadow_v2_a1_health': ['HEALTH', 'HEALTH_BASIS', 'health_usable', 'validate_publication'], 'trusted_router.async_settle_shadow_v2_a1_numbers': ['age_microseconds'], 'trusted_router.async_settle_shadow_v2_schema': ['INT64', 'POLICY']}, 'storage_gcp_shadow_attachments.py': {'trusted_router.async_settle_shadow_v2_a1_health': ['HEALTH_BASIS_BATCH'], 'trusted_router.async_settle_shadow_v2_schema': ['require']}, 'async_settle_shadow_attachments.py': {'trusted_router.async_settle_shadow_v2_evidence': ['MAX_DAY_BUCKETS'], 'trusted_router.async_settle_shadow_v2_a1_health': ['HEALTH_BASIS_BATCH', 'PUBLISHER_TRACE_PAGE'], 'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'require', 'sha256']}, 'services/async_settle_shadow_health.py': {'trusted_router.async_settle_shadow_v2_a1_evidence': ['validate_close_result'], 'trusted_router.async_settle_shadow_v2_a1_health': ['PUBLISHER_OPERATIONS', 'PUBLISHER_SLOT_TRACE'], 'trusted_router.async_settle_shadow_v2_evidence': ['CHECKPOINT_FIELDS', 'COUNTS', 'EVENT', 'RESERVATION_BLOCK'], 'trusted_router.async_settle_shadow_v2_schema': ['INT64', 'POLICY', 'day_at', 'require', 'sha256'], 'trusted_router.async_settle_shadow_v2_native': ['validate_bucket']}}
+    allowed.update({
+        'async_settle_shadow_cohort.py': {
+            'trusted_router.async_settle_shadow_v2_a1_reconciliation': ['resolve_event'],
+            'trusted_router.async_settle_shadow_v2_contract': ['CANDIDATE_BYTES', 'COHORT_EXCLUSIONS', 'Decision', 'LOCAL_BYTES', 'RequestedFacts', 'decide', 'fit_decision', 'parse_header'],
+            'trusted_router.async_settle_shadow_v2_evidence': ['BUCKET', 'COUNTS', 'EVENT', 'PREDICTION', 'SAMPLE'],
+            'trusted_router.async_settle_shadow_v2_projection': ['sample_projection', 'wire_projection'],
+            'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'day_at', 'decode', 'require'],
+        },
+        'services/async_settle_shadow_cohort_runtime.py': {
+            'trusted_router.async_settle_shadow_v2_contract': ['DEPENDENT', 'FEATURES', 'HEADER_BYTES', 'LOCAL_BYTES', 'RequestedFacts'],
+            'trusted_router.async_settle_shadow_v2_evidence': ['EVENT', 'PREDICTION', 'committed_identity'],
+            'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'require', 'sha256'],
+        },
+        'services/async_settle_shadow_cohort.py': {
+            'trusted_router.async_settle_shadow_v2_contract': ['LOCAL_BYTES', 'RequestedFacts'],
+            'trusted_router.async_settle_shadow_v2_evidence': ['EVENT', 'committed_identity'],
+            'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'require'],
+        },
+    })
     root = Path(__file__).parents[1] / "src"
     new = {path.stem for path in root.rglob("async_settle_shadow_v2_*.py")}
     for path in root.rglob("*.py"):
