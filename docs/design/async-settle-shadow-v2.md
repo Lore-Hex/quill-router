@@ -3307,3 +3307,464 @@ tests, production queries or performance/traffic measurements, created no fixtur
 edited no code and performed no Git writes. `git diff --check` is a document
 whitespace check, not CI or implementation proof.
 Only this design document and the requested scratch decision report are deliverables.
+
+## 15. A3 ADD — live export, collectors and activation inputs for the first window
+
+**AMENDMENT A3 (2026-10-13).** Additive implementation assignment for §§5.3,
+7–10; only the explicitly quoted replacements below supersede earlier wording.
+Owner reports P1/P1-A1/P1-A2, P2/pin, P3, P4a and probe package merged dormant;
+P5 is under review. This is not a deployment or test-pass assertion. All §13
+choices are accepted. No frozen schema, fixture, pin, gap literal, threshold,
+wire or P5 output contract changes. P4b and money activation remain deferred.
+
+**Source notation for A3 file:line citations:** `W/` is this worktree at the
+supplied base 231419d7; `P5/` is `/Users/jperla/josh/repos/tr/wt/v2-p5/`;
+`L/` is `/Users/jperla/josh/repos/tr/wt/v2-live/`. In the citation ledger below,
+`src/` abbreviates `src/trusted_router/`. These are inspected source snapshots,
+not promises that sibling worktrees cannot subsequently change.
+
+| A3 ADD citation | Inspected implementation boundary |
+|---|---|
+| C1 | `L/docs/design/async-settle-shadow-v2-live-export.md:11–139`, transport/producer inventory; `P5/docs/design/async-settle-shadow-v2-p5-inputs.md:1`, complete typed-field audit. `/tmp/v2-live-author-1/report.md`, “Concrete routing requests” 1–8 and “Named unfinished seams”, are the supplied execution report, not an A3 rerun. |
+| C2 | `L/src/async_settle_shadow_v2_export.py:19–20,34–55,88–118,121–135,147–303`: day kinds, original metadata, fake paging, absent native ports, supplemental accounting. |
+| C3 | `P5/src/async_settle_shadow_v2_gate_loading.py:228–285`, exact transport members; `async_settle_shadow_v2_gate_loader.py:145–182`, materialization/errors; `async_settle_shadow_v2_gate_expected.py:49–145`, expected slots/rosters/HWM and cap/MANIFEST confusion. |
+| C4 | `P5/src/async_settle_shadow_v2_gate_views.py:36–48,148–200,203–274`, budgets/external names/reset/signatures; `async_settle_shadow_v2_gate_inputs.py:299–318`, measurement, context and retained-capture formats. |
+| C5 | `P5/src/async_settle_shadow_v2_gate_payloads.py:242–320`, operations, approvals, independent roster and pins; `async_settle_shadow_v2_gate_release.py:22–123`, approved files, criteria, release plan, measurement parser. |
+| C6 | `P5/src/async_settle_shadow_v2_gate_provenance.py:19–32`, exactly one boot context per criterion; `async_settle_shadow_v2_gate_verifiers.py:18–115`, callable identity, pins and actual call counts. |
+| C7 | `P5/src/async_settle_shadow_v2_gate_bundle.py:212–261`, sample/certificate verification; `async_settle_shadow_v2_gate_accounting.py:284–288`, retry binding invocation; `async_settle_shadow_v2_gate_prior.py:33–60`, prior graph; `async_settle_shadow_v2_gates.py:112–133`, external stage checks. |
+| C8 | `W/src/services/async_settle_shadow_cohort_runtime.py:532–540,551–612`, verified-terminal outcome and content-free sample/receipt; `W/src/async_settle_shadow_evidence.py:270` and `W/src/services/async_settle_shadow_health.py:473`, process UUID becomes journal boot. |
+| C9 | `W/src/storage_gcp_shadow_observation.py:165–172`, only HEALTH uses COMMIT_TIMESTAMP; `W/src/storage_gcp_async_settle_shadow.py:38,83–100`, existing v1/body-only range; `W/src/storage_gcp_shadow_attachments.py:53–93`, bounded native response; C2 native generation seam. |
+| C10 | `P5/src/async_settle_shadow_v2_gate_load.py:168–249,275–375`, measurement/configured-cap checks; `W/src/async_settle_shadow_v2_a2_evidence.py:388`, PEAKS; §§3.2, 5.1, 7.2, 7.5.4 own units/bounds. |
+| C11 | `P5/scripts/async_settle/shadow_report.py:843–906`, actual v2 CLI; `W/scripts/provision_async_settle_shadow_probe_workspace.py:214–222`, provisioning CLI; `W/scripts/async_settle/probe_cohort_check.py:105–118`, diagnostic CLI; `W/scripts/deploy/async_settle_shadow_probe_jobs.sh:1–7`, jobs deploy entry point. |
+
+### 15.1 A3 ADD — decisions, scope and approval boundary
+
+| A3 ADD decision | Governing text and exact resolution; reason |
+|---|---|
+| D1 Signature material | §7 SAMPLE says **“No JWS.”** §7.2 says **“No credentials, prompt, raw token or key.”** Use the router's retained verified-terminal outcome, sample and receipt, with independently pinned runtime/verifier/fixture/key descriptors (C8); no transient token capture. The first-window compared branch is not an offline JWS-verification population. Exact §7.5.3 replacement: replace **“The pure gate invokes it for every applicable object and independently checks contextual identity/results.”** with **“The pure gate invokes it for every applicable object for which this policy retains original signature material; for first-window compared samples and compared retry receipts, it instead verifies the retained router verification outcome and its original sample/receipt joins under §15.1 D1. This does not claim offline replay of their signatures.”** The existing next sentence about negative controls still applies to callable binding and every applicable invocation. No weaker token verifier or inferred token is permitted. |
+| D2 Commit provenance | §7.2: **“Exports copy original rows/bytes; P5 never originates a writer's acknowledgement.”** C9 stores writer wall time in non-HEALTH updated_at. Export calls that `writer_updated_at`, never commit time; only HEALTH metadata can be called store commit time. Fixed-snapshot visibility proves durable presence **by the snapshot**, not exact commit/ack time. Retain source event/receipt times as such; G10 still uses the original sample timestamp after prerequisites (§8), once original closure/result and coverage establish durability. No timestamp synthesis or backdating. |
+| D3 Export completeness | §8 G1 already includes **“incomplete/bound-exhausted export”**; §7.5.4 requires **“All derived expected keys and dependency files must be covered.”** Bind the approved export accounting through the existing deployment FILE_REF of INDEPENDENT_INVENTORY and the complete INPUT_INVENTORY graph (§15.4). An exporter exit code or unreferenced supplemental hash is insufficient. No new frozen envelope. |
+| D4 Stage scope | §9: **“First-window deferrals are stage-specific, not gate exceptions.”** Parse/require artifacts for the requested stage and its predecessor closure; keep future-stage names in the reviewed release plan. Do not fabricate a post-opt-in budget during pre-enable, or D2/D3/money-flip PASS during shadow. Fix unconditional P5 view construction/all-stage proof presence and dormant-pin handling (C3–C5); schema-required digest slots still need defined original preimages, as specified in §15.7. |
+| D5 Approval ownership (recommended default) | §13 Q6: **“Release tooling owns independent per-boot inventory and ledger, P5 enforces readiness; operators seal only proven closures.”** One designated release operator collects; Joseph or his existing authorized release delegate reviews scope, source bindings and measured limits. Preapprove the boot-check mechanism/configuration; review its exact resulting contexts and daily inventory at packaging, without changing actual completion times. No human signs every poll. Use existing APPROVAL/REVIEW_RECORD and independently communicated release-plan digest (§7.5.4, C5), never a new signing service. |
+| D6 Cost/retention defaults for owner | Keep §7.2 ≥30-day retention and existing capacity/alarms; start with one closed-day export pass/day plus explicitly budgeted warm-up, final horizon and failed-pass reruns. Approve finite totals before opt-in. Choose §13 Q4's numeric blocked-day target from measured kills/losses, not a guessed percentage. Missing budget/target approval blocks activation, not document completion. |
+
+**D1 P5 changes, precisely (C3/C6/C7):** `signature_views` must not require
+`loading/signatures.json` or a Signature for compared samples/retries; an absent
+file is valid for this B=0 scope. Remove their token lookup/invoke requirements
+in `verify_samples`, retry accounting and `check_calls`; keep both approved
+callables/source/fixture/ordered public keysets required and report actual offline
+binding calls=0 for this branch (no invented calls/transcripts). Verify each
+sample's unique original terminal coordinates, day/id/boot/revision, payload and
+snapshot hashes, compared/eligible classification, booking, independent E and
+reconciled authorize identity/facts; every retry keeps its own terminal outcome,
+original reference, attempt accounting and prediction. Use available frozen
+fields, never reconstruct hidden claims from commitments. A receipt claiming A
+without its matching sample or a C/mismatch retry still blocks G3/G4/G5/G8/G9.
+Pin/test the actual C8 runtime call to `verify_terminal`, including expired,
+wrong-purpose, foreign-identity, malformed and invalid-signature cases producing
+C, through exact-revision `p4a_fail_closed`/`money_echo` proofs. This is the
+ordinary writer-trust boundary explicitly accepted in §7.2, not protection
+against a malicious writer. Certificate branches/ports/pure negative fixtures
+remain; unexpected certificate/B traffic blocks the eligible-only scope, and
+P4b must settle its own original-material rule before excluded-traffic opt-in.
+
+**Fixed first-window scope (§13, A2-S13–S15):** one dedicated typed Credits
+workspace, one supported candidate/request, provider pinned, no fallbacks,
+ordinary parameters, routes `chat.completions` and `responses`. Exercise enclaves
+us-central1/us-east4/europe-west4/us-west1; gateway books normally at router
+us-central1, with southamerica-east1 failover. Required seed regions are the
+router regions actually serving cohort traffic in the approved interval; include
+São Paulo when it serves, with a real eligible seed there. Inventory, idle-boot
+readiness, timer/closure/load obligations cover **all enabled evidence writers**,
+not just seeded routers; no boot can disappear because it never completed traffic.
+P5 C4's equality of seed regions to *all* router inventory regions must use the
+reviewed traffic-serving subset plus reconciled terminal regions (§13), while
+retaining the full inventory/cap sweep. Unknown routing or a new region blocks
+until evidenced/reviewed. No hard-coded four-entry list can hide added deployments.
+
+### 15.2 A3 ADD — complete producer and trust-input table
+
+The table exhausts C1's transport inventory and P5's typed provenance audit.
+Grouped typed families mean **every field** of that family, not omitted fields:
+Key/Row→T2–T9; Boot/Inventory→T14; Cohort→T18; Rate/Budget→T19–T21;
+ExternalProof/External→T22; ResetSupport/RetainedResult→T23–T24;
+Signature→T25; Preimage→T12; ReleasePlan→T26; VerifierApproval→T27;
+Bundle's derived fields→their named row, including undefined_preimages/a2_streams
+→T13. Each Ports and LoadingPorts member is separately named in T28–T32.
+
+Review codes: **R**=release reviewer checks exact source/config/fixture bytes and
+CI revision, pins originals and review records in independent release plan;
+**M**=R also checks measured native/platform data against limits, scope and
+accounting; **D**=deterministic packaging, no new approval authority, inherits
+approved source graph. Timing **stage** includes every predecessor re-evaluation.
+For every row, absent/mismatched bytes or incomplete export adds G1
+`artifact_gap`; malformed/undefined/unapproved substitution adds G1
+`evidence_schema_gap`; wrong policy adds `policy_version_gap`. The last column
+names **additional** §8 failures when that rule is active; do not replace them
+with the generic failure. Stage-inapplicable evidence is not reported as PASS.
+
+| A3 ADD ID / every transport member or trusted input | Producer; independent source where required | When / review | Affected rule and gap (besides G1 above) |
+|---|---|---|---|
+| T1 `v,policy_version,contract_revision,days,window,completed_at_us` | Exporter; reviewed day/snapshot plan and collector completion, exact literals C3; times select scope, never coverage | pass / D | G10 `continuous_window_gap` for unsupported scope |
+| T2 `rows` sample_v2 | Existing P4a Runtime.finish→P3; original verified comparison/booking, C8; not independent of writer | attempt/day / D | G5 `eligible_coverage_gap`, `prediction_demand_gap`; G9 retained correctness names |
+| T3 `rows` certificate_v2 | No first-window issuance producer; reviewed eligible-only policy requires zero; retain any unexpected original | day / R+D | G4 `exclusion_proof_gap`; G1 eligible-only violation |
+| T4 `rows` receipts_v2 / every event | Existing Journal freeze/finalize/completion→ObservationStore, C1; original attempts, sequence/HWM | checkpoint/day / D | G3 `authorize_coverage_gap`, `authorization_link_gap`; G4 `terminal_coverage_gap`, `phase_coverage_gap`; G8 `retry_original_gap` |
+| T5 `rows` counter_v2 | Existing health Service counters, C1; reconcile against receipts/traces, not trusted as roster | checkpoint/day / D | G4 `observed_partition_gap`; G6 `publisher_accounting_gap`; G8 `checkpoint_reconciliation_gap`, `evidence_loss_gap` |
+| T6 `rows` closure_v2 / close_result_v2 | Original boot Service/ObservationStore; separate acknowledged-close result transaction, C1 | close/day / D | G8 `writer_closure_gap`, `close_result_identity_gap`, `close_result_conflict`, `handoff_coverage_gap` |
+| T7 `rows` control_v2 cap-v2, retention-v2 | Existing allocator/retention writer; cap via day range, retention only exact policy key if planned; C1/C2. Never parse either as MANIFEST | pass / D | G8 `evidence_loss_gap` if cap/retirement hides required evidence |
+| T8 `rows` health_v2 local/fleet, health_claim_v2 local/publish | Existing observation publisher/claim; optional exact-key diagnostics, C9. Historical authority comes from T9 | trial/pass / D | G6 `shadow_health_gap`, `health_source_gap`, `health_timestamp_gap`, `health_slot_gap` |
+| T9 `attachments` health_basis, publisher_trace | Existing P3 Lane/Service immutable object writers; original bases/slot traces, inventory independently supplies expected boots/slots, C1/C3 | lane/day / D | G6 `shadow_health_gap`, `publisher_trace_gap`, `publisher_accounting_gap`, `health_elapsed_gap` |
+| T10 `rows` control_v2 day/manifest-v2 | DayPack (§15.3); T2–T9 + independent inventory, ledger/config and roots; **bundle artifact only**, no store mutation | closed day / D | G2 `writer_roster_gap`; all missing dependent rules retained |
+| T11 `proof` / named PROOF_MANIFEST root preimages | DayPack; exact §7.5.4 F/C/R constructions, all source_shas/rosters/regions/attachments/explicit_keys/complete from source graph | stage / D | G2 `boot_prerequisite_gap`; dependent G3–G11 |
+| T12 `preimages`, FILE_REF originals, ROOT_ENTRY/DETAIL pages, INPUT_LEAF and INPUT_INVENTORY_ENTRY | Exporter + DayPack; byte-preserved originals/finite expected plan including conflicts and dependencies (§15.4) | pass/stage / D | G7 `evidence_export_budget_gap` |
+| T13 Bundle undefined_preimages/a2_payloads/a2_streams, loading issues | P5 loader/renderer; derived only from T1–T32, never a trusted caller-created typed view, C3 | stage / D | Corresponding §8 rule; diagnostics cannot serve as proof preimages |
+| T14 `manifest.independent_inventory_sha256`, serving/deployment files; Boot.*, Inventory.* | Inventory collector; platform revision/instance lifecycle/audit records, released repository config and boot correlation (§15.3), not evidence row discovery | start/per boot/day / R | G2 `writer_roster_gap`, `regional_roster_unknown`, `legacy_region_label`, `legacy_sample_region`, `flag_interval_gap` |
+| T15 `ledgers`, ledger root, six criterion ARTIFACTs, PROOF_RESULT, PREREQUISITE_CONTEXT and predecessors | Readiness collector; CI/native trials and boot-local checks independently bound to T14, C6 | before opted traffic/per boot; package daily / R+M | G2 `boot_prerequisite_gap`; G6 `observer_cadence_gap`, `shadow_health_gap` |
+| T16 `attachments` coverage / authorization_obligation / handoff_accounting, projections and roots | Coverage assembler; T14 expected lifetimes/slots and original receipt HWM/forward terminal references/results; §§7.2–7.4 | day/horizon/stage / D | G3 `authorization_obligation_gap`, `authorization_terminal_conflict`, `authorization_horizon_gap`; G8 `handoff_coverage_gap` |
+| T17 `proof.shutdown_inventory_sha256`; shutdown_entry/measurement aliases and sources | Shutdown collector; platform termination events/grace plus measured monotonic lifecycle spans, original T6; C4/C5 | each close/day / M | G7 `close_handoff_budget_gap`; G8 `writer_closure_gap`, `handoff_coverage_gap` |
+| T18 `proof.cohort_seed_policy_sha256`; configuration, workspace fingerprints/regions/K | Reviewed cohort file + Inventory collector; provisioning/config-as-code at release commit, actual booking routing; §13 | pre opt-in; change/stage / R | G7 `pre_enable_budget`, `publisher_budget_gap`; G10 `regional_seed_gap` |
+| T19 `proof.pre_budget_sha256`, retained payload/output/dependencies, projected V2_LOAD | Budget collector; isolated ≤1-hour native trial, platform CPU, released caps/N/K/surge; §§5/8, C10 | before opt-in / M | G7 `pre_enable_budget`, `fleet_headroom_gap`, `simultaneous_capacity_gap` |
+| T20 `proof.post_budget_sha256`, retained payload/output/dependencies, actual V2_LOAD | Budget collector; closed warm-up native telemetry + T5/T9/T14/T17, linked exact pre envelope; C4/C10 | after opt-in; stage / M | G7 all seven names, including `freshness_budget_gap` |
+| T21 `loading/budget-measurements.json`; LIMITS/PEAKS, segments/EXPORT_OPERATION DETAIL, Rate.*, remaining Budget.* | Budget collector; measured operations/bytes/spans and reviewed configured allowances distinguished in §15.5; C4/C10 | pre/post/pass/stage / M | G7 `publisher_budget_gap`, `evidence_export_budget_gap`, `close_handoff_budget_gap` |
+| T22 `proof.external_proofs_sha256`, requirements/check/source files, pilot | ExternalPack; CI system's exact-revision jobs/artifacts, platform attestation and approved trials; exhaustive names §15.6 | required stage / R+M | G11 `external_proofs_missing`, `pilot_prerequisite_gap` |
+| T23 `proof.resolution_dag_sha256`, original retained v1 rows/proof/serving/manifests/report inputs, reset history/support/approvals | History collector; preserved old exports and release/rollback reviews before date filtering, §§7.5.4/9 | migration, changes/day/stage / R | G9 `missing_support`, `reviewed_resolution`, `revision_rollback` and original correctness reasons |
+| T24 `loading/retained-output/<payload-sha>.json`, exact outputs and opened dependencies | History/Budget/External collectors run approved retained callables, finite local file port; RETAINED_OUTPUT or budget explicit output, C4 | each delegated input / D | G7 `pre_enable_budget`; G9 `missing_support`; G11 `pilot_prerequisite_gap` |
+| T25 `loading/signatures.json`, Signature.* | D1: no producer/file required for compared-only samples/retries; zero offline binding calls. Approved public descriptors remain T27; no tokens exported | scope selection / R | G5 `eligible_coverage_gap`, G8 `retry_original_gap` for missing retained outcomes; unexpected B blocks |
+| T26 `loading/release-plan.json`, independent CLI digest; ReleasePlan.*; every APPROVAL/REVIEW_RECORD | Operator-approved reviewed file; external release review records, not bundle-self-approval; C5 | pre opt-in and each changed artifact set / R+M | G7 `pre_enable_budget`; G11 `external_proofs_missing` |
+| T27 manifest config/fixture, ledger policy/config/fixture, three fixed proof fixture files, verifier source/fixture/keyset/dependencies; VerifierApproval.* | Trusted immutable checkout at released SHA and separately approved public descriptors; §7.5.4's sole three-file inventory exemption; CI/source/pins independently checked | revision/keyset change; every stage / R | G2 `boot_prerequisite_gap`; G11 `external_proofs_missing` |
+| T28 Ports + LoadingPorts `verify_certificate,verify_original_receipt,verify_binding` | Trusted offline wiring of actual callables, never imported bundle code; T27 identity/pins; C6 | tool startup/stage / R | G4 `exclusion_proof_gap`, G5 `eligible_coverage_gap` where applicable; D1 calls remain honest |
+| T29 Ports + LoadingPorts `comparator_positive,positive_sample,known_exclusion` | Trusted retained predicate adapters at released source/fixtures, T27; C1/C6 | stage / R | G5 `eligible_coverage_gap`; G10 `positive_seed_gap` |
+| T30 Ports + LoadingPorts `fleet_budgets_pre,collect_rollbacks,report,post_flip,roster_coverage` | Trusted existing retained functions, original T19/T23/T24 payloads and finite dependencies (§7.5.4) | stage / R | G2 `writer_roster_gap`; G7 `pre_enable_budget`; G9 `missing_support`; G11 `pilot_prerequisite_gap` |
+| T31 Ports + LoadingPorts `approvals,approved_files,read_release_file`; LoadingPorts `retained,gate_roster,release,measurements` | Offline tool/release wiring; exact trusted checkout, independent digest, source-specific reviewed parsers (no universal opaque-file acceptance), C4–C6 | stage / R | Affected G2/G7/G9/G11 as T14/T17/T19/T23 |
+| T32 `transport,fleet,pre,serving` prior envelopes plus full reports/DETAIL/leaves/original dependencies | Earlier real evaluator output, recursively reloaded/re-evaluated at original completion with exact byte equality; C7. serving optional, never clock authority | stage / D | G7 `pre_enable_budget`; G10 `positive_seed_gap`, `continuous_window_gap` |
+
+### 15.3 A3 ADD — collectors and native read operations
+
+All collectors are dormant, explicitly invoked release tools. They may write
+only local/immutable export artifacts; they **never write runtime evidence,
+acknowledge for a writer, infer absent measurements, or scan production bodies**.
+No credential construction in pure validators. Source clients are read-only;
+no catalog discovery, bucket LIST, unbounded log query, automatic retry or body
+predicate fallback. Missing/truncated/delayed source remains missing. Each call
+is charged; a failed pass is retained and a rerun consumes a separately approved
+pass. §7.2's one 256-KiB decode buffer plus bounded state requires streaming to
+local spool/pages, not C2's whole-snapshot MemoryPort in production.
+
+| A3 ADD collector | Exact inputs/reads and bounds | Existing output and completion rule |
+|---|---|---|
+| NativeExport | Approved complete kinds/days/keys; statement below, ≤200 rows/page, LOW, 200-ms total read deadline including checkout/stream/cleanup, zero retries, fixed snapshot timestamp. Exact object GETs with returned generation; subsequent read uses that generation/condition, never current-version fallback. ≤10,000 planned source/dependency keys per pass; separately paginated reviewed passes if larger (§7.2, C2/C9) | Original T2–T9/T12 bytes plus existing C2 accounting source pages, per-source semantics and snapshot identity. Validate metadata on empty pages too; deadline/error/bound exhaustion never EOF. No runtime manifest write. |
+| DayPack | Only finite local spool/original FILE_REFs from NativeExport and collectors; no store queries. Build dependency graph leaves→coverage/root pages→proof→day manifests→report inputs; no report hash fed into its own proof | Frozen MANIFEST/PROOF_MANIFEST and §7.5.4 F/C/R preimages. Day manifest may commit proof; proof does not commit that manifest back. Preserve cap/retention subtypes. complete=true only when all independently expected sources/horizons close. |
+| Coverage assembler | T14 day/boot/role lifetimes, contender segments, counter HWM, receipt chains, scheduled two-second slots and retained basis references. Exact referenced page GETs only; source fetched once/pass. Enumerate from expectations before presence lookup | All five frozen COVERAGE_PAGE streams, AUTHORIZATION_OBLIGATION_PAGE/OBLIGATION_PROJECTION, HANDOFF_ACCOUNTING and roots. Missing predecessor leaves an unresolved tail obligation, not a shorter expected population; retain conflict candidates. Every issue-day obligation has its own original ≤48-hour forward terminal horizon (§7.3), including support days beyond seven-day end. |
+| Inventory | Explicit project/service/revision/region/time filters: platform services/revisions GETs and revision history; platform lifecycle/audit log `entries.list` and Monitoring time-series reads restricted to named resources and UTC day. Retain API page tokens through EOF, service-generated instance identity/start/stop/kill records and config digest. ≤200 records/page, ≤10,000 records/pass, 10-s deadline/call, no retries; split approved resource/day passes when needed | INDEPENDENT_INVENTORY serving/deployment FILE_REFs with original platform pages, reviewed mapping and pins; include retired/killed/zero-evidence/overlapping boots. Actual traffic intervals/regions come from platform routing plus probe/terminal reconciliation, not hostname inference. Missing lifecycle boundary/join is G2, never evidence-list subtraction. |
+| Readiness | T14 boot join, released CI/native regional artifacts, boot-local bounded transport/warm/check records; only finite artifact GETs/log queries under inventory bounds; six definitions below | PREREQUISITE_LEDGER, ARTIFACT descriptors, PROOF_RESULT, exactly one PREREQUISITE_CONTEXT per criterion, predecessor original bytes (C6). Runtime startup/readiness enforcement is P6 instrumentation, not an offline collector pretending to gate ingress. |
+| Shutdown | T14 termination/grace configuration and platform stop/kill events; boot-local monotonic lifecycle timing exported through retained observability; exact closure/result keys from NativeExport. Fetch source records under inventory bounds | SHUTDOWN_SOURCE→SHUTDOWN_MEASUREMENT→SHUTDOWN_INVENTORY/DETAIL; original aliases byte-identical (C4/C5). Measure preparation, export cadence wait, final pass, close and result separately, without double counting; check §6.1 combined grace. Kill/missing span stays blocked; do not set an unobserved duration to zero or use result elapsed for the whole pass. |
+| Budget | Released limits and T14 spans; read Monitoring CPU series for exact database/revisions and trial interval; native operation/row/RPC/byte traces, writer counters/slot traces, exporter accounting. Platform bounds as above; any database corroboration only enumerated exact keys/ranges with NativeExport limits | Pre/post BUDGET_ENVELOPE, LOAD_EVIDENCE (V2_LOAD), LOAD_SEGMENT/EXPORT_OPERATION DETAIL, LIMITS, BUDGET_MEASUREMENTS and retained payload/output. §15.5 owns numeric mapping; no extrapolated CPU or one-transaction=one-RPC assumption. |
+| ExternalPack | CI GET of explicitly selected run/job/artifact IDs at full router/enclave SHAs, attestation/release/config files and measured trials. ≤100 records/page, ≤10,000/pass, 10-s call deadline, no retries; pin immutable downloaded originals and verify conclusion/completed time, not job title | EXTERNAL_PROOFS/PROOF_RESULT/checks/sources and existing approvals, §15.6; no self-declared PASS checklist. Larger originals use bounded dependency pages; no truncated log passed off as complete. |
+| History | Explicit old export manifest/key list and reviewed fix/rollback files; exact-key/range reads under NativeExport limits only if originals not already retained; finite original payload/dependencies | RESOLUTION_DAG/RESET_ENTRY/support, retained collect_rollbacks **and report** payload/output capture. Compare history before day selection, preserve BLOCKED v1 originals. Empty DAG only when independently reviewed history is actually empty; never assume a new workspace erases fleet revision/mismatch history. |
+
+**NativeV2RangeRead statement (new reviewed SQL inventory/conformance entry,
+not an existing callable; C9):**
+
+```sql
+SELECT id, body, updated_at
+FROM tr_entities
+WHERE kind=@kind AND id>=@day_start AND id<@next_day_start
+  AND id>@after_id
+ORDER BY id LIMIT @page_size
+```
+
+Use complete kind and `[day+'/', next_day+'/')`, initially `after_id=''`, then
+exact last returned id. Seven day kinds are sample/certificate/receipts/counter/
+closure/control/close_result_v2 (C2); never use a body predicate. Retain each
+page's range, prior cursor, first/last key, row/key/body bytes and hashes, snapshot
+read timestamp, actual native RPCs and terminal continuation/EOF. A full page
+requires another page; a short/empty successful page establishes EOF **only for
+that range at that snapshot**. Exact diagnostics use
+`SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id`, at most
+one row under the same budget. Mutable local/fleet/local/publish and retention-v2
+are not historical day observations. Native generation read uses an explicit ≤200-ms whole-read deadline/no retries,
+and preserves key, generation, bytes/hash and response status; object mutation/conflicting generation
+blocks, and missing object never authorizes LIST. Native store timestamps retain
+nanoseconds exactly; D2 governs their meaning. Reader timestamps/versions cannot
+replace the original reply required by CLOSE_RESULT.
+
+**Boot identity is an explicit activation seam (C8).** The evidence boot is a
+process UUID, not a platform revision or automatically the platform instance ID.
+P6 must capture a content-free startup correlation `(platform instance, process
+boot, revision, region, process start)` through the platform-tagged lifecycle
+channel before opted traffic, and reconcile each platform instance/process restart
+against it. Retain platform-owned inventory/events independently of those records;
+never enumerate boots by surviving counters/startup messages alone. A missing
+binding, unobservable restart or platform lifecycle hole blocks G2; a revision-only
+API cannot prove per-boot completeness. This is observability/readiness integration,
+not a new signed evidence protocol or a collector-created boot acknowledgement.
+Demonstrate kill-before-first-flush and restart joins in acceptance before opting in.
+
+| A3 ADD §5.3 criterion | Minimal satisfying original artifact / actual producer for this window |
+|---|---|
+| `transport` | Regional release harness records real authorize→enclave echo→settle/refund round trip on both routes/full and hash-only variants, bounded headers and correct compared outcome; exact released router/enclave CI plus actual-hop trial bytes. Share regional run only within identical config/pins; Readiness binds it to each boot context without claiming it ran on that boot. |
+| `size` | CI serialization/fixture producer + native sizing harness: one-candidate full event/snapshot fits, maximum header/fragmentation, four-page/counter/closure maximum serialized transaction and separate result, native encoding/RSS/queue bounds (§11 SERIALIZATION). Context adoption checks the same config/source pins; no fresh size stress per boot. |
+| `regional_load` | Budget collector's approved ≤1-hour native trial and configured-cap/surge envelope for this true region/N=1/K, including CPU, reads, publisher/exports/shutdown. Per-boot context verifies it lies within that envelope; no borrow from another region/config. |
+| `boot_transport` | Startup harness on **this process** records a bounded boot-local transport/read check to its configured regional dependencies with marker/pin checks, plus the applicable real-hop regional proof. A random load-balanced request is not proof for this boot. Runs before readiness; idle boots also run it. |
+| `observer_freshness` | Router startup harness measures its own observer warm read/install, actual HEALTH O/C/R metadata, q≤250 ms and freshness/slot predicate; contender additionally measures its own claim/publication path. Enclave startup harness verifies its configured router path is ready and its local transport/echo state; it must not invent an enclave observer or borrow another router boot's warm result. Role applicability is fixed in approved criterion checks, not an empty PASS. |
+| `marker_keys` | Startup harness checks this boot's effective policy/capability/fixture/source hashes and public key descriptor/epoch configuration against the released commit and platform-deployed revision; verifies separation negatives from pinned CI. No private key/token captured. Enclave checks deployed attested image/pin and shadow-on/negotiation-off at activation; dormant stage records actual off state. |
+
+All six output PROOF_RESULT with exact approved check names/evidence FILE_REFs
+and one matching context (role/boot/revision/region/boot_at/criterion/completed_at);
+ledger ARTIFACT digest/completion must match. Shared trials' original times remain
+unchanged; a boot-specific adoption/check completes no earlier than that boot.
+`traffic_ready_at_us` is after all six completions and startup enforcement must
+withhold opted ingress until then. Failed/early attempts stay in the denominator;
+new boots append ledger, not global clock resets (§5.3). End-of-day reviewers
+approve source bindings, never retroactively move readiness before a measurement.
+
+### 15.4 A3 ADD — binding export accounting without a new frozen schema
+
+C2's `export/accounting.json` and bounded entries/reads/plan/gaps pages are
+**producer-specific source files**, not additional transport members or A1 roots.
+Use the already open deployment-source object (C5) with its existing `serving`
+array and one named `export_accounting: DETAIL`, a frozen FILE_REF dependency
+stream enumerating every original accounting root for that day, including reruns. The INDEPENDENT_INVENTORY approval covers this exact
+deployment file, platform originals and accounting; the independently supplied
+release plan pins those originals, accounting parser source/fixtures and review
+record. This is an assigned source parser under §7.5.4, not a frozen envelope
+extension. Keep serving roster bytes/shapes unchanged.
+
+The exporter records range plan **before** reads, then actual page cursors/EOF,
+row key/body hashes/lengths and D2 metadata, object key/generation, failures and
+operation counts. Reviewer approves the final measured source digest only after
+checking it against the preapproved plan/platform scope. P5 must actively parse
+that source and compare: every planned day/kind range represented, same snapshot
+within a pass, contiguous strict cursors, explicit successful EOF, expected exact
+objects accounted once, all failures retained, sums equal original bytes, no
+unconsumed continuation or silent cap, and actual records equal bundle originals.
+Do not accept `complete:true` without these checks, or generic approved-file hash
+alone. Missing/partial/mismatched accounting is G1 artifact_gap; production plans also require
+native provenance (C2 fake_version/native=false is only for test plans). Malformed/unknown
+parser/semantics is evidence_schema_gap; also G7 evidence_export_budget_gap.
+
+Register every accounting source, platform source, dependency and original byte
+candidate in frozen INPUT_LEAF/INPUT_INVENTORY_ENTRY. Enforce C1's combined
+10,000-object transport bound as well as each pass bound; splitting collection
+passes never permits truncating a stage's complete input/dependency graph. Expected coverage remains
+independently derived from T14/HWM/slots; a self-consistent partial listing is
+insufficient. Report input_inventory commits that complete graph; predecessor
+re-evaluation repeats the same accounting verification. Exclude only the three
+fixed checkout fixtures allowed by §7.5.4. Operation/byte totals feed V2_LOAD and
+BUDGET_MEASUREMENTS; report/leaf/root output work is charged by the acyclic §7.5.5
+plan, measured receipts enter the next pass, not their own source hash. Native
+read RPC totals include empty terminal pages, transactions, metadata, failed and
+restarted passes; report logical file counts do not replace those totals.
+The accounting graph describes source reads before DayPack: it cannot contain
+its own deployment approval, input leaves or final report. Those later files
+enter the input inventory/output cost plan, avoiding a digest cycle. No schema/pin
+changes: the source parser and mandatory G1/G7 consumption are P5/export code,
+with original-byte deletion/tampering negative tests.
+
+### 15.5 A3 ADD — measurements, limits and N=1 arithmetic
+
+Keep **measured values** and **approved ceilings** distinct. ALLOWANCES/TOTALS in
+C4's BUDGET_MEASUREMENTS feed budget caps; populate from the reviewed budget file,
+backed by separately retained measured sources/operations, not by replacing caps
+with observed demand. `component_us` is the measured conservative component bound
+validated against the unchanged deadlines. Pre/post LIMITS and retained N/caps/
+allowances must match exactly; post links C(pre envelope), not its filename.
+
+| A3 ADD numbers | Measurement source and mapping / configured source |
+|---|---|
+| Observer reads, pending/trust/health rows, active R/K, one-second startup bursts | Store adapter's native RPC/row counters and spans, reconciled with COUNTER observer counts and platform boot lifetimes. LOAD_SEGMENT boundaries at every start/end/day/rate/role change; every PEAKS component has a measured or configured derivation, never null→0. N=1 nominal **0.25 workspace +1 health =1.25 reads/s/router**, pending **250.25 rows/s/router**; take max(nominal, measured), §5.1. |
+| Publisher reads/mutations/transactions/RPCs/metadata | Store's own instrumented call counters and actual begin/commit/rollback/stream traces, reconciled with PUBLISHER_TRACE_PAGE, including losers/errors. §3.2: SELECTs K/2+1.5, unresolved visits 5,000.5/s, control reads K/2+1, ≤1 row mutation/s, claim+publication transactions K/2+0.5; native RPCs measured separately. Configured logical metadata floor 16(fleet_cap+surge)+4K bytes/s, native encoded bytes measured. |
+| CPU peak and incremental allowance | Platform Monitoring database CPU baseline/trial series on the actual authority node, explicit sample interval/resources and complete coverage; record baseline peak and measured trial increase, review conservative incremental allowance. Baseline peak + approved increment strictly <45%; missing samples or unjustified CPU slope block. |
+| Configured caps, surge, K, primary, N; regional/fleet PEAKS limits | Reviewed repository deploy configuration at released commit and approved measurement budget, verified against platform revision settings. No guessed K=1 or router cap reduction. Observer projection 1.25×(cap+surge), pending 250.25×(cap+surge); publisher cost at actual primary and authority DB once; sum configured regional caps=fleet cap, plus independent simultaneous sweep. |
+| Freshness component_us | Native monotonic spans for publisher period/jitter/publication, poll period/jitter/install, workspace period/jitter/install, metadata O/C/R and delayed result iteration. Preserve §3.2 **4.25+0.25=4.50<5** and workspace **4+0.25+0.5≤4.75**; arithmetic is not measurement. |
+| Export totals/peaks/passes/root writes/write bytes; cleanup counts/time | NativeExport accounting + sink GET/PUT receipts and actual serialized/key bytes; existing EXPORT_OPERATION entries refer to bounded source/page FILE_REFs, include native_rpcs/elapsed/pass. §7.2 lane bounds (R+K)/5 ops/s, 65,536(R+K)/5 body bytes/s are only producer steady ceilings. Include churn initial tokens/in-flight work, page/root outputs, all reruns and approved finite verification work. Cleanup uses manifest exact keys, measured isolated trial cost and approved production schedule; collector never deletes. |
+| Close transactions/rows/final/handoff/grace | Store traces plus single verified Shutdown population (T17); measure six-row final transaction plus separate one-row result, preceding passes/queue and export wait. §6.1's 2+2≤4-s final pass and full remaining grace apply; do not count a lost original reply as success. |
+
+Pre-enable uses ≤1-hour isolated **real adapter** measurements plus reviewed
+configured-cap projections, all money pins off; no production opted-counter
+requirement. Post uses actual closed warm-up intervals, all four enclave paths
+and true booking regions, platform startup/retirement overlap, own store operation
+telemetry, closure/results and measured export. Trial fixtures/fake clocks do not
+supply regional latency/CPU evidence. One workspace collapses cohort config,
+N arithmetic and unchanged limit approval to one reviewed set; it does **not**
+collapse per-boot checks, per-region transport/load, repeated exports or shutdowns
+to a single invented measurement (§§5.2/13).
+
+### 15.6 A3 ADD — exact external-proof inventory and retained history
+
+ExternalPack emits each C4 EXTERNAL_REQUIRED name below; slash-separated names
+are separate requirements/proofs, not aliases. Reuse an original CI artifact by
+FILE_REF when it proves multiple criteria, but each criterion has the exact
+release-approved check set (§11); never regenerate frozen fixtures. CI authority
+is run/job/artifact metadata for the full released router/enclave SHAs plus exact
+original results; runtime/attestation measurements are independently reviewed
+files bound to those SHAs/configuration. `required_stages` records the **whole**
+policy, including deferred names; supplied requirement objects are needed only
+when their stage is reached. At transport, all applicable shadow release proofs
+must already be packaged/approved; §8's stage rule sets remain unchanged.
+
+| A3 ADD required name(s), C4 exact spelling | Smallest producer/source satisfying it; required availability |
+|---|---|
+| `deployment_inventory` | Inventory collector's platform originals, released config and boot joins; transport, refreshed each day |
+| `authorization_transport_measurements` / `maximum_header_hops` | Regional harness actual-hop both-route/full/hash-only timings, max-size/fragmentation records; transport |
+| `fleet_load_budget` / `publisher_poll_freshness` / `lifecycle_cpu` | Budget/Shutdown collectors' native regional trial, platform CPU and component spans, reviewed pre envelope at pre-enable; post measurements at fleet gate |
+| `shared_fixtures` / `v2_wire` / `a1_contract` / `a2_contract` | Router + enclave CI byte inventories, combined enclave pin and frozen baseline/A1/A2 tests at exact releases; transport |
+| `frozen_pricing_crash_mutations` | Exact-revision full money oracle, pricing/binding bytes, crash/fault suites and compiled mutation kills (§11); transport |
+| `a1_time_domain` / `a1_accounting_dormancy` / `health` | P3 native/emulator fault and timestamp/cadence/dormancy CI plus regional real-adapter trial sources; transport |
+| `a1_report_obligations` / `a1_completion_context` / `durability` | P3/P4a/P5 CI terminal-horizon, same-writer completion, HWM/recovery/kill negatives (§11); transport |
+| `a1_close_handoff` / `a1_provenance_export_load` | Native lost-original/result-reply and exporter/churn/cleanup/identity CI plus Shutdown/Export measurement originals; transport |
+| `p4a_fail_closed` / `partition_wire` / `candidate_backing` / `original_receipt_locator` / `money_echo` | §11 first-window scope: P4a real authorize/settle/refund/stream integration, C/BLOCKED failures; frozen certificate purpose/backing/locator verifiers/fixtures and off-path money isolation; transport. Live P4b issuance/worker/mixed-traffic portions explicitly deferred to excluded-cohort activation, not marked passed. |
+| `demand` / `budget_boot` / `serialization` | Exact-revision CI idle/E/unknown, sequential/overlap/boot and native size/serialization proofs; transport |
+| `bootstrap` / `window` | Real-writer/export/collector/evaluator integration plus full simulated seven-day B=0/churn/forward-horizon proof; transport. This CI result never substitutes for real seven-day elapsed coverage. |
+| `live` / `rare_cases` | Isolated real native adapter fault suite and approved all-region trials, plus §11 rare boundary/mutation results; transport. Drain/handover portions remain pre-flip. |
+| `a2_report_commitment` / `a2_failure_counts` / `a2_roots_preimages` / `a2_verifier_purity` / `a2_packaging_delegation_cost` | P5 exact-revision original-byte/report/retained-delta/purity/permutation/count/finite-cost tests including A3 deletions; transport |
+| `d2_d3_capacity_slo` | Real regional drain/load/D2/D3 chosen-settings artifacts; **pre-flip**, no first-window fabricated result |
+| `policy_rollback_status` | Shadow opt-out/close/retention rollback trial now (transport); truthful status/money rollback/handoff/repair trial at pre-flip/post-flip under same retained criterion, distinct stage requirements |
+| Additional `attestation` / `exposure_acceptance`, signer/epoch/drain pilot checks | Existing release image/pin/attestation evidence now through marker_keys; selected money-pilot attestation/exposure approval and retained pre_flip/post_flip payloads at their money stages. No shadow-window permission to spend or enable admission (§9 steps 7–9). |
+
+History collector retains the actual v1 input payload and all opened dependency
+bytes, source pin, recomputed `collect_rollbacks` **and** `report` output, and
+RETAINED_OUTPUT capture (budget uses its explicit output FILE_REF). Resolution
+reviews name supporting artifact, fixed revision, serving_since and partial-order
+edges; preserve all reset support even outside selected days. Changed current
+manifests must be selected by exact manifest-v2 subtype, leaving cap rows
+inventoried (C3/C4). Historical v1 facts contribute no certifiable v2 seconds.
+
+### 15.7 A3 ADD — remaining packages, dependencies and acceptance
+
+| A3 ADD package, ordered | Minimal work and acceptance (all remain dormant until P6) |
+|---|---|
+| A3-E `P5 integration corrections` | Live-report requests 1–3: exact manifest key/schema filters in expected/reset views, preserve supplied proof/siblings after downstream errors, missing dependencies→artifact_gap with original path (malformed present bytes remain schema errors). Implement D1 calls/retained joins, stage-aware D4 inputs, traffic-region scope, and D3 G1/G7 accounting consumption. Update provenance audit and original-byte regressions; no fixture/pin/output contract changes. |
+| A3-N `native export ports` depends export package + agreed A3-E parser boundary | NativeV2RangeRead SQL/conformance manifest, snapshot/timestamp semantics, NativeGenerationRead, bounded streaming/spooling and real operation accounting. Test 0/199/200/201 rows, terminal empty page, continuation loss, timeout during iteration/cleanup, generation change, non-UTF8/conflicting bytes, bound exhaustion and no scan/retry. No writer API changes. |
+| A3-C1 `inventory/readiness/lifecycle collection` depends A3-N interfaces | Inventory, six boot criteria, Shutdown and startup/platform correlation/readiness integration; reviewed source parsers and approved-file packaging. Platform fake proves retired/killed/zero-row boot still expected, early traffic blocked, missing bind/measurement cannot turn into a roster or zero duration. Native trial demonstrates actual platform provenance before activation. |
+| A3-C2 `bundle and measurements` depends A3-E/N/C1 | DayPack/Coverage, Budget, ExternalPack, History and release-review file assembly in one offline package. Deterministic DAG/F/C/R, full dependency/expected-coverage/operation accounting; reuse existing retained callables. Deletion tests for every table row/source; no token capture. Commands below are acceptance interfaces to implement, not present capabilities. |
+| A3-I `end-to-end acceptance` depends E/N/C1/C2 | Real P3/P4a writers on fake store→real exporter→real collectors with fake platform/CI/Monitoring ports→real P5 loader/evaluator/renderer. First transport PASS with cap retained, no signatures file; then pre-enable→closed warm-up fleet (linked pre) + transport→fresh seed shadow-serving→≥604800s continuous window, forward horizon. Money pre/post-flip only in separate fully supplied synthetic stage tests. Missing producer cannot be replaced by fixture-generated gate evidence; fake external ports carry explicit fake source records, not production claims. |
+| P6 `measured opt-in` (§10), depends all above | Released exact-revision CI, bounded native trials, boot/lifecycle source access and budgets approved; existing reviewed deploy/attestation gates, N=1 config and jobs, real warm-up and stage chain. Record completed rollout/health, shadow opt-out rollback and retained losses. No gate tool changes flags; no money activation. |
+
+A3-I negatives must include deleting a middle/last range page or EOF, omitting
+an entire kind/day, dropping the accounting file while leaving a plausible bundle,
+changing hash/byte/generation, extra native RPC/rerun omitted from G7, missing idle
+or killed boot, missing one criterion/source, false shutdown zero, absent budgets,
+cap-only manifest input, invalid retained resolution support, pre-seed at/before
+any prerequisite and new unseeded booking region. Correct failures keep frozen
+§7.5 counts/subjects; ≥8 dates when the seed starts after midnight, and each
+issue-day horizon remains covered. Code packages run §11 full CI/oracle/conformance;
+A3 document editing is not evidence those tests passed.
+
+**A3 ADD — pre-enable preimage resolution.** Frozen
+`W/src/async_settle_shadow_v2_a2_contract.py:351–375,414–416` requires both
+pre/post envelope preimages and their exact link at every stage; omission is
+not permitted. Before production opt-in, the post slot must contain the **actual
+closed isolated qualification trial's** post envelope linked to the approved
+pre envelope. Retain its original payload/output, trial resource identity,
+closed writer evidence, shutdown measurements and review, explicitly scoped to
+that trial. It is sizing evidence only, never production post-opt-in PASS or a
+seed. The pre-stage production deployment/read-health/CPU records still prove
+actual dormant pins via retained fleet_budgets_pre; no production observer
+counts or readiness completion are invented. A3-E separates these source scopes
+when loading the pre-stage G7 projection. At the production fleet stage, replace
+the post slot with actual closed production warm-up evidence linked to the
+**same approved pre envelope**, and require its independent inventory/segments
+and complete boot ledgers. Archive the earlier pre-stage graph unchanged for
+recursive verification. The released configuration identity describes the
+reviewed activation configuration; stage-specific actual pins remain in each
+original deployment capture. Never rewrite the dormant capture as shadow-on.
+
+**A3 cannot be satisfied without a contract change:** none established for D1–D3.
+The pre/post requirement above is a concrete frozen constraint, not permission
+to bypass `validate_preimages`. A3-I must demonstrate this real-trial packaging
+through that unchanged validator and recursive prior verification. If it cannot,
+record the exact incompatible assertion/fixture as a contract blocker and stop
+P6; never replace it with ZERO, invented production observations or skipped
+validation. Separately, unavailable platform per-process lifecycle provenance
+blocks activation; revision-only inventory cannot satisfy §13 Q6.
+
+### 15.8 A3 ADD — exact first-window runbook and operator checklist
+
+**Exact replacement:** for the first window replace §9 numbered steps **3–6**
+with the sequence below; §9 steps 1–2 remain prerequisites and 7–9 remain deferred.
+The following interface is to be delivered/tested by A3-C2/P6; it is **not** a
+claim these commands exist today. `shadow_v2_window` is a small offline/release
+orchestrator, not a daemon: `collect` invokes only the bounded collectors;
+`review-inputs` prepares files for the human reviewer; `pack` uses approved bytes;
+`release` dispatches the existing reviewed workflow named in the plan and waits
+for CI/attestation/rollout/health; it cannot bypass those gates. `probe` invokes
+the existing dedicated job through reviewed paths, never direct billing probes.
+`trial` runs the separately approved bounded native qualification harness on its
+isolated resources and records actual writer/transport/CPU/shutdown results;
+collectors only read those results and cannot run or simulate the trial for it.
+Each command uses an explicit finite `--plan` file with full release SHAs,
+resources/dates, budgets/pass limits, source parsers, checkpoint stage and artifact
+paths. Plans contain secret **references** only. `--out` creates a new directory;
+no overwrite of BLOCKED artifacts. Changed originals require a new review digest.
+
+```sh
+# Offline release workspace; variables denote reviewed paths, not secret values.
+V2_PLAN=release/first-window-plan.json
+V2_DIR=release/first-window
+# §9.3: validate/provision once via the existing probe package if not already done.
+uv run python -m scripts.provision_async_settle_shadow_probe_workspace
+# Apply only the reviewed funding/key-output parameters via that package (C11).
+uv run python -m scripts.async_settle.shadow_v2_window trial --plan "$V2_PLAN" --out "$V2_DIR/trial"
+uv run python -m scripts.async_settle.shadow_v2_window collect --plan "$V2_PLAN" --stage pre --out "$V2_DIR/pre"
+uv run python -m scripts.async_settle.shadow_v2_window review-inputs --plan "$V2_PLAN" --input "$V2_DIR/pre"
+# Human review produces APPROVAL/REVIEW_RECORD, release-plan.json and independent digest.
+uv run python -m scripts.async_settle.shadow_v2_window pack --plan "$V2_PLAN" --input "$V2_DIR/pre" --out "$V2_DIR/pre-approved"
+```
+
+Use the **existing P5 CLI** for every gate (C11); `V2_APPROVED_SHA` is supplied
+from the external review record, not calculated from the bundle and self-approved:
+
+```sh
+v2_gate() {
+  uv run python -m scripts.async_settle.shadow_report --policy shadow-v2 \
+    --gate "$1" --bundle "$2/bundle.json" --output-dir "$2/gate-$1" \
+    --release-plan "$2/loading/release-plan.json" \
+    --release-plan-sha256 "$V2_APPROVED_SHA" \
+    --binding-keys "$2/loading/binding-public.json" \
+    --certificate-keys "$2/loading/certificate-public.json"
+}
+v2_gate fleet-budgets-pre "$V2_DIR/pre-approved"
+# §9.4: only after measured pre-enable PASS/review; real workflow, no manual env edit.
+uv run python -m scripts.async_settle.shadow_v2_window release --plan "$V2_PLAN" --phase shadow-opt-in
+uv run python -m scripts.async_settle.shadow_v2_window probe --plan "$V2_PLAN" --phase warmup
+# §9.5: wait for closed warm-up and required forward coverage; collector cannot close writers.
+uv run python -m scripts.async_settle.shadow_v2_window collect --plan "$V2_PLAN" --stage warmup --out "$V2_DIR/warmup"
+uv run python -m scripts.async_settle.shadow_v2_window review-inputs --plan "$V2_PLAN" --input "$V2_DIR/warmup"
+uv run python -m scripts.async_settle.shadow_v2_window pack --plan "$V2_PLAN" --input "$V2_DIR/warmup" --out "$V2_DIR/warmup-approved"
+# Set V2_APPROVED_SHA to this review's independent digest; pack includes the complete pre graph.
+v2_gate transport "$V2_DIR/warmup-approved"
+v2_gate fleet-budgets "$V2_DIR/warmup-approved"
+# Both prerequisite outputs become immutable inputs to subsequent packs.
+uv run python -m scripts.async_settle.shadow_v2_window probe --plan "$V2_PLAN" --phase window
+# Repeat collect/review/pack daily; final pack includes daily originals, all predecessors and horizons.
+uv run python -m scripts.async_settle.shadow_v2_window collect --plan "$V2_PLAN" --stage window --out "$V2_DIR/window"
+uv run python -m scripts.async_settle.shadow_v2_window review-inputs --plan "$V2_PLAN" --input "$V2_DIR/window"
+uv run python -m scripts.async_settle.shadow_v2_window pack --plan "$V2_PLAN" --input "$V2_DIR/window" --out "$V2_DIR/window-approved"
+# Set the newly approved external digest; §9.6 evaluates the real seed and continuous duration.
+v2_gate shadow-serving "$V2_DIR/window-approved"
+```
+
+No `--live` on the offline v2 gate CLI: C11 accepts original bundles; **native
+reads belong to collect**, replacing §9.5's less-specific `--bundle ... --live`.
+Collection selects a fixed snapshot after closure/horizon, never sleeps while
+holding a production snapshot. Each daily invocation has a fresh plan/output
+path; the displayed `window` path is the final invocation, not repeated overwrite.
+A seven-day **shadow** certificate here means validated shadow-serving evidence
+with elapsed≥604800, G1–G9 and G10 continuity/regional seeds; P4b certificate
+issuance is unrelated and deferred. Full pre-flip G1–G11 PASS still needs §9.7's
+money-specific inputs and cannot be claimed from this sequence.
+
+| A3 ADD ordered human checklist (commands/artifacts above) | Done means | Production credentials? |
+|---|---|---|
+| 1. Complete §9.1–2; review A3-E/N/C1/C2/I release CI and native-port acceptance | Exact releases/pins and complete dormant rollout/attestation; old BLOCKED v1/reset originals retained; four money-off pins; no unimplemented input producer | Yes for release/platform verification; CI read access separately |
+| 2. Verify/provision ONE probe via C11 package; approve funding/key delivery and released identity pin | Existing workspace verified, or reviewed `--apply --fund-usd <approved> --key-output-file <secure-local-path>` completed; key handled outside export; provider/candidate/routes/fallback configuration reviewed | Yes for provisioning/verification; no key in report/plan |
+| 3. Approve first-window plan, resource/day bounds, lifecycle source access, N=1 caps/K/surge, pass frequency/retention and measured blocked-day target | Platform can account for boots including pre-flush kills; named release reviewer; all finite costs authorized; no revision-only fallback | Yes to verify platform source access; approval itself offline |
+| 4. Run reviewed `trial`, then `collect --stage pre`; review actual isolated trial pre/post originals, `review-inputs`, human signoff, `pack`, `v2_gate fleet-budgets-pre` | Exact approved pre envelope/limits, all six criterion mechanisms proven, report/outer validated PASS; no fake opted evidence | Yes for native trial/Monitoring/platform read; gate offline |
+| 5. `release --phase shadow-opt-in`; verify config, attested regions, readiness and health | Completed reviewed P6 rollout: router v2 policy/one workspace/primary health, enclave shadow on, negotiation/admission/protection/fast drain off; per-boot early traffic prevented/accounted | Yes, deploy credentials |
+| 6. `probe --phase warmup`, wait for closed evidence; collect/review/pack warm-up | Both routes and variants through all four enclave paths; actual booking regions known; T=A, B=C=0; approved measured post costs and original closes/results/coverage | Yes, job and read credentials |
+| 7. Run transport then fleet-budgets, retain both full graphs plus pre graph | Both PASS, exact matching pre approval; prerequisites durably retained before seed; no report-only predecessor shortcut | No, offline |
+| 8. `probe --phase window`; daily collect/review/pack and shadow-serving; review new boots/regions and failures | Real durable positive strictly after prerequisite maximum; report keeps original seed time; actual-region seeds satisfied; each new boot has own ledger; no daily global-clock restart | Yes for jobs/collection; approvals/gates offline |
+| 9. If blocked: retain artifacts, investigate; use reviewed `release --phase shadow-opt-out` when required | Shadow opt-out/close/export completed truthfully; no loss erased, affected days remain blocked; fresh positive/window only after repair/prerequisites | Yes for opt-out; offline diagnosis otherwise |
+| 10. After ≥604800 continuously covered seconds and all issue-day forward horizons, final collect/review/pack + shadow-serving | Frozen envelope/report/detail/input graphs validate, PASS with elapsed≥604800 and no active gaps; ≥30-day retention/cleanup coverage and production health checked; archive review digest and all originals | Yes for final reads/retention verification; final gate offline |
+| 11. Hold money flags off; hand archive to owner | Certified shadow window only. Second workspace needs fresh N=2 pre/post approvals/measurements and scope; excluded traffic needs P4b; money pilot needs separate identity/exposure/concurrency/drain/D2/D3/attestation/rollback work and pre/post-flip gates (§§5.2, 9.7–9, 13) | No activation authorized by the certificate |
