@@ -128,7 +128,7 @@ def test_node_ships_its_journal_to_cloud_logging() -> None:
     """The unit writes its alerts as structured JSON to journald; W7's
     alerting reads them in Cloud Logging, so the node runs the Ops Agent
     with a journald receiver whose parser reads the journal's MESSAGE and
-    whose fields processor promotes the alert's severity (P1's second run
+    whose fields processor names the unit (P1's second run
     found the alerts stopping in journald). The agent is set up before the
     release is looked up, so a node with no release still ships its journal,
     and restarted on its configuration before the unit starts."""

@@ -1751,7 +1751,8 @@ func TestAnAlertIsALineOfJSON(t *testing.T) {
 		{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR", "message": "fastpath alert: " + auditor.AlertGap,
 			"subject":                       "lease-1",
 			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "gap"}},
-		{"severity": "ERROR", "message": "fastpath alert: something new", "subject": "gwa-2",
+		{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR", "message": "fastpath alert: something new",
+			"subject":                       "gwa-2",
 			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "other"}},
 	} {
 		var got map[string]any
