@@ -258,14 +258,14 @@
       "upstream_id": "z-ai/glm-5.3-flash",
       "confidential_compute": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 150000,
+      "input_token_price_per_m": 80000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 35000
+      "cached_input_token_price_per_m": 12000
     }
   ],
   "source": "https://completions.near.ai/endpoints",
   "pricing_source": "https://cloud-api.near.ai/v1/models",
-  "generated_at": "2026-10-13T03:51:03Z",
+  "generated_at": "2026-10-13T12:09:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11
 }

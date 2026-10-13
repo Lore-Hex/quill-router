@@ -541,19 +541,19 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 77,
+    "model_count": 78,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 149,
+    "route_count": 151,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 16,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 15,
+    "route_count": 16,
     "route_mode": "Prepaid",
     "slug": "nscale"
   },
@@ -784,11 +784,11 @@
   },
   "system1models": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 5,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 5,
+    "route_mode": "Prepaid",
     "slug": "system1models"
   },
   "system1models-eu": {

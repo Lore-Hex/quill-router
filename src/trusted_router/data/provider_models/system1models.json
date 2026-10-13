@@ -27,10 +27,9 @@
         "example_input": "{\"model\": \"system1models/s1-fast\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
         "example_output": "{\"model\": \"system1models/s1-fast\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
       },
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 19000,
       "output_token_price_per_m": 0,
-      "routable_reason": "provider-canary-failed",
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": null,
@@ -65,10 +64,9 @@
         "example_input": "{\"model\": \"system1models/s1-pro\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}",
         "example_output": "{\"model\": \"system1models/s1-pro\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
       },
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 38000,
       "output_token_price_per_m": 0,
-      "routable_reason": "provider-canary-failed",
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": "2026-11-12T00:00:00Z",
@@ -207,8 +205,7 @@
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": null,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 19000,
       "output_token_price_per_m": 0
     },
@@ -241,8 +238,7 @@
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": "2026-11-12T00:00:00Z",
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 38000,
       "output_token_price_per_m": 0
     },
@@ -308,15 +304,14 @@
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": null,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 80000,
       "output_token_price_per_m": 0
     }
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-10-13T03:51:03Z",
+  "generated_at": "2026-10-13T12:09:08Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9,
   "pricing_valid_until": "2026-11-12T00:00:00Z"

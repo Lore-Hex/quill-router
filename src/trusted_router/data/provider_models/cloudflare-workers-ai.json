@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-10-13T03:51:03Z",
+  "generated_at": "2026-10-13T12:09:07Z",
   "price_scale": "microdollars_per_million",
   "model_count": 37,
   "models": [
@@ -727,7 +727,7 @@
       "status": 1,
       "id": "cloudflare/clef-flash",
       "upstream_id": "@cf/cloudflare/clef-flash",
-      "context_length": 65536,
+      "context_length": 24576,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-10-04"
