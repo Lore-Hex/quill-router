@@ -70,7 +70,7 @@
   --tr-color-header-search-bg: #111512;
   --tr-color-header-search-border: #2A312C;
   --tr-font-family-sans: Archivo, Arial, sans-serif;
-  --tr-font-family-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --tr-font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --tr-font-weight-regular: 400;
   --tr-font-weight-medium: 500;
   --tr-font-weight-semibold: 550;
