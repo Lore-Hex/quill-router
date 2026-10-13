@@ -163,9 +163,12 @@ jobs:
     services:
       postgres:
         # Same Docker Official Image as postgres:17, verified 2026-10-09.
-        # ECR avoids Docker Hub's shared-runner anonymous pull limit. Pin the
-        # multi-architecture index so changing registries cannot change bytes.
-        image: public.ecr.aws/docker/library/postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        # Pin the multi-architecture index so changing registries cannot
+        # change bytes. Docker Hub limits anonymous pulls from shared runners,
+        # and public ECR answered "toomanyrequests: Data limit exceeded" on
+        # several shards a day (2026-10-13), which reddens CI and holds the
+        # deploy gate. Google's Docker Hub mirror serves the same digest.
+        image: mirror.gcr.io/library/postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
         env:
           POSTGRES_PASSWORD: tr
         ports:
