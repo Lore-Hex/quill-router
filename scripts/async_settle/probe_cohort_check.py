@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Read ten-minute cohort metadata through the bounded, indexed shadow day reader."""
+"""Read ten-minute cohort metadata through the bounded, indexed shadow day reader.
+
+Use the exclusive pass file from --generation-ids-out (format documented in
+synthetic/shadow_probe.py). Buffered requests match IDs; stream requests are
+reconciled by count, including streams that happen to expose an ID. This is
+sound only when the workspace's sole traffic in the window is this probe pass.
+Wait for settlement and select a window containing exactly one complete pass.
+A non-zero probe exit means a failed pass/configuration, not a missing stream
+ID. A non-zero reconciliation exit means missing, extra, ambiguous or unhealthy
+evidence (or invalid input); probe success alone does not prove settlement.
+Legacy ID-only files remain accepted with a strict total equal to their IDs.
+"""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +27,7 @@ from trusted_router.storage import create_store
 from trusted_router.storage_gcp_async_settle_shadow import EvidenceStore
 from trusted_router.storage_models import generation_id_for_authorization
 from trusted_router.storage_operational_analytics import analytics_surrogate
+from trusted_router.synthetic.shadow_probe import DENOMINATOR_PREFIX
 from trusted_router.synthetic.shadow_probe_contract import SHAPES
 
 # Counter policy table: action, fields, reason. Tests require exact schema
@@ -50,6 +62,46 @@ def counter_veto(row: dict[str, Any], cutoff_us: int, now_us: int) -> bool:
     return False
 
 
+def parse_denominator(lines: list[str]) -> tuple[list[str], dict[str, Any] | None]:
+    summary = None
+    ids = lines
+    if lines and lines[-1].startswith(DENOMINATOR_PREFIX):
+        summary = json.loads(lines[-1][len(DENOMINATOR_PREFIX):])
+        ids = lines[:-1]
+        fields = {"requests_sent", "buffered_with_id", "streams_sent", "streams_without_id", "failed"}
+        if (not isinstance(summary, dict)
+                or set(summary) != fields | {"by_shape", "stream_generation_ids"}
+                or any(type(summary[name]) is not int or not 0 <= summary[name] <= 10000 for name in fields)):
+            raise ValueError("invalid denominator: pass counts")
+        shapes = summary["by_shape"]
+        if not isinstance(shapes, dict) or set(shapes) != {shape.name for shape in SHAPES}:
+            raise ValueError("invalid denominator: shapes")
+        for counts in shapes.values():
+            if (not isinstance(counts, dict) or set(counts) != {"sent", "with_id"}
+                    or any(type(n) is not int or not 0 <= n <= 10000 for n in counts.values())
+                    or counts["with_id"] > counts["sent"]):
+                raise ValueError("invalid denominator: shape counts")
+        stream_ids = summary["stream_generation_ids"]
+        streams_sent = sum(shapes[s.name]["sent"] for s in SHAPES if s.stream)
+        streams_with_id = sum(shapes[s.name]["with_id"] for s in SHAPES if s.stream)
+        buffered_with_id = sum(shapes[s.name]["with_id"] for s in SHAPES if not s.stream)
+        if (not isinstance(stream_ids, list)
+                or summary["requests_sent"] != sum(c["sent"] for c in shapes.values())
+                or not summary["requests_sent"]
+                or summary["failed"] > summary["requests_sent"]
+                or summary["buffered_with_id"] != buffered_with_id or buffered_with_id != len(ids)
+                or summary["streams_sent"] != streams_sent
+                or summary["streams_without_id"] != streams_sent - streams_with_id
+                or len(stream_ids) != streams_with_id):
+            raise ValueError("invalid denominator: totals do not add up")
+    all_ids = ids + (summary["stream_generation_ids"] if summary is not None else [])
+    if (len(all_ids) > 10000 or (summary is None and not ids)
+            or any(not isinstance(value, str) or re.fullmatch(r"gen-[0-9a-f]{32}", value) is None for value in all_ids)
+            or len(set(all_ids)) != len(all_ids)):
+        raise ValueError("invalid denominator: identities")
+    return ids, summary
+
+
 def check(evidence: Any, workspace: str, now: dt.datetime, generation_ids: list[str] | None = None) -> dict[str, Any]:
     cutoff = now - dt.timedelta(minutes=10)
     fingerprint = analytics_surrogate("workspace", workspace)
@@ -57,10 +109,9 @@ def check(evidence: Any, workspace: str, now: dt.datetime, generation_ids: list[
     counters = []
     identities: dict[str, list[str]] = {}
     cohort_errors = []
-    if generation_ids is not None and (not generation_ids or len(generation_ids) > 10000
-            or len(set(generation_ids)) != len(generation_ids)
-            or any(re.fullmatch(r"gen-[0-9a-f]{32}", value) is None for value in generation_ids)):
-        raise ValueError("invalid denominator")
+    summary = None
+    if generation_ids is not None:
+        generation_ids, summary = parse_denominator(generation_ids)
     for day in sorted({cutoff.date().isoformat(), now.date().isoformat()}):
         for _, raw in evidence.day(SAMPLE, day):
             row = json.loads(raw)
@@ -91,6 +142,28 @@ def check(evidence: Any, workspace: str, now: dt.datetime, generation_ids: list[
         found = identities.get(identity, [])
         if found != ["exact"]:
             errors.append(identity + (": missing" if not found else ": non-exact or duplicate"))
+    if generation_ids is not None:
+        expected_streams = summary["streams_sent"] if summary is not None else 0
+        expected_total = summary["requests_sent"] if summary is not None else len(generation_ids)
+        buffered_ids = set(generation_ids)
+        unmatched = {identity: found for identity, found in identities.items() if identity not in buffered_ids}
+        total = sum(len(found) for found in identities.values())
+        stream_count = sum(len(found) for found in unmatched.values())
+        if total != expected_total:
+            errors.append(f"workspace sample count: expected {expected_total}, found {total}")
+        if stream_count != expected_streams:
+            errors.append(f"unmatched stream count: expected {expected_streams}, found {stream_count}; IDs: {sorted(unmatched)}")
+        for identity, found in identities.items():
+            if len(found) != 1:
+                errors.append(identity + ": duplicate sample")
+        if summary is not None:
+            if summary["failed"]:
+                errors.append(f"probe pass failed: {summary['failed']} requests")
+            if len(generation_ids) + expected_streams != expected_total:
+                errors.append("buffered requests missing IDs")
+            for identity in summary["stream_generation_ids"]:
+                if identity not in unmatched:
+                    errors.append(identity + ": optional stream ID missing")
     errors.extend(cohort_errors)
     # Writer counters cannot attribute losses to a workspace. Veto ambiguous
     # losses conservatively, never label these diagnostics cohort-specific.

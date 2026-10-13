@@ -47,15 +47,47 @@ def test_targets_always_use_all_regional_enclaves(regions: str) -> None:
     ]
 
 
+# Production field-name evidence, 2026-10-13:
+# /tmp/probe-fix-author-1/production-evidence.md. Exact probe chat bodies have
+# NO usage/trustedrouter fields. Even include_usage has no provider_usage.
+CHAT_STREAM_USAGE = {
+    "completion_tokens": 2, "cost_microdollars": 1, "inference_location": "fixture",
+    "prompt_tokens": 10, "total_cost_microdollars": 1, "total_tokens": 12,
+    "usage_estimated": True,
+}
+RESPONSES_STREAM_USAGE = {
+    "cost_microdollars": 1, "inference_location": "fixture", "input_tokens": 10,
+    "input_tokens_details": {}, "output_tokens": 2, "output_tokens_details": {},
+    "total_cost_microdollars": 1, "total_tokens": 12, "usage_estimated": True,
+}
+
+
+def stream_payloads(shape: Shape, *, include_usage: bool = False) -> list[dict[str, Any]]:
+    if shape.route == "/chat/completions":
+        payloads = [{"object": "chat.completion.chunk", "choices": [{"delta": {"content": "OK"}, "finish_reason": None}]} for _ in range(3)]
+        payloads.append({"object": "chat.completion.chunk", "choices": [{"delta": {}, "finish_reason": "stop"}]})
+        if include_usage:
+            payloads.append({"object": "chat.completion.chunk", "choices": [], "usage": dict(CHAT_STREAM_USAGE)})
+        return payloads
+    return [{"type": "response.output_text.delta", "delta": "OK"} for _ in range(9)] + [
+        {"type": "response.completed", "response": {"status": "completed", "usage": dict(RESPONSES_STREAM_USAGE)}}]
+
+
+def stream_reply(shape: Shape, payloads: list[dict[str, Any]], *, done: bool = True) -> httpx.Response:
+    text = "".join("data: " + json.dumps(payload) + "\n\n" for payload in payloads)
+    if done and shape.route == "/chat/completions":
+        text += "data: [DONE]\n\n"
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=text)
+
+
 def success(shape: Shape) -> httpx.Response:
+    if shape.stream:
+        return stream_reply(shape, stream_payloads(shape))
     payload = ({"choices": [{"finish_reason": "stop"}]} if shape.route == "/chat/completions"
                else {"type": "response.completed", "response": {"status": "completed"}})
     inner = payload.get("response", payload)
     inner["usage"] = {"input_tokens": 10, "output_tokens": 2,
                       "provider_usage": {"generation_id": "gen-" + __import__("uuid").uuid4().hex}}
-    if shape.stream:
-        return httpx.Response(200, headers={"content-type": "text/event-stream"},
-                              text="data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n")
     return httpx.Response(200, json=payload)
 
 

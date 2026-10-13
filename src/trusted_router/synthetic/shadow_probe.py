@@ -1,4 +1,20 @@
-"""Deterministic, first-party inference for the isolated shadow cohort."""
+"""Deterministic, first-party inference for the isolated shadow cohort.
+
+Denominator v1: one buffered router generation ID per line (unchanged), then
+exactly one final line ``# shadow-probe-pass-v1 `` followed by a JSON object:
+``requests_sent``, ``buffered_with_id``, ``streams_sent``, ``streams_without_id``,
+``failed`` are integer counts; ``by_shape`` maps each of the eight fixed names
+to {"sent": integer, "with_id": integer}; ``stream_generation_ids`` is a list
+of optional stream IDs, never buffered-ID lines. Every request, including a
+failed request, contributes to sent counts. CLI creation remains exclusive 0600.
+
+Exit 1 means at least one request failed validation (or the pass/file failed);
+exit 2 means invalid configuration. Missing stream identity alone is healthy.
+Stream requests are reconciled by count in the isolated, probe-only workspace;
+buffered requests still require identity. Exit 0 does not certify settlement:
+run probe_cohort_check with this pass file after settlement, using a ten-minute
+window containing exactly this pass and no other traffic.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +39,29 @@ class ProbeResult:
     status: str
     generation_id: str | None
     error_type: str | None
+    shape_name: str
+
+
+DENOMINATOR_PREFIX = "# shadow-probe-pass-v1 "
+
+
+def denominator(results: list[ProbeResult]) -> str:
+    by_shape = {shape.name: {"sent": 0, "with_id": 0} for shape in SHAPES}
+    streams = {shape.name for shape in SHAPES if shape.stream}
+    buffered_ids: list[str] = []
+    stream_ids: list[str] = []
+    for result in results:
+        counts = by_shape[result.shape_name]
+        counts["sent"] += 1
+        if result.generation_id is not None:
+            counts["with_id"] += 1
+            (stream_ids if result.shape_name in streams else buffered_ids).append(result.generation_id)
+    streams_sent = sum(by_shape[name]["sent"] for name in streams)
+    totals = dict(requests_sent=len(results), buffered_with_id=len(buffered_ids),
+                  streams_sent=streams_sent, streams_without_id=streams_sent - len(stream_ids),
+                  failed=sum(result.status != "up" for result in results),
+                  by_shape=by_shape, stream_generation_ids=stream_ids)
+    return "".join(identity + "\n" for identity in buffered_ids) + DENOMINATOR_PREFIX + json.dumps(totals, sort_keys=True) + "\n"
 
 
 def targets(settings: Settings) -> list[SyntheticTarget]:
@@ -101,7 +140,7 @@ async def probe(
                 response.raise_for_status()
                 if shape.stream:
                     terminal = done = False
-                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                    if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "text/event-stream":
                         raise ValueError("stream content type")
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
@@ -112,10 +151,15 @@ async def probe(
                             continue
                         payload = json.loads(data)
                         _verify_payload(payload, api_key)
-                        if not isinstance(payload, dict) or payload.get("error"):
+                        if (not isinstance(payload, dict) or "error" in payload
+                                or payload.get("type") == "error"
+                                or (isinstance(payload.get("response"), dict)
+                                    and payload["response"].get("error"))):
                             raise ValueError("stream payload")
                         generation_id = _generation_id(payload) or generation_id
-                        terminal = terminal or _terminal(payload, shape)
+                        terminal = terminal or (_terminal(payload, shape) and (
+                            shape.route != "/responses" or payload.get("type") == "response.completed"
+                        ))
                     if not terminal or (shape.route == "/chat/completions" and not done):
                         raise ValueError("missing terminal")
                 else:
@@ -125,7 +169,7 @@ async def probe(
                     generation_id = _generation_id(payload)
                     if not _terminal(payload, shape):
                         raise ValueError("missing terminal")
-                if generation_id is None:
+                if not shape.stream and generation_id is None:
                     raise ValueError("missing router usage identity")
     except Exception as exc:  # Sample only the class; never provider text or request headers.
         error = type(exc).__name__
@@ -135,7 +179,7 @@ async def probe(
         status_class = f"{status // 100}xx" if status is not None else "none"
         report(f"{target.name} {shape.name} {status_class} {elapsed}ms"
                + (f" generation_id={generation_id}" if generation_id else ""))
-    return ProbeResult("up" if error is None else "down", generation_id, error)
+    return ProbeResult("up" if error is None else "down", generation_id, error, shape.name)
 
 
 async def run_pass(

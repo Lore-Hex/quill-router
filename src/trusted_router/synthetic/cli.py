@@ -592,7 +592,7 @@ async def _run_scheduled_remediator(
 async def run_shadow_probe(*, once: bool = False, no_ingest: bool = False,
                            generation_ids_out: Path | None = None) -> int:
     from trusted_router.config import validate_shadow_probe_key
-    from trusted_router.synthetic.shadow_probe import run_pass
+    from trusted_router.synthetic.shadow_probe import denominator, run_pass
 
     output = None
     try:
@@ -625,9 +625,7 @@ async def run_shadow_probe(*, once: bool = False, no_ingest: bool = False,
             results = await run_pass(settings, monitor_region=settings.synthetic_monitor_region or settings.primary_region,
                                      client=client, report=print)
         if output is not None:
-            for result in results:
-                if result.generation_id is not None:
-                    output.write(result.generation_id + "\n")
+            output.write(denominator(results))
             output.flush()
             os.fsync(output.fileno())
         failed = sum(result.status != "up" for result in results)

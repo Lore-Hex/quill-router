@@ -408,7 +408,13 @@ async def test_pass_never_ingests_and_writes_denominator(once, tmp_path, monkeyp
     assert '32 requests, 0 failed' in output.out
     assert key not in output.out + output.err
     assert len(calls) == len({r.headers['idempotency-key'] for r in calls}) == 32
-    assert len(ids.read_text().splitlines()) == len(set(ids.read_text().splitlines())) == 32
+    lines = ids.read_text().splitlines()
+    assert len(lines) == len(set(lines)) == 17
+    assert all(line.startswith('gen-') for line in lines[:-1])
+    summary = json.loads(lines[-1].removeprefix(shadow_probe.DENOMINATOR_PREFIX))
+    assert summary == dict(requests_sent=32, buffered_with_id=16, streams_sent=16,
+                           streams_without_id=16, failed=0, stream_generation_ids=[],
+                           by_shape={s.name: dict(sent=4, with_id=0 if s.stream else 4) for s in SHAPES})
     assert ids.stat().st_mode & 0o777 == 0o600
     assert await cli.run_shadow_probe(once=once, generation_ids_out=ids) == 2
     assert len(calls) == 32  # exclusive output creation fails before paid calls
@@ -434,7 +440,7 @@ async def test_response_requires_router_usage_without_credential_echo(shape, dam
             'upper': 'gen-' + 'B' * 32, 'short': 'gen-a',
             'prefix': 'gen-' + key + 'b' * 16, 'suffix': 'gen-' + 'b' * 16 + key,
         }[damage]
-    payload = {'response': inner} if shape.route == '/responses' else inner
+    payload = {'type': 'response.completed', 'response': inner} if shape.route == '/responses' else inner
     reply = (httpx.Response(200, headers={'content-type': 'text/event-stream'},
                             text='data: ' + json.dumps(payload) + '\n\ndata: [DONE]\n\n')
              if shape.stream else httpx.Response(200, json=payload))
@@ -442,7 +448,8 @@ async def test_response_requires_router_usage_without_credential_echo(shape, dam
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: reply)) as client:
         result = await shadow_probe.probe(client, shadow_probe.targets(Settings(environment='test'))[0], shape,
                                           api_key=key, monitor_region='test', report=lines.append)
-    assert result.status == 'down' and result.generation_id is None
+    expected = 'down' if not shape.stream or damage in {'prefix', 'suffix', 'other_field'} else 'up'
+    assert result.status == expected and result.generation_id is None
     assert key not in '\n'.join(lines)
 
 
