@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,15 +167,57 @@ def test_node_ships_its_journal_to_cloud_logging() -> None:
     assert order == sorted(order), order
 
 
-def test_the_unit_states_holds_boot_bindings_once_every_auditor_reads_them() -> None:
-    """The owner states a hold's boot binding on its first heartbeat record
-    only behind -hold-boot, since an auditor from before the field refuses
-    the record; at P1 the two nodes are replaced together by the apply, so
-    the release that reads the field is the one whose unit passes the flag
-    (docs/runbooks/fastpath-deploy.md)."""
+def _unit_flags(script: str) -> set[str]:
+    """The flags the unit's ExecStart passes the command."""
+    lines = script.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith("ExecStart=/opt/fastpath/fastpath")]
+    assert len(starts) == 1, starts
+    flags: set[str] = set()
+    i = starts[0]
+    while lines[i].endswith("\\"):
+        i += 1
+        found = re.match(r"^\s*-([a-z][a-z-]*)", lines[i])
+        assert found, lines[i]
+        flags.add(found.group(1))
+    return flags
+
+
+def _command_flags(source: str) -> set[str]:
+    """The flags the command's main.go declares."""
+    return set(re.findall(r'flag\.\w+\((?:&[^,]+, )?"([a-z][a-z-]*)"', source))
+
+
+def _source_at(commit: str, path: str) -> str:
+    """The file at the commit, fetched when the checkout is shallow."""
+    show = ["git", "-C", str(ROOT), "show", f"{commit}:{path}"]
+    shown = subprocess.run(show, capture_output=True, text=True)  # noqa: S603 - git on the pinned SHA
+    if shown.returncode != 0:
+        fetch = ["git", "-C", str(ROOT), "fetch", "--depth=1", "origin", commit]
+        subprocess.run(fetch, check=True)  # noqa: S603 - git on the pinned SHA
+        shown = subprocess.run(show, capture_output=True, text=True, check=True)  # noqa: S603 - as above
+    return shown.stdout
+
+
+def test_the_unit_passes_only_flags_the_pinned_release_takes() -> None:
+    """The node starts the pinned release's command with the unit's flags:
+    one that command does not take stops it before either role starts, on
+    both nodes, restarted into the same refusal. So the unit's flags are
+    held to the pinned command's, not HEAD's (docs/runbooks/fastpath-deploy.md)."""
     script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
-    main = (ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8")
-    assert '"hold-boot"' in main
-    assert re.search(r"^\s*-hold-boot\s*$", script, re.M)
+    pinned = re.search(r'fastpath_release\s*=\s*"([0-9a-f]{40})"', (ROOT / "infra" / "fastpath.tf").read_text())
+    assert pinned
+    passed = _unit_flags(script)
+    assert {"roles", "address", "database"} <= passed
+    taken = _command_flags(_source_at(pinned.group(1), "fastpath/cmd/fastpath/main.go"))
+    assert passed <= taken, sorted(passed - taken)
     deploy = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text(encoding="utf-8")
-    assert "-hold-boot" in deploy and "reader deploys first" in deploy
+    assert "## A flag the unit passes" in deploy and "two releases, and no flag" in deploy
+
+
+def test_a_flag_the_pinned_command_lacks_is_found() -> None:
+    """The control: the check reads the unit's flags and the command's."""
+    unit = "[Service]\nExecStart=/opt/fastpath/fastpath \\\n  -roles admission \\\n  -hold-boot\nKillSignal=SIGTERM\n"
+    command = 'r := flag.String("roles", "", "")\nflag.BoolVar(&b, "boot", false, "")\nflag.Parse()\n'
+    assert _unit_flags(unit) == {"roles", "hold-boot"}
+    assert _command_flags(command) == {"roles", "boot"}
+    assert _unit_flags(unit) - _command_flags(command) == {"hold-boot"}
