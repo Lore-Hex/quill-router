@@ -45,6 +45,7 @@ on `main`.
 5. **A release from P1 on** pinned in `infra/fastpath.tf`
    (`fastpath_release`), so the nodes carry `loadgen`, `fastpathwatch` and
    `load-mix.json` in `/opt/fastpath`; then the nodes reset (P0's runbook).
+   Done 2026-10-13 02:10Z with bfa94e22e.
 
 ## Each run
 
@@ -55,7 +56,14 @@ gcloud compute ssh tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-prox
 ```
 
 with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
-`WS` the workspace's ID and `FUNDED` its funding in micro-credits:
+`WS` the workspace's ID, `FUNDED` its funding in micro-credits, and `FRONT`
+the nodes' front doors by their internal IPs, which a node keeps only
+until it is replaced (a change to the startup script replaces both nodes,
+as the apply of 2026-10-13 01:38Z did):
+
+```bash
+FRONT=$(gcloud compute instances list --project=quill-cloud-proxy --filter="name~tr-fastpath" --format="value(networkInterfaces[0].networkIP)" | sed 's#^#http://#; s#$#:8080#' | paste -sd, -)
+```
 
 1. **On.** `/opt/fastpath/fastpathctl -database $DB enable $WS`.
 2. **The load, under the watch.** One command: the watch opens its reads
@@ -72,7 +80,7 @@ with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trus
    own, the watch ends with it, exiting 0 with the workspace left on:
 
    ```bash
-   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager,settle-log-archive,records-archive -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -run /opt/fastpath/loadgen -front http://10.128.0.51:8080,http://10.128.0.110:8080 -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl
+   /opt/fastpath/fastpathwatch -database $DB -project quill-cloud-proxy -instance trusted-router-nam6 -subscriptions auditor,stager,settle-log-archive,records-archive -workspace $WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m -overdue 5m -max-overdue 0 -max-spend $((FUNDED / 10)) -run /opt/fastpath/loadgen -front $FRONT -mix /opt/fastpath/load-mix.json -workspace $WS -database $DB -rate 1 -duration 10m -log /tmp/p1-$(date -u +%Y%m%dT%H%M)Z.jsonl
    ```
 
    The generator's report is its standard output, the watch's answer the
