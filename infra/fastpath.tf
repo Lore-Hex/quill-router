@@ -14,9 +14,9 @@ locals {
   fastpath_region = "us-central1"
   # A main commit whose CI passed and whose binaries fastpath-release.yml
   # uploaded; a node picks a new one up when reset or replaced
-  # (docs/runbooks/fastpath-p0.md). 7cdbea308: the merge of #1708, P0's
-  # install itself, uploaded 2026-10-12 17:25Z.
-  fastpath_release        = "7cdbea308c56d7598242d3339cfcd83d7709b015"
+  # (docs/runbooks/fastpath-p0.md). bfa94e22e: the merge of #1728, P1's run,
+  # the first release carrying loadgen, fastpathwatch and load-mix.json.
+  fastpath_release        = "bfa94e22e2952b1cc9e94c2b525858d53cc6cc36"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
