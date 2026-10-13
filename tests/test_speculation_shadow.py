@@ -466,7 +466,10 @@ def test_flag_off_import_and_call_sites():
     root = Path(__file__).parents[1]
     result = subprocess.run([sys.executable, "-c", "import sys; import trusted_router.main; assert 'trusted_router.services.speculation_shadow' not in sys.modules; assert 'trusted_router.storage_gcp_speculation_shadow' not in sys.modules"],
         env={**os.environ, "TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED": "false", "TR_ENVIRONMENT": "test", "PYTHONPATH": str(root / "src")},
-        capture_output=True, text=True, timeout=30, cwd=root, check=False)
+        # A cold import of trusted_router.main takes about 13 s on an idle machine
+        # and exceeded 30 s twice on 2026-10-13 when gates ran at load 20-40; the
+        # bound only needs to catch a hang, not a slow host.
+        capture_output=True, text=True, timeout=180, cwd=root, check=False)
     assert result.returncode == 0, result.stderr
     # Only the shadow implementation may import the pure protocol at runtime.
     imports = []
