@@ -155,7 +155,7 @@ def _bad_number(lexeme: str) -> Any:
     raise ValueError("integer")
 
 
-def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
+def decode(raw: bytes, limit: int, *, retained_strings: bool = False, binary64_paths: tuple[tuple[str, ...], ...] = ()) -> Any:
     """Strict ASCII by default; retained mode admits canonical scalar strings.
 
     Whitespace is allowed for transport; byte limits charge those actual bytes.
@@ -163,6 +163,9 @@ def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
     the object and must be removed explicitly by fixture readers.
     """
     require(type(raw) is bytes and len(raw) <= limit, "evidence_size")
+    number_hook = None
+    if binary64_paths:
+        from trusted_router.async_settle_shadow_v2_a1_numbers import number_decoder
     if retained_strings:
         # V1's pure decoder preserves scalar Unicode/escaped ASCII values,
         # bounds depth and integers, and rejects duplicate keys and surrogates.
@@ -171,7 +174,11 @@ def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
             # executable table owns the disclosed retained transport policy.
             from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
             apply_deltas("retained-transport", raw)
-            return bounded_json(raw, limit, signed=True)
+            if binary64_paths:
+                number_hook = number_decoder(raw, binary64_paths)
+            if number_hook is None:
+                return bounded_json(raw, limit, signed=True)
+            return bounded_json(raw, limit, signed=True, number_hook=number_hook)
         except ValueError as exc:
             raise ValueError({"json_duplicate": "duplicate_key", "transport-spelling": "json_encoding"}.get(str(exc), str(exc))) from exc
     require(all(32 <= c <= 126 and c != 92 for c in raw), "json_encoding")
@@ -186,9 +193,13 @@ def decode(raw: bytes, limit: int, *, retained_strings: bool = False) -> Any:
                 require(depth <= 16, "json_depth")
             elif char in (93, 125):
                 depth -= 1
+    if binary64_paths:
+        number_hook = number_decoder(raw, binary64_paths)
     try:
-        return json.loads(raw, object_pairs_hook=_pairs, parse_int=_number,
-                          parse_float=_bad_number, parse_constant=_bad_number)
+        return json.loads(raw, object_pairs_hook=_pairs,
+                          parse_int=_number if number_hook is None else lambda token: number_hook(token, _number),
+                          parse_float=_bad_number if number_hook is None else lambda token: number_hook(token, _bad_number),
+                          parse_constant=_bad_number)
     except (json.JSONDecodeError, RecursionError, UnicodeError) as exc:
         raise ValueError("json_shape") from exc
 
@@ -199,6 +210,7 @@ class Schema:
     limit: int
     invariant: Check | None = None
     retained_strings: bool = False
+    binary64_paths: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
@@ -207,7 +219,7 @@ class Schema:
         # Inspect the original native object before any subclass delegation or
         # canonicalization can erase container/scalar types or join surrogates.
         from trusted_router.async_settle_shadow_v2_deltas import apply_deltas
-        apply_deltas("every v2 object", value)
+        apply_deltas("every v2 object", value, binary64_paths=self.binary64_paths)
         if self.retained_strings:
             apply_deltas("retained-object", value)
         self._validate(value)
@@ -215,14 +227,20 @@ class Schema:
     def _validate(self, value: Any) -> None:
         require(type(value) is dict and set(value) == set(self.fields))
         raw = canonical(value)
-        decode(raw, self.limit, retained_strings=self.retained_strings)
+        self._decode(raw)
         for field, check in self.fields.items():
             check(value[field])
         if self.invariant is not None:
             self.invariant(value)
 
+    def _decode(self, raw: bytes) -> Any:
+        if self.binary64_paths:
+            return decode(raw, self.limit, retained_strings=self.retained_strings,
+                          binary64_paths=self.binary64_paths)
+        return decode(raw, self.limit, retained_strings=self.retained_strings)
+
     def parse(self, raw: bytes) -> dict[str, Any]:
-        value = decode(raw, self.limit, retained_strings=self.retained_strings)
+        value = self._decode(raw)
         self(value)
         assert isinstance(value, dict)
         return value

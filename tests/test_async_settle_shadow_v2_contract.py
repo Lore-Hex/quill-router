@@ -12,6 +12,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from trusted_router import async_settle_shadow_binding as binding
+from trusted_router import async_settle_shadow_v2_a1_evidence as a1e
+from trusted_router import async_settle_shadow_v2_a1_health as a1h
+from trusted_router import async_settle_shadow_v2_a1_reconciliation as a1r
 from trusted_router import async_settle_shadow_v2_certificate as cert
 from trusted_router import async_settle_shadow_v2_contract as c
 from trusted_router import async_settle_shadow_v2_evidence as e
@@ -61,6 +64,7 @@ def signer() -> cert.ExclusionSigner:
 def schema_cases() -> list[tuple[str, s.Schema, dict[str, Any]]]:
     # Discover nested exact objects from committed bytes, not synthesized outputs.
     schemas = {name: value for module in (s, c, e, cert) for name, value in vars(module).items() if isinstance(value, s.Schema)}
+    schemas.update({"a1_" + name: value for module in (a1h, a1e, a1r) for name, value in vars(module).items() if isinstance(value, s.Schema) and id(value) not in {id(v) for v in schemas.values()}})
     known = {id(value) for value in schemas.values()}
     traversed: set[int] = set()
     def discover(label: str, check: Any) -> None:
@@ -94,7 +98,7 @@ def schema_cases() -> list[tuple[str, s.Schema, dict[str, Any]]]:
         elif isinstance(value, list):
             for child in value:
                 walk(child)
-    for path in FIXTURES.glob("*.json"):
+    for path in (*FIXTURES.glob("*.json"), *FIXTURES.with_name("shadow_v2_a1").glob("*.json")):
         walk(json.loads(path.read_bytes()))
     return sorted(cases.values(), key=lambda v: v[0])
 

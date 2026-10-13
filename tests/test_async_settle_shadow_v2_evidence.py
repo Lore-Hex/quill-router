@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import importlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -30,6 +32,9 @@ from tests.test_async_settle_shadow_v2_contract import (
     signer,
     strict_equal,
 )
+from trusted_router import async_settle_shadow_v2_a1_evidence as a1e
+from trusted_router import async_settle_shadow_v2_a1_health as a1h
+from trusted_router import async_settle_shadow_v2_a1_reconciliation as a1r
 from trusted_router import async_settle_shadow_v2_certificate as cert
 from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_deltas as deltas
@@ -1184,6 +1189,15 @@ def v2_acceptor(shape: str, value: Any) -> None:
 
 
 def constructed_acceptor(shape: str, value: Any) -> None:
+    if shape == "a1-counter":
+        oracle_native_domain(value)
+        assert value["contract_revision"] == "a1"
+        old = {k: v for k, v in value.items() if k != "contract_revision"}
+        old["publisher"] = {k: v for k, v in value["publisher"].items() if k not in {"scheduled_slots", "lost_claims", "unknown_outcomes", "late_cycles"}}
+        constructed_acceptor("counter", old)
+        for k in ("scheduled_slots", "lost_claims", "unknown_outcomes", "late_cycles"):
+            s.integer(value["publisher"][k])
+        return
     if shape in ("sample", "counter", "wire", "normal-usage"):
         oracle_native_domain(value)
     v1_delegate(shape, value)
@@ -1884,7 +1898,7 @@ def discovered_schemas() -> dict[int, tuple[str, s.Schema]]:
             for index, cell in enumerate(getattr(value, "__closure__", ()) or ()):
                 visit(label + f".closure{index}", cell.cell_contents)
 
-    for module in (s, cert, contract, e):
+    for module in (s, cert, contract, e, a1h, a1e, a1r):
         for name, value in vars(module).items():
             visit(module.__name__ + "." + name, value)
     return found
@@ -1903,6 +1917,8 @@ def transport_seeds() -> dict[int, list[tuple[str, str, dict[str, Any]]]]:
         "billing_shadow_policy": "shadow-v2", "billing_shadow_binding": wire["billing_shadow_binding"],
         "billing_snapshot": wire["billing_snapshot"],
     })]
+    a1_counter = json.loads((FIXTURES.with_name("shadow_v2_a1") / "counter.json").read_bytes())["variants"][0]["object"]
+    seeds[id(a1e.COUNTER)] = [("a1-counter", "a1-counter", a1_counter)]
     return seeds
 
 
@@ -1943,7 +1959,7 @@ def test_transport_schema_seed_inventory() -> None:
         for name, _, base in rows:
             assert [p for _, schema, n, _, _, positions in TRANSPORT_GRID if id(schema) == key and n == name for p in positions] == list(all_string_positions(base))
     assert {name for rows in transport_seeds().values() for name, _, _ in rows} == {
-        "sample-settle", "sample-refund", "counter", "authorize-compared",
+        "sample-settle", "sample-refund", "counter", "authorize-compared", "a1-counter",
         *(f"wire-{phase}-{mode}" for phase in ("settle", "refund") for mode in ("full", "hash-only", "failure"))}
 
 
@@ -2040,7 +2056,8 @@ def test_transport_enforcing_routes(label: str, schema: s.Schema, stage: str, mo
                 assert calls == [original], (label, stage)
 
 
-def oracle_native_domain(value: Any, ancestors: tuple[int, ...] = ()) -> None:
+def oracle_native_domain(value: Any, ancestors: tuple[int, ...] = (), *,
+                         binary64_paths: tuple[tuple[str, ...], ...] = (), path: tuple[str, ...] = ()) -> None:
     """Independent original-object check, before the reference canonicalizes."""
     if type(value) in (dict, list):
         assert len(ancestors) < 16 and id(value) not in ancestors
@@ -2048,12 +2065,15 @@ def oracle_native_domain(value: Any, ancestors: tuple[int, ...] = ()) -> None:
         if type(value) is dict:
             for key, child in value.items():
                 assert type(key) is str
-                oracle_native_domain(child, chain)
+                oracle_native_domain(child, chain, binary64_paths=binary64_paths, path=(*path, key))
         else:
             for child in value:
-                oracle_native_domain(child, chain)
+                oracle_native_domain(child, chain, binary64_paths=binary64_paths, path=(*path, "*"))
     else:
-        assert type(value) in (str, int, bool, type(None))
+        if type(value) is float and path in binary64_paths:
+            assert math.isfinite(value)
+        else:
+            assert type(value) in (str, int, bool, type(None))
 
 
 class NativeString(str):
@@ -2128,25 +2148,41 @@ def every_position(value: Any, path: tuple[Any, ...] = ()) -> Any:
 
 
 def native_seeds() -> dict[int, list[tuple[str, dict[str, Any]]]]:
-    """All distinct committed fixture values for every discovered Schema identity.
+    """All P1 seeds, plus minimal committed seeds for each A1 native type shape.
 
-    Keep variant provenance, and deduplicate only identical bytes within a schema.
+    A1 boundary variants are independently traced by the A1 fixture tests. Native
+    normalization needs every type/nullable structure, not repeated array sizes.
     Exact field matching is independent of whether the schema accepts the seed:
     rejection fixtures are explicitly filtered after matching, never manufactured.
     """
+    def native_shape(value: Any) -> Any:
+        if type(value) is dict:
+            return tuple((k, native_shape(v)) for k, v in sorted(value.items()))
+        if type(value) is list:
+            return ("list", frozenset(native_shape(v) for v in value))
+        return type(value).__name__
+
     seeds: dict[int, dict[bytes, tuple[str, dict[str, Any]]]] = {}
-    for path in sorted(FIXTURES.glob("*.json")):
+    for path in sorted((*FIXTURES.glob("*.json"), *FIXTURES.with_name("shadow_v2_a1").glob("*.json"))):
         for variant in json.loads(path.read_bytes()).get("variants", []):
             for position, value in every_position(variant):
                 if type(value) is not dict:
                     continue
-                for key, (_, schema) in DISCOVERED_SCHEMAS.items():
+                for key, (schema_label, schema) in DISCOVERED_SCHEMAS.items():
+                    if path.parent != FIXTURES and "_a1_" not in schema_label:
+                        continue
                     if set(value) == set(schema.fields) and accepts(schema, value):
                         label = path.stem + ":" + variant["name"] + ":" + ".".join(map(str, position))
                         seeds.setdefault(key, {}).setdefault(canonical(value), (label, value))
     for key, rows in transport_seeds().items():
         for name, _, value in rows:
             seeds.setdefault(key, {}).setdefault(canonical(value), (name, value))
+    for key, rows in seeds.items():
+        if "_a1_" in DISCOVERED_SCHEMAS[key][0]:
+            structures: dict[Any, tuple[bytes, tuple[str, dict[str, Any]]]] = {}
+            for encoded, row in sorted(rows.items(), key=lambda item: (len(item[0]), item[0])):
+                structures.setdefault(native_shape(row[1]), (encoded, row))
+            seeds[key] = dict(structures.values())
     return {key: list(rows.values()) for key, rows in seeds.items()}
 
 
@@ -2171,7 +2207,7 @@ NATIVE_GRID = [(label, schema, name, base, positions[start:start + 32])
 
 
 def test_native_schema_seed_inventory() -> None:
-    assert len(DISCOVERED_SCHEMAS) == 56
+    assert len(DISCOVERED_SCHEMAS) == 80
     assert {label for key, (label, _) in DISCOVERED_SCHEMAS.items() if key not in FIXTURE_NATIVE_SEEDS} == set(UNSEEDED_FIXTURE_SCHEMAS)
     # Explicit seeds fill the two empty nullable/mapping fixture slots.
     assert set(NATIVE_SEEDS) == set(DISCOVERED_SCHEMAS)
@@ -2197,11 +2233,25 @@ def test_native_normalization_grid(label: str, schema: s.Schema, name: str, base
                 parity_get(value, path[:-1])[path[-1]] = item
             else:
                 value = item
-            with pytest.raises(AssertionError):
-                oracle_native_domain(value)
-            for check in (schema, schema.serialize):
-                with pytest.raises(ValueError, match="^native-json-domain$"):
-                    check(value)
+            float_path = tuple("*" if type(p) is int else p for p in path) in schema.binary64_paths
+            if float_path and type(item) is float and _kind in ("float-int", "negative-zero"):
+                oracle_native_domain(value, binary64_paths=schema.binary64_paths)
+                # A valid wall scalar can change the digest ordering of an
+                # enclosing A1 batch; the field domain does not waive ordering.
+                hashes = [hashlib.sha256(json.dumps(b, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+                          for b in value["bases"]] if schema is a1h.HEALTH_BASIS_BATCH else []
+                if hashes == sorted(set(hashes)):
+                    assert_round_trip(schema, value)
+                else:
+                    for check in (schema, schema.serialize):
+                        with pytest.raises(ValueError, match="^evidence_schema_gap$"):
+                            check(value)
+            else:
+                with pytest.raises(AssertionError):
+                    oracle_native_domain(value, binary64_paths=schema.binary64_paths)
+                for check in (schema, schema.serialize):
+                    with pytest.raises(ValueError, match="^native-json-domain$"):
+                        check(value)
         # Surrogate joining is an independent, already accepted delta. Exercise
         # it on strict seeds too, including each original dictionary key.
         for key in original if type(original) is dict else (None,) if type(original) is str else ():
@@ -2219,7 +2269,7 @@ def test_native_normalization_grid(label: str, schema: s.Schema, name: str, base
         if type(original) in (bool, int):
             value = copy.deepcopy(base)
             parity_get(value, path[:-1])[path[-1]] = int(original) if type(original) is bool else bool(original)
-            oracle_native_domain(value)
+            oracle_native_domain(value, binary64_paths=schema.binary64_paths)
             for check in (schema, schema.serialize):
                 assert not accepts(check, value), (label, name, path, "bool-int")
 
@@ -2228,7 +2278,7 @@ def test_native_normalization_grid(label: str, schema: s.Schema, name: str, base
 def test_native_gate_precedes_delegation(label: str, schema: s.Schema, monkeypatch: pytest.MonkeyPatch) -> None:
     value = copy.deepcopy(NATIVE_SEEDS[id(schema)][0][1])
     calls = []
-    def reject(original: Any) -> bool:
+    def reject(original: Any, **kwargs: Any) -> bool:
         assert original is value
         calls.append(original)
         return True

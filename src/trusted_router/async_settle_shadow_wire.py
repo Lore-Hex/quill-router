@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -51,7 +52,8 @@ def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def bounded_json(raw: bytes, limit: int = JSON_BYTES, *, signed: bool = False) -> Any:
+def bounded_json(raw: bytes, limit: int = JSON_BYTES, *, signed: bool = False,
+                 number_hook: Callable[[str, Callable[[str], Any]], Any] | None = None) -> Any:
     if len(raw) > limit:
         _refuse("header_size")
     try:
@@ -82,9 +84,12 @@ def bounded_json(raw: bytes, limit: int = JSON_BYTES, *, signed: bool = False) -
         # Wire counts remain unsigned. Stored evidence additionally carries
         # signed deltas; schema validation still rejects negative counts/times.
         integer = (lambda token: -_integer(token[1:]) if token.startswith("-") else _integer(token)) if signed else _integer
-        value = json.loads(text, object_pairs_hook=_pairs, parse_int=integer,
-                           parse_float=lambda _: _refuse("integer"),
-                           parse_constant=lambda _: _refuse("integer"))
+        def reject(token: str) -> Any:
+            return _refuse("integer")
+        value = json.loads(text, object_pairs_hook=_pairs,
+                           parse_int=integer if number_hook is None else lambda token: number_hook(token, integer),
+                           parse_float=reject if number_hook is None else lambda token: number_hook(token, reject),
+                           parse_constant=reject)
     except (json.JSONDecodeError, RecursionError):
         return _refuse("json_shape")
     def strings(item: Any) -> None:
