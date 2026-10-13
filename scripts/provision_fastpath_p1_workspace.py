@@ -51,15 +51,17 @@ def _credits(store: Any, workspace_id: str) -> int:
     return sum(row[3] or 0 for row in _shard_tiers(store, workspace_id))
 
 
-def _event_amounts(store: Any, workspace_id: str, event_id: str) -> list[int]:
-    """The amounts of this workspace's trust events for the funding event."""
+def _grant_credited(store: Any, workspace_id: str, event_id: str) -> list[int]:
+    """What this workspace's grant events for the funding event credited:
+    a grant's trust event (kind "grant"), by its credited amount; a
+    payment's fact of the same ID proves nothing of the funding."""
     with store._database.snapshot() as snap:
         rows = snap.execute_sql(
-            "SELECT event_id, amount_micro FROM tr_trust_event WHERE workspace_id=@pk",
+            "SELECT event_id, kind, credited_micro FROM tr_trust_event WHERE workspace_id=@pk",
             params={"pk": workspace_id},
             param_types={"pk": store._param_types.STRING},
         )
-        return [int(row[1]) for row in rows if str(row[0]) == event_id]
+        return [int(row[2] or 0) for row in rows if str(row[0]) == event_id and str(row[1]) == "grant"]
 
 
 def _open_reservations(store: Any, workspace_id: str) -> int:
@@ -118,6 +120,7 @@ def provision(
         if open_holds:
             raise ValueError(f"workspace {workspace.id} has {open_holds} unsettled reservations; wait for them to settle")
         result["shards_before"] = _shard_tiers(store, workspace.id)
+        result["credits_total_microdollars"] = _credits(store, workspace.id)
     if not apply:
         return result
     if workspace is None:
@@ -139,10 +142,13 @@ def provision(
         after = _credits(store, workspace.id)
         if after != before + funding_microdollars:
             raise RuntimeError(f"the credit rows rose by {after - before}, not by the funding {funding_microdollars}")
-    elif funding_microdollars not in _event_amounts(store, workspace.id, funding_event_id):
+    elif funding_microdollars not in _grant_credited(store, workspace.id, funding_event_id):
         raise RuntimeError(f"the funding event {funding_event_id} was applied elsewhere, or with another amount; "
                            "this workspace holds no such grant")
     result["funded"] = "applied" if granted else "already applied"
+    # The audit's baseline: what the credit rows hold now, pre-existing
+    # funding of the operator's own workspace included.
+    result["credits_total_microdollars"] = _credits(store, workspace.id)
     record = store.set_workspace_trust_override(
         workspace.id, tier=tier, identity_bypass=False, operator_identity=operator, reason=reason
     )

@@ -25,9 +25,11 @@ on `main`.
    uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --apply
    ```
 
-   It prints the workspace's ID. `100` USD is `100000000` micro-credits,
-   the `-funded` of every audit below. Nothing of the fast path moves
-   `total_credits`.
+   It prints the workspace's ID and `credits_total_microdollars`, what
+   the credit rows hold once the grant is in (`100` USD is `100000000`
+   micro-credits, plus whatever an owned workspace of the name already
+   held): that total is the `FUNDED` of every audit below. Nothing of the
+   fast path moves `total_credits`.
 2. **The watch's reads.** `fastpathwatch` reads Spanner's CPU and the
    subscriptions' backlogs from Cloud Monitoring as the node, so the nodes'
    service account gets `roles/monitoring.viewer` beside the writer roles
@@ -51,7 +53,8 @@ gcloud compute ssh tr-fastpath-1 --zone=us-central1-a --project=quill-cloud-prox
 ```
 
 with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
-`WS` the workspace's ID, `FUNDED` its funding in micro-credits, and `FRONT`
+`WS` the workspace's ID, `FUNDED` the `credits_total_microdollars` the
+provisioner printed, and `FRONT`
 the nodes' front doors by their internal IPs, which a node keeps only
 until it is replaced (a change to the startup script replaces both nodes,
 as the apply of 2026-10-13 01:38Z did):

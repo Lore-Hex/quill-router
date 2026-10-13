@@ -167,3 +167,34 @@ def test_a_funding_event_applied_elsewhere_is_not_this_workspaces(monkeypatch: A
                                                                               occurred_at=p1.datetime.now(p1.UTC)))
     code, _, err = _run(store, capsys, "--apply")
     assert code == 1 and "applied elsewhere" in err
+
+
+def test_a_payment_fact_of_the_events_id_proves_no_grant(monkeypatch: Any, capsys: Any) -> None:
+    """A payment event of the funding event's ID, whose credited amount is
+    less than it charged, is not the grant: the replay fails."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _db = make_fake_store()
+    user = _owner(store)
+    workspace = store.create_workspace(user.id, "fastpath-synthetic", trial_credit_microdollars=0)
+    assert store.credit_workspace_typed_direct(
+        workspace.id, 95_000_000, "evt_synthetic_checkout",
+        provenance=p1.CreditProvenance(source="checkout", provider="stripe", external_ref="pi_synthetic",
+                                       occurred_at=p1.datetime.now(p1.UTC)),
+        payment_amount_microdollars=100_000_000, currency="usd")
+    code, _, err = _run(store, capsys, "--apply", "--funding-event-id", "evt_synthetic_checkout")
+    assert code == 1 and "applied elsewhere" in err
+
+
+def test_the_audit_baseline_is_the_rows_total(monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _db = make_fake_store()
+    user = _owner(store)
+    workspace = store.create_workspace(user.id, "fastpath-synthetic", trial_credit_microdollars=0)
+    assert store.credit_workspace_typed_direct(workspace.id, 100_000_000, "another_grant",
+                                               provenance=p1.CreditProvenance(source="grant", provider="operator",
+                                                                              external_ref=None,
+                                                                              occurred_at=p1.datetime.now(p1.UTC)))
+    code, plan, _ = _run(store, capsys)
+    assert code == 0 and plan["credits_total_microdollars"] == 100_000_000
+    code, result, _ = _run(store, capsys, "--apply")
+    assert code == 0 and result["funded"] == "applied" and result["credits_total_microdollars"] == 200_000_000
