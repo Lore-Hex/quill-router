@@ -73,6 +73,16 @@ def remove_publication_guard(script: str, guard: str) -> str:
         before, after = "--workflow ci.yml \\", "--workflow deploy.yml \\"
     elif guard == "poll_event":
         before, after = "--event workflow_dispatch \\", "--event push \\"
+    elif guard == "unverified_commit":
+        before = 'ci_url="${GITHUB_SERVER_URL}'
+        after = ('git commit --allow-empty -m "Never ran CI"\n'
+                 'SNAPSHOT_SHA=$(git rev-parse HEAD)\n' + before)
+    elif guard == "unverified_commit_before_dispatch":
+        before = "gh workflow run ci.yml"
+        after = 'git commit --allow-empty -m "Never ran CI"\n' + before
+    elif guard == "skip_branch_push":
+        before = 'git push origin "HEAD:refs/heads/${BRANCH}"'
+        after = f"if false; then {before}; fi"
     else:
         raise AssertionError(f"Unknown mutation: {guard}")
     assert script.count(before) == 1, f"Mutation target missing or ambiguous: {guard}"
@@ -105,8 +115,11 @@ class PublicationRepo:
         return self.git("rev-parse", "refs/heads/main", cwd=self.root / "origin.git")
 
     @property
-    def generated(self) -> str:
-        return self.git("rev-parse", "HEAD")
+    def dispatched_sha(self) -> str:
+        dispatches = [event for event in self.events if event[0] == "ci-dispatch"]
+        assert len(dispatches) == 1, "Expected one resolved CI dispatch"
+        assert dispatches[0][1] == "automation/price-refresh-42"
+        return dispatches[0][2]
 
     @property
     def calls(self) -> list[list[str]]:
@@ -136,7 +149,7 @@ class PublicationRepo:
             self.git("add", str(snapshot))
         states = run_states if run_states is not None else [("completed", conclusion)]
         scenario: dict[str, object] = {"polls": [[{
-            "databaseId": 1234, "headSha": self.base if wrong_sha else "$GENERATED_SHA",
+            "databaseId": 1234, "headSha": self.base if wrong_sha else "$DISPATCHED_SHA",
             "status": status, "conclusion": outcome,
         }] for status, outcome in states]}
         if move_main:
@@ -240,9 +253,9 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         path.write_text("{}\n")
     repo.git("add", ".")
     repo.git("commit", "-qm", "Previous main")
-    repo.previous = repo.generated
+    repo.previous = repo.git("rev-parse", "HEAD")
     repo.git("commit", "-qm", "Base main", "--allow-empty")
-    repo.base = repo.generated
+    repo.base = repo.git("rev-parse", "HEAD")
     repo.git("push", "-q", "origin", "main")
     (tmp_path / "events.jsonl").write_text("")  # Exclude fixture setup's seed push.
     env["GITHUB_SHA"] = repo.base
@@ -253,17 +266,25 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
 
 def assert_snapshot_published(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
-    assert repo.generated != repo.base
-    assert repo.main == repo.generated
+    dispatched_sha = repo.dispatched_sha
+    assert dispatched_sha != repo.base
+    answers = [json.loads(event[2]) for event in repo.events if event[0] == "poll" and event[2]]
+    successful = [answer for answer in answers
+                  if answer["status"] == "completed" and answer["conclusion"] == "success"]
+    assert successful, "Expected completed successful CI before publication"
+    assert all(answer["headSha"] == dispatched_sha for answer in successful), (
+        "Successful CI must use the dispatched SHA"
+    )
     assert repo.dispatches == [
         repo.dispatch("ci.yml", "automation/price-refresh-42"), repo.dispatch("deploy.yml", "main"),
     ]
     status_calls = [call for call in repo.calls if call[0] == "api"]
     posts = [call for call in status_calls if "POST" in call]
     gets = [call for call in status_calls if "--method" not in call]
-    endpoint = f'repos/{repo.env["GITHUB_REPOSITORY"]}/statuses/{repo.generated}'
+    endpoint = f'repos/{repo.env["GITHUB_REPOSITORY"]}/statuses/{dispatched_sha}'
     assert len(posts) == len(gets) == 4
-    assert all(endpoint in call for call in status_calls)
+    assert all(endpoint in call for call in status_calls), "Status endpoints must use the dispatched SHA"
+    assert repo.main == dispatched_sha, "Remote main must equal the dispatched SHA"
     assert [next(arg for arg in call if arg.startswith("context=")) for call in posts] == [
         "context=lint", "context=test (1)", "context=test (2)", "context=test (3)",
     ]
@@ -311,7 +332,7 @@ def assert_ci_completed_before_publication(
 
 
 def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
-    assert repo.generated != repo.base
+    assert repo.dispatched_sha != repo.base
     assert repo.main == (repo.moved or repo.base), result.stdout + result.stderr
     assert not any(call[0] == "api" for call in repo.calls)
     expected = [repo.dispatch("ci.yml", "automation/price-refresh-42")]
@@ -325,6 +346,29 @@ def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.Completed
 
 def test_publication_promotes_only_the_successful_generated_sha(publication_repo: PublicationRepo) -> None:
     assert_snapshot_published(publication_repo, publication_repo.run())
+
+
+@pytest.mark.parametrize("mutation, message", [
+    ("unverified_commit", "Status endpoints must use the dispatched SHA"),
+    ("unverified_commit_before_dispatch", "Remote main must equal the dispatched SHA"),
+])
+def test_unverified_commit_mutation_is_detected(
+    publication_repo: PublicationRepo, mutation: str, message: str,
+) -> None:
+    result = publication_repo.run(mutation=mutation)
+    assert result.returncode == 0, result.stdout + result.stderr
+    with pytest.raises(AssertionError, match=message):
+        assert_snapshot_published(publication_repo, result)
+
+
+def test_missing_remote_dispatch_ref_mutation_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(mutation="skip_branch_push")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.base
+    assert not any(call[0] == "api" for call in publication_repo.calls)
+    assert publication_repo.dispatches == [publication_repo.dispatch("ci.yml", "automation/price-refresh-42")]
+    assert "Could not resolve dispatched ref" in result.stderr
+    assert not any(event[0] == "poll" for event in publication_repo.events)
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled"])
@@ -352,7 +396,7 @@ def test_publication_recomputes_when_main_moved(publication_repo: PublicationRep
 def test_publication_does_nothing_without_staged_changes(publication_repo: PublicationRepo) -> None:
     result = publication_repo.run(changed=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert publication_repo.main == publication_repo.generated == publication_repo.base
+    assert publication_repo.main == publication_repo.base
     assert publication_repo.calls == []
     assert publication_repo.events == []  # Includes even no-op pushes.
 
@@ -378,13 +422,16 @@ def test_pending_ci_mutations_are_detected(publication_repo: PublicationRepo, mu
     if mutation == "completion":
         assert_snapshot_withheld(publication_repo, result)  # Incorrectly rejects a pending run.
     else:
-        assert_snapshot_published(publication_repo, result)  # Incorrectly accepts a pending run.
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert publication_repo.main == publication_repo.dispatched_sha
+        with pytest.raises(AssertionError, match="completed successful CI"):
+            assert_snapshot_published(publication_repo, result)
 
 
 def test_status_bridge_order_mutation_is_detected(publication_repo: PublicationRepo) -> None:
     result = publication_repo.run(mutation="late_bridge")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert publication_repo.main == publication_repo.generated != publication_repo.base
+    assert publication_repo.main == publication_repo.dispatched_sha != publication_repo.base
     with pytest.raises(AssertionError, match="must precede the main push"):
         assert_snapshot_published(publication_repo, result)
 
@@ -437,7 +484,14 @@ def test_publication_guards_have_effect(publication_repo: PublicationRepo, guard
     # remote ref must show an actual unsafe publication (not an unrelated error).
     with pytest.raises(AssertionError):
         assert_snapshot_withheld(publication_repo, result)
-    assert_snapshot_published(publication_repo, result)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.dispatched_sha != publication_repo.base
+    if guard in {"conclusion", "head_sha"}:
+        message = "completed successful CI" if guard == "conclusion" else "dispatched SHA"
+        with pytest.raises(AssertionError, match=message):
+            assert_snapshot_published(publication_repo, result)
+    else:
+        assert_snapshot_published(publication_repo, result)
 
 
 def test_ci_accepts_explicit_dispatch_for_bot_commits() -> None:

@@ -16,6 +16,7 @@ endpoint=''
 fields=()
 workflow_arg=''
 branch_arg=''
+ref_arg=''
 event_arg=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -24,6 +25,7 @@ while [ "$#" -gt 0 ]; do
     -f) fields+=("$2"); shift ;;
     --workflow) workflow_arg=$2; shift ;;
     --branch) branch_arg=$2; shift ;;
+    --ref) ref_arg=$2; shift ;;
     --event) event_arg=$2; shift ;;
     repos/*/statuses/*) endpoint=$1 ;;
   esac
@@ -33,9 +35,14 @@ done
 if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
   case "${third}" in
     ci.yml)
-      # Resolve the scenario's placeholder only after the real step commits.
-      jq --arg sha "$(git rev-parse HEAD)" \
-        '(.polls[][] | select(.headSha == "$GENERATED_SHA") | .headSha) = $sha' \
+      # Dispatch runs the pushed remote ref, never the checkout's mutable HEAD.
+      if ! dispatched_sha=$(git --git-dir="${TMPDIR}/origin.git" rev-parse --verify "refs/heads/${ref_arg}^{commit}"); then
+        echo "Could not resolve dispatched ref: ${ref_arg}" >&2
+        exit 1
+      fi
+      record_event ci-dispatch "${ref_arg}" "${dispatched_sha}"
+      jq --arg sha "${dispatched_sha}" \
+        '(.polls[][] | select(.headSha == "$DISPATCHED_SHA") | .headSha) = $sha' \
         "${scenario}" > "${scenario}.new"
       # Use cat rather than mv so the harness only needs the workflow's tools.
       cat "${scenario}.new" > "${scenario}"

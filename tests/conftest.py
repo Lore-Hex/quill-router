@@ -40,6 +40,13 @@ from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.routes import catalog as catalog_routes
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    # Before path/marker/shard selection: every CI pytest job checks the pin.
+    from tests.python_pin import require_pinned_python
+
+    require_pinned_python()
+
 # The session's catalog is complete: the data, and the vehicles put back above.
 record_the_session_catalog()
 
