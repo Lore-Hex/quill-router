@@ -99,7 +99,7 @@ def owned_database(database: Any) -> Any:
         return database  # Explicit offline transport harnesses already own their API.
     client = database._instance._client
     owned = Client(project=client.project, credentials=client.credentials,
-                   client_options=client._client_options)
+                   client_options=client._client_options, disable_builtin_metrics=True)
     result = owned.instance(database._instance.instance_id).database(database.database_id)
     result._sessions_manager = Sessions(result)
     # The SDK sets its thread-local transaction flag before checkout, outside its
@@ -168,12 +168,6 @@ def configure(database: Any) -> None:
                     measured()
         setattr(api, name, bounded)
     database._shadow_v2_io = True
-
-
-def entity_point_statement(kind: str, identity: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    from google.cloud.spanner_v1 import param_types
-    return ("SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
-            {"kind": kind, "id": identity}, {"kind": param_types.STRING, "id": param_types.STRING})
 
 
 def timestamp_ns(value: Any) -> int:

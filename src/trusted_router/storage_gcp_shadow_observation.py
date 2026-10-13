@@ -38,7 +38,6 @@ from trusted_router.storage_gcp_async_admission import HEALTH_ROW_LIMIT, unresol
 from trusted_router.storage_gcp_shadow_io import (
     configure,
     elapsed_clock,
-    entity_point_statement,
     owned_database,
     rpc_scope,
     timestamp_ns,
@@ -49,6 +48,21 @@ READ_SECONDS = 1.
 FLUSH_SECONDS = 4.
 T = TypeVar("T")
 Statement = tuple[str, dict[str, Any], dict[str, Any]]
+
+
+POINT_SQL = "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
+CLAIM_SQL = "SELECT (SELECT body FROM tr_entities WHERE kind=@kind AND id=@id) AS body, CURRENT_TIMESTAMP() AS claim_at"
+HEALTH_SQL = "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id"
+# The shared v1 builder supplies bindings; require exact SQL agreement before
+# dispatch. Explicit native statements keep the static shape guard effective.
+UNRESOLVED_SQL = ("SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox"
+                  "@{FORCE_INDEX=tr_settle_outbox_unresolved} "
+                  "WHERE unresolved_at IS NOT NULL ORDER BY unresolved_at LIMIT @limit")
+
+
+def entity_point_statement(kind: str, identity: str) -> Statement:
+    from google.cloud.spanner_v1 import param_types
+    return POINT_SQL, {"kind": kind, "id": identity}, {"kind": param_types.STRING, "id": param_types.STRING}
 
 
 @dataclass(frozen=True)
@@ -72,7 +86,7 @@ class UnknownCommit(RuntimeError):
 
 def shadow_health_claim_read() -> Statement:
     _, params, types = entity_point_statement(CLAIM_KIND, "local/publish")
-    return ("SELECT (SELECT body FROM tr_entities WHERE kind=@kind AND id=@id) AS body, CURRENT_TIMESTAMP() AS claim_at", params, types)
+    return CLAIM_SQL, params, types
 
 
 def shadow_health_publish_fence() -> Statement:
@@ -85,7 +99,7 @@ def shadow_health_previous() -> Statement:
 
 def read_shadow_health_statement() -> Statement:
     _, params, types = entity_point_statement(HEALTH_KIND, "local/fleet")
-    return "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id", params, types
+    return HEALTH_SQL, params, types
 
 
 class ObservationStore:
@@ -100,8 +114,9 @@ class ObservationStore:
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement
+        require(sql in (POINT_SQL, CLAIM_SQL), "unregistered_statement")
         with rpc_scope(budget.deadline, cap, budget.clock):
-            rows = list(reader.execute_sql(sql, params=params, param_types=types, retry=None,
+            rows = list(reader.execute_sql(POINT_SQL if sql == POINT_SQL else CLAIM_SQL, params=params, param_types=types, retry=None,
                         timeout=budget.remaining(cap), request_options={"priority": "PRIORITY_LOW"}))
         budget.remaining(cap)
         return rows
@@ -188,7 +203,8 @@ class ObservationStore:
         with rpc_scope(budget.deadline, cap, budget.clock):
             with self.database.snapshot() as snapshot:
                 sql, params, types = statement
-                stream = snapshot.execute_sql(sql, params=params, param_types=types, retry=None,
+                require(sql in (HEALTH_SQL, UNRESOLVED_SQL), "unregistered_statement")
+                stream = snapshot.execute_sql(HEALTH_SQL if sql == HEALTH_SQL else UNRESOLVED_SQL, params=params, param_types=types, retry=None,
                     timeout=budget.remaining(cap), request_options={"priority": "PRIORITY_LOW"})
                 rows = list(stream)
                 stamp = timestamp_ns(stream.metadata.transaction.read_timestamp)
@@ -349,8 +365,8 @@ def monotonic_counter(previous: dict[str, Any], value: dict[str, Any], *, reconc
     require(not previous["closed"], "closed_counter")
     require(previous["unreconciled_commits"] - value["unreconciled_commits"] <= reconciled, "unproven_reconciliation")
     _monotonic_counts(previous, value)
-    # Nullable timestamps and closed-partition reclassification are not counts.
-    # P4 must append completion events; cumulative attempt/loss/reset totals stay.
+    # P4a reserves on the request thread and finalizes exactly once with its
+    # final class. No reclassification: every cumulative counter is monotonic.
     for name in ("event_seq", "durable_event_hwm", "receipt_count", "loss_count", "reset_count",
                  "checkpoint_attempts", "checkpoint_failures", "checkpoint_recoveries", "unknown_commits",
                  "irrecoverable_losses", "authorize_attempts", "authorize_fresh", "authorize_replay",

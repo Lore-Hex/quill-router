@@ -160,7 +160,8 @@ def _prove_shared_adapter(tmp_path, monkeypatch):
     assert not any("shadow_v2" in name or "shadow_observation" in name for name in sys.modules)
     for name in modules:
         importlib.import_module("trusted_router."+name)
-    client = Client(project="offline", credentials=AnonymousCredentials(), client_options=ClientOptions(api_endpoint="localhost:1"))
+    client = Client(project="offline", credentials=AnonymousCredentials(),
+                    client_options=ClientOptions(api_endpoint="localhost:1"), disable_builtin_metrics=True)
     money_db = client.instance("offline").database("offline")
     from trusted_router.storage_gcp_shadow_io import owned_database
     private = owned_database(money_db)
@@ -275,16 +276,18 @@ def test_preclaim_lock_wait_rechecks_jitter(monkeypatch):
     svc.store.wall = lambda: wall[0]/1e6
     calls = []
     monkeypatch.setattr(svc.store, "claim", lambda *a: calls.append(a))
-    with svc.lock:
-        svc.schedule_cycle(NOW_US//2_000_000, NOW_US)
-        job = svc.publisher_executor.submit(svc.publish_cycle, NOW_US//2_000_000, NOW_US)
-        wall[0] += 300_000
-    job.result()
-    assert calls == []
-    counts = svc.counters["2026-10-12"]["publisher"]
-    validate_publisher_final(counts)
-    assert counts["missed_slots"] == 1
-    svc.publisher_executor.shutdown()
+    try:
+        with svc.lock:
+            svc.schedule_cycle(NOW_US//2_000_000, NOW_US)
+            job = svc.publisher_executor.submit(svc.publish_cycle, NOW_US//2_000_000, NOW_US)
+            wall[0] += 300_000
+        job.result()
+        assert calls == []
+        counts = svc.counters["2026-10-12"]["publisher"]
+        validate_publisher_final(counts)
+        assert counts["missed_slots"] == 1
+    finally:
+        svc.publisher_executor.shutdown()
 
 
 def test_midnight_queued_cycle_owns_day_before_executor_start():
@@ -306,6 +309,7 @@ def test_midnight_queued_cycle_owns_day_before_executor_start():
         assert "2026-10-12" in svc.journal.days
     finally:
         release.set()
+        svc.publisher_executor.shutdown(wait=True)
     blocker.result()
     job.result()
     counts = svc.counters["2026-10-12"]["publisher"]
@@ -514,15 +518,22 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
     db.snapshot = lambda: SnapshotCheckout(db)
     rows = {}
     calls = []
+    rpc_times = []
+    fail_commit = [False]
+    def elapsed(microseconds):
+        clock.now += microseconds/1_000_000
+        rpc_times.append(microseconds)
     def create(**kw):
         calls.append("session")
+        elapsed(2000)
         return SessionPB(name=db.name+"/sessions/native")
     def query(**kw):
         calls.append("query")
+        elapsed(1000)
         request = kw["request"]
         if "CURRENT_TIMESTAMP" in request.sql:
             fields = [("body", "STRING"), ("claim_at", "TIMESTAMP")]
-            values = [None, "2026-10-12T00:00:00Z"]
+            values = [rows.get(("async_settle_shadow_health_control_v2", "local/publish")), "2026-10-12T00:00:00Z"]
         elif "unresolved_at" in request.sql:
             fields, values = [("unresolved_at", "TIMESTAMP"), ("actual_cost_micro", "INT64"), ("status", "STRING")], []
         else:
@@ -541,6 +552,9 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
         return iter([response])
     def commit(**kw):
         calls.append("commit")
+        elapsed(10000)
+        if fail_commit[0]:
+            raise RuntimeError("lost commit reply")
         for mutation in kw["request"].mutations:
             for row in mutation.insert_or_update.values:
                 rows[(row[0], row[1])] = row[2]
@@ -565,6 +579,41 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
     assert len(durations) == len(calls) == 7
     (tmp_path/"publisher-rpcs.json").write_text(json.dumps(dict(cold_cycle_rpc_count=len(calls),
         calls=calls, warm_cycle_rpc_count=len(calls)-1)))
+
+    from trusted_router.async_settle_shadow_journal import CLAIM_KIND
+    from trusted_router.async_settle_shadow_v2_a1_health import validate_publisher_traces
+    assert CLAIM_KIND == "async_settle_shadow_health_control_v2"
+    for outcome in ("lost_claim", "published", "failed", "missed", "empty"):
+        svc = service()
+        svc.store = store
+        if outcome != "lost_claim":
+            rows.clear()
+        fail_commit[0] = outcome == "failed"
+        offset = len(rpc_times)
+        if outcome == "missed":
+            svc.missed_slot(NOW_US//2_000_000)
+        elif outcome != "empty":
+            svc.publish_cycle(NOW_US//2_000_000, NOW_US)
+        entries = [entry for item in svc.traces.queue for entry in svc.traces.schema.parse(item.body)["entries"]]
+        publisher = svc.counters["2026-10-12"]["publisher"]
+        first = last = NOW_US//2_000_000 if entries else None
+        validate_publisher_traces(publisher, entries, day="2026-10-12", boot=svc.journal.boot,
+                                  first_slot=first, last_slot=last)
+        assert not svc.journal.days["2026-10-12"].losses
+        expected = rpc_times[offset:]
+        if entries:
+            trace = entries[0]
+            assert trace["outcome"] == outcome
+            assert trace["rpc_count"] == len(expected)
+            assert trace["rpc_elapsed_us"] == sum(expected)
+            assert trace["cycle_us"] == (sum(expected) if outcome != "missed" else None)
+            if outcome == "lost_claim":
+                assert trace["claim_at_ns"] == NOW_US*1000
+        histogram = publisher["rpc_us"]
+        expected_counts = [0]*len(histogram["counts"])
+        for elapsed_us in expected:
+            expected_counts[sum(elapsed_us > edge for edge in histogram["bounds_us"])] += 1
+        assert histogram["counts"] == expected_counts
 
 
 def test_capture_prediction_retains_exact_basis_and_blocks_on_rate():
@@ -631,6 +680,8 @@ async def test_observer_close_keeps_queued_failures_owned():
         assert observer.inflight_ticks and not closing.done()
     finally:
         release.set()
+        await closing
+        observer.executor.shutdown(wait=True)
     await closing
     job.result()
     assert not observer.inflight_ticks and observer.counts["read_failures"] == 1
@@ -787,9 +838,9 @@ def test_receipt_and_attachment_roots_are_full_digests():
     lane.append(r.day, basis())
     first = lane.queue[0].body
     lane.step(Budget(logical_time()+2, logical_time))
-    assert lane.previous == hashlib.sha256(first).hexdigest()
+    assert lane.chains["2026-10-12"][1] == hashlib.sha256(first).hexdigest()
     lane.append(r.day, dict(basis(), since_reply_ns=1))
-    assert lane.schema.parse(lane.queue[0].body)["previous_sha256"] == lane.previous
+    assert lane.schema.parse(lane.queue[0].body)["previous_sha256"] == lane.chains["2026-10-12"][1]
 
 
 def test_original_prediction_cannot_be_overwritten():

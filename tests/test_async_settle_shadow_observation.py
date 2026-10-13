@@ -80,7 +80,25 @@ def install_scheduler(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def deterministic_scheduler(monkeypatch):
-    return install_scheduler(monkeypatch)
+    created = []
+    initialize = Service.__init__
+    def tracked(service, *args, **kwargs):
+        initialize(service, *args, **kwargs)
+        created.append(service)
+    monkeypatch.setattr(Service, "__init__", tracked)
+    previous_clock = logical_time.now
+    scheduler = install_scheduler(monkeypatch)
+    try:
+        yield scheduler
+    finally:
+        # Structural tests own these offline workers. Production shutdown may
+        # use wait=False to honor its deadline; tests always join before leaving.
+        for service in created:
+            service.publisher_executor.shutdown(wait=True, cancel_futures=True)
+            service.evidence_executor.shutdown(wait=True, cancel_futures=True)
+            if service.observer.executor is not None:
+                service.observer.executor.shutdown(wait=True, cancel_futures=True)
+        logical_time.now = previous_clock
 
 
 def fixture(name: str) -> Any:
@@ -144,7 +162,7 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
             from google.api_core.datetime_helpers import DatetimeWithNanoseconds
             from google.protobuf.timestamp_pb2 import Timestamp
 
-            from trusted_router.storage_gcp_shadow_io import entity_point_statement
+            from trusted_router.storage_gcp_shadow_observation import entity_point_statement
             stamp = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=db.server_ns//10**9, nanos=db.server_ns%10**9))
             if "CURRENT_TIMESTAMP() AS claim_at" in sql:
                 base = self.wrapped.execute_sql(entity_point_statement(params["kind"], params["id"])[0], params=params, param_types=param_types)
@@ -487,48 +505,50 @@ def test_native_encoding_six_maximum_rows(tmp_path: Any) -> None:
     from google.cloud.spanner_v1.types import CommitRequest
     store, db = fake_store()
     tracemalloc.start()
-    pages, counter, closure = maximum_rows()
-    rows = [*pages, counter, closure]
-    from trusted_router.async_settle_shadow_journal import SAMPLE_KIND
-    from trusted_router.detached_jws import canonical
-    retained_work = []
-    for index in range(32):
-        value = copy.deepcopy(fixture("sample")[0]["object"])
-        value["authorization_id"] = f"auth-{index:04d}"
-        raw = canonical(value)
-        record = Row(SAMPLE_KIND, value["authorization_day"]+"/"+value["authorization_id"], raw+b" "*(8192-len(raw)))
-        record.value()
-        retained_work.append(record)
-    assert sum(len(r.body) for r in retained_work) == 256*1024
-    assert sum(len(r.body) for r in rows) == 331776
-    assert max(len(r.key) for r in pages) == 96
-    retained, retained_peak = tracemalloc.get_traced_memory()
-    tx = Transaction(SimpleNamespace())
-    store.write(tx, rows, Budget(logical_time()+2, logical_time))
-    request = CommitRequest(session="projects/"+"p"*30+"/instances/"+"i"*64+"/databases/"+"d"*30+"/sessions/"+"s"*128,
-        transaction_id=b"t"*128, mutations=tx._mutations,
-        request_options={"priority": "PRIORITY_LOW", "transaction_tag": "tr_shadow_v2"})
-    encoded = CommitRequest.serialize(request)
-    import json as json_module
-    from pathlib import Path
+    try:
+        pages, counter, closure = maximum_rows()
+        rows = [*pages, counter, closure]
+        from trusted_router.async_settle_shadow_journal import SAMPLE_KIND
+        from trusted_router.detached_jws import canonical
+        retained_work = []
+        for index in range(32):
+            value = copy.deepcopy(fixture("sample")[0]["object"])
+            value["authorization_id"] = f"auth-{index:04d}"
+            raw = canonical(value)
+            record = Row(SAMPLE_KIND, value["authorization_day"]+"/"+value["authorization_id"], raw+b" "*(8192-len(raw)))
+            record.value()
+            retained_work.append(record)
+        assert sum(len(r.body) for r in retained_work) == 256*1024
+        assert sum(len(r.body) for r in rows) == 331776
+        assert max(len(r.key) for r in pages) == 96
+        retained, retained_peak = tracemalloc.get_traced_memory()
+        tx = Transaction(SimpleNamespace())
+        store.write(tx, rows, Budget(logical_time()+2, logical_time))
+        request = CommitRequest(session="projects/"+"p"*30+"/instances/"+"i"*64+"/databases/"+"d"*30+"/sessions/"+"s"*128,
+            transaction_id=b"t"*128, mutations=tx._mutations,
+            request_options={"priority": "PRIORITY_LOW", "transaction_tag": "tr_shadow_v2"})
+        encoded = CommitRequest.serialize(request)
+        import json as json_module
+        from pathlib import Path
 
-    from trusted_router.async_settle_shadow_journal import CLOSE_RESULT_KIND
-    result_value = json_module.loads((Path(__file__).parent / "fixtures/async_settlement/shadow_v2_a1/close_result.json").read_text())["variants"][0]["object"]
-    result_value.update(boot="b"*64, closure_sha256=closure.digest)
-    result_raw = canonical(result_value)
-    result_row = Row(CLOSE_RESULT_KIND, result_value["day"]+"/"+result_value["boot"], result_raw+b" "*(4096-len(result_raw)))
-    result_row.value()
-    result_tx = Transaction(SimpleNamespace())
-    result_tx.insert(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
-                     values=[(result_row.kind, result_row.key, result_row.body.decode(), dt.datetime.now(dt.UTC))])
-    result_request = CommitRequest(session=request.session, transaction_id=b"t"*128,
-        mutations=result_tx._mutations, request_options=request.request_options)
-    result_encoded = CommitRequest.serialize(result_request)
-    # Both maximum bounded attachment lanes, including encoded/native copies.
-    attachments = [memoryview(b"x"*65536).tobytes() for _ in range(8)]
-    assert sum(map(len, attachments)) == 512*1024
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+        from trusted_router.async_settle_shadow_journal import CLOSE_RESULT_KIND
+        result_value = json_module.loads((Path(__file__).parent / "fixtures/async_settlement/shadow_v2_a1/close_result.json").read_text())["variants"][0]["object"]
+        result_value.update(boot="b"*64, closure_sha256=closure.digest)
+        result_raw = canonical(result_value)
+        result_row = Row(CLOSE_RESULT_KIND, result_value["day"]+"/"+result_value["boot"], result_raw+b" "*(4096-len(result_raw)))
+        result_row.value()
+        result_tx = Transaction(SimpleNamespace())
+        result_tx.insert(table="tr_entities", columns=("kind", "id", "body", "updated_at"),
+                         values=[(result_row.kind, result_row.key, result_row.body.decode(), dt.datetime.now(dt.UTC))])
+        result_request = CommitRequest(session=request.session, transaction_id=b"t"*128,
+            mutations=result_tx._mutations, request_options=request.request_options)
+        result_encoded = CommitRequest.serialize(result_request)
+        # Both maximum bounded attachment lanes, including encoded/native copies.
+        attachments = [memoryview(b"x"*65536).tobytes() for _ in range(8)]
+        assert sum(map(len, attachments)) == 512*1024
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
     assert retained >= 331776+256*1024
     assert peak >= retained + len(encoded) + len(result_encoded) + sum(map(len, attachments))
     measurements = dict(body_bytes=331776, close_result_body_bytes=4096,

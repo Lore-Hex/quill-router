@@ -7,7 +7,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-import requests
 
 from tests.test_async_settle_shadow_observation_a1 import basis
 from trusted_router.async_settle_shadow_attachments import Lane
@@ -56,26 +55,18 @@ def test_http_absolute_deadline_keeps_unknown(fault, tmp_path):
         pytest.skip("sandbox forbids binding a local HTTP server; requires unrestricted CI")
     server.daemon_threads = True
     server_thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01})
-    server_thread.start()
-    endpoint = f"http://127.0.0.1:{server.server_port}/"
-    transport = object.__new__(GCSAttachments)
-    transport.bucket = "offline"
-    transport.endpoint = endpoint
-    transport.authenticated = False
-    # Compatibility setup also exercises the pre-fix Requests implementation.
-    class Session(requests.Session):
-        def request(self, method, url, **kwargs):
-            kwargs.pop("max_allowed_time", None)
-            return super().request(method, endpoint, **kwargs)
-    transport.credentials = None
-    transport.session_type = lambda *a, **kw: Session()
-    lane = Lane("basis", "issuer", transport)
-    lane.append("2026-10-12", basis())
-    item = lane.queue[0]
-    item.uncertain = True
-    payload[0] = item.body
-    start = time.monotonic()
     try:
+        server_thread.start()
+        endpoint = f"http://127.0.0.1:{server.server_port}/"
+        transport = GCSAttachments("offline")
+        transport.endpoint = endpoint
+        transport.authenticated = False
+        lane = Lane("basis", "issuer", transport)
+        lane.append("2026-10-12", basis())
+        item = lane.queue[0]
+        item.uncertain = True
+        payload[0] = item.body
+        start = time.monotonic()
         lane.step(Budget(start+2.))
         elapsed = time.monotonic()-start
         # Generous scheduling/cleanup bound. Tight latency is a measurement,
@@ -85,8 +76,7 @@ def test_http_absolute_deadline_keeps_unknown(fault, tmp_path):
         assert lane.operations == dict(put=0, get=1, sent_bytes=0, received_bytes=0)
         (tmp_path/"deadline.json").write_text(json.dumps(dict(fault=fault, budget=2.,
             elapsed=elapsed, server_reached=entered.is_set())))
-        if not entered.is_set():
-            pytest.skip("worker startup exhausted budget before HTTP fault; no stream proof")
+        assert entered.is_set(), "operation never reached the server fault"
     finally:
         release.set()
         server.shutdown()
@@ -94,93 +84,173 @@ def test_http_absolute_deadline_keeps_unknown(fault, tmp_path):
         server_thread.join()
 
 
-def test_trickling_stream_cannot_renew_absolute_deadline(monkeypatch):
-    """A byte every .1 s defeats a .2 s per-read timeout without a watchdog."""
-    import subprocess
+
+@pytest.mark.parametrize("parts", [3, 12], ids=["reviewer-late-get", "reviewer-entire-flush-trickle"])
+def test_reviewer_stream_deadlines(monkeypatch, parts):
+    """Both review stream witnesses, now using the production socket reader."""
     from types import SimpleNamespace
 
     from trusted_router import storage_gcp_shadow_attachments as module
-    now = [100.]
+    now = [0.]
+    transport = GCSAttachments("offline")
+    transport.authenticated = False
+    lane = Lane("basis", "issuer", transport)
+    lane.append("2026-10-12", basis())
+    item = lane.queue[0]
+    item.uncertain = True
+    reads = []
     class Response:
-        status_code = 200
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def raise_for_status(self): pass
-        def iter_content(self, size):
-            for _ in range(10):
-                now[0] += .1
-                yield b"x"
-    class Session(Response):
-        def request(self, *a, **kw): return Response()
-    killed = []
-    class Process:
-        returncode = 0
-        def communicate(self, data=None, timeout=None):
-            if not killed:
-                assert 0 < timeout <= .2
-                now[0] += timeout
-                raise subprocess.TimeoutExpired("offline", timeout)
-            return b"", None
-        def kill(self): killed.append(True)
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: Process())
-    # The current implementation ignores this clock during streaming.
-    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now[0]), raising=False)
-    transport = object.__new__(GCSAttachments)
-    transport.bucket = "offline"
-    transport.credentials = None
-    transport.session_type = lambda *a, **kw: Session()
-    with pytest.raises(TimeoutError):
-        transport.get("exact-key", .2)
-    assert killed == [True]
+        status = 200
+        fp = None
+        def read1(self, cap):
+            reads.append(cap)
+            now[0] += 1.
+            return item.body[len(reads)-1:len(reads)] if len(reads) < parts else item.body[parts-1:]
+        def getheaders(self): return []
+        def close(self): pass
+    class Connection:
+        def __init__(self, *a, **kw): self.sock = SimpleNamespace(settimeout=lambda v: None, shutdown=lambda v: None)
+        def connect(self): pass
+        def request(self, *a, **kw): pass
+        def getresponse(self): return Response()
+        def close(self): pass
+    monkeypatch.setattr(module.http.client, "HTTPSConnection", Connection)
+    lane.step(Budget(4., lambda: now[0]))
+    assert now[0] == 2. and len(reads) == 2
+    assert max(reads) <= 8192
+    assert lane.queue == [item] and item.uncertain
+    assert lane.operations["get"] == 1 and lane.operations["received_bytes"] == 0
+
+
+def test_late_transport_return_never_acknowledges_get():
+    now = [0.]
+    lane = Lane("basis", "issuer", None)
+    lane.append("2026-10-12", basis())
+    item = lane.queue[0]
+    item.uncertain = True
+    class Transport:
+        def get(self, key, timeout, *, deadline, clock):
+            assert timeout == deadline == 2.
+            now[0] = 3.
+            return item.body
+    lane.transport = Transport()
+    lane.step(Budget(4., lambda: now[0]))
+    assert lane.queue == [item] and item.uncertain
 
 
 @pytest.mark.parametrize("fault", ["transport", "503"])
 def test_auth_failure_is_not_retried(monkeypatch, fault):
-    import io
-    from types import SimpleNamespace
-
     import google.auth
 
     from trusted_router import storage_gcp_shadow_attachments as module
     calls = []
-    def request(self, *a, **kw):
-        calls.append((a, kw))
+    def exchange(self, *args):
+        calls.append(args)
         if fault == "transport":
-            raise requests.Timeout("offline")
-        return SimpleNamespace(status_code=503, close=lambda: None)
-    monkeypatch.setattr(requests.Session, "request", request)
+            raise TimeoutError("offline")
+        return 503, {}, b""
+    monkeypatch.setattr(module.Lifetime, "exchange", exchange)
     def default(**kwargs):
         kwargs["request"](url="http://offline.invalid", method="GET")
         raise AssertionError("failed authentication returned")
     monkeypatch.setattr(google.auth, "default", default)
-    value = dict(bucket="offline", endpoint="http://offline.invalid/", authenticated=True, timeout=.2)
-    monkeypatch.setattr(module.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps(value).encode())))
     with pytest.raises(RuntimeError, match="attachment_auth"):
-        module.worker()
-    assert len(calls) == 1 and calls[0][1]["allow_redirects"] is False
+        GCSAttachments("offline").get("exact-key", 2.)
+    assert len(calls) == 1
 
 
-def test_lane_passes_absolute_deadline_before_transport_start(monkeypatch):
-    from types import SimpleNamespace
-
-    from trusted_router import storage_gcp_shadow_attachments as module
+def test_lane_passes_absolute_deadline_before_transport_start():
     now = [100.]
-    def clock():
-        return now[0]
-    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=clock))
     launched = []
-    class Process:
-        returncode = 1
-        def communicate(self, *a, **kw): return b"null", None
-        def poll(self): return 1
-    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: launched.append(True) or Process())
     class Delayed(GCSAttachments):
         def get(self, key, timeout, **kwargs):
-            now[0] += 1  # Descheduled after lane admission, before transport entry.
+            now[0] += 1
             return super().get(key, timeout, **kwargs)
+        def _request(self, *args):
+            launched.append(True)
     lane = Lane("basis", "issuer", Delayed("offline"))
     lane.append("2026-10-12", basis())
     lane.queue[0].uncertain = True
-    lane.step(Budget(100.2, clock))
-    assert lane.queue[0].uncertain
-    assert launched == []
+    lane.step(Budget(100.2, lambda: now[0]))
+    assert lane.queue[0].uncertain and launched == []
+
+
+def test_transport_uses_in_process_exchange(monkeypatch):
+    import os
+    import subprocess
+
+    from trusted_router.storage_gcp_shadow_attachments import Lifetime
+    pid = os.getpid()
+    calls = []
+    def exchange(self, *args):
+        assert os.getpid() == pid
+        calls.append(args)
+        return 200, {}, b"exact"
+    def forbidden(*args, **kwargs):
+        raise AssertionError("attachment spawned a process")
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(Lifetime, "exchange", exchange)
+    transport = GCSAttachments("offline")
+    transport.authenticated = False
+    assert transport.get("exact-key", 2.) == b"exact"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("size", [65536, 65537])
+def test_native_body_reads_have_explicit_byte_cap(monkeypatch, size):
+    from types import SimpleNamespace
+
+    from trusted_router import storage_gcp_shadow_attachments as module
+    remaining = [size]
+    caps = []
+    class Response:
+        status = 200
+        fp = None
+        def getheaders(self): return []
+        def close(self): pass
+        def read1(self, cap):
+            caps.append(cap)
+            take = min(remaining[0], cap)
+            remaining[0] -= take
+            return b"x"*take
+    class Connection:
+        def __init__(self, *a, **kw): self.sock = SimpleNamespace(settimeout=lambda v: None, shutdown=lambda v: None)
+        def connect(self): pass
+        def request(self, *a, **kw): pass
+        def getresponse(self): return Response()
+        def close(self): pass
+    monkeypatch.setattr(module.http.client, "HTTPSConnection", Connection)
+    transport = GCSAttachments("offline")
+    transport.authenticated = False
+    if size == 65536:
+        assert len(transport.get("exact-key", 2., clock=lambda: 0.)) == size
+    else:
+        with pytest.raises(ValueError, match="attachment_bytes"):
+            transport.get("exact-key", 2., clock=lambda: 0.)
+    assert all(0 < cap <= 8192 for cap in caps) and caps[-1] == 1
+
+
+def test_credentials_and_object_share_admission_deadline(monkeypatch):
+    import google.auth
+
+    from trusted_router.storage_gcp_shadow_attachments import Lifetime
+    now = [0.]
+    observed = []
+    class Credentials:
+        def before_request(self, request, *args):
+            observed.append(("refresh", request.lifetime.deadline))
+            now[0] += .75
+    def default(**kwargs):
+        observed.append(("discovery", kwargs["request"].lifetime.deadline))
+        now[0] += .75
+        return Credentials(), "offline"
+    def exchange(lifetime, *args):
+        observed.append(("object", lifetime.deadline))
+        assert lifetime.remaining() == .5
+        now[0] += .6
+        return 200, {}, b"late"
+    monkeypatch.setattr(google.auth, "default", default)
+    monkeypatch.setattr(Lifetime, "exchange", exchange)
+    with pytest.raises(TimeoutError):
+        GCSAttachments("offline").get("exact-key", 2., deadline=2., clock=lambda: now[0])
+    assert observed == [("discovery", 2.), ("refresh", 2.), ("object", 2.)]

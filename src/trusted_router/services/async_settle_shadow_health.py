@@ -157,16 +157,33 @@ class HealthObserver(Observer):
                 self.health = dict(value) if value is not None else None
 
 
+class StickyLoss:
+    """One-way CPython boolean store; unlike Event.set(), takes no lock."""
+    def __init__(self) -> None:
+        self.value = False
+
+    def set(self) -> None:
+        self.value = True
+
+    def is_set(self) -> bool:
+        return self.value
+
+
 class Port:
     """Nonblocking request facade. No method calls storage or starts maintenance.
 
     Contention, saturation or invalid input returns None/False and poisons close.
     complete queues verification, not a durable acknowledgement. Only maintenance
     grants permits, writes retained batches, reads references and advances HWM.
+
+    Lock inventory: every method tries service.lock; capture_prediction also
+    tries observer.lock and bases.lock. Journal containers are plain bounded
+    lists/dicts. No method touches the maintenance, trace-export, session or
+    transport locks/queues. StickyLoss.set has no acquisition.
     """
     def __init__(self, service: Service) -> None:
         self.service = service
-        self.lost = threading.Event()
+        self.lost = StickyLoss()
 
     def call(self, action: Callable[[], T]) -> T | None:
         svc = self.service
@@ -219,7 +236,7 @@ class Port:
                 result = prediction(svc.observer, workspace, at=at)
             finally:
                 svc.observer.lock.release()
-            result["basis_sha256"] = svc.bases.append(day, value)
+            result["basis_sha256"] = svc.bases.append(day, value, blocking=False)
             return result
         return self.call(action)
 
@@ -494,6 +511,8 @@ class Service:
         self.journal.acknowledge(pages)
         if closure is not None:
             self.previous_closure = closure.digest
+            self.bases.retire(day)
+            self.traces.retire(day)
             self.journal.closed(day)
             self.final_attempted.discard(day)
             self.counters.pop(day)
@@ -584,7 +603,7 @@ class Service:
     def flush(self, deadline: float) -> None:
         # Maintenance is serialized independently of request-facing state.
         with self.maintenance_lock:
-            self._flush(deadline)
+            self._flush(min(deadline, self.termination_deadline or deadline))
 
     def _flush(self, deadline: float) -> None:
         budget = Budget(deadline, self.store.clock)

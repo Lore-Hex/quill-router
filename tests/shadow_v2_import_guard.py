@@ -4,19 +4,33 @@ import ast
 
 def validate_live_imports(source: str, permitted: dict[str, list[str]], new: set[str]) -> None:
     tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     seen: dict[str, set[str]] = {}
     lines = source.splitlines(keepends=True)
     spans = []
+    forbidden = {"__import__", "eval", "exec", "__builtins__", "importlib", "builtins",
+                 "globals", "locals", "vars"}
     for node in ast.walk(tree):
         if permitted and isinstance(node, ast.Name):
-            assert node.id not in {"__import__", "eval", "exec"}
+            assert node.id not in forbidden
+            if node.id == "getattr":
+                parent = parents.get(node)
+                assert isinstance(parent, ast.Call) and parent.func is node, "indirect getattr alias"
+        if permitted and isinstance(node, ast.ImportFrom) and node.module == "sys":
+            assert not any(n.name in {"modules", "*"} for n in node.names)
         if permitted and isinstance(node, ast.Attribute):
-            assert node.attr not in {"import_module", "__import__", "eval", "exec"}
+            assert node.attr not in forbidden | {"import_module", "modules", "__dict__"}
         if permitted and isinstance(node, ast.ImportFrom) and node.module == "builtins":
-            assert not any(n.name in {"__import__", "eval", "exec"} for n in node.names)
+            raise AssertionError("indirect builtin acquisition")
         if permitted and isinstance(node, (ast.Import, ast.ImportFrom)):
             imported = [n.name for n in node.names] if isinstance(node, ast.Import) else [node.module or ""]
-            assert not any(n == "importlib" or n.startswith("importlib.") for n in imported)
+            assert not any(n in {"builtins", "importlib"} or n.startswith("importlib.") for n in imported)
+        if permitted and isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            assert len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
+            assert isinstance(node.args[1].value, str)
+            assert node.args[1].value not in forbidden | {"import_module", "modules", "__dict__"}
+        if permitted and isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            assert node.slice.value not in forbidden | {"modules", "import_module"}
         if isinstance(node, ast.ImportFrom) and node.module and node.module.rsplit(".", 1)[-1] in new:
             assert node.level == 0 and node.module in permitted
             for alias in node.names:

@@ -317,3 +317,43 @@ def deterministic_shadow_budgets(request, monkeypatch):
     monkeypatch.setattr(request_body_limit, 'asyncio', SimpleNamespace(
         get_running_loop=lambda: SimpleNamespace(time=lambda: 16.0),
         wait_for=receive_without_elapsed_budget))
+
+
+_P3_MODULES = frozenset({
+    "test_async_settle_shadow_observation.py", "test_async_settle_shadow_observation_a1.py",
+    "test_async_settle_shadow_observation_r5.py", "test_shadow_attachment_deadline.py",
+    "test_shadow_v2_import_guard.py", "test_shadow_observation_native.py",
+})
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_sessionstart(session):
+    """Capture after coverage starts, before any fixture can skip a worker."""
+    yield
+    import sys
+    import threading
+    baseline = (sys.gettrace(), frozenset(t for t in threading.enumerate() if not t.daemon))
+    session.config._p3_process_baseline = baseline
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    yield
+    if item.path.name not in _P3_MODULES:
+        return
+    import sys
+    import threading
+    import tracemalloc
+    # Fixture teardown is complete. Join pytest-timeout's own watchdog using
+    # its public hook before inspecting application/test-owned thread leakage.
+    # Its outer protocol hook normally does this just after this check.
+    cancel = getattr(item.config.hook, "pytest_timeout_cancel_timer", None)
+    if cancel is not None:
+        cancel(item=item)
+    trace, threads = item.config._p3_process_baseline
+    assert not tracemalloc.is_tracing(), f"{item.nodeid} leaked tracemalloc"
+    # A coverage-owned tracer may be present at session start. Tests must restore
+    # precisely that tracer, and may never install a new one for the next test.
+    assert sys.gettrace() is trace, f"{item.nodeid} leaked/replaced the session trace function"
+    extra = [t for t in threading.enumerate() if not t.daemon and t not in threads]
+    assert not extra, f"{item.nodeid} leaked non-daemon threads: {extra}"

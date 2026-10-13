@@ -4,6 +4,19 @@ from tests.shadow_v2_import_guard import validate_live_imports
 
 
 @pytest.mark.parametrize("extra", [
+    'import builtins\ngetattr(builtins, "__import__")("x")\n',
+    'import builtins as b\ngetattr(b, "__import__")("x")\n',
+    'getattr(__builtins__, "__import__")("x")\n',
+    '__builtins__["__import__"]("x")\n',
+    'import sys as s\ns.modules["importlib"].import_module("x")\n',
+    'import sys as s\ngetattr(s, "modules")["builtins"]\n',
+    'getattr(receiver, unresolved)("x")\n',
+    'from builtins import getattr as hidden\n',
+    'from sys import modules as loaded\n',
+    'import sys\nread = getattr\nread(sys, "modules")\n',
+    'import importlib as lib\nlib.import_module("x")\n',
+    'exec("pass")\n',
+    'eval("1")\n',
     "from builtins import __import__ as hidden\nhidden(\"x\")\n",
     "load = __import__\nload(\"x\")\n",
     "from importlib import import_module as hidden\nhidden(\"x\")\n",
@@ -22,3 +35,24 @@ def test_exact_import_guard_negative_controls(extra):
     validate_live_imports(source, allowed, names)
     with pytest.raises(AssertionError):
         validate_live_imports(extra+source, allowed, names)
+
+
+def test_review_getattr_mutant_rejected_by_actual_dormancy_guard(monkeypatch):
+    from pathlib import Path
+
+    from tests.test_async_settle_shadow_v2_evidence import (
+        test_no_runtime_imports_or_calls_to_new_modules,
+    )
+    source = Path("src/trusted_router/storage_gcp_shadow_attachments.py").resolve()
+    mutant = source.read_text() + '''
+def _review_dynamic_load(module_name):
+    import builtins
+    return getattr(builtins, "__import__")(module_name, fromlist=["*"])
+'''
+    compile(mutant, str(source), "exec")
+    read = Path.read_text
+    def overlay(path, *args, **kwargs):
+        return mutant if path.resolve() == source else read(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", overlay)
+    with pytest.raises(AssertionError):
+        test_no_runtime_imports_or_calls_to_new_modules()
