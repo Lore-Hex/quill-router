@@ -214,6 +214,10 @@ def _v2_install_hook(app: Any, settings: Settings, backend: Any, workspace: str)
         return None
     from trusted_router.services.async_settle_shadow_cohort_runtime import install
     install(app, settings, backend)
+    from trusted_router.services.async_settle_shadow_startup_harness import (
+        install as install_startup,
+    )
+    install_startup(app, settings, getattr(app.state, "async_settle_shadow_cohort", None))
 
 
 def create_app(
@@ -307,6 +311,10 @@ def create_app(
         elif settings.async_settle_shadow_workspace_ids and not settings.async_settle_shadow_policy:
             from trusted_router.services.async_settle_shadow import install as install_settle_shadow
             install_settle_shadow(app, settings, typed_billing_store(STORE))
+    from trusted_router.services.async_settle_shadow_startup_harness import (
+        install as install_startup_harness,
+    )
+    install_startup_harness(app, settings)
     app.state.settings = settings
     stage_d_policy_resolver = StageDPolicyResolver(
         settings,

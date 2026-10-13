@@ -297,12 +297,14 @@ class Runtime:
         # Reserve the bounded replay-decision cache inside the shared byte cap.
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
+        self.startup_admission = SimpleNamespace(ready=True)
         self.decisions: dict[str, bytes] = {}
         self.worker.start()  # install-time prestart; no request can start a thread
 
     def authorize_http(self, request: Any, body: Any, auth: GatewayAuthorization, additions: dict[str, Any],
                        endpoints: list[Any], *, typed: bool, federated: bool, replay: bool) -> None:
         try:
+            startup_ready = self.startup_admission.ready
             observed_us = time.time_ns()//1000
             capability = tuple(request.headers.getlist("X-TR-Settlement-Shadow-Policy"))
             original = None
@@ -312,10 +314,10 @@ class Runtime:
                 except ValueError:
                     # The replay still receives its own unresolved receipt below.
                     pass
-            if replay or not has_v2_capability(capability):
+            if not startup_ready or replay or not has_v2_capability(capability):
                 inputs = AuthorizeInput(observed_us, authorization_identity(auth, self.async_runtime, typed),
                     self.settings.source_revision, receipt_dimensions(auth.provider, body.route_type, body.stream), None, None, False, False,
-                    "replay" if has_v2_capability(capability) else "header_absent")
+                    "missing_context" if not startup_ready else "replay" if has_v2_capability(capability) else "header_absent")
             else:
                 inputs = map_requested_facts(body=body, authorization=auth, endpoints=endpoints,
                     typed=typed, federated=federated, runtime=self.async_runtime,
