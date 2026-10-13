@@ -1,23 +1,19 @@
 """A1 review witnesses through the service and native SDK boundaries."""
 from __future__ import annotations
 
-import ast
-import hashlib
-import importlib.util
-import sys
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from google.api_core.exceptions import Aborted, DeadlineExceeded, InternalServerError
 
 from tests.test_async_settle_shadow_observation import (
     NOW_US,
+    deterministic_scheduler,  # noqa: F401
     event_for,
     health,
     installed,
+    logical_time,
     service,
 )
 from tests.test_async_settle_shadow_v2_evidence import exhaustive, untraced  # noqa: F401
@@ -31,90 +27,175 @@ from trusted_router.async_settle_shadow_v2_a1_health import validate_publisher_f
 from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore, UnknownCommit
 
 
-@exhaustive
-def test_dormant_adapter_exact_base_and_rpc_call_allocation_differential(tmp_path):
-    from trusted_router import storage_gcp_io as head
-    raw = (Path(__file__).parent/"fixtures/storage_gcp_io_main_9135f4b7.py.txt").read_bytes()
-    assert hashlib.sha256(raw).hexdigest() == "9db65df2443e2a8820d09e3d19e992ab9d60c42233021d0c6fccafbed034cbb5"
-    assert Path(head.__file__).read_bytes() == raw
-    path = tmp_path/"base_io.py"
-    path.write_bytes(raw)
-    spec = importlib.util.spec_from_file_location("base_io", path)
-    base = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = base
-    spec.loader.exec_module(base)
+def test_selected_v2_does_not_mutate_shared_adapter(tmp_path):
+    import inspect
+    import os
+    import subprocess
+    import sys
+    script = "import pytest\nfrom pathlib import Path\n" + inspect.getsource(_prove_shared_adapter)
+    script += "\n_prove_shared_adapter(Path("+repr(str(tmp_path))+"), pytest.MonkeyPatch())\n"
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,  # noqa: S603
+        env={**os.environ, "TR_STORAGE_BACKEND": "memory", "TR_ENVIRONMENT": "test"}, timeout=300)
+    assert result.returncode == 0, result.stdout+result.stderr
+
+
+def _prove_shared_adapter(tmp_path, monkeypatch):
+    """Runtime before/after proof; no frozen version of the owner's adapter."""
     import contextvars
-    # Baseline code runs with the identical caller ContextVar keys. Fresh keys
-    # have randomized hashes and different HAMT allocation shapes despite
-    # identical functions, which would measure the harness rather than P3.
-    for name, value in vars(head).items():
-        if isinstance(value, contextvars.ContextVar):
-            setattr(base, name, value)
-    methods = ("begin_transaction", "commit", "execute_sql", "execute_batch_dml", "execute_streaming_sql",
-        "read", "streaming_read", "rollback", "create_session", "batch_create_sessions", "get_session", "list_sessions", "delete_session")
-    for module in (base, head):
-        tree = ast.parse(Path(module.__file__).read_text())
-        assert not any(isinstance(n, ast.Name) and n.id in {"_RPC_OBSERVER", "_SPANNER_NO_RETRY"} for n in ast.walk(tree))
-    def run(module, method, error, cap, *, allocations=False):
-        calls, frames = [], []
+    import gc
+    import hashlib
+    import importlib
+    import inspect
+    import json
+    import sys
+    import tracemalloc
+    from types import CodeType, SimpleNamespace
+
+    from google.api_core.client_options import ClientOptions
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud.spanner_v1 import Client
+
+    from trusted_router import storage_gcp_io as shared
+
+    def code_hash(code):
+        # marshal's reference/intern flags can change when unrelated imports
+        # retain a constant. Hash the immutable code fields, not marshal flags.
+        constants = tuple(code_hash(v) if isinstance(v, CodeType) else repr(v) for v in code.co_consts)
+        fields = (code.co_code, constants, code.co_names, code.co_varnames, code.co_freevars,
+            code.co_cellvars, code.co_argcount, code.co_kwonlyargcount, code.co_posonlyargcount,
+            code.co_flags, code.co_exceptiontable, code.co_linetable, code.co_firstlineno, code.co_filename)
+        return hashlib.sha256(repr(fields).encode()).hexdigest()
+
+    def function_state(value, seen=None):
+        seen = set() if seen is None else seen
+        if id(value) in seen:
+            return ("reference", id(value))
+        seen.add(id(value))
+        def state(member):
+            return function_state(member, seen) if inspect.isfunction(member) else repr(member)
+        return (id(value), id(value.__code__), code_hash(value.__code__),
+            repr(value.__defaults__), repr(value.__kwdefaults__), repr(value.__annotations__),
+            tuple((key, state(member)) for key, member in sorted(vars(value).items())),
+            tuple(state(cell.cell_contents) for cell in value.__closure__ or ()))
+
+    def snapshot():
+        result = {"namespace_keys": tuple(sorted(vars(shared)))}
+        context = contextvars.copy_context()
+        for name, value in vars(shared).items():
+            if name == "__builtins__":
+                result[name] = id(value)
+                continue
+            code = function_state(value) if inspect.isfunction(value) else None
+            state = (value in context, repr(value), repr(value.get(None))) if isinstance(value, contextvars.ContextVar) else repr(value)
+            members = ()
+            if inspect.isclass(value):
+                members = tuple((key, function_state(member) if inspect.isfunction(member) else
+                    function_state(member.__func__) if isinstance(member, (classmethod, staticmethod)) and inspect.isfunction(member.__func__) else repr(member))
+                    for key, member in sorted(vars(value).items()))
+            result[name] = (id(value), code, state, members)
+        return result
+
+    def money_scenario():
+        calls = []
         def rpc(*args, **kwargs):
             calls.append((args, kwargs))
-            if error:
-                raise error
-            return ("response",)
-        db = SimpleNamespace(spanner_api=SimpleNamespace(**dict.fromkeys(methods, rpc)),
-                             run_in_transaction=lambda fn, **kw: fn(kw))
-        old_time = module.time
-        module.time = SimpleNamespace(monotonic=lambda: 100.)
-        module.configure_spanner_rpc_deadlines(db)
-        def profile(frame, event, arg):
-            if event == "call" and frame.f_globals.get("__name__") == module.__name__:
-                frames.append((frame.f_code.co_name, frame.f_code.co_code))
-        previous = sys.getprofile()
-        sys.setprofile(profile)
-        if allocations:
-            tracemalloc.start()
+            return "response"
+        db = SimpleNamespace(spanner_api=SimpleNamespace(commit=rpc, execute_sql=rpc),
+            run_in_transaction=lambda fn, **kw: fn(kw))
+        shared.configure_spanner_rpc_deadlines(db)
+        gc.collect()
+        tracemalloc.start()
         try:
-            with module.spanner_rpc_deadline(101., max_rpc_seconds=cap), module.count_spanner_rpcs() as count:
-                try:
-                    result = getattr(db.spanner_api, method)(123, timeout=.75, retry=None)
-                except Exception as exc:
-                    result = (type(exc).__name__, str(exc))
-                output = (calls, result, count.value(), frames)
-                if allocations:
-                    blocks = sorted((v.traceback[0].lineno, v.count, v.size)
-                        for v in tracemalloc.take_snapshot().statistics("lineno")
-                        if v.traceback[0].filename == module.__file__)
-                    return output, blocks
-                return output
-        finally:
-            sys.setprofile(previous)
-            module.time = old_time
-    import json
-    import tracemalloc
-    allocation_counts = []
-    def measured(module, method, error_type, message, cap):
-        error = error_type(message) if error_type else None
-        try:
-            return run(module, method, error, cap, allocations=True)
+            with shared.spanner_rpc_deadline(101.), shared.count_spanner_rpcs() as count:
+                db.spanner_api.execute_sql("fixed select", retry=None)
+                db.spanner_api.commit("fixed commit", retry=None)
+                blocks = sorted((v.traceback[0].lineno, v.count, v.size)
+                    for v in tracemalloc.take_snapshot().statistics("lineno")
+                    if v.traceback[0].filename == shared.__file__)
+                return calls, count.value(), blocks
         finally:
             tracemalloc.stop()
-    for method in methods:
-        for error_type, message in ((None, ""), (Aborted, "x"), (InternalServerError, "x"),
-                                    (InternalServerError, "RST_STREAM"), (DeadlineExceeded, "x")):
-            for cap in (None, .5):
-                # Warm both code objects before counting retained native/Python blocks.
-                for module in (base, head):
-                    run(module, method, error_type(message) if error_type else None, cap)
-                baseline = measured(base, method, error_type, message, cap)
-                current = measured(head, method, error_type, message, cap)
-                assert baseline == current
-                allocation_counts.append(dict(method=method, error=error_type.__name__ if error_type else None,
-                    message=message, cap=cap, retained_blocks=sum(v[1] for v in current[1]),
-                    retained_bytes=sum(v[2] for v in current[1])))
-    (tmp_path/"allocation-differential.json").write_text(json.dumps(allocation_counts))
-    # Live blocks attributed to the adapter are measured at the return boundary;
-    # exact source/bytecode equality additionally covers freed transient work.
+
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+    from trusted_router.storage_models import CreditAccount
+
+    def money_store_scenario():
+        store, database = make_fake_store()
+        store._write_entity("credit", "ws_fixed", CreditAccount(workspace_id="ws_fixed"))
+        database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[("ws_fixed", 0)] = {
+            "workspace_id": "ws_fixed", "shard": 0, "total_credits": 0,
+            "total_usage": 0, "reserved": 0, "source_updated_at": None, "updated_at": None}
+        gc.collect()
+        tracemalloc.start()
+        try:
+            assert store.credit_workspace_once("ws_fixed", 5_000_000, "evt_fixed")
+            assert not store.credit_workspace_once("ws_fixed", 5_000_000, "evt_fixed")
+            balance = database.typed[CREDIT_BALANCE_TABLE][("ws_fixed", 0)]["total_credits"]
+            assert balance == 5_000_000
+            # Normalize interpreter method-lookup caches and collect cycles:
+            # these are global runtime caches, not retained money-store state.
+            # datetime.utcoffset creates a transient lookup-name cache entry.
+            sys._clear_type_cache()
+            gc.collect()
+            blocks = sorted((v.traceback[0].filename.split("trusted_router/")[-1]+":"+str(v.traceback[0].lineno), v.count, v.size)
+                for v in tracemalloc.take_snapshot().statistics("lineno")
+                if "/trusted_router/" in v.traceback[0].filename)
+            calls = (database.transaction_execute_sql_calls, database.snapshot_execute_sql_calls, database.commits)
+            return balance, calls, blocks
+        finally:
+            tracemalloc.stop()
+
+    monkeypatch.setattr(shared, "time", SimpleNamespace(monotonic=lambda: 100.))
+    money_scenario()  # Warm the same code and ContextVar keys.
+    money_store_scenario()
+    before = snapshot()
+    baseline = money_scenario()
+    money_baseline = money_store_scenario()
+    modules = sorted(path.stem for path in (Path.cwd()/"src/trusted_router").glob("*shadow*v2*.py"))
+    modules += ["async_settle_shadow_journal", "async_settle_shadow_health_state",
+        "async_settle_shadow_attachments", "storage_gcp_shadow_io", "storage_gcp_shadow_observation",
+        "storage_gcp_shadow_attachments", "services.async_settle_shadow_health"]
+    # No test helper or live v2 module is imported before the baseline.
+    assert not any("shadow_v2" in name or "shadow_observation" in name for name in sys.modules)
+    for name in modules:
+        importlib.import_module("trusted_router."+name)
+    client = Client(project="offline", credentials=AnonymousCredentials(), client_options=ClientOptions(api_endpoint="localhost:1"))
+    money_db = client.instance("offline").database("offline")
+    from trusted_router.storage_gcp_shadow_io import owned_database
+    private = owned_database(money_db)
+    assert private is not money_db and private.spanner_api is not money_db.spanner_api
+    assert private.sessions_manager is not money_db.sessions_manager
+    import google.auth
+
+    from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
+    monkeypatch.setattr(google.auth, "default", lambda **kw: (AnonymousCredentials(), "offline"))
+    transport = GCSAttachments("offline")
+    assert transport.bucket == "offline"
+    from tests.test_async_settle_shadow_observation import NOW_US, service
+    from tests.test_async_settle_shadow_observation_a1 import MemoryAttachments
+    svc = service()
+    svc.bases.transport = svc.traces.transport = MemoryAttachments()
+    svc.store.wall = lambda: NOW_US/1e6
+    svc.publish_cycle(NOW_US//2_000_000, NOW_US)
+    svc.store.wall = lambda: NOW_US/1e6+100
+    svc.flush(svc.store.clock()+4)
+    assert svc.store.database.commits
+    after = snapshot()
+    assert after == before, {k: (before.get(k), after.get(k)) for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+    measured = money_scenario()
+    assert measured[:2] == baseline[:2], (baseline, measured)
+    assert [(line, count) for line, count, size in measured[2]] == [(line, count) for line, count, size in baseline[2]]
+    # CPython key-sharing dict sizes can shrink with unrelated object creation;
+    # preserve measured bytes as data, while asserting exact allocation counts.
+    money_after = money_store_scenario()
+    (tmp_path/"money-store-runtime.json").write_text(json.dumps(dict(logical_calls=money_after[1],
+        retained_before=money_baseline[2], retained_after=money_after[2])))
+    assert money_after[:2] == money_baseline[:2], (money_baseline[:2], money_after[:2])
+    assert [(line, count) for line, count, size in money_after[2]] == [(line, count) for line, count, size in money_baseline[2]], (money_baseline[2], money_after[2])
+    (tmp_path/"money-runtime.json").write_text(json.dumps(dict(rpc_count=baseline[1], retained_allocations_before=baseline[2], retained_allocations_after=measured[2])))
+    money_db.spanner_api.transport.close()
+    private.spanner_api.transport.close()
 
 
 def test_generic_completion_missing_original_stays_unresolved():
@@ -128,7 +209,7 @@ def test_generic_completion_missing_original_stays_unresolved():
         payload_sha256=None, booking=dict(outcome="not_attempted", reference=None, winner=None))
     assert svc.port.finalize(reservation, event)
     assert svc.port.complete(reservation)
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days[reservation.day].hwm == 0
     assert reservation in svc.journal.batches
     page = svc.journal.pages[0].row
@@ -198,7 +279,7 @@ def test_preclaim_lock_wait_rechecks_jitter(monkeypatch):
         svc.schedule_cycle(NOW_US//2_000_000, NOW_US)
         job = svc.publisher_executor.submit(svc.publish_cycle, NOW_US//2_000_000, NOW_US)
         wall[0] += 300_000
-    job.result(2)
+    job.result()
     assert calls == []
     counts = svc.counters["2026-10-12"]["publisher"]
     validate_publisher_final(counts)
@@ -214,17 +295,19 @@ def test_midnight_queued_cycle_owns_day_before_executor_start():
     svc.observer.clock = lambda: 0.
     svc.observer.daily_since = 0.
     release = threading.Event()
-    blocker = svc.publisher_executor.submit(release.wait, 3)
+    blocker = svc.publisher_executor.submit(release.wait)
     stamp = wall[0]
     with svc.lock:
         svc.schedule_cycle(stamp//2_000_000, stamp)
         job = svc.publisher_executor.submit(svc.publish_cycle, stamp//2_000_000, stamp)
     wall[0] += 3_000_000
-    svc.flush(time.monotonic()+4)
-    assert "2026-10-12" in svc.journal.days
-    release.set()
-    blocker.result(2)
-    job.result(2)
+    try:
+        svc.flush(svc.store.clock()+4)
+        assert "2026-10-12" in svc.journal.days
+    finally:
+        release.set()
+    blocker.result()
+    job.result()
     counts = svc.counters["2026-10-12"]["publisher"]
     validate_publisher_final(counts)
     assert counts["missed_slots"] == 1
@@ -237,13 +320,13 @@ class MemoryAttachments:
         self.objects = {}
         self.calls = []
         self.lose = False
-    def put(self, key, body, timeout):
+    def put(self, key, body, timeout, *, deadline=None, clock=None):
         self.calls.append(("put", key, len(body)))
         assert key not in self.objects
         self.objects[key] = body
         if self.lose:
             raise TimeoutError("lost")
-    def get(self, key, timeout):
+    def get(self, key, timeout, *, deadline=None, clock=None):
         self.calls.append(("get", key))
         return self.objects.get(key)
 
@@ -336,9 +419,14 @@ def test_native_checkout_inside_owning_budget(monkeypatch, consumer, checkout):
     if checkout == "expired":
         clock.now += 2
     if checkout == "contended":
-        db.sessions_manager.lock.acquire()
-        # Use a tiny but positive native checkout budget; no unbounded pool wait.
-        cap = .001
+        class Contended:
+            def acquire(self, *, timeout):
+                assert 0 < timeout <= cap
+                clock.now += timeout
+                return False
+            def release(self):
+                pass
+        db.sessions_manager.lock = Contended()
     budget = Budget(10.+cap, clock.monotonic)
     def read():
         if consumer == "observe":
@@ -378,8 +466,8 @@ async def test_authorize_receipt_closure_commits_open_report_obligation():
     assert svc.port.finalize(r, event_for(r)) and svc.port.complete(r)
     await svc.close()
     assert not svc.unclosed
-    page = svc.store.read(PAGE_KIND, f"{r.day}/{r.boot}/{r.first_seq:020}", Budget(time.monotonic()+1))
-    closure = svc.store.read(CLOSURE_KIND, r.day+"/"+r.boot, Budget(time.monotonic()+1))
+    page = svc.store.read(PAGE_KIND, f"{r.day}/{r.boot}/{r.first_seq:020}", Budget(logical_time()+1, logical_time))
+    closure = svc.store.read(CLOSURE_KIND, r.day+"/"+r.boot, Budget(logical_time()+1, logical_time))
     assert closure.value()["authorization_obligations"] == "receipt_chain"
     assert closure.value()["receipt_chain_sha256"] == page.digest
     obligation = authorization_obligation(page.value(), f"{r.event_seq:020}")
@@ -405,7 +493,7 @@ def test_future_host_claim_rejected_before_mutation_or_scan():
     svc = service()
     with pytest.raises(ValueError, match="a1-server-slot"):
         svc.store.claim(svc.journal.boot, NOW_US//2_000_000+100, NOW_US+200_000_000,
-                        Budget(time.monotonic()+.5))
+                        Budget(logical_time()+.5, logical_time))
     assert svc.store.database.rows == {}
     assert svc.store.database.transaction_execute_sql_calls == 1
     assert svc.store.database.snapshot_execute_sql_calls == 0
@@ -471,6 +559,7 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
     with rpc_scope(budget.deadline, .5, clock.monotonic), observe_spanner_rpcs(durations.append):
         assert store.claim("issuer", NOW_US//2_000_000, NOW_US, budget)
         value = store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget)
+        assert value["observed_at_ns"] == NOW_US*1000+123
         assert store.publish(value, budget)
     assert calls == ["session", "query", "commit", "query", "query", "query", "commit"]
     assert len(durations) == len(calls) == 7
@@ -527,7 +616,7 @@ async def test_observer_close_keeps_queued_failures_owned():
     entered, release = threading.Event(), threading.Event()
     def read():
         entered.set()
-        assert release.wait(2)
+        release.wait()
         raise RuntimeError("read failed")
     observer.health_read = read
     started = observer.clock()
@@ -535,11 +624,231 @@ async def test_observer_close_keeps_queued_failures_owned():
         observer._count("health_reads")
         observer.inflight_ticks[None] = started
     job = observer.executor.submit(observer._health, started)
-    assert entered.wait(2)
+    entered.wait()
     closing = asyncio.create_task(observer.close())
-    await asyncio.sleep(.01)
-    assert observer.inflight_ticks and not closing.done()
-    release.set()
+    try:
+        await asyncio.sleep(0)  # One explicit scheduler turn; no elapsed-time dependency.
+        assert observer.inflight_ticks and not closing.done()
+    finally:
+        release.set()
     await closing
     job.result()
     assert not observer.inflight_ticks and observer.counts["read_failures"] == 1
+
+
+def test_missing_durable_page_blocks_journal_closure():
+    """P3 verifies page durability; P5 independently validates exported coverage."""
+    from trusted_router.async_settle_shadow_journal import PAGE_KIND
+    svc = service()
+    svc.journal.grant("2026-10-12", RESERVATION_BLOCK)
+    r = svc.port.reserve(NOW_US)
+    assert svc.port.finalize(r, event_for(r)) and svc.port.complete(r)
+    svc.journal.freeze(r.day)
+    with pytest.raises(ValueError, match="reference_missing"):
+        svc.journal.verify_complete(r, [])
+    assert svc.journal.days[r.day].hwm == 0
+    assert not svc.journal.can_close(r.day, inflight=0, pending=0,
+        interval_end_us=NOW_US, folded_us=NOW_US)
+    assert not any(kind in (PAGE_KIND, CLOSURE_KIND) for kind, _ in svc.store.database.rows)
+
+
+def test_reader_yes_cannot_erase_publisher_failure(monkeypatch):
+    import copy
+
+    from trusted_router.services.async_settle import Admission
+    svc = service()
+    svc.store.wall = lambda: NOW_US/1e6
+    monkeypatch.setattr(svc.store, "claim", lambda *a: (_ for _ in ()).throw(UnknownCommit("lost")))
+    svc.publish_cycle(NOW_US//2_000_000, NOW_US)
+    before = copy.deepcopy(svc.counters["2026-10-12"]["publisher"])
+    svc.observer.install_workspace("ws", svc.store.clock(), Admission(0, 2))
+    svc.observer.install_health(svc.store.clock(), installed(health(), reply_at=svc.store.clock()))
+    assert svc.observer.peek("ws")["prediction"] == "yes"
+    svc.fold(NOW_US+100_000_000)
+    assert svc.counters["2026-10-12"]["publisher"] == before
+    assert before["failures"] == before["unknown_outcomes"] == 1
+
+
+def test_literal_trace_is_per_cycle_not_cumulative(monkeypatch):
+    svc = service()
+    wall = [NOW_US]
+    svc.store.wall = lambda: wall[0]/1e6
+    def lose(*args):
+        svc.store.last_claim = dict(claim_at_ns=wall[0]*1000)
+        return False
+    monkeypatch.setattr(svc.store, "claim", lose)
+    for _ in range(2):
+        svc.publish_cycle(wall[0]//2_000_000, wall[0])
+        wall[0] += 2_000_000
+        logical_time.advance(2)
+    assert svc.traces.queue, "the cycle must retain a literal trace"
+    entries = svc.traces.schema.parse(svc.traces.queue[0].body)["entries"]
+    assert len(entries) == 2
+    assert [e["outcome"] for e in entries] == ["lost_claim", "lost_claim"]
+    assert [e["cycle_us"] for e in entries] == [0, 0]
+    assert all(e["ack_at_us"] is None and e["observed_at_ns"] is None for e in entries)
+    assert svc.counters["2026-10-12"]["publisher"]["lost_claims"] == 2
+
+
+@pytest.mark.asyncio
+async def test_close_result_separate_transaction_and_original_identity(monkeypatch):
+    from trusted_router.async_settle_shadow_journal import COUNTER_KIND
+    svc = service()
+    rows = []
+    real = svc.store.database.run_in_transaction
+    def transaction(callback, **kwargs):
+        before = dict(svc.store.database.rows)
+        result = real(callback, **kwargs)
+        rows.append({key[0] for key, value in svc.store.database.rows.items() if before.get(key) != value})
+        return result
+    monkeypatch.setattr(svc.store.database, "run_in_transaction", transaction)
+    await svc.close()
+    assert not svc.unclosed
+    assert rows == [{COUNTER_KIND, CLOSURE_KIND}, {CLOSE_RESULT_KIND}]
+    result = next(row for (kind, _), row in svc.store.database.rows.items() if kind == CLOSE_RESULT_KIND)
+    import json
+    value = json.loads(result.body)
+    assert value["boot"] == svc.journal.boot and value["router_revision"] == "a"*40
+    assert value["handoff_attempt_limit"] == 1
+    assert value["flush_remaining_us"] <= 4_000_000
+    assert value["shutdown_remaining_us"] <= 9_000_000
+
+
+def test_health_read_preserves_O_and_snapshot_R():
+    from trusted_router.async_settle_shadow_journal import HEALTH_KIND, Row
+    svc = service()
+    body = health()
+    row = Row.build(HEALTH_KIND, "local/fleet", body)
+    with svc.store.database.batch() as batch:
+        svc.store.write(batch, [row], Budget(logical_time()+2, logical_time))
+    svc.store.database.server_ns = NOW_US*1000+4_000_000_000
+    read = svc.store.read_shadow_health()
+    assert read["body"] == body
+    assert read["read_at_ns"] == NOW_US*1000+4_000_000_000
+    assert read["body"]["observed_at_ns"] == NOW_US*1000
+
+
+def test_acknowledgement_is_observed_reply_not_C_or_R(monkeypatch):
+    svc = service()
+    wall = [NOW_US]
+    svc.store.wall = lambda: wall[0]/1e6
+    real = svc.store.publish
+    def publish(value, budget):
+        result = real(value, budget)
+        logical_time.advance(.4)
+        wall[0] += 400_000
+        return result
+    monkeypatch.setattr(svc.store, "publish", publish)
+    monkeypatch.setattr(svc.store, "read_shadow_health", lambda: dict(
+        committed_at_ns=NOW_US*1000+300_000_000, read_at_ns=NOW_US*1000+350_000_000))
+    svc.publish_cycle(NOW_US//2_000_000, NOW_US)
+    assert svc.traces.queue, "the cycle must retain a literal trace"
+    entries = svc.traces.schema.parse(svc.traces.queue[0].body)["entries"]
+    assert len(entries) == 1 and entries[0]["outcome"] == "published"
+    assert entries[0]["ack_at_us"] == NOW_US+400_000
+    assert entries[0]["cycle_us"] == 400_000
+
+
+def test_observation_uses_unresolved_snapshot_not_scalar_clock(monkeypatch):
+    svc = service()
+    svc.store.database.server_ns = NOW_US*1000+123
+    seen = []
+    real = svc.store.snapshot_query
+    def query(statement, budget, cap):
+        seen.append(statement[0])
+        assert "tr_settle_outbox" in statement[0] and "CURRENT_TIMESTAMP" not in statement[0]
+        return real(statement, budget, cap)
+    monkeypatch.setattr(svc.store, "snapshot_query", query)
+    value = svc.store.observe("issuer", "us-central1", "a"*40,
+        NOW_US//2_000_000, Budget(logical_time()+.5, logical_time))
+    assert len(seen) == 1 and "CURRENT_TIMESTAMP" not in seen[0]
+    assert "tr_settle_outbox" in seen[0]
+    assert value["observed_at_ns"] == NOW_US*1000+123
+    assert value["sample_count"] == 0
+
+
+def test_receipt_and_attachment_roots_are_full_digests():
+    import hashlib
+
+    from tests.test_async_settle_shadow_observation import journal
+    j = journal()
+    r = j.reserve(NOW_US)
+    j.finalize(r, event_for(r))
+    j.complete(r)
+    pages = j.freeze(r.day)
+    expected = hashlib.sha256(pages[0].body).hexdigest()
+    j.acknowledge(pages)
+    assert j.verify_complete(r, pages)
+    assert j.days[r.day].chain == expected
+    r2 = j.reserve(NOW_US+1)
+    j.finalize(r2, event_for(r2))
+    assert j.freeze(r2.day)[0].value()["previous_page_sha256"] == expected
+    lane = Lane("basis", "issuer", MemoryAttachments())
+    lane.append(r.day, basis())
+    first = lane.queue[0].body
+    lane.step(Budget(logical_time()+2, logical_time))
+    assert lane.previous == hashlib.sha256(first).hexdigest()
+    lane.append(r.day, dict(basis(), since_reply_ns=1))
+    assert lane.schema.parse(lane.queue[0].body)["previous_sha256"] == lane.previous
+
+
+def test_original_prediction_cannot_be_overwritten():
+    import copy
+
+    from tests.test_async_settle_shadow_observation import retained_case
+    from trusted_router.async_settle_shadow_v2_evidence import EVENT
+    svc, r, _ = retained_case("sample", pending=True)
+    original = svc.journal.slot(r).body
+    changed = EVENT.parse(original)
+    assert changed["prediction"] is not None
+    changed["prediction"] = copy.deepcopy(changed["prediction"])
+    changed["prediction"]["prediction"] = "no" if changed["prediction"]["prediction"] == "yes" else "yes"
+    with pytest.raises(ValueError, match="slot_conflict"):
+        svc.journal.finalize(r, changed)
+    assert svc.journal.slot(r).body == original
+
+
+@pytest.mark.parametrize("stage", ["claim", "observe", "publish"])
+@pytest.mark.parametrize("fault", ["late", "lost"])
+def test_each_publisher_stage_uncertainty_is_failure(monkeypatch, stage, fault):
+    svc = service()
+    svc.store.wall = lambda: NOW_US/1e6
+    real = getattr(svc.store, stage)
+    def operation(*args):
+        result = real(*args)
+        if fault == "late":
+            logical_time.advance(.500001)
+            return result
+        if stage == "observe":
+            raise RuntimeError("snapshot response lost")
+        raise UnknownCommit("commit response lost")
+    monkeypatch.setattr(svc.store, stage, operation)
+    svc.publish_cycle(NOW_US//2_000_000, NOW_US)
+    counts = svc.counters["2026-10-12"]["publisher"]
+    assert counts["publications"] == 0 and counts["failures"] == 1
+    assert counts["late_cycles"] == int(fault == "late")
+    assert counts["unknown_outcomes"] == int(fault == "lost" and stage != "observe")
+    validate_publisher_final(counts)
+
+
+def test_late_landed_close_result_requires_exact_reconciliation(monkeypatch):
+    svc = service()
+    svc.closing_reason = "shutdown"
+    svc.termination_deadline = logical_time()+9
+    database = svc.store.database
+    real = database.run_in_transaction
+    delayed = []
+    def commit(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if not delayed and any(kind == CLOSE_RESULT_KIND for kind, _ in database.rows):
+            delayed.append(True)
+            logical_time.advance(3.)  # Past result's 2 s child, within 4 s flush.
+        return result
+    monkeypatch.setattr(database, "run_in_transaction", commit)
+    svc.flush(logical_time()+4)
+    assert delayed == [True]
+    assert svc.handoff is not None and svc.journal.days
+    attempts = database.commits
+    svc.flush(logical_time()+4)
+    assert svc.handoff is None and not svc.journal.days
+    assert database.commits == attempts  # Exact readback, never a second result write.

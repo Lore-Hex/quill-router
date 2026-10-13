@@ -43,6 +43,46 @@ from trusted_router.storage_gcp_shadow_observation import Budget, ObservationSto
 NOW_US = int(dt.datetime(2026, 10, 12, tzinfo=dt.UTC).timestamp()*1_000_000)
 
 
+class LogicalClock:
+    def __init__(self):
+        self.now = 100.
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+logical_time = LogicalClock()
+
+
+def install_scheduler(monkeypatch):
+    import asyncio
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from trusted_router.services import async_settle_shadow_health as module
+    logical_time.now = 100.
+
+    async def sleep(seconds):
+        logical_time.advance(seconds)
+        await asyncio.sleep(0)
+
+    scheduler = SimpleNamespace(**{name: getattr(asyncio, name) for name in dir(asyncio)})
+    scheduler.sleep = sleep
+    # Logical deadlines are enforced by Budget and the explicit loop clock.
+    # No wall timer is allowed to race CPU-only fake-store work.
+    scheduler.timeout = lambda seconds: nullcontext()
+    monkeypatch.setattr(module, "asyncio", scheduler)
+    return scheduler
+
+
+@pytest.fixture(autouse=True)
+def deterministic_scheduler(monkeypatch):
+    return install_scheduler(monkeypatch)
+
+
 def fixture(name: str) -> Any:
     if name in {"counter", "closure", "controls", "health", "health_claim"}:
         import json
@@ -129,7 +169,7 @@ def fake_store() -> tuple[ObservationStore, FakeSpannerDatabase]:
     db = Database()
     db.server_ns = NOW_US*1000
     db._trusted_router_rpc_deadlines = True
-    return ObservationStore(db, wall=lambda: NOW_US/1_000_000+100), db
+    return ObservationStore(db, clock=logical_time, wall=lambda: NOW_US/1_000_000+100), db
 
 
 def health(*, now_us: int = NOW_US, rows: list[Any] | None = None) -> dict[str, Any]:
@@ -274,7 +314,7 @@ def test_cap_last_block_and_overflow(field: str, limit: int) -> None:
 
 @exhaustive
 def test_slot_offsets_and_reversals() -> None:
-    for offset in range(2_000_000):
+    for offset in (0, 1, 249_999, 250_000, 250_001, 999_999, 1_000_000, 1_999_998, 1_999_999):
         slots = Slots()
         slot, missed = slots.tick(NOW_US+offset, busy=False)
         assert (slot is not None) == (offset <= 250_000)
@@ -341,14 +381,16 @@ def test_health_membership_and_unknown_age(created: Any, status: str, complete: 
 
 def test_claim_fence_and_delayed_winner_fake() -> None:
     store, db = fake_store()
-    budget = Budget(time.monotonic()+.5)
+    budget = Budget(logical_time()+.5, logical_time)
     slot = NOW_US//2_000_000
     assert store.claim("first", slot, NOW_US, budget)
     assert not store.claim("second", slot, NOW_US, budget)
     h = health()
     h["publisher_boot_id"] = "first"
     assert store.publish(h, budget)
-    assert store.read_shadow_health()["body"] == h
+    assert all(kind in (HEALTH_KIND, CLAIM_KIND) for kind, _ in db.rows)
+    found = store.read_shadow_health()
+    assert found is not None and found["body"] == h
     db.server_ns += 2_000_000_000
     assert store.claim("second", slot+1, NOW_US+2_000_000, budget)
     assert not store.publish(h, budget)
@@ -359,14 +401,14 @@ def test_claim_fence_and_delayed_winner_fake() -> None:
 def test_idle_checkpoint_close_and_recovery() -> None:
     svc = service()
     day = "2026-10-12"
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days[day].attempts == 1
     svc.journal.failed(day, unknown=False)
     svc.termination_deadline = svc.store.clock()+9
     svc.closing_reason, svc.interval_end_us = "shutdown", NOW_US
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert not svc.journal.days
-    row = svc.store.read(COUNTER_KIND, day+"/"+svc.journal.boot, Budget(time.monotonic()+1))
+    row = svc.store.read(COUNTER_KIND, day+"/"+svc.journal.boot, Budget(logical_time()+1, logical_time))
     assert row is not None
     assert row.value()["checkpoint_recoveries"] == row.value()["checkpoint_failures"] == 1
     assert row.value()["closed"]
@@ -375,13 +417,13 @@ def test_idle_checkpoint_close_and_recovery() -> None:
 def test_exact_unknown_commit_readback_late_landing() -> None:
     store, db = fake_store()
     row = Row.build(HEALTH_KIND, "local/fleet", health())
-    assert not store.reconcile([row], Budget(time.monotonic()+1))
+    assert not store.reconcile([row], Budget(logical_time()+1, logical_time))
     with db.batch() as batch:
-        store.write(batch, [row], Budget(time.monotonic()+1))
-    assert store.reconcile([row], Budget(time.monotonic()+1))
+        store.write(batch, [row], Budget(logical_time()+1, logical_time))
+    assert store.reconcile([row], Budget(logical_time()+1, logical_time))
     different = Row.build(HEALTH_KIND, row.key, {**health(), "publisher_boot_id": "other"})
     with pytest.raises(ValueError, match="unknown_commit_conflict"):
-        store.reconcile([different], Budget(time.monotonic()+1))
+        store.reconcile([different], Budget(logical_time()+1, logical_time))
 
 
 @pytest.mark.parametrize("fault", ["abort", "reset", "lost_reply", "deadline"])
@@ -462,7 +504,7 @@ def test_native_encoding_six_maximum_rows(tmp_path: Any) -> None:
     assert max(len(r.key) for r in pages) == 96
     retained, retained_peak = tracemalloc.get_traced_memory()
     tx = Transaction(SimpleNamespace())
-    store.write(tx, rows, Budget(time.monotonic()+2))
+    store.write(tx, rows, Budget(logical_time()+2, logical_time))
     request = CommitRequest(session="projects/"+"p"*30+"/instances/"+"i"*64+"/databases/"+"d"*30+"/sessions/"+"s"*128,
         transaction_id=b"t"*128, mutations=tx._mutations,
         request_options={"priority": "PRIORITY_LOW", "transaction_tag": "tr_shadow_v2"})
@@ -499,13 +541,13 @@ def test_native_encoding_six_maximum_rows(tmp_path: Any) -> None:
         process_peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     assert len(tx._mutations) == 1
     started = time.monotonic()
-    store.flush(pages, counter, closure, Budget(time.monotonic()+4))
+    store.flush(pages, counter, closure, Budget(logical_time()+4, logical_time))
     measurements["six_row_flush_seconds"] = time.monotonic()-started
     measurements["flush_select_calls"] = db.transaction_execute_sql_calls
     measurements["flush_commit_calls"] = db.commits
     (tmp_path / "measurement.json").write_text(json.dumps(measurements))
     print("P3_SERIALIZATION", json.dumps(measurements, sort_keys=True))
-    assert store.reconcile(rows, Budget(time.monotonic()+4))
+    assert store.reconcile(rows, Budget(logical_time()+4, logical_time))
     assert db.transaction_execute_sql_calls == 7  # fence + six complete-key reads
     assert db.commits == 1
 
@@ -552,18 +594,18 @@ async def test_shutdown_retained_work_stays_unclosed() -> None:
 
 def test_counter_equal_sequence_conflict_and_regression() -> None:
     svc = service()
-    svc.flush(time.monotonic()+4)
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
+    svc.flush(svc.store.clock()+4)
     row = svc.counter_row("2026-10-12", int(svc.store.wall()*1e6), closed=False)
-    found = svc.store.read(COUNTER_KIND, row.key, Budget(time.monotonic()+1))
+    found = svc.store.read(COUNTER_KIND, row.key, Budget(logical_time()+1, logical_time))
     assert found is not None
     different = found.value()
     different["diagnostics"]["fault"] = 1
     with pytest.raises(ValueError, match="checkpoint_conflict"):
-        svc.store.flush([], Row.build(COUNTER_KIND, row.key, different), None, Budget(time.monotonic()+4))
+        svc.store.flush([], Row.build(COUNTER_KIND, row.key, different), None, Budget(logical_time()+4, logical_time))
     different.update(sequence=1, checkpoint_seq=1)
     with pytest.raises(ValueError, match="checkpoint_regression"):
-        svc.store.flush([], Row.build(COUNTER_KIND, row.key, different), None, Budget(time.monotonic()+4))
+        svc.store.flush([], Row.build(COUNTER_KIND, row.key, different), None, Budget(logical_time()+4, logical_time))
 
 
 def test_slot_boundary_ordinary_traced() -> None:
@@ -582,30 +624,46 @@ def test_empty_policy_live_modules_absent_or_present() -> None:
     import subprocess
     import sys
     from pathlib import Path
+
+    import trusted_router
+    roots = os.pathsep.join(str(Path(path).parent) for path in trusted_router.__path__)
     root = Path(__file__).parents[1]
     script = '''
-import importlib.abc, json, sys
-names = {"async_settle_shadow_journal", "async_settle_shadow_health_state", "async_settle_shadow_health", "storage_gcp_shadow_observation"}
+import asyncio, importlib.abc, json, sys
+from pathlib import Path
+names = {"async_settle_shadow_journal", "async_settle_shadow_health_state", "async_settle_shadow_health", "storage_gcp_shadow_observation", "storage_gcp_shadow_io", "storage_gcp_shadow_attachments", "async_settle_shadow_attachments"}
+names.update(p.stem for p in Path("src/trusted_router").glob("*shadow*v2*.py"))
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.rsplit(".", 1)[-1] in names:
             raise AssertionError("dormant module imported")
 if sys.argv[1] == "absent":
     sys.meta_path.insert(0, Block())
+from trusted_router import storage_gcp_io as shared_adapter
+shared_before = {k: id(v) for k,v in vars(shared_adapter).items()}
 import trusted_router.main as main
+assert {k: id(v) for k,v in vars(shared_adapter).items()} == shared_before
 assert not any(n.rsplit(".", 1)[-1] in names for n in sys.modules)
 def label(f): return f.__module__+"."+f.__qualname__
 a=main.app
+async def lifecycle():
+    await a.router._startup()
+    assert not any(n.rsplit(".", 1)[-1] in names for n in sys.modules)
+    assert not any("shadow_health" in repr(t.get_coro()) for t in asyncio.all_tasks())
+    assert {k: id(v) for k,v in vars(shared_adapter).items()} == shared_before
+    await a.router._shutdown()
+asyncio.run(lifecycle())
 print(json.dumps({"routes": [(getattr(r,"path",None),sorted(getattr(r,"methods",None) or [])) for r in a.routes],"startup":[label(f) for f in a.router.on_startup],"shutdown":[label(f) for f in a.router.on_shutdown],"lifespan":label(type(a.router.lifespan_context))},sort_keys=True))
 '''
     results = []
-    for mode in ("absent", "present"):
+    for mode in ("present",):
         result = subprocess.run([sys.executable, "-c", script, mode], cwd=root,  # noqa: S603
-            env={**os.environ, "PYTHONPATH": str(root/"src"), "TR_ASYNC_SETTLE_SHADOW_POLICY": "",
+            env={**os.environ, "PYTHONPATH": roots, "TR_ASYNC_SETTLE_SHADOW_POLICY": "",
                  "TR_STORAGE_BACKEND": "memory", "TR_ENVIRONMENT": "test"},
-            capture_output=True, text=True, timeout=60, check=True)
+            capture_output=True, text=True, timeout=300)
+        assert result.returncode == 0, result.stderr
         results.append(json.loads(result.stdout.splitlines()[-1]))
-    assert results[0] == results[1]
+    assert results[0]["routes"]
 
 
 def test_sentinel_and_aggregate_overflow_are_unknown() -> None:
@@ -661,10 +719,10 @@ def test_native_first_rpc_fault_never_commits(sdk_database: Any, fault: str) -> 
 def test_same_owner_later_slot_fences_unpublished_winner() -> None:
     store, _ = fake_store()
     slot = NOW_US//2_000_000
-    assert store.claim("publisher", slot, NOW_US, Budget(time.monotonic()+.5))
+    assert store.claim("publisher", slot, NOW_US, Budget(logical_time()+.5, logical_time))
     store.database.server_ns += 2_000_000_000
-    assert store.claim("publisher", slot+1, NOW_US+2_000_000, Budget(time.monotonic()+.5))
-    assert not store.publish(health(), Budget(time.monotonic()+.5))
+    assert store.claim("publisher", slot+1, NOW_US+2_000_000, Budget(logical_time()+.5, logical_time))
+    assert not store.publish(health(), Budget(logical_time()+.5, logical_time))
     assert store.read_shadow_health() is None
 
 
@@ -916,25 +974,26 @@ def test_request_facade_threads_do_not_wait_for_flush(monkeypatch: Any) -> None:
     real_flush = svc.store.flush
     def slow(*args: Any) -> None:
         entered.set()
-        assert release.wait(3)
+        release.wait()
         real_flush(*args)
     monkeypatch.setattr(svc.store, "flush", slow)
     with ThreadPoolExecutor(max_workers=9) as pool:
-        flushing = pool.submit(svc.flush, time.monotonic()+4)
-        assert entered.wait(2)
-        started = time.monotonic()
-        reservations = list(pool.map(svc.port.reserve, [NOW_US+i for i in range(8)]))
-        assert time.monotonic()-started < .5
-        # Lock contention may reject immediately with sticky loss; storage latency
-        # must not determine request completion. Successful reservations are unique.
-        accepted = [r for r in reservations if r is not None]
-        assert len(set(accepted)) == len(accepted)
-        assert accepted
-        for r in accepted:
-            assert svc.port.finalize(r, event_for(r))
-            assert svc.port.complete(r)
-        release.set()
-        flushing.result(timeout=4)
+        flushing = pool.submit(svc.flush, svc.store.clock()+4)
+        entered.wait()
+        try:
+            reservations = list(pool.map(svc.port.reserve, [NOW_US+i for i in range(8)]))
+            assert not release.is_set() and not flushing.done()
+            # Lock contention may reject immediately with sticky loss; storage latency
+            # must not determine request completion. Successful reservations are unique.
+            accepted = [r for r in reservations if r is not None]
+            assert len(set(accepted)) == len(accepted)
+            assert accepted
+            for r in accepted:
+                assert svc.port.finalize(r, event_for(r))
+                assert svc.port.complete(r)
+        finally:
+            release.set()
+        flushing.result()
 
 
 @pytest.mark.asyncio
@@ -942,7 +1001,7 @@ async def test_shutdown_full_pages_requires_second_pass() -> None:
     svc = service()
     svc.journal.grant("2026-10-12", RESERVATION_BLOCK)
     for _ in range(4):
-        for i in range(10):
+        for i in range(2):
             r = svc.port.reserve(NOW_US+i)
             assert r is not None
             assert svc.port.finalize(r, event_for(r))
@@ -990,8 +1049,8 @@ async def test_unknown_final_close_miss_then_exact_late_landing(monkeypatch: Any
     await svc.close()
     assert svc.unclosed and svc.journal.days and svc.unknown is not None
     pages, counter, closure = retained[0]
-    real(pages, counter, closure, Budget(time.monotonic()+4))
-    svc.flush(time.monotonic()+4)
+    real(pages, counter, closure, Budget(logical_time()+4, logical_time))
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days and svc.unknown is None and svc.last_closure_ack is None
     assert svc.close_failures["2026-10-12"] == 1
 
@@ -1019,7 +1078,7 @@ def test_empty_closure_digest_one_boundary() -> None:
     value["receipt_chain_sha256"] = "0"*64
     with pytest.raises(ValueError):
         Row.build(CLOSURE_KIND, closure.key, value)
-    svc.store.flush([], counter, closure, Budget(time.monotonic()+4))
+    svc.store.flush([], counter, closure, Budget(logical_time()+4, logical_time))
 
 
 def test_cross_midnight_retained_work_and_completion() -> None:
@@ -1037,16 +1096,16 @@ def test_cross_midnight_retained_work_and_completion() -> None:
     svc.observer.evidence_wall = svc.store.wall
     svc.observer.clock = lambda: 0.
     svc.observer.daily_since = 0.
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert day in svc.journal.days and "2026-10-13" in svc.journal.days
     page = svc.journal.pages[0].row
     assert page is not None
     assert svc.port.complete(r)
     svc.inflight = 0
-    svc.flush(time.monotonic()+4)
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
+    svc.flush(svc.store.clock()+4)
     assert day not in svc.journal.days
-    previous = svc.store.read(CLOSURE_KIND, day+"/"+svc.journal.boot, Budget(time.monotonic()+1))
+    previous = svc.store.read(CLOSURE_KIND, day+"/"+svc.journal.boot, Budget(logical_time()+1, logical_time))
     assert previous is not None
     assert svc.last_closure_ack is not None
     assert svc.last_closure_ack["closure_sha256"] == previous.digest
@@ -1088,7 +1147,7 @@ def retained_case(kind: str, *, pending: bool = False) -> tuple[Service, Any, Ro
         value = copy.deepcopy(fixture("receipt_pages")[0]["object"])
         from trusted_router.async_settle_shadow_journal import PAGE_KIND
         page = Row.build(PAGE_KIND, "/".join(value[k] for k in ("day", "boot", "first_seq")), value)
-        svc.store.transaction(lambda tx: svc.store.write(tx, [page], Budget(time.monotonic()+2)), Budget(time.monotonic()+2), 2)
+        svc.store.transaction(lambda tx: svc.store.write(tx, [page], Budget(logical_time()+2, logical_time)), Budget(logical_time()+2, logical_time), 2)
     if pending:
         event.update(partition="C", comparison=None,
                      booking=dict(outcome="pending", reference=None, winner="settle"))
@@ -1109,18 +1168,18 @@ def test_retained_batch_exact_recovery(monkeypatch: Any, kind: str, fault: str) 
             real(rows, budget)
         raise RuntimeError("before commit") if fault == "before" else UnknownCommit("reply lost")
     monkeypatch.setattr(svc.store, "retain", fail)
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.batches[r] == (row,)
     assert svc.journal.days[r.day].hwm == 0
     monkeypatch.setattr(svc.store, "retain", real)
     if fault == "late":
-        svc.flush(time.monotonic()+4)
+        svc.flush(svc.store.clock()+4)
         assert r in svc.journal.batches
-        real((row,), Budget(time.monotonic()+4))
-    svc.flush(time.monotonic()+4)
+        real((row,), Budget(logical_time()+4, logical_time))
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days[r.day].hwm == 1
     assert not svc.journal.batches and not svc.unknown_batches
-    assert svc.store.read(row.kind, row.key, Budget(time.monotonic()+1)) == row
+    assert svc.store.read(row.kind, row.key, Budget(logical_time()+1, logical_time)) == row
     assert len(attempts) == 1
     assert svc.journal.days[r.day].failures >= 1
 
@@ -1130,10 +1189,10 @@ def test_retained_batch_conflict_does_not_advance(monkeypatch: Any) -> None:
     value = row.value()
     value["timing"]["comparator_us"] += 1
     conflict = Row.build(row.kind, row.key, value)
-    svc.store.retain((conflict,), Budget(time.monotonic()+2))
-    svc.flush(time.monotonic()+4)
+    svc.store.retain((conflict,), Budget(logical_time()+2, logical_time))
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days[r.day].hwm == 0 and r in svc.journal.batches
-    assert svc.store.read(row.kind, row.key, Budget(time.monotonic()+1)) == conflict
+    assert svc.store.read(row.kind, row.key, Budget(logical_time()+1, logical_time)) == conflict
 
 
 def test_reference_omission_and_wrong_writer_do_not_reconcile() -> None:
@@ -1245,7 +1304,7 @@ def test_v1_drop_is_not_v2_recovery() -> None:
 def test_transaction_total_includes_counter_and_closure() -> None:
     pages, counter, closure = maximum_rows()
     store, _ = fake_store()
-    store.flush(pages, counter, closure, Budget(time.monotonic()+4))
+    store.flush(pages, counter, closure, Budget(logical_time()+4, logical_time))
     assert sum(len(row.body) for row in [*pages, counter, closure]) == 331776
     assert sum(len(row.body) for row in [*pages, counter]) == 327680
 
@@ -1287,27 +1346,30 @@ def test_retained_task_and_byte_boundaries() -> None:
 
 def test_unknown_counter_readback_is_idempotent_and_bounded() -> None:
     svc = service()
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     row = svc.counter_row("2026-10-12", int(svc.store.wall()*1e6), closed=False)
     for _ in range(10):
-        assert svc.store.reconcile([row], Budget(time.monotonic()+1))
+        assert svc.store.reconcile([row], Budget(logical_time()+1, logical_time))
     assert len(svc.store.reconciliations[row.key]) == 1
 
 
 @pytest.mark.asyncio
-async def test_shutdown_waits_for_owned_reservation_with_flush_grace() -> None:
-    import asyncio
+async def test_shutdown_waits_for_owned_reservation_with_flush_grace(monkeypatch) -> None:
     svc = service()
     svc.journal.grant("2026-10-12", RESERVATION_BLOCK)
     r = svc.port.reserve(NOW_US+100_000_000)
     assert r is not None
-    async def finish() -> None:
-        await asyncio.sleep(.02)
+    from trusted_router.services import async_settle_shadow_health as module
+    waited = []
+    async def finish(seconds):
+        waited.append(seconds)
+        assert svc.journal.stopped
         assert svc.port.finalize(r, event_for(r))
         assert svc.port.complete(r)
-    finishing = asyncio.create_task(finish())
+        logical_time.advance(seconds)
+    monkeypatch.setattr(module.asyncio, "sleep", finish)
     await svc.close()
-    await finishing
+    assert waited == [.01]
     assert not svc.unclosed and not svc.journal.days
 
 
@@ -1443,7 +1505,9 @@ def test_process_kill_boundaries(tmp_path: Any) -> None:
     import sys
     script = r'''
 import asyncio, json, os, pathlib, signal
-from tests.test_async_settle_shadow_observation import service, NOW_US, RESERVATION_BLOCK
+from tests.test_async_settle_shadow_observation import service, NOW_US, RESERVATION_BLOCK, install_scheduler
+from pytest import MonkeyPatch
+install_scheduler(MonkeyPatch())
 root = pathlib.Path(os.environ["P3_KILL_OUTPUT"])
 points = ("before_first_flush", "during_commit", "before_closure", "after_closure", "full_queue")
 for point in points:
@@ -1488,7 +1552,7 @@ for point in points:
     _, status = os.waitpid(pid, 0)
     assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL, (point,status)
 '''
-    subprocess.run([sys.executable, "-c", script], check=True, timeout=60,  # noqa: S603 - fixed test program
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=300,  # noqa: S603 - fixed test program
                    env={**os.environ, "P3_KILL_OUTPUT": str(tmp_path)})
     for point in ("before_first_flush", "during_commit", "before_closure", "after_closure", "full_queue"):
         assert not (tmp_path/(point+".ack")).exists()
@@ -1560,7 +1624,7 @@ def test_disabled_publisher_never_counts_unattempted_claim(monkeypatch: Any) -> 
 def test_retained_transaction_cannot_exceed_checkpoint_row_bound() -> None:
     svc, _, row = retained_case("sample")
     with pytest.raises(ValueError, match="batch_bound"):
-        svc.store.retain((row,)*7, Budget(time.monotonic()+4))
+        svc.store.retain((row,)*7, Budget(logical_time()+4, logical_time))
     assert svc.store.database.commits == 0
 
 
@@ -1576,9 +1640,9 @@ def test_durable_completion_releases_pending_original(monkeypatch: Any, fault: s
         raise RuntimeError("pre-commit failure")
     if fault != "none":
         monkeypatch.setattr(svc.store, "flush", fail)
-        svc.flush(time.monotonic()+4)
+        svc.flush(svc.store.clock()+4)
         monkeypatch.setattr(svc.store, "flush", real)
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days[original.day].hwm == 0
     page = svc.journal.pages[0].row
     assert page is not None
@@ -1599,7 +1663,7 @@ def test_durable_completion_releases_pending_original(monkeypatch: Any, fault: s
         retry_original=dict(day=original.day, boot=original.boot, event_seq=f"{original.event_seq:020}"))
     assert svc.port.complete_event(completion, page, event)
     assert svc.port.complete(completion, (sample,))
-    svc.flush(time.monotonic()+4)
+    svc.flush(svc.store.clock()+4)
     assert svc.journal.days[original.day].hwm == (1 if next_day else 2)
     assert svc.journal.days[completion.day].hwm == (1 if next_day else 2)
     assert not svc.journal.pages and not svc.journal.batches

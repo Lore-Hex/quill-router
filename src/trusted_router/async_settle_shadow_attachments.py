@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -11,8 +12,8 @@ from trusted_router.async_settle_shadow_v2_schema import POLICY, require, sha256
 
 
 class Transport(Protocol):
-    def put(self, key: str, body: bytes, timeout: float) -> None: ...
-    def get(self, key: str, timeout: float) -> bytes | None: ...
+    def put(self, key: str, body: bytes, timeout: float, *, deadline: float, clock: Callable[[], float]) -> None: ...
+    def get(self, key: str, timeout: float, *, deadline: float, clock: Callable[[], float]) -> bytes | None: ...
 
 
 @dataclass
@@ -102,10 +103,10 @@ class Lane:
         landed = False
         try:
             if operation == "put":
-                self.transport.put(item.key, item.body, timeout)
+                self.transport.put(item.key, item.body, timeout, deadline=min(budget.deadline, now+2.), clock=budget.clock)
                 landed = True
             else:
-                found = self.transport.get(item.key, timeout)
+                found = self.transport.get(item.key, timeout, deadline=min(budget.deadline, now+2.), clock=budget.clock)
                 with self.lock:
                     self.operations["received_bytes"] += len(found or b"")
                 if found is not None:
