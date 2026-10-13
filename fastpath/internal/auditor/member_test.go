@@ -649,3 +649,23 @@ func TestTheFirstFaultStands(t *testing.T) {
 		t.Fatalf("a later fault on a lease loaded with one: %d", *f)
 	}
 }
+
+// TestAHoldsRowStatesTheBootBindingTheOwnerStated: a hold the heartbeats
+// alone made has on its row the boot binding its first heartbeat record
+// states, the owner's statement of the authorization's; a later heartbeat
+// states none and changes none, and a first that states none leaves the
+// row's empty.
+func TestAHoldsRowStatesTheBootBindingTheOwnerStated(t *testing.T) {
+	l := load(t, "open")
+	first := hb(1, "a", 1, 1)
+	first.Boot = []byte("boot-1")
+	apply(t, l, Applied, first, hb(2, "b", 1, 1), hb(3, "a", 2, 2))
+	req := l.Request()
+	got := map[string][]byte{}
+	for _, h := range req.PutHolds {
+		got[h.AuthorizationID] = h.Boot
+	}
+	if !bytes.Equal(got["a"], []byte("boot-1")) || len(got["b"]) != 0 || req.PutHolds[0].RunningCharge.Int64 != 2 {
+		t.Fatalf("the holds' boot bindings: %q, %+v", got, req.PutHolds)
+	}
+}

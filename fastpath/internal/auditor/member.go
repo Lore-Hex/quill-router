@@ -249,6 +249,10 @@ func (l *Lease) heartbeat(r record.Record) {
 	h.row.SnapshotOwnerSeq = spanner.NullInt64{Int64: r.Seq, Valid: true}
 	if r.First {
 		h.row.ReapBasis = r.Basis
+		// The owner states the authorization's boot binding on the first
+		// heartbeat record: the hold's row keeps it, as a hold handed over
+		// does, for a reap of the hold to state.
+		h.row.Boot = r.Boot
 	}
 	l.put[r.Auth] = true
 }

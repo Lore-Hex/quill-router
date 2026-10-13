@@ -464,6 +464,11 @@ func TestHeartbeatValidity(t *testing.T) {
 	if len(recs) != 2 || string(recs[0].Basis) != "terms" || recs[1].Snapshot.Running != 60 || recs[1].Seq != 2 {
 		t.Fatalf("the heartbeat records: %+v", recs)
 	}
+	// Neither states the authorization's boot binding: the release after
+	// this one does, on the first, once every auditor reads it there.
+	if len(recs[0].Boot) != 0 || len(recs[1].Boot) != 0 {
+		t.Fatalf("the heartbeat records' boot bindings: %q, %q", recs[0].Boot, recs[1].Boot)
+	}
 	if _, err := f.lease.Settle(ctx, a, 60, sum("d")); err != nil {
 		t.Fatal(err)
 	}
@@ -1222,5 +1227,24 @@ func TestARecordTooLargeIsNotNumbered(t *testing.T) {
 	}
 	if _, err := f.lease.Refund(ctx, big.Auth); err != nil {
 		t.Fatalf("the refund of the longest boot binding: %v", err)
+	}
+}
+
+// TestTheBootBindingIsStatedOnlyOnceEveryAuditorReadsIt: this release's
+// owner states no boot binding on a first heartbeat record, since an
+// auditor from before the field refuses a heartbeat record that carries
+// one; the release after it, deployed once every auditor is of this one,
+// states it there.
+func TestTheBootBindingIsStatedOnlyOnceEveryAuditorReadsIt(t *testing.T) {
+	f := newFixture(t, 1000, func(e int64) int64 { return e / 10 })
+	ctx := context.Background()
+	a := f.admit(t, 500, true)
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 20,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	recs := f.log.records(t, "lease-1")
+	if len(recs) != 1 || !recs[0].First || string(recs[0].Basis) != "terms" || len(recs[0].Boot) != 0 {
+		t.Fatalf("the first heartbeat record before every auditor reads the field: %+v", recs)
 	}
 }

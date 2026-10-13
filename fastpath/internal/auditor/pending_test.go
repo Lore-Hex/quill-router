@@ -764,3 +764,28 @@ func TestAPackIsFirstSeenWhenItsPageIsRead(t *testing.T) {
 		t.Fatalf("told %v, want the first pack alone, %v", alerts, want)
 	}
 }
+
+// TestAReapsWorkReadsNoBootBindingFromABasis: a pack of one reap winner
+// whose staged full record states no boot binding is told, and nothing is
+// published, written, marked done or dropped, whatever the record's basis,
+// the gateway's, contains.
+func TestAReapsWorkReadsNoBootBindingFromABasis(t *testing.T) {
+	ctx := context.Background()
+	pack := store.Pack{CommitVersion: 4, Winners: []store.Winner{
+		{AuthorizationID: "b", Kind: "reap", Charge: 9, Work: encoded(Work{V: 1, Digest: sum("b"), SnapshotSeq: 3})}}}
+	var events, alerts []string
+	s := &fakePending{events: &events, staged: true,
+		body: []byte(`{"v":1,"a":"b","basis":"eyJib290IjoiWW05dmRDMHkifQ=="}`)}
+	topic := &fakeTopic{events: &events, failAuth: map[string]bool{}}
+	p, err := NewPending(PendingConfig{Store: s, Records: topic, Every: time.Hour, Limit: 1, Wait: time.Second,
+		Alert: func(auth, what string) { alerts = append(alerts, auth+": "+what) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, _ := p.Do(ctx, store.LeaseRef{Workspace: "ws", LeaseID: "l"}, pack)
+	if done || !slices.Equal(events, []string{"read b"}) || !slices.Equal(alerts, []string{"b: " + AlertNoBootBinding}) ||
+		len(s.written) != 0 || len(topic.data) != 0 {
+		t.Fatalf("a reap whose record states no boot binding: done %v, %v, told %v, wrote %d, published %d", done, events,
+			alerts, len(s.written), len(topic.data))
+	}
+}

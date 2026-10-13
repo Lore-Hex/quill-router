@@ -79,7 +79,9 @@ type Record struct {
 	Drain       string `json:"drain,omitempty"`
 	SnapshotSeq int64  `json:"snap,omitempty"`
 	// Boot is the boot binding a refund's or a release's disposition record
-	// carries (§4.9), from the authorization's envelope.
+	// carries (§4.9), from the authorization's envelope; and a hold's first
+	// heartbeat record's, the owner's statement of it, which the hold's row
+	// keeps for a reap of the hold to state.
 	Boot []byte `json:"boot,omitempty"`
 	// First marks a hold's first heartbeat record, which carries Basis, what
 	// a reap of the hold needs to build its full record (the request's terms
@@ -201,7 +203,7 @@ func (r Record) Validate() error {
 		tick: r.TickNumber != 0 || !r.TickAt.IsZero(), snapshot: r.Snapshot != nil, ckpt: r.Checkpoint != nil,
 		holds: len(r.Holds) > 0, manifest: r.Manifest != nil}
 	want := map[Kind]has{
-		Heartbeat:  {owner: true, auth: true, snapshot: true, basis: got.basis},
+		Heartbeat:  {owner: true, auth: true, snapshot: true, basis: got.basis, boot: got.boot && r.First},
 		Settle:     {owner: true, auth: true, digest: true},
 		Refund:     {owner: true, auth: true, boot: true},
 		Reap:       {owner: true, auth: true, digest: true, snap: true},

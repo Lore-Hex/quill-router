@@ -141,3 +141,29 @@ a gap is not open, so `node` says done while the lease is held. One left
 past the bound above is stopped at a gap or unreadable: it is a page to a
 person, and the lease is noted with its workspace and ID for the archive
 rebuild.
+
+## A record field the auditors must read first
+
+A new field on a settle-log record is refused by an auditor from before
+it, which then marks the lease stopped at a gap: a heartbeat record it
+refuses leaves the settle after it acknowledged past a gap, its charge
+lost. So a new field takes two releases, and no flag. The first has every
+auditor read the field and the owner state nothing new; it is deployed as
+any release is, beside auditors from before it. The second has the owner
+state the field. It is pinned only once every member runs the first or a
+later one: read `/opt/fastpath/release` on each node before the pin, and
+if a node runs an earlier release, bring it to the first before the
+second is pinned anywhere. Nodes replaced by one apply, or one at a time,
+then never mix an owner that states the field with an auditor that does
+not read it. The first such field is the hold's boot binding on its first
+heartbeat record: the release that reads it states none, and the one
+after it states it.
+
+## A flag the unit passes
+
+The unit starts the pinned release's command with the flags in
+`infra/fastpath_node_startup.sh.tftpl`, and a flag that command does not
+take stops it before either role starts, on both nodes, restarted into the
+same refusal. So a new flag lands with or after the pin of a release that
+takes it, never before: `tests/test_fastpath_p1.py` holds the unit's flags
+to the command of the release `infra/fastpath.tf` pins.
