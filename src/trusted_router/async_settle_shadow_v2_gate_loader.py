@@ -8,15 +8,15 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Key, Ports
 from trusted_router.async_settle_shadow_v2_gate_loading import (
     LoadingIssue,
     error_gap,
+    retained_json,
     validate_original_bytes,
 )
 from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
-from trusted_router.async_settle_shadow_v2_schema import decode, integer, require
+from trusted_router.async_settle_shadow_v2_schema import integer, require
 
-# Decoding is complete for contract-owned shapes. Adapting the retained tool
-# payload graph, with its finite I/O sandbox and approved-delta comparison, is
-# a separate P5 implementation seam; a decoded envelope is not approval.
-UNDEFINED_PREIMAGES = ('retained_payload_adapter_unbound',)
+# Missing bindings are reported at the particular dependency, never as a
+# blanket stand-in for implementing the retained adapters.
+UNDEFINED_PREIMAGES: tuple[str, ...] = ()
 MAX_BUNDLE_BYTES = 10000 * 262144
 
 
@@ -25,7 +25,7 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
     try:
         # This is the finite transport containing many original files, not one
         # FILE_REF payload. Each child keeps its own contract byte bound.
-        value = decode(raw, MAX_BUNDLE_BYTES, retained_strings=True)
+        value = retained_json(raw, limit=MAX_BUNDLE_BYTES, allow_float=False, max_depth=16)
         require(type(value) is dict and value.get('policy_version') == 'shadow-v2'
                 and value.get('contract_revision') == 'a1', 'policy_version_gap')
         require(set(value) <= {'v', 'policy_version', 'contract_revision', 'rows', 'attachments', 'proof', 'ledgers',
@@ -82,7 +82,7 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
             payloads.pop(name, None)
         decoded_rows, decoded_attachments = rows('rows'), rows('attachments')
         require(len(decoded_rows) + len(decoded_attachments) + len(ledgers) + len(preimages) + 1 <= 10000, 'artifact_gap')
-        graph = PayloadGraph({k: v for k, v in unique.items() if k not in conflicts}, completed)
+        graph = PayloadGraph({k: v for k, v in unique.items() if k not in conflicts}, completed, ports=ports)
         for qualified in a2.OBJECT_PREIMAGES:
             if qualified.startswith('proof.') and qualified not in unique:
                 issues.append(LoadingIssue('artifact_gap', qualified, 'required payload absent'))
@@ -93,18 +93,34 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
         try:
             inventory = graph.inventory(payloads, ports)
         except ValueError as exc:
-            undefined += ('a2_payload_dependency_closure:' + str(exc),)
             graph.reject('manifest.independent_inventory_sha256', exc)
         except (KeyError, TypeError):
-            undefined += ('a2_payload_dependency_closure:evidence_schema_gap',)
             graph.reject('manifest.independent_inventory_sha256', ValueError('evidence_schema_gap'))
         try:
             cohort = graph.cohort(payloads)
         except (ValueError, KeyError, TypeError) as exc:
             graph.reject('proof.cohort_seed_policy_sha256', exc)
+        from trusted_router.async_settle_shadow_v2_gate_release import release_checks
+        from trusted_router.async_settle_shadow_v2_gate_views import (
+            budget_view,
+            external_view,
+            reset_view,
+            signature_views,
+        )
+        views: dict[str, Any] = {}
+        for path, build in (
+            ('loading/release-plan.json', lambda: release_checks(graph, payloads)),
+            ('proof.pre_budget_sha256', lambda: budget_view(graph, payloads, inventory, decoded_rows, decoded_attachments) if inventory else None),
+            ('proof.external_proofs_sha256', lambda: external_view(graph, payloads['proof.external_proofs_sha256'])),
+            ('proof.resolution_dag_sha256', lambda: reset_view(graph, payloads['proof.resolution_dag_sha256'], inventory, decoded_rows)),
+            ('loading/signatures.json', lambda: signature_views(graph, decoded_rows)),
+        ):
+            try:
+                view = build()
+                views[path] = view
+            except (ValueError, KeyError, TypeError, OSError, AttributeError) as exc:
+                graph.reject(path, exc)
         issues.extend(graph.issues)
-        if issues:
-            undefined += tuple('a2_payload_dependency_closure:' + issue.gap for issue in issues)
         graph.streams['loading_issues'] = [issue.as_dict() for issue in issues]
         bundle = Bundle(rows=decoded_rows, attachments=decoded_attachments, proof=original(value.get('proof')),
                       ledgers=tuple(x.encode('utf-8') for x in ledgers), days=tuple(days),
@@ -112,7 +128,10 @@ def load(raw: bytes, ports: Ports | None = None) -> Bundle:
                       pre=original(value.get('pre')), serving=original(value.get('serving')),
                       completed_at_us=completed, undefined_preimages=undefined,
                       preimages=tuple(preimages), a2_payloads=payloads, window=value.get('window'),
-                      a2_streams=graph.streams, inventory=inventory, cohort=cohort)
+                      a2_streams=graph.streams, inventory=inventory, cohort=cohort,
+                      budget=views.get('proof.pre_budget_sha256'), external=views.get('proof.external_proofs_sha256'),
+                      reset_support=views.get('proof.resolution_dag_sha256'),
+                      signatures=views.get('loading/signatures.json', ()))
         graph.streams['loading_validation'] = validate_original_bytes(bundle, ports)
         return bundle
     except (ValueError, UnicodeError):

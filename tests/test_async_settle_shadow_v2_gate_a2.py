@@ -280,7 +280,8 @@ def test_loader_decodes_original_a2_payload_bytes() -> None:
     loaded = load(source)
     assert loaded.preimages[0].raw == raw
     assert loaded.a2_payloads['proof.cohort_seed_policy_sha256'] == json.loads(raw)
-    assert 'retained_payload_adapter_unbound' in loaded.undefined_preimages
+    assert 'retained_payload_adapter_unbound' not in loaded.undefined_preimages
+    assert any(issue['gap'] == 'artifact_gap' for issue in loaded.a2_streams['loading_issues'])
 
 
 def test_preimage_conflict_candidates_are_not_selected() -> None:
@@ -429,15 +430,18 @@ def test_loader_derives_roster_cohort_and_shutdown_from_original_bytes(passing: 
     assert loaded.cohort == passing.cohort
     shutdown = [entry for key, entries in loaded.a2_streams.items() if key.startswith('shutdown_writers/') for entry in entries]
     assert {entry['boot'] for entry in shutdown} == {'boot0', 'boot1'}
-    assert loaded.undefined_preimages == ('retained_payload_adapter_unbound',)
-    assert loaded.budget is None  # Envelope decoding is not retained approval.
+    assert 'retained_payload_adapter_unbound' not in loaded.undefined_preimages
+    assert any(issue['path'] == 'loading/release-plan.json' and issue['gap'] == 'artifact_gap'
+               for issue in loaded.a2_streams['loading_issues'])
+    assert loaded.budget is None  # The older schema fixture has no approved loading port.
 
 
 @pytest.mark.parametrize('missing', ['reviews/', 'budgets/deployment.json', 'details/shutdown/', 'measurements/'])
 def test_loader_requires_original_dependency_bytes(passing: Bundle, missing: str) -> None:
     candidate = replace(passing, preimages=tuple(p for p in passing.preimages if not p.name.startswith(missing)))
     loaded = loaded_fixture(candidate)
-    assert any(name.startswith('a2_payload_dependency_closure:') for name in loaded.undefined_preimages)
+    assert loaded.a2_streams['loading_issues']
+    assert any(issue['gap'] in ('artifact_gap', 'evidence_schema_gap') for issue in loaded.a2_streams['loading_issues'])
 
 
 def test_loader_rejects_changed_retained_roster_pins(passing: Bundle) -> None:
@@ -459,7 +463,8 @@ def test_loader_rejects_changed_retained_roster_pins(passing: Bundle) -> None:
             source = Preimage(source.name, a2.INDEPENDENT_INVENTORY.serialize(envelope))
         sources.append(source)
     loaded = loaded_fixture(replace(passing, preimages=tuple(sources)))
-    assert any(name.startswith('a2_payload_dependency_closure:') for name in loaded.undefined_preimages)
+    assert loaded.a2_streams['loading_issues']
+    assert any(issue['gap'] in ('artifact_gap', 'evidence_schema_gap') for issue in loaded.a2_streams['loading_issues'])
 
 
 def test_missing_first_receipt_has_expected_root_entry(passing: Bundle) -> None:

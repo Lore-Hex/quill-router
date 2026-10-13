@@ -47,13 +47,13 @@ def error_gap(exc: Exception) -> str:
     return 'artifact_gap' if str(exc) in ('artifact_gap', 'evidence_size') else 'evidence_schema_gap'
 
 
-def retained_json(raw: bytes) -> Any:
+def retained_json(raw: bytes, *, limit: int = 262144, allow_float: bool = True, max_depth: int = 64) -> Any:
     """Transport decode only; the retained callable owns the payload schema.
 
     Do not run v1 binary64 measurements through the integer-only A2 decoder.
     Duplicate fields and nonfinite numbers must not disappear before delegation.
     """
-    require(type(raw) is bytes and len(raw) <= 262144, 'artifact_gap')
+    require(type(raw) is bytes and len(raw) <= limit, 'artifact_gap')
 
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -63,6 +63,7 @@ def retained_json(raw: bytes) -> Any:
         return result
 
     def finite(token: str) -> float:
+        require(allow_float)
         value = float(token)
         require(math.isfinite(value))
         return value
@@ -76,12 +77,14 @@ def retained_json(raw: bytes) -> Any:
         pending = [(value, 0)]
         while pending:
             child, depth = pending.pop()
-            require(depth <= 64)
+            require(depth <= max_depth)
             if isinstance(child, (dict, list)):
                 pending.extend((v, depth + 1) for v in
                                (child.values() if isinstance(child, dict) else child))
             elif isinstance(child, str):
                 child.encode('utf-8')
+            elif not allow_float and type(child) is int:
+                require(-(1 << 63) <= child < (1 << 63))
         return value
     except (UnicodeError, RecursionError, OverflowError) as exc:
         raise ValueError('evidence_schema_gap') from exc

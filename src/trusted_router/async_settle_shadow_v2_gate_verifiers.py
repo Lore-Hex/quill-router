@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 def approval(ctx: Context, name: str) -> VerifierApproval:
     require(ctx.ports is not None, 'artifact_gap')
     assert ctx.ports is not None
-    function = getattr(ctx.ports, 'verify_' + name)
+    function = getattr(ctx.ports, 'verify_' + name, None)
+    require(callable(function), 'artifact_gap')
+    assert function is not None
     records = [v for v in ctx.ports.approvals if v.entry_point.endswith('.verify_' + name)]
     require(len(records) == 1, 'artifact_gap')
     approved = records[0]
@@ -27,7 +29,27 @@ def approval(ctx: Context, name: str) -> VerifierApproval:
     require(approved.source != b'' and approved.fixture != b'', 'artifact_gap')
     require(file_digest(approved.source) == approved.source_pin and file_digest(approved.fixture) == approved.fixture_pin, 'artifact_gap')
     require(approved.keyset == canonical([asdict(k) for k in approved.keys]), 'evidence_schema_gap')
+    release_approval(ctx, approved)
     return approved
+
+
+def release_approval(ctx: Context, approved: VerifierApproval) -> None:
+    # Legacy typed unit inputs predate the original-byte loading boundary.
+    # Every loaded certification run must establish independent release pins.
+    if 'loading_issues' not in ctx.bundle.a2_streams:
+        return
+    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+    require(isinstance(ctx.ports, LoadingPorts) and ctx.ports.release is not None, 'artifact_gap')
+    assert isinstance(ctx.ports, LoadingPorts) and ctx.ports.release is not None
+    release = ctx.ports.release
+    files = {p.name: p.raw for p in ctx.bundle.preimages}
+    require(files.get(release.path) == release.raw, 'artifact_gap')
+    expected = release.verifiers.get(approved.entry_point)
+    actual = (file_digest(approved.source), file_digest(approved.fixture),
+              file_digest(approved.keyset) if approved.keys else None)
+    require(expected == actual, 'artifact_gap')
+    for path, digest in release.artifacts.items():
+        require(path in files and file_digest(files[path]) == digest, 'artifact_gap')
 
 
 def check_ports(ctx: Context) -> None:
@@ -60,9 +82,10 @@ def records(ctx: Context) -> dict[str, Any]:
         for approved in ctx.ports.approvals:
             if approved.entry_point.endswith(('.verify_certificate', '.verify_binding')):
                 continue
+            loaded_calls = sum(v['calls'] for v in ctx.bundle.a2_streams.get('retained_calls', []) if v['entry_point'] == approved.entry_point)
             result['retained_tools'].append(dict(entry_point=approved.entry_point,
                 source_sha256=file_digest(approved.source), fixture_sha256=file_digest(approved.fixture),
-                keyset_sha256=None, calls=ctx.verifier_calls.get(approved.entry_point, 0)))
+                keyset_sha256=None, calls=ctx.verifier_calls.get(approved.entry_point, 0) + loaded_calls))
         result['retained_tools'].sort(key=lambda v: v['entry_point'])
     a2.VERIFIERS(result)
     return result
@@ -88,5 +111,19 @@ def invoke_retained(ctx: Context, name: str, *args: Any, **kwargs: Any) -> Any:
         ctx.issue('artifact_gap', 'retained validator approval absent: ' + name)
         raise ValueError('artifact_gap')
     require(file_digest(approved.source) == approved.source_pin and file_digest(approved.fixture) == approved.fixture_pin, 'artifact_gap')
+    release_approval(ctx, approved)
     ctx.verifier_calls[approved.entry_point] = ctx.verifier_calls.get(approved.entry_point, 0) + 1
+    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+    if isinstance(ctx.ports, LoadingPorts) and name in ('fleet_budgets_pre', 'post_flip'):
+        from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+        from trusted_router.async_settle_shadow_v2_gate_retained import delegate
+        graph = PayloadGraph({p.name: p.raw for p in ctx.bundle.preimages},
+                             ctx.bundle.completed_at_us, ports=ctx.ports)
+        envelopes = [p['retained'] for p in ctx.bundle.a2_payloads.values() if 'retained' in p]
+        envelopes.extend(p['pilot'] for p in ctx.bundle.a2_payloads.values() if p.get('pilot'))
+        matches = [e for e in envelopes if e['entry_point'].endswith('.' + name)]
+        require(len(matches) == 1, 'artifact_gap')
+        payload, result = delegate(graph, matches[0])
+        require(len(args) == 1 and not kwargs and canonical(args[0]) == canonical(payload), 'evidence_schema_gap')
+        return result
     return function(*args, **kwargs)

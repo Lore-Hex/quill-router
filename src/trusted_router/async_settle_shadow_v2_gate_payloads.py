@@ -44,8 +44,10 @@ class PayloadGraph:
     _bad_pages: dict[tuple[str, str], PayloadError] = field(default_factory=dict)
     _containers: dict[int, list[tuple[str, str, dict[str, Any] | None, str | None]]] = field(default_factory=dict)
     _indexed: set[str] = field(default_factory=set)
+    _lookups: dict[bytes, Any] = field(default_factory=dict)
     issues: list[LoadingIssue] = field(default_factory=list)
     limits: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ports: Ports | None = None
 
     def reject(self, path: str, exc: Exception) -> None:
         if isinstance(exc, PayloadError):
@@ -98,6 +100,18 @@ class PayloadGraph:
             if id(schema) not in self._containers:
                 containers: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
                 for path, raw in self.files.items():
+                    # Lookup only. Most dependencies are source/fixture files,
+                    # not page containers. Reject them before the much more
+                    # expensive contract traversal; accepted pages still go
+                    # through the contract on their original bytes below.
+                    if raw not in self._lookups:
+                        try:
+                            self._lookups[raw] = retained_json(raw)
+                        except ValueError:
+                            self._lookups[raw] = None
+                    lookup = self._lookups[raw]
+                    if type(lookup) is not dict or 'entries' not in lookup:
+                        continue
                     try:
                         value = contract._object_bytes(raw, schema)
                     except ValueError as exc:
@@ -176,11 +190,23 @@ class PayloadGraph:
         if qualified == 'proof.shutdown_inventory_sha256':
             require(value['complete'], 'artifact_gap')
             self.approved_subject(value['approval'], value['measurements'])
-            for entry in self.detail(value['writers'], 'shutdown_writers'):
+            writers = self.detail(value['writers'], 'shutdown_writers')
+            measured_inventory = retained_json(self.file(value['measurements']))
+            require(measured_inventory == [entry['measurement'] for entry in writers], 'evidence_schema_gap')
+            for entry in writers:
                 measurement = self.object(entry['measurement'], a2.SHUTDOWN_MEASUREMENT)
                 require(all(measurement[key] == entry[key] for key in ('day', 'boot')), 'evidence_schema_gap')
                 require(not entry['termination_applies'] or entry['grace_us'] == measurement['grace_us'], 'evidence_schema_gap')
+                require(day_at(entry['interval_end_us'] - 1) == entry['day'], 'evidence_schema_gap')
                 require((entry['reason'] == 'hard_kill') == (measurement['outcome'] == 'hard_kill'), 'evidence_schema_gap')
+                if self.ports is not None:
+                    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+                    parsers = self.ports.measurements if isinstance(self.ports, LoadingPorts) else {}
+                    parser = parsers.get(measurement['source']['path'])
+                    require(parser is not None, 'evidence_schema_gap')
+                    assert parser is not None
+                    original = parser(self.file(measurement['source']))
+                    require(all(original.get(k) == v for k, v in measurement.items() if k not in ('v', 'policy_version', 'contract_revision', 'source')), 'evidence_schema_gap')
                 for field_name, schema in (('original_close', a1.CLOSURE), ('close_result', a1.CLOSE_RESULT)):
                     if entry[field_name] is not None:
                         close = self.object(entry[field_name], schema)
@@ -202,7 +228,9 @@ class PayloadGraph:
                 key = (segment['day'], segment['boot'])
                 require(ends.get(key, 0) <= segment['start_us'], 'evidence_schema_gap')
                 ends[key] = segment['end_us']
-            self.detail(load['operations'], 'operations')
+            for operation in self.detail(load['operations'], 'operations'):
+                require(load['interval']['start_us'] <= operation['at_us'] < load['interval']['end_us'], 'evidence_schema_gap')
+                require(operation['bytes'] == (0 if operation['operation'] == 'delete' else operation['object']['bytes']), 'evidence_schema_gap')
         elif qualified == 'proof.resolution_dag_sha256':
             self.delegated(value['retained'])
             for reset in self.detail(value['history'], 'reset_history'):
@@ -239,8 +267,17 @@ class PayloadGraph:
             require(type(serving) is list and type(deployment) is dict and type(deployment.get('serving')) is list, 'evidence_schema_gap')
             measured = ports.roster_coverage(serving)
             require(measured == ports.roster_coverage(deployment['serving']), 'evidence_schema_gap')
+            from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+            if isinstance(ports, LoadingPorts):
+                require(ports.gate_roster is not None, 'artifact_gap')
+                assert ports.gate_roster is not None
+                require(ports.gate_roster(serving, deployment['serving']), 'evidence_schema_gap')
             require({row['instance']: row['pins'] for row in serving}
                     == {row['instance']: row['pins'] for row in deployment['serving']}, 'evidence_schema_gap')
+            for row in serving:
+                pins = row['pins']
+                expected_pins = (dict(TR_ASYNC_SETTLE_ENABLED='false', TR_ASYNC_SETTLE_PROTECTION='false', TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED='false') if row['role'] == 'router' else dict(TR_ASYNC_SETTLE_NEGOTIATE='off', TR_ASYNC_SETTLE_SHADOW='on'))
+                require(all(pins.get(k) == v for k, v in expected_pins.items()), 'evidence_schema_gap')
             for boot, role, rev, region, date, start, end in measured:
                 identity(boot)
                 a2.ROLE(role)

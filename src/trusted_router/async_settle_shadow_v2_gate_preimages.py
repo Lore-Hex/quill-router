@@ -9,7 +9,7 @@ from trusted_router import async_settle_shadow_v2_a2_contract as contract
 from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_a2_roots as roots
 from trusted_router import async_settle_shadow_v2_evidence as p1
-from trusted_router.async_settle_shadow_v2_gate_inputs import Key
+from trusted_router.async_settle_shadow_v2_gate_inputs import Preimage
 from trusted_router.async_settle_shadow_v2_gate_result import Subject
 
 if TYPE_CHECKING:
@@ -25,9 +25,25 @@ RELEASE_FILES = {
 }
 
 
+def original_files(sources: tuple[Preimage, ...]) -> dict[str, bytes]:
+    """Retain conflicting file candidates without selecting a logical body."""
+    grouped: dict[str, set[bytes]] = defaultdict(set)
+    for source in sources:
+        if source.name not in RELEASE_FILES:
+            grouped[source.name].add(source.raw)
+    result = {}
+    for path, candidates in grouped.items():
+        if len(candidates) == 1:
+            result[path] = next(iter(candidates))
+        else:
+            for raw in candidates:
+                result['file-candidates/' + roots.file_digest(path.encode()) + '/' + roots.file_digest(raw)] = raw
+    return result
+
+
 def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes], dict[str, Any]]:
     """Derive roots from complete logical identities, retaining every candidate."""
-    artifacts = {v.name: v.raw for v in ctx.bundle.preimages if v.name not in RELEASE_FILES}
+    artifacts = original_files(ctx.bundle.preimages)
     artifacts.update(ctx.release_files)
     for qualified in (*contract.OBJECT_PREIMAGES, *contract.FILE_PREIMAGES):
         dated = manifest['day'] + '/' + qualified
@@ -50,37 +66,24 @@ def preimages(ctx: Context, manifest: dict[str, Any]) -> tuple[dict[str, bytes],
         artifacts['candidates/' + roots.file_digest(raw) + '.json'] = raw
     result: dict[str, Any] = {}
     day = manifest['day']
-    expected = set(manifest['router_writers'])
+    from trusted_router.async_settle_shadow_v2_gate_expected import (
+        receipt_keys,
+        trace_keys,
+        writers,
+    )
+    expected = writers(ctx, manifest)
     for field, kind in (('counter_root', p1.KINDS[3]), ('closure_root', p1.KINDS[4])):
         result['manifest.' + field] = [dict(key=a2.L(day, boot), bodies=grouped[kind, day + '/' + boot]) for boot in sorted(expected)]
     # A missing page is still a root entry. Enumerate the first committed page
     # and each successor from the counter's HWM and verified predecessor, not
     # merely from the files that happened to arrive in the export.
-    receipt_keys = {key for kind, key in grouped if kind == p1.KINDS[2] and key.startswith(day + '/')}
-    for counter in ctx.kind(p1.KINDS[3]):
-        if counter['day'] != day or counter['durable_event_hwm'] == 0:
-            continue
-        first = 1
-        while first <= counter['durable_event_hwm']:
-            key = day + '/' + counter['boot'] + '/' + f'{first:020}'
-            receipt_keys.add(key)
-            page = ctx.rows.get(Key(p1.KINDS[2], key))
-            if page is None:
-                break
-            first = int(page['last_seq']) + 1
-    result['manifest.receipts_root'] = [dict(key=a2.L(*key.split('/')), bodies=grouped[p1.KINDS[2], key]) for key in sorted(receipt_keys)]
+    result['manifest.receipts_root'] = [dict(key=a2.L(*key.split('/')), bodies=grouped[p1.KINDS[2], key]) for key in sorted(receipt_keys(ctx, manifest))]
     expected_ledgers = {a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us))
                         for b in ctx.bundle.inventory.boots} if ctx.bundle.inventory else set()
     result['proof.ledger_root'] = [dict(key=key, bodies=ledgers[key]) for key in sorted(expected_ledgers)]
     day_boots = set(manifest['router_writers']) | set(manifest['enclave_writers'])
     result['manifest.prerequisite_ledger_root'] = [entry for entry in result['proof.ledger_root'] if a2.decode_key(entry['key'])[1] in day_boots]
-    trace_entries = []
-    for (kind, key), values in grouped.items():
-        if kind == 'publisher_trace':
-            parts = key.split('/')
-            if len(parts) == 4:
-                trace_entries.append(dict(key=a2.L(*parts[1:]), bodies=values))
-    result['proof.publisher_slot_trace_sha256'] = trace_entries
+    result['proof.publisher_slot_trace_sha256'] = [dict(key=a2.L(*key.split('/')[1:]), bodies=grouped['publisher_trace', key]) for key in sorted(trace_keys(ctx))]
     for field, stream in contract.COVERAGE_PREIMAGES.items():
         result[field] = sorted([p for p in ctx.attached('coverage') if p['day'] == day and p['stream'] == stream], key=lambda p: p['page_seq'])
     for field, stream in contract.CROSS_DAY_PREIMAGES.items():
@@ -93,6 +96,8 @@ def audit(ctx: Context) -> None:
         ctx.issue(issue['gap'], issue['detail'], Subject(wire=a2.O('a2_file', issue['path'])))
     if 'loading_issues' in ctx.bundle.a2_streams:
         ledger_preimages(ctx)
+        from trusted_router.async_settle_shadow_v2_gate_expected import audit_expected
+        audit_expected(ctx)
     if ctx.proof is None:
         return
     expected_ledgers = {a2.L(b.role, b.boot, b.revision, b.region, str(b.start_us))
@@ -140,6 +145,9 @@ def ledger_preimages(ctx: Context) -> None:
     for source in ctx.bundle.preimages:
         if source.name not in RELEASE_FILES and len(source.raw) <= 262144:
             files[roots.file_digest(source.raw)].add(source.raw)
+    from trusted_router.async_settle_shadow_v2_gate_payloads import PayloadGraph
+    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+    graph = PayloadGraph({p.name: p.raw for p in ctx.bundle.preimages}, ctx.bundle.completed_at_us, ports=ctx.ports)
     previous_files: dict[str, set[bytes]] = defaultdict(set)
     for raw in ctx.bundle.ledgers:
         previous_files[roots.file_digest(raw)].add(raw)
@@ -182,6 +190,12 @@ def ledger_preimages(ctx: Context) -> None:
             elif 'criterion' in evidence:
                 if evidence['criterion'] != field or evidence[ledger['role'] + '_revision'] != ledger['revision']:
                     ctx.issue('evidence_schema_gap', 'prerequisite criterion or producer revision differs: ' + field, subject)
+                if isinstance(ctx.ports, LoadingPorts):
+                    from trusted_router.async_settle_shadow_v2_gate_provenance import prerequisite
+                    try:
+                        prerequisite(graph, evidence, ledger, field)
+                    except ValueError as exc:
+                        ctx.issue(str(exc) if str(exc) == 'artifact_gap' else 'evidence_schema_gap', 'prerequisite provenance: ' + field, subject)
             else:
                 # A generic gate output does not establish a particular boot's
                 # readiness (§5.3); don't invent a mapping to daily fleet gates.
@@ -192,7 +206,7 @@ def input_inventory(ctx: Context) -> tuple[list[dict[str, Any]], dict[str, bytes
     """Inventory exact candidate files, including conflicts, in bounded leaves."""
     from trusted_router.async_settle_shadow_v2_gate_failures import TAG
     from trusted_router.async_settle_shadow_v2_schema import sha256
-    artifacts = {v.name: v.raw for v in ctx.bundle.preimages if v.name not in RELEASE_FILES}
+    artifacts = original_files(ctx.bundle.preimages)
     for row in (*ctx.bundle.rows, *ctx.bundle.attachments):
         artifacts['rows/' + row.key.kind + '/' + row.key.id + '/' + roots.file_digest(row.raw)] = row.raw
     for raw in ctx.bundle.ledgers:

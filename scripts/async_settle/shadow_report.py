@@ -774,16 +774,21 @@ def shadow_v2_release_pins() -> dict[str, str]:
             'proof.wire_fixture_sha256': FIXTURE_MANIFEST_SHA256}
 
 
-def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes | None = None) -> Any:
+def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes | None = None,
+                    *, release: Any = None) -> Any:
     """Bind imported verifiers and original public descriptors at the I/O boundary."""
     import inspect
 
+    from scripts.async_settle.async_settle_shadow_v2_gate_tools import run_retained
     from trusted_router.async_settle_shadow_binding import verify_binding
     from trusted_router.async_settle_shadow_v2_certificate import (
         verify_certificate,
         verify_original_receipt,
     )
-    from trusted_router.async_settle_shadow_v2_gate_inputs import Ports, VerifierApproval
+    from trusted_router.async_settle_shadow_v2_gate_inputs import VerifierApproval
+    from trusted_router.async_settle_shadow_v2_gate_ports import LoadingPorts
+    from trusted_router.async_settle_shadow_v2_gate_retained import unchanged_checks
+    from trusted_router.async_settle_shadow_v2_gate_views import budget_view
     from trusted_router.detached_jws import TrustedKey, canonical
 
     if __package__:
@@ -804,19 +809,35 @@ def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes |
         fixtures = (root / 'tests/fixtures/async_settlement' / fixture).read_bytes()
         approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, raw, keys,
             hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
-    for fn in (pilot_enablement.fleet_budgets_pre, collect_rollbacks, report, pilot_enablement.post_flip):
+    for fn in (pilot_enablement.fleet_budgets_pre, pilot_enablement.fleet_budgets,
+               pilot_enablement.shadow_serving, pilot_enablement.pre_flip, pilot_enablement.post_flip,
+               pilot_enablement.counter_coverage_report, pilot_enablement.roster_coverage,
+               collect_rollbacks, report, run_retained, unchanged_checks, budget_view):
         source = Path(inspect.getfile(fn)).read_bytes()
         fixtures = (root / 'tests/fixtures/async_settlement/shadow_v2_a2/manifest.json').read_bytes()
         approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, b'[]', (),
             hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
-    return Ports(verify_certificate, verify_original_receipt, verify_binding,
+    from trusted_router.async_settle_shadow_v2_gate_views import SHUTDOWN_SOURCE
+    measurements = {path: SHUTDOWN_SOURCE.parse for path in release.artifacts
+                    if path.startswith('sources/measurement/')} if release is not None else {}
+    return LoadingPorts(verify_certificate, verify_original_receipt, verify_binding,
         comparator_positive, positive_sample, known_exclusion, pilot_enablement.fleet_budgets_pre,
         collect_rollbacks, report, pilot_enablement.post_flip, tuple(approvals),
-        shadow_v2_release_pins(), lambda path: (root / path).read_bytes(), pilot_enablement.roster_coverage)
+        shadow_v2_release_pins(), lambda path: (root / path).read_bytes(), pilot_enablement.roster_coverage,
+        retained=run_retained, gate_roster=pilot_enablement.gate_roster_coverage, release=release,
+        measurements=measurements)
 
 
 def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
     """Explicit offline v2 entry point; a render failure is a tool failure."""
+    if not __package__:
+        # Direct script execution and module execution bind the same imported
+        # retained callables. This branch is reachable only with explicit v2.
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from scripts.async_settle.shadow_report import shadow_v2_main as entry
+        entry(argv, gate=gate)
+        return
     from trusted_router.async_settle_shadow_v2_gate_loader import load
     from trusted_router.async_settle_shadow_v2_gate_result import render
     from trusted_router.async_settle_shadow_v2_gates import evaluate
@@ -828,9 +849,17 @@ def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
     parser.add_argument('--certificate-keys', type=Path)
     parser.add_argument('--binding-keys', type=Path)
     parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--release-plan', type=Path)
+    parser.add_argument('--release-plan-sha256')
     args = parser.parse_args(argv)
+    from scripts.async_settle.async_settle_shadow_v2_gate_tools import read_release_plan
+    release = None
+    if args.release_plan is not None:
+        if args.release_plan_sha256 is None:
+            parser.error('--release-plan requires its independently approved --release-plan-sha256')
+        release = read_release_plan(args.release_plan.read_bytes(), args.release_plan_sha256)
     ports = shadow_v2_ports(args.certificate_keys.read_bytes() if args.certificate_keys else None,
-                            args.binding_keys.read_bytes() if args.binding_keys else None)
+                            args.binding_keys.read_bytes() if args.binding_keys else None, release=release)
     result = evaluate(load(args.bundle.read_bytes(), ports), ports, gate=args.gate)
     try:
         output, _attachments = render(result)
