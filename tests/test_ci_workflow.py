@@ -195,18 +195,32 @@ def test_ci_and_production_use_the_same_python() -> None:
     assert_ci_uses_repository_python(yaml.safe_load(ci))
 
 
+# ci.yml currently needs no UV_* settings. Each future exception must explain
+# why it cannot bypass the repository's interpreter pin.
+UV_ENV_ALLOWLIST: dict[str, str] = {}
+
+
 def assert_ci_uses_repository_python(document: object, location: str = "ci") -> None:
     """Check every workflow/job/step, including env and action inputs."""
     if isinstance(document, dict):
         for key, value in document.items():
             here = f"{location}.{key}"
-            assert key not in {"UV_PYTHON", "UV_PYTHON_PREFERENCE", "python-version", "python-version-file"}, (
+            assert not str(key).startswith("UV_") or key in UV_ENV_ALLOWLIST, (
+                f"{here}: interpreter override: UV_* setting not on the CI allowlist"
+            )
+            assert key not in {"python-version", "python-version-file"}, (
                 f"{here}: interpreter override bypasses .python-version"
             )
             if key == "uses" and isinstance(value, str):
                 assert "setup-python" not in value.lower(), f"{here}: alternate interpreter source"
             if key == "run" and isinstance(value, str):
-                assert not re.search(r"\bUV_PYTHON(?:_PREFERENCE)?\s*=", value), (
+                # Assignments include inline env and quoted $GITHUB_ENV writes
+                # (both NAME=value and multiline NAME<<EOF). Bare exports can
+                # expose an inherited value without an assignment here.
+                variables = re.findall(r"\b(UV_[A-Za-z0-9_]+)\s*(?:=|<<)", value)
+                for exported in re.findall(r"\bexport\s+([^\n;&|]+)", value):
+                    variables.extend(re.findall(r"\bUV_[A-Za-z0-9_]+\b", exported))
+                assert all(variable in UV_ENV_ALLOWLIST for variable in variables), (
                     f"{here}: interpreter override in shell environment"
                 )
                 assert_no_uv_interpreter_flags(value, here)
@@ -236,14 +250,27 @@ def uv_invocation_allowed(args: list[str]) -> bool:
 
 def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
     # Keep quoted/multiline arguments intact while separating shell commands.
-    lexer = shlex.shlex(script.replace("\\\n", ""), posix=True, punctuation_chars=";&|()\n")
+    # Strip unquoted comments at word starts, preserving their newline. shlex's
+    # built-in comment handling eats that boundary and merges the next command.
+    script = re.sub(
+        r"""('[^']*'|"(?:\\.|[^"\\])*"|\\.)|(?<![^\s;&|()<>])#[^\n]*""",
+        lambda match: match[1] or "",
+        script.replace("\\\n", ""),
+    )
+    punctuation = ";&|()<>\n"
+    lexer = shlex.shlex(script, posix=True, punctuation_chars=punctuation)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    lexer.commenters = ""
     command: list[str] = []
     for token in [*lexer, "\n"]:
-        if not set(token) <= set(";&|()\n"):
+        if not set(token) <= set(punctuation):
             command.append(token)
             continue
+        # A descriptor such as the 2 in 2>&1 belongs to the redirection,
+        # not to uv. Redirections and pipes end the invocation's arguments.
+        if ("<" in token or ">" in token) and command and command[-1].isdigit():
+            command.pop()
         for i, word in enumerate(command):
             name = Path(word).name
             if name == "uvx":
@@ -256,16 +283,37 @@ def assert_no_uv_interpreter_flags(script: str, location: str) -> None:
 
 
 @pytest.mark.parametrize("scope", ["workflow", "job", "step"])
-@pytest.mark.parametrize("variable", ["UV_PYTHON", "UV_PYTHON_PREFERENCE"])
+@pytest.mark.parametrize("variable", [
+    "UV_PYTHON", "UV_PYTHON_PREFERENCE", "UV_NO_CONFIG", "UV_CONFIG_FILE", "UV_PYTHON_INSTALL_DIR",
+    "UV_FUTURE_SETTING",
+])
 def test_ci_python_env_override_mutations_are_detected(scope: str, variable: str) -> None:
     original = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     mutated = deepcopy(original)
     job = mutated["jobs"]["lint"]
     target = {"workflow": mutated, "job": job, "step": job["steps"][0]}[scope]
-    target.setdefault("env", {})[variable] = "3.11" if variable == "UV_PYTHON" else "only-system"
+    target.setdefault("env", {})[variable] = {
+        "UV_PYTHON": "3.11", "UV_PYTHON_PREFERENCE": "only-system", "UV_NO_CONFIG": "true",
+        "UV_CONFIG_FILE": "another-uv.toml", "UV_PYTHON_INSTALL_DIR": "another-python",
+    }.get(variable, "true")
     with pytest.raises(AssertionError, match="interpreter override"):
         assert_ci_uses_repository_python(mutated)
     assert_ci_uses_repository_python(original)
+
+
+@pytest.mark.parametrize("variable", ["UV_NO_CONFIG", "UV_CONFIG_FILE", "UV_PYTHON_INSTALL_DIR"])
+@pytest.mark.parametrize("shell", [
+    '{variable}=true uv sync --frozen',
+    'export {variable}=true\nuv sync --frozen',
+    'export {variable}\nuv sync --frozen',
+    'echo "{variable}=true" >> "$GITHUB_ENV"',
+    'printf "%s\\n" "{variable}<<EOF" true EOF >> "$GITHUB_ENV"',
+])
+def test_ci_uv_shell_env_mutations_are_detected(variable: str, shell: str) -> None:
+    mutated = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    mutated["jobs"]["lint"]["steps"].append({"run": shell.format(variable=variable)})
+    with pytest.raises(AssertionError, match="interpreter override"):
+        assert_ci_uses_repository_python(mutated)
 
 
 @pytest.mark.parametrize("run", [
@@ -326,3 +374,37 @@ def test_uv_run_tool_options_are_not_interpreter_flags() -> None:
     # Options after the tool belong to the tool (pytest -p plugins, ruff -p...).
     assert_no_uv_interpreter_flags("uv run pytest -p no:cacheprovider", "ci")
     assert_no_uv_interpreter_flags("uv run --no-sync python -c 'print(1)'", "ci")
+
+
+@pytest.mark.parametrize("script", [
+    "uv sync --frozen # install\necho done",
+    "uv sync --frozen # don't parse 'comment quotes\necho done",
+    "uv sync --frozen > /tmp/sync.log",  # noqa: S108 -- parsed shell text, never executed
+    "uv run pytest 2>&1 | tee log",
+    "uv sync --frozen >> log", "uv sync --frozen < input", "uv sync --frozen 2> log",
+    "uv sync --frozen &> log", "uv sync --frozen 2>&1", "uv sync --frozen | tee log",
+])
+def test_ci_uv_allows_shell_comments_and_redirections(
+    script: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocations: list[list[str]] = []
+    allowed = uv_invocation_allowed
+
+    def record(args: list[str]) -> bool:
+        invocations.append(args)
+        return allowed(args)
+
+    monkeypatch.setattr(f"{__name__}.uv_invocation_allowed", record)
+    assert_ci_uses_repository_python({"run": script})
+    assert invocations == [["run", "pytest"] if script.startswith("uv run") else ["sync", "--frozen"]]
+
+
+def test_ci_uv_rejects_override_after_inline_comment() -> None:
+    with pytest.raises(AssertionError, match="allowlist") as caught:
+        assert_ci_uses_repository_python({"run": "uv sync --frozen # c\nuv sync --python 3.11"})
+    assert str(["uv", "sync", "--python", "3.11"]) in str(caught.value)
+
+
+def test_ci_uv_does_not_strip_quoted_hash_arguments() -> None:
+    with pytest.raises(AssertionError, match="allowlist"):
+        assert_ci_uses_repository_python({"run": 'uv sync --frozen "#argument"'})
