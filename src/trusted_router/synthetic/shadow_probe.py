@@ -1,4 +1,22 @@
-"""Deterministic, first-party inference for the isolated shadow cohort."""
+"""Deterministic, first-party inference for the isolated shadow cohort.
+
+Denominator v1: one buffered router generation ID per line (unchanged), then
+exactly one final line ``# shadow-probe-pass-v1 `` followed by a JSON object:
+``requests_sent``, ``buffered_with_id``, ``streams_sent``, ``streams_without_id``,
+``failed`` are integer counts; ``by_shape`` maps each of the eight fixed names
+to {"sent": integer, "with_id": integer}; ``stream_generation_ids`` is a list
+of optional stream IDs, never buffered-ID lines. ``first_request_sent_at_us``
+and ``last_response_finished_at_us`` bound the pass using the probe UTC clock. Every request, including a
+failed request, contributes to sent counts. CLI creation remains exclusive 0600.
+
+Exit 1 means at least one request failed validation (or the pass/file failed);
+exit 2 means invalid configuration. Missing stream identity alone is healthy.
+Stream requests have only count_in_isolated_window diagnostics; membership is
+not proven. A missing and extra same-shape sample can cancel within the pass;
+buffered requests still require identity. Exit 0 does not certify settlement:
+run probe_cohort_check with this pass file after settlement, using a ten-minute
+window containing exactly this pass and no other traffic.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +24,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +41,35 @@ class ProbeResult:
     status: str
     generation_id: str | None
     error_type: str | None
+    shape_name: str
+    request_sent_at_us: int | None = None
+    response_finished_at_us: int | None = None
+
+
+DENOMINATOR_PREFIX = "# shadow-probe-pass-v1 "
+
+
+def denominator(results: list[ProbeResult]) -> str:
+    by_shape = {shape.name: {"sent": 0, "with_id": 0} for shape in SHAPES}
+    streams = {shape.name for shape in SHAPES if shape.stream}
+    buffered_ids: list[str] = []
+    stream_ids: list[str] = []
+    for result in results:
+        counts = by_shape[result.shape_name]
+        counts["sent"] += 1
+        if result.generation_id is not None:
+            counts["with_id"] += 1
+            (stream_ids if result.shape_name in streams else buffered_ids).append(result.generation_id)
+    streams_sent = sum(by_shape[name]["sent"] for name in streams)
+    starts = [r.request_sent_at_us for r in results if r.request_sent_at_us is not None]
+    ends = [r.response_finished_at_us for r in results if r.response_finished_at_us is not None]
+    totals = dict(first_request_sent_at_us=min(starts) if len(starts) == len(results) and starts else None,
+                  last_response_finished_at_us=max(ends) if len(ends) == len(results) and ends else None,
+                  requests_sent=len(results), buffered_with_id=len(buffered_ids),
+                  streams_sent=streams_sent, streams_without_id=streams_sent - len(stream_ids),
+                  failed=sum(result.status != "up" for result in results),
+                  by_shape=by_shape, stream_generation_ids=stream_ids)
+    return "".join(identity + "\n" for identity in buffered_ids) + DENOMINATOR_PREFIX + json.dumps(totals, sort_keys=True) + "\n"
 
 
 def targets(settings: Settings) -> list[SyntheticTarget]:
@@ -81,6 +128,27 @@ def _verify_payload(payload: Any, key: str) -> None:
             _verify_payload(value, key)
 
 
+async def _sse_lines(response: httpx.Response) -> AsyncIterator[str]:
+    # SSE recognizes only CR/LF; str.splitlines (used by HTTPX aiter_lines)
+    # also splits Unicode separators, which must not dispatch SSE events.
+    response.encoding = "utf-8"
+    pending: list[str] = []
+    after_cr = False
+    async for chunk in response.aiter_text():
+        for char in chunk:
+            if after_cr and char == "\n":
+                after_cr = False
+                continue
+            after_cr = char == "\r"
+            if char in "\r\n":
+                yield "".join(pending)
+                pending.clear()
+            else:
+                pending.append(char)
+    if pending:
+        yield "".join(pending)
+
+
 async def probe(
     client: httpx.AsyncClient, target: SyntheticTarget, shape: Shape, *,
     api_key: str, monitor_region: str,
@@ -91,6 +159,7 @@ async def probe(
     status: int | None = None
     error: str | None = None
     generation_id: str | None = None
+    request_sent_at_us = time.time_ns() // 1000
     try:
         async with asyncio.timeout(30):
             async with client.stream("POST", url, json=shape.body(), headers={
@@ -101,21 +170,41 @@ async def probe(
                 response.raise_for_status()
                 if shape.stream:
                     terminal = done = False
-                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                    if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "text/event-stream":
                         raise ValueError("stream content type")
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data:"):
+                    # Ignore one leading BOM, comments and non-data fields.
+                    # Dispatch only at a blank line, never at EOF.
+                    fields: list[str] = []
+                    first_line = True
+                    async for line in _sse_lines(response):
+                        if first_line:
+                            line = line.removeprefix("\ufeff")
+                            first_line = False
+                        if line:
+                            name, _, value = line.partition(":")
+                            if name == "data":
+                                fields.append(value.removeprefix(" "))
                             continue
-                        data = line[5:].strip()
+                        if not fields:
+                            continue
+                        data = "\n".join(fields)
+                        fields.clear()
                         if data == "[DONE]":
                             done = True
                             continue
                         payload = json.loads(data)
                         _verify_payload(payload, api_key)
-                        if not isinstance(payload, dict) or payload.get("error"):
+                        if (not isinstance(payload, dict) or "error" in payload
+                                or payload.get("type") == "error"
+                                or (isinstance(payload.get("response"), dict)
+                                    and payload["response"].get("error"))):
                             raise ValueError("stream payload")
                         generation_id = _generation_id(payload) or generation_id
-                        terminal = terminal or _terminal(payload, shape)
+                        terminal = terminal or (_terminal(payload, shape) and (
+                            shape.route != "/responses" or payload.get("type") == "response.completed"
+                        ))
+                    if fields:
+                        raise ValueError("unfinished stream event")
                     if not terminal or (shape.route == "/chat/completions" and not done):
                         raise ValueError("missing terminal")
                 else:
@@ -125,17 +214,19 @@ async def probe(
                     generation_id = _generation_id(payload)
                     if not _terminal(payload, shape):
                         raise ValueError("missing terminal")
-                if generation_id is None:
+                if not shape.stream and generation_id is None:
                     raise ValueError("missing router usage identity")
     except Exception as exc:  # Sample only the class; never provider text or request headers.
         error = type(exc).__name__
         generation_id = None
+    response_finished_at_us = time.time_ns() // 1000
     elapsed = int((time.perf_counter() - started) * 1000)
     if report is not None:
         status_class = f"{status // 100}xx" if status is not None else "none"
         report(f"{target.name} {shape.name} {status_class} {elapsed}ms"
                + (f" generation_id={generation_id}" if generation_id else ""))
-    return ProbeResult("up" if error is None else "down", generation_id, error)
+    return ProbeResult("up" if error is None else "down", generation_id, error, shape.name,
+                       request_sent_at_us, response_finished_at_us)
 
 
 async def run_pass(

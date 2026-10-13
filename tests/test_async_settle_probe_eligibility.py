@@ -30,6 +30,7 @@ from trusted_router.services import async_settle
 from trusted_router.services.async_settle_shadow import Runtime
 from trusted_router.storage import configure_store
 from trusted_router.storage_models import generation_id_for_authorization
+from trusted_router.storage_operational_analytics import analytics_surrogate
 from trusted_router.synthetic.shadow_probe_contract import SHAPES, Shape
 
 
@@ -119,10 +120,24 @@ def test_real_authorize_and_settle_compares_every_shape(shape: Shape, fault: str
         monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, replace(endpoint, request_price_microdollars=1))
         clear_catalog_caches()
     def reconciliation(data: dict[str, Any]) -> dict[str, Any]:
-        now = dt.datetime.now(dt.UTC)
-        evidence = SimpleNamespace(day=lambda kind, day: [(str(i), json.dumps(row)) for i, row in enumerate(rows)]
+        from tests.test_async_settle_probe_stream_identity import full_pass
+        from trusted_router.synthetic.shadow_probe import denominator
+        # Surround the real authorization's sample with the rest of the fixed
+        # grid: an ID-only partial pass is now an uncertified diagnostic.
+        now, grid, results, _, _ = full_pass()
+        observed = int(dt.datetime.now(dt.UTC).timestamp() * 1e6)
+        now = dt.datetime.fromtimestamp((observed + 60_000_000) / 1e6, dt.UTC)
+        for row in grid:
+            row.update(workspace_fingerprint=analytics_surrogate("workspace", "ws-rpc"),
+                       observed_at_us=observed, authorize_at_us=observed)
+        results = [replace(r, request_sent_at_us=observed - 30_000_000,
+                           response_finished_at_us=observed) for r in results]
+        index = next(i for i, r in enumerate(results) if r.shape_name == shape.name)
+        results[index] = replace(results[index], generation_id=generation_id_for_authorization(data["authorization_id"]))
+        grid[index:index + 1] = rows
+        evidence = SimpleNamespace(day=lambda kind, day: [(str(i), json.dumps(row)) for i, row in enumerate(grid)]
                                    if kind == SAMPLE and day == now.date().isoformat() else [])
-        return check(evidence, "ws-rpc", now, [generation_id_for_authorization(data["authorization_id"])])
+        return check(evidence, "ws-rpc", now, denominator(results).splitlines())
     try:
         data = gateway._authorize_gateway_sync(req, body, cfg)["data"]
         assert len(data["route_candidates"]) == 1
