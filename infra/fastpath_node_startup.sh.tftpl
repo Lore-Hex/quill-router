@@ -12,7 +12,8 @@ set -euo pipefail
 # they stop in journald, as P1's second run found. The install is
 # idempotent. The journal's line is its MESSAGE field; parsed, its
 # "logging.googleapis.com/labels" become the entry's labels and its
-# "severity", promoted, the entry's severity.
+# "logging.googleapis.com/severity" the entry's severity; a line that
+# states none keeps the journal's priority as its severity.
 if ! systemctl is-active --quiet google-cloud-ops-agent 2>/dev/null; then
   curl -sSfo /tmp/add-ops-agent-repo.sh https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
   bash /tmp/add-ops-agent-repo.sh --also-install
@@ -30,8 +31,6 @@ logging:
     fastpath_fields:
       type: modify_fields
       fields:
-        severity:
-          move_from: jsonPayload.severity
         labels."unit":
           move_from: jsonPayload._SYSTEMD_UNIT
   service:

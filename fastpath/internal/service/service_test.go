@@ -904,7 +904,8 @@ func TestAProcessWithNoAlertCallbackWritesJSON(t *testing.T) {
 		return false, nil
 	})
 	var got map[string]any
-	want := map[string]any{"severity": "ERROR", "message": "fastpath alert: " + auditor.AlertNoLeaseAuth,
+	want := map[string]any{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR",
+		"message":                       "fastpath alert: " + auditor.AlertNoLeaseAuth,
 		"subject":                       "not-an-authorization",
 		"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "full_record_of_no_authorization"}}
 	if err := json.Unmarshal([]byte(line), &got); err != nil || !reflect.DeepEqual(got, want) {
@@ -1747,7 +1748,8 @@ func TestAnAlertIsALineOfJSON(t *testing.T) {
 		t.Fatalf("the lines: %q", out.String())
 	}
 	for i, want := range []map[string]any{
-		{"severity": "ERROR", "message": "fastpath alert: " + auditor.AlertGap, "subject": "lease-1",
+		{"severity": "ERROR", "logging.googleapis.com/severity": "ERROR", "message": "fastpath alert: " + auditor.AlertGap,
+			"subject":                       "lease-1",
 			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "gap"}},
 		{"severity": "ERROR", "message": "fastpath alert: something new", "subject": "gwa-2",
 			"logging.googleapis.com/labels": map[string]any{"fastpath_alert": "other"}},
