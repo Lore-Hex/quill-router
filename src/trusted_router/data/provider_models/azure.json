@@ -12,9 +12,15 @@
       "display_name": "Microsoft-Decision-1",
       "title": "Microsoft-Decision-1",
       "model_type": "decision",
-      "endpoints": ["decide"],
-      "input_modalities": ["text"],
-      "output_modalities": ["decision"],
+      "endpoints": [
+        "decide"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "decision"
+      ],
       "context_length": 32768,
       "input_token_price_per_m": 42000,
       "output_token_price_per_m": 0,
@@ -251,5 +257,5 @@
       "azure_deployment_sku": "GlobalStandard"
     }
   ],
-  "generated_at": "2026-10-12T21:06:59Z"
+  "generated_at": "2026-10-13T03:51:03Z"
 }
