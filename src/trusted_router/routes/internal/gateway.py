@@ -3472,7 +3472,7 @@ def _record_refund_benchmark_safely(
 
 
 def _v2_authorize_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
-                       additions: dict[str, Any], candidates: Any, federated: bool, replay: bool) -> None:
+                       additions: dict, candidates: Any, federated: bool, replay: bool) -> None:
     if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
@@ -3522,7 +3522,7 @@ def _v2_settle_hook(settings: Settings, request: Any, body: Any, authorization: 
 
 
 def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
-                    callback: Any, *, success: bool = False) -> Any:
+                    callback: Any, *, success: bool) -> Any:
     if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return callback()
@@ -3533,7 +3533,7 @@ def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: 
 
 
 def _v2_capture_hook(settings: Settings, authorization: GatewayAuthorization, body: Any,
-                    endpoint: Any = None, document: Any = None, *, replay: bool = False) -> None:
+                    endpoint: Any, document: Any, *, replay: bool) -> None:
     if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
@@ -3564,7 +3564,8 @@ def _settle_gateway_with_admission_sync(
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
-        return _v2_settle_hook(settings, _shadow_request, body, authorization,
+        return _terminal_once(
+            lambda once: _v2_settle_hook(settings, _shadow_request, body, authorization, once),
             lambda: _settle_gateway_with_admission_sync(body, settings=settings,
                 background_tasks=background_tasks, _authorization=authorization))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
@@ -3624,9 +3625,10 @@ def _settle_gateway_authorization(
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
-        return _v2_refund_hook(settings, _shadow_request, body, authorization,
+        return _terminal_once(
+            lambda once: _v2_refund_hook(settings, _shadow_request, body, authorization, once, success=success),
             lambda: _settle_gateway_authorization(body, success=success, settings=settings,
-                background_tasks=background_tasks, _authorization=authorization), success=success)
+                background_tasks=background_tasks, _authorization=authorization))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3634,7 +3636,7 @@ def _settle_gateway_authorization(
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
     if authorization.settled:
-        _v2_capture_hook(settings, authorization, body, replay=True)
+        _v2_capture_hook(settings, authorization, body, None, None, replay=True)
         if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
             try:
                 from trusted_router.services.async_settle_shadow import capture_prices
@@ -3809,7 +3811,7 @@ def _settle_gateway_authorization(
         except ValueError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     billing_snapshot = billing_pricing_snapshot(authorization)
-    _v2_capture_hook(settings, authorization, body, selected_endpoint, billing_snapshot)
+    _v2_capture_hook(settings, authorization, body, selected_endpoint, billing_snapshot, replay=False)
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_prices

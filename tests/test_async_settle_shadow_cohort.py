@@ -454,12 +454,19 @@ def assert_cohort_tree(source: str, expected: set[str]) -> None:
     hooks = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in HOOKS}
     assert set(hooks) == expected
     for name, hook in hooks.items():
+        assert not hook.decorator_list, name
+        assert not hook.args.defaults and not any(hook.args.kw_defaults), name
+        annotations = [arg.annotation for arg in (*hook.args.posonlyargs, *hook.args.args, *hook.args.kwonlyargs)] + [hook.returns]
+        assert all(a is None or isinstance(a, (ast.Name, ast.Constant)) for a in annotations), name
         guard = hook.body[0]
         assert isinstance(guard, ast.If), name
         assert isinstance(guard.test, ast.UnaryOp) and isinstance(guard.test.op, ast.Not), name
         call = guard.test.operand
         assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'in_v2_cohort', name
-        assert len(call.args) == 4 and not call.keywords, name
+        workspace = 'workspace' if name == '_v2_install_hook' else 'authorization.workspace_id'
+        approved = ast.parse('in_v2_cohort(settings.async_settle_shadow_policy, '+workspace+
+            ', settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids)', mode='eval').body
+        assert ast.dump(call) == ast.dump(approved), name
         assert len(guard.body) == 1 and isinstance(guard.body[0], ast.Return) and not guard.orelse, name
         result = guard.body[0].value
         if name in {'_v2_settle_hook', '_v2_refund_hook'}:
@@ -481,6 +488,8 @@ def assert_cohort_tree(source: str, expected: set[str]) -> None:
             while parent in parents and parent not in hooks.values():
                 parent = parents[parent]
             assert parent in hooks.values(), ('unguarded package reference', node.lineno)
+            allowed = {child for statement in parent.body[1:] for child in ast.walk(statement)}
+            assert node in allowed, ('reference before guard', node.lineno)
 
 
 def test_every_request_path_import_is_cohort_gated() -> None:
@@ -489,6 +498,7 @@ def test_every_request_path_import_is_cohort_gated() -> None:
         expected = HOOKS - {'_v2_install_hook'} if path == root/'routes/internal/gateway.py' else set()
         assert_cohort_tree(path.read_text(), expected)
     assert_cohort_tree((root/'main.py').read_text(), {'_v2_install_hook'})
+    assert_repository_references(root.parent.parent)
 
 
 def gateway_source() -> str:
@@ -736,3 +746,50 @@ def test_p4a_files_pass_unchanged_per_file_import_guard():
     for name in ('async_settle_shadow_cohort.py', 'services/async_settle_shadow_cohort.py',
                  'services/async_settle_shadow_cohort_runtime.py'):
         validate_live_imports((root/'src/trusted_router'/name).read_text(), allowed[name], new)
+
+
+def assert_repository_references(root):
+    """Closed allowlist; propagate dependencies through imports and re-exports."""
+    allowed = {
+        'trusted_router.async_settle_shadow_cohort',
+        'trusted_router.services.async_settle_shadow_cohort',
+        'trusted_router.services.async_settle_shadow_cohort_runtime',
+        'trusted_router.routes.internal.gateway', 'trusted_router.main',
+    }
+    own = {name for name in allowed if 'shadow_cohort' in name}
+    sources = {}
+    for directory in ('src', 'scripts'):
+        for path in (root/directory).rglob('*.py'):
+            relative = path.relative_to(root/'src') if directory == 'src' else path.relative_to(root)
+            module = '.'.join(relative.with_suffix('').parts).removesuffix('.__init__')
+            sources[module] = (path, ast.parse(path.read_text()))
+    dependencies = {}
+    direct = set()
+    for module, (path, tree) in sources.items():
+        deps = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                deps.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                prefix = module.split('.') if path.name == '__init__.py' else module.split('.')[:-1]
+                base = '.'.join(prefix[:len(prefix)-node.level+1]) if node.level else ''
+                base = '.'.join(filter(None, (base, node.module)))
+                deps.add(base)
+                deps.update(base+'.'+alias.name for alias in node.names)
+            if (isinstance(node, (ast.Name, ast.Attribute)) and 'shadow_cohort' in
+                    (node.id if isinstance(node, ast.Name) else node.attr)
+                    or isinstance(node, ast.Constant) and isinstance(node.value, str) and 'shadow_cohort' in node.value):
+                direct.add(module)
+        dependencies[module] = deps
+        if any(any(dep == name or dep.startswith(name+'.') for name in own) for dep in deps):
+            direct.add(module)
+    # Approved hook modules are boundaries; importing gateway itself does not
+    # constitute importing the optional package. Unapproved re-exports are not.
+    tainted = direct - {'trusted_router.main', 'trusted_router.routes.internal.gateway'}
+    while True:
+        more = {module for module, deps in dependencies.items()
+                if any(dep == name or dep.startswith(name+'.') for dep in deps for name in tainted)} - allowed
+        if more <= tainted:
+            break
+        tainted |= more
+    assert (direct | tainted) <= allowed, sorted((direct | tainted) - allowed)

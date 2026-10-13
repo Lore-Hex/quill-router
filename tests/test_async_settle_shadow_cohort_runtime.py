@@ -124,14 +124,22 @@ def test_request_thread_reserve_worker_thread_finalize_blocks_freeze_hwm_close()
         shell.close()
 
 
-def test_p3_terminal_permit_exhaustion_has_no_slot_reproduction():
+def test_terminal_cap_exhaustion_blocks_day_without_receipt_or_conservation(monkeypatch):
     shell, service, _ = installed()
     try:
         day = day_at(NOW*1000000)
         service.journal.terminal_permits[day] = 0
-        assert service.port.reserve(NOW*1000000, terminal=True) is None
+        monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+        ctx = context()
+        assert shell.capture_terminal(request(), ctx.body, ctx.authorization, 'settle') == (None, 0)
         assert service.port.lost.is_set()
         assert service.journal.days[day].next_seq == 1
+        assert not service.journal.pages
+        service.flush(service.store.clock()+2)
+        assert service.journal.days[day].losses > 0
+        service.journal.days[day].closing = True
+        assert not service.journal.can_close(day, inflight=0, pending=0, interval_end_us=0, folded_us=0)
+        # No receipt means no claim of T conservation for this blocked day.
     finally:
         shell.close()
 
@@ -283,15 +291,25 @@ def test_missing_prediction_basis_retains_unfinished_eligible_slot(monkeypatch):
         shell.close()
 
 
-def test_p3_nullable_dimension_fold_defect_reproduction():
+def test_nullable_dimensions_fold_positive_counters():
     from tests.test_async_settle_shadow_cohort import terminal
     from trusted_router.async_settle_shadow_cohort import receipt_bucket
     shell, service, _ = installed()
     try:
         event = terminal(partition='C', eligibility='unknown', prediction=None,
             dimensions=dict(adapter='openai', route_type=None, streamed=None))
-        with pytest.raises(StopIteration):
-            service.port.fold_counts(day_at(NOW*1000000), receipt_bucket(event))
+        day = day_at(NOW*1000000)
+        assert service.port.fold_counts(day, receipt_bucket(event))
+        assert service.counters[day]['C'] == service.counters[day]['settle_attempts'] == 1
+        assert service.counters[day]['A'] == service.counters[day]['B'] == 0
+        bucket = next(row for row in service.counters[day]['buckets']
+                      if row['phase'] == 'settle' and row['dimensions'] == event['dimensions'])
+        assert bucket['C'] == bucket['settle_attempts'] == 1
+        assert bucket['eligible_demand'] is None
+        legacy = next(row for row in service.counters[day]['counts']
+                      if (row['adapter'], row['route_type'], row['streamed']) == ('openai', 'unknown', None))
+        assert legacy['settle_attempts'] == legacy['observed_attempts'] == 1
+        assert not service.port.lost.is_set()
     finally:
         shell.close()
 
@@ -382,7 +400,7 @@ def test_worker_conflict_and_opposite_winner_preserve_first_sample(monkeypatch, 
         shell.close()
 
 
-def test_p3_later_booking_completion_backing_defect_reproduction(monkeypatch):
+def test_original_preserving_completion_accepts_unknown_sample(monkeypatch):
     shell, service, _ = installed()
     monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
     shell.booking_store.booking = lambda *_: Booking()
@@ -406,14 +424,14 @@ def test_p3_later_booking_completion_backing_defect_reproduction(monkeypatch):
         assert service.port.complete_event(later, original, completion) is not None
         assert service.port.complete(later)
         pages = service.journal.freeze(later.day)
-        with pytest.raises(ValueError, match='reference_conflict'):
-            service.journal.verify_complete(later, [*pages, *rows])
+        assert service.journal.verify_complete(later, [*pages, *rows])
         shell.release(size)
     finally:
         shell.close()
 
 
-def test_later_retry_fact_is_c_without_reclassifying_original(monkeypatch):
+@pytest.mark.parametrize('durable', [False, True])
+def test_later_retry_reconciles_without_reclassifying_original(monkeypatch, durable):
     shell, service, _ = installed()
     monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
     ctx = context()
@@ -424,6 +442,16 @@ def test_later_retry_fact_is_c_without_reclassifying_original(monkeypatch):
         first.endpoint = endpoint()
         shell.process(first)
         original_bytes = service.journal.slot(first.reservation).body
+        original_rows = service.journal.batches[first.reservation]
+        if durable:
+            from trusted_router.storage_gcp_shadow_observation import Budget
+            original_pages = service.journal.freeze(first.reservation.day)
+            service.store.retain(original_rows, Budget(service.store.clock()+2, service.store.clock))
+            service.journal.checkpoint(first.reservation.day)
+            counter = service.counter_row(first.reservation.day, NOW*1000000, closed=False)
+            service.store.flush(original_pages, counter, None, Budget(service.store.clock()+2, service.store.clock))
+            service.journal.acknowledge(original_pages)
+            assert not service.journal.verify_complete(first.reservation, [*original_pages, *original_rows])
         shell.release(size)
         shell.booking_store.booking = lambda *_: Booking(2, 'settled', True)
         second, size = shell.capture_terminal(req, ctx.body, ctx.authorization, 'settle')
@@ -433,7 +461,23 @@ def test_later_retry_fact_is_c_without_reclassifying_original(monkeypatch):
         assert event['partition'] == 'C' and event['diagnostic']['reason'] == 'retry_original_gap'
         assert service.journal.slot(first.reservation).body == original_bytes
         assert service.counters[first.reservation.day]['C'] == service.counters[first.reservation.day]['eligible_demand'] == 2
-        assert service.port.lost.is_set()
+        assert not service.port.lost.is_set()
+        service.journal.freeze(first.reservation.day)
+        pages = [page.row for page in service.journal.pages if page.row is not None]
+        slots = [slot for page in service.journal.pages for slot in page.slots]
+        assert len(slots) == 3
+        completion = EVENT.parse(slots[-1].body)
+        original = EVENT.parse(original_bytes)
+        assert completion['phase'] == 'completion'
+        assert completion['partition'] == original['partition'] == 'C'
+        assert completion['comparison'] == original['comparison']
+        assert completion['booking']['outcome'] == 'settled'
+        assert completion['retry_original'] == original_rows[0].value()['original_terminal_receipt']
+        assert service.journal.batches[first.reservation] == original_rows
+        assert service.journal.verify_complete(slots[-1].reservation, [*pages, *original_rows])
+        assert slots[0].reconciled
+        assert service.journal.days[first.reservation.day].hwm == (1 if durable else 0)
+        assert service.counters[first.reservation.day]['settle_attempts'] == 2
         shell.release(size)
     finally:
         shell.close()
@@ -524,25 +568,29 @@ def test_shared_guard_refusals_each_finalize_one_c(monkeypatch, full):
         shell.close()
 
 
-@pytest.mark.parametrize('lock_name', ['guard', 'queue', 'port', 'cleanup'])
+@pytest.mark.parametrize('lock_name', ['guard', 'queue', 'port', 'cleanup', 'liveness'])
 def test_terminal_lock_handshake_returns_before_exact_lock_release(monkeypatch, lock_name):
     from trusted_router.services import async_settle_shadow_cohort_runtime as module
     monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
     shell, service, _ = installed()
     ctx = context()
     real = {'guard': shell.guard, 'queue': shell.queue.mutex,
-            'port': service.lock, 'cleanup': shell.guard}[lock_name]
+            'port': service.lock, 'cleanup': shell.guard, 'liveness': threading.Lock()}[lock_name]
     held, release, done = threading.Event(), threading.Event(), threading.Event()
     attempts, result, money = [], [], []
     class Handshake:
         def acquire(self, *args, **kwargs):
             if threading.current_thread().name == 'request-handshake':
                 attempts.append((args, kwargs))
-                assert kwargs == {'blocking': False}
             return real.acquire(*args, **kwargs)
+        def locked(self):
+            return real.locked()
         def release(self):
             real.release()
-    if lock_name in {'guard', 'cleanup'}:
+    saved_tstate = shell.worker._tstate_lock
+    if lock_name == 'liveness':
+        shell.worker._tstate_lock = Handshake()
+    elif lock_name in {'guard', 'cleanup'}:
         shell.guard = Handshake()
     elif lock_name == 'queue':
         shell.queue.mutex = Handshake()
@@ -573,17 +621,17 @@ def test_terminal_lock_handshake_returns_before_exact_lock_release(monkeypatch, 
     caller_thread = threading.Thread(target=caller, name='request-handshake')
     try:
         caller_thread.start()
-        assert done.wait(10), 'request must return while the exact lock is still held'
-        assert not release.is_set() and attempts
-        assert result == [b'committed money response'] and money == [1]
-        assert service.port.lost.is_set()
-        assert all(not slot.completion_requested for page in service.journal.pages for slot in page.slots)
+        returned_while_held = done.wait(3) and not release.is_set()
+        incomplete = all(not slot.completion_requested for page in service.journal.pages for slot in page.slots)
+        lost = service.port.lost.is_set()
     finally:
         release.set()
         owner.join(10)
         caller_thread.join(10)
         # Restore the real worker locks before it drains queued obligations.
-        if lock_name in {'guard', 'cleanup'}:
+        if lock_name == 'liveness':
+            shell.worker._tstate_lock = saved_tstate
+        elif lock_name in {'guard', 'cleanup'}:
             shell.guard = real
         elif lock_name == 'queue':
             shell.queue.mutex = real
@@ -591,6 +639,11 @@ def test_terminal_lock_handshake_returns_before_exact_lock_release(monkeypatch, 
             service.lock = real
         shell.join()
         shell.close()
+    assert returned_while_held, 'request must return while the exact lock is still held'
+    assert result == [b'committed money response'] and money == [1]
+    assert lock_name == 'liveness' or lost and incomplete
+    assert attempts
+    assert all(kwargs == {'blocking': False} or args in ((False,), (False, -1)) for args, kwargs in attempts)
 
 
 @pytest.mark.parametrize('failure', ['full', 'stopped'])
@@ -732,4 +785,85 @@ def test_request_threads_never_fold_and_capture_never_validates_contract(monkeyp
         sys.setprofile(None)
         release.set()
         shell.join()
+        shell.close()
+
+
+@pytest.mark.parametrize('mismatch', ['identity', 'backing'])
+def test_later_completion_rejects_mismatched_identity_and_backing(monkeypatch, mismatch):
+    from trusted_router.async_settle_shadow_journal import Row
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    ctx = context()
+    shell.booking_store.booking = lambda *_: Booking()
+    try:
+        cap, size = shell.capture_terminal(request([('X-TR-Settlement-Shadow', fixture('terminal_compared_full')[0]['header'])]),
+            ctx.body, ctx.authorization, 'settle')
+        cap.endpoint = endpoint()
+        shell.process(cap)
+        original = service.journal.slot(cap.reservation).body
+        row = service.journal.batches[cap.reservation][0]
+        attempt = EVENT.parse(original)
+        attempt['booking'] = dict(outcome='settled', winner='settle', reference='a'*64)
+        if mismatch == 'identity':
+            attempt['identity']['workspace_id'] = 'wrong-workspace'
+        else:
+            value = row.value()
+            value['payload_hash'] = '0'*64
+            row = Row.build(row.kind, row.key, value)
+        with pytest.raises(ValueError, match='retry_'+mismatch):
+            shell.reconcile_booking(row, attempt)
+        assert service.journal.slot(cap.reservation).body == original
+        assert not service.journal.slot(cap.reservation).reconciled
+        assert service.journal.days[cap.reservation.day].next_seq == 2
+        shell.release(size)
+    finally:
+        shell.close()
+
+
+@pytest.mark.filterwarnings('ignore::pytest.PytestUnhandledThreadExceptionWarning')
+def test_worker_death_retains_open_checkpoint_hwm_debt_and_refuses_terminal(monkeypatch):
+    from trusted_router.storage_gcp_shadow_observation import Budget
+    monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    shell, service, _ = installed()
+    entered, die = threading.Event(), threading.Event()
+    def fatal():
+        entered.set()
+        assert die.wait(10)
+        raise SystemExit('injected worker death')
+    try:
+        assert shell.dispatch(fatal)
+        assert entered.wait(10)
+        ctx = context()
+        body = GatewayAuthorizeRequest(api_key_hash='key-v1', model=ctx.authorization.model_id,
+            route_type='chat.completions', stream=False, requested_parameters=[])
+        values = additions()
+        shell.authorize_http(request([('X-TR-Settlement-Shadow-Policy', 'shadow-v2')]),
+            body, ctx.authorization, values, [endpoint()], typed=True, federated=False, replay=False)
+        assert values.get('billing_shadow_binding')
+        die.set()
+        shell.worker.join(10)
+        assert not shell.worker.is_alive()
+        day = day_at(NOW*1000000)
+        slot = service.journal.pages[0].slots[0]
+        pages = service.journal.freeze(day)
+        service.journal.checkpoint(day)
+        counter = service.counter_row(day, NOW*1000000, closed=False)
+        service.store.flush(pages, counter, None, Budget(service.store.clock()+2, service.store.clock))
+        service.journal.acknowledge(pages)
+        value = counter.value()
+        assert value['authorize_attempts'] == 0
+        assert value['event_seq'] == 1 and value['durable_event_hwm'] == 0
+        assert not value['closed'] and not slot.completion_requested
+        state = service.journal.days[day]
+        state.closing = True
+        assert not service.journal.can_close(day, inflight=0, pending=0, interval_end_us=0, folded_us=0)
+        state.closing = False
+        calls = []
+        assert shell.terminal(request(), ctx.body, ctx.authorization, 'refund', lambda: calls.append(1) or b'ok') == b'ok'
+        assert calls == [1] and service.port.lost.is_set()
+        slot = service.journal.pages[-1].slots[-1]
+        assert EVENT.parse(slot.body)['partition'] == 'C' and not slot.completion_requested
+    finally:
+        die.set()
+        shell.worker.join(10)
         shell.close()

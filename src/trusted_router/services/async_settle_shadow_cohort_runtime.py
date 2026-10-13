@@ -62,15 +62,6 @@ def receipt_dimensions(adapter: str | None, route: str | None, streamed: bool | 
                     (None if v == "unknown" else v for v in values), strict=True))
 
 
-def fold_final_counts(port: Port, day: str, event: dict[str, Any]) -> bool:
-    """P3 currently cannot fold nullable dimensions; retain its sticky loss."""
-    try:
-        return port.fold_counts(day, receipt_bucket(event))
-    except (StopIteration, ValueError, KeyError):
-        port.lost.set()
-        return False
-
-
 def authorization_identity(auth: GatewayAuthorization, runtime: Any, typed: bool) -> dict[str, Any]:
     return dict(authorization_id=auth.id, generation_id=generation_id_for_authorization(auth.id),
         workspace_id=auth.workspace_id, key_id=auth.key_hash, invocation_nonce=auth.invocation_nonce,
@@ -236,8 +227,8 @@ def receipt_prediction(capture: Capture, verified: VerifiedTerminal) -> dict[str
     return {k: capture.prediction[k] for k in PREDICTION.fields}
 
 
-def permit_exhaustion(port: Port) -> None:
-    """P3 cannot reserve a C slot without a terminal permit; keep sticky loss."""
+def terminal_cap_exhaustion(port: Port) -> None:
+    """Terminal cap exhaustion blocks the day; it grants no receipt-only lane."""
     port.lost.set()
 
 
@@ -251,17 +242,6 @@ def compared_handoff_fields(fields: dict[str, Any], authorization: GatewayAuthor
         return fields
     require(bool(authorization.invocation_nonce), "authorization_link_gap")
     return {**fields, "invocation_nonce": authorization.invocation_nonce}
-
-
-def retry_completion_backing(original: dict[str, Any], later: dict[str, Any]) -> None:
-    """P3 cannot reconcile a changed booking/result against an immutable sample.
-
-    Its A1 completion context accepts the later fact, but verify_complete still
-    requires the original sample's booking outcome and comparison to match it.
-    Keep both attempts' classes final; never overwrite the first sample.
-    """
-    require((original["booking"]["outcome"], original["classification"])
-            == (later["booking"]["outcome"], later["classification"]), "retry_original_gap")
 
 
 class WorkerQueue(Queue[tuple[Callable[..., Any], tuple[Any, ...]]]):
@@ -356,7 +336,7 @@ class Runtime:
         """Ruling 4: reserve once, retain bounded inputs; no parser or booking read."""
         reservation = self.port.reserve(time.time_ns()//1000, terminal=True)
         if reservation is None:
-            permit_exhaustion(self.port)
+            terminal_cap_exhaustion(self.port)
             return None, 0
         size = (2*(HEADER_BYTES+1) + 8192 + sum(len(v) for v in auth.candidate_endpoint_ids) + 4*len(auth.pricing_snapshot or "")
                 if len(auth.candidate_endpoint_ids) <= 128 else 256*1024+1)
@@ -437,6 +417,8 @@ class Runtime:
 
     def defer_fold(self, reservation: Reservation, event: dict[str, Any],
                    rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
+        # P4A_PENDING_FOLD_PUBLICATION: register P3 deferred-fold debt here
+        # when its API lands. Current completion/HWM barriers retain this debt.
         # EVENT's fixed 4096-byte maximum is charged alongside terminal work
         # and the retained decision cache, including the currently running item.
         size = 4096
@@ -457,7 +439,7 @@ class Runtime:
 
     def fold_complete(self, reservation: Reservation, event: dict[str, Any],
                       rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
-        require(fold_final_counts(self.port, reservation.day, event), "counter_overflow")
+        require(self.port.fold_counts(reservation.day, receipt_bucket(event)), "counter_overflow")
         if prediction is not None:
             with self.port.service.lock:
                 self.port.service.counters[reservation.day]["admission_observer"]["prediction_"+prediction["prediction"]] += 1
@@ -560,6 +542,7 @@ class Runtime:
             retry_original=None, completion_of=None,
             diagnostic=dict(reason=verified.reason, required_bytes=0, candidate_count=0) if verified.reason else None)
         rows: tuple[Row, ...] = ()
+        reconcile: Row | None = None
         if comparison is not None and comparison.payload_hash is not None and ctx is not None:
             value = sample(ctx, comparison, observed_us=reservation.observed_us, router_us=capture.router_us or 0,
                            comparator_us=capture.comparator_us or 0, booking_us=capture.booking_us, instance=reservation.boot, revision=self.settings.source_revision,
@@ -577,11 +560,16 @@ class Runtime:
                 result = sample_retry(old.value(), value)
                 event["retry_original"] = old.value()["original_terminal_receipt"]
                 if result == "duplicate":
-                    try:
-                        retry_completion_backing(old.value(), value)
-                    except ValueError:
+                    previous = old.value()
+                    if (previous["booking"]["outcome"], previous["classification"]) != (value["booking"]["outcome"], value["classification"]):
+                        # The immutable first sample cannot back an upgraded A
+                        # attempt. Retain this attempt as C and append a separate
+                        # original-class completion after its receipt is final.
                         result = "retry_original_gap"
-                        self.port.lost.set()
+                        if previous["booking"]["outcome"] in {"pending", "unknown"} and booking.confirmed:
+                            reconcile = old
+                        else:
+                            self.port.lost.set()
                 if result != "duplicate":
                     event.update(partition="C", proof_kind="none", diagnostic=dict(reason=result, required_bytes=0, candidate_count=0))
                     if result == "conflict":
@@ -597,6 +585,39 @@ class Runtime:
             self.defer_fold(reservation, event, rows, prediction)
         else:
             self.fold_complete(reservation, event, rows, prediction)
+        if reconcile is not None:
+            self.reconcile_booking(reconcile, event)
+
+    def reconcile_booking(self, backing: Row, attempt: dict[str, Any]) -> None:
+        """Append P3's verified completion without rewriting either HTTP receipt."""
+        value = backing.value()
+        reference = value["original_terminal_receipt"]
+        with self.port.service.lock:
+            journal = self.port.service.journal
+            journal.freeze(reference["day"])
+            # Durable unknown-booking pages remain behind HWM but freeze()
+            # returns only pages still needing upload. Include retained rows.
+            pages = [page.row for page in journal.pages
+                     if page.day == reference["day"] and page.row is not None]
+            matches = [(page, event) for page in pages
+                if page.value()["boot"] == reference["boot"]
+                for event in page.value()["events"] if event["seq"] == reference["event_seq"]]
+        require(len(matches) == 1, "retry_original_gap")
+        original_page, original = matches[0]
+        require(original["identity"] == attempt["identity"]
+                and original["payload_sha256"] == attempt["payload_sha256"], "retry_identity")
+        require(value["payload_hash"] == original["payload_sha256"]
+                and value["classification"] == original["comparison"]
+                and value["booking"]["outcome"] == original["booking"]["outcome"], "retry_backing")
+        later = self.port.reserve(attempt["event_at_us"])
+        require(later is not None, "unfinished_slot")
+        assert later is not None
+        completion = {**original, "phase": "completion", "seq": f"{later.event_seq:020}",
+            "event_at_us": later.observed_us, "receipt_at_us": later.observed_us,
+            "prediction": None, "completion_of": original["seq"],
+            "retry_original": reference, "booking": attempt["booking"]}
+        require(self.port.complete_event(later, original_page, completion) is not None, "unfinished_slot")
+        require(self.port.complete(later), "unfinished_slot")
 
     def start(self) -> None:
         # Already prestarted by install, including applications without lifespan.

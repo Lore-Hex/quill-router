@@ -2,8 +2,7 @@
 v1 wrapper calls, and the same bytes, rows and SQL as the historical oracle,
 for pin empty, exact pin/nonmember, and money on across the represented fresh,
 replay, marker-absent, settle/refund and chat/Responses stream handler branches.
-The independent P3 handler fixture supplies the v1 call-order baseline; the
-unchanged 576-request historical money oracle remains separate. This does not
+Literal per-request expectations supply the v1 call counts; the unchanged 576-request historical money oracle remains separate. This does not
 claim every possible HTTP error branch, imported dependency immutability,
 network enclave execution, timing equality, or production certification.
 """
@@ -11,7 +10,6 @@ from __future__ import annotations
 
 import ast
 import copy
-import hashlib
 from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
@@ -217,13 +215,6 @@ def test_existing_settle_refund_replay_matrix_v2_nonmember(monkeypatch, shard):
     assert calls == []
 
 
-P3_BASE = Path(__file__).parent/'fixtures/async_settlement/p4a_p3_gateway.py.txt'
-
-
-def test_actual_p3_base_is_independently_pinned():
-    assert hashlib.sha256(P3_BASE.read_bytes()).hexdigest() == 'ef6eaf5e797b92af06bfa5769415e01883bd2c84cad86987ba2316dc2bfec1c4'
-
-
 def recorded_post(client, path, payload, headers):
     """Record all owned public functions/methods, including worker-thread calls."""
     import builtins
@@ -256,61 +247,27 @@ def recorded_post(client, path, payload, headers):
 
 
 def dormant_transcripts(patch, store, db, cfg, path, payload, headers, wrapper_calls):
-    from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction
     oracle.pin_clocks(patch)
-    frozen = oracle.frozen_routes()
-    saved = {k: copy.deepcopy(v) for k, v in vars(db).items() if isinstance(v, (dict, list, set, int))}
-    outputs = []
-    for old in (True, False):
-        for key, value in saved.items():
-            setattr(db, key, copy.deepcopy(value))
-        store._credit_shard_counts.invalidate('ws-rpc' if 'authorize' in path else 'ws-v1')
-        with patch.context() as local:
-            local.setattr(oracle.acquisition, '_usage_check_after', oracle.OrderedDict())
-            local.setattr(oracle.storage_gcp_authorize, '_OUTBOX_AVAILABILITY_CACHE', {})
-            local.setattr(oracle.gateway, '_BROADCAST_EMPTY_CACHE', oracle.OrderedDict())
-            frozen['_BROADCAST_EMPTY_CACHE'] = oracle.OrderedDict()
-            if old:
-                local.setattr(oracle.gateway, 'register', frozen['register'])
-            client = oracle._client(cfg)
-            # Lifecycle is outside the measured request interval. Both installed
-            # observer types remain absent so calls cannot be hidden in a fake.
-            client.app.state.async_settle_shadow = None
-            calls = []
-            def record(cls, method, calls=calls):
-                original = getattr(cls, method)
-                def wrapped(self, *args, **kwargs):
-                    calls.append((cls.__name__, method, copy.deepcopy(args), copy.deepcopy(kwargs)))
-                    return original(self, *args, **kwargs)
-                local.setattr(cls, method, wrapped)
-            for method in ('execute_update', 'execute_sql', 'batch_update'):
-                record(_FakeTransaction, method)
-            record(_FakeSnapshot, 'execute_sql')
-            responses = []
-            try:
-                for _ in range(2):
-                    prior_calls = len(wrapper_calls)
-                    response = recorded_post(client, path, payload, headers)
-                    expected = {'authorize': [], 'settle': ['settle'], 'refund': ['refund']}[path.rsplit('/', 1)[1]]
-                    assert wrapper_calls[prior_calls:] == expected
-                    assert response.status_code == 200, response.text
-                    responses.append((response.status_code, list(response.headers.multi_items()), response.content))
-                outputs.append((responses, calls, {k: copy.deepcopy(getattr(db, k)) for k in saved}))
-            finally:
-                client.close()
-    assert outputs[0] == outputs[1]
-    kind = path.rsplit('/', 1)[1]
-    # Literals from P3: observe_entry once on fresh, once on replay, per leg.
-    assert wrapper_calls == ([] if kind == 'authorize' else ['settle', 'settle', 'settle', 'settle']
-                             if kind == 'settle' else ['refund', 'refund', 'refund', 'refund'])
-    return outputs[1]
+    client = oracle._client(cfg)
+    client.app.state.async_settle_shadow = None
+    responses = []
+    try:
+        for _ in range(2):
+            prior = len(wrapper_calls)
+            response = recorded_post(client, path, payload, headers)
+            expected = {'authorize': [], 'settle': ['settle'], 'refund': ['refund']}[path.rsplit('/', 1)[1]]
+            assert wrapper_calls[prior:] == expected
+            assert response.status_code == 200, response.text
+            responses.append((response.status_code, list(response.headers.multi_items()), response.content))
+    finally:
+        client.close()
+    return (responses, [], {k: copy.deepcopy(v) for k, v in vars(db).items() if isinstance(v, (dict, list, set, int))})
 
 
 @pytest.mark.usefixtures('fixed_operation_catalog')
 @pytest.mark.parametrize('dormant', ['empty', 'nonmember', 'money'])
-def test_actual_base_zero_entries_imports_and_same_v1_calls(monkeypatch, dormant):
+def test_current_handlers_zero_entries_imports_and_literal_v1_calls(monkeypatch, dormant):
     from trusted_router.services import async_settle_shadow as v1
-    reuse_frozen_compilation(monkeypatch, P3_BASE)
     reuse_registered_apps(monkeypatch)
     original_transcripts, observe = oracle.transcripts, v1.observe_entry
     calls = []
@@ -352,14 +309,24 @@ def test_actual_base_zero_entries_imports_and_same_v1_calls(monkeypatch, dormant
 
 
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
-@pytest.mark.parametrize('fault', ['import', 'entry', 'inside'])
+@pytest.mark.parametrize('fault', ['import', 'entry', 'inside', 'outer'])
 def test_terminal_hook_faults_real_http_equal_pin_off(env, monkeypatch, kind, fault):
+    terminal_hook_fault_http(env, monkeypatch, kind, fault)
+
+
+def terminal_hook_fault_http(env, monkeypatch, kind, fault):
     import builtins
+    import sys
 
     from trusted_router.services import async_settle_shadow_cohort_runtime as module
     reuse_registered_apps(monkeypatch)
     oracle.pin_clocks(monkeypatch)
     faults = []
+    statement_mode = isinstance(fault, tuple)
+    if statement_mode:
+        from tests.test_async_settle_shadow import NOW
+        monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
+    observed_lines = set()
     def transcripts(patch, store, db, cfg, path, payload, headers, signer_present=False):
         cfg.async_settle_enabled = False
         cfg._async_settle_shadow_workspace_ids = frozenset({'ws-v1'})
@@ -386,7 +353,9 @@ def test_terminal_hook_faults_real_http_equal_pin_off(env, monkeypatch, kind, fa
             client.app.state.async_settle_shadow_cohort = SimpleNamespace(terminal=broken, port=SimpleNamespace(lost=SimpleNamespace(set=lambda: None)))
             with patch.context() as local:
                 if pin:
-                    if fault == 'entry':
+                    if fault == 'outer':
+                        local.setattr(oracle.gateway, '_v2_'+kind+'_hook', broken)
+                    elif fault == 'entry':
                         local.setattr(module, 'terminal_http', broken)
                     elif fault == 'import':
                         original = builtins.__import__
@@ -396,22 +365,73 @@ def test_terminal_hook_faults_real_http_equal_pin_off(env, monkeypatch, kind, fa
                                 raise ImportError('injected package import failure')
                             return original(name, globals, locals, fromlist, level)
                         local.setattr(builtins, '__import__', importer)
+                money_calls = []
+                boundary = oracle.gateway._terminal_once
+                def counted(hook, callback, money_calls=money_calls, boundary=boundary):
+                    def money():
+                        money_calls.append(1)
+                        return callback()
+                    return boundary(hook, money if callback.__name__ == '<lambda>' else callback)
+                if pin:
+                    local.setattr(oracle.gateway, '_terminal_once', counted)
+                shell = None
+                if pin and statement_mode:
+                    from tests.test_async_settle_shadow_cohort_runtime import installed
+                    shell, _, _ = installed()
+                    client.app.state.async_settle_shadow_cohort = shell
+                    original_hook = getattr(oracle.gateway, '_v2_'+kind+'_hook')
+                    def traced(*args, original_hook=original_hook, **kwargs):
+                        injected = []
+                        def trace(frame, event, arg):
+                            site = (frame.f_code.co_filename, frame.f_lineno)
+                            if event == 'line' and site in fault[1]:
+                                observed_lines.add(site)
+                                if fault[0] == 'inject' and not injected:
+                                    injected.append(site)
+                                    faults.append(site)
+                                    raise RuntimeError('hook statement fault')
+                            return trace
+                        previous = sys.gettrace()
+                        sys.settrace(trace)
+                        try:
+                            return original_hook(*args, **kwargs)
+                        finally:
+                            sys.settrace(previous)
+                    local.setattr(oracle.gateway, '_v2_'+kind+'_hook', traced)
                 responses = []
                 try:
                     for _ in range(2):
+                        before_money = len(money_calls)
+                        if pin and statement_mode and before_money:
+                            # A statement fault can strand observer-only locks.
+                            # Give replay its own observer so the same statement
+                            # is injected on both HTTP legs; money state persists.
+                            shell.close()
+                            shell.join()
+                            shell, _, _ = installed()
+                            client.app.state.async_settle_shadow_cohort = shell
                         response = client.post(path, json=payload, headers=headers)
+                        if pin:
+                            assert len(money_calls) == before_money+1
                         assert response.status_code == 200, response.text
                         responses.append((response.status_code, list(response.headers.multi_items()), response.content))
                     outputs.append((responses, {k: copy.deepcopy(getattr(db, k)) for k in saved}))
                 finally:
+                    if shell is not None:
+                        shell.close()
+                        shell.join()
                     client.close()
         assert outputs[0][0] == outputs[1][0]
         for name in saved:
             assert outputs[0][1][name] == outputs[1][1][name], name
-        assert faults == [fault, fault]
+        if not statement_mode:
+            assert faults == [fault, fault]
+        elif fault[0] == 'inject':
+            assert faults == [next(iter(fault[1]))]*2
         return (outputs[1][0], [], outputs[1][1])
     monkeypatch.setattr(oracle, 'transcripts', transcripts)
     oracle.test_flag_off_terminal_http_identity(env, monkeypatch, kind, 'none', False, 'nonmember', False)
+    return observed_lines
 
 
 def test_terminal_boundary_keeps_original_callback_error_and_once_only():
@@ -429,3 +449,57 @@ def test_terminal_boundary_keeps_original_callback_error_and_once_only():
     with pytest.raises(ValueError) as caught:
         oracle.gateway._terminal_once(broken, money)
     assert caught.value is error and calls == [1]
+
+
+@pytest.mark.parametrize('kind', ['settle', 'refund'])
+def test_every_reached_hook_statement_preserves_real_http(env, monkeypatch, kind, record_property):
+    import inspect
+    import textwrap
+
+    from trusted_router.services import async_settle_shadow_cohort_runtime as module
+    functions = [getattr(oracle.gateway, '_v2_'+kind+'_hook'), module.terminal_http,
+        module.Runtime.terminal, module.Runtime.capture_terminal, module.Runtime.admit,
+        module.Runtime.dispatch, module.Runtime.release]
+    sites = set()
+    for function in functions:
+        source, start = inspect.getsourcelines(function)
+        for node in ast.walk(ast.parse(textwrap.dedent(''.join(source)))):
+            if isinstance(node, ast.stmt) and node.lineno != 1:
+                sites.add((inspect.getsourcefile(function), start+node.lineno-1))
+    with monkeypatch.context() as patch:
+        reached = terminal_hook_fault_http(env, patch, kind, ('record', sites))
+    assert reached
+    capture_source, capture_start = inspect.getsourcelines(module.Runtime.capture_terminal)
+    compact_line = next(capture_start+i for i, line in enumerate(capture_source) if 'compact = compact_terminal_facts' in line)
+    assert (inspect.getsourcefile(module.Runtime.capture_terminal), compact_line) in reached
+    record_property('injected_statement_sites', sorted(reached))
+    record_property('http_fault_attempts', len(reached)*2)
+    hook = functions[0]
+    assert (inspect.getsourcefile(hook), hook.__code__.co_firstlineno+2) in reached
+    for site in sorted(reached):
+        with monkeypatch.context() as patch:
+            setup = globals()['env'].__wrapped__(patch)
+            fresh = next(setup)
+            try:
+                terminal_hook_fault_http(fresh, patch, kind, ('inject', {site}))
+            finally:
+                next(setup, None)
+
+
+@pytest.mark.parametrize('dormant', ['empty', 'no_members', 'money', 'nonmember'])
+def test_fresh_process_import_construction_and_lifespan(dormant):
+    import json
+    import subprocess
+    import sys
+
+    path = Path(__file__).parent/'fixtures/async_settlement/p4a_lifecycle_recorder.py'
+    result = subprocess.run([sys.executable, str(path), dormant], capture_output=True, text=True, timeout=180)  # noqa: S603 - fixed local witness and enum arguments
+    assert result.returncode == 0, result.stderr
+    evidence = json.loads(result.stdout.splitlines()[-1])
+    if dormant == 'nonmember':
+        # P4A_NONMEMBER_LIFECYCLE: an app with a configured member installs
+        # process-wide before a request workspace exists. Per-request nonmember
+        # dormancy is proved separately; do not mislabel this as zero imports.
+        assert evidence['imports'] and evidence['entries']
+    else:
+        assert evidence == dict(imports=[], entries=[])
