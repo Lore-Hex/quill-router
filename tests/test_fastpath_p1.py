@@ -122,3 +122,19 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
 def test_commands_keep_their_order_within_a_block() -> None:
     doc = "```bash\nuv run b\ngcloud a\n/opt/fastpath/c\n```\n`/opt/fastpath/d`\n"
     assert _commands(doc) == ["uv run b", "gcloud a", "/opt/fastpath/c", "/opt/fastpath/d"]
+
+
+def test_node_ships_its_journal_to_cloud_logging() -> None:
+    """The unit writes its alerts as structured JSON to journald; W7's
+    alerting reads them in Cloud Logging, so the node runs the Ops Agent
+    with a journald receiver that parses the JSON (P1's second run found
+    the alerts stopping in journald)."""
+    script = (ROOT / "infra" / "fastpath_node_startup.sh.tftpl").read_text(encoding="utf-8")
+    assert "add-google-cloud-ops-agent-repo.sh" in script and "--also-install" in script
+    assert "type: systemd_journald" in script and "type: parse_json" in script
+    assert "systemctl restart google-cloud-ops-agent" in script
+    # The agent is set up after the release is installed, so a node without
+    # a release still records why it stays stopped, and before the unit
+    # starts.
+    assert script.index("google-cloud-ops-agent") > script.index('echo "$release" > /opt/fastpath/release')
+    assert script.index("systemctl restart google-cloud-ops-agent") < script.index("systemctl enable")

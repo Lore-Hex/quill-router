@@ -27,6 +27,36 @@ for tool in loadgen fastpathwatch load-mix.json; do
   fi
 done
 echo "$release" > /opt/fastpath/release
+# The node's journal reaches Cloud Logging through the Ops Agent: the unit
+# writes its alerts as structured JSON lines (fastpath_alert in the entry's
+# labels), which W7's alerting reads there; without the agent they stop in
+# journald, as P1's second run found. The agent's install is idempotent.
+if ! systemctl is-active --quiet google-cloud-ops-agent 2>/dev/null; then
+  curl -sSfo /tmp/add-ops-agent-repo.sh https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+  bash /tmp/add-ops-agent-repo.sh --also-install
+fi
+install -d /etc/google-cloud-ops-agent
+cat > /etc/google-cloud-ops-agent/config.yaml <<AGENT
+logging:
+  receivers:
+    fastpath_journal:
+      type: systemd_journald
+  processors:
+    fastpath_json:
+      type: parse_json
+      field: message
+    fastpath_unit:
+      type: modify_fields
+      fields:
+        labels."unit":
+          move_from: jsonPayload._SYSTEMD_UNIT
+  service:
+    pipelines:
+      fastpath:
+        receivers: [fastpath_journal]
+        processors: [fastpath_json, fastpath_unit]
+AGENT
+systemctl restart google-cloud-ops-agent
 cat > /etc/systemd/system/fastpath.service <<UNIT
 [Unit]
 Description=TrustedRouter fast admission node ($release)
