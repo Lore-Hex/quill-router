@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -462,11 +461,10 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 	// the load's PID, and the workspace still on as it is told to stop.
 	armed := filepath.Join(t.TempDir(), "armed")
 	stubborn := "trap '' TERM; touch " + armed + "; while :; do sleep 0.1; done"
-	// The term hook learns the load's PID; from then a goroutine watches
-	// that the workspace stays enabled for as long as the process exists,
-	// so a turn-off before the load is gone is seen whenever it happens.
-	var told int
-	var offEarly atomic.Bool
+	// The command's term and kill hooks see the load's PID and, at each,
+	// the workspace still enabled: the turn-off comes after the load is
+	// gone, which gone confirms once the command returns.
+	var told, killed int
 	observing := func(base deps) deps {
 		o := base
 		o.term = func(pid int) error {
@@ -474,29 +472,27 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 			if !enabled(t, ws) {
 				t.Error("the workspace was turned off before the load was told to stop")
 			}
-			go func() {
-				for syscall.Kill(pid, 0) == nil {
-					if on, err := isEnabled(ws); err == nil && !on {
-						offEarly.Store(true)
-						return
-					}
-					time.Sleep(5 * time.Millisecond)
-				}
-			}()
 			return base.term(pid)
+		}
+		o.kill = func(pid int) error {
+			killed = pid
+			if !enabled(t, ws) {
+				t.Error("the workspace was turned off before the load that would not stop was killed")
+			}
+			if syscall.Kill(pid, 0) != nil {
+				t.Error("the load was already gone as it was killed")
+			}
+			return base.kill(pid)
 		}
 		return o
 	}
 	gone := func(what string) {
 		t.Helper()
-		if told == 0 {
-			t.Fatalf("%s: the load was never told to stop", what)
+		if told == 0 || killed != told {
+			t.Fatalf("%s: the load was told to stop as %d and killed as %d", what, told, killed)
 		}
 		if err := syscall.Kill(told, 0); !errors.Is(err, syscall.ESRCH) {
 			t.Fatalf("%s: the load %d is still there once the command returned: %v", what, told, err)
-		}
-		if offEarly.Load() {
-			t.Fatalf("%s: the workspace was turned off while the load's process was still there", what)
 		}
 	}
 	hot.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
@@ -514,7 +510,7 @@ func TestARunStartsTheLoadOnceTheWatchSeesAndEndsWithIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.Remove(armed)
-	told = 0
+	told, killed = 0, 0
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		for {
@@ -621,15 +617,4 @@ type noBacklog struct{ sources }
 
 func (noBacklog) Undelivered(context.Context, string) (int64, error) {
 	return 0, errors.New("no Monitoring")
-}
-
-// isEnabled says whether the switch enables the workspace, for a goroutine.
-func isEnabled(ws string) (bool, error) {
-	row, err := shared.Single().ReadRow(context.Background(), "tr_fastpath_workspace", spanner.Key{ws}, []string{"enabled"})
-	if err != nil {
-		return false, err
-	}
-	var on bool
-	err = row.Column(0, &on)
-	return on, err
 }

@@ -90,7 +90,7 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
                     if "scripts/set_trust_override.py" in c and "--tier 1" in c and "--apply" in c)
     role = next(i for i, c in enumerate(commands) if "roles/monitoring.viewer" in c and "tr-fastpath-node@" in c)
     assert max(override, role) < commands.index(watch)
-    exercised = runbook.index("each of the watch's stops is exercised once")
+    exercised = runbook.index("the stops P1 can produce are exercised once")
     raised = re.search(r"raises\s+`-rate` by a step", runbook)
     assert raised is not None and raised.start() > exercised
     # The exercises breach once the generator runs, each confirmed by the
@@ -98,12 +98,15 @@ def test_runbook_runs_the_load_under_the_watch_and_names_every_binary_by_its_pat
     # start starts no load, exit 1, and no stop to confirm by status; the
     # CPU ceiling is not exercised in production.
     exercises = runbook[exercised:raised.start()]
-    for phrase in ("`-max-spend 1`", "`-max-oldest 1s`", "`-overdue 1s -max-overdue 0`", "once the report shows generations",
-                   "A lost view: the one `-run` gives, at the start", "exits 1 before any",
-                   "The CPU ceiling is left to the watch's tests",
-                   '`"load":\n"exited"`', "status $WS` at exit 0"):
+    for phrase in ("`-max-spend 1`", "the generation log named by `-log` has a line before", '(`"load": "exited"`)',
+                   "status $WS` at exit 0", "A lost view: the one `-run` gives, at the start", "exits 1 before any",
+                   "not exercised live, a stated deviation", "The CPU ceiling", "The backlog and pending-work ceilings",
+                   "stopping one node's `fastpath` unit leaves the other"):
         assert phrase in exercises, phrase
-    assert "-max-cpu 0.01" not in runbook
+    # No exercise waits on the report, which comes only once the load has
+    # ended, and none stops a node's unit as if that stopped a worker.
+    for phrase in ("-max-cpu 0.01", "once the report shows generations", "`systemctl stop`"):
+        assert phrase not in runbook, phrase
 
 
 def test_commands_keep_their_order_within_a_block() -> None:

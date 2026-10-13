@@ -74,6 +74,7 @@ type target struct {
 type deps struct {
 	open  func(ctx context.Context, t target) (watch.Sources, *store.Store, func(), error)
 	term  func(pid int) error
+	kill  func(pid int) error
 	alive func(pid int) bool
 	clock func() time.Time
 }
@@ -102,6 +103,7 @@ var production = deps{
 		return src, s, func() { _ = metrics.Close(); client.Close() }, nil
 	},
 	term:  func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) },
+	kill:  func(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) },
 	alive: func(pid int) bool { err := syscall.Kill(pid, 0); return err == nil || errors.Is(err, syscall.EPERM) },
 	clock: time.Now,
 }
@@ -230,7 +232,7 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	stopChild := func() string {
 		how := stopLoad(d, *pid, *grace)
 		if d.alive(*pid) {
-			_ = load.Process.Kill()
+			_ = d.kill(*pid)
 			how += "; killed"
 		}
 		<-loadDone

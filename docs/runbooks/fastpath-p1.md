@@ -95,32 +95,36 @@ with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trus
    Pub/Sub latency and redeliveries.
 
 The first run is one generation a second. Before the rate is raised past
-it, each of the watch's stops is exercised once at that rate, by a breach
-that comes once the generator runs: the stop then ends a running load,
-which is what the exercise is for. A ceiling the stage is already past at
-the watch's first look stops it before any load (exit 3, the workspace
+it, the stops P1 can produce are exercised once at that rate. A stop
+worth the name ends a running load: a ceiling the stage is already past
+at the watch's first look stops it before any load (exit 3, the workspace
 off, no generation sent), which proves nothing about a running one.
 
-- Spend: `-max-spend 1`. The first settle breaches it.
-- Backlog: the stager stopped (the nodes' `fastpath` unit on one node, by
-  `systemctl stop`) once the report shows generations, with
-  `-max-oldest 1s`.
-- Pending work: `-overdue 1s -max-overdue 0`, with the pending worker
-  stopped the same way, once a pack is pending.
+- Spend: `-max-spend 1`. The first settle breaches it with the load
+  running. Evidence: the generation log named by `-log` has a line before
+  the stop, and the watch's answer names the ceiling and the load
+  (`"load": "exited"`); then
+  `/opt/fastpath/fastpathctl -database $DB status $WS` at exit 0, and the
+  workspace enabled again.
 - A lost view: the one `-run` gives, at the start: the command with
   `-subscriptions` naming one that does not exist exits 1 before any
-  generation is sent, the report empty and the workspace left as it was. A
-  view lost once the load runs stops the stage after `-misses` looks,
-  which the watch's own tests hold and no run exercises.
+  generation is sent, the report empty and the workspace left as it was.
 
-The CPU ceiling is left to the watch's tests: production's CPU cannot be
-raised to order, and a ceiling under the idle reading stops the stage at
-the first look, before any load. Each of the three stops ends with the
-report showing generations sent, the watch's answer naming the load (`"load":
-"exited"`) and the ceiling, and
-`/opt/fastpath/fastpathctl -database $DB status $WS` at exit 0; then the
-workspace is enabled again. Each later run raises `-rate` by a step toward
-the design's benchmark rate (§6), within the same ceilings.
+The other stops are held by the watch's tests (`fastpath/internal/watch`,
+`fastpath/cmd/fastpathwatch`) and not exercised live, a stated deviation
+from W3's "each stop exercised", recorded in the P1 results document:
+
+- The CPU ceiling: production's CPU cannot be raised to order, and a
+  ceiling under the idle reading stops the stage before any load.
+- The backlog and pending-work ceilings: both nodes run every role, so
+  stopping one node's `fastpath` unit leaves the other consuming the
+  stager's subscription and sweeping the pending packs, and the backlog
+  never forms; the nodes have no way to suspend those workers alone.
+- A view lost once the load runs, which stops the stage after `-misses`
+  looks.
+
+Each later run raises `-rate` by a step toward the design's benchmark rate
+(§6), within the same ceilings.
 
 ## The mix
 
