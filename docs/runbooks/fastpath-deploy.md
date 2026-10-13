@@ -155,8 +155,8 @@ later one: read `/opt/fastpath/release` on each node before the pin, and
 if a node runs an earlier release, bring it to the first before the
 second is pinned anywhere. Nodes replaced by one apply, or one at a time,
 then never mix an owner that states the field with an auditor that does
-not read it. The first such field is the hold's boot binding on its first
-heartbeat record: the release that reads it states none, and the one
+not read it. The first such field was the hold's boot binding on its
+first heartbeat record: one release read it and stated none, and the one
 after it states it.
 
 ## A flag the unit passes

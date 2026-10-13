@@ -290,13 +290,13 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		Snapshot: &record.Snapshot{GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: usage, Running: hb.Running,
 			Deadline: deadline.UTC()}}
 	if !h.heartbeat {
-		// The hold's first heartbeat record carries the reap's basis. Every
-		// auditor of this release reads the authorization's boot binding
-		// on it too, for the hold's row and a reap of the hold, and the
-		// release after this one has the owner state it (h.boot): an
-		// auditor from before this release refuses a heartbeat record that
-		// carries one (docs/runbooks/fastpath-deploy.md).
-		r.First, r.Basis = true, hb.Basis
+		// The hold's first heartbeat record carries the reap's basis and
+		// the authorization's boot binding, the owner's statement of it
+		// for the hold's row and a reap of the hold. Every auditor reads
+		// the field since the release before this one; one from before
+		// that refused a heartbeat record carrying it (docs/runbooks/
+		// fastpath-deploy.md).
+		r.First, r.Basis, r.Boot = true, hb.Basis, h.boot
 	}
 	s, err := l.handOver(r, 0)
 	switch {
