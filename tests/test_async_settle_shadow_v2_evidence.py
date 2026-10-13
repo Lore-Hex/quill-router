@@ -404,10 +404,15 @@ def test_no_runtime_imports_or_calls_to_new_modules() -> None:
     allowed.update({
         'async_settle_shadow_cohort.py': {
             'trusted_router.async_settle_shadow_v2_a1_reconciliation': ['resolve_event'],
-            'trusted_router.async_settle_shadow_v2_contract': ['CANDIDATE_BYTES', 'CANDIDATE_SET', 'COHORT_EXCLUSIONS', 'Decision', 'LOCAL_BYTES', 'RequestedFacts', 'decide', 'fit_decision', 'generation_id', 'parse_header'],
-            'trusted_router.async_settle_shadow_v2_evidence': ['BUCKET', 'COUNTS', 'EVENT', 'PREDICTION', 'SAMPLE', 'committed_identity'],
+            'trusted_router.async_settle_shadow_v2_contract': ['CANDIDATE_BYTES', 'COHORT_EXCLUSIONS', 'Decision', 'LOCAL_BYTES', 'RequestedFacts', 'decide', 'fit_decision', 'parse_header'],
+            'trusted_router.async_settle_shadow_v2_evidence': ['BUCKET', 'COUNTS', 'EVENT', 'PREDICTION', 'SAMPLE'],
             'trusted_router.async_settle_shadow_v2_projection': ['sample_projection', 'wire_projection'],
-            'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'decode', 'require'],
+            'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'day_at', 'decode', 'require'],
+        },
+        'services/async_settle_shadow_cohort_runtime.py': {
+            'trusted_router.async_settle_shadow_v2_contract': ['DEPENDENT', 'FEATURES', 'HEADER_BYTES', 'LOCAL_BYTES', 'RequestedFacts'],
+            'trusted_router.async_settle_shadow_v2_evidence': ['EVENT', 'PREDICTION', 'committed_identity'],
+            'trusted_router.async_settle_shadow_v2_schema': ['POLICY', 'require', 'sha256'],
         },
         'services/async_settle_shadow_cohort.py': {
             'trusted_router.async_settle_shadow_v2_contract': ['LOCAL_BYTES', 'RequestedFacts'],

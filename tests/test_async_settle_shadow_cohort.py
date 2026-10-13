@@ -38,12 +38,12 @@ from trusted_router.async_settle_shadow_v2_contract import (
 )
 from trusted_router.async_settle_shadow_v2_evidence import EVENT, committed_identity
 from trusted_router.async_settle_shadow_v2_schema import day_at
-from trusted_router.config import Settings
+from trusted_router.config import Settings, in_v2_cohort
 from trusted_router.detached_jws import b64encode, canonical
 from trusted_router.services.async_settle_shadow_cohort import (
     AuthorizeInput,
     authorize,
-    is_v2_request,
+    has_v2_capability,
 )
 
 # Importing the shared decorator also constructs P1's unrelated exhaustive
@@ -147,13 +147,15 @@ def terminal(**changes: Any) -> dict[str, Any]:
 def _case_gate_cartesian_zero_effects(pin: str, member: bool, money: bool, marker: tuple[str, ...]) -> None:
     cfg = config(async_settle_shadow_policy=pin, async_settle_shadow_workspaces='ws-v1' if member else 'other', async_settle_enabled=money)
     expected = pin == 'shadow-v2' and member and not money and marker == ('shadow-v2',)
-    assert is_v2_request(cfg, 'ws-v1', marker) is expected
+    cohort = in_v2_cohort(pin, 'ws-v1', money, cfg.async_settle_shadow_workspace_ids)
+    assert cohort is (pin == 'shadow-v2' and member and not money)
+    assert has_v2_capability(marker) is (marker == ('shadow-v2',))
     port = Port()
     before = additions()
     result = authorize(cfg, marker, port, inputs(), before, signer())
     assert bool(result) is expected
     assert before == additions()
-    if not expected:
+    if not cohort:
         assert port.calls == [] and port.journal.days[day_at(NOW*1000000)].next_seq == 1
 
 
@@ -257,6 +259,8 @@ def _case_every_noneligible_reason_never_emits(reason: str) -> None:
     assert (event['partition'], event['eligibility']) == ('C', 'unknown')
     assert event['diagnostic']['reason'] == ('missing_context' if reason == 'unknown_parameters' else reason)
     assert not hasattr(port, 'certificate')
+    # P2 receives no v2 fields for this decision and sends no usable variant.
+    assert verify_terminal((), context(), [signer().trusted], local_bytes=1).partition == 'C'
 
 
 @exhaustive
@@ -321,9 +325,8 @@ def test_replay_links_original_and_never_signs_or_refreezes() -> None:
 
 
 def _case_p2_bytes_delegate_to_unchanged_comparator(variant: str) -> None:
-    page, locator = original()
     checked = verify_terminal((fixture(variant)[0]['header'],), context(), [signer().trusted],
-                              local_bytes=1000, original_page=page, original_locator=locator)
+                              local_bytes=1000)
     assert (checked.partition, checked.eligibility, checked.proof_kind) == ('A', 'eligible', 'compared')
     assert checked.comparison is not None and checked.comparison.python_micro == 2
 
@@ -335,16 +338,11 @@ def test_p2_bytes_delegate_to_unchanged_comparator() -> None:
 
 
 def _case_compared_failures_remain_c(damage: str) -> None:
-    page, locator = original()
     ctx = context()
     keys = [signer().trusted]
     headers = (fixture('terminal_compared_full')[0]['header'],)
     size = 1000
-    if damage == 'missing_original':
-        page = locator = None
-    elif damage == 'foreign_original':
-        locator = dict(locator, boot='other')
-    elif damage == 'missing_header':
+    if damage == 'missing_header':
         headers = ()
     elif damage == 'bad_header':
         headers = ('!',)
@@ -365,16 +363,16 @@ def _case_compared_failures_remain_c(damage: str) -> None:
             import hashlib
             wire['payload_hash'] = hashlib.sha256(canonical(wire['terminal'])).hexdigest()
         headers = (b64encode(canonical(wire)),)
-    checked = verify_terminal(headers, ctx, keys, local_bytes=size, original_page=page, original_locator=locator)
+    checked = verify_terminal(headers, ctx, keys, local_bytes=size)
     assert checked.partition == 'C'
-    assert checked.eligibility == ('unknown' if damage in ('missing_original', 'foreign_original') else 'eligible')
+    assert checked.eligibility in ('unknown', 'eligible')
     if damage == 'amount':
         assert checked.comparison is not None and checked.comparison.classification == 'evaluator_disagreement'
 
 
 @exhaustive
 def test_compared_failures_remain_c() -> None:
-    for damage in ['missing_original', 'foreign_original', 'missing_header', 'bad_header', 'local_cap', 'unverified', 'booking_unknown', 'opposite_winner', 'excluded', 'hash', 'amount']:
+    for damage in ['missing_header', 'bad_header', 'local_cap', 'unverified', 'booking_unknown', 'opposite_winner', 'excluded', 'hash', 'amount']:
         _case_compared_failures_remain_c(damage)
 
 
@@ -447,16 +445,34 @@ def test_retry_rules_call_retained_contract() -> None:
     assert sample_retry(sample, retry) == 'winner_polarity'
 
 
-def test_no_request_path_call_sites_yet() -> None:
+def test_every_request_path_import_is_cohort_gated() -> None:
     root = Path(__file__).parents[1]/'src/trusted_router'
+    found = []
     for path in (root/'routes').rglob('*.py'):
-        assert 'async_settle_shadow_cohort' not in path.read_text()
-    assert 'async_settle_shadow_cohort' not in (root/'main.py').read_text()
-    for path in (root/'async_settle_shadow_cohort.py', root/'services/async_settle_shadow_cohort.py'):
         tree = ast.parse(path.read_text())
-        assert not any(isinstance(n, ast.AsyncFunctionDef) for n in ast.walk(tree))
-        assert 'ExclusionSigner' not in path.read_text()
-        assert 'MODEL_ENDPOINTS' not in path.read_text()
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and 'shadow_cohort' in node.module:
+                current = node
+                guarded = False
+                while current in parents:
+                    current = parents[current]
+                    if isinstance(current, ast.If) and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                            and n.func.id == 'in_v2_cohort' for n in ast.walk(current.test)):
+                        guarded = True
+                assert guarded, (path, node.lineno)
+                found.extend(alias.name for alias in node.names)
+    assert sorted(found) == ['authorize_http', 'capture_prices', 'capture_prices', 'terminal_http', 'terminal_http']
+
+
+def test_zero_certificate_issuance_calls() -> None:
+    root = Path(__file__).parents[1]/'src/trusted_router'
+    paths = [root/'async_settle_shadow_cohort.py', *root.glob('services/async_settle_shadow_cohort*.py')]
+    for path in paths:
+        source = path.read_text()
+        assert 'ExclusionSigner' not in source and 'async_settle_shadow_v2_certificate' not in source
+        tree = ast.parse(source)
+        assert not any(isinstance(n, ast.Call) and 'certificate' in ast.unparse(n.func).lower() for n in ast.walk(tree))
 
 
 def test_complete_event_size_checked_after_coordinates() -> None:
@@ -516,8 +532,7 @@ def test_every_eligible_terminal_receipt_keeps_prediction() -> None:
     prediction = copy.deepcopy(fixture('sample')[1]['object'])
     for booking in (Booking(), Booking(2, 'settled', True)):
         verified = verify_terminal((fixture('terminal_compared_full')[0]['header'],),
-            context(booking=booking), [signer().trusted], local_bytes=1000,
-            original_page=page, original_locator=locator)
+            context(booking=booking), [signer().trusted], local_bytes=1000)
         reservation = Reservation(page['day'], 'writer', 2, 2, (NOW+1)*1000000)
         event = EVENT.parse(terminal_receipt(reservation, original=page['events'][0],
             revision='a'*40, phase='settle', dimensions=page['events'][0]['dimensions'],
@@ -530,12 +545,11 @@ def test_every_eligible_terminal_receipt_keeps_prediction() -> None:
 
 
 def test_observed_binding_contract_gap_is_explicit() -> None:
-    page, locator = original()
     envelope = copy.deepcopy(fixture('terminal_compared_full')[0]['object'])
     envelope['observed']['service_tier'] = 'unsupported'
     envelope.update(terminal=None, payload_hash=None, go_error='unsupported_observed')
     result = verify_terminal((b64encode(canonical(envelope)),), context(), [signer().trusted],
-        local_bytes=1000, original_page=page, original_locator=locator)
+        local_bytes=1000)
     assert result.comparison is not None
     assert result.comparison.binding_verified and result.comparison.raw_matches_body
     assert result.comparison.observed_eligible is False
@@ -546,7 +560,7 @@ def test_observed_binding_contract_gap_is_explicit() -> None:
             proof_kind='observed_binding', comparison='unevaluable', payload_sha256=None)
 
 
-def test_p3_partition_reclassification_gap() -> None:
+def test_p3_partition_reclassification_is_forbidden() -> None:
     from trusted_router.async_settle_shadow_v2_a1_evidence import COUNTER
     from trusted_router.async_settle_shadow_v2_evidence import COUNTS
     from trusted_router.storage_gcp_shadow_observation import monotonic_counter
@@ -577,22 +591,20 @@ def test_verifier_does_not_consult_catalog(monkeypatch: Any) -> None:
         def __getitem__(self, key: str) -> Any:
             calls.append(key)
             return super().__getitem__(key)
-    page, locator = original()
     monkeypatch.setattr(catalog, 'MODEL_ENDPOINTS', Catalog())
     result = verify_terminal((fixture('terminal_compared_full')[0]['header'],), context(),
-        [signer().trusted], local_bytes=1000, original_page=page, original_locator=locator)
+        [signer().trusted], local_bytes=1000)
     assert result.partition == 'A' and calls == []
 
 
 def _case_refund_requires_actual_confirmed_booking(confirmed: bool) -> None:
     import hashlib
-    page, locator = original()
     value = copy.deepcopy(fixture('terminal_compared_full')[0]['object'])
     value['terminal'].update(terminal_kind='refund', charge_micro=0)
     value['payload_hash'] = hashlib.sha256(canonical(value['terminal'])).hexdigest()
     ctx = context(attempted_kind='refund', booking=Booking(0, 'refunded', True) if confirmed else Booking())
     result = verify_terminal((b64encode(canonical(value)),), ctx, [signer().trusted],
-        local_bytes=1000, original_page=page, original_locator=locator)
+        local_bytes=1000)
     assert result.partition == ('A' if confirmed else 'C')
 
 
@@ -641,7 +653,7 @@ def test_traced_core_branches(monkeypatch: Any) -> None:
         _case_missing_fact_never_defaults(missing)
     for variant in ('terminal_compared_full', 'terminal_compared_hash_only'):
         _case_p2_bytes_delegate_to_unchanged_comparator(variant)
-    for damage in ('missing_original', 'foreign_original', 'missing_header', 'bad_header',
+    for damage in ('missing_header', 'bad_header',
                    'local_cap', 'unverified', 'booking_unknown', 'opposite_winner', 'excluded', 'hash', 'amount'):
         _case_compared_failures_remain_c(damage)
     for offset, valid in ((-1, False), (0, True)):

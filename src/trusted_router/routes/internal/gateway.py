@@ -65,7 +65,7 @@ from trusted_router.catalog import (
     endpoint_zero_data_retention,
 )
 from trusted_router.client_context import parse_client_context, parse_gateway_request_id
-from trusted_router.config import Settings, get_settings
+from trusted_router.config import Settings, get_settings, in_v2_cohort
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
     USER_MODEL_OWNER_SETTLE_FIELD,
@@ -537,6 +537,9 @@ async def settle_gateway(
 ) -> dict[str, Any]:
     """Run one settlement off-loop behind the process-local per-key gate."""
     require_internal_gateway(request, settings)
+    if settings.async_settle_shadow_policy == "shadow-v2" and not settings.async_settle_enabled:
+        return await run_in_threadpool(_settle_gateway_with_admission_sync, body,
+            settings=settings, background_tasks=background_tasks, _shadow_request=request)
     if settings.async_settle_shadow_workspace_ids:
         from trusted_router.services.async_settle_shadow import observe_entry
         return await observe_entry(request, body, settings, background_tasks,
@@ -2385,6 +2388,9 @@ def register(router: APIRouter) -> None:
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
+        if settings.async_settle_shadow_policy == "shadow-v2" and not settings.async_settle_enabled:
+            return await run_in_threadpool(_settle_gateway_authorization, body, success=False,
+                settings=settings, background_tasks=background_tasks, _shadow_request=request)
         if settings.async_settle_shadow_workspace_ids:
             from trusted_router.services.async_settle_shadow import observe_entry
             return await observe_entry(request, body, settings, background_tasks,
@@ -2872,6 +2878,17 @@ def _gateway_authorize_response(
             typed=async_store is not None and getattr(async_store, "request_record_write_mode", "legacy") == "typed",
             federated=async_federated, replay=idempotent_replay, effective_at=async_effective_at,
         )
+    if async_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+            authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        try:
+            from trusted_router.services.async_settle_shadow_cohort_runtime import authorize_http
+            v2_store = typed_billing_store(STORE)
+            authorize_http(async_request, async_body, authorization, async_additions,
+                [e for _, e in endpoint_candidates],
+                typed=v2_store is not None and getattr(v2_store, "request_record_write_mode", "legacy") == "typed",
+                federated=async_federated, replay=idempotent_replay)
+        except Exception:  # noqa: S110 - preserve the committed authorization response
+            pass
     if authorization.workspace_id in settings.async_settle_shadow_workspace_ids and async_request is not None:
         try:
             shadow_runtime = getattr(async_request.app.state, "async_settle_shadow", None)
@@ -3475,11 +3492,19 @@ def _settle_gateway_with_admission_sync(
     *,
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
+    _shadow_request: Request | None = None,
+    _authorization: GatewayAuthorization | None = None,
 ) -> dict[str, Any]:
     with gateway_phase("key_lookup_ms", after="routing_ms"):
-        authorization = STORE.get_gateway_authorization(body.authorization_id)
+        authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+            authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        from trusted_router.services.async_settle_shadow_cohort_runtime import terminal_http
+        return terminal_http(_shadow_request, body, authorization, "settle",
+            lambda: _settle_gateway_with_admission_sync(body, settings=settings,
+                background_tasks=background_tasks, _authorization=authorization))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3524,6 +3549,7 @@ def _settle_gateway_authorization(
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
     _authorization: GatewayAuthorization | None = None,
+    _shadow_request: Request | None = None,
 ) -> dict[str, Any]:
     timing_start = perf_counter()
     # getattr: some callers/tests build the settle body via model_construct,
@@ -3534,6 +3560,12 @@ def _settle_gateway_authorization(
         authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+            authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        from trusted_router.services.async_settle_shadow_cohort_runtime import terminal_http
+        return terminal_http(_shadow_request, body, authorization, "settle" if success else "refund",
+            lambda: _settle_gateway_authorization(body, success=success, settings=settings,
+                background_tasks=background_tasks, _authorization=authorization))
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_authorization
@@ -3541,6 +3573,16 @@ def _settle_gateway_authorization(
         except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
             pass
     if authorization.settled:
+        if in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+                settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+            try:
+                from trusted_router.services.async_settle_shadow_cohort_runtime import (
+                    capture_prices as capture_v2_prices,
+                )
+                capture_v2_prices(authorization, _select_authorized_endpoint(authorization, body),
+                    billing_pricing_snapshot(authorization), model_catalog.MODEL_ENDPOINTS, prices_match_booking=False)
+            except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
+                pass
         if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
             try:
                 from trusted_router.services.async_settle_shadow import capture_prices
@@ -3715,6 +3757,15 @@ def _settle_gateway_authorization(
         except ValueError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
     billing_snapshot = billing_pricing_snapshot(authorization)
+    if in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+            settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
+        try:
+            from trusted_router.services.async_settle_shadow_cohort_runtime import (
+                capture_prices as capture_v2_prices,
+            )
+            capture_v2_prices(authorization, selected_endpoint, billing_snapshot, model_catalog.MODEL_ENDPOINTS)
+        except Exception:  # noqa: S110 - diagnostic failure cannot affect billing
+            pass
     if settings.async_settle_shadow_workspace_ids and authorization.workspace_id in settings.async_settle_shadow_workspace_ids:
         try:
             from trusted_router.services.async_settle_shadow import capture_prices

@@ -1,0 +1,85 @@
+package main
+
+import (
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "os"
+    "path/filepath"
+    "strings"
+    "testing"
+    "time"
+
+    "github.com/Lore-Hex/quill-cloud-proxy/enclave-go/internal/llm"
+    "github.com/Lore-Hex/quill-cloud-proxy/enclave-go/internal/trustedrouter"
+    "github.com/Lore-Hex/quill-cloud-proxy/enclave-go/internal/types"
+)
+
+func TestP4aProbeHandoffs(t *testing.T) {
+    t.Setenv("QUILL_USAGE_HEARTBEAT", "off")
+    t.Setenv("QUILL_TERMINATE_AT_CAP", "off")
+    t.Setenv("TR_ASYNC_SETTLE_NEGOTIATE", "off")
+    trustedrouter.ShadowBuildRevision = strings.Repeat("a", 40)
+    for _, adapter := range []string{"openai", "anthropic"} {
+        for _, route := range []string{"chat.completions", "responses"} {
+            for _, streamed := range []bool{false, true} {
+                name := fmt.Sprintf("%s-%s-%v", adapter, route, streamed)
+                t.Run(name, func(t *testing.T) {
+                    reply, err := os.ReadFile(filepath.Join(os.Getenv("P4A_INPUT"), name+".json"))
+                    if err != nil { t.Fatal(err) }
+                    var data struct { Data struct { Model string `json:"model"` } `json:"data"` }
+                    if err := json.Unmarshal(reply, &data); err != nil { t.Fatal(err) }
+                    var baseline string
+                    for _, enabled := range []bool{false, true} {
+                        flag := "off"
+                        if enabled { flag = "on" }
+                        t.Setenv("TR_ASYNC_SETTLE_SHADOW", flag)
+                        var body, header, path string
+                        terminals := 0
+                        transport := shadowV2StreamTransport(func(r *http.Request) (*http.Response, error) {
+                            answer := string(reply)
+                            if r.URL.Path != "/internal/gateway/authorize" {
+                                terminals++
+                                raw, _ := io.ReadAll(r.Body)
+                                body, header, path = string(raw), r.Header.Get("X-TR-Settlement-Shadow"), r.URL.Path
+                                answer = `{"data":{"settled":true,"cost_microdollars":4,"generation_id":"test"}}`
+                            }
+                            return &http.Response{StatusCode:200, Header:make(http.Header), Body:io.NopCloser(strings.NewReader(answer))}, nil
+                        })
+                        gateway := trustedrouter.New("https://trustedrouter.com", "test", &http.Client{Transport:transport})
+                        limit := 2
+                        req := &types.OpenAIChatRequest{Model:data.Data.Model, Stream:streamed, MaxTokens:&limit, RequestedParameters:[]string{"max_tokens"}, StreamOptions:&types.ChatStreamOptions{IncludeUsage:true}}
+                        auth, err := gateway.AuthorizeWithRoute(t.Context(), "key", req, route)
+                        if err != nil { t.Fatal(err) }
+                        var output bytes.Buffer
+                        if streamed {
+                            serveStreaming(t.Context(), &output, shadowStreamProvider{}, req, &types.AnthropicMessagesRequest{},
+                                []llm.InvokeOptions{{Model:auth.Model, Provider:auth.Provider, EndpointID:auth.EndpointID}},
+                                gateway, auth, nil, time.Now(), nil, route, "p4a", auth.Model)
+                        } else {
+                            usage := trustedrouter.Usage{InputTokens:1, OutputTokens:1, ElapsedSeconds:1, RouteType:route, SelectedModel:auth.Model,
+                                SelectedEndpoint:auth.EndpointID, ShadowObservation:trustedrouter.ObserveShadowUsage(true, "")}
+                            auth.RecordShadowInvocation(auth.EndpointID, auth.Provider)
+                            if _, err := gateway.Settle(t.Context(), auth, usage); err != nil { t.Fatal(err) }
+                        }
+                        if terminals != 1 { t.Fatalf("terminal count %d", terminals) }
+                        transcript := normalizeShadowClocks(output.String())+"\n"+normalizeShadowClocks(body)
+                        if !enabled {
+                            baseline = transcript
+                            if header != "" { t.Fatal("off header") }
+                        } else {
+                            if transcript != baseline { t.Fatal("stream/body differential") }
+                            if header == "" { t.Fatal("missing compared header") }
+                            raw, err := json.Marshal(map[string]any{"header":header, "body":json.RawMessage(body),
+                                "path":path, "stream":normalizeShadowClocks(output.String()), "off_on_bytes_equal":true})
+                            if err != nil { t.Fatal(err) }
+                            if err := os.WriteFile(filepath.Join(os.Getenv("P4A_OUTPUT"), name+".json"), raw, 0600); err != nil { t.Fatal(err) }
+                        }
+                    }
+                })
+            }
+        }
+    }
+}

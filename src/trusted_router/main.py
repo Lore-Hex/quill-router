@@ -293,6 +293,10 @@ def create_app(
                 install as install_shadow_health,
             )
             install_shadow_health(app, settings, typed_billing_store(STORE))
+            from trusted_router.services.async_settle_shadow_cohort_runtime import (
+                install as install_shadow_cohort,
+            )
+            install_shadow_cohort(app, settings, typed_billing_store(STORE))
         elif settings.async_settle_shadow_workspace_ids and not settings.async_settle_shadow_policy:
             from trusted_router.services.async_settle_shadow import install as install_settle_shadow
             install_settle_shadow(app, settings, typed_billing_store(STORE))

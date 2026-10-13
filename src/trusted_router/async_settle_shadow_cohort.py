@@ -9,20 +9,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
+from trusted_router.async_settle_shadow_binding import verify_binding
 from trusted_router.async_settle_shadow_compare import Comparison, Context, compare
 from trusted_router.async_settle_shadow_evidence import retry_classification
 from trusted_router.async_settle_shadow_journal import Reservation
 from trusted_router.async_settle_shadow_v2_a1_reconciliation import resolve_event
 from trusted_router.async_settle_shadow_v2_contract import (
     CANDIDATE_BYTES,
-    CANDIDATE_SET,
     COHORT_EXCLUSIONS,
     LOCAL_BYTES,
     Decision,
     RequestedFacts,
     decide,
     fit_decision,
-    generation_id,
     parse_header,
 )
 from trusted_router.async_settle_shadow_v2_evidence import (
@@ -31,10 +30,9 @@ from trusted_router.async_settle_shadow_v2_evidence import (
     EVENT,
     PREDICTION,
     SAMPLE,
-    committed_identity,
 )
 from trusted_router.async_settle_shadow_v2_projection import sample_projection, wire_projection
-from trusted_router.async_settle_shadow_v2_schema import POLICY, decode, require
+from trusted_router.async_settle_shadow_v2_schema import POLICY, day_at, decode, require
 from trusted_router.detached_jws import TrustedKey, b64encode, canonical
 
 
@@ -42,6 +40,7 @@ from trusted_router.detached_jws import TrustedKey, b64encode, canonical
 class PreparedAuthorization:
     decision: Decision
     body: bytes
+    event: dict[str, Any]
 
 
 def decision_reference(decision: Decision) -> dict[str, Any]:
@@ -62,7 +61,7 @@ def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
     facts and unsupported representations remain unknown; no defaults enter
     RequestedFacts. An oversize event is replaced by the contract diagnostic.
     """
-    decision = Decision("unknown", "missing_context", False, None, None)
+    decision = Decision("unknown", reason if reason in {"header_absent", "replay"} else "missing_context", False, None, None)
     projection = None
     if facts is not None:
         try:
@@ -71,7 +70,6 @@ def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
             if candidates is not None and complete_candidates:
                 # decide owns candidate validation and its input bound.
                 projection = decode(candidates, CANDIDATE_BYTES)
-                CANDIDATE_SET(projection)
         except (ValueError, TypeError, KeyError):
             decision = Decision("unknown", "missing_context", False, None, None)
             projection = None
@@ -92,11 +90,11 @@ def prepare_authorization(reservation: Reservation, *, identity: dict[str, Any],
         event["diagnostic"] = dict(reason=fitted.reason or "missing_context",
             required_bytes=fitted.required_bytes or 0, candidate_count=fitted.candidate_count or 0)
     # The diagnostic itself must fit; failure is a lost slot, never truncation.
-    return PreparedAuthorization(fitted, EVENT.serialize(event))
+    return PreparedAuthorization(fitted, EVENT.serialize(event), event)
 
 
 def unresolved_authorization(prepared: PreparedAuthorization, reason: str) -> bytes:
-    event = EVENT.parse(prepared.body)
+    event = dict(prepared.event)
     event.update(eligibility="unknown", facts=None, candidates=None,
                  diagnostic=dict(reason=reason, required_bytes=0, candidate_count=0))
     return EVENT.serialize(event)
@@ -105,6 +103,13 @@ def unresolved_authorization(prepared: PreparedAuthorization, reason: str) -> by
 def replay_event(reservation: Reservation, *, original_page: dict[str, Any],
                  original_locator: dict[str, Any], revision: str) -> bytes:
     original = resolve_event(original_page, original_locator)
+    return replay_decision(reservation, original=original, original_locator=original_locator, revision=revision)
+
+
+def replay_decision(reservation: Reservation, *, original: dict[str, Any],
+                    original_locator: dict[str, Any], revision: str) -> bytes:
+    """Link an immutable finalized decision retained by this issuing worker."""
+    EVENT(original)
     require(original["phase"] == "authorize", "authorization_link_gap")
     require(original["event_at_us"] <= reservation.observed_us, "authorization_link_gap")
     event = {**original, "seq": f"{reservation.event_seq:020}",
@@ -117,16 +122,6 @@ def replay_event(reservation: Reservation, *, original_page: dict[str, Any],
         "retry_original": {k: original_locator[k] for k in ("day", "boot", "event_seq")},
         "completion_of": None}
     return EVENT.serialize(event)
-
-
-def compared_authorization_locator() -> NoReturn:
-    """Missing contract seam: resolve a compared binding to its original page.
-
-    The unchanged binding has no receipt coordinate. No complete-key discovery
-    function or bounded cross-boot index is supplied by P1-A1/P3. A caller with
-    no independently resolved original page must keep the attempt unresolved.
-    """
-    raise ValueError("authorization_link_gap")
 
 
 def observed_binding_payload_reference() -> NoReturn:
@@ -145,86 +140,43 @@ class VerifiedTerminal:
     proof_kind: str
     reason: str | None
     comparison: Comparison | None = None
+    authorization_day: str | None = None
+    authorization_at_us: int | None = None
 
 
 def verify_terminal(headers: tuple[str, ...], context: Context, keys: Sequence[TrustedKey],
-                    *, local_bytes: int, original_page: dict[str, Any] | None,
-                    original_locator: dict[str, Any] | None) -> VerifiedTerminal:
-    """Worker-only verification; v1 owns binding, usage, arithmetic and booking.
-
-    Supplied pages must already be independently established durable by the
-    shell. Parsing a page here is deliberately not a storage acknowledgement.
-    """
-    unknown = VerifiedTerminal("C", "unknown", "none", "missing_context")
-    original = None
-    link_gap = None
-    try:
-        original = eligible_original(context, original_page, original_locator)
-        unknown = VerifiedTerminal("C", "eligible", "none", "eligible_coverage_gap")
-    except (ValueError, KeyError, TypeError) as error:
-        link_gap = str(error) if isinstance(error, ValueError) else "missing_context"
+                    *, local_bytes: int) -> VerifiedTerminal:
+    """Ruling 2: the unchanged signed binding proves the authorize decision."""
+    unknown = VerifiedTerminal("C", "unknown", "none", "header_absent")
+    if not headers:
+        return unknown
     try:
         value = parse_header(headers)
         if value["variant"] == "excluded":
-            return VerifiedTerminal("C", unknown.eligibility, "none", "exclusion_proof_gap")
-        # Excluded never copies pricing. Compared cannot evade the local cap.
+            return VerifiedTerminal("C", "unknown", "none", "exclusion_proof_gap")
         require(type(local_bytes) is int and 0 <= local_bytes <= LOCAL_BYTES, "snapshot_size")
         compared = compare((b64encode(canonical(wire_projection(value))),), context, keys)
-        if link_gap is not None:
-            return VerifiedTerminal("C", "unknown", "compared", link_gap, compared)
-        assert original is not None
-        unknown = VerifiedTerminal("C", "eligible", "compared", "eligible_coverage_gap", compared)
+        issued_us = (verify_binding(value["billing_shadow_binding"], keys, context.received_at).iat*1000000
+                     if compared.binding_verified else None)
+        proof_day = day_at(issued_us) if issued_us is not None else None
+        eligible = "eligible" if compared.binding_verified and compared.verified_streamed is not None else "unknown"
+        unknown = VerifiedTerminal("C", eligible, "compared" if compared.payload_hash else "none",
+                                   "eligible_coverage_gap", compared, proof_day, issued_us)
         if not (compared.binding_verified and compared.raw_matches_body):
             return unknown
-        require(compared.verified_streamed is original["facts"]["streamed"], "authorization_link_gap")
-        require(context.body.route_type == original["facts"]["route"], "authorization_link_gap")
         if not (context.booking.confirmed and context.booking.amount is not None
                 and context.booking.kind == context.attempted_kind):
-            return VerifiedTerminal("C", "eligible", "compared", "booking_unknown", compared)
-        if compared.observed_eligible is False and compared.classification == "unevaluable":
-            if compared.payload_hash is None:
-                observed_binding_payload_reference()
-            return VerifiedTerminal("B", "excluded", "observed_binding", None, compared)
-        if compared.payload_hash is None:
-            return unknown
-        if compared.observed_eligible is True and compared.classification in ("exact", "explained-by-catalog-change"):
-            return VerifiedTerminal("A", "eligible", "compared", None, compared)
+            return VerifiedTerminal("C", eligible, unknown.proof_kind, "booking_unknown", compared, proof_day, issued_us)
+        if compared.observed_eligible is False:
+            observed_binding_payload_reference()
+        if (compared.payload_hash is not None and compared.observed_eligible is True
+                and compared.classification in ("exact", "explained-by-catalog-change")):
+            return VerifiedTerminal("A", "eligible", "compared", None, compared, proof_day, issued_us)
         return unknown
     except (ValueError, KeyError, TypeError) as error:
         return VerifiedTerminal("C", unknown.eligibility, unknown.proof_kind,
                                 str(error) if isinstance(error, ValueError) else "missing_context",
-                                unknown.comparison)
-
-
-def eligible_original(context: Context, page: dict[str, Any] | None,
-                      locator: dict[str, Any] | None) -> dict[str, Any]:
-    if page is None or locator is None:
-        compared_authorization_locator()
-    original = resolve_event(page, locator)
-    auth = context.authorization
-    identity = committed_identity(dict(authorization_id=auth.id,
-        generation_id=generation_id(auth.id), workspace_id=auth.workspace_id,
-        key_id=auth.key_hash, invocation_nonce=auth.invocation_nonce,
-        reservation_id=auth.credit_reservation_id, billing_authority=auth.settlement,
-        journal_region=context.journal_region if context.journal_region is not None else context.region,
-        epoch=context.epoch, settle_origin="typed"))
-    require(original["phase"] == "authorize" and original["identity"] == identity,
-            "authorization_link_gap")
-    require(original["eligibility"] == "eligible" and original["facts"] is not None,
-            "authorization_link_gap")
-    require(original["event_at_us"] // 1000000 <= context.received_at, "authorization_link_gap")
-    candidates = original["candidates"]
-    decision = decide(RequestedFacts.from_object(original["facts"]),
-        original["decision"]["reason"], canonical(candidates) if candidates is not None else None,
-        complete_candidates=candidates is not None,
-        complete_supported_context=candidates is not None
-            and all(c["adapter"] in ("openai", "anthropic") for c in candidates))
-    require(decision.eligibility == "eligible" and decision_reference(decision) == original["decision"],
-            "authorization_link_gap")
-    # Actual endpoint membership is checked independently of mutable catalog data.
-    if context.selected_endpoint is not None:
-        require(any(c["endpoint_id"] == context.selected_endpoint for c in candidates), "authorization_link_gap")
-    return original
+                                unknown.comparison, unknown.authorization_day, unknown.authorization_at_us)
 
 
 def terminal_receipt(reservation: Reservation, *, original: dict[str, Any], revision: str,
