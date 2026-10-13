@@ -1486,3 +1486,53 @@ func TestAReapStatesTheBootBindingTheOwnerStated(t *testing.T) {
 		t.Fatalf("the reap's full record: %+v %v", full, err)
 	}
 }
+
+// TestAReapReadsNoBootBindingFromABasis: a hold whose first heartbeat
+// record states no boot binding, as an owner before the record carried one
+// published it, is reaped with a full record whose boot binding is empty,
+// whatever its basis, the gateway's, contains: the basis is nobody's
+// statement of the authorization's boot.
+func TestAReapReadsNoBootBindingFromABasis(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	var clock time.Time
+	rt := f.runtime(func(c *Config) { c.Clock = func() time.Time { return clock } })
+	first := hb(1, "a", 1, 10)
+	first.Basis = []byte(`{"boot":"Ym9vdC0y","model":"m"}`)
+	handleAll(rt, on(t, f.ref, first), on(t, f.ref, settle(2, "b", 40, 0)))
+	if ok, _, err := f.s.OwnerMarkDraining(ctx, grantee, f.ref); err != nil || !ok {
+		t.Fatalf("the draining write: %v %v", ok, err)
+	}
+	row, _, err := f.s.ReadLease(ctx, f.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int64(0)
+	tickAt := func(at time.Time) {
+		n++
+		handleAll(rt, on(t, f.ref, tick(n, at)))
+	}
+	tickAt(row.FenceTime.Time.Add(2 * time.Second))
+	round(rt)
+	if l := f.loaded(); len(l.Holds) != 1 || len(l.Holds[0].Boot) != 0 {
+		t.Fatalf("the hold's row: %+v", l.Holds)
+	}
+	late := row.Expiry
+	if deadline.After(late) {
+		late = deadline
+	}
+	late = late.Add(time.Hour)
+	clock = late
+	tickAt(late)
+	if got := f.records.published(); !slices.Equal(got, []string{"a/record"}) {
+		t.Fatalf("the record topic: %v", got)
+	}
+	var full reapRecord
+	f.records.mu.Lock()
+	body := f.records.data[0]
+	f.records.mu.Unlock()
+	if err := json.Unmarshal(body, &full); err != nil || len(full.Boot) != 0 || !bytes.Equal(full.Basis, first.Basis) ||
+		len(bootOf(body)) != 0 {
+		t.Fatalf("the reap's full record: %+v %v", full, err)
+	}
+}
