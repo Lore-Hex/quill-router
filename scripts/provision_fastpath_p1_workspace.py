@@ -47,6 +47,21 @@ def _shard_tiers(store: Any, workspace_id: str) -> list[list[int | None]]:
         return [[None if v is None else int(v) for v in row] for row in rows]
 
 
+def _credits(store: Any, workspace_id: str) -> int:
+    return sum(row[3] or 0 for row in _shard_tiers(store, workspace_id))
+
+
+def _event_amounts(store: Any, workspace_id: str, event_id: str) -> list[int]:
+    """The amounts of this workspace's trust events for the funding event."""
+    with store._database.snapshot() as snap:
+        rows = snap.execute_sql(
+            "SELECT event_id, amount_micro FROM tr_trust_event WHERE workspace_id=@pk",
+            params={"pk": workspace_id},
+            param_types={"pk": store._param_types.STRING},
+        )
+        return [int(row[1]) for row in rows if str(row[0]) == event_id]
+
+
 def _open_reservations(store: Any, workspace_id: str) -> int:
     with store._database.snapshot() as snap:
         rows = snap.execute_sql(
@@ -109,12 +124,24 @@ def provision(
         workspace = store.create_workspace(user.id, workspace_name, trial_credit_microdollars=0)
         result["workspace_id"] = workspace.id
         result["created_workspace"] = True
+    # The grant must show: a new one raises the rows by exactly the funding,
+    # from what they held just before; one the store reports already
+    # applied must have its event on this workspace, with this amount, or
+    # it was applied elsewhere (the store deduplicates the event globally).
+    before = _credits(store, workspace.id)
     granted = store.credit_workspace_typed_direct(
         workspace.id,
         funding_microdollars,
         funding_event_id,
         provenance=CreditProvenance(source="grant", provider="operator", external_ref=None, occurred_at=datetime.now(UTC)),
     )
+    if granted:
+        after = _credits(store, workspace.id)
+        if after != before + funding_microdollars:
+            raise RuntimeError(f"the credit rows rose by {after - before}, not by the funding {funding_microdollars}")
+    elif funding_microdollars not in _event_amounts(store, workspace.id, funding_event_id):
+        raise RuntimeError(f"the funding event {funding_event_id} was applied elsewhere, or with another amount; "
+                           "this workspace holds no such grant")
     result["funded"] = "applied" if granted else "already applied"
     record = store.set_workspace_trust_override(
         workspace.id, tier=tier, identity_bypass=False, operator_identity=operator, reason=reason
@@ -123,8 +150,6 @@ def provision(
     result["shards_after"] = _shard_tiers(store, workspace.id)
     if any(row[1] is None or row[1] < tier for row in result["shards_after"]):
         raise RuntimeError("a credit shard's effective tier is still below the override")
-    if sum(row[3] or 0 for row in result["shards_after"]) < funding_microdollars:
-        raise RuntimeError("the credit rows do not hold the funding")
     return result
 
 

@@ -127,15 +127,43 @@ def test_refuses_bad_inputs_and_rows_that_do_not_reflect_the_work(monkeypatch: A
     for bad in (["--fund-usd", "0"], ["--fund-usd", "-5"], ["--tier", "4"]):
         assert p1.main(["--email", EMAIL, *bad], store=store) == 1, bad
     capsys.readouterr()
-    # A grant the rows do not reflect, and a shard the override left below
-    # the tier, each fail the apply.
+    # A grant the rows do not reflect fails the apply, even on a workspace
+    # that already holds the amount from elsewhere.
+    user = store.find_user_by_email(EMAIL)
+    workspace = store.create_workspace(user.id, "fastpath-synthetic", trial_credit_microdollars=0)
+    assert store.credit_workspace_typed_direct(workspace.id, 100_000_000, "another_grant",
+                                               provenance=p1.CreditProvenance(source="grant", provider="operator",
+                                                                              external_ref=None,
+                                                                              occurred_at=p1.datetime.now(p1.UTC)))
     monkeypatch.setattr(store, "credit_workspace_typed_direct", lambda *a, **k: True)
     code, _, err = _run(store, capsys, "--apply")
-    assert code == 1 and "do not hold the funding" in err
+    assert code == 1 and "rose by 0, not by the funding" in err
     monkeypatch.undo()
     monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
     store2, _db2 = make_fake_store()
     _owner(store2)
-    monkeypatch.setattr(p1, "_shard_tiers", lambda s, w: [[0, 0, 1, 100_000_000]])
+    # The rows rise by the funding, and a shard's effective tier stays 0.
+    reads = iter([[[0, 0, None, 0]], [[0, 0, 1, 100_000_000]]])
+    monkeypatch.setattr(p1, "_shard_tiers", lambda s, w: next(reads, [[0, 0, 1, 100_000_000]]))
     code, _, err = _run(store2, capsys, "--apply")
     assert code == 1 and "below the override" in err
+
+
+def test_a_funding_event_applied_elsewhere_is_not_this_workspaces(monkeypatch: Any, capsys: Any) -> None:
+    """The store deduplicates the event globally: once applied to one
+    workspace, a second owned workspace of the name, holding credit from
+    another event, gets nothing, and the script says so instead of taking
+    that credit for the funding."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, _db = make_fake_store()
+    user = _owner(store)
+    code, first, _ = _run(store, capsys, "--apply")
+    assert code == 0 and first["funded"] == "applied"
+    store.update_workspace(first["workspace_id"], name="fastpath-synthetic-old")
+    second = store.create_workspace(user.id, "fastpath-synthetic", trial_credit_microdollars=0)
+    assert store.credit_workspace_typed_direct(second.id, 100_000_000, "another_grant",
+                                               provenance=p1.CreditProvenance(source="grant", provider="operator",
+                                                                              external_ref=None,
+                                                                              occurred_at=p1.datetime.now(p1.UTC)))
+    code, _, err = _run(store, capsys, "--apply")
+    assert code == 1 and "applied elsewhere" in err
