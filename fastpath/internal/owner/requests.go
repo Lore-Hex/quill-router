@@ -263,6 +263,13 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		l.mu.Unlock()
 		return time.Time{}, ErrRejected
 	}
+	// The basis a reap builds its record from states the authorization's
+	// boot binding, if it states one: a basis stating another is not this
+	// hold's (§4.9), since the auditor reads the boot there.
+	if basisBoot := record.BootInBasis(hb.Basis); !h.heartbeat && len(basisBoot) > 0 && !bytes.Equal(basisBoot, h.boot) {
+		l.mu.Unlock()
+		return time.Time{}, ErrRejected
+	}
 	// A stream's buffer joins the lease's at its first heartbeat.
 	buffer := l.buffer
 	if !h.heartbeat {

@@ -262,6 +262,7 @@ type fakePending struct {
 	events                        *[]string
 	staged                        bool
 	body                          []byte
+	bodies                        map[string][]byte // a staged body by authorization, over body
 	failWrite, failMark, failDrop bool
 	written                       [][]store.LeaseRecord
 	retired                       [][]store.StagedKey
@@ -270,6 +271,9 @@ type fakePending struct {
 func (f *fakePending) ReadStaged(_ context.Context, auth string, digest []byte) (store.StagedRecord, bool, error) {
 	*f.events = append(*f.events, "read "+auth)
 	body := f.body
+	if b, ok := f.bodies[auth]; ok {
+		body = b
+	}
 	if body == nil {
 		body = []byte(`{"boot":"Ym9vdC0x"}`)
 	}
@@ -393,21 +397,31 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 	}
 	// A reap's full record built from a hold whose row carried no boot
 	// binding states it through its basis, the request's terms the first
-	// heartbeat brought; a basis that states none is none.
-	basis := func(terms string) []byte {
-		return fmt.Appendf(nil, `{"v":1,"a":"a","basis":%q}`, base64.StdEncoding.EncodeToString([]byte(terms)))
+	// heartbeat brought, which the owner held to the authorization's boot;
+	// a basis that states none is none. A settle's full record is the
+	// enclave's: its basis, if any, proves nothing, and a settle that
+	// states no boot is told.
+	basis := func(auth, terms string) []byte {
+		return fmt.Appendf(nil, `{"v":1,"a":%q,"basis":%q}`, auth, base64.StdEncoding.EncodeToString([]byte(terms)))
 	}
-	done, events, alerts, _, topic = run(func(s *fakePending, _ *fakeTopic) { s.body = basis(`{"boot":"Ym9vdC0x","model":"m"}`) })
+	reapBody := func(s *fakePending, terms string) {
+		s.bodies = map[string][]byte{"b": basis("b", terms)}
+	}
+	done, events, alerts, _, topic = run(func(s *fakePending, _ *fakeTopic) { reapBody(s, `{"boot":"Ym9vdC0y","model":"m"}`) })
 	if !done || len(alerts) != 0 || !slices.Equal(events, want) {
-		t.Fatalf("a boot binding in the basis: done %v, %v, told %v", done, events, alerts)
+		t.Fatalf("a reap's boot binding in its basis: done %v, %v, told %v", done, events, alerts)
 	}
 	var out OutcomeRecord
-	if err := json.Unmarshal(topic.data[0], &out); err != nil || !bytes.Equal(out.Boot, []byte("boot-1")) {
-		t.Fatalf("the outcome's boot from the basis: %+v %v", out, err)
+	if err := json.Unmarshal(topic.data[1], &out); err != nil || !bytes.Equal(out.Boot, []byte("boot-2")) {
+		t.Fatalf("the reap's outcome's boot from the basis: %+v %v", out, err)
 	}
-	if done, _, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { s.body = basis(`{"model":"m"}`) }); done ||
+	if done, _, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { reapBody(s, `{"model":"m"}`) }); done ||
+		!slices.Equal(alerts, []string{"b: " + AlertNoBootBinding}) {
+		t.Fatalf("a reap's basis that states no boot binding: done %v, told %v", done, alerts)
+	}
+	if done, _, alerts, _, _ := run(func(s *fakePending, _ *fakeTopic) { s.body = basis("a", `{"boot":"Ym9vdC0y"}`) }); done ||
 		!slices.Equal(alerts, []string{"a: " + AlertNoBootBinding}) {
-		t.Fatalf("a basis that states no boot binding: done %v, told %v", done, alerts)
+		t.Fatalf("a settle's full record with a boot binding in a basis only: done %v, told %v", done, alerts)
 	}
 
 	// The records go in batches each within its bounds.

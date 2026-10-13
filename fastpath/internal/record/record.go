@@ -405,3 +405,19 @@ func (d *HoldsHasher) Add(held HeldHold) ([]byte, error) {
 
 // Sum is the digest of the holds taken.
 func (d *HoldsHasher) Sum() []byte { return d.h.Sum(nil) }
+
+// BootInBasis is the boot binding the basis a hold's first heartbeat brings
+// states: the basis is the gateway's terms for a reap of the hold (§4.9),
+// opaque here but for this one field, "boot", the authorization's boot
+// binding, which the owner holds a basis to (a basis stating another is
+// refused) and which a reap's full record and its pending work read. A
+// basis that is not of that shape, or states none, yields none.
+func BootInBasis(basis []byte) []byte {
+	var terms struct {
+		Boot []byte `json:"boot"`
+	}
+	if len(basis) == 0 || json.Unmarshal(basis, &terms) != nil {
+		return nil
+	}
+	return terms.Boot
+}

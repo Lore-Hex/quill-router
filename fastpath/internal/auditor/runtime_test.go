@@ -1463,6 +1463,22 @@ func TestAReapStatesTheBootBindingTheBasisCarries(t *testing.T) {
 	}
 	tickAt(row.FenceTime.Time.Add(2 * time.Second))
 	round(rt)
+	// The hold's row as a member before this change stored it: no boot
+	// binding, the basis alone; the reap states the basis's.
+	if _, err := f.db.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		n, err := txn.Update(ctx, spanner.Statement{
+			SQL:    "UPDATE tr_lease_hold SET boot_binding = NULL WHERE workspace_id = @w AND lease_id = @l",
+			Params: map[string]any{"w": f.ref.Workspace, "l": f.ref.LeaseID}})
+		if err == nil && n != 1 {
+			return fmt.Errorf("%d hold rows", n)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if l := f.loaded(); len(l.Holds) != 1 || len(l.Holds[0].Boot) != 0 {
+		t.Fatalf("the hold's row before the reap: %+v", l.Holds)
+	}
 	late := row.Expiry
 	if deadline.After(late) {
 		late = deadline

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -443,6 +444,10 @@ func TestHeartbeatValidity(t *testing.T) {
 	for name, hb := range map[string]HeartbeatOf{
 		"a first without the reap's basis": {GatewaySeq: 1, Hash: sum("o1"), Usage: 1, Running: 1},
 		"a first numbered 0":               {GatewaySeq: 0, Hash: sum("o0"), Usage: 1, Running: 1, Basis: []byte("terms")},
+		// The basis states the authorization's boot binding, if one: another's
+		// is not this hold's.
+		"a first whose basis states another boot": {GatewaySeq: 1, Hash: sum("o1"), Usage: 1, Running: 1,
+			Basis: []byte(`{"boot":"b3RoZXI=","model":"m"}`)},
 	} {
 		if _, err := f.lease.Heartbeat(ctx, other, hb); !errors.Is(err, ErrRejected) {
 			t.Errorf("%s: %v, want %v", name, err, ErrRejected)
@@ -469,6 +474,12 @@ func TestHeartbeatValidity(t *testing.T) {
 	}
 	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 3, Hash: sum("h3"), Usage: 40, Running: 70}); !errors.Is(err, ErrDecided) {
 		t.Fatalf("a heartbeat after the settle: %v", err)
+	}
+	// A basis that states the hold's own boot binding, or none, is taken.
+	stated := f.admit(t, 100, true)
+	if _, err := f.lease.Heartbeat(ctx, stated, HeartbeatOf{GatewaySeq: 1, Hash: sum("s1"), Usage: 1, Running: 1,
+		Basis: fmt.Appendf(nil, `{"boot":%q,"model":"m"}`, base64.StdEncoding.EncodeToString(boot))}); err != nil {
+		t.Errorf("a first whose basis states the hold's boot: %v", err)
 	}
 }
 

@@ -252,7 +252,7 @@ func (l *Lease) heartbeat(r record.Record) {
 		// The basis carries the boot binding (§4.9): the hold's row states
 		// it from the first heartbeat on, as a hold handed over does.
 		if len(h.row.Boot) == 0 {
-			h.row.Boot = bootInBasis(r.Basis)
+			h.row.Boot = record.BootInBasis(r.Basis)
 		}
 	}
 	l.put[r.Auth] = true

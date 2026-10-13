@@ -508,7 +508,7 @@ func (rt *Runtime) reap(ctx context.Context, h *held, hold store.HoldRow, at tim
 	// one its basis carries, for a hold the heartbeats alone made.
 	boot := hold.Boot
 	if len(boot) == 0 {
-		boot = bootInBasis(hold.ReapBasis)
+		boot = record.BootInBasis(hold.ReapBasis)
 	}
 	full := encoded(reapRecord{V: 1, Lease: h.ref.LeaseID, Auth: hold.AuthorizationID, Estimate: hold.Estimate,
 		Charge: charge, At: at, GatewaySeq: hold.SnapshotSeq.Int64, Hash: hold.SnapshotHash, Usage: hold.SnapshotUsage,

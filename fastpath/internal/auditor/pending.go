@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/record"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -235,33 +236,30 @@ var stagedBatch = store.MaxDropStaged
 // owner's reap's and an auditor's reap's each carry it, as "boot".
 func bootOf(body []byte) []byte {
 	var full struct {
-		Boot  []byte `json:"boot"`
+		Boot []byte `json:"boot"`
+	}
+	if json.Unmarshal(body, &full) != nil {
+		return nil
+	}
+	return full.Boot
+}
+
+// reapBootOf is a reap's full record's boot binding: the one it states, or
+// the one its basis states, for a record built from a hold whose row
+// carried none (the basis is the owner's to hold to the authorization's
+// boot, record.BootInBasis). A settle's full record is the enclave's and
+// states its own, or none.
+func reapBootOf(body []byte) []byte {
+	if boot := bootOf(body); len(boot) > 0 {
+		return boot
+	}
+	var full struct {
 		Basis []byte `json:"basis"`
 	}
 	if json.Unmarshal(body, &full) != nil {
 		return nil
 	}
-	if len(full.Boot) > 0 {
-		return full.Boot
-	}
-	// A reap's full record built from a hold whose row carried no boot
-	// binding states it through the basis.
-	return bootInBasis(full.Basis)
-}
-
-// bootInBasis is the boot binding the basis a hold's first heartbeat
-// brought carries (§4.9): the request's terms and boot binding, as the
-// gateway states them, which a reap of the hold needs to build its full
-// record so no reap depends on the authorization's record. A basis that is
-// not of that shape, or states none, yields none.
-func bootInBasis(basis []byte) []byte {
-	var terms struct {
-		Boot []byte `json:"boot"`
-	}
-	if len(basis) == 0 || json.Unmarshal(basis, &terms) != nil {
-		return nil
-	}
-	return terms.Boot
+	return record.BootInBasis(full.Basis)
 }
 
 // Do does a pack's work, and reports whether the pack is done. A settle's or
@@ -300,7 +298,11 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		}
 		w.body = r.Body
 		if len(w.boot) == 0 {
-			w.boot = bootOf(r.Body)
+			if w.Kind == "reap" {
+				w.boot = reapBootOf(r.Body)
+			} else {
+				w.boot = bootOf(r.Body)
+			}
 		}
 	}
 	for _, w := range winners {
