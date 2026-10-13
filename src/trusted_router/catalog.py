@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from functools import cache
 
 from trusted_router.catalog_capabilities import (
     manifest_supported_parameters,
@@ -201,6 +202,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
     MODELS,
 )
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
+from trusted_router.config import Settings, get_settings
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
 from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
@@ -595,11 +597,34 @@ def model_eu_focused_provider_available(model: Model) -> bool:
     )
 
 
+@cache
+def _process_settings() -> Settings:
+    # Routing reads the auto ladder from the app's Settings, which the app
+    # builds once at startup from the same environment.
+    return get_settings()
+
+
+def _routing_pool_discovery(model: Model) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """supported_parameters and input_modalities a routing pool can promise,
+    or nothing for any other model. Orchestration models (synth, advisors,
+    private proxies) run several calls in the gateway, each with its own
+    parameters, so their rows are not derived from routes."""
+    if orchestration_role(model.id) != "routing_pool":
+        return (), ()
+    # routing imports this module, so it is imported when a row is built.
+    from trusted_router.routing import routing_pool_discovery
+
+    return routing_pool_discovery(model.id, _process_settings())
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
     capabilities = [endpoint_capabilities(model, endpoint) for endpoint in endpoints]
+    # A routing pool has no routes of its own; it publishes what a request
+    # naming it is sure to get on the routes it can reach.
+    pool_parameters, pool_modalities = _routing_pool_discovery(model)
     # Discovery fields are a union over the model's own routes. A private
     # proxy (for example a named decision model) is served through another
     # model's routes, so it keeps its own declarations instead.
@@ -609,6 +634,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         else tuple(dict.fromkeys((
             *model.input_modalities,
             *(value for endpoint in endpoints for value in (endpoint.input_modalities or ())),
+            *pool_modalities,
         )))
     )
     named_chain = NAMED_DECISION_MODEL_PROVIDERS.get(model.id)
@@ -640,6 +666,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         ),
         model.supported_parameters,
         *(endpoint.supported_parameters for endpoint in endpoints),
+        pool_parameters,
     )
 
     # For meta routers, derive prompt/completion price from the candidate range

@@ -513,6 +513,7 @@ def test_capability_docs_explain_scope_and_unknown_support(client: TestClient):
         "provider.require_parameters: true", "include every parameter sent",
         "Check the per-route values first", "some routes declare less than the model supports",
         "not effort values or image input", "provider.min_privacy", "Routing aliases",
+        "every model it can route to", "routing sends image input only to routes that accept images",
     ):
         assert text in response.text
 
@@ -528,6 +529,7 @@ def test_public_openapi_explains_capability_union_and_parameter_filter(client: T
         "Some routes declare less than the model supports", "provider.require_parameters: true",
         "supported_parameters include every parameter sent", "not effort values or image input",
         "trustedrouter.endpoints[].capabilities", "Routing aliases omit the object",
+        "every model it can route to", "routing sends image input only to routes that accept images",
     ):
         assert text in description
 

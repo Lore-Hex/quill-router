@@ -8,6 +8,8 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
 
+from fastapi import HTTPException
+
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
@@ -37,6 +39,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
     meta_candidate_models,
 )
+from trusted_router.catalog_capabilities import union_supported_parameters
 from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -345,6 +348,68 @@ def catalog_endpoint_candidates(
     if not prefs.allow_fallbacks:
         return candidates[:1]
     return candidates
+
+
+def routing_pool_routes(
+    model_id: str,
+    settings: Settings,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Every (model, route) a chat request naming `model_id` can reach when the
+    caller sets no preferences of its own.
+
+    For a routing pool (trustedrouter/auto, cheap, eu, zdr, ...) this is the
+    pool itself: its models, each on the routes the pool's own filters keep
+    (Credits only, a privacy floor, an EU or renewable host list). A caller's
+    filters, the gateway region and live availability only remove routes.
+    An empty pool has no routes.
+    """
+    try:
+        return list(chat_route_endpoint_candidates({"model": model_id}, settings))
+    except HTTPException:
+        return []
+
+
+def routing_pool_discovery(
+    model_id: str,
+    settings: Settings,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The supported_parameters and input_modalities /v1/models may publish
+    for a routing pool: what a request naming the pool is sure to get.
+
+    Each field follows what routing does with it.
+
+    - A parameter is published when every model the pool can route to has at
+      least one pool route that accepts it, by the same test
+      provider.require_parameters applies. Default routing does not filter by
+      parameters, so the pool never claims more than its weakest model, and a
+      model's routes follow the same contract as naming that model directly.
+      With provider.require_parameters: true, a request sending a published
+      parameter keeps every model in the pool.
+    - An input modality is published when any of the pool's routes accepts it.
+      Routing always keeps only routes whose own input_modalities cover the
+      request's (endpoint_supports_input_modalities), so an image request
+      reaches only routes that take images.
+    """
+    routes_by_model: dict[str, list[ModelEndpoint]] = {}
+    named: set[str] = set()
+    modalities: dict[str, None] = {}
+    for model, endpoint in routing_pool_routes(model_id, settings):
+        routes_by_model.setdefault(model.id, []).append(endpoint)
+        named.update(endpoint.supported_parameters)
+        # Missing route metadata means text only, as in the routing filter.
+        modalities.update(dict.fromkeys(endpoint.input_modalities or ("text",)))
+    published = [
+        parameter
+        for parameter in named
+        if all(
+            any(
+                _endpoint_supports_requested_parameters(route, frozenset({parameter}))
+                for route in routes
+            )
+            for routes in routes_by_model.values()
+        )
+    ]
+    return union_supported_parameters(published), tuple(modalities)
 
 
 def speech_route_endpoint_candidates(
