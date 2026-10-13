@@ -655,6 +655,44 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
     assert rendered["TR_SOURCE_REVISION"] == "abc12345" + "0" * 32
 
 
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
+def test_rollout_pauses_unqualified_shadow_without_enabling_money_paths(
+    harness: DeployScriptHarness, region: str,
+) -> None:
+    from types import SimpleNamespace
+
+    from trusted_router.services import async_settle_shadow
+
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
+                   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES": "stale-opt-in"},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_SERVING_REGION"] == region
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
+    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
+    assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
+    assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
+    config = Settings(
+        environment="test",
+        async_settle_shadow_workspaces=rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"],
+        async_settle_enabled=rendered["TR_ASYNC_SETTLE_ENABLED"],
+        async_settle_protection=rendered["TR_ASYNC_SETTLE_PROTECTION"],
+    )
+
+    class ForbiddenBackend:
+        @property
+        def _database(self):
+            pytest.fail("paused shadow must not access Spanner or install workers")
+
+    app = SimpleNamespace(state=SimpleNamespace())
+    async_settle_shadow.install(app, config, ForbiddenBackend())
+    assert not hasattr(app.state, "async_settle_shadow")
+
+
 @pytest.mark.parametrize("revision", ["abc12345", "not-a-commit", "f" * 40])
 def test_rollout_refuses_invalid_source_before_cloud_access(
     harness: DeployScriptHarness, revision: str,

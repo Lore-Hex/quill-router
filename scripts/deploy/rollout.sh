@@ -634,16 +634,15 @@ ENV_VARS=(
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
   # Admission and protection stay off until the runbook's step 8; nothing in this
   # block issues a ticket. Do not inherit any of these values from an old revision.
-  # Shadow phase (design §8, shadow appendix §11): a non-empty list installs the
-  # router-side comparator runtime (observer, counter maintenance, evidence
-  # store) for the named workspaces, so it is NOT dormant. Opt the pilot
-  # workspace 45819281-0ce9-4811-a0cd-c660ab3a116d in only after the signer and
-  # epoch are provisioned and the §5 fleet budget gate is recorded (design §10
-  # "Decisions", enablement order). Rollback: empty the list and redeploy.
+  # Shadow paused: v1 polls fleet-v1 while its publisher is disabled, so it
+  # cannot qualify evidence and generates cross-region read-deadline alerts.
+  # Re-enable only after independent shadow health and cohort prerequisites
+  # pass; start a new evidence window. Do not enable fast drain to seed health.
+  # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET="
   "TR_ASYNC_SETTLE_SHADOW_POLICY="
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
   "TR_ASYNC_SETTLE_ENABLED=false"
   "TR_ASYNC_SETTLE_PROTECTION=false"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
