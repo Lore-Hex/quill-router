@@ -10,10 +10,12 @@ import pytest
 from tests.shadow_v2_gate_fixture_generator import START, build, change_row, ports
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_evidence as p1
+from trusted_router.async_settle_shadow_v2_a2_evidence import FAILURE_RULES
 from trusted_router.async_settle_shadow_v2_gate_bundle import Context, decode_bundle
+from trusted_router.async_settle_shadow_v2_gate_failures import PRODUCERS
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Row
 from trusted_router.async_settle_shadow_v2_gate_result import Subject, render
-from trusted_router.async_settle_shadow_v2_gates import GAP_GROUPS, RULES, clock, evaluate
+from trusted_router.async_settle_shadow_v2_gates import clock, evaluate, names
 from trusted_router.async_settle_shadow_v2_schema import sha256
 from trusted_router.detached_jws import canonical
 
@@ -94,9 +96,9 @@ def damage(bundle: Bundle, gap: str) -> Bundle:
     if gap == 'eligible_coverage_gap':
         return replace(bundle, rows=tuple(r for r in bundle.rows if r.key.kind != p1.KINDS[0]))
     if gap == 'prediction_demand_gap':
-        return counter(lambda c: c['admission_observer'].update(prediction_yes=0))
+        return receipt(lambda p: p['events'][1]['prediction'].update(prediction='unknown'))
     if gap == 'prediction_unknown_gap':
-        return counter(lambda c: c['admission_observer'].update(prediction_yes=0, prediction_unknown=1))
+        return receipt(lambda p: p['events'][1]['prediction'].update(prediction='unknown'))
     if gap == 'observer_cadence_gap':
         return counter(lambda c: c['admission_observer'].update(health_reads=0))
     if gap == 'observer_budget_gap':
@@ -144,7 +146,7 @@ def damage(bundle: Bundle, gap: str) -> Bundle:
         return counter(lambda c: c['diagnostics'].update(exclusion_conflict=1))
     if gap == 'missing_support':
         return replace(bundle, reset_support=None)
-    if gap in GAP_GROUPS['G9']:
+    if gap in names('G9'):
         assert bundle.reset_support
         return replace(bundle, reset_support=replace(bundle.reset_support,
             resets=(dict(at_us=START + 1, revision='a' * 40, reason=gap),)))
@@ -155,7 +157,7 @@ def damage(bundle: Bundle, gap: str) -> Bundle:
     if gap == 'regional_seed_gap':
         assert bundle.inventory
         return replace(bundle, inventory=replace(bundle.inventory,
-            boots=(*bundle.inventory.boots, replace(bundle.inventory.boots[0], boot='new', region='europe-west1'))))
+            boots=(replace(bundle.inventory.boots[0], region='europe-west1'), *bundle.inventory.boots[1:])))
     if gap == 'continuous_window_gap':
         return bundle
     if gap == 'external_proofs_missing':
@@ -167,7 +169,7 @@ def damage(bundle: Bundle, gap: str) -> Bundle:
     raise AssertionError(gap)
 
 
-GAPS = tuple(rule.gap for rule in RULES)
+GAPS = tuple(rule.name for rule in FAILURE_RULES)
 pytestmark = pytest.mark.timeout(method='signal')
 
 
@@ -182,6 +184,9 @@ def test_gap_negative(passing: Bundle, gap: str) -> None:
     assert result.verdict == 'BLOCKED'
     assert gap in result.gaps, (gap, result.gaps)
     assert any(f.gap == gap for f in result.failures)
+    output, attachments = render(result)
+    assert json.loads(output)['verdict'] == 'BLOCKED'
+    assert json.loads(attachments[0]) == result.gate_report
 
 
 @pytest.mark.parametrize('gap', GAPS)
@@ -193,24 +198,23 @@ def test_gap_positive(positive_results: dict[str, Any], gap: str) -> None:
 
 
 def test_one_producer_and_both_directions() -> None:
-    names = [r.gap for r in RULES]
-    assert len(names) == len(set(names))
-    assert set(names) == {g for gaps in GAP_GROUPS.values() for g in gaps}
-    assert len({r.decide for r in RULES}) == len(RULES)
-    assert all(r.decide.__name__ == 'decide_' + r.gap for r in RULES)
-    assert set(test_gap_positive.pytestmark[0].args[1]) == set(names)
-    assert set(test_gap_negative.pytestmark[0].args[1]) == set(names)
+    expected = [r.name for r in FAILURE_RULES]
+    assert len(expected) == len(set(expected)) == 58
+    assert set(PRODUCERS) == set(expected)
+    assert len(set(PRODUCERS.values())) == 58
+    assert all(fn.__name__ == 'decide_' + name for name, fn in PRODUCERS.items())
+    assert set(test_gap_positive.pytestmark[0].args[1]) == set(expected)
+    assert set(test_gap_negative.pytestmark[0].args[1]) == set(expected)
 
 
 def test_lossless_more_than_128_subjects() -> None:
     context = Context(Bundle(), None, 'pre-flip')
     for i in range(200):
         context.issue('writer_closure_gap', 'absent', Subject('2026-10-06', f'boot{i}'), tuple(f'receipt{j:04}' for j in range(300)))
-    rule = next(r for r in RULES if r.gap == 'writer_closure_gap')
-    failures = rule.decide(context)
+    failures = PRODUCERS['writer_closure_gap'](context)
     assert len(failures) == 200
-    assert all(f.count == 300 and len(f.object_ids) == 300 for f in failures)
-    assert len({f.subject.boot for f in failures}) == 200
+    assert all(f.count == 1 and len(f.object_ids) == 300 for f in failures)
+    assert len({f.subject['boot'] for f in failures}) == 200
 
 
 def test_evaluates_later_rules_after_failure(passing: Bundle) -> None:
@@ -223,13 +227,14 @@ def test_missing_verifier_is_artifact_gap(passing: Bundle) -> None:
     assert 'artifact_gap' in evaluate(passing).gaps
 
 
-def test_internal_pass_and_render_seam(passing: Bundle) -> None:
+def test_internal_pass_and_render(passing: Bundle) -> None:
     result = evaluate(passing, ports(), gate='shadow-serving')
     assert result.verdict == 'PASS' and result.gaps == ()
     assert result.report.writers[1].prediction_state == 'not_exercised'
     assert result.report.writers[1].unknown_ratio is None
-    with pytest.raises(ValueError, match='undefined preimage'):
-        render(result)
+    output, attachments = render(result)
+    assert json.loads(output)['verdict'] == 'PASS'
+    assert json.loads(attachments[0]) == result.gate_report
 
 
 def test_bootstrap_uses_original_time_and_excludes_serving(passing: Bundle) -> None:
@@ -381,14 +386,11 @@ def test_digest_without_preimage_cannot_pass(passing: Bundle) -> None:
 
 
 def test_gap_inventory_matches_design_table() -> None:
-    import re
     from pathlib import Path
     design = (Path(__file__).parents[1] / 'docs/design/async-settle-shadow-v2.md').read_text()
-    table = design.split('## 8. Gate v2', 1)[1].split('For G6 cadence', 1)[0]
-    names = {name for line in table.splitlines() if line.startswith('| G') or line.startswith('| **A1 AFTER G')
-             for name in re.findall(r'`([^`]+)`', line.split('|')[-2])}
-    assert names <= set(GAPS)
-    assert set(GAPS) - names == {'hash', 'identity', 'normalization', 'evaluator_disagreement', 'counter_mismatch', 'reviewed_resolution'}
+    table = design.split('| GAP_NAME | Single producer |', 1)[1].split('\n\n', 1)[0]
+    inventory = {line.split('|')[1].strip() for line in table.splitlines()[2:]}
+    assert inventory == set(GAPS)
 
 
 def test_post_flip_delegates_retained_outcomes(passing: Bundle, tmp_path: Any) -> None:

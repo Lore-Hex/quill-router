@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
+from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
+from trusted_router import async_settle_shadow_v2_gate_report as a2report
+from trusted_router.async_settle_shadow_v2_a2_contract import REQUIRED_RULES
+from trusted_router.async_settle_shadow_v2_a2_roots import file_digest
 from trusted_router.async_settle_shadow_v2_gate_accounting import (
     PREREQUISITES,
     authorization,
@@ -21,10 +23,10 @@ from trusted_router.async_settle_shadow_v2_gate_bundle import (
     decode_bundle,
     verify_samples,
 )
+from trusted_router.async_settle_shadow_v2_gate_failures import PRODUCERS, normalize
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Ports
 from trusted_router.async_settle_shadow_v2_gate_load import load_budgets, observer_health
 from trusted_router.async_settle_shadow_v2_gate_result import (
-    Failure,
     Metric,
     Peak,
     Report,
@@ -32,47 +34,18 @@ from trusted_router.async_settle_shadow_v2_gate_result import (
     Subject,
     WriterReport,
 )
-from trusted_router.async_settle_shadow_v2_schema import day_at, require, sha256
+from trusted_router.async_settle_shadow_v2_gate_verifiers import (
+    check_calls,
+    invoke_retained,
+    records,
+)
+from trusted_router.async_settle_shadow_v2_schema import day_at, require
 
-# Sole inventory and ownership table. Each name has exactly one output producer.
-GAP_GROUPS = {
-    'G1': ('policy_version_gap', 'evidence_schema_gap', 'artifact_gap'),
-    'G2': ('writer_roster_gap', 'regional_roster_unknown', 'legacy_region_label', 'legacy_sample_region', 'flag_interval_gap', 'boot_prerequisite_gap'),
-    'G3': ('authorize_coverage_gap', 'authorization_link_gap', 'authorization_obligation_gap', 'authorization_terminal_conflict', 'authorization_horizon_gap'),
-    'G4': ('observed_partition_gap', 'terminal_coverage_gap', 'phase_coverage_gap', 'exclusion_proof_gap'),
-    'G5': ('eligible_coverage_gap', 'prediction_demand_gap', 'prediction_unknown_gap'),
-    'G6': ('observer_cadence_gap', 'observer_budget_gap', 'shadow_health_gap', 'health_source_gap', 'health_timestamp_gap', 'health_elapsed_gap', 'health_slot_gap', 'publisher_accounting_gap', 'publisher_trace_gap'),
-    'G7': ('simultaneous_capacity_gap', 'pre_enable_budget', 'publisher_budget_gap', 'fleet_headroom_gap', 'freshness_budget_gap', 'evidence_export_budget_gap', 'close_handoff_budget_gap'),
-    'G8': ('checkpoint_reconciliation_gap', 'evidence_loss_gap', 'writer_closure_gap', 'retry_original_gap', 'close_result_identity_gap', 'close_result_conflict', 'handoff_coverage_gap'),
-    'G9': ('hash', 'identity', 'normalization', 'evaluator_disagreement', 'counter_mismatch', 'reviewed_resolution', 'revision_rollback', 'missing_support', 'exclusion_conflict'),
-    'G10': ('positive_seed_gap', 'regional_seed_gap', 'continuous_window_gap'),
-    'G11': ('external_proofs_missing', 'pilot_prerequisite_gap'),
-}
-STAGES = {
-    'fleet-budgets-pre': ('G1', 'G7'),
-    'fleet-budgets': ('G1', 'G2', 'G5', 'G6', 'G7', 'G8'),
-    'shadow-serving': tuple('G' + str(i) for i in range(1, 11)),
-    'pre-flip': tuple(GAP_GROUPS),
-    'post-flip': ('G1', 'G11'),
-}
+STAGES = REQUIRED_RULES
 
 
-@dataclass(frozen=True)
-class Rule:
-    gap: str
-    group: str
-    decide: Callable[[Context], tuple[Failure, ...]]
-
-
-def _producer(gap: str, group: str) -> Callable[[Context], tuple[Failure, ...]]:
-    def decide(ctx: Context) -> tuple[Failure, ...]:
-        return tuple(Failure(gap, group, issue.subject, issue.count,
-                             issue.object_ids, issue.detail) for issue in ctx.issues if issue.gap == gap)
-    decide.__name__ = 'decide_' + gap
-    return decide
-
-
-RULES = tuple(Rule(gap, group, _producer(gap, group)) for group, gaps in GAP_GROUPS.items() for gap in gaps)
+def names(rule: str) -> tuple[str, ...]:
+    return tuple(row.name for row in a2.FAILURE_RULES if row.rule == rule)
 
 
 def resets(ctx: Context) -> tuple[int, ...]:
@@ -82,7 +55,7 @@ def resets(ctx: Context) -> tuple[int, ...]:
         return ()
     history = [dict(r) for r in support.resets]
     for sample in ctx.kind(p1.KINDS[0]):
-        if sample['classification'] in GAP_GROUPS['G9']:
+        if sample['classification'] in names('G9'):
             history.append(dict(at_us=sample['observed_at_us'], revision=sample['deployment']['router_revision'], reason=sample['classification']))
     for counter in ctx.kind(p1.KINDS[3]):
         if counter['diagnostics'].get('exclusion_conflict', 0):
@@ -92,7 +65,7 @@ def resets(ctx: Context) -> tuple[int, ...]:
     try:
         # The retained function owns resolution schema, rollback partial order,
         # provenance support and persistent missing-support behavior.
-        legacy = ctx.ports.report(list(support.rows), list(ctx.bundle.days), support.proof)
+        legacy = invoke_retained(ctx, 'report', list(support.rows), list(ctx.bundle.days), support.proof)
         for gap in legacy['gaps']:
             if gap.endswith('missing_support'):
                 ctx.issue('missing_support', 'retained report: ' + gap)
@@ -100,11 +73,11 @@ def resets(ctx: Context) -> tuple[int, ...]:
         serving = [(b.start_us, b.end_us or ctx.bundle.completed_at_us, b.revision)
                    for b in ctx.bundle.inventory.boots] if ctx.bundle.inventory else []
         manifests = {m['day']: {'router_revisions': m['revisions']['router']} for m in ctx.kind(p1.KINDS[5]) if 'revisions' in m}
-        ctx.ports.collect_rollbacks(history, serving, support.proof.get('resolved_mismatches', []), manifests)
+        invoke_retained(ctx, 'collect_rollbacks', history, serving, support.proof.get('resolved_mismatches', []), manifests)
     except (ValueError, KeyError, TypeError):
         ctx.issue('missing_support', 'invalid retained reset/resolution evidence')
     for reset in history:
-        reason = reset['reason'] if reset['reason'] in GAP_GROUPS['G9'] else 'missing_support'
+        reason = reset['reason'] if reset['reason'] in names('G9') else 'missing_support'
         if 'resolved_at_us' not in reset or 'invalidated_at_us' in reset:
             ctx.issue(reason, 'unresolved correctness history', Subject(object_id=str(reset.get('at_us'))))
     return tuple(sorted(r['at_us'] for r in history if type(r.get('at_us')) is int))
@@ -128,7 +101,7 @@ def external(ctx: Context) -> None:
         try:
             require(ctx.ports is not None and supplied.post_input is not None, 'pilot_prerequisite_gap')
             assert ctx.ports is not None and supplied.post_input is not None
-            require(ctx.ports.post_flip(supplied.post_input)['status'] == 'PASS', 'pilot_prerequisite_gap')
+            require(invoke_retained(ctx, 'post_flip', supplied.post_input)['status'] == 'PASS', 'pilot_prerequisite_gap')
         except (ValueError, KeyError, TypeError, OSError):
             ctx.issue('pilot_prerequisite_gap', 'retained post-flip status/rollback/handoff failed')
     elif not all((supplied.drain_selected, supplied.signer_checked, supplied.attestation_checked, supplied.exposure_accepted)):
@@ -176,7 +149,7 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
         if at > threshold and day_at(at) in ctx.bundle.days and day_at(at) not in blocked_days and (not reset_times or at > max(reset_times)):
             candidates.append(sample)
     candidates.sort(key=lambda s: s['observed_at_us'])
-    persistent = any(i.gap in GAP_GROUPS['G9'] for i in ctx.issues)
+    persistent = any(i.gap in names('G9') for i in ctx.issues)
     start = candidates[0]['observed_at_us'] if candidates and not persistent else None
     if start is None:
         ctx.issue('positive_seed_gap', 'no qualifying original durable eligible sample')
@@ -190,7 +163,10 @@ def clock(ctx: Context, reset_times: tuple[int, ...]) -> tuple[int | None, int |
     if ctx.gate == 'pre-flip' and (elapsed is None or elapsed < 604800):
         ctx.issue('continuous_window_gap', 'less than 604800 continuously covered seconds')
     if ctx.bundle.cohort and ctx.bundle.cohort.regional_seeds and ctx.gate == 'pre-flip':
-        regions = {b.region for b in ctx.bundle.inventory.boots if b.role == 'router'} if ctx.bundle.inventory else set()
+        traffic_boots = {page['boot'] for page, event in ctx.events()
+                         if event['phase'] in ('authorize', 'replay', 'settle', 'refund')}
+        regions = {b.region for b in ctx.bundle.inventory.boots
+                   if b.role == 'router' and b.boot in traffic_boots} if ctx.bundle.inventory else set()
         seeded = {s['deployment']['region'] for s in candidates if start is not None and start <= s['observed_at_us'] <= (end or start)}
         for region in sorted(regions - seeded):
             ctx.issue('regional_seed_gap', 'region has no real seed', Subject(object_id=region))
@@ -258,16 +234,35 @@ def evaluate(bundle: Bundle | Any, ports: Ports | None = None, *, gate: str = 'p
             collect(ctx)
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             ctx.issue('evidence_schema_gap', collect.__name__ + ': ' + type(exc).__name__)
+    check_calls(ctx)
     peaks = load_budgets(ctx)
     reset_times = resets(ctx)
     external(ctx)
     start, elapsed, gap_times = clock(ctx, reset_times)
+    from trusted_router.async_settle_shadow_v2_gate_preimages import oversized_file_preimage
+    oversized_file_preimage(ctx)
     selected = STAGES[gate]
-    failures = tuple(failure for rule in RULES if rule.group in selected for failure in rule.decide(ctx))
+    window = None
+    populations = None
+    try:
+        window = a2report.window_for(ctx)
+        populations = a2report.population(ctx, window, selected)
+    except ValueError:
+        ctx.issue('artifact_gap', 'report observation window unavailable')
+    normalize(ctx)
+    if any(i.gap == 'evidence_schema_gap' for i in ctx.issues):
+        ctx.issue('artifact_gap', 'incomplete evaluation after schema damage')
+    failures = tuple(failure for rule in a2.FAILURE_RULES if rule.rule in selected
+                     for failure in PRODUCERS[rule.name](ctx))
     metrics = report(ctx, peaks, start, elapsed, reset_times, gap_times)
-    return Result(gate, bundle.completed_at_us, sha256(ctx.proof) if ctx.proof else None,
+    gate_report = None
+    streams: dict[str, list[dict[str, Any]]] = {}
+    leaves: dict[str, bytes] = {}
+    if window is not None and populations is not None and ctx.proof is not None:
+        gate_report, streams, leaves = a2report.build(ctx, failures, metrics, window, populations, records(ctx))
+    return Result(gate, bundle.completed_at_us, file_digest(bundle.proof) if bundle.proof else None,
                   ctx.proof['ledger_root'] if ctx.proof else None,
-                  tuple(sorted({f.gap for f in failures})), failures, metrics)
+                  tuple(sorted({f.gap for f in failures})), failures, metrics, gate_report, streams, leaves)
 
 
 def fleet_budgets_pre(bundle: Bundle, ports: Ports | None = None) -> Result:

@@ -15,6 +15,7 @@ from trusted_router import async_settle_shadow_binding as binding
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_health as health
 from trusted_router import async_settle_shadow_v2_a1_reconciliation as joins
+from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_certificate as cert
 from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_evidence as p1
@@ -33,6 +34,7 @@ from trusted_router.async_settle_shadow_v2_gate_inputs import (
     ResetSupport,
     Row,
     Signature,
+    VerifierApproval,
 )
 from trusted_router.async_settle_shadow_v2_gate_load import COMPONENT_BOUNDS
 from trusted_router.async_settle_shadow_v2_schema import day_at, sha256
@@ -56,10 +58,33 @@ def fixture(file: str, *, a1_release: bool = True, name: str | None = None) -> d
     return copy.deepcopy(next(v['object'] for v in variants if name is None or v['name'] == name))
 
 
+@cache
 def ports() -> Ports:
+    import inspect
+    wire = json.loads((ROOT / 'shadow_v1.json').read_bytes())
+    token = wire['billing_shadow_binding']
+    claims = json.loads(b64decode(token.split('.')[1]))
+    old = json.loads((ROOT / 'authorize_v1.json').read_bytes())
+    header = json.loads(b64decode(token.split('.')[0]))
+    binding_keys = (TrustedKey(header['kid'], binding.PURPOSE, old['public_key'], claims['iss'], binding.AUDIENCE),)
+    vector = json.loads((ROOT / 'shadow_v2/exclusion_certificate.json').read_bytes())['variants'][0]
+    approvals = []
+    for fn, keys, file in ((cert.verify_certificate, (TrustedKey(**vector['key']),), 'shadow_v2/exclusion_certificate.json'),
+                           (binding.verify_binding, binding_keys, 'shadow_v1.json')):
+        approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn,
+            Path(inspect.getfile(fn)).read_bytes(), (ROOT / file).read_bytes(), canonical([asdict(k) for k in keys]), keys,
+            hashlib.sha256(Path(inspect.getfile(fn)).read_bytes()).hexdigest(), hashlib.sha256((ROOT / file).read_bytes()).hexdigest()))
+    for fn in (pilot.fleet_budgets_pre, legacy.collect_rollbacks, legacy.report, pilot.post_flip):
+        source = Path(inspect.getfile(fn)).read_bytes()
+        release = (ROOT / 'shadow_v2_a2/manifest.json').read_bytes()
+        approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, release, b'[]', (),
+            hashlib.sha256(source).hexdigest(), hashlib.sha256(release).hexdigest()))
     return Ports(cert.verify_certificate, cert.verify_original_receipt, binding.verify_binding,
         legacy.comparator_positive, legacy.positive_sample, legacy.known_exclusion,
-        pilot.fleet_budgets_pre, legacy.collect_rollbacks, legacy.report, pilot.post_flip)
+        pilot.fleet_budgets_pre, legacy.collect_rollbacks, legacy.report, pilot.post_flip, tuple(approvals),
+        {field: hashlib.sha256((ROOT / file).read_bytes()).hexdigest() for field, file in (
+            ('proof.evaluator_fixture_sha256', 'billing_v1.json'), ('proof.binding_fixture_sha256', 'shadow_v1.json'),
+            ('proof.wire_fixture_sha256', 'shadow_v2/manifest.json'))})
 
 
 def pre_enable_bundle(tmp_path: Path) -> dict[str, Any]:
@@ -196,10 +221,11 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
                     counter['buckets'].append(bucket)
             first, last = (left + 1999999) // 2000000, (right - 1) // 2000000
             previous_trace = None
+            trace_template = fixture('publisher_slot_trace')
             for offset in range(first, last + 1, 60):
                 entries = []
                 for slot in range(offset, min(last + 1, offset + 60)):
-                    trace = fixture('publisher_slot_trace')
+                    trace = trace_template.copy()
                     stamp = slot * 2000000
                     trace.update(day=day, boot=boot.boot, slot=slot, claim_start_us=stamp,
                         claim_at_ns=stamp * 1000, observed_at_ns=stamp * 1000, publisher_heartbeat_ns=stamp * 1000,
@@ -211,6 +237,10 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
             count_slots = last - first + 1
             counter['publisher'].update(scheduled_slots=count_slots, claim_attempts=count_slots,
                                        claims=count_slots, scans=count_slots, publications=count_slots)
+            counter['publisher']['cycle_us']['counts'] = [0] * 9
+            counter['publisher']['cycle_us']['counts'][sum(trace_template['cycle_us'] > edge for edge in counter['publisher']['cycle_us']['bounds_us'])] = count_slots
+            counter['publisher']['rpc_us']['counts'] = [0] * 9
+            counter['publisher']['rpc_us']['counts'][0] = count_slots * trace_template['rpc_count']
             raw_counter = a1.COUNTER.serialize(counter)
             rows.append(Row(Key(p1.KINDS[3], day + '/' + boot.boot), raw_counter))
             closure = fixture('closure')
@@ -227,6 +257,21 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
             handoff = fixture('handoff_accounting', name='landed-True')
             handoff.update(day=day, boot=boot.boot, result_sha256=sha256(result))
             attachments.append(Row(Key('handoff_accounting', f'handoffs/{day}/{boot.boot}'), a1.HANDOFF_ACCOUNTING.serialize(handoff)))
+            a2tag = dict(v=2, policy_version='shadow-v2', contract_revision='a2')
+            result_raw = a1.CLOSE_RESULT.serialize(result)
+            close_ref = dict(path='rows/close/' + day + '/' + boot.boot, sha256=hashlib.sha256(result_raw).hexdigest(), bytes=len(result_raw))
+            measurement = dict(**a2tag, day=day, boot=boot.boot, grace_us=4000000,
+                final_pass_us=2000000, close_us=1000000, result_us=1000000, export_wait_us=0, preparation_us=0,
+                outcome='graceful', source=close_ref)
+            measured_raw = a2.SHUTDOWN_MEASUREMENT.serialize(measurement)
+            measured_key = 'measurements/' + day + '/' + boot.boot
+            attachments.append(Row(Key('shutdown_measurement', measured_key), measured_raw))
+            entry = dict(day=day, boot=boot.boot, termination_applies=right == boot.end_us,
+                reason=closure['reason'], interval_end_us=right, grace_us=4000000,
+                original_close=dict(path='rows/closure/' + day + '/' + boot.boot,
+                    sha256=hashlib.sha256(a1.CLOSURE.serialize(closure)).hexdigest(), bytes=len(a1.CLOSURE.serialize(closure))),
+                close_result=close_ref, measurement=dict(path=measured_key, sha256=hashlib.sha256(measured_raw).hexdigest(), bytes=len(measured_raw)))
+            attachments.append(Row(Key('shutdown_entry', 'shutdown/' + day + '/' + boot.boot), a2.SHUTDOWN_ENTRY.serialize(entry)))
             joins.obligation_projection(closure, [obligation] if owns else [])
             rate_segments.append(Rate(boot.boot, left, right, max(1, duration // 4), max(1, duration)))
     preimages = []
@@ -326,10 +371,11 @@ def build(tmp_path: Path, *, seconds: int = 20, churn: bool = True, recovered_ch
             manifest = json.loads(row.raw)
             manifest['proof_manifest_sha256'] = sha256(proof)
             rows[index] = Row(row.key, a1.MANIFEST.serialize(manifest))
-    return Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory, Cohort(1, True, REGION), budget,
+    from tests.shadow_v2_gate_a2_fixture import seal
+    return seal(Bundle(tuple(rows), proof_raw, tuple(ledgers), tuple(attachments), inventory, Cohort(1, True, REGION), budget,
         external, ResetSupport((), {}), (Signature(sample_key, token, (key,), START // 1000000 + 2),),
         gate('transport', START), gate('fleet-budgets', START), gate('fleet-budgets-pre', START - 1),
-        gate('shadow-serving', end), end, days, preimages=tuple(preimages))
+        gate('shadow-serving', end), end, days, preimages=tuple(preimages)))
 
 
 def change_row(bundle: Bundle, kind: str, change: Any, index: int = 0) -> Bundle:

@@ -1,8 +1,9 @@
 """Lossless internal gate results; the output attachment seam is deliberately closed."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from fractions import Fraction
+from typing import Any, Literal
 
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router.async_settle_shadow_v2_schema import require
@@ -22,16 +23,18 @@ class Subject:
     phase: str | None = None
     dimensions: Dimensions | None = None
     object_id: str | None = None
+    wire: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
 class Failure:
     gap: str
     rule: str
-    subject: Subject
+    subject: dict[str, Any]
     count: int
     object_ids: tuple[str, ...]
     detail: str
+    days: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,12 +74,12 @@ class Metric:
 class Peak:
     region: str | None
     simultaneous: int
-    reads: float
-    pending: float
-    trust: float
-    health: float
-    publisher_reads: float
-    publisher_writes: float
+    reads: Fraction
+    pending: Fraction
+    trust: Fraction
+    health: Fraction
+    publisher_reads: Fraction
+    publisher_writes: Fraction
     publisher_simultaneous: int
 
 
@@ -108,6 +111,9 @@ class Result:
     gaps: tuple[str, ...]
     failures: tuple[Failure, ...]
     report: Report
+    gate_report: dict[str, Any] | None = None
+    detail_streams: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    input_leaves: dict[str, bytes] = field(default_factory=dict)
 
     @property
     def verdict(self) -> str:
@@ -115,19 +121,32 @@ class Result:
 
 
 def render(result: Result) -> tuple[bytes, tuple[bytes, ...]]:
-    """A2 seam: cannot invent coverage preimage or paginate failures as GATE_OUTPUT.
+    """Emit the frozen envelope/report/flat streams, validating the final graph."""
+    from trusted_router import async_settle_shadow_v2_a2_contract as contract
+    from trusted_router import async_settle_shadow_v2_a2_evidence as a2
+    from trusted_router.async_settle_shadow_v2_gate_failures import listing
+    from trusted_router.async_settle_shadow_v2_schema import sha256
+    from trusted_router.detached_jws import canonical
 
-    Validate every currently expressible field, then raise the contract's own
-    error. Even an internally passing bundle cannot be published as a PASS yet.
-    """
-    fields = dict(v=2, policy_version='shadow-v2', contract_revision='a1',
-                  gate=result.gate, verdict=result.verdict,
-                  completed_at_us=result.completed_at_us,
-                  proof_manifest_sha256=result.proof_manifest_sha256,
-                  prerequisite_ledger_root=result.prerequisite_ledger_root,
-                  gaps=list(result.gaps), clock_start_us=result.report.clock_start_us,
-                  elapsed_seconds=result.report.elapsed_seconds)
-    for name, value in fields.items():
-        a1.GATE_OUTPUT.fields[name](value)
-    require(False, 'artifact_gap: undefined preimage: coverage_sha256; failure pages')
-    raise AssertionError('unreachable')
+    report = result.gate_report
+    require(report is not None, 'artifact_gap: report unavailable')
+    assert report is not None
+    tallies, prefix = listing(result.failures, tuple(report['days']))
+    require(tallies == report['failure_counts'], 'evidence_schema_gap')
+    streams = result.detail_streams
+    require(prefix == [entry for page in streams['failures'] for entry in page['entries']], 'evidence_schema_gap')
+    output = dict(v=2, policy_version='shadow-v2', contract_revision='a1',
+        gate=result.gate, verdict=result.verdict, completed_at_us=result.completed_at_us,
+        proof_manifest_sha256=result.proof_manifest_sha256, prerequisite_ledger_root=result.prerequisite_ledger_root,
+        gaps=list(result.gaps), clock_start_us=report['clock_start_us'],
+        elapsed_seconds=report['elapsed_seconds'] if report['elapsed_seconds'] is not None else 0,
+        coverage_sha256=sha256(report))
+    raw = a1.GATE_OUTPUT.serialize(output)
+    attachments = (a2.GATE_REPORT.serialize(report), *(canonical(page) for name in
+        ('writers', 'regions', 'failures', 'input_inventory', 'reset_history') for page in streams[name]), *(raw for _, raw in sorted(result.input_leaves.items())))
+    # This is deliberately the last operation. Failure is a tool error, even
+    # when all predicates had previously accepted the input.
+    contract.validate_gate_output(output, report, failures=streams['failures'], writers=streams['writers'],
+        regions=streams['regions'], inputs=streams['input_inventory'], reset_history=streams['reset_history'],
+        verifiers=report['verifiers'])
+    return raw, attachments

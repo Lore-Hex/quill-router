@@ -757,39 +757,88 @@ def report(rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
         report_sha256="719a3acfc87edf226b7b51a06b3b5d74192944dce248442ddc7e865fa2d4c2f0")
 
 
-def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
-    """Explicit, offline v2 entry point; publication remains blocked until A2."""
+def shadow_v2_ports(certificate_keys: bytes | None = None, binding_keys: bytes | None = None) -> Any:
+    """Bind imported verifiers and original public descriptors at the I/O boundary."""
+    import inspect
+
     from trusted_router.async_settle_shadow_binding import verify_binding
     from trusted_router.async_settle_shadow_v2_certificate import (
         verify_certificate,
         verify_original_receipt,
     )
-    from trusted_router.async_settle_shadow_v2_gate_inputs import Ports
-    from trusted_router.async_settle_shadow_v2_gate_loader import load
-    from trusted_router.async_settle_shadow_v2_gate_result import render
-    from trusted_router.async_settle_shadow_v2_gates import evaluate
+    from trusted_router.async_settle_shadow_v2_gate_inputs import Ports, VerifierApproval
+    from trusted_router.detached_jws import TrustedKey, canonical
 
     if __package__:
         from . import pilot_enablement
     else:
         import pilot_enablement
-    parser = argparse.ArgumentParser(description="Offline shadow-v2 gate (A2 rendering pending)")
+    root = Path(__file__).resolve().parents[2]
+    approvals = []
+    for fn, raw, fixture in ((verify_certificate, certificate_keys, 'shadow_v2/exclusion_certificate.json'),
+                              (verify_binding, binding_keys, 'shadow_v1.json')):
+        if raw is None:
+            continue
+        values = json.loads(raw)
+        if type(values) is not list or canonical(values) != raw:
+            raise ValueError('evidence_schema_gap: canonical public descriptors required')
+        keys = tuple(TrustedKey(**value) for value in values)
+        source = Path(inspect.getfile(fn)).read_bytes()
+        fixtures = (root / 'tests/fixtures/async_settlement' / fixture).read_bytes()
+        approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, raw, keys,
+            hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
+    for fn in (pilot_enablement.fleet_budgets_pre, collect_rollbacks, report, pilot_enablement.post_flip):
+        source = Path(inspect.getfile(fn)).read_bytes()
+        fixtures = (root / 'tests/fixtures/async_settlement/shadow_v2_a2/manifest.json').read_bytes()
+        approvals.append(VerifierApproval(fn.__module__ + '.' + fn.__name__, fn, source, fixtures, b'[]', (),
+            hashlib.sha256(source).hexdigest(), hashlib.sha256(fixtures).hexdigest()))
+    return Ports(verify_certificate, verify_original_receipt, verify_binding,
+        comparator_positive, positive_sample, known_exclusion, pilot_enablement.fleet_budgets_pre,
+        collect_rollbacks, report, pilot_enablement.post_flip, tuple(approvals),
+        {field: hashlib.sha256((root / 'tests/fixtures/async_settlement' / file).read_bytes()).hexdigest()
+         for field, file in (('proof.evaluator_fixture_sha256', 'billing_v1.json'),
+            ('proof.binding_fixture_sha256', 'shadow_v1.json'), ('proof.wire_fixture_sha256', 'shadow_v2/manifest.json'))})
+
+
+def shadow_v2_main(argv: list[str], *, gate: str | None = None) -> None:
+    """Explicit offline v2 entry point; a render failure is a tool failure."""
+    from trusted_router.async_settle_shadow_v2_gate_loader import load
+    from trusted_router.async_settle_shadow_v2_gate_result import render
+    from trusted_router.async_settle_shadow_v2_gates import evaluate
+
+    parser = argparse.ArgumentParser(description="Offline shadow-v2 gate")
     parser.add_argument('--policy', choices=['shadow-v2'], required=True)
     parser.add_argument('--bundle', type=Path, required=True)
     parser.add_argument('--gate', choices=['fleet-budgets-pre', 'fleet-budgets', 'shadow-serving', 'pre-flip', 'post-flip'], default=gate or 'pre-flip')
+    parser.add_argument('--certificate-keys', type=Path)
+    parser.add_argument('--binding-keys', type=Path)
+    parser.add_argument('--output-dir', type=Path)
     args = parser.parse_args(argv)
-    ports = Ports(verify_certificate, verify_original_receipt, verify_binding,
-                  comparator_positive, positive_sample, known_exclusion,
-                  pilot_enablement.fleet_budgets_pre, collect_rollbacks, report,
-                  pilot_enablement.post_flip)
+    ports = shadow_v2_ports(args.certificate_keys.read_bytes() if args.certificate_keys else None,
+                            args.binding_keys.read_bytes() if args.binding_keys else None)
     result = evaluate(load(args.bundle.read_bytes()), ports, gate=args.gate)
     try:
         output, _attachments = render(result)
-    except ValueError:
+    except ValueError as exc:
         # A diagnostic, explicitly NOT a GATE_OUTPUT and never a v2 PASS.
         print(json.dumps(dict(policy_version='shadow-v2', status='BLOCKED',
-            error='undefined preimage: coverage_sha256; failure pages', gaps=result.gaps), indent=2))
+            error=str(exc), gaps=result.gaps), indent=2))
         raise SystemExit(1) from None
+    destination = args.output_dir or args.bundle.parent / 'gate-output'
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / 'report.json').write_bytes(_attachments[0])
+    from trusted_router.async_settle_shadow_v2_a2_evidence import L
+    from trusted_router.detached_jws import canonical
+    for stream, pages in result.detail_streams.items():
+        for page in pages:
+            target = destination / L('report', stream, page['page_seq'])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(canonical(page))
+    for path, raw in result.input_leaves.items():
+        target = destination / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    (destination / 'output.json').write_bytes(output)
     print(output.decode('ascii'))
     raise SystemExit(0 if result.verdict == 'PASS' else 1)
 

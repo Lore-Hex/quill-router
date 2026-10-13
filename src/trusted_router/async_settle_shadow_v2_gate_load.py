@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 from typing import Any
 
 from trusted_router import async_settle_shadow_v2_a1_health as h
@@ -9,7 +10,8 @@ from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_bundle import Context, subject
 from trusted_router.async_settle_shadow_v2_gate_inputs import Boot, Rate
 from trusted_router.async_settle_shadow_v2_gate_result import Peak, Subject
-from trusted_router.async_settle_shadow_v2_schema import require, sha256
+from trusted_router.async_settle_shadow_v2_gate_verifiers import invoke_retained
+from trusted_router.async_settle_shadow_v2_schema import day_at, require, sha256
 
 COMPONENT_BOUNDS = dict(publisher_period=2., publisher_jitter=.25, publication=.5,
     poll_period=1., poll_jitter=.25, install=.25, workspace_period=4.,
@@ -36,28 +38,28 @@ def sweep(boots: tuple[Boot, ...], rates: tuple[Rate, ...], workspace_count: int
             edges.update((rate.start_us, rate.end_us, min(rate.end_us, rate.start_us + 1000000)))
         require(all(a.end_us <= b.start_us for a, b in zip(segments, segments[1:], strict=False)), 'simultaneous_capacity_gap')
     require(all(any(b.boot == r.boot for b in routers) for r in rates), 'simultaneous_capacity_gap')
-    peaks: dict[str | None, list[float]] = {None: [0.] * 8}
+    peaks: dict[str | None, list[Fraction]] = {None: [Fraction(0)] * 8}
     for b in routers:
-        peaks.setdefault(b.region, [0.] * 8)
+        peaks.setdefault(b.region, [Fraction(0)] * 8)
     for at in sorted(edges)[:-1]:
-        totals: dict[str | None, list[float]] = {k: [0.] * 8 for k in peaks}
+        totals: dict[str | None, list[Fraction]] = {k: [Fraction(0)] * 8 for k in peaks}
         for boot in routers:
             if not boot.start_us <= at < (boot.end_us if boot.end_us is not None else completed_at_us):
                 continue
-            nominal = workspace_count / 4
-            trust, health, pending, pr, pw = nominal, 1., 1001 * nominal, 0., 0.
-            burst_reads = 0.
+            nominal = Fraction(workspace_count, 4)
+            trust, health, pending, pr, pw = nominal, Fraction(1), 1001 * nominal, Fraction(0), Fraction(0)
+            burst_reads = Fraction(0)
             for rate in rates:
                 if rate.boot == boot.boot and rate.start_us <= at < rate.end_us:
-                    duration = (rate.end_us - rate.start_us) / 1000000
+                    duration = Fraction(rate.end_us - rate.start_us, 1000000)
                     trust = max(trust, rate.workspace_reads / duration)
                     health = max(health, rate.health_reads / duration)
                     pending = max(pending, 1001 * rate.workspace_reads / duration)
                     pr, pw = rate.publisher_reads / duration, rate.publisher_writes / duration
                     if at < rate.start_us + 1000000:
-                        burst_reads = rate.burst_reads
-                        pending = max(pending, rate.burst_pending)
-            values = (1., max(trust + health + pr, burst_reads), pending, trust, health, pr, pw, float(boot.contender))
+                        burst_reads = Fraction(rate.burst_reads)
+                        pending = max(pending, Fraction(rate.burst_pending))
+            values = (Fraction(1), max(trust + health + pr, burst_reads), pending, trust, health, pr, pw, Fraction(boot.contender))
             for region in (None, boot.region):
                 for i, value in enumerate(values):
                     totals[region][i] += value
@@ -142,7 +144,8 @@ def observer_health(ctx: Context) -> None:
             ctx.issue('health_timestamp_gap', 'snapshot age/order bound', sub)
         trace = next((t for t in traces if t['boot'] == body['publisher_boot_id'] and t['slot'] == body['slot']), None)
         if trace is None:
-            ctx.issue('publisher_trace_gap', 'basis has no publisher trace', sub)
+            ctx.issue('publisher_trace_gap', 'basis has no publisher trace',
+                      Subject(day_at(body['slot'] * 2000000), body['publisher_boot_id']))
         else:
             try:
                 h.validate_basis_trace(basis, trace)
@@ -151,7 +154,8 @@ def observer_health(ctx: Context) -> None:
                 h.validate_publication(claim, body)
                 require(prediction['health_slot'] == body['slot'], 'health_slot_gap')
             except ValueError as exc:
-                ctx.issue('health_slot_gap' if str(exc) == 'health_slot_gap' else 'publisher_trace_gap', str(exc), sub)
+                ctx.issue('health_slot_gap' if str(exc) == 'health_slot_gap' else 'publisher_trace_gap', str(exc),
+                          sub if str(exc) == 'health_slot_gap' else Subject(trace['day'], trace['boot']))
     # Every scheduled fleet slot needs an actual winner, independent of reader success.
     by_slot: dict[int, list[dict[str, Any]]] = {}
     for trace in traces:
@@ -169,7 +173,7 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
     try:
         require(ctx.ports is not None, 'pre_enable_budget')
         assert ctx.ports is not None
-        legacy = ctx.ports.fleet_budgets_pre(budget.pre_input)
+        legacy = invoke_retained(ctx, 'fleet_budgets_pre', budget.pre_input)
         require(legacy.get('status') == 'PASS', 'pre_enable_budget')
         require(legacy['workspace_count'] == cohort.workspace_count == budget.post_workspace_count
                 and legacy['maximum_router_instances_by_region'] == dict(budget.regional_caps) == dict(budget.post_regional_caps)
@@ -186,7 +190,8 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
         require(sum(budget.regional_caps.values()) == budget.fleet_cap, 'simultaneous_capacity_gap')
         for peak in peaks:
             cap = budget.fleet_cap if peak.region is None else budget.regional_caps.get(peak.region, 0)
-            require(peak.simultaneous <= cap, 'simultaneous_capacity_gap')
+            if peak.simultaneous > cap:
+                ctx.issue('simultaneous_capacity_gap', 'simultaneous cap exceeded', Subject(object_id=peak.region))
     except ValueError as exc:
         ctx.issue('simultaneous_capacity_gap', str(exc))
     maxima = budget.component_seconds
@@ -205,8 +210,11 @@ def load_budgets(ctx: Context) -> tuple[Peak, ...]:
                 covered = max(covered, boot.end_us or ctx.bundle.completed_at_us)
         if covered < right:
             ctx.issue('publisher_budget_gap', 'primary publisher lifetime coverage hole')
-    if any(p.publisher_simultaneous > budget.publisher_cap for p in peaks) or budget.publisher_cap < 1 or budget.publisher_reads < budget.publisher_cap / 2 + 1.5 or budget.publisher_writes < 1 or any(p.publisher_reads > budget.publisher_reads or p.publisher_writes > budget.publisher_writes for p in peaks) or any(e['cycle_us'] is not None and e['cycle_us'] > 500000 for p in ctx.attached('publisher_trace') for e in p['entries']):
+    if any(p.publisher_simultaneous > budget.publisher_cap for p in peaks) or budget.publisher_cap < 1 or budget.publisher_reads < budget.publisher_cap / 2 + 1.5 or budget.publisher_writes < 1 or any(p.publisher_reads > budget.publisher_reads or p.publisher_writes > budget.publisher_writes for p in peaks):
         ctx.issue('publisher_budget_gap', 'publisher cap/rate/cycle budget')
+    for page in ctx.attached('publisher_trace'):
+        if any(e['cycle_us'] is not None and e['cycle_us'] > 500000 for e in page['entries']):
+            ctx.issue('publisher_budget_gap', 'publisher cycle deadline', subject(page))
     publisher_bounds = (
         (budget.publisher_unresolved_rows_per_second, 5000.5),
         (budget.publisher_control_rows_per_second, budget.publisher_cap / 2 + 1),

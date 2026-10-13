@@ -6,10 +6,12 @@ from typing import Any
 
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_reconciliation as joins
+from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_contract as contract
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_bundle import Context, subject
 from trusted_router.async_settle_shadow_v2_gate_result import Dimensions, Subject
+from trusted_router.async_settle_shadow_v2_gate_verifiers import invoke
 from trusted_router.async_settle_shadow_v2_schema import day_at, require, sha256
 from trusted_router.detached_jws import canonical
 
@@ -113,27 +115,37 @@ def receipt_accounting(ctx: Context) -> None:
         if len(terminal) != counter['settle_attempts'] + counter['refund_attempts']:
             ctx.issue('terminal_coverage_gap', 'terminal receipts incomplete (complete observed receipt list)', sub, tuple(e['seq'] for e in terminal),
                       count=abs(len(terminal) - counter['settle_attempts'] - counter['refund_attempts']))
-        counts = Counter(e['partition'] for e in terminal)
-        if any(counts[k] != counter[k] for k in ('A', 'B', 'C')) or counter['C'] > 0:
-            ctx.issue('observed_partition_gap', 'terminal partition is not closed', sub, tuple(e['seq'] for e in terminal if e['partition'] == 'C'))
-        for bucket in counter['buckets']:
-            dim = bucket['dimensions']
-            phase = bucket['phase']
+        # The assertion population is the union, including declared zero buckets.
+        buckets = {canonical([b['phase'], b['dimensions']]): (b['phase'], b['dimensions'], b)
+                   for b in counter['buckets']}
+        for _, event in own:
+            phase = 'authorize' if event['phase'] == 'replay' else event['phase']
+            if phase in ('authorize', 'settle', 'refund'):
+                buckets.setdefault(canonical([phase, event['dimensions']]), (phase, event['dimensions'], None))
+        for phase, dim, bucket in buckets.values():
             selected = [e for _, e in own if ('authorize' if e['phase'] == 'replay' else e['phase']) == phase and e['dimensions'] == dim]
             bs = Subject(counter['day'], counter['boot'], phase, Dimensions(**dim))
-            expected_count = bucket['authorize_attempts'] if phase == 'authorize' else bucket[phase + '_attempts']
-            if len(selected) != expected_count or phase != 'authorize' and any(sum(e['partition'] == k for e in selected) != bucket[k] for k in ('A', 'B', 'C')):
-                ctx.issue('phase_coverage_gap', 'phase/dimension receipts differ', bs, tuple(e['seq'] for e in selected))
+            expected_count = None if bucket is None else bucket['authorize_attempts' if phase == 'authorize' else phase + '_attempts']
+            if len(selected) != expected_count:
+                ctx.issue('phase_coverage_gap', 'phase/dimension receipts differ', sub)
+            if phase == 'authorize':
+                continue
+            counts = Counter(e['partition'] for e in selected)
+            if bucket is None or any(counts[k] != bucket[k] for k in ('A', 'B', 'C')) or counts['C'] > 0:
+                ctx.issue('observed_partition_gap', 'terminal partition is not closed', bs)
+            eligible = None if any(e['eligibility'] == 'unknown' for e in selected) else sum(e['eligibility'] == 'eligible' for e in selected)
+            predictions = Counter(e['prediction']['prediction'] for e in selected if e['prediction'] is not None)
+            y, n, u = (predictions[k] for k in ('yes', 'no', 'unknown'))
+            if eligible is None or bucket is None or eligible != bucket['eligible_demand'] or y + n + u != eligible or eligible > 0 and y + n == 0:
+                ctx.issue('prediction_demand_gap', 'predictions do not cover eligible demand', bs)
+            if eligible is None or 100 * u > 2 * eligible:
+                ctx.issue('prediction_unknown_gap', 'unknown prediction allowance exceeded', bs)
         eligible = None if any(e['eligibility'] == 'unknown' for e in terminal) else sum(e['eligibility'] == 'eligible' for e in terminal)
         if eligible is None or eligible != counter['eligible_demand']:
             ctx.issue('eligible_coverage_gap', 'independent eligible demand differs', sub)
-        obs = counter['admission_observer']
-        y, n, u = (obs['prediction_' + k] for k in ('yes', 'no', 'unknown'))
         predictions = Counter(e['prediction']['prediction'] for e in terminal if e['prediction'] is not None)
-        if eligible is None or y + n + u != eligible or any(predictions[k] != obs['prediction_' + k] for k in ('yes', 'no', 'unknown')) or eligible > 0 and y + n == 0:
-            ctx.issue('prediction_demand_gap', 'predictions do not cover eligible demand', sub)
-        if eligible is None or 100 * u > 2 * eligible:
-            ctx.issue('prediction_unknown_gap', 'unknown prediction allowance exceeded', sub)
+        if any(predictions[k] != counter['admission_observer']['prediction_' + k] for k in ('yes', 'no', 'unknown')):
+            ctx.issue('phase_coverage_gap', 'retained prediction totals differ from receipts', sub)
         for event in terminal:
             key = event['authorization_day'] + '/' + event['authorization_id']
             sample = samples.get(key)
@@ -145,6 +157,9 @@ def receipt_accounting(ctx: Context) -> None:
                         or sample['booking']['attempted_kind'] != event['phase']):
                     ctx.issue('eligible_coverage_gap', 'missing verified compared original', es)
             if event['partition'] == 'B':
+                ctx.issue('policy_version_gap', 'eligible-only cohort has excluded traffic',
+                          Subject(wire=a2.E(counter['day'], counter['boot'],
+                              next(p['first_seq'] for p, e in own if e is event), event['seq'], event=event)))
                 if event['proof_kind'] == 'certificate':
                     valid = key in ctx.verified
                 else:
@@ -270,7 +285,7 @@ def durability(ctx: Context) -> None:
                 if event['proof_kind'] != 'certificate':
                     require(signature is not None and ctx.ports is not None, 'retry_original_gap')
                     assert signature is not None and ctx.ports is not None
-                    ctx.ports.verify_binding(signature.token, signature.keys, event['receipt_at_us'] // 1000000)
+                    invoke(ctx, 'binding', signature.token, signature.keys, event['receipt_at_us'] // 1000000)
                 require(oe['phase'] == event['phase'] and oe['receipt_at_us'] <= event['event_at_us'] and
                     all(oe[k] == event[k] for k in ('identity', 'decision', 'dimensions', 'payload_sha256', 'certificate_sha256', 'proof_kind')), 'retry_original_gap')
         except ValueError as exc:

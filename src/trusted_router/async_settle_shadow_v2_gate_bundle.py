@@ -8,12 +8,15 @@ from typing import Any
 from trusted_router import async_settle_shadow_v2_a1_evidence as a1
 from trusted_router import async_settle_shadow_v2_a1_health as health
 from trusted_router import async_settle_shadow_v2_a1_reconciliation as reconciliation
+from trusted_router import async_settle_shadow_v2_a2_evidence as a2
 from trusted_router import async_settle_shadow_v2_evidence as p1
 from trusted_router.async_settle_shadow_v2_gate_inputs import Bundle, Key, Ports
 from trusted_router.async_settle_shadow_v2_gate_result import Subject
 from trusted_router.async_settle_shadow_v2_schema import decode, require, sha256
 
 ATTACHMENTS = {
+    'shutdown_entry': a2.SHUTDOWN_ENTRY,
+    'shutdown_measurement': a2.SHUTDOWN_MEASUREMENT,
     'health_basis': health.HEALTH_BASIS_BATCH,
     'publisher_trace': health.PUBLISHER_TRACE_PAGE,
     'handoff_accounting': a1.HANDOFF_ACCOUNTING,
@@ -42,8 +45,10 @@ class Context:
     ledgers: list[dict[str, Any]] = field(default_factory=list)
     gates: dict[str, dict[str, Any]] = field(default_factory=dict)
     issues: list[Issue] = field(default_factory=list)
+    verifier_calls: dict[str, int] = field(default_factory=dict)
     verified: set[str] = field(default_factory=set)
     obligations: list[dict[str, Any]] = field(default_factory=list)
+    salvaged_events: list[tuple[dict[str, Any], dict[str, Any]]] = field(default_factory=list)
 
     def kind(self, kind: str) -> list[dict[str, Any]]:
         return [v for k, v in self.rows.items() if k.kind == kind]
@@ -52,10 +57,11 @@ class Context:
         return [v for k, v in self.attachments.items() if k.kind == kind]
 
     def events(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-        return [(page, event) for page in self.kind(p1.KINDS[2]) for event in page['events']]
+        return [(page, event) for page in self.kind(p1.KINDS[2]) for event in page['events']] + self.salvaged_events
 
     def issue(self, gap: str, detail: str, subject: Subject = Subject(),
               ids: tuple[str, ...] = (), *, count: int | None = None) -> None:
+        a2.GAP_NAME(gap)
         self.issues.append(Issue(gap, subject, detail, tuple(sorted(ids)), len(ids) or 1 if count is None else count))
 
 
@@ -68,8 +74,16 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
     all_rows = (*bundle.rows, *bundle.attachments)
     seen: dict[Key, bytes] = {}
     for row in all_rows:
-        sub = Subject(object_id=row.key.id)
+        try:
+            sub = Subject(object_id=row.key.id, wire=a2.O(row.key.kind, row.key.id))
+        except ValueError:
+            ctx.issue('evidence_schema_gap', 'unencodable expected row identity')
+            sub = Subject(wire=a2.N())
         if row.key in seen:
+            if seen[row.key] == row.raw:
+                continue
+            ctx.rows.pop(row.key, None)
+            ctx.attachments.pop(row.key, None)
             gap = 'close_result_conflict' if row.key.kind == a1.KINDS[-1] else 'artifact_gap'
             ctx.issue(gap, 'duplicate complete key', sub,
                       (hashlib.sha256(seen[row.key]).hexdigest(), hashlib.sha256(row.raw).hexdigest()))
@@ -92,16 +106,19 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
                     or tags.get('v') != 2 or 'contract_revision' in tags and tags['contract_revision'] != 'a1'
                     or row.key.kind in a1.KINDS[3:] and tags.get('contract_revision') != 'a1'):
                 ctx.issue('policy_version_gap', 'changed policy or contract revision', sub)
-            ctx.issue('evidence_schema_gap', str(exc), sub)
+            if row.key.kind != p1.KINDS[2] or not invalid_events(ctx, row.key, tags):
+                ctx.issue('evidence_schema_gap', str(exc), sub)
             owner = {p1.KINDS[2]: 'terminal_coverage_gap', p1.KINDS[3]: 'phase_coverage_gap',
                      p1.KINDS[4]: 'writer_closure_gap', a1.KINDS[-1]: 'close_result_identity_gap',
                      'health_basis': 'shadow_health_gap', 'publisher_trace': 'publisher_trace_gap',
                      'authorization_obligation': 'authorization_obligation_gap',
                      'handoff_accounting': 'handoff_coverage_gap'}.get(row.key.kind)
             if owner:
-                ctx.issue(owner, 'invalid required row: ' + str(exc), sub)
+                parts = row.key.id.split('/')
+                diagnostic = Subject(parts[0], parts[1], object_id=row.key.id) if len(parts) == 2 else Subject(object_id=row.key.id)
+                ctx.issue(owner, 'invalid required row: ' + str(exc), diagnostic)
             if str(exc) == 'a1-publisher-conservation':
-                ctx.issue('publisher_accounting_gap', str(exc), sub)
+                ctx.issue('publisher_accounting_gap', str(exc), diagnostic)
     if not bundle.rows and gate != 'fleet-budgets-pre':
         ctx.issue('evidence_schema_gap', 'no evidence rows')
     try:
@@ -136,24 +153,15 @@ def decode_bundle(bundle: Bundle, ports: Ports | None, gate: str) -> Context:
             ctx.issue('artifact_gap', 'incomplete proof')
     for name in bundle.undefined_preimages:
         ctx.issue('artifact_gap', 'undefined preimage: ' + name, Subject(object_id=name))
-    # Undefined constructions enter only as original bytes supplied with typed
-    # inputs. There is no fallback from a digest-shaped string to a preimage.
-    preimages = {p.name: p.raw for p in bundle.preimages}
-    if len(preimages) != len(bundle.preimages):
+    if len({p.name for p in bundle.preimages}) != len(bundle.preimages):
         ctx.issue('artifact_gap', 'duplicate supplied preimage')
-    if ctx.proof is not None:
-        for name, expected in ctx.proof.items():
-            if name.endswith(('_sha256', '_root')):
-                original = preimages.get('proof.' + name)
-                if original is None or hashlib.sha256(original).hexdigest() != expected:
-                    ctx.issue('artifact_gap', 'missing or changed preimage', Subject(object_id='proof.' + name))
-        for manifest in ctx.kind(p1.KINDS[5]):
-            if 'router_writers' in manifest and manifest['proof_manifest_sha256'] != sha256(ctx.proof):
-                ctx.issue('artifact_gap', 'manifest proof binding differs', subject(manifest))
+    from trusted_router.async_settle_shadow_v2_gate_preimages import audit
+    audit(ctx)
     return ctx
 
 
 def coverage_issues(ctx: Context) -> None:
+    raw_rows = {r.key: r.raw for r in (*ctx.bundle.rows, *ctx.bundle.attachments)}
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for page in ctx.attached('coverage'):
         grouped.setdefault((page['day'], page['stream']), []).append(page)
@@ -170,8 +178,7 @@ def coverage_issues(ctx: Context) -> None:
             for page in pages:
                 for entry in page['entries']:
                     require(entry['state'] == 'present', 'artifact_gap')
-                    raw = next((r.raw for r in (*ctx.bundle.rows, *ctx.bundle.attachments)
-                                if r.key.id == entry['key'] and r.key.kind == (a1.KINDS[-1] if stream == 'close_result' else stream)), None)
+                    raw = raw_rows.get(Key(a1.KINDS[-1] if stream == 'close_result' else stream, entry['key']))
                     require(raw is not None and hashlib.sha256(raw).hexdigest() == entry['sha256']
                             and len(raw) == entry['bytes'], 'artifact_gap')
         except ValueError as exc:
@@ -179,6 +186,8 @@ def coverage_issues(ctx: Context) -> None:
 
 
 def verify_samples(ctx: Context) -> None:
+    from trusted_router.async_settle_shadow_v2_gate_verifiers import check_ports, invoke
+    check_ports(ctx)
     if ctx.ports is None:
         ctx.issue('artifact_gap', 'missing mandatory verifier port')
         return
@@ -190,7 +199,7 @@ def verify_samples(ctx: Context) -> None:
             ctx.issue('artifact_gap', 'missing binding material', Subject(object_id=key))
             continue
         try:
-            claims = ctx.ports.verify_binding(sig.token, sig.keys, sig.now)
+            claims = invoke(ctx, 'binding', sig.token, sig.keys, sig.now)
             claims_dict = claims.model_dump(mode='json')
             require(claims_dict['authorization_id'] == sample['authorization_id'], 'identity')
             require(claims_dict['snapshot_hash'] == sample['snapshot_hash'], 'hash')
@@ -201,6 +210,8 @@ def verify_samples(ctx: Context) -> None:
             require(len(originals) == 1 and originals[0]['identity'] == p1.committed_identity(claims_dict), 'identity')
             ctx.verified.add(key)
         except ValueError as exc:
+            if str(exc) in ('artifact_gap', 'evidence_schema_gap'):
+                ctx.issue(str(exc), 'binding invocation refused')
             ctx.issue('eligible_coverage_gap', str(exc), Subject(object_id=key))
     for page, event in ctx.events():
         if event.get('proof_kind') != 'certificate':
@@ -215,7 +226,7 @@ def verify_samples(ctx: Context) -> None:
             original_key = Key(p1.KINDS[2], '/'.join(locator[k] for k in ('day', 'boot', 'first_seq')))
             original = next((r.raw for r in ctx.bundle.rows if r.key == original_key), None)
             backing = ctx.ports.verify_original_receipt(sig.claims, returned_key=(original_key.kind, original_key.id), page=original)
-            result = ctx.ports.verify_certificate(sig.token, sig.keys, sig.expected, event['receipt_at_us'] // 1000000,
+            result = invoke(ctx, 'certificate', sig.token, sig.keys, sig.expected, event['receipt_at_us'] // 1000000,
                 returned_key=(original_key.kind, original_key.id), page=original,
                 attempt=sig.attempt, server_attempt=sig.server_attempt, booking=event['booking']['outcome'])
             require(backing.partition == result.partition == 'B', result.reason or backing.reason or 'exclusion_proof_gap')
@@ -224,3 +235,39 @@ def verify_samples(ctx: Context) -> None:
         except ValueError as exc:
             ctx.issue('exclusion_conflict' if str(exc) == 'exclusion_conflict' else 'exclusion_proof_gap',
                       str(exc), subject(page, event['seq']))
+
+
+def invalid_events(ctx: Context, key: Key, value: Any) -> bool:
+    """Separate a bad child from its independently verified page container.
+
+    No invalid child supplies identity, including its claimed event sequence.
+    The return value suppresses only recursive container rejection caused by
+    children; independently invalid header/coordinates still fail at O.
+    """
+    try:
+        require(type(value) is dict and set(value) == set(p1.PAGE.fields))
+        for field, check in p1.PAGE.fields.items():
+            if field != 'events':
+                check(value[field])
+        require(key.id == '/'.join(value[k] for k in ('day', 'boot', 'first_seq')))
+        events = value['events']
+        require(type(events) is list and 0 < len(events) <= p1.PAGE_EVENTS)
+        require(int(value['last_seq']) - int(value['first_seq']) + 1 == len(events))
+    except ValueError:
+        return False
+    invalid = False
+    for index, event in enumerate(events):
+        try:
+            p1.EVENT(event)
+            require(int(event['seq']) == int(value['first_seq']) + index)
+            wire = a2.E(value['day'], value['boot'], value['first_seq'], event['seq'], event=event)
+            if event['receipt_locator'] is not None:
+                require(event['receipt_locator'] == dict(day=value['day'], boot=value['boot'],
+                    first_seq=value['first_seq'], event_seq=event['seq']))
+            ctx.salvaged_events.append((value, event))
+        except ValueError:
+            invalid = True
+            wire = a2.I(value['day'], value['boot'], value['first_seq'], index)
+            sub = Subject(value['day'], value['boot'], wire=wire)
+            ctx.issue('evidence_schema_gap', 'invalid receipt position', sub)
+    return invalid

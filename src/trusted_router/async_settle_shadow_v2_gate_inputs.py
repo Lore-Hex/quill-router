@@ -1,34 +1,24 @@
 """Internal decoded inputs and ports, not a new evidence wire contract.
 
-A2 owns serialization/preimages of these inputs. A digest alone cannot construct
-one. Production loaders leave undefined inputs absent, which is an artifact gap.
+A2 defines serialization/preimages; the P5 adapter must establish their semantic
+binding before populating these internal views. A digest alone is insufficient.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from trusted_router.async_settle_shadow_v2_a2_contract import BindingVerifier, CertificateVerifier
 from trusted_router.detached_jws import TrustedKey
 
 if TYPE_CHECKING:
     from trusted_router.async_settle_shadow_v2_certificate import ReceiptVerification
 
 
-class CertificateVerifier(Protocol):
-    def __call__(self, token: str, keys: Sequence[TrustedKey], expected: Mapping[str, Any],
-                 now: int, *, returned_key: tuple[str, str], page: bytes | None,
-                 attempt: dict[str, Any], server_attempt: dict[str, Any],
-                 booking: str) -> ReceiptVerification: ...
-
-
 class ReceiptVerifier(Protocol):
     def __call__(self, claims: dict[str, Any], *, returned_key: tuple[str, str],
                  page: bytes | None) -> ReceiptVerification: ...
-
-
-class BindingVerifier(Protocol):
-    def __call__(self, token: str, keys: Sequence[TrustedKey], now: int) -> Any: ...
 
 
 class ResetCollector(Protocol):
@@ -39,6 +29,19 @@ class ResetCollector(Protocol):
 class LegacyReport(Protocol):
     def __call__(self, rows: list[dict[str, Any]], days: list[str], proof: dict[str, Any],
                  *, not_before_us: int = 0) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True)
+class VerifierApproval:
+    """Trusted tool's imported callable and approved original public artifacts."""
+    entry_point: str
+    function: Callable[..., Any]
+    source: bytes
+    fixture: bytes
+    keyset: bytes
+    keys: tuple[TrustedKey, ...]
+    source_pin: str
+    fixture_pin: str
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,8 @@ class Ports:
     collect_rollbacks: ResetCollector
     report: LegacyReport
     post_flip: Callable[[dict[str, Any]], dict[str, Any]]
+    approvals: tuple[VerifierApproval, ...] = ()
+    approved_files: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, order=True)
@@ -189,7 +194,7 @@ class Signature:
 
 @dataclass(frozen=True)
 class Preimage:
-    """Supplied original attachment bytes; A2 owns decoding and semantic binding."""
+    """Supplied original attachment bytes for contract decoding and P5 binding."""
     name: str
     raw: bytes
 
@@ -214,3 +219,5 @@ class Bundle:
     days: tuple[str, ...] = ()
     undefined_preimages: tuple[str, ...] = ()
     preimages: tuple[Preimage, ...] = ()
+    a2_payloads: Mapping[str, dict[str, Any]] = field(default_factory=dict)
+    window: Mapping[str, int] | None = None
