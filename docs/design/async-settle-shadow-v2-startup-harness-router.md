@@ -1,229 +1,136 @@
-# Router startup harness, round 1
+# Router startup records — round 2
 
-This round adds runtime records and an admission hold. It is incomplete and is
-not ready for release. In the installed application, missing startup producers
-keep opted handoffs unavailable. Ordinary traffic follows the existing path.
-There are no contract, collector, exporter, fixture, pin or store-kind changes.
+The package runs after the serving listener starts. Application construction
+installs the admission hold and allocates the boot; it does not wait for files,
+store operations or object writes. Non-cohort behavior and the capture path are
+unchanged. The closed record inventory and existing native parsers are unchanged.
 
-## Configuration and records
+## Connected producers
 
-`TR_ASYNC_SETTLE_SHADOW_STARTUP_MANIFEST` names one reviewed local regular JSON
-file, at most 262144 bytes, canonical UTF-8 (sorted keys, compact separators,
-no trailing newline). No directory search occurs. Missing files leave the boot
-missing. The closed top-level fields are:
+P3's HealthObserver retains its first usable HEALTH_BASIS buffer at the actual
+install. The buffer is produced and parsed there, with reader boot and install
+clock; the startup reader never reconstructs it from a later cache snapshot.
+The observation store retains the exact Row.body buffers submitted for the
+successful HEALTH_CLAIM and HEALTH writes. The publisher's owner reply carries
+these bytes and its measured cycle time to the service. A contender adoption
+joins these originals through the native publication and HEALTH_BASIS parsers.
+The reader boot must match, source state must be installed, installation must
+be within 250000 us, and publication within 500000 us. Both publication clocks
+must be in this boot and precede installation. A missing join stays missing.
 
-```
-launch revision region config_sha256 policy_sha256 fixture_sha256 config
- effective_pins public_descriptors artifacts selections ready_key_prefix
-```
+With a service, startup uses service.journal.boot. Without one, it imports and
+calls uuid.uuid4, the exact allocation function used by P3's Counters. Idle app
+construction now installs the coordinator instead of returning without a boot.
+A configured launch descriptor can therefore produce an idle correlation and
+the available adoptions. The marker adoption compares the real settings with
+the declared pins, including the dormant OFF values.
 
-`launch` holds `mode=instance_as_launch`, `project`, `region`, `service`, and
-`revisions` mapping K_REVISION names to full released source SHAs. Inherited
-read-only fd 3 takes precedence and must contain exactly one canonical object
-`{instance,launch,role,revision,region}` followed by EOF, within 2048 bytes and
-250 ms. A present malformed descriptor never falls back. Instance mode obtains
-only the instance ID from the fixed metadata endpoint, using the existing
-Metadata-Flavor pattern and a one-second timeout. Both scoped IDs use SHA-256
-of canonical `{source,coordinate}` as specified by the interface. Acquisition
-mode and the original source coordinate stay on the Descriptor object; the
-closed correlation record has no extra mode field.
+The regional-operation adapter binds read to the configured P3 database ID and
+its existing ObservationStore. It performs one HEALTH local/fleet exact-key
+read, with one attempt and a bounded budget. Target membership, region and
+configured database are checked. Operations run off the listener's task; the
+criterion's outer deadline remains at most ten seconds. There is no retry.
+The transport operation remains an explicit missing input, described below.
 
-`revision`, `region` and all three digests have the interface's shapes.
-`config_sha256` must hash canonical `config`. `config.dependencies.router` is a
-list of 2..16 unique `{operation,resource,region}` targets; operations include
-both transport and read. Targets are passed only from this loaded configuration
-to the dependency port. `config.descriptor_ids` is a bounded list of identifiers.
-`effective_pins` has exactly the three router pins; deployed settings are compared
-before checks. Booleans are emitted as their actual `true`/`false` values,
-including OFF values. `public_descriptors` is the exact object containing
-`authority_epoch,config_sha256,source_revision,descriptor_ids`.
+Runtime.authorize_http samples admission time at its existing native start
+boundary. The recorder counts opted cohort starts, including starts that cannot
+obtain a journal slot. The authorize producer reports its actual returned
+outcome, and the runtime updates that outcome if the final handoff fails.
+Accepted means the admission handoff was produced. It does not mean settlement
+completed. Rejected, failed and timeout results use the same start coordinate.
+The PAGE callback runs after P3 acknowledgement and joins the actual result to
+the native start event and exact PAGE bytes. Result and PAGE may arrive in either
+order. Missing results, missing pages and replay events without a start locator
+have no projection. Pending joins are bounded at 8192; overflow is counted.
+Recent emitted joins are bounded separately. A busy recorder counts a missing
+join and leaves native admission unchanged; it never waits on its join lock. Native PAGE retention remains P3's
+job; the harness does not change capture or the sample writer.
 
-`artifacts` maps at most 32 artifact IDs to objects with exactly:
+The P3 close generator now supplies an optional observation callback. It samples
+preparation, attachment wait, final pass, close and result endpoints in the
+service's monotonic clock. Termination preparation starts at close entry; daily
+preparation starts in the closing flush. The first preparation/upload boundary
+is kept across the preliminary and final passes. Close and result intervals
+come from the actual calls, including failed calls. The callback receives the
+exact closure and close-result Row.body originals. It adds no wait, retry or
+store operation to P3. A bounded result attempt can produce complete=false;
+an unobserved result phase produces no span. A process cannot report its own
+unobserved end. There is one final record per day, joined to the boot origin.
+This checkout did not contain the five named trace events described in the
+round-2 request; these endpoints are observed directly in the existing generator.
 
-```
-id criterion source revision region config_sha256 started_at_us completed_at_us checks
-```
+## Original loading and retention
 
-`checks` has that criterion's exact check names and pass/fail values.
-`selections` maps each criterion to its exact source-role-to-artifact-ID map.
-The six criteria and source roles equal the collectors' inventory. Artifact
-original times are unchanged; completion must follow start and precede adoption.
-Non-CI trials span at most one hour. Artifact failures remain failures. A missing
-source emits no completed substitute. The current manifest is a projection of
-reviewed CI/trial results; loading and joining the original CI/trial documents,
-enclave revision and trial configuration envelope remain ReleaseArtifactOriginals.
-It must not be presented as a complete native release bundle.
+The canonical startup manifest names each artifact with a configured path and
+its declared joins. Each original has exactly id, criterion, source,
+router_revision, enclave_revision, region, config_sha256, started_at_us,
+completed_at_us, checks and conclusion. The configured enclave revision is
+config.enclave_revision. Reads are bounded to 65536 bytes per original and a
+finite manifest inventory. Times, checks and revisions are parsed from the
+original file bytes and compared with the declaration. Missing files and
+mismatched joins never become passing adoptions. Public descriptors retain the
+exact object slice from the canonical manifest.
 
-Each criterion is attempted once. Adoption time is sampled locally after the
-selected reads and measurements. Repeating run/adopt cannot replace a missing
-or failed adoption. The observer port carries original buffers and install,
-claim and publication times, with the 250000/500000 microsecond ceilings.
-Its production adapter is unfinished. The coordinator requires a validator port;
-tests supply the existing native HEALTH_BASIS and publication validators. No
-observer adoption is possible without that validator port.
+Startup originals use the existing attachments transport with create-if-absent
+writes. Every reply must contain the matching key, digest, length and positive
+generation before readiness opens. Under ready_key_prefix/boot/ the key plan is:
 
-The runtime inventory contains all five closed kinds, role fields, coordinate
-kinds/ceilings and enums. Tests compare it to the dormant collectors without
-runtime imports of those collectors. A coordinate hashes and counts the same
-buffer. The emitter drops invalid records and counts drops. Its default logger
-writes compact JSON lines to stdout. This base tree's existing application
-handler uses stderr and a text prefix, so it cannot supply the interface's exact
-stdout records unchanged. A dedicated ordinary StreamHandler is used; no extra
-record kind or descriptive payload is added.
+- descriptor.json, mode.json, and source.json when the descriptor supplies it;
+- correlation.json, manifest.json, and adoptions/criterion.json;
+- artifacts/sha256.json for the exact CI, trial and release originals;
+- originals/kind/sha256.json for emitted original coordinates;
+- index.json, containing the keys, digests, lengths and returned generations.
 
-## Listener and admission
+The ready original keeps the round-1 key ready_key_prefix/boot.json. It is written
+after the startup originals and their index are acknowledged. Available records
+and originals are retained even when an adoption is missing. PAGE, closure and
+close-result rows keep their existing P3 keys and retention path. The release
+must configure the required retention duration and capture the generation
+replies; a local stdout record is not an object acknowledgement.
 
-Application construction attaches the hold to the compared Runtime.
-`DrainingServer.startup` first awaits the existing listener startup, then schedules
-the harness. It does not await manifest or platform work. The coordinator has
-bounded file size, descriptor, dependency, observer and object-write steps.
-Alternative ASGI launchers must call `listener_started` after their listener is
-up; merely finishing application lifespan does not establish that boundary.
+## Runtime gaps still blocking completion
 
-`Runtime.authorize_http` reads the startup flag once. Until ready, it uses the
-existing `missing_context` unresolved receipt path, producing no opted handoff.
-The existing cohort checks still decide which requests reach that runtime.
-Non-cohort requests get the same response fields and no new records. Direct
-unit-test Runtime construction retains its existing behavior unless a startup
-hold is installed; application construction installs the hold.
+**ReleasedDependencyOperations.transport:** this checkout has no configured
+settle-echo client or callable in the compared runtime. The adapter rejects the
+transport operation with this name instead of treating a generic round trip as
+the compared path. This blocks boot_transport and therefore ready for every
+boot. The missing implementation needs the released enclave client, its regional
+target and its existing marker/pin checks. No replacement path was introduced.
 
-Six passing records precede one ready timestamp, sampled strictly after all six
-completions. A clock that has not advanced leaves readiness unavailable; no
-invented microsecond is added. The validated ready original is emitted once,
-then written once to the existing attachments bucket under
-`ready_key_prefix + '/' + boot + '.json'`, with create-if-absent object semantics.
-A thin adapter reuses GCSAttachments' bounded worker, Lifetime, request and reply
-bounds while preserving the object metadata response that this base transport
-otherwise discards. Name, length and positive generation are checked. The
-coordinator retains key, generation, digest, length and original bytes and only
-then opens the hold. Stdout is never an acknowledgement. A failed write or reply
-never gets a second ready timestamp.
+**IdleObserverOriginals:** a no-cohort boot has no P3 service and thus no actual
+HEALTH_BASIS install. The unchanged observer criterion requires an installed
+original. Idle boots now have an allocated boot and coordinator, but cannot emit
+six completed adoptions from the available producers. With a valid descriptor
+and originals, they emit correlation and the available adoptions, including
+actual dormant pins. Completing six idle adoptions needs the specified idle
+producer, consistent with the existing empty-policy import rule. No absent
+observation is represented as passed.
 
-`PreIngressRetention` has a fake-tested write/acknowledgement implementation.
-The release owner must still establish at least 30-day bucket retention and
-independent capture of the original and generation. Other original buffers are
-currently bounded in memory; their complete retained export is unfinished.
-
-## Attempts and daily close
-
-The P3 acknowledged-page callback passes actual PAGE rows to the recorder after
-the existing acknowledgement. PAGE parsing remains with the existing row parser.
-The record selects native authorize start events, their original start time,
-sequence and day, and computes a coordinate from the exact PAGE body. It does not
-use the later page-storage or emission time. Replayed events lacking a native
-start locator remain missing. The recorder requires a separately supplied result for each sequence and accepts
-all four result values. NativeAttemptResults must carry those actual results
-and distinguish an eligible native event whose later handoff failed. Until that
-seam is supplied, native attempts remain recorded by P3, while result projections
-remain missing; the recorder does not infer accepted from eligibility.
-
-The shutdown builder checks all five actual monotonic endpoint pairs, their
-contiguity and nesting, and joins the descriptor and boot origin. Missing
-endpoints produce no final span, including termination mid-pass. It never fills
-missing endpoints with zeros or attributes an unobserved hard kill to this
-process. Repeated day closes emit at most once. The builder is tested with
-simulated endpoint observations, not a live P3 lifecycle measurement.
-
-P3ShutdownEndpoints is unfinished: this tree exposes close/result transaction
-boundaries, but not the preparation/export-wait/final-pass endpoint set needed
-for both midnight and termination. No wrappers invent those intervals. P3's
-SIGTERM behavior and timing logic are untouched. NativeExport closure/result
-original retention and the remaining-grace comparison also need binding to this
-recorder. There is no claim that daily or terminating spans are emitted live.
+These are remaining runtime work, not release qualifications. The round is not
+a claim that all production startup criteria can pass.
 
 ## Stage and seam ledger
 
-* **RouterLaunchDescriptor qualification:** acquisition exists; bridge source
-  retention and its exact independent launch join remain release work.
-* **Two witnesses:** termination before correlation, and restart with preserved
-  instance identity (or enforced replacement), remain release work. This package
-  neither runs them nor establishes one process per instance.
-* **BootClockQualification:** the boot UTC original and monotonic origin exist;
-  native clock relation, adjustment and uncertainty qualification remain release
-  work. The current process-start marker is sampled when this module loads,
-  not an independently obtained operating-system creation timestamp.
-* **ReleasedDependencyOperations:** the bounded target-driven port exists; no
-  production regional-operation registry is installed. Local transport remains
-  missing. A resource string must be bound to the actual configured client,
-  marker and deployed pin before that port can report a completed observation.
-* **ObserverInstallOriginals:** no production hook retains HEALTH_BASIS at the
-  actual warm install, nor the exact contender claim/publication write buffers.
-  The coordinator requires the existing native validators through a supplied
-  callable as well as its projection joins. The production adapter must still
-  connect those validators and producer buffers.
-* **ReleaseArtifactOriginals:** original CI/trial/release loading, not just their
-  manifest projections, needs completion. Public descriptors now use the exact
-  object slice of the retained canonical manifest.
-* **PreIngressRetention / StartupOriginalRetention:** ready write/acknowledgement
-  is implemented; native retention qualification and export of all other
-  originals and mode/source coordinates remain unfinished.
-* **NativeAttemptResults:** exact accepted/failed/rejected/timeout result joins,
-  replay/unavailable-page handling and complete denominator retention remain
-  unfinished as described above.
-* **P3ShutdownEndpoints:** actual daily and terminating phase observations and
-  native close/result original joins remain unfinished.
-* **JournalBootAllocation:** when no P3 service exists, construction records this
-  missing seam in app state. It does not allocate a replacement P3 boot. Thus
-  the requested idle/no-cohort record-producing runtime is not yet implemented.
-* **ListenerStarted:** the packaged serving entry point is wired; alternative
-  hosts need their own post-listener callback.
-* **EnclaveOptedAdmission:** the enclave owner must identify and hold its actual
-  opted admission callable until its own six checks and retained ready
-  acknowledgement. This router package does not implement that callable.
+- **Two witnesses:** an independent termination-before-correlation observation
+  and a restart with preserved instance identity (or enforced replacement)
+  remain release work. They block the launch population and restart joins.
+- **RouterLaunchDescriptor qualification:** descriptor acquisition and mode/source
+  retention exist. The release still needs the independent launcher mapping,
+  source original and qualified process-start timestamp. These block acceptance
+  of the correlation's launch/time join. The current process-start marker is
+  sampled when the module loads.
+- **BootClockQualification:** the boot UTC original and monotonic origin exist.
+  The release must establish their relation, adjustments and uncertainty.
+  This blocks adoption-time and elapsed-time qualification across clocks.
+- **EnclaveOptedAdmission:** the enclave owner must connect its actual opted
+  admission callable to its six checks and retained ready acknowledgement.
+  This blocks activation of the complete compared route.
 
-Missing runtime ports keep production readiness unavailable. This is an
-incomplete round-one implementation, not an activation or release claim.
+## Validation
 
-## Interface sentences not yet implemented as written
-
-The interface document is unchanged. The smallest proposed change for each item
-below is implementation work at the named seam, not a weaker interface rule.
-
-> The producer computes both digest and byte count from the same retained buffer, never from request fields, filenames, a later reconstruction, or a declared result.
-
-Public descriptor coordinates now use the exact object slice of the loaded
-manifest buffer. The production observer claim/publication buffers still need
-their actual producer retention hook; they cannot be reconstructed later.
-
-> Parse HEALTH_BASIS with its existing validator, require reader_boot and installed source state.
-
-ObserverInstallOriginals must expose exact P3 producer buffers and the install
-endpoint. The required validator port is tested with the existing native
-validators; it has no production adapter yet.
-
-> A contender also retains parsed HEALTH_CLAIM and HEALTH, validates their publication join, owner boot, actual claim and publication clocks within this boot and before installation, with publication <=500000 us.
-
-The contender port needs the native validators and actual producer write buffers.
-
-> Retain the ready original and acknowledgement for >=30 days.
-
-The object write is implemented; independent retention and acknowledgement
-capture configuration must be supplied before use.
-
-> The recorder writes the single result projection when the result is known and the page containing that start event has been retained; accepted means admission accepted, not eventual settlement.
-
-NativeAttemptResults must carry the actual result alongside the existing event
-start boundary, including failures after native event finalization.
-
-> The close coordinator writes one final a3_shutdown_span per inventoried router writer/day interval after the measured final pass has ended.
-
-Add P3ShutdownEndpoints at actual lifecycle boundaries, without changing their
-budgets or sequencing. The current standalone builder is not that integration.
-
-> Write the correlation once, immediately after reading the descriptor and allocating the journal boot, before boot checks and before any ready record.
-
-The inherited descriptor is read and correlated before loading the manifest,
-but the existing journal was allocated earlier during application construction.
-Move descriptor delivery and correlation to the allocation boundary while
-retaining post-listener checks; add the no-cohort journal owner.
-
-> process_start_us is the measured process start, recorded_at_us is this correlation write time.
-
-Replace the module-load marker with a qualified entry-point/process-start
-measurement supplied by RouterLaunchDescriptor.
-
-The requested design section 15 is absent from this checkout's design document
-(the file ends with section 14.3). The interface's six-criterion table was used.
-The named observation-service glob is also absent; its implementation is
-`services/async_settle_shadow_health.py`. The requested generation receipt is
-absent from the base attachments API; the ready-only adapter preserves it.
+The two package test modules use the real P3 service and compared Runtime with
+fakes at the store and transport boundaries. They cover original buffer identity,
+actual outcomes and PAGE acknowledgement, incomplete starts and closes, original
+file joins, generation replies, target selection and listener availability.
+The round-2 report at /tmp/v2-harness-author-2/report.md records the requested
+module runs, scratch-copy sensitivity checks and request-cost measurements.

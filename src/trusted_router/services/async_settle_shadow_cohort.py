@@ -73,7 +73,8 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
               original_decision: dict[str, Any] | None = None,
               retained_original: bool = False,
               finalized_event: Callable[[bytes], None] | None = None,
-              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None) -> dict[str, Any]:
+              finish_obligation: Callable[[Reservation, dict[str, Any]], None] | None = None,
+              attempt_result: Callable[[Reservation, str], None] | None = None) -> dict[str, Any]:
     """Return additive metadata only after the exact fitted slot is finalized.
 
     No mutation of caller additions or billing DTOs. A replay records its own
@@ -85,6 +86,12 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
         else:
             require(port.fold_counts(reservation.day, receipt_bucket(event)), "counter_overflow")
             port.complete(reservation)
+    def report(reservation: Reservation, result: str) -> None:
+        if attempt_result is not None:
+            try:
+                attempt_result(reservation, result)
+            except Exception:  # noqa: S110 - startup records never change the returned fields
+                pass
     reservation = None
     prepared = None
     finalized = False
@@ -114,6 +121,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
             require(port.finalize(reservation, event, fold_owed=finish_obligation is not None) is not None, "unfinished_slot")
             finalized = True
             finish(reservation, event)
+            report(reservation, "rejected")
             return {}
         prepared = prepare_authorization(reservation, identity=committed_identity(inputs.identity),
             revision=inputs.revision, dimensions=inputs.dimensions, facts=inputs.facts,
@@ -173,6 +181,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
         finish(reservation, event)
         if finalized_event is not None:
             finalized_event(finalized_body)
+        report(reservation, "accepted" if metadata else "rejected")
         return metadata
     except Exception as error:
         loss = getattr(port, "lost", None)
@@ -191,4 +200,6 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                     finish(reservation, event)
             except Exception:  # noqa: S110 - the journal keeps the unfinished slot
                 pass
+        if reservation is not None:
+            report(reservation, "timeout" if isinstance(error, TimeoutError) else "failed")
         return {}

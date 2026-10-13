@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -144,3 +145,14 @@ def health_basis(observer: Any, boot: str, *, at: float | None = None) -> dict[s
             committed_at_ns=item["committed_at_ns"], read_at_ns=item["read_at_ns"], read_elapsed_ns=q, since_reply_ns=e)
     HEALTH_BASIS(value)
     return value
+
+
+def validate_startup_observation(observed: dict[str, Any]) -> None:
+    """Parse the actual install and publication buffers with the native readers."""
+    basis = HEALTH_BASIS.parse(observed["health_basis_raw"])
+    if observed["contender"]:
+        claim = json.loads(observed["claim_raw"])
+        publication = HEALTH.parse(observed["publication_raw"])
+        validate_publication(claim, publication)
+        if publication != basis["body"]:
+            raise ValueError("startup_publication_join")

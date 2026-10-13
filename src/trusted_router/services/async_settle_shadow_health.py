@@ -23,6 +23,7 @@ from trusted_router.async_settle_shadow_health_state import (
     Slots,
     health_basis,
     prediction,
+    validate_startup_observation,
 )
 from trusted_router.async_settle_shadow_journal import (
     CERTIFICATE_KIND,
@@ -195,6 +196,28 @@ class HealthObserver(Observer):
                 self._failure(None, started, "late_installs")
             elif self._success(None, started):
                 self.health = dict(value) if value is not None else None
+                svc = self.service
+                if svc is not None and svc.startup_observation is None and value is not None:
+                    try:
+                        # This is the install producer, not a later cache snapshot.
+                        basis = health_basis(self, svc.journal.boot, at=self.clock())
+                        if basis["source_state"] != "installed":
+                            return
+                        raw = canonical(basis)
+                        installed = int(svc.store.wall()*1_000_000)*1000
+                        original = dict(health_basis_raw=raw, installed_at_ns=installed,
+                                        contender=bool(svc.settings.async_settle_shadow_health_region)
+                                        and svc.settings.async_settle_shadow_health_region
+                                        == svc.settings.effective_serving_region)
+                        if original["contender"]:
+                            if svc.startup_publication is None:
+                                return
+                            original.update(svc.startup_publication)
+                        validate_startup_observation(original)
+                        if original["health_basis_raw"] and value["read_at_ns"] <= installed:
+                            svc.startup_observation = original
+                    except Exception:  # noqa: S110 - record collection cannot alter an install
+                        pass
 
 
 class StickyLoss:
@@ -397,6 +420,7 @@ class PublisherReply:
     generation: int = 0
     actual_start_mono: float | None = None
     reason: str | None = None
+    originals: dict[str, Any] | None = None
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
@@ -462,12 +486,25 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         cycle_us=elapsed if attempted else None,
         outcome={"missed_slots": "missed", "lost_claims": "lost_claim", "publications": "published", "failures": "failed"}[outcome],
         unknown_outcome=unknown, late_cycle=late, rpc_count=len(rpc_durations), rpc_elapsed_us=sum(rpc_durations))
-    return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason)
+    originals = None
+    if outcome == "publications" and claim is not None:
+        claim_raw = store.startup_claim_raw
+        publication_raw = store.startup_publication_raw
+        if claim_raw is not None and publication_raw is not None:
+            originals = dict(claim_raw=claim_raw, publication_raw=publication_raw,
+                publication_elapsed_us=elapsed, claim_at_ns=claim["claim_at_ns"],
+                published_at_ns=value["observed_at_ns"] if value else None)
+    return PublisherReply(trace, tuple(rpc_durations), claimed, job.generation, started, reason, originals)
 
 
 class Service:
     def __init__(self, settings: Settings, store: ObservationStore, transport: Transport | None = None) -> None:
         self.settings, self.store = settings, store
+        self.startup_observation: dict[str, Any] | None = None
+        self.startup_publication: dict[str, Any] | None = None
+        self.startup_close: Callable[..., None] | None = None
+        self.startup_preparation_started: int | None = None
+        self.startup_close_phases: dict[str, tuple[int, int]] = {}
         self.workspaces = settings.async_settle_shadow_workspace_ids
         self.legacy = Counters(settings.effective_serving_region, settings.source_revision)
         self.journal = Journal(self.legacy.instance)
@@ -646,6 +683,8 @@ class Service:
         if any(isinstance(e, lifecycle.Fault) for e in effects):
             self.publisher_faults += 1
             return (lifecycle.Fault("invalid_publisher_reply"),)
+        if reply.originals is not None and trace["outcome"] == "published":
+            self.startup_publication = reply.originals
         if trace["outcome"] != "missed" and reply.actual_start_mono is not None:
             self.last_claim_start = reply.actual_start_mono
         with self.lock:
@@ -971,6 +1010,7 @@ class Service:
 
     def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
+        preparation_started = round(self.store.clock()*1_000_000)
         budget = Budget(deadline, self.store.clock)
         self.sync_fold_obligations()
         if self.closing_reason is not None and not self.state.shutdown:
@@ -985,6 +1025,7 @@ class Service:
             for effect in effects:
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
+        export_started = round(self.store.clock()*1_000_000)
         yield from self.upload(self.bases, budget)
         yield from self.upload(self.traces, budget)
         with self.lock:
@@ -1031,6 +1072,10 @@ class Service:
                 reason = self.closing_reason or ("utc_boundary" if day < today else None)
                 if reason:
                     state.closing = True
+                    if self.startup_close is not None and day not in self.startup_close_phases:
+                        self.startup_close_phases[day] = (
+                            self.startup_preparation_started if self.startup_preparation_started is not None
+                            else preparation_started, export_started)
                 end_us = self.interval_end_us or now_us
                 if reason == "utc_boundary":
                     import datetime as dt
@@ -1053,8 +1098,18 @@ class Service:
             if closure is not None:
                 with self.lock:
                     self.final_attempted.add(day)
+            close_started = round(self.store.clock()*1_000_000)
+            phase_start, phase_export = self.startup_close_phases.get(day, (preparation_started, export_started))
+            spans = dict(preparation=[phase_start, phase_export],
+                export_wait=[phase_export, close_started])
+            close_original = closure
+            result_original = None
+            completed = False
             try:
-                yield partial(self.store.flush, pages, counter, closure, budget)
+                try:
+                    yield partial(self.store.flush, pages, counter, closure, budget)
+                finally:
+                    spans["close"] = [close_started, round(self.store.clock()*1_000_000)]
                 elapsed = max(0, round((self.store.clock()-started)*1_000_000))
                 if closure is not None:
                     observed = int(self.store.wall()*1_000_000)
@@ -1065,6 +1120,7 @@ class Service:
                         observed_at_us=observed, physical_commit_ack_at_us=observed, elapsed_us=elapsed,
                         outcome="acknowledged", flush_remaining_us=flush_remaining,
                         shutdown_remaining_us=shutdown_remaining, handoff_attempt_limit=1))
+                    result_original = result
                     validate_close_result(result.value(), closure.value(), termination_applies=self.termination_deadline is not None)
                     # Freeze only after the original reply. No readback path enters here.
                     effects = self.accept(lifecycle.FinalReply(observed, day, "timely"))
@@ -1072,11 +1128,16 @@ class Service:
                         return
                     self.last_closure_ack = result.value()
                     self.handoff = (day, pages, closure, result)
+                    result_started = round(self.store.clock()*1_000_000)
                     try:
-                        yield partial(self.store.close_result, result, budget)
+                        try:
+                            yield partial(self.store.close_result, result, budget)
+                        finally:
+                            spans["result"] = [result_started, round(self.store.clock()*1_000_000)]
                     except Exception:
                         self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, None))
                         return  # Exactly one write; later exact read can establish landing.
+                    completed = True
                     self.handoff = None
                     self.accept(lifecycle.CloseResultReply(int(self.store.wall()*1_000_000), day, True))
                 with self.lock:
@@ -1117,6 +1178,16 @@ class Service:
                         logger.warning("shadow_v2_final_close_failed day=%s boot=%s unknown=%s",
                                        day, self.journal.boot, isinstance(error, UnknownCommit))
                 return
+            finally:
+                if close_original is not None and self.startup_close is not None:
+                    spans["final_pass"] = [close_started, round(self.store.clock()*1_000_000)]
+                    try:
+                        self.startup_close(day=day, interval_end_us=end_us, spans=spans,
+                            complete=completed, outcome="graceful", closure=close_original,
+                            result=result_original)
+                    except Exception:  # noqa: S110 - observations never alter P3 progress
+                        pass
+                    self.startup_close_phases.pop(day, None)
 
     def maintain(self) -> None:
         self.drive(self.maintenance())
@@ -1245,6 +1316,7 @@ class Service:
             await self.close_done.wait()
             return
         self.close_task = asyncio.current_task()
+        self.startup_preparation_started = round(self.store.clock()*1_000_000)
         deadline = min(deadline or self.store.clock()+9, self.termination_deadline or self.store.clock()+9)
         if reason == "shutdown":
             self.termination_deadline = deadline

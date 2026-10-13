@@ -108,6 +108,8 @@ class ObservationStore:
         self.workspace_database = database
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
+        self.startup_claim_raw: bytes | None = None
+        self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
         configure(self.database)
@@ -184,7 +186,9 @@ class ObservationStore:
             old = Row(CLAIM_KIND, "local/publish", body.encode()).value() if body is not None else None
             if not claim_allowed(old, slot):
                 return False
-            self.write(tx, [Row.build(CLAIM_KIND, "local/publish", value)], budget)
+            row = Row.build(CLAIM_KIND, "local/publish", value)
+            self.write(tx, [row], budget)
+            self.startup_claim_raw = row.body
             return True
         return self.transaction(run, budget, CYCLE_SECONDS)
 
@@ -197,7 +201,10 @@ class ObservationStore:
                 return False
             self.write(tx, [row], budget)
             return True
-        return self.transaction(run, budget, CYCLE_SECONDS)
+        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed:
+            self.startup_publication_raw = row.body
+        return landed
 
     def snapshot_query(self, statement: Statement, budget: Budget, cap: float) -> tuple[list[Any], int]:
         with rpc_scope(budget.deadline, cap, budget.clock):

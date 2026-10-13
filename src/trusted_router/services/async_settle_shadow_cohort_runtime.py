@@ -33,7 +33,7 @@ from trusted_router.async_settle_shadow_v2_contract import (
 from trusted_router.async_settle_shadow_v2_evidence import EVENT, PREDICTION, committed_identity
 from trusted_router.async_settle_shadow_v2_schema import POLICY, require, sha256
 from trusted_router.billing_snapshot import Eligibility, exclusion
-from trusted_router.config import Settings
+from trusted_router.config import Settings, in_v2_cohort
 from trusted_router.detached_jws import canonical
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.services.async_settle_shadow_admission import unknown
@@ -298,15 +298,27 @@ class Runtime:
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
         self.startup_admission = SimpleNamespace(ready=True)
+        self.startup_attempt_result: Callable[[Any, str], None] | None = None
+        self.startup_attempt_start: Callable[[], None] | None = None
         self.decisions: dict[str, bytes] = {}
         self.worker.start()  # install-time prestart; no request can start a thread
 
     def authorize_http(self, request: Any, body: Any, auth: GatewayAuthorization, additions: dict[str, Any],
                        endpoints: list[Any], *, typed: bool, federated: bool, replay: bool) -> None:
+        attempt: list[tuple[Reservation, str]] | None = None
         try:
             startup_ready = self.startup_admission.ready
             observed_us = time.time_ns()//1000
             capability = tuple(request.headers.getlist("X-TR-Settlement-Shadow-Policy"))
+            if (self.startup_attempt_result is not None and has_v2_capability(capability)
+                    and in_v2_cohort(self.settings.async_settle_shadow_policy, auth.workspace_id,
+                        self.settings.async_settle_enabled, self.settings.async_settle_shadow_workspace_ids)):
+                attempt = []
+                if self.startup_attempt_start is not None:
+                    try:
+                        self.startup_attempt_start()
+                    except Exception:  # noqa: S110 - recorder availability does not change admission
+                        pass
             original = None
             if replay and has_v2_capability(capability):
                 try:
@@ -336,10 +348,19 @@ class Runtime:
             fields = authorize(self.settings, capability,
                 self.port, inputs, additions, self.signer, replay=replay,
                 original_decision=original, retained_original=True, original_locator=original["receipt_locator"] if original else None,
-                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize)
+                finalized_event=retain if not replay else None, finish_obligation=self.defer_authorize,
+                attempt_result=(lambda reservation, result: attempt.append((reservation, result))) if attempt is not None else None)
             additions.update(compared_handoff_fields(fields, auth))
-        except Exception:
+        except Exception as error:
+            if attempt:
+                attempt[-1] = (attempt[-1][0], "timeout" if isinstance(error, TimeoutError) else "failed")
             self.port.lost.set()
+        finally:
+            if attempt and self.startup_attempt_result is not None:
+                try:
+                    self.startup_attempt_result(*attempt[-1])
+                except Exception:  # noqa: S110 - record collection cannot change admission
+                    pass
 
     def admit(self, size: int) -> str | None:
         if not self.guard.acquire(blocking=False):

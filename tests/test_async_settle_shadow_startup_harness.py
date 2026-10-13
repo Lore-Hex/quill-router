@@ -6,6 +6,8 @@ import copy
 import hashlib
 import json
 import os
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -32,7 +34,8 @@ def descriptor():
 
 
 def manifest():
-    config = dict(dependencies=dict(router=[dict(operation=o, resource='regional-store', region=REGION)
+    directory = tempfile.TemporaryDirectory(prefix='startup-originals-')
+    config = dict(enclave_revision='d'*40, dependencies=dict(router=[dict(operation=o, resource='regional-store', region=REGION)
                                            for o in ('transport', 'read')]), descriptor_ids=['public-one'])
     config_sha = hashlib.sha256(records.canonical(config)).hexdigest()
     m = dict(launch=dict(mode='instance_as_launch', project='project', region=REGION,
@@ -47,9 +50,15 @@ def manifest():
             name = criterion+'/'+source
             m['selections'][criterion][source] = name
             m['artifacts'][name] = dict(id=name, criterion=criterion, source=source,
-                revision=REV, region=REGION, config_sha256=config_sha, started_at_us=1,
-                completed_at_us=2, checks=dict.fromkeys(records.CHECKS[criterion], 'pass'))
-    return ReleaseManifest(records.canonical(m))
+                router_revision=REV, enclave_revision='d'*40, region=REGION, config_sha256=config_sha, started_at_us=1,
+                completed_at_us=2, checks=dict.fromkeys(records.CHECKS[criterion], 'pass'), conclusion='pass')
+            raw = records.canonical(m['artifacts'][name])
+            path = Path(directory.name)/(name.replace('/', '-')+'.json')
+            path.write_bytes(raw)
+            m['artifacts'][name]['path'] = str(path)
+    result = ReleaseManifest(records.canonical(m))
+    result.test_directory = directory
+    return result
 
 
 def fake_harness(*, contender=False, ack=True):
@@ -100,6 +109,10 @@ def fake_harness(*, contender=False, ack=True):
         if observed['contender']:
             validate_publication(HEALTH_CLAIM.parse(observed['claim_raw']), HEALTH.parse(observed['publication_raw']))
     h.ports.validate_observer = validate_observer
+    async def retain_original(key, raw):
+        calls.append(('original', key, raw))
+        return Acknowledgement(key, '19', hashlib.sha256(raw).hexdigest(), len(raw))
+    h.ports.retain_original = retain_original
     return h, lines, calls
 
 
@@ -163,6 +176,8 @@ def test_descriptor_actual_fd_three(tmp_path):
     path.write_bytes(descriptor().original)
     # Child-only descriptor 3; the parent's descriptors remain untouched.
     code = f'''import os
+import tempfile
+from pathlib import Path
 from trusted_router.services.async_settle_shadow_launch_descriptor import read_fd
 f = os.open({str(path)!r}, os.O_RDONLY)
 os.dup2(f, 3)
@@ -361,7 +376,7 @@ def test_emitter_does_not_raise_on_writer_failure():
 def test_manifest_bounded_canonical_and_missing(tmp_path):
     path = tmp_path/'release.json'
     path.write_bytes(records.canonical(manifest()))
-    assert load_manifest(str(path)) == manifest()
+    assert load_manifest(str(path)) == json.loads(path.read_bytes())
     path.write_bytes(path.read_bytes()+b'\n')
     with pytest.raises(ValueError):
         load_manifest(str(path))
@@ -424,3 +439,53 @@ def test_default_writer_failure_cannot_fail_startup(monkeypatch):
     assert not calls
     assert emitter.emit(dict(kind='a3_traffic_ready', boot='one', at_us=1)) is None
     assert calls == ['writer'] and emitter.dropped == 1
+
+
+async def test_original_artifact_clock_and_revision_joins(tmp_path):
+    h, _, _ = fake_harness()
+    m = manifest()
+    selected = m['selections']['transport']['ci']
+    declared = m['artifacts'][selected]
+    path = Path(declared['path'])
+    raw = path.read_bytes()
+    changed = json.loads(raw)
+    changed['completed_at_us'] = 999999999
+    path.write_bytes(records.canonical(changed))
+    await h.run(descriptor(), m)
+    assert 'transport' in h.missing and 'transport' not in h.adopted
+    assert path.read_bytes() in h.files.values()
+    assert not h.admission.ready
+
+
+async def test_absent_original_never_uses_manifest_projection():
+    h, _, _ = fake_harness()
+    m = manifest()
+    selected = m['selections']['size']['ci']
+    Path(m['artifacts'][selected]['path']).unlink()
+    await h.run(descriptor(), m)
+    assert 'size' in h.missing and 'size' not in h.adopted
+    assert not h.admission.ready
+
+
+async def test_all_startup_originals_retained_before_ready():
+    h, _, calls = fake_harness()
+    m = manifest()
+    await h.run(descriptor(), m)
+    assert h.admission.ready
+    uploads = [c for c in calls if c[0] == 'original']
+    keys = {c[1] for c in uploads}
+    prefix = m['ready_key_prefix']+'/'+h.boot+'/'
+    assert {prefix+'descriptor.json', prefix+'mode.json', prefix+'correlation.json', prefix+'index.json'} <= keys
+    assert {prefix+'adoptions/'+c+'.json' for c in records.CHECKS} <= keys
+    assert all(raw in [c[2] for c in uploads] for raw in m.artifact_originals.values())
+    assert len(h.file_acknowledgements) == len(uploads)
+    assert calls[-1][0] == 'ready'
+
+
+async def test_original_generation_required():
+    h, _, _ = fake_harness()
+    async def missing_generation(key, raw):
+        return Acknowledgement(key, '', hashlib.sha256(raw).hexdigest(), len(raw))
+    h.ports.retain_original = missing_generation
+    await h.run(descriptor(), manifest())
+    assert not h.admission.ready and h.ready_raw is None

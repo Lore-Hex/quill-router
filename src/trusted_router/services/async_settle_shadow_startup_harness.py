@@ -5,12 +5,15 @@ import asyncio
 import hashlib
 import json
 import os
+import threading
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from trusted_router.services.async_settle_shadow_launch_descriptor import (
     Descriptor,
@@ -78,6 +81,7 @@ class ReleaseManifest(dict[str, Any]):
         marker = b'"public_descriptors":'
         offset = raw.index(marker+public) + len(marker)
         self.public_original = raw[offset:offset+len(public)]
+        self.artifact_originals: dict[str, bytes] = {}
 
 
 def load_manifest(path: str) -> dict[str, Any]:
@@ -107,6 +111,7 @@ class Ports:
     observer: Callable[[], Awaitable[dict[str, Any]]] | None = None
     retain_ready: Callable[[str, bytes], Awaitable[Acknowledgement | None]] | None = None
     validate_observer: Callable[[dict[str, Any]], None] | None = None
+    retain_original: Callable[[str, bytes], Awaitable[Acknowledgement | None]] | None = None
 
 
 class Harness:
@@ -120,6 +125,8 @@ class Harness:
         self.monotonic = monotonic or (lambda: time.monotonic_ns()//1000)
         self.boot_at_us, self.monotonic_at_boot_us = self.now(), self.monotonic()
         self.originals = Originals()
+        self.files: dict[str, bytes] = {}
+        self.file_acknowledgements: dict[str, Acknowledgement] = {}
         raw = canonical(dict(clock="utc_ns", boot=boot, boot_at_us=self.boot_at_us))
         self.clock_basis = dict(clock="utc_ns", boot=boot, boot_at_us=self.boot_at_us,
                                 original=self.originals.retain("clock_basis.original", raw))
@@ -134,14 +141,27 @@ class Harness:
         self.task: asyncio.Task[None] | None = None
         self.started = False
         self.shutdown_days: set[str] = set()
+        self.attempts: dict[tuple[str, int], tuple[int, str]] = {}
+        self.attempt_pages: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
+        self.attempt_emitted: set[tuple[str, int]] = set()
+        self.attempt_emitted_order: deque[tuple[str, int]] = deque()
+        self.attempt_count = self.attempt_projected = self.attempt_overflow = 0
+        self.attempt_lock = threading.Lock()
 
     def correlate(self, descriptor: Descriptor) -> bool:
         if self.descriptor is not None:
             return False
         self.descriptor = descriptor
-        self.correlated = self.emitter.emit(dict(kind="a3_startup_correlation", **descriptor.value,
+        raw = self.emitter.emit(dict(kind="a3_startup_correlation", **descriptor.value,
             boot=self.boot, process_start_us=min(PROCESS_START_US, self.boot_at_us),
-            recorded_at_us=self.now())) is not None
+            recorded_at_us=self.now()))
+        self.correlated = raw is not None
+        if raw is not None:
+            self.files["correlation.json"] = raw
+        self.files["descriptor.json"] = descriptor.original
+        self.files["mode.json"] = canonical(dict(mode=descriptor.mode))
+        if descriptor.source_coordinate is not None:
+            self.files["source.json"] = descriptor.source_coordinate
         return self.correlated
 
     def artifact_inputs(self, criterion: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -152,10 +172,20 @@ class Harness:
         checks = dict.fromkeys(CHECKS[criterion], "pass")
         for source, artifact_id in selections.items():
             identifier(artifact_id)
-            artifact = manifest["artifacts"][artifact_id]
-            closed(artifact, "id criterion source revision region config_sha256 started_at_us completed_at_us checks")
+            declared = manifest["artifacts"][artifact_id]
+            require(isinstance(manifest, ReleaseManifest))
+            assert isinstance(manifest, ReleaseManifest)
+            raw = manifest.artifact_originals[artifact_id]
+            artifact = json.loads(raw)
+            closed(artifact, "id criterion source router_revision enclave_revision region config_sha256 started_at_us completed_at_us checks conclusion")
+            require(artifact["router_revision"] == manifest["revision"])
+            require(artifact["enclave_revision"] == manifest["config"]["enclave_revision"])
+            revision(artifact["enclave_revision"])
+            require(artifact["conclusion"] in {"pass", "fail"})
+            # Compare declared joins, but derive all times and outcomes from the original.
+            require(all(artifact[k] == v for k, v in declared.items() if k != "path"))
             require((artifact["id"], artifact["criterion"], artifact["source"]) == (artifact_id, criterion, source))
-            for name in ("revision", "region", "config_sha256"):
+            for name in ("region", "config_sha256"):
                 require(artifact[name] == manifest[name])
             integer(artifact["started_at_us"])
             integer(artifact["completed_at_us"], artifact["started_at_us"]+1, self.now())
@@ -164,7 +194,7 @@ class Harness:
             closed(artifact["checks"], set(CHECKS[criterion]))
             for name, result in artifact["checks"].items():
                 require(type(result) is str and result in {"pass", "fail"})
-                if result == "fail":
+                if result == "fail" or artifact["conclusion"] == "fail":
                     checks[name] = "fail"
         return selections, checks
 
@@ -226,6 +256,9 @@ class Harness:
                 require(claim["owner_boot_id"] == self.boot == publication["publisher_boot_id"])
                 require(claim["slot"] == publication["slot"] and publication == basis["body"])
                 require(claim["claim_at_ns"] == observed["claim_at_ns"] and publication["observed_at_ns"] == observed["published_at_ns"])
+                integer(observed["claim_at_ns"], self.boot_at_us*1000, installed)
+                integer(observed["published_at_ns"], observed["claim_at_ns"], installed)
+                integer(observed["publication_elapsed_us"], 0, 500_000)
                 for name in ("claim", "publication"):
                     fields[name] = self.originals.retain(name, observed[name+"_raw"])
                 for name in ("publication_elapsed_us", "claim_at_ns", "published_at_ns"):
@@ -259,7 +292,9 @@ class Harness:
                 revision=self.descriptor.value["revision"], region=self.descriptor.value["region"],
                 boot_at_us=self.boot_at_us, criterion=criterion, completed_at_us=self.now(),
                 checks=checks, config_sha256=self.manifest["config_sha256"], inputs=inputs, **fields)
-            if self.emitter.emit(record) is not None:
+            raw = self.emitter.emit(record)
+            if raw is not None:
+                self.files["adoptions/"+criterion+".json"] = raw
                 self.adopted[criterion] = record
             else:
                 self.missing.add(criterion)
@@ -276,8 +311,20 @@ class Harness:
             require(self.correlated and self.descriptor == descriptor)
             self.manifest = manifest
             require(descriptor.value["revision"] == manifest["revision"] and descriptor.value["region"] == manifest["region"])
+            require(isinstance(manifest, ReleaseManifest))
+            assert isinstance(manifest, ReleaseManifest)
+            self.files["manifest.json"] = manifest.original
+            for artifact_id, declared in manifest["artifacts"].items():
+                try:
+                    raw = await asyncio.to_thread(read_original, declared["path"])
+                    require(sum(map(len, self.files.values()))+len(raw) <= 1048576)
+                    manifest.artifact_originals[artifact_id] = raw
+                    self.files["artifacts/"+hashlib.sha256(raw).hexdigest()+".json"] = raw
+                except Exception:
+                    self.missing.add("ReleaseArtifactOriginals:"+artifact_id)
             for criterion in CHECKS:
                 await self.adopt(criterion)
+            await self.retain_startup()
             if set(self.adopted) != set(CHECKS) or any(
                     result != "pass" for r in self.adopted.values() for result in r["checks"].values()):
                 return
@@ -292,33 +339,114 @@ class Harness:
                 ack = await self.ports.retain_ready(key, self.ready_raw)
             require(isinstance(ack, Acknowledgement))
             assert ack is not None
-            require(ack.key == key and type(ack.generation) is str and ack.generation.isascii()
-                    and ack.generation.isdigit() and 0 < int(ack.generation) <= (1 << 63)-1)
-            require(ack.sha256 == hashlib.sha256(self.ready_raw).hexdigest() and ack.bytes == len(self.ready_raw))
+            check_acknowledgement(ack, key, self.ready_raw)
             self.acknowledgement = ack
             self.admission.ready = True
         except Exception:
             self.missing.add("PreIngressRetention" if self.ready_raw else "startup")
 
-    def retained_page(self, row: Any, results: dict[int, str] | None = None) -> None:
-        """Called on a retained PAGE, after the native writer's acknowledgement."""
+    async def retain_startup(self) -> None:
+        assert self.manifest is not None
+        require(self.ports.retain_original is not None)
+        assert self.ports.retain_original is not None
+        for (kind, sha, _), raw in self.originals.buffers.items():
+            self.files["originals/"+kind+"/"+sha+".json"] = raw
+        for suffix, raw in self.files.items():
+            key = self.manifest["ready_key_prefix"]+"/"+self.boot+"/"+suffix
+            async with asyncio.timeout(10):
+                ack = await self.ports.retain_original(key, raw)
+            require(isinstance(ack, Acknowledgement))
+            assert ack is not None
+            check_acknowledgement(ack, key, raw)
+            self.file_acknowledgements[key] = ack
+        # The index lets capture resolve coordinates and the generation replies.
+        index = canonical({k: dict(generation=v.generation, sha256=v.sha256, bytes=v.bytes)
+                           for k, v in self.file_acknowledgements.items()})
+        key = self.manifest["ready_key_prefix"]+"/"+self.boot+"/index.json"
+        async with asyncio.timeout(10):
+            ack = await self.ports.retain_original(key, index)
+        require(isinstance(ack, Acknowledgement))
+        assert ack is not None
+        check_acknowledgement(ack, key, index)
+        self.file_acknowledgements[key] = ack
+
+    @property
+    def missing_attempts(self) -> int:
+        return self.attempt_count - self.attempt_projected
+
+    def attempt_start(self) -> None:
+        self.attempt_count += 1
+
+    def attempt_result(self, reservation: Any, result: str) -> None:
+        if not self.attempt_lock.acquire(blocking=False):
+            self.attempt_overflow += 1
+            return
         try:
-            page = row.value()  # Existing PAGE parser and locator joins.
-            raw = row.body
+            self._attempt_result(reservation, result)
+        finally:
+            self.attempt_lock.release()
+
+    def _attempt_result(self, reservation: Any, result: str) -> None:
+        key = (reservation.day, reservation.event_seq)
+        if len(self.attempts) >= 8192:
+            self.attempt_overflow += 1
+            return
+        require(reservation.boot == self.boot)
+        require(result in {"accepted", "failed", "rejected", "timeout"})
+        self.attempts[key] = (reservation.observed_us, result)
+        self.project_attempt(key)
+
+    def project_attempt(self, key: tuple[str, int]) -> None:
+        if key in self.attempt_emitted or key not in self.attempts or key not in self.attempt_pages:
+            return
+        at_us, result = self.attempts[key]
+        page_at, ref = self.attempt_pages[key]
+        require(page_at == at_us)
+        raw = self.emitter.emit(dict(kind="a3_opted_attempt", boot=self.boot, at_us=at_us,
+            result=result, receipt=dict(day=key[0], boot=self.boot, sequence=key[1], original=ref)))
+        if raw is not None:
+            self.attempt_projected += 1
+            if len(self.attempt_emitted_order) == 8192:
+                self.attempt_emitted.discard(self.attempt_emitted_order.popleft())
+            self.attempt_emitted_order.append(key)
+            self.attempt_emitted.add(key)
+            del self.attempts[key]
+            del self.attempt_pages[key]
+
+    def retained_page(self, row: Any, results: dict[int, str] | None = None) -> None:
+        """Observe exact PAGE bytes only after the P3 writer acknowledgement."""
+        if not self.attempt_lock.acquire(blocking=False):
+            self.attempt_overflow += 1
+            self.missing.add("NativeAttemptPage")
+            return
+        try:
+            self._retained_page(row, results)
+        finally:
+            self.attempt_lock.release()
+
+    def _retained_page(self, row: Any, results: dict[int, str] | None = None) -> None:
+        try:
+            page = row.value()
             require(page["boot"] == self.boot)
-            ref = coordinate("receipt.original", raw)
+            ref = coordinate("receipt.original", row.body)
             for event in page["events"]:
                 if event["phase"] != "authorize" or event["receipt_locator"] is None:
                     continue
                 sequence = int(event["seq"])
                 integer(sequence, 1)
-                if results is None or sequence not in results:
-                    self.missing.add("NativeAttemptResults")
+                key = (page["day"], sequence)
+                if key in self.attempt_emitted:
                     continue
-                result = results[sequence]
-                self.emitter.emit(dict(kind="a3_opted_attempt", boot=self.boot,
-                    at_us=event["event_at_us"], result=result,
-                    receipt=dict(day=page["day"], boot=self.boot, sequence=sequence, original=ref)))
+                if len(self.attempt_pages) >= 8192:
+                    self.attempt_overflow += 1
+                    continue
+                self.attempt_pages[key] = (event["event_at_us"], ref)
+                if results is not None and sequence in results:
+                    self.attempt_count += 1
+                    self.attempts[key] = (event["event_at_us"], results[sequence])
+                if key not in self.attempts:
+                    self.missing.add("NativeAttemptResults")
+                self.project_attempt(key)
         except Exception:
             self.missing.add("NativeAttemptPage")
 
@@ -338,7 +466,26 @@ class Harness:
             spans=spans, outcome=outcome)) is not None
 
 
+def read_original(path: str) -> bytes:
+    require(type(path) is str and Path(path).is_file())
+    with open(path, "rb") as source:
+        raw = source.read(65537)
+    require(0 < len(raw) <= 65536)
+    return raw
+
+
+def check_acknowledgement(ack: Acknowledgement, key: str, raw: bytes) -> None:
+    require(ack.key == key and type(ack.generation) is str and ack.generation.isascii()
+            and ack.generation.isdigit() and 0 < int(ack.generation) <= (1 << 63)-1)
+    require(ack.sha256 == hashlib.sha256(raw).hexdigest() and ack.bytes == len(raw))
+
+
 async def retain_ready(bucket: str, key: str, raw: bytes) -> Acknowledgement:
+    validate(json.loads(raw))
+    return await retain_object(bucket, key, raw)
+
+
+async def retain_object(bucket: str, key: str, raw: bytes) -> Acknowledgement:
     """Reuse the existing bounded object worker, retaining its generation reply."""
     from trusted_router.storage_gcp_shadow_attachments import AuthRequest, GCSAttachments, Lifetime
 
@@ -360,7 +507,7 @@ async def retain_ready(bucket: str, key: str, raw: bytes) -> Acknowledgement:
             require(status in {200, 201})
             return response
 
-    validate(json.loads(raw))
+    require(type(raw) is bytes and 0 < len(raw) <= MANIFEST_BYTES)
     transport = ReadyObjects(bucket)
     response = await asyncio.to_thread(transport.request, "POST", key, raw, 9.)
     require(response is not None)
@@ -374,22 +521,13 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
     if getattr(app.state, "async_settle_shadow_startup", None) is not None:
         return
     service = getattr(app.state, "async_settle_shadow_observation", None)
-    if service is None:
-        # JournalBootAllocation: do not invent a replacement journal identity.
-        app.state.async_settle_shadow_startup_missing = "JournalBootAllocation"
-        return
     admission = Admission()
     if runtime is not None:
         runtime.startup_admission = admission
-    harness = Harness(service.journal.boot, admission)
+    harness = Harness(service.journal.boot if service is not None else str(uuid4()), admission)
     app.state.async_settle_shadow_startup = harness
-    original_acknowledged = service.acknowledged
-
-    def acknowledged(day: str, pages: list[Any], closure: Any) -> None:
-        original_acknowledged(day, pages, closure)
-        for page in pages:
-            harness.retained_page(page)
-    service.acknowledged = acknowledged
+    if service is not None:
+        bind_service(harness, service, runtime)
 
     async def begin() -> None:
         try:
@@ -410,8 +548,11 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
                 async def retain(key: str, raw: bytes) -> Acknowledgement:
                     return await retain_ready(settings.async_settle_shadow_attachment_bucket, key, raw)
                 harness.ports.retain_ready = retain
-            # ReleasedDependencyOperations and ObserverInstallOriginals remain
-            # missing until the owning adapters provide their measured originals.
+                async def retain_other(key: str, raw: bytes) -> Acknowledgement:
+                    return await retain_object(settings.async_settle_shadow_attachment_bucket, key, raw)
+                harness.ports.retain_original = retain_other
+            if service is not None:
+                harness.ports.dependency = dependency_operations(service, manifest)
             await harness.run(descriptor, manifest)
         except Exception:
             harness.missing.add("ReleaseStartupInputs")
@@ -429,3 +570,59 @@ def listener_started(app: Any) -> None:
     begin = getattr(app.state, "async_settle_shadow_startup_begin", None)
     if harness is not None and begin is not None and harness.task is None:
         harness.task = asyncio.create_task(begin(), name="shadow-startup-records")
+
+
+def bind_service(harness: Harness, service: Any, runtime: Any = None) -> None:
+    from trusted_router.async_settle_shadow_health_state import validate_startup_observation
+
+    async def observer() -> dict[str, Any]:
+        # Warm work remains owned by P3. This task only waits for its retained reply.
+        for _ in range(90):
+            if service.startup_observation is not None:
+                return dict(service.startup_observation)
+            await asyncio.sleep(.01)
+        raise ValueError("ObserverInstallOriginals")
+
+    def closed_interval(*, closure: Any, result: Any, **fields: Any) -> None:
+        harness.originals.retain("originals.original_close", closure.body)
+        if result is not None:
+            harness.originals.retain("originals.close_result", result.body)
+        harness.shutdown_span(**fields)
+
+    service.startup_close = closed_interval
+    harness.ports.observer = observer
+    harness.ports.validate_observer = validate_startup_observation
+    original_acknowledged = service.acknowledged
+
+    def acknowledged(day: str, pages: list[Any], closure: Any) -> None:
+        original_acknowledged(day, pages, closure)
+        for page in pages:
+            harness.retained_page(page)
+    service.acknowledged = acknowledged
+    if runtime is not None:
+        runtime.startup_attempt_result = harness.attempt_result
+        runtime.startup_attempt_start = harness.attempt_start
+
+
+def dependency_operations(service: Any, manifest: dict[str, Any]) -> Callable[[dict[str, Any], int], Awaitable[bool]]:
+    """Bind an exact-key read to the installed observation client, once per boot."""
+    from trusted_router.async_settle_shadow_journal import HEALTH_KIND
+    from trusted_router.storage_gcp_shadow_observation import Budget
+
+    targets = tuple(canonical(t) for t in manifest["config"]["dependencies"]["router"])
+    used: set[bytes] = set()
+
+    async def operation(target: dict[str, Any], deadline_us: int) -> bool:
+        key = canonical(target)
+        require(key in targets and key not in used and 0 < deadline_us <= 10_000_000)
+        used.add(key)
+        require(target["region"] == service.settings.effective_serving_region)
+        if target["operation"] == "read":
+            # The resource is the configured P3 database, never a request value.
+            require(target["resource"] == service.settings.spanner_database_id)
+            budget = Budget(service.store.clock()+deadline_us/1_000_000, service.store.clock)
+            await asyncio.to_thread(service.store.read, HEALTH_KIND, "local/fleet", budget)
+            budget.remaining(deadline_us/1_000_000)
+            return True
+        raise ValueError("ReleasedDependencyOperations.transport")
+    return operation
