@@ -16,7 +16,7 @@ locals {
   # uploaded; a node picks a new one up when reset or replaced
   # (docs/runbooks/fastpath-p0.md). bfa94e22e: the merge of #1728, P1's run,
   # the first release carrying loadgen, fastpathwatch and load-mix.json.
-  fastpath_release        = "bfa94e22e2952b1cc9e94c2b525858d53cc6cc36"
+  fastpath_release        = "2eef83dec7d3252a0da3c5c6158aeada7473cb95"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
