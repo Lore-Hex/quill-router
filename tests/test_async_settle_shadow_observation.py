@@ -424,7 +424,7 @@ def test_idle_checkpoint_close_and_recovery() -> None:
     assert svc.journal.days[day].attempts == 1
     svc.journal.failed(day, unknown=False)
     svc.termination_deadline = svc.store.clock()+9
-    svc.closing_reason, svc.interval_end_us = "shutdown", NOW_US
+    svc.closing_reason, svc.interval_end_us = "shutdown", int(svc.store.wall()*1e6)
     svc.flush(svc.store.clock()+4)
     assert not svc.journal.days
     row = svc.store.read(COUNTER_KIND, day+"/"+svc.journal.boot, Budget(logical_time()+1, logical_time))
@@ -509,7 +509,18 @@ def test_native_encoding_six_maximum_rows(tmp_path: Any) -> None:
     try:
         pages, counter, closure = maximum_rows()
         rows = [*pages, counter, closure]
-        from trusted_router.async_settle_shadow_journal import SAMPLE_KIND
+        from trusted_router.async_settle_shadow_journal import SAMPLE_KIND, Reservation, Slot
+        from trusted_router.async_settle_shadow_v2_evidence import EVENT
+        full_journal = Journal("b"*64)
+        for row in pages:
+            value = row.value()
+            page = ReceiptPage(value["day"], value["boot"], int(value["first_seq"]), state=PageState.FROZEN, row=row)
+            for event in value["events"]:
+                reservation = Reservation(page.day, page.boot, page.first_seq, int(event["seq"]), event["event_at_us"])
+                page.slots.append(Slot(reservation, EVENT.serialize(event)))
+            full_journal.pages.append(page)
+        assert len(full_journal.pages) == 4 and full_journal.retained_bytes <= 256*1024
+        assert sum(len(page.row.body) for page in full_journal.pages) == 256*1024
         from trusted_router.detached_jws import canonical
         retained_work = []
         for index in range(32):
@@ -544,12 +555,37 @@ def test_native_encoding_six_maximum_rows(tmp_path: Any) -> None:
         result_request = CommitRequest(session=request.session, transaction_id=b"t"*128,
             mutations=result_tx._mutations, request_options=request.request_options)
         result_encoded = CommitRequest.serialize(result_request)
-        # Both maximum bounded attachment lanes, including encoded/native copies.
-        attachments = [memoryview(b"x"*65536).tobytes() for _ in range(8)]
+        # Simultaneous legal maxima: old-day final in flight, new-day publisher
+        # outstanding, and full new-day lanes. A same-day publisher and final
+        # cannot coexist because the final barrier deliberately forbids it.
+        import pickle
+
+        from tests.test_async_settle_shadow_observation_a1 import basis
+        from tests.test_async_settle_shadow_observation_r7 import missed
+        from trusted_router import async_settle_shadow_lifecycle as lifecycle
+        from trusted_router.async_settle_shadow_attachments import Lane
+        midnight = NOW_US+lifecycle.DAY_US
+        model, _ = lifecycle.step(lifecycle.State(), lifecycle.Tick(midnight-lifecycle.SLOT_US+500000))
+        model, _ = lifecycle.step(model, lifecycle.Tick(midnight, 100.))
+        model, _ = lifecycle.step(model, lifecycle.FlushReply(midnight, "2026-10-12", True, True, model.days[0].traces))
+        assert model.days[0].final and model.job is not None and lifecycle.final_barrier(model)
+        assert len(pickle.dumps(model)) < 16384
+        lanes = [Lane(stream, "b"*64, None) for stream in ("basis", "trace")]
+        for lane in lanes:
+            for index in range(4):
+                value = dict(basis(), reader_boot="b"*64) if lane.stream == "basis" else missed(SimpleNamespace(journal=SimpleNamespace(boot="b"*64)), midnight//lifecycle.SLOT_US+index)
+                lane.append("2026-10-13", value)
+                item = lane.queue[-1]
+                item.body += b" "*(65536-len(item.body))
+                lane.schema.parse(item.body)
+                item.frozen = True
+            assert lane.retained_bytes == 256*1024
+        attachments = [item.body for lane in lanes for item in lane.queue]
         assert sum(map(len, attachments)) == 512*1024
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
+    assert peak < 32*1024*1024  # Includes row bodies, parsed JSON and protobuf encoding copies.
     assert retained >= 331776+256*1024
     assert peak >= retained + len(encoded) + len(result_encoded) + sum(map(len, attachments))
     measurements = dict(body_bytes=331776, close_result_body_bytes=4096,
@@ -652,7 +688,7 @@ def test_empty_policy_live_modules_absent_or_present() -> None:
     script = '''
 import asyncio, importlib.abc, json, sys
 from pathlib import Path
-names = {"async_settle_shadow_journal", "async_settle_shadow_health_state", "async_settle_shadow_health", "storage_gcp_shadow_observation", "storage_gcp_shadow_io", "storage_gcp_shadow_attachments", "async_settle_shadow_attachments"}
+names = {"async_settle_shadow_lifecycle", "async_settle_shadow_journal", "async_settle_shadow_health_state", "async_settle_shadow_health", "storage_gcp_shadow_observation", "storage_gcp_shadow_io", "storage_gcp_shadow_attachments", "async_settle_shadow_attachments"}
 names.update(p.stem for p in Path("src/trusted_router").glob("*shadow*v2*.py"))
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
@@ -785,7 +821,7 @@ def test_late_health_commit_is_failure_but_reader_uses_observation_age(monkeypat
     svc.store.clock = lambda: clock[0]
     svc.store.wall = lambda: NOW_US/1e6 + clock[0]
     landed: list[dict[str, Any]] = []
-    monkeypatch.setattr(svc.store, "claim", lambda *args: True)
+    monkeypatch.setattr(svc.store, "claim", lambda *args: native_claim_result(svc, True))
     monkeypatch.setattr(svc.store, "observe", lambda *args: health())
     def publish(value: dict[str, Any], budget: Budget) -> bool:
         clock[0] = .501
@@ -815,7 +851,7 @@ def test_success_reply_over_budget_is_not_publication(monkeypatch: Any) -> None:
     clock = [0.]
     svc.store.clock = lambda: clock[0]
     svc.store.wall = lambda: NOW_US/1e6
-    monkeypatch.setattr(svc.store, "claim", lambda *args: True)
+    monkeypatch.setattr(svc.store, "claim", lambda *args: native_claim_result(svc, True))
     monkeypatch.setattr(svc.store, "observe", lambda *args: health())
     def publish(*args: Any) -> bool:
         clock[0] = .500001
@@ -869,7 +905,7 @@ def test_publisher_slot_product(monkeypatch: Any) -> None:
                 clock[0] = .501
                 return True
             return value
-        monkeypatch.setattr(svc.store, "claim", lambda *a, claim=claim: outcome(claim))
+        monkeypatch.setattr(svc.store, "claim", lambda *a, claim=claim, svc=svc: native_claim_result(svc, outcome(claim)))
         monkeypatch.setattr(svc.store, "observe", lambda *a, scan=scan: health() if outcome(scan) else None)
         monkeypatch.setattr(svc.store, "publish", lambda *a, publish=publish: outcome(publish))
         svc.publish_cycle(NOW_US//2_000_000, NOW_US)
@@ -1520,6 +1556,8 @@ async def test_maximum_queue_shutdown_measurements(tmp_path: Any, monkeypatch: A
     elapsed = time.monotonic()-started
     assert not svc.unclosed and not svc.journal.days, (svc.journal.days, len(svc.journal.batches), svc.unknown, svc.journal.losses)
     assert svc.store.database.commits == 3
+    assert svc.store.database.transaction_execute_sql_calls <= 16
+    assert svc.store.database.snapshot_execute_sql_calls <= 12
     measurement = dict(shutdown_seconds=elapsed, page_bytes=4*65536, counter_bytes=65536, closure_bytes=4096,
         transaction_body_bytes=[327680, 69632], commits=svc.store.database.commits,
         total_selects=svc.store.database.transaction_execute_sql_calls+svc.store.database.snapshot_execute_sql_calls,
@@ -1627,7 +1665,7 @@ def test_publisher_exact_budget_boundary(monkeypatch: Any, elapsed: float, accep
     clock = [0.]
     svc.store.clock = lambda: clock[0]
     svc.store.wall = lambda: NOW_US/1e6
-    monkeypatch.setattr(svc.store, "claim", lambda *args: True)
+    monkeypatch.setattr(svc.store, "claim", lambda *args: native_claim_result(svc, True))
     monkeypatch.setattr(svc.store, "observe", lambda *args: health())
     def publish(*args: Any) -> bool:
         clock[0] = elapsed
@@ -1700,3 +1738,9 @@ def test_durable_completion_releases_pending_original(monkeypatch: Any, fault: s
     assert not svc.journal.pages and not svc.journal.batches
     assert page.value()["events"][0]["booking"]["outcome"] == "pending"  # immutable history
     assert svc.journal.days[original.day].failures == int(fault != "none")
+
+
+def native_claim_result(svc, result):
+    # Keep the fake reply schema-valid: a real claim read always supplies S.
+    svc.store.last_claim = {"claim_at_ns": NOW_US*1000}
+    return result

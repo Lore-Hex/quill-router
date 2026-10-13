@@ -44,6 +44,7 @@ def test_review_getattr_mutant_rejected_by_actual_dormancy_guard(monkeypatch):
     from tests.test_async_settle_shadow_v2_evidence import (
         test_no_runtime_imports_or_calls_to_new_modules,
     )
+    test_no_runtime_imports_or_calls_to_new_modules()
     source = Path("src/trusted_router/storage_gcp_shadow_attachments.py").resolve()
     mutant = source.read_text() + '''
 def _review_dynamic_load(module_name):
@@ -57,3 +58,25 @@ def _review_dynamic_load(module_name):
     monkeypatch.setattr(Path, "read_text", overlay)
     with pytest.raises(AssertionError):
         test_no_runtime_imports_or_calls_to_new_modules()
+
+
+@pytest.mark.parametrize("loader", ["importlib", "importlib.util", "pkgutil", "runpy", "zipimport", "imp"])
+@pytest.mark.parametrize("spelling", ["import {loader}", "import {loader} as hidden", "from {loader} import resolve_name", "from {loader} import resolve_name as hidden"])
+def test_closed_loader_import_inventory(loader, spelling):
+    prefix = "from trusted_router.async_settle_shadow_v2_a1_health import HEALTH\n"
+    allowed = {"trusted_router.async_settle_shadow_v2_a1_health": ["HEALTH"]}
+    source = prefix + spelling.format(loader=loader) + "\n"
+    compile(source, "loader-control", "exec")
+    validate_live_imports(prefix, allowed, {"async_settle_shadow_v2_a1_health"})
+    with pytest.raises(AssertionError):
+        validate_live_imports(source, allowed, {"async_settle_shadow_v2_a1_health"})
+
+
+@pytest.mark.parametrize("extra", ["compile('1', 'x', 'eval')", "from builtins import compile as hidden",
+    "import sys as s; s.modules", "import sys as s; s.__dict__['modules']", "import sys as s; vars(s)['modules']"])
+def test_closed_loader_access_inventory(extra):
+    prefix = "from trusted_router.async_settle_shadow_v2_a1_health import HEALTH\n"
+    allowed = {"trusted_router.async_settle_shadow_v2_a1_health": ["HEALTH"]}
+    compile(prefix+extra, "loader-control", "exec")
+    with pytest.raises(AssertionError):
+        validate_live_imports(prefix+extra, allowed, {"async_settle_shadow_v2_a1_health"})

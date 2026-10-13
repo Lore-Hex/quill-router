@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,10 @@ def test_http_absolute_deadline_keeps_unknown(fault, tmp_path):
             pass
 
         def do_GET(self):
+            if fault == "headers":
+                entered.set()
+                release.wait()
+                return
             self.send_response(200)
             if fault != "never_close":
                 self.send_header("Content-Length", str(len(payload[0])))
@@ -53,6 +58,8 @@ def test_http_absolute_deadline_keeps_unknown(fault, tmp_path):
     try:
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     except PermissionError:
+        if "CI" in os.environ:
+            pytest.fail("CI must permit native loopback qualification")
         pytest.skip("sandbox forbids binding a local HTTP server; requires unrestricted CI")
     server.daemon_threads = True
     server_thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01})
@@ -255,3 +262,111 @@ def test_credentials_and_object_share_admission_deadline(monkeypatch):
     with pytest.raises(TimeoutError):
         GCSAttachments("offline").get("exact-key", 2., deadline=2., clock=lambda: now[0])
     assert observed == [("discovery", 2.), ("refresh", 2.), ("object", 2.)]
+
+
+@pytest.mark.parametrize("stage", ["credential", "connect", "send", "read", "cleanup"])
+def test_authenticated_native_cancellation(stage, monkeypatch):
+    import http.client
+
+    import google.auth
+
+    from trusted_router.storage_gcp_shadow_attachments import Lifetime
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "1")
+            self.end_headers()
+            try:
+                self.wfile.write(b"x")
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    except PermissionError:
+        if "CI" in os.environ:
+            pytest.fail("CI must permit authenticated native cancellation qualification")
+        pytest.skip("sandbox forbids native loopback")
+    server.daemon_threads = True
+    worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01})
+    lifetime = []
+    auth_calls = []
+    cancelled = []
+    def cancel():
+        if not cancelled:
+            cancelled.append(stage)
+            lifetime[0].cancelled = True
+    class Credentials:
+        def before_request(self, request, method, url, headers):
+            auth_calls.append("refresh")
+            headers["Authorization"] = "Bearer offline-test-token"
+    def credentials(**kwargs):
+        auth_calls.append("discovery")
+        lifetime.append(kwargs["request"].lifetime)
+        if stage == "credential":
+            cancel()
+        return Credentials(), "offline"
+    monkeypatch.setattr(google.auth, "default", credentials)
+    target, method = {
+        "connect": (http.client.HTTPConnection, "connect"),
+        "send": (http.client.HTTPConnection, "request"),
+        "read": (http.client.HTTPResponse, "read1"),
+        "cleanup": (http.client.HTTPResponse, "close"),
+        "credential": (Lifetime, "remaining"),
+    }[stage]
+    if stage != "credential":
+        original = getattr(target, method)
+        def boundary(self, *args, **kwargs):
+            result = original(self, *args, **kwargs)
+            cancel()
+            return result
+        monkeypatch.setattr(target, method, boundary)
+    transport = GCSAttachments("offline")
+    transport.endpoint = f"http://127.0.0.1:{server.server_port}/"
+    try:
+        worker.start()
+        with pytest.raises(TimeoutError):
+            transport.get("exact-key", 2., clock=lambda: 0.)
+        assert cancelled == [stage]
+        assert auth_calls == (["discovery"] if stage == "credential" else ["discovery", "refresh"])
+        assert not transport.active.locked()
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+
+
+@pytest.mark.parametrize("lost", [False, True])
+def test_attachment_auth_and_transport_inventory_per_export(monkeypatch, lost):
+    import google.auth
+
+    from trusted_router.storage_gcp_shadow_attachments import Lifetime
+    now, calls, stored = [0.], [], []
+    class Credentials:
+        def before_request(self, request, method, url, headers):
+            calls.append("refresh")
+    def default(**kwargs):
+        calls.append("discovery")
+        return Credentials(), "offline"
+    def exchange(self, method, url, body, headers):
+        calls.append(method)
+        if method == "POST":
+            stored.append(body)
+            if lost:
+                raise TimeoutError("original attachment reply lost")
+            return 200, {}, b""
+        return 200, {}, stored[0]
+    monkeypatch.setattr(google.auth, "default", default)
+    monkeypatch.setattr(Lifetime, "exchange", exchange)
+    lane = Lane("basis", "issuer", GCSAttachments("offline"))
+    lane.append("2026-10-12", basis())
+    size = lane.retained_bytes
+    lane.step(Budget(2., lambda: now[0]))
+    assert calls == ["discovery", "refresh", "POST"]
+    if lost:
+        assert lane.queue[0].uncertain
+        now[0] = 5.
+        lane.step(Budget(7., lambda: now[0]))
+        assert calls == ["discovery", "refresh", "POST", "discovery", "refresh", "GET"]
+    assert not lane.queue
+    assert lane.operations == dict(put=1, get=int(lost), sent_bytes=size, received_bytes=size*int(lost))

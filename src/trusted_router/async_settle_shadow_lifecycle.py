@@ -17,6 +17,13 @@ DAY_US = 86_400_000_000
 
 
 @dataclass(frozen=True)
+class MissedRun:
+    first_slot: int
+    count: int
+    reason: str = "publisher_busy"
+
+
+@dataclass(frozen=True)
 class Day:
     day: str
     first_slot: int
@@ -36,8 +43,12 @@ class Day:
     attachments: frozenset[str] = frozenset()
     attachment_stamp: int = -1
     attachment_keys: frozenset[str] = frozenset()
-    traces: tuple[int, ...] = ()
-    trace_payloads: tuple[tuple[int, bytes], ...] = ()
+    # One contiguous emitted prefix; the attachment lane alone retains bodies.
+    traces: range = range(0)
+    frontier: int = -1
+    lost_traces: int = 0
+    first_lost_slot: int | None = None
+    last_lost_slot: int | None = None
     flush: bool = False
     ready: bool = False
     final: bool = False
@@ -47,6 +58,14 @@ class Day:
     closed: bool = False
     veto: bool = False
 
+    @property
+    def pending_missed(self) -> MissedRun | None:
+        if not self.publishers:
+            return None
+        first = min(self.publishers)+1
+        end = self.cursor if self.interval_last_slot is None else self.interval_last_slot
+        return MissedRun(first, end-first+1) if end >= first else None
+
 
 @dataclass(frozen=True)
 class State:
@@ -55,11 +74,20 @@ class State:
     retired: str = ""
     shutdown: bool = False
     publisher_enabled: bool = True
+    first_slot: int | None = None
+    accepted_stamp: int | None = None
+    shutdown_stamp: int | None = None
+    generation: int = 0
+    job: PublisherJob | None = None
+    last_actual_start: float = float("-inf")
+    retired_slots: int = 0
 
 
 @dataclass(frozen=True)
 class Tick:
     stamp: int
+    mono: float | None = None
+    admit: bool = True
 
 
 @dataclass(frozen=True)
@@ -67,7 +95,22 @@ class SlotOutcome:
     stamp: int
     slot: int
     outcome: Literal["missed", "lost_claim", "published", "failed"]
-    trace: bytes = b""
+    trace: bytes = b""  # Input compatibility only: never retained in State.
+    generation: int = 0
+    actual_start_mono: float | None = None
+
+
+@dataclass(frozen=True)
+class TraceLost:
+    stamp: int
+    day: str
+    slot: int
+
+
+@dataclass(frozen=True)
+class PolicyChanged:
+    stamp: int
+    generation: int
 
 
 @dataclass(frozen=True)
@@ -95,7 +138,7 @@ class AttachmentSettled:
     stamp: int
     day: str
     key: str
-    drained: tuple[int, ...] = ()
+    drained: tuple[int, ...] | range = ()
     success: bool = True
 
 
@@ -105,7 +148,7 @@ class FlushReply:
     day: str
     success: bool
     ready: bool = False
-    drained: tuple[int, ...] = ()
+    drained: tuple[int, ...] | range = ()
 
 
 @dataclass(frozen=True)
@@ -127,13 +170,31 @@ class ShutdownRequested:
     stamp: int
 
 
-Event: TypeAlias = (Tick | SlotOutcome | ObserverEnqueued | ObserverFolded | AttachmentAdmitted
+Event: TypeAlias = (Tick | TraceLost | PolicyChanged | SlotOutcome | ObserverEnqueued | ObserverFolded | AttachmentAdmitted
                     | AttachmentSettled | FlushReply | FinalReply | CloseResultReply | ShutdownRequested)
 
 
 @dataclass(frozen=True)
-class StartPublisherCycle:
+class PublisherJob:
     slot: int
+    generation: int
+    earliest_start_mono: float
+    latest_start_mono: float
+
+
+@dataclass(frozen=True)
+class StartPublisherCycle:
+    job: PublisherJob
+
+    @property
+    def slot(self) -> int:
+        return self.job.slot
+
+
+@dataclass(frozen=True)
+class EmitTrace:
+    slot: int
+    outcome: str
 
 
 @dataclass(frozen=True)
@@ -161,7 +222,7 @@ class Fault:
     reason: str
 
 
-Effect: TypeAlias = StartPublisherCycle | StartFlush | StartFinalClose | StartCloseResult | UploadAttachment | Fault
+Effect: TypeAlias = EmitTrace | StartPublisherCycle | StartFlush | StartFinalClose | StartCloseResult | UploadAttachment | Fault
 
 
 def day_name(stamp: int) -> str:
@@ -190,7 +251,7 @@ def bounded(state: State) -> bool:
 
 
 def no_post_final_owners(state: State) -> bool:
-    return all(not d.final or not (d.publishers or d.observers or d.attachments or d.traces or d.trace_payloads)
+    return all(not d.final or not (d.publishers or d.observers or d.attachments or d.traces or d.lost_traces)
                for d in state.days)
 
 
@@ -220,7 +281,7 @@ def _progress(state: State, effects: list[Effect]) -> tuple[State, tuple[Effect,
             continue
         closing = state.shutdown or d.day < state.current
         if (closing and d.cursor == d.last_slot and not
-                (d.publishers or d.observers or d.attachments or d.traces or d.flush) and d.ready):
+                (d.publishers or d.observers or d.attachments or d.traces or d.lost_traces or d.flush) and d.ready):
             d = replace(d, final=True)
             effects.append(StartFinalClose(d.day))
         elif not d.flush:
@@ -230,50 +291,76 @@ def _progress(state: State, effects: list[Effect]) -> tuple[State, tuple[Effect,
     return state, tuple(effects)
 
 
-def _tick(state: State, stamp: int, *, shutdown: bool = False) -> tuple[State, list[Effect]]:
+def _emit(d: Day, effects: list[Effect], reply: SlotOutcome | None = None) -> Day:
+    end = d.cursor if d.interval_last_slot is None else d.interval_last_slot
+    frontier = min(d.publishers) if d.publishers else end+1
+    previous = d.first_slot if d.frontier < 0 else d.frontier
+    for slot in range(previous, frontier):
+        effects.append(EmitTrace(slot, reply.outcome if reply is not None and slot == reply.slot else "missed"))
+    start = d.traces.start if d.traces else previous
+    return replace(d, frontier=frontier, traces=range(start, frontier))
+
+
+def lifetime_coverage(state: State) -> bool:
+    if state.first_slot is None or state.accepted_stamp is None:
+        return not state.days
+    through = state.first_slot + state.retired_slots
+    for d in state.days:
+        end = d.cursor if d.interval_last_slot is None else d.interval_last_slot
+        if d.first_slot != through:
+            return False
+        through = end+1
+    return through == state.accepted_stamp//SLOT_US+1
+
+
+def _tick(state: State, stamp: int, *, shutdown: bool = False,
+          mono: float | None = None, admit: bool = True) -> tuple[State, list[Effect]]:
     today, slot = day_name(stamp), stamp // SLOT_US
     effects: list[Effect] = []
+    if state.accepted_stamp is not None and stamp < state.accepted_stamp:
+        return state, [Fault("stale_tick")]
+    original = state
     if not state.days:
-        first = slot
-        d = Day(today, first, first-1, (stamp//DAY_US+1)*DAY_US//SLOT_US-1)
-        state = _put(state, d)
-    if today > state.current:
-        state = replace(state, current=today)
+        state = _put(state, Day(today, slot, slot-1, (stamp//DAY_US+1)*DAY_US//SLOT_US-1))
+    # Enumerate the lifetime before retiring ANY shutdown suffix. Capacity is an
+    # atomic refusal: a stamp beyond representable days is never accepted.
+    while state.days[-1].day < today:
+        first = state.days[-1].last_slot+1
+        if len(state.days) >= MAX_DAY_BUCKETS:
+            old = state.days[0]
+            if not old.closed:
+                return original, [Fault("day_limit")]
+            state = replace(state, days=state.days[1:], retired=old.day,
+                            retired_slots=state.retired_slots+old.last_slot-old.first_slot+1)
+        state = _put(state, Day(day_name(first*SLOT_US), first, first-1, first+DAY_US//SLOT_US-1))
+    state = replace(state, current=max(state.current, today), accepted_stamp=stamp,
+                    first_slot=state.first_slot if state.first_slot is not None else state.days[0].first_slot)
+    at = stamp/1_000_000 if mono is None else mono
     for d in state.days:
         if d.final or d.closed or d.veto or d.day > today:
             continue
         through = min(slot, d.last_slot)
         if through > d.cursor:
-            gaps = tuple(range(d.cursor+1, through+1)) if state.publisher_enabled else ()
-            start = bool(gaps and d.day == today and not shutdown and stamp % SLOT_US <= 250_000
-                         and not any(x.publishers for x in state.days))
-            missed = gaps[:-1] if start else gaps
+            count = through-d.cursor if state.publisher_enabled else 0
+            start = bool(count and admit and d.day == today and not shutdown and stamp % SLOT_US <= 250_000
+                         and state.job is None)
+            missed = count-int(start)
             owners = d.publishers | {slot} if start else d.publishers
-            d = replace(d, cursor=through, scheduled=d.scheduled+len(missed), missed=d.missed+len(missed),
-                        traces=d.traces+missed, publishers=frozenset(owners), ready=False)
+            d = replace(d, cursor=through, scheduled=d.scheduled+missed, missed=d.missed+missed,
+                        publishers=frozenset(owners), ready=False)
             if start:
-                effects.append(StartPublisherCycle(slot))
+                job = PublisherJob(slot, state.generation, max(at, state.last_actual_start+2),
+                                   at+(250_000-stamp % SLOT_US)/1_000_000)
+                state = replace(state, job=job)
+                effects.append(StartPublisherCycle(job))
+            if state.publisher_enabled:
+                d = _emit(d, effects)
         if shutdown:
-            # End the active interval at this stamp. Later calendar slots were
-            # never opportunities; the cursor sentinel prohibits future admission.
             d = replace(d, interval_last_slot=d.cursor, cursor=d.last_slot)
         state = _put(state, d)
-    if not any(d.day == today for d in state.days) and not shutdown:
-        # Enumerate intervening days too: a delayed scheduler must not skip the
-        # new day's midnight-to-wake opportunities or an entire intervening day.
-        first = max(d.last_slot for d in state.days)+1
-        opened = day_name(first*SLOT_US)
-        # Retire only terminal days, retaining a watermark against reopening.
-        while len(state.days) >= MAX_DAY_BUCKETS:
-            old = state.days[0]
-            if not old.closed:
-                return state, [*effects, Fault("day_limit")]
-            state = replace(state, days=state.days[1:], retired=max(state.retired, old.day))
-        d = Day(opened, first, first-1, first+DAY_US//SLOT_US-1)
-        state = _put(state, d)
-        state, more = _tick(state, stamp, shutdown=shutdown)
-        effects.extend(more)
-    return replace(state, shutdown=state.shutdown or shutdown), effects
+    return replace(state, shutdown=state.shutdown or shutdown,
+                   shutdown_stamp=stamp if shutdown else state.shutdown_stamp,
+                   generation=state.generation+int(shutdown)), effects
 
 
 def step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
@@ -290,6 +377,8 @@ def step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
 
 def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
     stamp_day = day_name(event.stamp)
+    if isinstance(event, PolicyChanged):
+        return replace(state, generation=max(state.generation, event.generation)), ()
     if isinstance(event, (Tick, ShutdownRequested)):
         existing = next((d for d in state.days if d.day == stamp_day), None)
         if stamp_day < state.current and existing is None:
@@ -298,7 +387,9 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
             return state, (Fault("frozen_day"),)
         if state.shutdown:
             return state, (Fault("shutdown"),)
-        state, effects = _tick(state, event.stamp, shutdown=isinstance(event, ShutdownRequested))
+        state, effects = _tick(state, event.stamp, shutdown=isinstance(event, ShutdownRequested),
+                               mono=event.mono if isinstance(event, Tick) else None,
+                               admit=event.admit if isinstance(event, Tick) else False)
         return _progress(state, effects)
     identity = (day_name(event.slot*SLOT_US) if isinstance(event, SlotOutcome)
                 else (event.day or stamp_day) if isinstance(event, AttachmentAdmitted)
@@ -325,15 +416,29 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
     elif d.final:
         return state, (Fault("frozen_day"),)
     elif isinstance(event, SlotOutcome):
-        if event.slot not in d.publishers or event.outcome not in ("missed", "lost_claim", "published", "failed"):
+        if (type(event.slot) is not int or type(event.generation) is not int
+                or state.job is None or event.slot != state.job.slot or event.generation != state.job.generation
+                or event.slot not in d.publishers or event.outcome not in ("missed", "lost_claim", "published", "failed")):
             return state, (Fault("unknown_slot"),)
+        if event.outcome != "missed":
+            if event.actual_start_mono is None or not state.job.earliest_start_mono <= event.actual_start_mono <= state.job.latest_start_mono:
+                return state, (Fault("invalid_start"),)
+            state = replace(state, last_actual_start=event.actual_start_mono)
+        state = replace(state, job=None)
         d = replace(d, publishers=d.publishers-{event.slot}, scheduled=d.scheduled+1,
                     missed=d.missed+(event.outcome == "missed"), attempted=d.attempted+(event.outcome != "missed"),
                     lost=d.lost+(event.outcome == "lost_claim"), published=d.published+(event.outcome == "published"),
-                    failed=d.failed+(event.outcome == "failed"), traces=d.traces+(event.slot,),
-                    trace_payloads=d.trace_payloads+((event.slot, event.trace),), ready=False)
+                    failed=d.failed+(event.outcome == "failed"), ready=False)
+        d = _emit(d, effects, event)
+    elif isinstance(event, TraceLost):
+        if event.slot not in d.traces or (d.last_lost_slot is not None and event.slot <= d.last_lost_slot):
+            return state, (Fault("unknown_trace_loss"),)
+        d = replace(d, lost_traces=d.lost_traces+1,
+                    first_lost_slot=d.first_lost_slot if d.first_lost_slot is not None else event.slot,
+                    last_lost_slot=event.slot)
     elif isinstance(event, ObserverEnqueued):
-        if (event.key in d.observers or state.shutdown or event.stamp < d.observer_stamp
+        if (len(event.key) > 512 or len(d.observers | d.observer_keys) >= 32
+                or event.key in d.observers or state.shutdown or event.stamp < d.observer_stamp
                 or (event.stamp == d.observer_stamp and event.key in d.observer_keys)):
             return state, (Fault("observer_admission"),)
         d = replace(d, observers=d.observers | {event.key}, ready=False, observer_stamp=event.stamp,
@@ -343,7 +448,8 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
             return state, (Fault("unknown_observer"),)
         d = replace(d, observers=d.observers-{event.key})
     elif isinstance(event, AttachmentAdmitted):
-        if (event.key in d.attachments or event.stamp < d.attachment_stamp
+        if (len(event.key) > 512 or len(d.attachments | d.attachment_keys) >= 8
+                or event.key in d.attachments or event.stamp < d.attachment_stamp
                 or (event.stamp == d.attachment_stamp and event.key in d.attachment_keys)):
             return state, (Fault("attachment_admission"),)
         d = replace(d, attachments=d.attachments | {event.key}, ready=False, attachment_stamp=event.stamp,
@@ -355,14 +461,12 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
             return state, (Fault("unknown_attachment"),)
         if not event.success:
             return state, (UploadAttachment(event.key),)
-        d = replace(d, attachments=d.attachments-{event.key}, traces=tuple(s for s in d.traces if s not in event.drained),
-                    trace_payloads=tuple(p for p in d.trace_payloads if p[0] not in event.drained))
+        d = replace(d, attachments=d.attachments-{event.key}, traces=_drain(d.traces, event.drained))
     elif isinstance(event, FlushReply):
         if not d.flush or not set(event.drained) <= set(d.traces):
             return state, (Fault("unexpected_flush_reply"),)
         d = replace(d, flush=False, ready=event.success and event.ready,
-                    traces=tuple(s for s in d.traces if s not in event.drained) if event.success else d.traces,
-                    trace_payloads=tuple(p for p in d.trace_payloads if p[0] not in event.drained) if event.success else d.trace_payloads)
+                    traces=_drain(d.traces, event.drained) if event.success else d.traces)
         # A failed checkpoint is retried on a later tick, never recursively.
         state = _put(state, d)
         if not event.success or not event.ready:
@@ -370,3 +474,11 @@ def _step(state: State, event: Event) -> tuple[State, tuple[Effect, ...]]:
     else:
         return state, (Fault("invalid_event"),)
     return _progress(_put(state, d), effects)
+
+
+def _drain(slots: range, drained: tuple[int, ...] | range) -> range:
+    if not drained:
+        return slots
+    if tuple(drained) != tuple(range(slots.start, slots.start+len(drained))):
+        raise ValueError("nonprefix_drain")
+    return range(slots.start+len(drained), slots.stop)

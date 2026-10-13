@@ -292,7 +292,7 @@ def test_preclaim_lock_wait_rechecks_jitter(monkeypatch):
         svc.schedule_cycle(NOW_US//2_000_000, NOW_US)
         job = svc.publisher_executor.submit(publish_cycle, svc.store, svc.journal.boot,
             svc.settings.effective_serving_region, svc.settings.source_revision,
-            NOW_US//2_000_000, NOW_US, True, svc.last_claim_start)
+            svc.state.job, NOW_US, svc)
         wall[0] += 300_000
     finally:
         release.set()
@@ -319,7 +319,7 @@ def test_midnight_queued_cycle_owns_day_before_executor_start():
         from trusted_router.services.async_settle_shadow_health import publish_cycle
         job = svc.publisher_executor.submit(publish_cycle, svc.store, svc.journal.boot,
             svc.settings.effective_serving_region, svc.settings.source_revision,
-            stamp//2_000_000, stamp, True, svc.last_claim_start)
+            svc.state.job, stamp, svc)
     wall[0] += 3_000_000
     try:
         svc.flush(svc.store.clock()+4)
@@ -573,7 +573,7 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
         if fail_commit[0]:
             raise RuntimeError("lost commit reply")
         for mutation in kw["request"].mutations:
-            for row in mutation.insert_or_update.values:
+            for row in [*mutation.insert_or_update.values, *mutation.insert.values]:
                 rows[(row[0], row[1])] = row[2]
         return CommitResponse(commit_timestamp="2026-10-12T00:00:00.000000456Z")
     db.spanner_api.create_session, db.spanner_api.execute_streaming_sql, db.spanner_api.commit = create, query, commit
@@ -594,11 +594,30 @@ def test_native_cycle_rpc_inventory(monkeypatch, shadow_deadline_clock, tmp_path
         assert store.publish(value, budget)
     assert calls == ["session", "query", "commit", "query", "query", "query", "commit"]
     assert len(durations) == len(calls) == 7
-    (tmp_path/"publisher-rpcs.json").write_text(json.dumps(dict(cold_cycle_rpc_count=len(calls),
-        calls=calls, warm_cycle_rpc_count=len(calls)-1)))
+    cold = list(calls)
+    calls.clear()
+    rows.clear()
+    budget = Budget(clock.monotonic()+.5, clock.monotonic)
+    with rpc_scope(budget.deadline, .5, clock.monotonic), observe_spanner_rpcs(durations.append):
+        assert store.claim("issuer", NOW_US//2_000_000, NOW_US, budget)
+        value = store.observe("issuer", "us-central1", "a"*40, NOW_US//2_000_000, budget)
+        assert store.publish(value, budget)
+    assert calls == ["query", "commit", "query", "query", "query", "commit"]
+    (tmp_path/"publisher-rpcs.json").write_text(json.dumps(dict(cold_cycle_rpc_count=len(cold),
+        calls=cold, warm_calls=calls, warm_cycle_rpc_count=len(calls))))
 
-    from trusted_router.async_settle_shadow_journal import CLAIM_KIND
+    from tests.test_async_settle_shadow_observation import maximum_rows
+    from trusted_router.async_settle_shadow_journal import CLAIM_KIND, CLOSE_RESULT_KIND, Row
     from trusted_router.async_settle_shadow_v2_a1_health import validate_publisher_traces
+    pages, counter, closure = maximum_rows()
+    calls.clear()
+    store.flush(pages, counter, closure, Budget(clock.monotonic()+4, clock.monotonic))
+    assert calls == ["query"]*7+["commit"]
+    from pathlib import Path
+    result = dict(json.loads((Path(__file__).parent/"fixtures/async_settlement/shadow_v2_a1/close_result.json").read_text())["variants"][0]["object"], boot=counter.value()["boot"])
+    calls.clear()
+    store.close_result(Row.build(CLOSE_RESULT_KIND, counter.key, result), Budget(clock.monotonic()+4, clock.monotonic))
+    assert calls == ["query", "query", "commit"]
     assert CLAIM_KIND == "async_settle_shadow_health_control_v2"
     for outcome in ("lost_claim", "published", "failed", "missed", "empty"):
         svc = service()

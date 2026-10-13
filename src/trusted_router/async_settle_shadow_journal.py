@@ -323,10 +323,24 @@ class Journal:
                                  else dict(day=reservation.day, boot=reservation.boot, event_seq=f"{reservation.event_seq:020}"))
                     if reference is None and event["phase"] == "completion":
                         reference = dict(day=reservation.day, boot=reservation.boot, event_seq=event["completion_of"])
+                    backing_candidates: tuple[dict[str, Any], ...] = (event,)
+                    if event["phase"] == "completion":
+                        originals = [e for r in found.values() if r.kind == PAGE_KIND
+                                     and r.value()["day"] == reference["day"]
+                                     and r.value()["boot"] == reference["boot"]
+                                     for e in r.value()["events"] if e["seq"] == reference["event_seq"]]
+                        require(len(originals) == 1, "retry_original_gap")
+                        original_event = originals[0]
+                        # An old unknown sample backs only a completion that
+                        # preserves its original class. A later upgrade needs
+                        # the later sample matching that completion itself.
+                        if all(event[k] == original_event[k] for k in ("partition", "comparison")):
+                            backing_candidates += (original_event,)
                     require(value["original_terminal_receipt"] == reference
                             and value["payload_hash"] == event["payload_sha256"]
-                            and value["booking"]["outcome"] == event["booking"]["outcome"]
-                            and value["classification"] == event["comparison"], "reference_conflict")
+                            and any(value["booking"]["outcome"] == candidate["booking"]["outcome"]
+                                    and value["classification"] == candidate["comparison"]
+                                    for candidate in backing_candidates), "reference_conflict")
                 else:
                     require(value["certificate_sha256"] == event["certificate_sha256"]
                         and value["claims"]["original_receipt"] == event["original_receipt"], "reference_conflict")

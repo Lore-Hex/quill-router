@@ -24,6 +24,7 @@ LAST = MIDNIGHT//m.SLOT_US-1
 
 @lru_cache(maxsize=8192)
 def invariants(state):
+    assert m.lifetime_coverage(state)
     assert m.conservation(state)
     assert m.final_barrier(state)
     assert m.one_final(state)
@@ -42,6 +43,8 @@ def invariants(state):
 
 
 def checked(state, event):
+    if isinstance(event, m.SlotOutcome) and event.outcome != "missed" and event.actual_start_mono is None and state.job:
+        event = replace(event, actual_start_mono=state.job.earliest_start_mono)
     after, effects = m.step(state, event)
     invariants(after)
     if any(isinstance(e, m.Fault) for e in effects):
@@ -68,7 +71,7 @@ def drain(state, outcome="timely"):
     # Complete only work actually issued by the machine. Early injected replies
     # above were refused, so the real effect still requires its own completion.
     if not state.shutdown:
-        state, _ = checked(state, m.ShutdownRequested(MIDNIGHT+1))
+        state, _ = checked(state, m.ShutdownRequested(max(MIDNIGHT+1, state.accepted_stamp or 0)))
     for _ in range(20):
         before = state
         for d in state.days:
@@ -100,7 +103,7 @@ def test_midnight_flush_precedes_unaccounted_missed_slots():
     state, effects = checked(state, m.Tick(MIDNIGHT+500_000))
     old = next(d for d in state.days if d.day == OLD)
     assert old.cursor == LAST and old.missed == 1 and old.scheduled == 2
-    assert old.traces == (LAST,) and not old.final
+    assert tuple(old.traces) == (LAST,) and not old.final
     assert not any(isinstance(e, m.StartFinalClose) for e in effects)
     state = drain(state)
     old = next(d for d in state.days if d.day == OLD)
@@ -293,10 +296,10 @@ def test_completed_owner_event_cannot_be_replayed(attachment):
 
 
 def test_vetoed_day_cannot_be_evicted_to_admit_unbounded_open_journals():
-    state = drain(boot(), "unknown")
-    # Continue another day's scheduler after the old-day final veto. Shutdown
-    # belongs to this test's drain helper, so form the corresponding live state.
-    state = replace(state, shutdown=False)
+    state, _ = checked(boot(), m.Tick(MIDNIGHT+500_000))
+    state, _ = checked(state, m.FlushReply(MIDNIGHT+500_000, OLD, True, True, state.days[0].traces))
+    state, _ = checked(state, m.FinalReply(MIDNIGHT+500_000, OLD, "unknown"))
+    # Continue a genuinely live lifetime after the old-day final veto.
     for offset in range(4):
         state, _ = checked(state, m.Tick(MIDNIGHT+offset*m.DAY_US+500_000))
     assert len(state.days) == 3 and state.days[0].veto

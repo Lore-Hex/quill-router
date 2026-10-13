@@ -1,6 +1,7 @@
 """P3 native serialization and slot races, selected by CI's emulator command."""
 from __future__ import annotations
 
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -20,16 +21,42 @@ def shadow_emulator_resources():
     # Reuse the existing emulator/schema fixture in an isolated instance so the
     # empty snapshot witness cannot inherit outbox rows from adjacent suites.
     from tests.conformance.spanner_emulator import emulator_resources
-    with emulator_resources() as resources:
-        yield resources
+    if "SPANNER_EMULATOR_HOST" in os.environ:
+        assert os.environ.get("TR_CONFORMANCE_EMULATOR_SCHEMA") == "1", "configured emulator requires schema coverage"
+    try:
+        with emulator_resources() as resources:
+            yield resources
+    except pytest.skip.Exception as error:
+        if "SPANNER_EMULATOR_HOST" in os.environ:
+            pytest.fail(f"configured native case skipped: {error}")
+        raise
 
 
 @pytest.mark.parametrize("backend", ["spanner-emulator"])
-def test_shadow_observation_native_six_rows(shadow_emulator_resources: Any, backend: str) -> None:
+def test_shadow_observation_native_six_rows(shadow_emulator_resources: Any, backend: str, monkeypatch: Any) -> None:
     database, _ = shadow_emulator_resources
     store = ObservationStore(database, wall=lambda: NOW_US/1e6)
     pages, counter, closure = maximum_rows(uuid4().hex*2)
+    from types import SimpleNamespace
+
+    from google.cloud.spanner_v1.transaction import Transaction
+    from google.cloud.spanner_v1.types import CommitRequest
+    captured = []
+    commit = store.database.spanner_api.commit
+    def encode(*args, **kwargs):
+        request = CommitRequest(kwargs["request"])
+        captured.append(request)
+        return commit(*args, **kwargs)
+    monkeypatch.setattr(store.database.spanner_api, "commit", encode)
     store.flush(pages, counter, closure, Budget(time.monotonic()+4))
+    assert len(captured) == 1
+    native = captured[0]
+    fake = Transaction(SimpleNamespace())
+    store.write(fake, [*pages, counter, closure], Budget(time.monotonic()+4))
+    assert list(native.mutations) == list(fake._mutations)
+    assert sum(len(row.body) for row in [*pages, counter, closure]) == 331776
+    assert max(len(row.key) for row in pages) == 96
+    assert 331776 < len(CommitRequest.serialize(native)) < 336000
     assert store.reconcile([*pages, counter, closure], Budget(time.monotonic()+4))
 
 
@@ -127,3 +154,102 @@ def test_shadow_observation_native_empty_nonempty_metadata(shadow_emulator_resou
     finally:
         with database.batch() as batch:
             batch.delete("tr_settle_outbox", KeySet(keys=[(identity, "settle")]))
+
+
+def native_service(database):
+    from trusted_router.config import Settings
+    from trusted_router.services.async_settle_shadow_health import Service
+    return Service(Settings(environment="test", async_settle_shadow_policy="shadow-v2",
+        async_settle_shadow_workspaces="ws", source_revision="a"*40), ObservationStore(database))
+
+
+@pytest.mark.parametrize("backend", ["spanner-emulator"])
+@pytest.mark.parametrize("fault", ["lost", "late"])
+def test_shadow_native_original_final_reply(shadow_emulator_resources, backend, fault):
+    from tests.shadow_observation_faults import verify_final_fault
+    database, _ = shadow_emulator_resources
+    verify_final_fault(native_service(database), fault)
+
+
+@pytest.mark.parametrize("backend", ["spanner-emulator"])
+def test_shadow_native_one_attempt_handoff(shadow_emulator_resources, backend):
+    from tests.shadow_observation_faults import verify_handoff_fault
+    database, _ = shadow_emulator_resources
+    verify_handoff_fault(native_service(database))
+
+
+@pytest.mark.parametrize("backend", ["spanner-emulator"])
+@pytest.mark.parametrize("signum", ["SIGTERM", "SIGKILL"])
+@pytest.mark.parametrize("point", ["before_first_flush", "during_commit", "before_ack", "after_ack", "before_result", "after_result"])
+def test_shadow_native_process_restart(shadow_emulator_resources, backend, point, signum, tmp_path):
+    import json
+    import signal
+    import subprocess
+    import sys
+    from pathlib import Path
+    database, _ = shadow_emulator_resources
+    boot = uuid4().hex
+    args = [sys.executable, str(Path(__file__).parents[1]/"shadow_observation_restart.py"),
+        database._instance._client.project, database._instance.instance_id, database.database_id, boot]
+    with (tmp_path/"child.log").open("w") as errors:
+        child = subprocess.Popen([*args, point], stdout=subprocess.PIPE, stderr=errors, text=True)  # noqa: S603
+        try:
+            assert child.stdout.readline().strip() == "BOUNDARY", (tmp_path/"child.log").read_text()
+            child.send_signal(getattr(signal, signum))
+            assert child.wait(timeout=15) == -getattr(signal, signum)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+    recovered = subprocess.run([*args, "recover"], capture_output=True, text=True, timeout=30)  # noqa: S603
+    assert recovered.returncode == 0, recovered.stderr
+    state = json.loads(recovered.stdout.splitlines()[-1])
+    assert state["durable"] == (point == "after_result")
+    assert state["missing_close"] == (point != "after_result")
+    assert state["closure"] == (point in {"before_ack", "after_ack", "before_result", "after_result"})
+
+
+@pytest.mark.parametrize("backend", ["spanner-emulator"])
+def test_shadow_native_exact_miss_then_late_landing(shadow_emulator_resources, backend, monkeypatch):
+    from google.api_core.exceptions import DeadlineExceeded
+    from google.cloud.spanner_v1.types import CommitRequest
+
+    from trusted_router.async_settle_shadow_journal import CLOSE_RESULT_KIND, CLOSURE_KIND
+    from trusted_router.storage_gcp_shadow_io import rpc_scope
+    database, _ = shadow_emulator_resources
+    svc = native_service(database)
+    now = [100.]
+    svc.store.clock = lambda: now[0]
+    svc.closing_reason, svc.termination_deadline = "shutdown", 109.
+    api = svc.store.database.spanner_api
+    commit = api.commit
+    pending = []
+    def defer(*args, **kwargs):
+        request = CommitRequest(kwargs["request"])
+        kinds = [row[0] for mutation in request.mutations for row in mutation.insert_or_update.values]
+        if CLOSURE_KIND in kinds:
+            pending.append((args, kwargs))
+            raise DeadlineExceeded("request withheld before native commit")
+        return commit(*args, **kwargs)
+    monkeypatch.setattr(api, "commit", defer)
+    svc.flush(104.)
+    assert len(pending) == 1 and svc.final_veto
+    day = next(iter(svc.journal.days))
+    key = day+"/"+svc.journal.boot
+    # The read boundary drops the first exact reply; no full scan or retry.
+    read = svc.store.read
+    reads = []
+    def first_miss(kind, requested, budget):
+        reads.append((kind, requested))
+        assert kind == CLOSURE_KIND and requested == key
+        return None
+    with monkeypatch.context() as local:
+        local.setattr(svc.store, "read", first_miss)
+        assert not svc.store.reconcile([svc.unknown[3]], Budget(104., svc.store.clock))
+    assert reads == [(CLOSURE_KIND, key)]
+    with rpc_scope(104., 2., svc.store.clock):
+        commit(*pending[0][0], **pending[0][1])
+    assert read(CLOSURE_KIND, key, Budget(104., svc.store.clock)) is not None
+    svc.flush(104.)
+    assert day in svc.final_veto and len(pending) == 1
+    assert read(CLOSE_RESULT_KIND, key, Budget(104., svc.store.clock)) is None

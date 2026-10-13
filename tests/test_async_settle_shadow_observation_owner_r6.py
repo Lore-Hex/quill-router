@@ -128,7 +128,7 @@ def test_midnight_shell_accounts_gap_before_counter_closure():
     svc.observer.daily_since = 0.
     svc.traces.transport = MemoryAttachments()
     svc.publish_cycle(stamp[0]//m.SLOT_US, stamp[0])
-    svc.traces.step(Budget(svc.store.clock()+4, svc.store.clock))
+    svc.drive(svc.upload(svc.traces, Budget(svc.store.clock()+4, svc.store.clock)))
     svc.traces.next_operation = float("-inf")
     stamp[0] += 4_500_000
     svc.flush(svc.store.clock()+4)
